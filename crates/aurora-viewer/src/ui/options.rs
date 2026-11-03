@@ -61,6 +61,7 @@ pub enum Page {
     Confirmations,
     Inventory,
     Controls,
+    Gamepad,
     Shortcuts,
     Commands,
     System,
@@ -69,7 +70,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 21] = [
+    pub const ALL: [Page; 22] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
@@ -86,6 +87,7 @@ impl Page {
         Page::Confirmations,
         Page::Inventory,
         Page::Controls,
+        Page::Gamepad,
         Page::Shortcuts,
         Page::Commands,
         Page::System,
@@ -112,6 +114,7 @@ impl Page {
             Page::Confirmations => "confirmations",
             Page::Inventory => "inventory",
             Page::Controls => "controls",
+            Page::Gamepad => "gamepad",
             Page::Shortcuts => "shortcuts",
             Page::Commands => "commands",
             Page::System => "system",
@@ -138,6 +141,7 @@ impl Page {
             Page::Confirmations => aurora_i18n::tr!("ui-options-page-confirmations"),
             Page::Inventory => aurora_i18n::tr!("common-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-page-controls"),
+            Page::Gamepad => aurora_i18n::tr!("joystick-gamepad"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-shortcuts"),
             Page::Commands => aurora_i18n::tr!("ui-options-commands"),
             Page::System => aurora_i18n::tr!("ui-options-page-system"),
@@ -165,6 +169,7 @@ impl Page {
             Page::Confirmations => aurora_i18n::tr!("ui-options-about-confirmations"),
             Page::Inventory => aurora_i18n::tr!("ui-options-about-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-about-controls"),
+            Page::Gamepad => aurora_i18n::tr!("ui-options-about-gamepad"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-click-a-shortcut-then-press-the-desired-key-or"),
             Page::Commands => aurora_i18n::tr!("ui-options-about-commands"),
             Page::System => aurora_i18n::tr!("ui-options-about-system"),
@@ -191,6 +196,7 @@ impl Page {
             Page::Confirmations => "circle-check-filled",
             Page::Inventory => "box",
             Page::Controls => "mouse-filled",
+            Page::Gamepad => "device-gamepad-filled",
             Page::Shortcuts => "keyboard-filled",
             Page::Commands => "square-rounded-chevron-right-filled",
             Page::System => "world-filled",
