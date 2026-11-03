@@ -1870,6 +1870,7 @@ fn fs_shadow(in: ShadowOut) {
 
 // --------------------------------------------------------------- particles
 
+override PARTICLE_GLOW_PASS: bool = false;
 const PART_EMISSIVE: u32 = 1u;
 const PART_KEEP_ZERO_ALPHA: u32 = 2u;
 const PART_AXIS: u32 = 4u;
@@ -1903,6 +1904,13 @@ struct PartOut {
 
 @vertex
 fn vs_particle(in: PartIn) -> PartOut {
+    // Interior zero-glow instances remain in a shared batch; clip them before
+    // rasterization instead of sampling their texture and depth for zero output.
+    if (PARTICLE_GLOW_PASS && in.glow <= 0.0 && in.end_glow <= 0.0) {
+        var empty: PartOut;
+        empty.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return empty;
+    }
     // two triangles: corners (-1,-1) (1,-1) (1,1) / (-1,-1) (1,1) (-1,1)
     let cx = array<f32, 6>(-1.0, 1.0, 1.0, -1.0, 1.0, -1.0);
     let cy = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0);
@@ -1968,6 +1976,8 @@ fn vs_particle(in: PartIn) -> PartOut {
 fn particle_light(base: vec3<f32>, in: PartOut) -> vec3<f32> {
     let normal = normalize(cross(frame.cam_right.xyz, frame.cam_up.xyz));
     let relative = in.world_pos - frame.camera_pos.xyz;
+    // Retain this control flow: an explicit if/else around the two
+    // atmosphere calls raised mixed-particle GPU time in profiling.
     var atmos = ll_atmos_eye(relative);
     if ((in.flags & PART_EMISSIVE) != 0u) {
         // fullbrightF passes a zero light_dir to calcAtmosphericVars:

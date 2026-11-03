@@ -491,22 +491,24 @@ impl ParticleManager {
             } else {
                 s.slot
             };
-            let mut texture_px = 0.0_f32;
+            let mut texture_area = 0.0_f32;
             for p in s.ps.particles() {
                 if p.flags & ps::LL_PART_HUD != 0 {
                     continue;
                 }
                 let Some(inst) = instance(p, slot) else { continue };
                 let pos = if p.is_ribbon() { (p.pos + p.prev_pos) * 0.5 } else { p.pos };
-                texture_px = texture_px.max(texture_pixels(p, eye, pixel_scale));
+                texture_area = texture_area.max(projected_texture_area(p, eye));
                 self.order_tmp.push(far_first_key(pos.distance_squared(eye), self.inst_tmp.len()));
                 self.inst_tmp.push(inst);
             }
-            textures.note_usage(&s.texture, texture_px);
+            // sqrt and positive pixel scale are monotone: the same maximum
+            // request needs one square root per source, not per particle.
+            textures.note_usage(&s.texture, texture_area.sqrt() * pixel_scale);
         }
         self.live = self.inst_tmp.len();
         // the order is sorted as plain integers (8 bytes each, not the
-        // 48-byte instances), then the instances are gathered
+        // 88-byte instances), then the instances are gathered
         self.order_tmp.sort_unstable();
         out.extend(self.order_tmp.iter().map(|k| self.inst_tmp[(k & 0xFFFF_FFFF) as usize]));
         parts.lap(Part::ParamsPartList, t);
@@ -516,9 +518,14 @@ impl ParticleManager {
 /// LLVOPartGroup::updateGeometry uses projected area with a 10x priority
 /// boost, not a fixed texture resolution. Close or large sprites can reach
 /// discard 0; distant sprites retain ordinary streaming/budget behavior.
-fn texture_pixels(p: &ps::Particle, eye: Vec3, pixel_scale: f32) -> f32 {
+fn projected_texture_area(p: &ps::Particle, eye: Vec3) -> f32 {
     let area = p.size.x.max(0.0) * p.size.y.max(0.0);
-    (area * 10.0 / p.pos.distance_squared(eye).max(1.0)).sqrt() * pixel_scale
+    area * 10.0 / p.pos.distance_squared(eye).max(1.0)
+}
+
+#[cfg(test)]
+fn texture_pixels(p: &ps::Particle, eye: Vec3, pixel_scale: f32) -> f32 {
+    projected_texture_area(p, eye).sqrt() * pixel_scale
 }
 
 fn instance(p: &ps::Particle, texture: u32) -> Option<ParticleInstance> {
@@ -539,11 +546,13 @@ fn instance(p: &ps::Particle, texture: u32) -> Option<ParticleInstance> {
         flags,
         color: p.color.map(to_u8),
         glow: p.glow,
-        end_pos: p.prev_pos.to_array(),
-        end_axis: p.prev_axis.to_array(),
-        end_width: p.prev_width,
-        end_color: p.prev_color.map(to_u8),
-        end_glow: if ribbon { p.prev_glow } else { p.glow },
+        // Ordinary sprites never consume ribbon endpoints. Avoid their
+        // colour conversion and copies while retaining full ribbon precision.
+        end_pos: if ribbon { p.prev_pos.to_array() } else { [0.0; 3] },
+        end_axis: if ribbon { p.prev_axis.to_array() } else { [0.0; 3] },
+        end_width: if ribbon { p.prev_width } else { 0.0 },
+        end_color: if ribbon { p.prev_color.map(to_u8) } else { [0; 4] },
+        end_glow: if ribbon { p.prev_glow } else { 0.0 },
         blend: aurora_render::particles::blend_index(p.blend_src, p.blend_dst),
     })
 }
@@ -1053,6 +1062,32 @@ mod tests {
         assert!(geometry(&p).is_some());
         p.prev_axis = p.axis;
         assert!(geometry(&p).is_none());
+    }
+
+    #[test]
+    fn reducing_texture_area_before_sqrt_keeps_the_exact_detail_request() {
+        let source = pick_source(0, glam::Vec2::splat(0.5), Vec3::ZERO);
+        let template = source.ps.particles()[0];
+        let particles: Vec<_> = (0..512)
+            .map(|i| {
+                let mut p = template;
+                p.size = glam::Vec2::new((i % 17) as f32 * 0.25, (i % 11) as f32 * 0.375);
+                p.pos = Vec3::new(i as f32 * 0.023, (i % 7) as f32 * 0.71, 2.0);
+                p
+            })
+            .collect();
+        for eye in [Vec3::ZERO, Vec3::new(3.0, 8.0, 4.0)] {
+            for scale in [1.0, 128.0, 768.0, 1536.0] {
+                let before = particles.iter().map(|p| texture_pixels(p, eye, scale)).fold(0.0_f32, f32::max);
+                let after = particles
+                    .iter()
+                    .map(|p| projected_texture_area(p, eye))
+                    .fold(0.0_f32, f32::max)
+                    .sqrt()
+                    * scale;
+                assert_eq!(before.to_bits(), after.to_bits());
+            }
+        }
     }
 
     #[test]

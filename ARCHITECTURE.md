@@ -1,5 +1,18 @@
 # Aurora Viewer architecture
 
+Scripted particle rendering keeps its sorted simulation data independent of
+visibility. `aurora-render/src/particles.rs` retains the original blend/texture
+glow boundaries, conservatively trims invisible ends and coalesces only colour
+groups whose preceding group emits no glow. The main view's exact GPU projection
+includes temporal jitter and photo tiles; ribbon bounds cover both endpoint axes.
+`particle_commands.rs` prepares large ordered direct-draw chunks on two dedicated
+workers and reuses unchanged commands. Ordinary short lists keep direct drawing;
+resource, pipeline and sample-count changes invalidate chunks. No extra GPU
+features or device-generated commands are required. The particle-only glow gate
+includes particle emitters even when no glowing object is visible. `RenderStats`
+and `AURORA_PROFILE` expose separate particle batch/draw, instance and command
+chunk counts instead of relying on the ordinary scene draw counter.
+
 The mesh Collisions tab keeps its level-of-detail selector and triangle-retention
 slider on one row, without numbered steps. Optional source-file/preset actions
 occupy a following row so they do not displace those primary controls.
@@ -3382,6 +3395,7 @@ simulates and prepares frame N+1 while the render thread draws frame N.
 | **Main** (winit loop, `App::frame`) | The world, the scene, the egui interface (up to the shapes to draw, not tessellated), the window. In `aurora-render`, the `Renderer` (`main_thread.rs`): *what* to draw — draw records and face table (`RecordStore`), object table of the culling (`CullTables`), allocators of the geometry arena, pages, slots and positions of the textures (`TextureTable`), bone palettes and skin bindings, staging memory and staging copies (`UploadQueue`), settings and window size. It creates GPU resources (creation has no order) but **never writes into the GPU queue and submits nothing** |
 | **Render** (`aurora-render`, `render_thread.rs`) | The `Backend` (`renderer.rs`): *how* to draw — surface and swapchain, pipelines, render targets, uniforms of the frame, tessellation of egui's shapes (`ui_frame.rs`) and egui renderer, compute culling and its tiles, occlusion, probes, impostor atlas, readbacks (depth under the cursor, culling counters, GPU timers, screenshots). **Sole user of the queue** (`write_*`, `submit`, `present`); two helper threads finish the encoders in parallel (`helpers.rs`). The main thread never waits for it without a bound: past `STALL_AFTER` (2 s) a frame is not built until it is free (`Renderer::stalled_for`), and closing leaves it behind after 3 s |
 | Frame helpers (global rayon pool, `aurora-worker-<i>`) | Nothing: they lend a hand to the main thread in its parallel loops (`frame_par.rs`), on the data it lends them for the duration of the loop. The main thread does its share without waiting for them: a helper woken too late does not delay the frame |
+| Particle command workers (`aurora-particle-encode-<i>`, two) | Validate large ordered direct-draw chunks on immutable particle ranges and renderer resources; finished render bundles execute in the original order. Short lists and worker-creation failure keep direct recording. No simulation/world mutation and no GPU waits |
 | Window hold (`window-hold`, `window_hold.rs`, Windows) | Nothing: asleep except while Windows holds the window, when it asks the main thread for the next frame, one at a time (it waits for each to be drawn) and does the wait of the frame limiter in its place |
 | Background tasks (`scene/jobs.rs`, low priority) | Decoding, mesh building; they write into the mapped staging memory, never into the queue |
 | Cache of the transcoded textures (`aurora-texcache`, `scene/texture_cache.rs`) | Writes the `.bc7` files that the decoding tasks hand to it: creating a file takes milliseconds, which the tasks do not spend waiting for the disk. Queue bounded to 256 MB; beyond that, the file is not written and the texture will be decoded again |

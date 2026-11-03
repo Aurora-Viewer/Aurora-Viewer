@@ -9600,6 +9600,23 @@ impl App {
         if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
+        // The mixed load uses a fixed view after demo loading resets.
+        if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_PARTICLES").is_ok_and(|mode| mode == "bench-mixed") {
+            let ground = crate::demo::floor_at(180.0, 127.0);
+            self.camera.set_view(
+                glam::Vec3::new(166.0, 126.5, ground + 4.7),
+                glam::Vec3::new(180.0, 126.5, ground + 4.7),
+                &mut self.world.agent,
+                &self.settings.camera,
+            );
+            self.camera.snap();
+            self.settings.glow = true;
+            self.panels.people = false;
+            self.panels.minimap = false;
+            self.panels.chat = false;
+            self.panels.inventory = false;
+            self.panels.ao = false;
+        }
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);

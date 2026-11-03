@@ -1612,6 +1612,7 @@ pub(crate) struct Backend {
     motion_kept: bool,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
+    particle_commands: crate::particle_commands::Commands,
     timer: Option<GpuTimer>,
     /// Two threads that finish command encoders beside this one.
     finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
@@ -3149,6 +3150,7 @@ impl Backend {
             motion_kept: false,
             cull_cpu: Vec::new(),
             particle_buffer,
+            particle_commands: crate::particle_commands::Commands::default(),
             timer,
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
@@ -3526,6 +3528,7 @@ impl Backend {
             write_mask: wgpu::ColorWrites::ALPHA,
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
+            constants: &[("PARTICLE_GLOW_PASS", 1.0)],
             ..base("particle glow", "vs_particle", "fs_particle_glow")
         });
         let water_particles = pipe(PipeDesc {
@@ -6206,7 +6209,12 @@ impl Backend {
         }
         // glow passes only when some visible face glows (RenderGlow)
         // (a cut-out photo's alpha holds its coverage instead, cutout.rs)
-        let glow_on = f.glow && !f.cutout && (!lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true));
+        let glow_on = crate::particles::glow_enabled(
+            f.glow,
+            f.cutout,
+            !lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true),
+            &lists.particles,
+        );
         // diagnostic: AURORA_GLOW_SKIP bits leave out a family of glowing faces
         // (2 opaque, 4 alpha pool, 8 blended)
         static GLOW_SKIP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -6322,7 +6330,12 @@ impl Backend {
             self.queue.write_buffer(&self.ssao.buffer, 0, bytemuck::bytes_of(&u));
         }
 
-        // ---- particles
+        // ---- particles: retain logical batch boundaries before any clipping.
+        self.particle_commands.plan.prepare(
+            &lists.particles,
+            glow_on,
+            &crate::particles::Frustum::new(Mat4::from_cols_array_2d(&main.view_proj)),
+        );
         let n_particles = lists.particles.len() as u32;
         if n_particles > 0 {
             let bytes = std::mem::size_of_val(lists.particles.as_slice()) as u64;
@@ -6341,6 +6354,17 @@ impl Backend {
             self.queue
                 .write_buffer(&self.particle_buffer, 0, bytemuck::cast_slice(&lists.particles));
         }
+
+        stats.particle_work = self.particle_commands.prepare(
+            &self.device,
+            &[&self.groups.b, &self.records_bind_group, &scene.textures],
+            &self.particle_buffer,
+            &self.pipelines.particles,
+            &self.pipelines.particle_glow,
+            HDR_FORMAT,
+            Some(DEPTH_FORMAT),
+            self.msaa_samples,
+        );
 
         // ---- shadow caster culling per cascade (CPU lists: the terrain,
         // and every caster without the GPU lists). Each cascade keeps the
@@ -7803,15 +7827,8 @@ impl Backend {
             }
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
-                pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
-                for batch in crate::particles::batches(&lists.particles, glow_on) {
-                    pass.set_pipeline(&self.pipelines.particles[batch.blend]);
-                    pass.draw(0..6, batch.instances.clone());
-                    if batch.glow {
-                        pass.set_pipeline(&self.pipelines.particle_glow);
-                        pass.draw(0..6, batch.instances);
-                    }
-                }
+                self.particle_commands
+                    .draw(pass, &self.pipelines.particles, &self.pipelines.particle_glow);
             }
         };
         {

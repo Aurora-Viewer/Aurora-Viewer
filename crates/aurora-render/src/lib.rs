@@ -36,6 +36,7 @@ mod motion_history;
 mod occlusion;
 pub mod pacing;
 mod packet;
+mod particle_commands;
 #[cfg(test)]
 mod particle_tests;
 pub mod particles;

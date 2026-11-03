@@ -1503,6 +1503,20 @@ pub struct ShadowStats {
     pub gpu_ms: Option<[f32; 5]>,
 }
 
+/// Scripted particle work submitted by one frame; ordinary scene draw
+/// counters do not include these instanced colour/glow draws.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParticleDrawStats {
+    pub batches: u32,
+    pub color_draws: u32,
+    pub glow_draws: u32,
+    pub color_instances: u32,
+    pub glow_instances: u32,
+    pub culled: u32,
+    pub bundle_builds: u32,
+    pub bundles: u32,
+}
+
 /// Per-frame statistics reported by the renderer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderStats {
@@ -1543,6 +1557,7 @@ pub struct RenderStats {
     /// with a render thread.
     pub cpu_encode_ms: f32,
     pub particles: u32,
+    pub particle_work: ParticleDrawStats,
     pub water_reflection: bool,
     pub mirror: bool,
     /// Draws hidden by the GPU occlusion (a frame or two late; None = off).

@@ -5260,6 +5260,51 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // Mixed particle load: blend/glow draw pressure plus lit and rotating ribbon geometry.
+    if particles_mode == "bench-mixed" {
+        use aurora_prim::particles::*;
+        let ground = floor_at(180.0, 127.0);
+        for i in 0..32usize {
+            let y = 119.5 + (i % 8) as f32 * 2.0;
+            let z = ground + 1.4 + (i / 8) as f32 * 1.5;
+            let mut o = prim(
+                id,
+                Vec3::new(180.0 + (i % 3) as f32 * 0.15, y, z),
+                Quat::from_rotation_x(0.7),
+                Vec3::splat(0.08),
+                boxp,
+                te(teal, 0, true, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            let mut legacy = fountain_particles();
+            let ribbon = i % 4 == 3;
+            let lit = i % 4 == 0;
+            let glow = i % 2 == 1;
+            let flags = LL_PART_INTERP_COLOR_MASK
+                | LL_PART_INTERP_SCALE_MASK
+                | LL_PART_DATA_GLOW
+                | LL_PART_DATA_BLEND
+                | if lit { 0 } else { LL_PART_EMISSIVE_MASK }
+                | if ribbon { LL_PART_RIBBON_MASK } else { 0 };
+            legacy[68..72].copy_from_slice(&flags.to_le_bytes());
+            legacy[82..86].copy_from_slice(if ribbon { &[8, 32, 2, 48] } else { &[32, 32, 48, 48] });
+            let pairs = [[7u8, 9u8], [1, 7], [7, 0], [0, 1], [3, 4], [2, 9], [7, 3], [5, 7]];
+            let mut block = Vec::with_capacity(98);
+            block.extend_from_slice(&(PS_SYS_DATA_BLOCK_SIZE as u32).to_le_bytes());
+            block.extend_from_slice(&legacy[..68]);
+            block.extend_from_slice(&22u32.to_le_bytes());
+            block.extend_from_slice(&legacy[68..]);
+            block.extend_from_slice(if glow { &[128, 48] } else { &[0, 0] });
+            block.extend_from_slice(&pairs[i % pairs.len()]);
+            o.particles = aurora_net::objects::ParticleUpdate::Set(block);
+            if ribbon {
+                o.angular_velocity = Vec3::X * 0.8;
+            }
+            add(o);
+            id += 1;
+        }
+    }
     // particle fountain at the plaza center (legacy 86-byte particle block)
     {
         let mut o = prim(

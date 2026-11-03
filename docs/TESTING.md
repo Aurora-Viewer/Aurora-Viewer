@@ -3617,6 +3617,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
 | `AURORA_DEMO_PARTICLES=<mode>` | Particle rendering parity, wind comparison, a leash chain, or particle load |
+| `AURORA_PARTICLE_COMMANDS=auto\|direct` | Ordered particle command preparation; direct forces the comparison/fallback path |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
@@ -3704,6 +3705,17 @@ both open states and the selection count. Capture at frame 620.
   front of a blurred background, no staircase on a blurred foreground's
   edge. `:debug` paints the circle of confusion: near red, far blue, sharp
   grey.
+- **`AURORA_DEMO_PARTICLES=bench-mixed`**: a fixed 8 × 4 array of 32 extra
+  emitters exercises eight blend pairs, 16 glowing emitters, eight lit emitters
+  and eight rotating ribbons. The default wind/smoke emitters remain outside
+  the fixed inspection view. At frame 600 the camera faces the array and glow
+  is enabled; capture after frame 1800 for a warm preview or 3000 for profiling.
+  Billboards grow from 1 to 1.5 m; ribbon widths taper from 0.25 to 0.0625 m.
+  Combine `AURORA_PROFILE=1`, `AURORA_FPS_LIMIT=120`, `AURORA_AA=6` and
+  `AURORA_WINDOW_SIZE=1280,720` or `2560,1440`. Compare matching scripts/settings,
+  preserving the colour/glow order; destination-mask squares are deliberate.
+  Use `load` for ordinary fountains. This is an offline rendering workload;
+  it does not measure network texture loading.
 - **`AURORA_DEMO_PARTICLES=wind|smoke|both|legacy`**: wind streaks of the
   motorbike and parameters of the smoke script received through compressed
   updates, in front of a dark panel; extended glow format (`legacy`:
@@ -10213,6 +10225,20 @@ these lines, stand the demo avatar near the crowd (`AURORA_DEMO_POS`) and
 grep the session log for `prim ` and `left out`.
 
 ## Profiling
+
+`AURORA_PARTICLE_COMMANDS=direct` retains ordinary direct draw recording for
+A/B profiling; `auto` (the default) prepares sufficiently large lists as ordered
+command chunks. It changes no particle counts, blending, glow, simulation or
+hardware requirements. Small lists use direct recording in either mode.
+
+Particle work has its own counters: `part_batches` is the original sorted
+blend/texture grouping; `part_color` and `part_glow` count submitted particle
+draws. `part_color_instances` / `part_glow_instances` are their instance totals;
+`part_culled` counts instances omitted from colour drawing. `part_bundles` counts
+ordered command chunks and `part_bundle_builds` those validated anew this frame
+(unchanged chunks are reused). The ordinary scene `draws` / `calls` counters do
+not include this particle work. Simulation, picking and texture priority remain
+active for clipped particles. Particle-only glow requires no glowing world object.
 
 With `AURORA_PROFILE=1`, each `perf summary` line covers one second. Two
 threads share a frame: the **main thread** runs the simulation and the
