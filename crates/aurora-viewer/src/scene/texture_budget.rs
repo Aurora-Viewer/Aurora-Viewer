@@ -369,10 +369,14 @@ impl Pressure {
     }
 
     /// The window is in front again: back to the step it was at, the usual
-    /// rules taking over from there (the Legacy Viewer restores its bias).
-    pub fn release(&mut self, now: Instant) {
+    /// rules taking over from there (the Legacy Viewer restores its bias);
+    /// while the card is still crowded, the highest step stays
+    /// ([`Crowding`]: with the viewer's other memory alone past the budget,
+    /// the step restored let the textures load again, and the next glance
+    /// at another window took them all back, every few seconds).
+    pub fn release(&mut self, now: Instant, crowded: bool) {
         if let Some(step) = self.held.take() {
-            self.step = step;
+            self.step = if crowded { MAX_PRESSURE } else { step };
             self.changed = now;
             self.over_since = None;
         }
@@ -383,8 +387,11 @@ impl Pressure {
     /// still above the target a second after the step was fully applied,
     /// or [`RAISE_UNSETTLED_AFTER`] after it if it never is; a pass apart
     /// while the card is crowded ([`CROWDED_RAISE_AFTER`]). Down: under
-    /// 90 % of the target for a while, and only if the textures would still
-    /// fit there one step below.
+    /// 90 % of the target for a while, only if the textures would still
+    /// fit there one step below, and never while the card is crowded (the
+    /// pages under their target change nothing to the driver moving
+    /// memory out; the step goes down once the budget is back above the
+    /// usage, with the same waits).
     pub fn update(&mut self, now: Instant, r: Reading) -> u8 {
         if self.held.is_some() {
             return self.step;
@@ -402,6 +409,12 @@ impl Pressure {
             }
         } else {
             self.over_since = None;
+            if r.crowded {
+                // (held where it is; the step down waits its LOWER_AFTER
+                // once the card has room again)
+                self.changed = now;
+                return self.step;
+            }
             if self.step > 0 && r.used < free && r.below < free && now.duration_since(self.changed) >= LOWER_AFTER {
                 self.step -= 1;
                 self.changed = now;
@@ -580,6 +593,39 @@ mod tests {
     }
 
     #[test]
+    fn a_crowded_card_holds_the_pressure_until_it_has_room_again() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut p = Pressure::new(t0);
+        let crowded = |used, settled| Reading {
+            crowded: true,
+            ..reading(used, settled, used)
+        };
+        for i in 0..7 {
+            p.update(t0 + s(i), crowded(1200, false));
+        }
+        assert_eq!(p.step(), MAX_PRESSURE);
+        // the textures under their target, the card still crowded (the
+        // viewer's other memory alone is past the budget): held
+        assert_eq!(p.update(t0 + s(20), crowded(100, true)), MAX_PRESSURE);
+        assert_eq!(p.update(t0 + s(60), crowded(100, true)), MAX_PRESSURE);
+        // the window went behind and came back meanwhile: still held
+        p.hold_max(t0 + s(61));
+        p.release(t0 + s(62), true);
+        assert_eq!(p.step(), MAX_PRESSURE);
+        assert_eq!(p.update(t0 + s(63), crowded(100, true)), MAX_PRESSURE);
+        // the budget back above the usage: down one step after LOWER_AFTER,
+        // not at once
+        assert_eq!(p.update(t0 + s(64), reading(100, true, 100)), MAX_PRESSURE);
+        assert_eq!(p.update(t0 + s(69), reading(100, true, 100)), MAX_PRESSURE - 1);
+        assert_eq!(p.update(t0 + s(74), reading(100, true, 100)), MAX_PRESSURE - 2);
+        // in front again with room: back to the step held
+        p.hold_max(t0 + s(75));
+        p.release(t0 + s(76), false);
+        assert_eq!(p.step(), MAX_PRESSURE - 2);
+    }
+
+    #[test]
     fn crowding_is_told_once_per_drop() {
         let mut c = Crowding::default();
         assert_eq!(c.update(video(8 * GB, 6 * GB)), None);
@@ -727,14 +773,14 @@ mod tests {
         assert_eq!(p.update(t0 + s(30), reading(2000, true, 2000)), MAX_PRESSURE);
         // holding again keeps the step it came from
         p.hold_max(t0 + s(31));
-        p.release(t0 + s(40));
+        p.release(t0 + s(40), false);
         assert!(!p.held());
         assert_eq!(p.step(), 1);
         // then the usual rules: no step down before LOWER_AFTER
         assert_eq!(p.update(t0 + s(42), reading(100, true, 100)), 1);
         assert_eq!(p.update(t0 + s(46), reading(100, true, 100)), 0);
         // releasing what is not held changes nothing
-        p.release(t0 + s(50));
+        p.release(t0 + s(50), false);
         assert_eq!(p.step(), 0);
     }
 

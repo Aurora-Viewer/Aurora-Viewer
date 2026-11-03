@@ -3242,7 +3242,7 @@ impl TextureStreamer {
                 );
             }
         } else if !away && self.pressure.held() {
-            self.pressure.release(now);
+            self.pressure.release(now, crowded);
             log::info!("texture memory: the window is in front again, textures load as before");
         }
         // what the pages would hold one step below, from step 1 too

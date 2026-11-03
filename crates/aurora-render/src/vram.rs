@@ -105,29 +105,50 @@ impl<T: Ord + Copy> SlidingMin<T> {
 /// The lowest budget of the last [`BUDGET_WINDOW`] (module).
 pub type BudgetFloor = SlidingMin<u64>;
 
-/// `AURORA_DEMO_VRAM_DROP=<seconds>[,<mb>]`, with `AURORA_DEMO=1`: from
-/// that many seconds after the start, the driver's budget is read as `mb`
-/// megabytes (else half of what the viewer holds then), under the viewer's
-/// usage, as when another program takes the card: the texture budget's
-/// reaction to a crowded card, and the crash report's headroom row, shown
-/// without a second program (docs/TESTING.md).
-fn demo_drop() -> Option<(Duration, Option<u64>)> {
-    static DROP: std::sync::OnceLock<Option<(Duration, Option<u64>)>> = std::sync::OnceLock::new();
-    *DROP.get_or_init(|| {
-        std::env::var_os("AURORA_DEMO")?;
-        let value = std::env::var("AURORA_DEMO_VRAM_DROP").ok()?;
-        let (after, mb) = value.split_once(',').unwrap_or((value.as_str(), ""));
-        let after: u64 = after.trim().parse().ok()?;
-        let mb = mb.trim().parse::<u64>().ok().map(|mb| mb.clamp(1, 1 << 20) << 20);
-        Some((Duration::from_secs(after), mb))
-    })
+/// `AURORA_DEMO_VRAM_DROP=<seconds>[,<mb>[,<for>]]`, with `AURORA_DEMO=1`:
+/// from that many seconds after the start, the driver's budget is read as
+/// `mb` megabytes (else half of what the viewer holds at that moment, the
+/// figure then fixed), under the viewer's usage, as when another program
+/// takes the card, for `for` seconds (else to the end): the texture
+/// budget's reaction to a crowded card and its recovery, and the crash
+/// report's headroom row, shown without a second program (docs/TESTING.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DemoDrop {
+    after: Duration,
+    mb: Option<u64>,
+    lasts: Option<Duration>,
 }
 
-/// The driver's figure with the demo's drop applied (`demo_drop`).
-fn demo_dropped(raw: u64, usage: u64, started: std::time::Instant) -> u64 {
-    match demo_drop() {
-        Some((after, mb)) if started.elapsed() >= after => mb.unwrap_or(usage / 2).min(raw),
-        _ => raw,
+impl DemoDrop {
+    fn from_env() -> Option<Self> {
+        static DROP: std::sync::OnceLock<Option<DemoDrop>> = std::sync::OnceLock::new();
+        *DROP.get_or_init(|| {
+            std::env::var_os("AURORA_DEMO")?;
+            Self::parse(&std::env::var("AURORA_DEMO_VRAM_DROP").ok()?)
+        })
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        let mut parts = value.split(',').map(str::trim);
+        let after = Duration::from_secs(parts.next()?.parse().ok()?);
+        let mb = parts
+            .next()
+            .and_then(|mb| mb.parse::<u64>().ok())
+            .map(|mb| mb.clamp(1, 1 << 20) << 20);
+        let lasts = parts.next().and_then(|s| s.parse().ok()).map(Duration::from_secs);
+        Some(DemoDrop { after, mb, lasts })
+    }
+
+    /// The budget the drop gives in place of `raw` at `elapsed` since the
+    /// start, `dropped` holding the figure fixed at the first dropped
+    /// sample; `raw` outside the drop.
+    fn apply(&self, raw: u64, usage: u64, elapsed: Duration, dropped: &mut Option<u64>) -> u64 {
+        let over = self.lasts.is_some_and(|lasts| elapsed >= self.after + lasts);
+        if elapsed < self.after || over {
+            return raw;
+        }
+        let figure = *dropped.get_or_insert_with(|| self.mb.unwrap_or(usage / 2));
+        figure.min(raw)
     }
 }
 
@@ -170,9 +191,10 @@ impl BudgetSampler {
             let mut tightest = SlidingMin::<i64>::default();
             let mut logged = None::<u64>;
             let started = std::time::Instant::now();
+            let (demo, mut dropped) = (DemoDrop::from_env(), None);
             while !stop.load(Ordering::Acquire) {
                 if let Some((raw, usage)) = query() {
-                    let raw = demo_dropped(raw, usage, started);
+                    let raw = demo.map_or(raw, |d| d.apply(raw, usage, started.elapsed(), &mut dropped));
                     let now = std::time::Instant::now();
                     let budget = floor.update(raw, now);
                     // (the headroom follows the figure the viewer is given,
@@ -458,6 +480,35 @@ mod tests {
         // 500 MB short at the second reading
         assert_eq!(sampler.read(), Some((5_000 * MB, 5_500 * MB)));
         assert_eq!(sampler.headroom(), Some(-(500 * MB as i64)));
+    }
+
+    #[test]
+    fn the_demo_drop_is_a_fixed_figure_for_its_span() {
+        let s = Duration::from_secs;
+        let drop = DemoDrop::parse("30,,20").expect("parsed");
+        assert_eq!(
+            drop,
+            DemoDrop {
+                after: s(30),
+                mb: None,
+                lasts: Some(s(20))
+            }
+        );
+        let mut fixed = None;
+        // before the drop: the driver's figure
+        assert_eq!(drop.apply(15_000 * MB, 6_000 * MB, s(29), &mut fixed), 15_000 * MB);
+        // the drop: half the usage of that moment, then the same figure as
+        // the textures go
+        assert_eq!(drop.apply(15_000 * MB, 6_000 * MB, s(30), &mut fixed), 3_000 * MB);
+        assert_eq!(drop.apply(15_000 * MB, 1_000 * MB, s(40), &mut fixed), 3_000 * MB);
+        // its end: the driver's figure again
+        assert_eq!(drop.apply(15_000 * MB, 1_000 * MB, s(50), &mut fixed), 15_000 * MB);
+        // a given figure, to the end of the run
+        let given = DemoDrop::parse("5,1024").expect("parsed");
+        let mut fixed = None;
+        assert_eq!(given.apply(15_000 * MB, 6_000 * MB, s(5), &mut fixed), 1024 * MB);
+        assert_eq!(given.apply(15_000 * MB, 6_000 * MB, s(5_000), &mut fixed), 1024 * MB);
+        assert_eq!(DemoDrop::parse("soon"), None);
     }
 
     #[test]
