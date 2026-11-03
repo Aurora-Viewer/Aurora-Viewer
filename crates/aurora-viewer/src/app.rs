@@ -12216,6 +12216,14 @@ impl App {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::SelectMany(indices) => {
+                        self.build.select_many(&mut self.world, &self.settings.build, &indices);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::RenameSelection(name) => {
+                        self.build.set_name(&self.world, &name, false);
+                        self.flush_build();
+                    }
                     crate::build::demo::Step::SharedRights(idx, granted) => {
                         crate::build::demo::shared_rights(&mut self.world, idx, granted);
                     }

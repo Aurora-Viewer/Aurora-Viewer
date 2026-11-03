@@ -40,8 +40,7 @@ impl World {
         let uuid = |id: &uuid::Uuid| self.objects.index_of_uuid(id).is_some_and(|i| self.rlva_can_edit(i));
         match command {
             BuildCmd::Transform { handle, updates } => updates.iter().all(|u| local(*handle, u.local_id)),
-            BuildCmd::SetName { handle, local_id, .. }
-            | BuildCmd::SetDescription { handle, local_id, .. }
+            BuildCmd::SetDescription { handle, local_id, .. }
             | BuildCmd::SetFlags { handle, local_id, .. }
             | BuildCmd::SetPhysicsParams { handle, local_id, .. }
             | BuildCmd::SetTextures { handle, local_id, .. }
@@ -50,6 +49,7 @@ impl World {
             | BuildCmd::MoveTaskInventory { handle, local_id, .. }
             | BuildCmd::UpdateTaskInventory { handle, local_id, .. }
             | BuildCmd::RezScript { handle, local_id, .. } => local(*handle, *local_id),
+            BuildCmd::SetName { handle, local_ids, .. } => local_ids.iter().all(|id| local(*handle, *id)),
             BuildCmd::Select { handle, local_ids }
             | BuildCmd::Link { handle, local_ids }
             | BuildCmd::Delink { handle, local_ids }

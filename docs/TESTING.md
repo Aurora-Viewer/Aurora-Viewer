@@ -1857,6 +1857,11 @@ folders for the texture. On the grid, the human also checks the group
 permissions, the contents of another owner and the non-copyable items of
 worn objects.
 
+`AURORA_DEMO_BUILD=multi-rename,118,151` selects two independent roots,
+opens Edit > General, and applies the shared name `Shared edit`. Capture at
+620, 650 and 660: both selected roots before the edit, then each root in turn
+with its General name field showing the committed shared name.
+
 `AURORA_DEMO_BUILD=faces,object:99620` adds three cubes: two linked parts
 (A / A2) and a separate object (B). In Materials
 (`AURORA_DEMO_BUILD_TAB=texture:bp`), the script selects a face at 625, adds

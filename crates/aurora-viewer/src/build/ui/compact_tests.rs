@@ -741,6 +741,105 @@ fn shared_editing_enables_general_edits_without_sale_or_permission_authority() {
 }
 
 #[test]
+fn general_name_edit_commits_to_each_selected_object_root() {
+    use aurora_net::{NetCommand, build::BuildCmd};
+
+    let (mut world, mut tool, _) = fixture();
+    let keys: Vec<_> = [118, 151]
+        .into_iter()
+        .map(|local_id| {
+            let index = world.objects.iter().find(|(_, object)| object.key.local_id == local_id).unwrap().0;
+            let object = world.objects.get_mut(index).unwrap();
+            object.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+            let key = object.key;
+            tool.props.insert(
+                object.full_id,
+                ObjectProps {
+                    object_id: object.full_id,
+                    full: true,
+                    name: format!("Original {local_id}"),
+                    owner_id: world.agent_id,
+                    creator_id: world.agent_id,
+                    owner_mask: perm::COPY | perm::MODIFY | perm::MOVE | perm::TRANSFER,
+                    base_mask: perm::COPY | perm::MODIFY | perm::MOVE | perm::TRANSFER,
+                    ..Default::default()
+                },
+            );
+            key
+        })
+        .collect();
+    tool.selection = keys.clone();
+    tool.selection_linked = false;
+    tool.out.clear();
+
+    let p = crate::theme::Theme::default().palette();
+    let ctx = egui::Context::default();
+    let mut show = |events| frame(&ctx, events, |ui| general::show(ui, &p, &mut tool, &mut world, false));
+    let mut texts = show(vec![]);
+    for _ in 0..3 {
+        texts = show(vec![]);
+    }
+    let name_field = texts
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("build-ui-general-multiple-selection"))
+        .unwrap()
+        .1
+        .center();
+    show(vec![egui::Event::PointerMoved(name_field)]);
+    for pressed in [true, false] {
+        show(vec![egui::Event::PointerButton {
+            pos: name_field,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    let select_all = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..Default::default()
+    };
+    show(vec![
+        egui::Event::ModifiersChanged(select_all),
+        egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: select_all,
+        },
+    ]);
+    show(vec![
+        egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+        egui::Event::Text("Shared edit".into()),
+    ]);
+    show(vec![egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+
+    let changed: Vec<_> = tool
+        .out
+        .iter()
+        .filter_map(|command| match command {
+            NetCommand::Build(BuildCmd::SetName { local_ids, name, .. }) => Some((local_ids, name.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        changed.len(),
+        1,
+        "the selected roots should share one region packet: {:?}",
+        tool.out
+    );
+    assert_eq!(changed[0].1, "Shared edit");
+    assert_eq!(changed[0].0, &keys.iter().map(|key| key.local_id).collect::<Vec<_>>());
+}
+
+#[test]
 fn megaprim_edit_keeps_server_dimensions_until_a_size_edit() {
     for legacy in [false, true] {
         for modifiable in [true, false] {
