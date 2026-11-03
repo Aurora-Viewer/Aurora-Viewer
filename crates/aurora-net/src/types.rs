@@ -860,6 +860,22 @@ pub enum NetEvent {
     MeanCollisions(Vec<MeanCollision>),
     /// Avatar profile data (AgentProfile / AvatarPropertiesReply).
     AvatarProfile(Box<crate::profile::AvatarProfile>),
+    /// A profile's picks, where `AgentProfile` is missing (AvatarPicksReply,
+    /// to the generic "avatarpicksrequest").
+    AvatarPicks {
+        target: Uuid,
+        picks: Vec<(Uuid, String)>,
+    },
+    /// Our notes about an avatar (AvatarNotesReply, to "avatarnotesrequest").
+    AvatarNotes {
+        target: Uuid,
+        notes: String,
+    },
+    /// An avatar's groups (AvatarGroupsReply, sent with AvatarPropertiesReply).
+    AvatarGroups {
+        avatar: Uuid,
+        groups: Vec<crate::profile::ProfileGroup>,
+    },
     /// PickInfoReply.
     PickInfo(Box<crate::PickInfo>),
     /// AvatarClassifiedReply: an avatar's classifieds (id, name).
@@ -1211,6 +1227,12 @@ pub enum NetEvent {
     BakeUploaded {
         request: Uuid,
         result: Result<Uuid, String>,
+    },
+    /// Answer to `QueryCachedBakes` (AgentCachedTextureResponse): the
+    /// texture the region keeps for each face asked, nil when it has none.
+    CachedBakes {
+        serial: i32,
+        faces: Vec<(u8, Uuid)>,
     },
     /// The simulator lacks one of our bakes (RebakeAvatarTextures): the
     /// texture it named, or all of them when it named none.
@@ -2178,6 +2200,12 @@ pub enum NetCommand {
     },
     /// Send our appearance with our own bakes (AgentSetAppearance).
     SetAppearance(Box<crate::local_bakes::Appearance>),
+    /// Ask the region for the bakes it keeps, by (cache key, face):
+    /// answered by `CachedBakes`.
+    QueryCachedBakes {
+        serial: i32,
+        keys: Vec<(Uuid, u8)>,
+    },
     /// Ask the server to rebuild our appearance from the Current Outfit
     /// folder (UpdateAvatarAppearance capability).
     RequestServerAppearance {
