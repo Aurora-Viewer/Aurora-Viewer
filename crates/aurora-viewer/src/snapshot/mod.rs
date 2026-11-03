@@ -417,9 +417,10 @@ pub struct TilePass {
 /// contact shadows' rays (60 pixels). A tile drawn alone had no scene past
 /// its border, and GTAO took the border row it read again beyond it for a
 /// wall: a dark line along the seams. GTAO's radius (0.73 m) spans fewer
-/// pixels than the band beyond 9 m in a photo 1,800 pixels high, and its
-/// farthest samples weigh the least; the band costs 128 pixels of a side of
-/// 4,096 or more in the photos that need tiles. The bloom, the depth of
+/// pixels than the band beyond 9 m in a photo 1,800 pixels high; nearer,
+/// its samples past the band read the whole photo's depth ([`ContextPass`]).
+/// The band costs 128 pixels of a side of 4,096 or more in the photos that
+/// need tiles. The bloom, the depth of
 /// field and the contact shadows of a photo larger than the viewfinder
 /// (their rays as much longer, [`viewfinder_scale`]) reach farther and
 /// widen it while they are on (`aurora_render::bloom_tile_reach`,
@@ -458,6 +459,35 @@ const TILE_ALIGN: u32 = 64;
 pub fn pass_pixels(free_bytes: u64, per_pixel: u64, window: (u32, u32)) -> u64 {
     let window = u64::from(window.0) * u64::from(window.1);
     (free_bytes / per_pixel.max(1)).max(window)
+}
+
+/// Bytes a photo pass takes beyond its render targets, for each pixel: its
+/// own output texture (8-bit RGBA) and the buffer it is read back into.
+pub const PASS_OUTPUT_BYTES: u64 = 8;
+
+/// Bytes of render targets a pixel takes when the renderer has not measured
+/// them yet, besides [`FALLBACK_BYTES_PER_SAMPLE`] per MSAA sample: fitted
+/// on 2026-11-02 to the targets measured (87 bytes a pixel without MSAA on
+/// Agni, 187 with 8x in demo), with some room.
+const FALLBACK_BYTES_PER_PIXEL: u64 = 120;
+const FALLBACK_BYTES_PER_SAMPLE: u64 = 12;
+
+/// Bytes of video memory a pixel of a photo pass takes: the render targets
+/// the renderer measured at its last size (`measured`,
+/// `RenderStats::target_bytes_per_pixel`, which follows every effect and
+/// the MSAA of the current settings), or the fallback with `samples`, and
+/// the pass's output. Constants of 16 bytes a pixel and 18 a sample, from
+/// October, counted under half of what the targets took by November
+/// without MSAA (34 bytes for 87, and 8 more for the output): an 8K photo
+/// was planned in one pass of
+/// 31 Mpx on a card with 2.4 GB free, the driver moved memory out to the
+/// system's and the GPU, crawling, was reset after a few seconds.
+pub fn pass_bytes_per_pixel(measured: Option<f32>, samples: u32) -> u64 {
+    let targets = match measured.filter(|b| b.is_finite() && *b > 0.0) {
+        Some(bytes) => bytes.ceil() as u64,
+        None => FALLBACK_BYTES_PER_PIXEL + FALLBACK_BYTES_PER_SAMPLE * u64::from(samples.max(1)),
+    };
+    targets + PASS_OUTPUT_BYTES
 }
 
 /// A pass read back black in every pixel (RGBA, alpha left out): what a
@@ -713,6 +743,48 @@ impl Hold {
                 *kept = Some(first);
                 Some(first)
             }
+        }
+    }
+}
+
+/// A tiled photo's frame of the whole photo at a fraction of its size,
+/// drawn before its tiles: GTAO keeps its depth, which the tiles' samples
+/// past their border read (`aurora_render::PhotoContext`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextPass {
+    /// A photo in one pass, or without ambient occlusion.
+    None,
+    /// To draw, at this size.
+    Pending((u32, u32)),
+    Drawn,
+}
+
+/// How many times smaller, on each side, the context is than the photo:
+/// GTAO's samples past a tile's guard band are 128 pixels or more away,
+/// where they read depth levels of 16 photo pixels or coarser; the
+/// context's first level is 4 of them (8 when GTAO runs at half
+/// resolution).
+const CONTEXT_DIVISOR: u32 = 4;
+
+impl ContextPass {
+    /// What a photo of `size` drawn in `tiles` passes needs, with the
+    /// ambient occlusion on or not.
+    pub fn plan(size: (u32, u32), tiles: usize, occlusion: bool) -> Self {
+        if tiles > 1 && occlusion {
+            ContextPass::Pending((size.0.div_ceil(CONTEXT_DIVISOR).max(16), size.1.div_ceil(CONTEXT_DIVISOR).max(16)))
+        } else {
+            ContextPass::None
+        }
+    }
+
+    /// The part drawn while part `next` of `tiles` is the next tile, and
+    /// how many parts: the context counts as the first, so that it shows
+    /// the tiles' instant (`Hold::for_part`).
+    pub fn part(self, next: usize, tiles: usize) -> (usize, usize) {
+        match self {
+            ContextPass::None => (next, tiles),
+            ContextPass::Pending(_) => (0, tiles + 1),
+            ContextPass::Drawn => (next + 1, tiles + 1),
         }
     }
 }

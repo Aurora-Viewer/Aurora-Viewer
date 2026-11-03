@@ -398,19 +398,26 @@ pub fn editable(inv: &Inventory, change: &Mutation, protected: &HashSet<Uuid>) -
     // can never write into, rename, move or remove any part of its inventory.
     // The Alchemy import source is protected the same way.
     let sources = [child(inv, inv.root, "#Firestorm"), Source::Alchemy.root(inv)];
-    change
-        .operations
-        .iter()
-        .flat_map(|op| match op {
-            Operation::Folder { parent, .. } | Operation::Links { parent, .. } => [Some(*parent), None],
-            Operation::Patch { id, body, .. } => [Some(*id), body.as_map().and_then(|m| m.get("parent_id")).map(|p| p.as_uuid())],
-            Operation::Delete { id, .. } | Operation::Purge(id) => [Some(*id), None],
-        })
-        .flatten()
-        .chain(change.copies.iter().map(|copy| copy.parent))
-        .chain(change.refresh.iter().copied())
-        .filter(|id| inv.folders.contains_key(id) || inv.items.contains_key(id))
-        .all(|id| !sources.iter().flatten().any(|root| actions::under(inv, id, *root)) && actions::mutable(inv, id, protected))
+    // a locked folder holds only itself: never moved nor removed (`movable`)
+    let unlocks = change.operations.iter().any(|op| match op {
+        Operation::Patch { id, body, .. } => protected.contains(id) && body.as_map().is_some_and(|m| m.contains_key("parent_id")),
+        Operation::Delete { id, .. } | Operation::Purge(id) => protected.contains(id),
+        Operation::Folder { .. } | Operation::Links { .. } => false,
+    });
+    !unlocks
+        && change
+            .operations
+            .iter()
+            .flat_map(|op| match op {
+                Operation::Folder { parent, .. } | Operation::Links { parent, .. } => [Some(*parent), None],
+                Operation::Patch { id, body, .. } => [Some(*id), body.as_map().and_then(|m| m.get("parent_id")).map(|p| p.as_uuid())],
+                Operation::Delete { id, .. } | Operation::Purge(id) => [Some(*id), None],
+            })
+            .flatten()
+            .chain(change.copies.iter().map(|copy| copy.parent))
+            .chain(change.refresh.iter().copied())
+            .filter(|id| inv.folders.contains_key(id) || inv.items.contains_key(id))
+            .all(|id| !sources.iter().flatten().any(|root| actions::under(inv, id, *root)) && actions::mutable(inv, id))
 }
 
 /// Build the entire parent-before-child mutation before sending it. AIS

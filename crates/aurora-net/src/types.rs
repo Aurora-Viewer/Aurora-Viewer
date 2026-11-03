@@ -798,10 +798,17 @@ pub enum NetEvent {
         experience: Uuid,
         message: aurora_llsd::Llsd,
     },
+    /// Any ExperienceEvent (LLExperienceLogDispatchHandler), for the log.
+    ExperienceLog(ExperienceLogEvent),
     /// GroupExperiences: the experiences a group owns (empty on a failure).
     GroupExperiences {
         group: Uuid,
         ids: Vec<Uuid>,
+    },
+    /// One list of the "My Experiences" window (None when it could not be read).
+    ExperienceList {
+        kind: crate::experience::ExperienceListKind,
+        ids: Option<Vec<Uuid>>,
     },
     /// ExperiencePreferences: the agent's permission for an experience after
     /// reading or changing it.
@@ -1216,6 +1223,20 @@ pub enum NetEvent {
     InventoryItemsMissing {
         items: Vec<Uuid>,
     },
+    /// Answer to `UploadBake`: the new texture.
+    BakeUploaded {
+        request: Uuid,
+        result: Result<Uuid, String>,
+    },
+    /// Answer to `QueryCachedBakes` (AgentCachedTextureResponse): the
+    /// texture the region keeps for each face asked, nil when it has none.
+    CachedBakes {
+        serial: i32,
+        faces: Vec<(u8, Uuid)>,
+    },
+    /// The simulator lacks one of our bakes (RebakeAvatarTextures): the
+    /// texture it named, or all of them when it named none.
+    RebakeRequested(Uuid),
     /// Answer to a server appearance (bake) request: success, or the COF
     /// version the server expected.
     AppearanceRequestResult {
@@ -1630,6 +1651,9 @@ pub enum NetCommand {
     /// The experiences a group owns (GroupExperiences capability), answered
     /// by NetEvent::GroupExperiences.
     GroupExperiences(Uuid),
+    /// The lists of the "My Experiences" window, each answered by
+    /// NetEvent::ExperienceList.
+    MyExperiences,
     /// ExperiencePreferences: read, allow, block or forget an experience.
     ExperiencePermission {
         experience: Uuid,
@@ -2168,6 +2192,20 @@ pub enum NetCommand {
         item: Uuid,
         favorite: bool,
     },
+    /// Upload one of our own bakes, on a grid that does not bake
+    /// (`UploadBakedTexture`): answered by `BakeUploaded`.
+    UploadBake {
+        request: Uuid,
+        j2c: Vec<u8>,
+    },
+    /// Send our appearance with our own bakes (AgentSetAppearance).
+    SetAppearance(Box<crate::local_bakes::Appearance>),
+    /// Ask the region for the bakes it keeps, by (cache key, face):
+    /// answered by `CachedBakes`.
+    QueryCachedBakes {
+        serial: i32,
+        keys: Vec<(Uuid, u8)>,
+    },
     /// Ask the server to rebuild our appearance from the Current Outfit
     /// folder (UpdateAvatarAppearance capability).
     RequestServerAppearance {
@@ -2268,4 +2306,16 @@ impl Default for AgentControls {
             alt_or_ctrl: false,
         }
     }
+}
+
+/// One ExperienceEvent: an object used a permission the agent gave an
+/// experience.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExperienceLogEvent {
+    pub experience: Uuid,
+    pub permission: i32,
+    pub owner: Uuid,
+    pub object_name: String,
+    pub parcel_name: String,
+    pub attachment: bool,
 }

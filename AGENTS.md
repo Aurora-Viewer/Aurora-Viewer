@@ -212,11 +212,15 @@ Before each significant commit, and always before the PR:
 - **macOS code is built on GitHub only.** The agents' PCs build Windows;
   the Linux and macOS paths (`cfg(unix)`, `cfg(target_os = "macos")`, the
   Metal ones in `aurora-render`) are built by the `clippy (Linux)` job and
-  the macOS workflow (`macos.yml`), on every pull request. Keep such code
-  small and behind its `cfg`, give it pure helpers that the tests run on
-  every system, and read the macOS job of your PR before the review. A
-  shader change can break Metal alone: the merge queue draws a demo frame on
-  an Apple GPU.
+  the macOS workflow (`macos.yml`), on the pull requests that touch them:
+  code under or near such a `cfg`, the renderer and its shaders for macOS,
+  a dependency or a build file (`.github/actions/platform-needed`; the job
+  summary says why). Keep such code small and behind its `cfg`, give it
+  pure helpers that the tests run on every system, and read the macOS job
+  of your PR before the review. A shader change can break Metal alone: the
+  merge queue draws a demo frame on an Apple GPU. Every merge runs the
+  macOS and Linux jobs in full on `main`: a red one there is fixed before
+  anything else.
 
 - **Zero clippy warnings** (`-D warnings`), formatted code (`rustfmt.toml`).
 - **No `unwrap()` / `expect()` on external data** (network, files, assets,
@@ -537,7 +541,7 @@ in `.scratch/`, never committed: the review lives in the PR comment, not in
 the repository. When you ask the author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
-commit. Structure of your review (keep the `## Review` heading and the
+commit of its own (a merge of main does not count). Structure of your review (keep the `## Review` heading and the
 `Verdict:` line as they are: the PR tracking of `aurora-tools.cmd` reads
 them):
 

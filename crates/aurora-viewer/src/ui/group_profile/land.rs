@@ -15,6 +15,7 @@ use crate::ui::context::{self, CtxAction};
 use crate::ui::place_details::Ctx;
 use crate::ui::{menu, widgets};
 use crate::world::group_money::GroupMoneyData;
+use crate::world::worldmap::WorldMap;
 use aurora_net::GroupMembership;
 use aurora_net::group_money::{AccountBody, AccountLine, AccountSummary, GroupParcel, LandTotals, Ledger, Transaction, trans};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
@@ -235,10 +236,9 @@ fn head_label(ui: &egui::Ui, p: &Palette, text: &str, cell: Rect, right: bool) {
 
 /// The region and the position in it, as Firestorm's "location" column
 /// ("Sim (x, y)").
-fn location(parcel: &GroupParcel) -> String {
-    let x = (parcel.global_x.round() as i64).rem_euclid(256);
-    let y = (parcel.global_y.round() as i64).rem_euclid(256);
-    format!("{} ({x}, {y})", parcel.sim_name)
+fn location(parcel: &GroupParcel, map: &WorldMap) -> String {
+    let (x, y) = map.local_xy(f64::from(parcel.global_x).round(), f64::from(parcel.global_y).round());
+    format!("{} ({}, {})", parcel.sim_name, x.round() as i64, y.round() as i64)
 }
 
 /// "4 096 m²", or "billable / actual m²" when they differ.
@@ -348,7 +348,7 @@ fn parcels(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, data: Option
         }
         widgets::paint_elided(
             ui,
-            &location(parcel),
+            &location(parcel, &c.world.map),
             Pos2::new(text_x, mid),
             x + widths[1] - 8.0 - text_x,
             FontId::proportional(12.5),
@@ -409,7 +409,8 @@ fn parcels(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, data: Option
             ParcelAct::Map => actions.push(GroupAction::ShowOnMap { x, y }),
             ParcelAct::AboutLand => actions.push(GroupAction::AboutLand { x, y }),
             ParcelAct::PlaceProfile => {
-                let pos = glam::Vec3::new(x.rem_euclid(256.0) as f32, y.rem_euclid(256.0) as f32, parcel.global_z);
+                let (lx, ly) = c.world.map.local_xy(x, y);
+                let pos = glam::Vec3::new(lx as f32, ly as f32, parcel.global_z);
                 context::request(ui.ctx(), CtxAction::ShowPlaceInfo(parcel.sim_name.clone(), pos));
             }
         }
@@ -694,7 +695,7 @@ mod tests {
             sku: String::new(),
         };
         // ll_round(global) % REGION_WIDTH_UNITS
-        assert_eq!(location(&parcel), "Sablière (30, 0)");
+        assert_eq!(location(&parcel, &WorldMap::default()), "Sablière (30, 0)");
         assert!(parcel_area(&parcel).contains(&aurora_i18n::integer(512)));
         assert!(lindens(-300).starts_with('−'));
         assert!(!lindens(300).starts_with('−'));

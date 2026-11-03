@@ -48,6 +48,9 @@ pub(super) fn double_click(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
+    if listing_wear(inv, id, st) {
+        return;
+    }
     let original = rules::original(inv, id);
     match original.and_then(|original| inv.items.get(&original)) {
         Some(it) if matches!(it.asset_type, 5 | 6 | 13) => match wear_toggle(it, facts.worn.contains(&it.id), prefs) {
@@ -91,7 +94,25 @@ pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs
 
 /// The "Open" entry, and the double-click of what is not worn: objects,
 /// clothing and body parts never come here (`double_click`).
+/// AlertMerchantListingCannotWear (LLInventoryAction::doToSelected,
+/// llinventoryfunctions.cpp): nothing wearable is opened, so worn, from the
+/// listings, active or not. The Legacy Viewer checks it on "open" only, and
+/// a double-click there still wears the item: here neither does.
+fn listing_wear(inv: &Inventory, id: Uuid, st: &mut InventoryUi) -> bool {
+    let wearable = rules::original(inv, id)
+        .and_then(|original| inv.items.get(&original))
+        .is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13));
+    if wearable && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, id, root)) {
+        st.message = aurora_i18n::tr!("marketplace-alert-cannot-wear").into();
+        return true;
+    }
+    false
+}
+
 pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
+    if listing_wear(inv, id, st) {
+        return;
+    }
     if let Some(original) = rules::original(inv, id)
         && inv.items.get(&original).is_some_and(|it| it.asset_type == 21)
     {
@@ -326,6 +347,45 @@ pub(super) fn show(
 mod tests {
     use super::*;
     use egui::{Pos2, epaint::Shape};
+
+    #[test]
+    fn nothing_is_worn_from_the_marketplace_listings() {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            ..Default::default()
+        };
+        inv.folders.insert(
+            inv.root,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: inv.root,
+                    type_default: 8,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: crate::world::inventory::FetchState::Fetched,
+                library: false,
+            },
+        );
+        crate::world::marketplace::demo::seed(&mut inv, Uuid::from_u128(2));
+        // the hoodie of an inactive version folder, then of the active one
+        for hoodie in [Uuid::from_u128(8_400_101), Uuid::from_u128(8_400_102)] {
+            let mut st = InventoryUi::default();
+            let mut actions = Vec::new();
+            double_click(
+                &inv,
+                hoodie,
+                &mut st,
+                &InventoryPreferences::default(),
+                &Facts::default(),
+                &mut actions,
+            );
+            open(&inv, hoodie, &mut st, &mut actions);
+            assert!(actions.is_empty());
+            assert_eq!(st.message, aurora_i18n::tr!("marketplace-alert-cannot-wear"));
+        }
+    }
     #[test]
     fn resource_previews_preserve_an_unsaved_document() {
         let mut inv = Inventory::default();

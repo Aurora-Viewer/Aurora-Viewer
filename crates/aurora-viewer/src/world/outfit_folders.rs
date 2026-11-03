@@ -502,8 +502,11 @@ mod tests {
         ] {
             assert!(actions::move_selection(&inv, &ids, to, &empty, &empty).is_err());
         }
-        for protected in [id(740), id(744), id(742), id(741), my] {
-            assert!(actions::move_selection(&inv, &[id(744)], id(742), &std::collections::HashSet::from([protected]), &empty).is_err());
+        // a locked folder holds only itself (LLFolderBridge::isProtected)
+        let locked = |id| std::collections::HashSet::from([id]);
+        assert!(actions::move_selection(&inv, &[id(744)], id(742), &locked(id(744)), &empty).is_err());
+        for other in [id(740), id(742), id(741), my] {
+            assert!(actions::move_selection(&inv, &[id(744)], id(742), &locked(other), &empty).is_ok());
         }
         let current = base(&inv).expect("current saved outfit");
         let trash = system_folder(&inv, 14).expect("Trash");

@@ -77,6 +77,11 @@ fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| AssetError::invalid(e.to_string()))?;
+    // TGA has no reliable magic signature and image's guesser excludes it.
+    // Let its decoder validate unrecognised headers under the same limits.
+    if reader.format().is_none() {
+        reader.set_format(image::ImageFormat::Tga);
+    }
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(256 * 1024 * 1024);
     limits.max_image_width = Some(8096 * 8096 / 4);
@@ -210,6 +215,83 @@ pub fn encode(pixels: &DecodedImage, options: Options) -> Result<Vec<u8>, AssetE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tga_imports_preserve_rle_raw_origins_channels_and_upload_pixels_without_a_footer() {
+        for components in [3_usize, 4] {
+            let pixels: Vec<u8> = (0_u8..4)
+                .flat_map(|y| {
+                    (0_u8..4).flat_map(move |x| {
+                        let pixel = [x.saturating_sub(1) * 60 + 10, y * 50 + 20, 30, y * 70];
+                        pixel[..components].to_vec()
+                    })
+                })
+                .collect();
+            let expected = DecodedImage {
+                width: 4,
+                height: 4,
+                components: components as u8,
+                data: pixels.clone(),
+                discard: 0,
+            };
+            for rle in [false, true] {
+                for origin in [0, 0x10, 0x20, 0x30] {
+                    let stored: Vec<u8> = (0..4)
+                        .flat_map(|row| {
+                            let pixels = &pixels;
+                            (0..4).flat_map(move |column| {
+                                let y = if origin & 0x20 == 0 { 3 - row } else { row };
+                                let x = if origin & 0x10 == 0 { column } else { 3 - column };
+                                pixels[(y * 4 + x) * components..(y * 4 + x + 1) * components].iter().copied()
+                            })
+                        })
+                        .collect();
+                    let mut bytes = Vec::new();
+                    let encoder = image::codecs::tga::TgaEncoder::new(&mut bytes);
+                    let encoder = if rle { encoder } else { encoder.disable_rle() };
+                    let color = if components == 4 {
+                        image::ExtendedColorType::Rgba8
+                    } else {
+                        image::ExtendedColorType::Rgb8
+                    };
+                    encoder.encode(&stored, 4, 4, color).expect("TGA fixture");
+                    bytes[17] = (bytes[17] & 0x0f) | origin;
+                    for loader in [decode, decode_map] {
+                        let decoded = loader(&bytes).expect("import TGA without a footer");
+                        assert_eq!(decoded, expected, "{components} channels, rle={rle}, origin={origin:#x}");
+                        let options = Options::default();
+                        let prepared = prepare(&decoded, options).expect("prepare TGA");
+                        let uploaded = encode(&prepared, options).expect("encode TGA upload");
+                        assert_eq!(crate::decode_j2k(&uploaded, 0).expect("decode uploaded TGA"), expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tga_imports_reject_truncated_invalid_and_oversized_sources() {
+        let mut bytes = Vec::new();
+        image::codecs::tga::TgaEncoder::new(&mut bytes)
+            .encode(&[10; 4 * 4 * 4], 4, 4, image::ExtendedColorType::Rgba8)
+            .expect("TGA fixture");
+        for loader in [decode, decode_map] {
+            for length in [0, 1, 17, 18, bytes.len() - 1] {
+                assert!(loader(&bytes[..length]).is_err(), "truncated TGA with {length} bytes");
+            }
+            for kind in [0, 7, 255] {
+                let mut invalid = bytes.clone();
+                invalid[2] = kind;
+                assert!(loader(&invalid).is_err(), "invalid TGA type {kind}");
+            }
+            let mut oversized = bytes[..18].to_vec();
+            oversized[12..16].copy_from_slice(&[255; 4]);
+            assert!(matches!(loader(&oversized), Err(AssetError::TooLarge(_))));
+            let mut empty = bytes.clone();
+            empty[12..14].fill(0);
+            assert!(loader(&empty).is_err());
+        }
+    }
 
     fn assert_png_upload(source: image::DynamicImage, components: u8, data: Vec<u8>) {
         let expected = DecodedImage {

@@ -12,6 +12,7 @@ mod contents_list;
 #[cfg(test)]
 mod contents_tests;
 
+pub(crate) use contents_list::demo_root as contents_demo_root;
 pub(crate) use contents_list::demo_select_all as contents_demo_select_all;
 pub(crate) use contents_list::shortcuts as contents_shortcuts;
 

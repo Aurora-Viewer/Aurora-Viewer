@@ -112,6 +112,84 @@ pub(crate) async fn folder_landed(http: &reqwest::Client, fetch_cap: &str, owner
     false
 }
 
+/// LLInventoryModel::createNewCategory without AIS (createNewCategoryCoro):
+/// the region's `CreateInventoryCategory` capability, whose answer is the
+/// folder; only without it, CreateInventoryFolder over the circuit, which
+/// has no answer, so the fetch service confirms it (`folder_landed`). The
+/// folder's id, as the server made it; None when it was not confirmed.
+///
+/// `announce` gets the folder as soon as it is confirmed, before anything
+/// is put in it: createNewCategoryCoro adds it to the inventory model at
+/// once, and an item arriving for a folder the viewer does not know is
+/// filed in Lost And Found (LLInventoryModel::updateItem).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_folder_without_ais<E, EFut>(
+    http: &reqwest::Client,
+    create_cap: Option<&str>,
+    fetch_cap: &str,
+    owner: Uuid,
+    id: Uuid,
+    parent: Uuid,
+    name: &str,
+    type_default: i8,
+    send_edit: &mut E,
+    announce: &(dyn Fn(super::InvFolder) + Sync),
+) -> Result<Option<Uuid>, String>
+where
+    E: FnMut(UdpEdit) -> EFut,
+    EFut: std::future::Future<Output = Result<(), String>>,
+{
+    let made = if let Some(cap) = create_cap {
+        let body = llsd_map! {
+            "folder_id" => id, "parent_id" => parent, "type" => i32::from(type_default), "name" => name,
+        };
+        let Ok(reply) = crate::caps::post_llsd(http, cap, &body).await else {
+            return Ok(None);
+        };
+        Some(reply["folder_id"].as_uuid()).filter(|folder| !folder.is_nil())
+    } else {
+        send_edit(UdpEdit::CreateFolder {
+            id,
+            parent,
+            name: name.to_owned(),
+            type_default,
+        })
+        .await?;
+        folder_landed(http, fetch_cap, owner, parent, id).await.then_some(id)
+    };
+    if let Some(folder) = made {
+        announce(super::InvFolder {
+            id: folder,
+            parent,
+            name: name.to_owned(),
+            type_default: i32::from(type_default),
+            version: 1,
+            ..Default::default()
+        });
+    }
+    Ok(made)
+}
+
+/// `op` with the folders made before it under the ids the server gave them.
+fn remap(op: &Operation, created: &HashMap<Uuid, Uuid>) -> Operation {
+    let at = |id: &Uuid| created.get(id).copied().unwrap_or(*id);
+    let mut op = op.clone();
+    match &mut op {
+        Operation::Folder { parent, .. } | Operation::Links { parent, .. } => *parent = at(parent),
+        Operation::Patch { id, body, .. } => {
+            *id = at(id);
+            if body.has("parent_id") {
+                let parent = at(&body["parent_id"].as_uuid());
+                if let Llsd::Map(fields) = body {
+                    fields.insert("parent_id".into(), parent.into());
+                }
+            }
+        }
+        Operation::Delete { id, .. } | Operation::Purge(id) => *id = at(id),
+    }
+    op
+}
+
 fn not_on_this_grid() -> String {
     aurora_i18n::tr!("session-inventory-change-not-supported-on-this-grid").into()
 }
@@ -182,7 +260,9 @@ pub(crate) fn udp_edits(op: &Operation, known: &Known) -> Result<Vec<UdpEdit>, S
                 inv_type: link.inv_type as i8,
             })
             .collect(),
-        Operation::Delete { id, folder: true } => vec![UdpEdit::RemoveFolder(*id)],
+        // remove_inventory_category's [UDP-Msg] branch: "RemoveInventoryFolder
+        // does not remove children, so must clear descendents first"
+        Operation::Delete { id, folder: true } => vec![UdpEdit::Purge(*id), UdpEdit::RemoveFolder(*id)],
         Operation::Delete { id, folder: false } => vec![UdpEdit::RemoveItem(*id)],
         Operation::Purge(id) => vec![UdpEdit::Purge(*id)],
     })
@@ -300,19 +380,23 @@ where
     P: FnMut(Progress),
 {
     let no_udp: Option<fn(UdpEdit) -> std::future::Ready<Result<(), String>>> = None;
-    apply(http, cap, fetch_cap, owner, change, send_move, no_udp, progress).await
+    apply(http, cap, None, fetch_cap, owner, change, send_move, no_udp, progress, &|_| {}).await
 }
 
 /// The same on a grid without AIS: the changes go over the circuit, and the
-/// fetch service confirms them as it does for AIS.
+/// fetch service confirms them as it does for AIS. New folders go through
+/// `create_cap` (CreateInventoryCategory) when the region grants it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn mutate_udp<F, Fut, E, EFut, P>(
     http: &reqwest::Client,
+    create_cap: Option<&str>,
     fetch_cap: &str,
     owner: Uuid,
     change: Mutation,
     send_move: F,
     send_edit: E,
     progress: P,
+    announce: &(dyn Fn(super::InvFolder) + Sync),
 ) -> Result<Reply, String>
 where
     F: FnMut(InventoryMove) -> Fut,
@@ -321,19 +405,33 @@ where
     EFut: std::future::Future<Output = Result<(), String>>,
     P: FnMut(Progress),
 {
-    apply(http, "", fetch_cap, owner, change, send_move, Some(send_edit), progress).await
+    apply(
+        http,
+        "",
+        create_cap,
+        fetch_cap,
+        owner,
+        change,
+        send_move,
+        Some(send_edit),
+        progress,
+        announce,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn apply<F, Fut, E, EFut, P>(
     http: &reqwest::Client,
     cap: &str,
+    create_cap: Option<&str>,
     fetch_cap: &str,
     owner: Uuid,
     change: Mutation,
     mut send_move: F,
     mut udp: Option<E>,
     mut progress: P,
+    announce: &(dyn Fn(super::InvFolder) + Sync),
 ) -> Result<Reply, String>
 where
     F: FnMut(InventoryMove) -> Fut,
@@ -357,30 +455,51 @@ where
             total: change.operations.len(),
         });
         if let Some(send_edit) = udp.as_mut() {
+            let requested = op;
+            let op = &remap(op, &created);
+            if let Operation::Folder {
+                parent,
+                name,
+                type_default,
+                ..
+            } = op
+            {
+                let Operation::Folder { id, .. } = requested else {
+                    unreachable!("remap keeps the kind")
+                };
+                let name = folder_name(name);
+                let made = create_folder_without_ais(
+                    http,
+                    create_cap,
+                    fetch_cap,
+                    owner,
+                    *id,
+                    *parent,
+                    &name,
+                    *type_default as i8,
+                    send_edit,
+                    announce,
+                )
+                .await?;
+                let Some(actual) = made else {
+                    return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-new-folder-reload").into());
+                };
+                created.insert(*id, actual);
+                folders.push(super::InvFolder {
+                    id: actual,
+                    parent: *parent,
+                    name,
+                    type_default: *type_default,
+                    version: 1,
+                    ..Default::default()
+                });
+                continue;
+            }
             for edit in udp_edits(op, &change.known)? {
                 send_edit(edit).await?;
             }
+            // a new folder went its own way above
             match op {
-                // the simulator keeps the id a viewer gives a new folder
-                Operation::Folder {
-                    id,
-                    parent,
-                    name,
-                    type_default,
-                } => {
-                    if !folder_landed(http, fetch_cap, owner, *parent, *id).await {
-                        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-new-folder-reload").into());
-                    }
-                    created.insert(*id, *id);
-                    folders.push(super::InvFolder {
-                        id: *id,
-                        parent: *parent,
-                        name: folder_name(name),
-                        type_default: *type_default,
-                        version: 1,
-                        ..Default::default()
-                    });
-                }
                 Operation::Patch { id, folder, body } if body.has("parent_id") => {
                     let parent = body["parent_id"].as_uuid();
                     if id.is_nil() || parent.is_nil() {
@@ -2074,6 +2193,82 @@ mod udp_tests {
         assert_eq!(**item, expected);
     }
 
+    #[tokio::test]
+    async fn without_ais_a_new_folder_comes_from_its_capability_and_what_follows_goes_in_it() {
+        let (requested, assigned, parent) = (id(1), id(9), id(2));
+        let (url, task) = crate::outfits::tests::server(vec![
+            (200, llsd_map! { "folder_id" => assigned, "parent_id" => parent, "type" => -1, "name" => "Boxes" }),
+            (
+                200,
+                llsd_map! { "folders" => Llsd::Array(vec![
+                    llsd_map! {
+                        "folder_id" => parent, "owner_id" => Uuid::nil(), "version" => 3, "items" => Llsd::Array(Vec::new()),
+                        "categories" => Llsd::Array(vec![llsd_map! {
+                            "category_id" => assigned, "parent_id" => parent, "name" => "Boxes", "type_default" => -1, "version" => 1,
+                        }]),
+                    },
+                    llsd_map! {
+                        "folder_id" => assigned, "owner_id" => Uuid::nil(), "version" => 2, "categories" => Llsd::Array(Vec::new()),
+                        "items" => Llsd::Array(vec![llsd_map! {
+                            "item_id" => id(4), "parent_id" => assigned, "asset_id" => id(3), "name" => "Box", "type" => 24, "inv_type" => 6,
+                        }]),
+                    },
+                ]) },
+            ),
+        ])
+        .await;
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = sent.clone();
+        let change = Mutation {
+            operations: vec![
+                Operation::Folder {
+                    id: requested,
+                    parent,
+                    name: "Boxes".into(),
+                    type_default: -1,
+                },
+                Operation::Links {
+                    parent: requested,
+                    links: vec![crate::outfits::OutfitLink {
+                        target: id(3),
+                        name: "Box".into(),
+                        desc: String::new(),
+                        folder: false,
+                        inv_type: 6,
+                    }],
+                },
+            ],
+            refresh: vec![parent, requested],
+            ..Default::default()
+        };
+        let reply = mutate_udp(
+            &reqwest::Client::new(),
+            Some(&format!("{url}/create")),
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            change,
+            |_| std::future::ready(Ok(())),
+            move |edit| {
+                log.lock().expect("edits").push(edit);
+                std::future::ready(Ok(()))
+            },
+            |_| {},
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        assert!(reply.is_ok(), "{reply:?}");
+        let sent = sent.lock().expect("edits");
+        assert!(
+            !sent.iter().any(|e| matches!(e, UdpEdit::CreateFolder { .. })),
+            "no CreateInventoryFolder with the capability"
+        );
+        let [UdpEdit::Link { parent: linked, .. }] = sent.as_slice() else {
+            panic!("{sent:?}");
+        };
+        assert_eq!(*linked, assigned);
+    }
+
     #[test]
     fn a_folder_update_sends_the_parent_and_type_it_has() {
         let edits = udp_edits(&patch(id(4), true, llsd_map! { "name" => "Looks" }), &known()).unwrap();
@@ -2158,7 +2353,11 @@ mod udp_tests {
         );
         let delete = |folder| Operation::Delete { id: id(1), folder };
         assert_eq!(udp_edits(&delete(false), &Known::default()).unwrap(), [UdpEdit::RemoveItem(id(1))]);
-        assert_eq!(udp_edits(&delete(true), &Known::default()).unwrap(), [UdpEdit::RemoveFolder(id(1))]);
+        // RemoveInventoryFolder leaves the children: they are purged first
+        assert_eq!(
+            udp_edits(&delete(true), &Known::default()).unwrap(),
+            [UdpEdit::Purge(id(1)), UdpEdit::RemoveFolder(id(1))]
+        );
         assert_eq!(
             udp_edits(&Operation::Purge(id(1)), &Known::default()).unwrap(),
             [UdpEdit::Purge(id(1))]

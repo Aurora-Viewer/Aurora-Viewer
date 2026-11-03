@@ -74,6 +74,37 @@ pub(crate) fn worn_labels(world: &World) -> HashMap<Uuid, String> {
     labels
 }
 
+/// Keep modifier clicks for selection, including a fast Ctrl/Shift-click.
+pub(super) fn double_clicked(response: &egui::Response) -> bool {
+    response.double_clicked_by(egui::PointerButton::Primary) && !response.ctx.input(|i| i.modifiers.any())
+}
+
+/// LLOutfitsList::onDoubleClick / LLPanelWearing::onDoubleClick
+/// (lloutfitslist.cpp, llpanelwearing.cpp): add beside the worn items,
+/// remove a worn item, and only replace body parts. Act on the clicked row
+/// alone, independently of the inventory's Add/Replace preferences.
+pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
+    if !double_clicked(response) || !matches!(it.asset_type, 5 | 6 | 13) {
+        return;
+    }
+    let locks = world.rlva_wear_locks();
+    if worn {
+        if it.asset_type != 13 && locks.can_remove(it.id) {
+            actions.push(Action::Remove(it.id));
+        }
+    } else {
+        let replace = it.asset_type == 13;
+        let allowed = locks.wear(&world.inventory, it.id, 0);
+        if if replace { allowed.replace } else { allowed.add } {
+            actions.push(Action::WearItem {
+                item: it.id,
+                replace,
+                point: 0,
+            });
+        }
+    }
+}
+
 /// The menu of an outfit's item row `it`, acting on `selected` (the row
 /// alone, or the selection it is part of). As updateItemsVisibility does,
 /// Wear, Add, Attach to, Take off / Detach, the favorites and Delete from

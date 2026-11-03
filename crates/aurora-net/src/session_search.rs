@@ -66,7 +66,7 @@ impl Session<'_> {
                     None => log::warn!("ProductInfoRequest: unreadable reply"),
                 },
                 Ok(r) => log::warn!("ProductInfoRequest: HTTP {}", r.status().as_u16()),
-                Err(e) => log::warn!("ProductInfoRequest: {e}"),
+                Err(e) => log::warn!("ProductInfoRequest: {}", e.without_url()),
             }
         });
     }
