@@ -172,6 +172,8 @@ pub struct FrameInput {
     /// Sitting and optional eye following consume it after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
     pub draw_distance: f32,
+    /// The main region's width (LLWorld::mWidth, which follows the region).
+    pub region_width: f32,
     pub aspect: f32,
 }
 
@@ -312,6 +314,7 @@ pub struct Camera {
     avatar: AvatarFrame,
     head: Vec3,
     draw_distance: f32,
+    region_width: f32,
     /// DisableCameraConstraints, as of the last frame.
     unconstrained: bool,
     /// Our avatar's id (the alt-camera focus object of unlockView).
@@ -387,6 +390,7 @@ impl Default for Camera {
             },
             head: start + Vec3::Z * 0.7,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             unconstrained: false,
             own: Uuid::nil(),
             dt: 0.0,
@@ -1104,7 +1108,7 @@ impl Camera {
         }
         MAX_CAMERA_DISTANCE_FROM_OBJECT
             .min(self.draw_distance - 1.0)
-            .min(REGION_WIDTH - CAMERA_FUDGE_FROM_OBJECT)
+            .min(self.region_width - CAMERA_FUDGE_FROM_OBJECT)
     }
 
     /// Distance limits of the alt camera for its focus (min, max).
@@ -1466,6 +1470,7 @@ impl Camera {
         let dt = f.dt.max(0.0);
         self.dt = dt;
         self.draw_distance = f.draw_distance;
+        self.region_width = f.region_width;
         self.unconstrained = s.disable_constraints;
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
@@ -2219,6 +2224,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: None,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             aspect: 1.0,
         }
     }

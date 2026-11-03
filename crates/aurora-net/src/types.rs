@@ -1014,6 +1014,8 @@ pub enum NetEvent {
     /// grid, one byte per cell (ownership & 0x07, 0x40 west line, 0x80 south line).
     ParcelOverlay {
         handle: RegionHandle,
+        /// The region's size in metres, which says how many chunks it has.
+        size: (u32, u32),
         sequence: i32,
         data: Vec<u8>,
     },

@@ -8362,6 +8362,7 @@ impl App {
                     .map(|_| self.settings.build.follow_edit_object),
                 eye_offset: None,
                 draw_distance: self.settings.draw_distance,
+                region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
             if frame.edit_tracking.is_some() || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                 // Evaluate the focused edit selection after the local drag,

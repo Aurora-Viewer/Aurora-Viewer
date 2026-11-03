@@ -4537,11 +4537,12 @@ impl Session<'_> {
             }
         } else if id == CoarseLocationUpdate::ID {
             let m: CoarseLocationUpdate = pkt.decode()?;
+            let size = self.sims.get(&from).map_or((256, 256), |sim| sim.size);
             let positions = m
                 .location
                 .iter()
                 .zip(m.agent_data.iter())
-                .map(|(l, a)| (a.agent_id, Vec3::new(l.x as f32, l.y as f32, l.z as f32 * 4.0)))
+                .map(|(l, a)| (a.agent_id, coarse_position(l.x, l.y, l.z, size)))
                 .collect();
             emit(
                 self.sh,
@@ -4631,13 +4632,15 @@ impl Session<'_> {
                 self.remove_sim(from);
             }
         } else if id == ParcelOverlay::ID {
-            // LLViewerParcelMgr::processParcelOverlay: one quarter of the
+            // LLViewerParcelMgr::processParcelOverlay: 1024 cells of the
             // region's 4 m grid per message (property lines, for sale)
             let m: ParcelOverlay = pkt.decode()?;
+            let size = self.sims.get(&from).map_or((256, 256), |sim| sim.size);
             emit(
                 self.sh,
                 NetEvent::ParcelOverlay {
                     handle: self.handle_of(from),
+                    size,
                     sequence: m.parcel_data.sequence_id,
                     data: m.parcel_data.data,
                 },
@@ -5282,6 +5285,29 @@ fn follow_cam_event(pkt: &IncomingPacket, handle: RegionHandle) -> Result<Option
         }))
     } else {
         Ok(None)
+    }
+}
+
+/// A CoarseLocationUpdate position in metres. Its X and Y are bytes, so a
+/// region past 256 m sends them scaled to fit (SceneGraph.cs, OpenSim), and
+/// the viewer scales them back (LLViewerRegion::updateCoarseLocations, there
+/// with the width on both axes). Z is in steps of 4 m.
+fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
+    Vec3::new(
+        f32::from(x) * size.0 as f32 / 256.0,
+        f32::from(y) * size.1 as f32 / 256.0,
+        f32::from(z) * 4.0,
+    )
+}
+
+#[cfg(test)]
+mod coarse_tests {
+    use super::*;
+
+    #[test]
+    fn coarse_positions_scale_back_with_each_axis_of_the_region() {
+        assert_eq!(coarse_position(100, 200, 10, (256, 256)), Vec3::new(100.0, 200.0, 40.0));
+        assert_eq!(coarse_position(100, 200, 10, (1024, 512)), Vec3::new(400.0, 400.0, 40.0));
     }
 }
 
