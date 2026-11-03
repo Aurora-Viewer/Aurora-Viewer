@@ -3983,7 +3983,8 @@ both open states and the selection count. Capture at frame 620.
   newest first: the user's sky, then the library's from Annan Adored
   Pink Sky down to A-12AM. `order-az`: the same with the lists' A–Z
   switch on (2490): the user's sky, then the library's skies A to Z
-  (A-12AM first), the switch lit beside the search field.
+  (A-6PM before A-12AM: numbers by value, as the inventory's by-name
+  order), the switch lit beside the search field.
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
