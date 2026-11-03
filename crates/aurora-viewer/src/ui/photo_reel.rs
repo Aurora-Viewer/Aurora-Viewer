@@ -310,7 +310,9 @@ fn place_name(place: &Place) -> &'static str {
 }
 
 /// The photo's destinations offered again: those it has not gone to, the
-/// e-mail always (to someone else).
+/// e-mail always (to someone else). The profile's post comes once the
+/// photo is uploaded to the inventory, in the upload's place (the human's
+/// choice: upload first, then post).
 fn destinations(photo: &Photo) -> Vec<Destination> {
     let mut out = Vec::new();
     if photo.on_disk().is_none() {
@@ -318,8 +320,7 @@ fn destinations(photo: &Photo) -> Vec<Destination> {
     }
     if photo.item().is_none() {
         out.push(Destination::Inventory);
-    }
-    if !photo.went(&Place::Profile) {
+    } else if !photo.went(&Place::Profile) {
         out.push(Destination::Profile);
     }
     out.push(Destination::Email);
@@ -610,6 +611,14 @@ impl QuickView {
                 if i != cursor {
                     ui.painter().rect_filled(rect, radius, p.navy.gamma_multiply(0.3));
                 }
+                // uploaded to the inventory: a green check at its top right,
+                // on a dark disc so that any photo keeps it readable
+                if photo.item().is_some() {
+                    let mark = Rect::from_center_size(rect.right_top() + Vec2::new(-9.0, 9.0), Vec2::splat(14.0));
+                    ui.painter().circle_filled(mark.center(), 7.5, p.navy);
+                    vf_icon(ui.painter(), "circle-check-filled", mark, p.success);
+                }
+                let resp = resp.on_hover_text(places_text(photo));
                 if resp.clicked() {
                     self.go(view, photo.id, now, out);
                 }
@@ -768,8 +777,12 @@ mod tests {
 
     #[test]
     fn offered_where_it_has_not_gone() {
-        let all = [Destination::Disk, Destination::Inventory, Destination::Profile, Destination::Email];
-        assert_eq!(destinations(&photo(vec![])), all);
+        // not uploaded: no post to the profile yet
+        let fresh = [Destination::Disk, Destination::Inventory, Destination::Email];
+        assert_eq!(destinations(&photo(vec![])), fresh);
+        // uploaded: the post in the upload's place
+        let uploaded = photo(vec![Place::Disk("a.png".into()), Place::Inventory(Uuid::nil())]);
+        assert_eq!(destinations(&uploaded), [Destination::Profile, Destination::Email]);
         let sent = photo(vec![
             Place::Disk("a.png".into()),
             Place::Inventory(Uuid::nil()),

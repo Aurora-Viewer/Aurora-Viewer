@@ -1,10 +1,13 @@
-//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:mail][:post][:moved][:toolbar]: the reel filled with
-//! `n` real photos of the plaza, saved to a folder of the cache (never the
-//! Pictures folder), the focal length changed between them so that they
-//! differ. `quick` then opens the quick view on the newest, `delete` asks
-//! to delete it, `send` sends it again to the inventory (its price asked over
-//! the quick view), `mail` opens the e-mail's form over it, `post` posts it to
-//! the demo's web profile. `moved` puts the tray at the middle
+//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:mail][:post][:moved][:toolbar]:
+//! the reel filled with `n` real photos of the plaza, saved to a folder of
+//! the cache (never the Pictures folder), the focal length changed between
+//! them so that they differ. `quick` then opens the quick view on the
+//! newest, `delete` asks to delete it, `send` sends it again to the
+//! inventory (its price asked over the quick view), `upload` too with its
+//! price confirmed: uploaded, the photo shows its check in the strip and
+//! Post to profile takes the upload's place. `mail` opens the e-mail's form
+//! over it, `post` posts it to the demo's web profile (whether uploaded or
+//! not). `moved` puts the tray at the middle
 //! of the screen: the photos fly to it there. `toolbar` puts the Photo roll
 //! button on the right toolbar (dimmed until the first photo), then closes
 //! photo mode and opens the quick view with it. From AURORA_DEMO_SNAPSHOT_FRAME
@@ -25,6 +28,8 @@ pub(in crate::app) struct Demo {
     quick: bool,
     delete: bool,
     send: bool,
+    /// `send`, its price confirmed at once.
+    upload: bool,
     mail: bool,
     post: bool,
     /// The tray moved to the middle of the screen, the flights following it.
@@ -52,9 +57,12 @@ impl Demo {
             .unwrap_or(700);
         Some(Demo {
             count,
-            quick: words.iter().any(|w| matches!(*w, "quick" | "delete" | "send" | "mail" | "post")),
+            quick: words
+                .iter()
+                .any(|w| matches!(*w, "quick" | "delete" | "send" | "upload" | "mail" | "post")),
             delete: words.contains(&"delete"),
-            send: words.contains(&"send"),
+            send: words.contains(&"send") || words.contains(&"upload"),
+            upload: words.contains(&"upload"),
             mail: words.contains(&"mail"),
             post: words.contains(&"post"),
             moved: words.contains(&"moved"),
@@ -97,6 +105,13 @@ impl App {
         let Some(d) = self.snapshots.reel.demo.as_mut() else {
             return;
         };
+        // `upload`: the price asked for the photo sent again, confirmed
+        if d.done && d.upload && self.snapshots.confirm.is_some() {
+            d.upload = false;
+            log::info!("photo reel demo: price confirmed");
+            self.photo_action(crate::ui::snapshot::Action::Confirm(true), renderer);
+            return;
+        }
         if d.done || busy || frame < d.start || frame < d.last + 20 {
             return;
         }
