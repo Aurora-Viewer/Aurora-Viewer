@@ -2627,6 +2627,8 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        // the login screen and Preferences say "L$" again, not the last grid's money
+        aurora_i18n::set_currency("");
         // Capture the layout before replacing account-specific UI state.
         self.chat_ui.remember_layout(&mut self.settings);
         self.settings.show_camera_controls = self.panels.camera_controls;

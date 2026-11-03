@@ -401,7 +401,7 @@ pub struct World {
     /// Message of the day writes it again to the nearby chat.
     pub motd: String,
     pub balance: Option<i32>,
-    /// The grid's money symbol, from the login (`app::currency_symbol`).
+    /// The grid's money symbol, from the login (`app::buy_currency::grid_currency`).
     pub grid_currency: String,
     /// m² of land the account holds (MoneyBalanceReply SquareMetersCommitted,
     /// LLStatusBar::getSquareMetersCommitted).
