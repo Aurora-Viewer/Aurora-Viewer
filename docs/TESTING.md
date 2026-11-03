@@ -3968,7 +3968,8 @@ both open states and the selection count. Capture at frame 620.
   with no day (`default`: Firestorm's default day asset, the built-in
   default sky offline) or replies for another parcel and
   another region (`stale`: ignored).
-- **`AURORA_DEMO_ENV_SELECT=1|lighting|list`**: environment picker
+- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none`**:
+  environment picker
   (`demo_env.rs`), with a library containing an
   "Environments" folder and a Settings folder in the inventory, whose
   settings assets are known locally. `1`: the window opens, then
@@ -3976,7 +3977,10 @@ both open states and the selection count. Capture at frame 620.
   (3200), a day cycle (3500) and "Shared environment" (3800, 5 s
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
-  (2500).
+  (2500). `search`: the same list, "sunset" typed in its search field
+  (2510): only the two sunsets are left, without the two fixed entries.
+  `search-none`: a long text no name contains: the list says so, the
+  line cut to the list's width.
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
