@@ -644,11 +644,51 @@ mod tests {
 
     #[test]
     fn the_title_follows_the_channel() {
-        assert_eq!(Channel::Nearby.title(), "Nearby voice");
-        assert_eq!(Channel::AdHoc.title(), "Conference call");
-        assert!(Channel::P2p("Nova".into()).title().starts_with("Call with"));
+        // the catalogue's text, whatever the language of the PC
+        assert_eq!(Channel::Nearby.title(), aurora_i18n::tr!("voice-controls-title-nearby"));
+        assert_eq!(Channel::AdHoc.title(), aurora_i18n::tr!("voice-controls-title-adhoc"));
+        assert_eq!(
+            Channel::P2p("Nova".into()).title(),
+            aurora_i18n::tr!("voice-controls-title-p2p", name = "Nova")
+        );
         assert!(Channel::P2p("Nova".into()).title().contains("Nova"));
+        assert_eq!(
+            Channel::Group("Dancers".into()).title(),
+            aurora_i18n::tr!("voice-controls-title-group", group = "Dancers")
+        );
         assert!(Channel::Group("Dancers".into()).title().contains("Dancers"));
+        assert_ne!(Channel::Nearby.title(), Channel::AdHoc.title());
+    }
+
+    /// The window keeps its size at every scale and text size, with the
+    /// nearby participants listed and the last row inside it.
+    #[test]
+    fn the_window_keeps_its_size() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = id(9);
+        world.social.names.insert(id(9), "Me Resident".into());
+        let mut levels = HashMap::new();
+        levels.insert(id(9), (0.0, false));
+        for n in 1..=3 {
+            world.social.names.insert(id(n), name_of(&id(n)));
+            levels.insert(id(n), (0.0, false));
+        }
+        let pics = HashMap::new();
+        // sorted by name: amy, Bob, Zed
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(300.0, 260.0), Vec2::new(420.0, 360.0)],
+            "Zed",
+            VoiceControlsUi::default,
+            |ui, ctx, p| {
+                let inputs = Inputs {
+                    world: &world,
+                    levels: &levels,
+                    pics: &pics,
+                };
+                ui.show(ctx, p, &inputs, &mut true);
+            },
+        );
     }
 
     #[test]
