@@ -1,4 +1,4 @@
-//! Graphics presets of Preferences › Graphics: five levels, from a very
+//! Graphics presets of Preferences Ã¢â‚¬Âº Graphics: five levels, from a very
 //! modest machine to everything a strong card can afford. Each level writes
 //! the same set of quality settings; when one of them is then changed by
 //! hand, no level matches any more and the row shows "Custom", like
@@ -83,6 +83,7 @@ impl Preset {
                 max_particles: 256,
                 shadow_quality: 0,
                 projector_shadows: false,
+                shadow_pcss: false,
                 ssao: 0,
                 ao_method: 0,
                 gtao_quality: 2,
@@ -109,6 +110,7 @@ impl Preset {
                 max_particles: 2048,
                 shadow_quality: 0,
                 projector_shadows: false,
+                shadow_pcss: false,
                 ssao: 0,
                 ao_method: 0,
                 gtao_quality: 2,
@@ -136,6 +138,7 @@ impl Preset {
                 max_particles: 4096,
                 shadow_quality: 0,
                 projector_shadows: false,
+                shadow_pcss: false,
                 ssao: 1,
                 ao_method: 1,
                 gtao_quality: 0,
@@ -165,6 +168,7 @@ impl Preset {
                 max_particles: 4096,
                 shadow_quality: 2,
                 projector_shadows: false,
+                shadow_pcss: true,
                 ssao: 1,
                 ao_method: 1,
                 gtao_quality: 2,
@@ -200,6 +204,7 @@ impl Preset {
                 max_particles: 8192,
                 shadow_quality: 4,
                 projector_shadows: true,
+                shadow_pcss: true,
                 ssao: 2,
                 ao_method: 1,
                 gtao_quality: 3,
@@ -478,6 +483,8 @@ pub struct Values {
     pub max_particles: u32,
     pub shadow_quality: u8,
     pub projector_shadows: bool,
+    #[serde(default = "hdr_on")]
+    pub shadow_pcss: bool,
     pub ssao: u8,
     /// 0 Legacy, 1 GTAO (`Settings::ao_method`).
     pub ao_method: u8,
@@ -556,6 +563,7 @@ impl Values {
             max_particles: s.max_particles,
             shadow_quality: s.shadow_quality,
             projector_shadows: s.projector_shadows,
+            shadow_pcss: s.shadow_pcss,
             ssao: s.ssao,
             ao_method: s.ao_method,
             gtao_quality: s.gtao_quality,
@@ -589,6 +597,7 @@ impl Values {
         s.shadow_quality = self.shadow_quality;
         s.shadows = self.shadow_quality > 0;
         s.projector_shadows = self.projector_shadows;
+        s.shadow_pcss = self.shadow_pcss;
         s.ssao = self.ssao;
         s.ao_method = self.ao_method;
         s.gtao_quality = self.gtao_quality;
@@ -742,6 +751,26 @@ mod tests {
         json.as_object_mut().expect("an object").remove("hdr_emissive");
         let read: Values = serde_json::from_value(json).expect("backup without the field");
         assert!(read.hdr_emissive);
+    }
+
+    #[test]
+    fn pcss_profiles_round_trip_and_old_profiles_have_a_default() {
+        for enabled in [false, true] {
+            let mut s = Settings {
+                shadow_pcss: enabled,
+                ..Settings::default()
+            };
+            let values = Values::read(&s);
+            let saved = serde_json::to_value(values).expect("profile");
+            let read: Values = serde_json::from_value(saved.clone()).expect("saved profile");
+            s.shadow_pcss = !enabled;
+            read.write(&mut s);
+            assert_eq!(s.shadow_pcss, enabled);
+            let mut old = saved;
+            old.as_object_mut().expect("profile object").remove("shadow_pcss");
+            let read: Values = serde_json::from_value(old).expect("old profile");
+            assert!(read.shadow_pcss);
+        }
     }
 
     #[test]

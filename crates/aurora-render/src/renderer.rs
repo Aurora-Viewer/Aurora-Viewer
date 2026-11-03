@@ -5168,7 +5168,7 @@ impl Backend {
             let radius = corners.iter().map(|c| c.distance(center)).fold(0.0f32, f32::max).max(1.0);
             // Leave room inside the atlas tile for the complete PCSS footprint
             // and receiver offset, even at a frustum corner.
-            let guard = if crate::shadow_cull::pcss_enabled() {
+            let guard = if self.settings.shadow_pcss {
                 crate::shadow_cull::PCSS_MAX_RADIUS + 0.02 + 0.04 * i as f32
             } else {
                 0.0
@@ -6008,7 +6008,7 @@ impl Backend {
             Ok("before") => 0x300,
             _ => 0,
         });
-        if !crate::shadow_cull::pcss_enabled() {
+        if !self.settings.shadow_pcss {
             main.light_sets.mode[2] |= 0x20000; // SHADOW_FILTER_PCF
         }
         // AURORA_SHADOW_BIAS=legacy|new|alt: the receiver bias of before (a

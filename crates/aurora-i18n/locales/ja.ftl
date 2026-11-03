@@ -12950,3 +12950,6 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+ui-options-shadow-pcss = ソフトシャドウ（PCSS）
+ui-options-shadow-pcss-help = 影を落とす面からの距離に応じて、太陽・月・プロジェクターの影を柔らかくします。接触影の細部は維持されます。GPU の処理負荷が増えます。

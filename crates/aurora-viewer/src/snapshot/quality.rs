@@ -72,6 +72,7 @@ macro_rules! each_value {
             max_particles,
             shadow_quality,
             projector_shadows,
+            shadow_pcss,
             ssao,
             ao_method,
             gtao_quality,
@@ -780,6 +781,26 @@ mod tests {
         assert!(s.shadows);
         held.retarget(&mut s, held.user());
         assert!(!s.shadows);
+    }
+
+    #[test]
+    fn photo_quality_preserves_pcss_and_adopts_live_changes() {
+        for enabled in [false, true] {
+            let mut s = Settings {
+                shadow_pcss: enabled,
+                contact_shadows: true,
+                ..Settings::default()
+            };
+            let mut held = boost(&mut s);
+            assert_eq!(s.shadow_pcss, enabled);
+            assert!(s.contact_shadows);
+            s.shadow_pcss = !enabled;
+            held.retarget(&mut s, photo_maxima());
+            assert_eq!(s.shadow_pcss, !enabled, "photo retarget preserves a live preference change");
+            held.restore(&mut s);
+            assert_eq!(s.shadow_pcss, !enabled);
+            assert!(s.contact_shadows);
+        }
     }
 
     #[test]

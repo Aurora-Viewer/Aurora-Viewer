@@ -73,7 +73,7 @@ struct Frame {
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier, z 1 = PBR materials' occlusion applied, w 1 = specular occlusion from GTAO's bent normal (in ao_tex.gba)
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1), w colored sky ambient
-    sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22° halo)
+    sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22Â° halo)
     sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
     // night sky (stars.rs StarFrame): region directions of the catalogue's
     // axes; w: catalogue (-1 none), Milky Way strength, 0
@@ -132,7 +132,7 @@ struct DrawRecord {
     uv_st: vec4<f32>,         // scale s, scale t, offset s, offset t
     params: vec4<f32>,        // x rotation, y metallic, z roughness, w alpha cutoff
     tex: vec4<u32>,           // base, normal, metallic-roughness, emissive
-    flags: vec4<u32>,         // x low 16 flags / high 16 HUD zoom ×4096 (0 = 1), y palette base (anchored: anchor matrix), z skin binds, w texture animation mode | size x << 8 | size y << 16
+    flags: vec4<u32>,         // x low 16 flags / high 16 HUD zoom Ã—4096 (0 = 1), y palette base (anchored: anchor matrix), z skin binds, w texture animation mode | size x << 8 | size y << 16
     mat_uv: vec4<f32>,        // normal map: scale s, t, offset s, t
     spec_uv: vec4<f32>,       // legacy specular / PBR metallic-roughness map: scale s, t, offset s, t
     legacy: vec4<f32>,        // x normal rot, y spec / MR rot, z glossiness (PBR: emissive rot), w env intensity
@@ -1154,7 +1154,7 @@ const SPECULAR_AA: u32 = 0x8000u;
 // the form Filament gives it, normalFiltering): where the shading normal
 // turns faster than a pixel, the highlight is widened so it no longer
 // shimmers from one frame to the next. The kernel adds to the GGX lobe's
-// alpha², capped, so a large smooth surface keeps its highlight. Only the
+// alphaÂ², capped, so a large smooth surface keeps its highlight. Only the
 // change a pixel cannot resolve counts: below SPECULAR_AA_FLOOR (a normal
 // turning about 0.06 rad per pixel: an object some 35 pixels across, or a
 // normal map's relief seen from afar) nothing changes, so a polished ball
@@ -1189,7 +1189,7 @@ fn specular_aa_roughness(perceptual: f32, variance: f32) -> f32 {
 }
 
 // The same for a legacy material's glossiness (its Blinn-Phong exponent is
-// gloss² × 368, ll_light_func): through the GGX alpha of the same lobe
+// glossÂ² Ã— 368, ll_light_func): through the GGX alpha of the same lobe
 // width, alpha = sqrt(2 / (e + 2)), and back. Without variance the
 // glossiness comes back unchanged.
 fn specular_aa_gloss(gloss: f32, variance: f32) -> f32 {
@@ -1309,6 +1309,70 @@ fn pcss_shadow(uv: vec2<f32>, tile: vec2<f32>, texel: f32, radius: f32,
     }
     return sum / 32.0;
 }
+
+// Projector PCSS uses perspective depth d = A + B / z. Never average
+// nonlinear stored depths: blocker separation and source size are in metres.
+// Fixed 2 cm source radius; the receiving footprint is capped at 25 cm.
+// Algorithm: NVIDIA, Integrating Realistic Soft Shadows (2008), adapted to
+// the existing atlas, receiver planes and dense missed-blocker fallback.
+fn spot_pcss_compare(uv: vec2<f32>, offset: vec2<f32>, origin: vec2<f32>, texel: f32,
+                     receiver: f32, gradient: vec2<f32>) -> f32 {
+    let local = pcss_tile_uv(uv + offset, texel);
+    return textureSampleCompareLevel(shadow_map, shadow_sampler, origin + local * 0.25,
+        receiver + dot(gradient, local - uv) - 0.0002);
+}
+
+fn spot_pcss(uv: vec2<f32>, origin: vec2<f32>, texel: f32, receiver: f32,
+             gradient: vec2<f32>, z: f32, ab: vec2<f32>, projection_scale: vec2<f32>) -> f32 {
+    let near = max(-ab.y / ab.x, 0.001);
+    let max_uv = min(projection_scale * PCSS_MAX_RADIUS / z, vec2<f32>(0.125));
+    let search = min(max_uv, projection_scale * 0.02 * max(z - near, 0.0) / (near * z));
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    var blockers = 0.0;
+    var blocker_z = 0.0;
+    for (var i = 0u; i < 25u; i++) {
+        var offset: vec2<f32>;
+        if (i < 9u) {
+            offset = (vec2<f32>(f32(i % 3u), f32(i / 3u)) - 1.0) * texel;
+        } else {
+            let j = i - 9u;
+            offset = PCSS_DISK[(j / 2u) * 4u + 2u + (j & 1u)] * search;
+        }
+        let local = pcss_tile_uv(uv + offset, texel);
+        let at = vec2<i32>(floor((origin + local * 0.25) * dims));
+        let stored = textureLoad(shadow_map, at, 0);
+        let centre = ((vec2<f32>(at) + 0.5) / dims - origin) * 4.0;
+        let correction = dot(gradient, centre - uv);
+        let expected = receiver + correction;
+        if (stored < 1.0 && stored < expected - 0.0002) {
+            let distance = ab.y / (stored - correction - ab.x);
+            if (distance > 0.0 && distance < z) {
+                blocker_z += distance;
+                blockers += 1.0;
+            }
+        }
+    }
+    if (blockers == 0.0) { return -2.0; }
+    let average_z = blocker_z / blockers;
+    let half_uv = max(vec2<f32>(0.5 * texel),
+        min(max_uv, projection_scale * 0.02 * (z - average_z) / (average_z * z)));
+    var sum = 0.0;
+    if (max(half_uv.x, half_uv.y) <= texel) {
+        for (var y = -1; y <= 1; y++) {
+            for (var x = -1; x <= 1; x++) {
+                let weight = f32((2 - abs(x)) * (2 - abs(y)));
+                sum += weight * spot_pcss_compare(uv, vec2<f32>(f32(x), f32(y)) * half_uv,
+                    origin, texel, receiver, gradient);
+            }
+        }
+        return sum / 16.0;
+    }
+    for (var i = 0u; i < 32u; i++) {
+        sum += spot_pcss_compare(uv, PCSS_DISK[i] * half_uv, origin, texel, receiver, gradient);
+    }
+    return sum / 32.0;
+}
+
 // PCSS END
 
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
@@ -1409,11 +1473,11 @@ fn screen_motion(cur: vec4<f32>, prev: vec4<f32>) -> vec2<f32> {
     return (cur.xy / cur.w - prev.xy / prev.w) * vec2<f32>(0.5, -0.5);
 }
 
-// The view shown instead of the image (frame.light_mode.z, Preferences ›
+// The view shown instead of the image (frame.light_mode.z, Preferences â€º
 // Debug), or `col`.
-// 1 (also AURORA_DEBUG_SHADOWS): the cascade each pixel reads — red, green,
+// 1 (also AURORA_DEBUG_SHADOWS): the cascade each pixel reads â€” red, green,
 // blue from the finest, mixed where two are blended, black beyond the
-// shadow distance — darkened where the pixel is in shadow. The choice
+// shadow distance â€” darkened where the pixel is in shadow. The choice
 // mirrors shadow_factor.
 // 2: the ambient occlusion of the screen alone, light grey where nothing is
 // occluded (and everywhere when the effect is off), whatever the exposure
@@ -1638,7 +1702,7 @@ fn spherical_caps_intersection(cos_a: f32, cos_b: f32, cos_d: f32) -> f32 {
 // of convex shapes, whose grazing reflections nothing hides (Aurora's
 // choice; an open surface keeps exactly its reflection). And a reflection
 // is never darkened more than the ambient light (the visibility): what
-// hides the sky is itself lit, which the cones take for black — a polished
+// hides the sky is itself lit, which the cones take for black â€” a polished
 // metal turned black in an inside corner, with the bent normal's noise.
 // And the lobe is never narrower than about 26 degrees here: a narrow lobe
 // swings from open to hidden with the smallest turn of the bent normal,
@@ -1804,9 +1868,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     return col;
 }
 
-// Normal mapping without precomputed tangents (Mikkelsen 2010 / Schüler).
+// Normal mapping without precomputed tangents (Mikkelsen 2010 / SchÃ¼ler).
 // The cotangent frame is the solution divided by det = dot(dp1, dp2perp).
-// Schüler drops it because it is positive in GL, where dFdy runs up the
+// SchÃ¼ler drops it because it is positive in GL, where dFdy runs up the
 // window; here dpdy runs down the framebuffer, det is negative on every face
 // and without its sign both axes come out reversed (bumps lit as dents).
 // `uv` is the sampling coordinate of the top-left-origin texture, so the
@@ -2063,7 +2127,7 @@ fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
 // Light left by the shadow map of projector `i` (1: lit, or no map), as
 // spotLightF.glsl with sampleSpotShadow / pcfSpotShadow (shadowUtil.glsl):
 // the two projectors that weigh most on screen have a map, in the halves of
-// the top row of the shadow atlas's fourth tile. Like Firestorm's, these
+// the top row of the shadow atlas's fourth tile. Like the Legacy Viewer's, these
 // shadows stop with the sun's (the last tenth of its shadow distance).
 fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     if (frame.params.z < 0.5 || (i != frame.spot_lights.x && i != frame.spot_lights.y)) {
@@ -2088,15 +2152,39 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     // a map is a quarter of the atlas wide: its texel in map coordinates
     let texel = 4.0 / f32(textureDimensions(shadow_map).x);
     let origin = vec2<f32>(0.5 + 0.25 * f32(k), 0.5);
-    var sum = 0.0;
-    // pcfSpotShadow's five taps
-    let taps = array<vec2<f32>, 5>(
-        vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
-    for (var t = 0; t < 5; t++) {
-        let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0002);
+    var s = -2.0;
+    if ((frame.light_mode.z & SHADOW_FILTER_PCF) == 0u) {
+        let m = frame.spot_vp[k];
+        let row_x = vec3<f32>(m[0].x, m[1].x, m[2].x);
+        let row_y = vec3<f32>(m[0].y, m[1].y, m[2].y);
+        let row_z = vec3<f32>(m[0].z, m[1].z, m[2].z);
+        let row_w = vec3<f32>(m[0].w, m[1].w, m[2].w);
+        let projection = vec2<f32>(length(row_x), length(row_y));
+        let a = dot(row_z, row_w) / dot(row_w, row_w);
+        let b = m[3].z - a * m[3].w;
+        let relative = world_pos + n * 0.04 - frame.projectors[i].origin.xyz;
+        let plane = dot(n, relative);
+        // A plane seen at grazing incidence has an unbounded correction.
+        // Keep the existing filter there, just as for directional maps.
+        if (abs(plane) > 0.15 * length(relative)) {
+            let gradient = b * vec2<f32>(2.0 * dot(n, row_x) / (projection.x * projection.x),
+                -2.0 * dot(n, row_y) / (projection.y * projection.y)) / plane;
+            let soft = spot_pcss(uv, origin, texel, ndc.z, gradient, lp.w,
+                vec2<f32>(a, b), projection * 0.5);
+            if (soft >= 0.0) { s = soft; }
+        }
     }
-    var s = sum * 0.2;
+    if (s < 0.0) {
+        var sum = 0.0;
+        // pcfSpotShadow's five taps
+        let taps = array<vec2<f32>, 5>(
+            vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
+        for (var t = 0; t < 5; t++) {
+            let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0002);
+        }
+        s = sum * 0.2;
+    }
     // the map fades in and out as its projector takes or loses it
     s = clamp(s + select(frame.spot_fade.x, frame.spot_fade.y, k == 1u), 0.0, 1.0);
     return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));

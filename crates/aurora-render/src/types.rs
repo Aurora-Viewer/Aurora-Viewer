@@ -1016,6 +1016,8 @@ pub struct RenderSettings {
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
+    /// Contact-hardening PCSS for directional and projector shadow maps.
+    pub shadow_pcss: bool,
     /// Geometric specular anti-aliasing of the objects' highlights
     /// (common.wgsl `specular_aa_roughness`, AURORA_SPECULAR_AA).
     pub specular_aa: bool,
@@ -1051,6 +1053,7 @@ impl Default for RenderSettings {
             screen_indirect: false,
             screen_indirect_intensity: 1.0,
             contact_shadows: false,
+            shadow_pcss: true,
             specular_aa: true,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,

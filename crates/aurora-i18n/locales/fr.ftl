@@ -12966,3 +12966,6 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+
+ui-options-shadow-pcss = Ombres douces (PCSS)
+ui-options-shadow-pcss-help = Adoucit les ombres du soleil, de la lune et des projecteurs selon la distance à la surface qui les projette. Les ombres de contact conservent leurs détails fins. Demande davantage de calcul graphique.

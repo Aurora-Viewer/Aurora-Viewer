@@ -249,11 +249,6 @@ const FILTER_TEXELS: f32 = 6.0;
 /// Maximum directional PCSS half-width in metres (common.wgsl).
 pub(crate) const PCSS_MAX_RADIUS: f32 = 0.25;
 
-pub(crate) fn pcss_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("AURORA_SHADOW_PCSS").as_deref() != Ok("0"))
-}
-
 /// Taps per axis of the shadow filter for a span of `span_texels`
 /// (`shadow_taps` in common.wgsl): never more than a texel apart, since a
 /// bilinear compare tap only blends over one texel and wider gaps draw
@@ -298,7 +293,9 @@ pub fn cascade_caster_planes(
 /// filter's taps and the normal offset (0.02 + 0.04 k) of `cascade_shadow`
 /// (common.wgsl), and a little more.
 pub fn lookup_margin(k: usize, texel: f32) -> f32 {
-    lookup_margin_for(k, texel, pcss_enabled())
+    // Keep the conservative PCSS guard with either filter: a live setting
+    // change cannot expose a caster discarded by a cached draw list.
+    lookup_margin_for(k, texel, true)
 }
 
 fn lookup_margin_for(k: usize, texel: f32, pcss: bool) -> f32 {
@@ -332,8 +329,8 @@ pub fn cascade_scale(m: &Mat4) -> f32 {
 /// (`c`, `r`), its depth comes from the map of the cascade before
 /// (`merged_from_finer` in cull.wgsl, kept line for line). The cascades
 /// look along the same light, so a caster covers the same place in each of
-/// them: when the cascade before holds it — it draws it, or leaves it in
-/// turn to the one before — and the caster is inside that cascade's square
+/// them: when the cascade before holds it â€” it draws it, or leaves it in
+/// turn to the one before â€” and the caster is inside that cascade's square
 /// with `MERGE_TEXELS` to spare, every texel of `k` it would have covered
 /// is filled from the finer map (shadow_merge.rs). `shadow_size`: side of a
 /// cascade in texels (0: no merge).

@@ -1146,6 +1146,8 @@ pub struct Settings {
     /// The two projectors that weigh most on screen cast shadows
     /// (Firestorm RenderShadowDetail 2, "Sun/Moon + Projectors", its default).
     pub projector_shadows: bool,
+    /// PCSS filtering for sun/moon and projector maps; contact detail is independent.
+    pub shadow_pcss: bool,
     /// Screen-space contact shadows of the sun or the moon, beyond the
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
@@ -1958,6 +1960,7 @@ impl Default for Settings {
             former_look_at_range: None,
             shadow_quality: 3,
             projector_shadows: true,
+            shadow_pcss: true,
             contact_shadows: false,
             antialiasing: 6,
             render_scale_percent: 100,
@@ -2800,6 +2803,7 @@ impl Settings {
             screen_indirect: self.ao_method == 1 && self.screen_indirect_light,
             screen_indirect_intensity: self.screen_indirect_intensity,
             contact_shadows: self.contact_shadows,
+            shadow_pcss: self.shadow_pcss,
             specular_aa: self.specular_aa,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
@@ -3988,6 +3992,24 @@ mod tests {
         let mut off = Settings::default();
         off.build.limit_select_distance = false;
         assert!(!off.sanitized().build.limit_select_distance);
+    }
+
+    #[test]
+    fn shadow_pcss_choice_survives_loading_and_reaches_the_renderer() {
+        let old: Settings = serde_json::from_str("{}").expect("old settings");
+        assert!(old.shadow_pcss);
+        for enabled in [false, true] {
+            let s = Settings {
+                shadow_pcss: enabled,
+                contact_shadows: true,
+                ..Settings::default()
+            };
+            let saved = serde_json::to_string(&s).expect("settings");
+            let restored: Settings = serde_json::from_str(&saved).expect("saved settings");
+            let render = restored.render_settings();
+            assert_eq!(render.shadow_pcss, enabled);
+            assert!(render.contact_shadows, "map filter never disables contact detail");
+        }
     }
 
     #[test]

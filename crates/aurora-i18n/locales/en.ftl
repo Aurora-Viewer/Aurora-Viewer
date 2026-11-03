@@ -12970,3 +12970,6 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
+
+ui-options-shadow-pcss = Soft shadows (PCSS)
+ui-options-shadow-pcss-help = Softens sun, moon and projector shadows with distance from the casting surface. Contact shadows keep their fine detail. Uses more graphics processing.

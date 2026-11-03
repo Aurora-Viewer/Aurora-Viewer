@@ -299,6 +299,274 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     );
 }
 
+/// Projectors must use linear blocker distances, not perspective depth ratios.
+#[test]
+#[ignore = "requires a GPU"]
+fn projector_pcss_hardens_at_contact_and_isolates_atlas_tiles() {
+    let instance = wgpu::Instance::default();
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+        return;
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("test device");
+    let format = wgpu::TextureFormat::Depth32Float;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("PCSS synthetic atlas"),
+        size: wgpu::Extent3d {
+            width: 512,
+            height: 512,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let depth = texture.create_view(&Default::default());
+    let fixture = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("PCSS fixture"),
+        source: wgpu::ShaderSource::Wgsl(
+            r#"
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs(@builtin(position) p: vec4<f32>) -> @builtin(frag_depth) f32 {
+    // Two projector maps, with different near planes and hostile neighbours.
+    if (p.x < 256.0 || p.y < 256.0 || p.y >= 384.0) { return 0.0; }
+    let k = u32(p.x - 256.0) / 128u;
+    let local = (p.xy - vec2<f32>(256.0 + f32(k) * 128.0, 256.0)) / 128.0;
+    let near = select(0.05, 0.5, k == 1u);
+    let a = 20.0 / (20.0 - near);
+    let b = -near * a;
+    return select(1.0, a + b / 2.0, local.x < 0.5 && abs(local.y - 0.5) < 0.4);
+}
+"#
+            .into(),
+        ),
+    });
+    let raster = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+        label: Some("PCSS fixture"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &fixture,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &fixture,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("PCSS fixture"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&raster);
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let body = crate::COMMON_SHADER
+        .split("// PCSS BEGIN")
+        .nth(1)
+        .expect("PCSS start")
+        .split("// PCSS END")
+        .next()
+        .expect("PCSS end");
+    let source = format!(
+        r#"
+@group(0) @binding(0) var shadow_map: texture_depth_2d;
+@group(0) @binding(1) var shadow_sampler: sampler_comparison;
+{body}
+struct Query {{ a: vec4<f32>, b: vec4<f32> }};
+@group(0) @binding(2) var<storage, read> queries: array<Query>;
+@group(0) @binding(3) var<storage, read_write> results: array<vec4<f32>>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
+    if (id.x >= arrayLength(&queries)) {{ return; }}
+    let q = queries[id.x];
+    let texel = 1.0 / 128.0;
+    let soft = spot_pcss(q.a.xy, q.b.xy, texel, q.a.z, vec2<f32>(0.0), q.a.w,
+        q.b.zw, vec2<f32>(4.0));
+    let fallback = spot_pcss_compare(q.a.xy, vec2<f32>(0.0), q.b.xy, texel, q.a.z, vec2<f32>(0.0));
+    results[id.x] = vec4<f32>(select(soft, fallback, soft < 0.0), soft, 0.0, 0.0);
+}}
+"#
+    );
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("projector PCSS contract"),
+        source: wgpu::ShaderSource::Wgsl(source.clone().into()),
+    });
+    let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("projector PCSS contract"),
+        layout: None,
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut queries = Vec::<[f32; 8]>::new();
+    for (k, near) in [0.05f32, 0.5].into_iter().enumerate() {
+        let a = 20.0 / (20.0 - near);
+        let b = -near * a;
+        for z in [2.05, 4.0, 8.0] {
+            for i in 0..241 {
+                queries.push([0.44 + i as f32 * 0.0005, 0.5, a + b / z, z, 0.5 + k as f32 * 0.25, 0.5, a, b]);
+            }
+        }
+    }
+    let profiles = queries.len();
+    for k in 0..2 {
+        let near = if k == 0 { 0.05 } else { 0.5 };
+        let a = 20.0 / (20.0 - near);
+        let b = -near * a;
+        for uv in [[0.999, 0.5], [0.8, 0.001], [0.8, 0.999]] {
+            queries.push([uv[0], uv[1], a + b / 8.0, 8.0, 0.5 + k as f32 * 0.25, 0.5, a, b]);
+        }
+    }
+    let results = run_queries(&device, &queue, &pipeline, &depth, &queries);
+    assert!(results.iter().all(|r| r[0].is_finite() && (0.0..=1.0).contains(&r[0])));
+    for k in 0..2 {
+        let widths: Vec<_> = (0..3)
+            .map(|step| {
+                let at = (k * 3 + step) * 241;
+                let row = &results[at..at + 241];
+                assert!(row[0][0] < 0.01 && row[240][0] > 0.99, "umbra and lit surface survive");
+                assert!(row.windows(2).all(|w| w[1][0] + 0.002 >= w[0][0]), "monotone edge");
+                row.iter().filter(|r| r[0] > 0.1 && r[0] < 0.9).count()
+            })
+            .collect();
+        assert!(widths[1] > widths[0] * 2 && widths[2] > widths[1], "contact hardening: {widths:?}");
+    }
+    for i in 0..3 * 241 {
+        assert!(
+            (results[i][0] - results[i + 3 * 241][0]).abs() < 0.003,
+            "near plane must not change physical softness: {i}"
+        );
+    }
+    assert!(results[profiles..].iter().all(|r| r[0] > 0.999), "no neighbouring-tile shadows");
+    let plane = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("PCSS receiver plane"),
+        source: wgpu::ShaderSource::Wgsl(
+            r#"
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs(@builtin(position) p: vec4<f32>) -> @builtin(frag_depth) f32 {
+    return 0.4 + 0.06 * (fract(p.x / 128.0) - 0.5);
+}
+"#
+            .into(),
+        ),
+    });
+    let plane_raster = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+        label: Some("PCSS fixture"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &plane,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &plane,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("PCSS fixture"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&plane_raster);
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+    let tilted_source = source.replace("vec2<f32>(0.0), q.a.w", "vec2<f32>(0.06, 0.0), q.a.w");
+    let tilted_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("tilted projector PCSS"),
+        source: wgpu::ShaderSource::Wgsl(tilted_source.into()),
+    });
+    let tilted_pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("tilted projector PCSS"),
+        layout: None,
+        module: &tilted_module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut tilted = Vec::new();
+    for k in 0..2 {
+        let a = 1.025;
+        let b = -0.05 * a;
+        for u in [0.1123, 0.3751, 0.54321, 0.8766] {
+            let receiver = 0.4 + 0.06 * (u - 0.5);
+            let z = b / (receiver - a);
+            tilted.push([u, 0.5, receiver, z, 0.5 + k as f32 * 0.25, 0.5, a, b]);
+        }
+    }
+    let samples = run_queries(&device, &queue, &tilted_pipeline, &depth, &tilted);
+    assert!(
+        samples.iter().all(|s| s[1] < 0.0),
+        "projector plane must not shadow itself: {samples:?}"
+    );
+}
+
 fn run_queries(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

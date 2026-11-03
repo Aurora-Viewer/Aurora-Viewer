@@ -504,6 +504,11 @@ fn light(cx: &mut Cx) {
         let off = cx.s.shadow_quality == 0;
         cx.subs(off, |cx| {
             cx.toggle(
+                tr!("ui-options-shadow-pcss"),
+                tr!("ui-options-shadow-pcss-help"),
+                &field!(shadow_pcss),
+            );
+            cx.toggle(
                 tr!("ui-options-projector-shadows"),
                 tr!("ui-options-projector-shadows-help"),
                 &field!(projector_shadows),
