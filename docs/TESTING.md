@@ -538,7 +538,9 @@ disc sprays), `hover` or `nocontrols` the on-screen controls
 on hover or hidden (the lens ring and the AF choices show otherwise), `tilt`
 the camera rolled 20° clockwise (the level turns the other way, along the
 horizon), `tilt90` a quarter turn (the AF frame over a head keeps its size,
-lying on its side), `poser` the poser opened over it (the dock's wand
+lying on its side), `qualitywarn` the warning a first "Photo quality"
+shows (Cancel leaves it off, "Turn on anyway" turns it on and is
+remembered: the log gives `photo quality: warning accepted`), `poser` the poser opened over it (the dock's wand
 button: its window, the joints and the gizmo drawn over the viewfinder; a
 click on a joint selects it without moving the AF point), `focus`
 the own avatar's face aimed at
@@ -4717,6 +4719,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
+| `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
@@ -4844,6 +4847,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo; `teleport` opens the offline link test |
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
+| `AURORA_DEMO_WEB_BROWSER=<page>` | Toolbar web browser window open at start on this page |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
@@ -5003,6 +5007,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
   friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
   and `--language en`.
+- **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
+  frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
+  Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
+  tags (Off / On / Briefly), Show look-at targets; a line; Hover Height
+  (greyed in demo: the plaza region offers no height adjustment), Maximum
+  bandwidth, Maximum avatar complexity ("Unlimited" at the right end); a
+  line; Sky, Water and Day/Night lists with their arrows, Personal lighting
+  and the return to the shared environment. Moving a slider changes the same
+  setting in Preferences (open both to compare) and is saved on release.
+  Capture after frame 300, with `--language fr` and `--language en`.
 - **`AURORA_DEMO_SUITCASE=1`**: at frame 300, the question a Hypergrid
   teleport from the home grid asks when worn items are not in My Suitcase:
   seven invented items, an invented grid as the destination. "Teleport anyway" goes
@@ -7885,6 +7899,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   as on an OpenSim grid whose grid info gives this help page, with the
   page's host as the grid's name at the right end of the row. Without it
   the entry is hidden, as on Second Life.
+- **`AURORA_DEMO_WEB_BROWSER=<page>`**: the toolbar's Web browser window
+  (`webbrowser`, LLFloaterWebContent) open at start on this page; a local
+  `file:///…` page is enough, with no grid or network. Without it the demo
+  has the button like a grid session (it opens the home page of
+  Preferences › Network and cache, `https://duckduckgo.com` by default).
+  Check: back, forward, stop (lit only while a page loads), reload, home,
+  the address field (Enter navigates; a bare host gets `https://`; the
+  padlock is lit for https only), "Open in browser" (greyed out on a
+  `file:` page or `about:blank`: only web pages go to the system browser),
+  the status line and load bar under the page. An http(s) link clicked in
+  a page opens in the same window; a SLURL acts in the viewer; a link that
+  asks for a new window (`target="_blank"`) does nothing.
 - **`AURORA_DEMO_MARKETPLACE=<page>`**: World › SL Marketplace stands for
   this page in demo (a local `file:///…` page is enough): the window opens
   at start on it, the menu entry shows, and a link to an address under it

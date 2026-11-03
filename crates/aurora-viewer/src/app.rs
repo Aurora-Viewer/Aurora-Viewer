@@ -104,6 +104,7 @@ mod photo_isolate;
 mod physics_editor;
 mod plate_click;
 mod pointing;
+mod quick_prefs;
 mod region_restart;
 mod region_window;
 mod relogin;
@@ -638,6 +639,9 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Quick preferences (the toolbar's `quickprefs`).
+    quick_prefs_ui: ui::quick_prefs::QuickPrefsUi,
+    quick_prefs_demo_done: bool,
     /// Report Abuse (LLFloaterReporter).
     report_abuse: ui::report_abuse::ReportAbuseUi,
     /// The depth of field's focus distance and its transition.
@@ -685,6 +689,7 @@ pub struct App {
     buy_land_source: buy_land::BuyLandSource,
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
+    web_browser_ui: ui::web_browser::WebBrowserUi,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
     listings_ui: ui::marketplace_listings::ListingsUi,
     /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
@@ -1462,6 +1467,8 @@ impl App {
             create_landmark_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            quick_prefs_ui: Default::default(),
+            quick_prefs_demo_done: false,
             follow_ui: Default::default(),
             portal_ui: Default::default(),
             particle_editor: Default::default(),
@@ -1498,6 +1505,7 @@ impl App {
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
+            web_browser_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
             people_map_ui: Default::default(),
@@ -2782,6 +2790,9 @@ impl App {
         self.money_tracker_ui = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
+        self.web_browser_ui = Default::default();
+        // closed, or the next session would open the home page by itself
+        self.panels.web_browser = false;
         // the listings belong to the account (LLMarketplaceData)
         self.listings_ui = Default::default();
         self.demo_slm = None;
@@ -13590,7 +13601,10 @@ impl App {
 
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
-        self.profile_ui.web_has_focus() || self.search_ui.web_has_focus() || self.marketplace_ui.web_has_focus()
+        self.profile_ui.web_has_focus()
+            || self.search_ui.web_has_focus()
+            || self.marketplace_ui.web_has_focus()
+            || self.web_browser_ui.web_has_focus(self.panels.web_browser)
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -13600,6 +13614,7 @@ impl App {
             .focused_web()
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
+            .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -16378,6 +16393,18 @@ impl App {
                         home: marketplace_home.as_deref(),
                     },
                 );
+                // the toolbar's web browser: the same plugins and browser
+                // settings, the shared profile, no OpenID cookie
+                self.web_browser_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.web_browser,
+                    &ui::web_browser::BrowserWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        home: &self.settings.browser_home_page,
+                    },
+                );
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -16679,7 +16706,7 @@ impl App {
                 );
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
-                if self.panels.environment {
+                if self.panels.environment || self.panels.quick_prefs {
                     if !self.env_scan {
                         self.env_scan = true;
                         self.env_ui.scan_left = usize::MAX;
@@ -16698,8 +16725,11 @@ impl App {
                     &mut lighting,
                 );
                 self.panels.environment = open;
+                // Quick preferences' environment block shares the window's
+                // lists and "Personal lighting"
+                let quick_actions = self.quick_prefs_window(&ctx, &p, &mut lighting);
                 let reset = self.personal_lighting(&ctx, &p, lighting);
-                self.env_actions(env_actions.into_iter().chain(reset));
+                self.env_actions(env_actions.into_iter().chain(quick_actions).chain(reset));
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
@@ -17576,6 +17606,15 @@ impl ApplicationHandler for App {
             // page, open at start
             if self.marketplace_home().is_some() {
                 self.marketplace_ui.open(None);
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_WEB_BROWSER=<page>: the toolbar's web browser on
+            // that page, open at start
+            if let Ok(page) = std::env::var("AURORA_DEMO_WEB_BROWSER")
+                && !page.trim().is_empty()
+            {
+                self.web_browser_ui.go_to(&page);
+                self.panels.web_browser = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
