@@ -2096,7 +2096,7 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, bottom: f32
         .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - bottom))
         .show(ctx, |ui| {
             // the dock's face and edge (`dock_button`)
-            dock_frame(p, ui.visuals(), 8).show(ui, |ui| {
+            dock_frame(p, ui.visuals(), 5).show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
                 // the photo covering the card's picture
                 let radius = widgets::inner_radius(ui.visuals());

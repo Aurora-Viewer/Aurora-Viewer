@@ -182,9 +182,9 @@ pub(super) struct Snapshots {
     /// toolbar's Snapshot to disk): taken by the next `photo_update`.
     to_disk: bool,
     /// The price to confirm before the upload.
-    confirm: Option<i32>,
+    pub(super) confirm: Option<i32>,
     /// The price the balance cannot pay.
-    short: Option<i32>,
+    pub(super) short: Option<i32>,
     upload: Option<Upload>,
     /// The message tells of this item, saved to the inventory.
     message_item: Option<Uuid>,
@@ -814,7 +814,7 @@ impl App {
 
     /// Encode the PNG and post it, off the main thread: the session cookie
     /// of the web profile first when it is not known for this login.
-    fn photo_post(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
+    pub(super) fn photo_post(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
         let Some(web) = self.photo_profile_web() else {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-profile-not-ready").to_owned(), true));
             return;
@@ -929,7 +929,7 @@ impl App {
     /// Encode the JPEG and send the postcard, off the main thread; the
     /// demo has no simulator and answers itself (AURORA_DEMO_SNAPSHOT=
     /// postcard-fail: refused).
-    fn photo_postcard(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
+    pub(super) fn photo_postcard(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
         let url = self.world.main().and_then(|r| r.caps.get("SendPostcard").cloned());
         if url.is_none() && !self.demo {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-email-unavailable").to_owned(), true));
@@ -1239,11 +1239,11 @@ impl App {
 
     /// What the window shows of a photo for the inventory.
     pub(super) fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
-        // a photo of the reel held to be sent again goes at its own size
-        // (fitted to the inventory's when it was held): its price follows
-        let capture = match (&self.snapshots.held, self.snapshots.reel.held) {
-            (Some(held), Some(_)) => (held.width, held.height),
-            _ => self.photo_size(window),
+        // a photo of the reel sent again goes at its own size (fitted to the
+        // inventory's when it was read back): its price follows
+        let capture = match &self.snapshots.reel.pending {
+            Some((_, (w, h, _))) => (*w, *h),
+            None => self.photo_size(window),
         };
         let texture = inventory::texture_size(capture);
         InventoryView {
@@ -1288,7 +1288,7 @@ impl App {
 
     /// Scale and encode the texture on a worker; the shutter sounds as the
     /// upload starts, like saveTexture's playSnapshotAnimAndSound.
-    fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, cutout: bool) {
+    pub(super) fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, cutout: bool) {
         self.snapshots.reel.start(size, Some(&rgba), cutout);
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
@@ -1527,7 +1527,8 @@ impl App {
                     s.gallery.retain(|(p, _)| *p != saved.path);
                     s.gallery.insert(0, (saved.path.clone(), Some(tex.clone())));
                     s.reel.done(Some(Place::Disk(saved.path.clone())), Some(tex));
-                    if viewfinder {
+                    // (a photo of the reel saved again from the quick view: no card)
+                    if viewfinder && !s.reel.sent_again {
                         s.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
                     }
                     s.gallery.truncate(gallery::SHOWN);
@@ -1685,7 +1686,10 @@ impl App {
                 }
             }
             Action::Confirm(yes) => {
-                if let Some(cost) = self.snapshots.confirm.take()
+                let cost = self.snapshots.confirm.take();
+                // a photo of the reel waiting for its price, or a new one
+                if !self.photo_reel_confirmed(cost.filter(|_| yes))
+                    && let Some(cost) = cost
                     && yes
                 {
                     self.photo_inventory_start(cost, renderer);
@@ -2024,7 +2028,8 @@ LUT_3D_SIZE {n}
     /// The card shows a photo sent to the inventory, the profile feed or by
     /// e-mail (its picture is the reel's card photo).
     fn photo_review_show(&mut self) {
-        if self.viewfinder_on() {
+        // (a photo of the reel sent again from the quick view: no card)
+        if self.viewfinder_on() && !self.snapshots.reel.sent_again {
             self.snapshots.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
         }
     }
@@ -2054,7 +2059,12 @@ LUT_3D_SIZE {n}
         let quality_reduced = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_some_and(|f| f.step > 0 && !f.climbing);
         // (the panel shows it in its own line, the viewfinder once at the top)
         let quality_note = std::mem::take(&mut self.snapshots.fit_note) && quality_reduced;
-        let mut actions = self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short);
+        // (over the quick view, open: drawn after it, photo_reel_quick)
+        let mut actions = if self.snapshots.reel.quick.is_open() {
+            Vec::new()
+        } else {
+            self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short)
+        };
         if self.viewfinder_on() {
             // the held photo under the overlay
             if let Some(t) = self.snapshots.held.as_ref().and_then(|h| h.texture.as_ref()) {

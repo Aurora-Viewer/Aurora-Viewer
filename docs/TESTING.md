@@ -344,7 +344,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
-| `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:moved]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again or the tray moved |
+| `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:mail][:post][:moved]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail, profile) or the tray moved |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
@@ -664,14 +664,14 @@ environment`) and leaves the photo mode (960): the scene keeps that light.
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
 
-`AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:moved]`: from
+`AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:mail][:post][:moved]`: from
 `AURORA_DEMO_SNAPSHOT_FRAME` (700 by default) the photo mode takes `n` real
 photos (12 at most), 20 frames apart, saved to `demo-photo-reel` in the
 cache folder (never the Pictures folder), the focal length going through
 35, 50, 24 and 85 mm so that they differ; the photo mode's look follows
 `AURORA_DEMO_SNAPSHOT` (`viewfinder`, or `open` for the panel). In the
-viewfinder each photo shows its card (its picture alone, framed like the
-dock's buttons) centred over the lens and aperture controls for
+viewfinder each photo shows its card (its picture alone, on a tile of the
+dock like the tray's photos) centred over the lens and aperture controls for
 4.8 s, then flies in an arc to the reel's tray, bottom left: the stack of
 the older photos (its badge counting them all) with the folder's button
 under it, then the two newest, the newest on the right. `moved` puts the
@@ -681,9 +681,11 @@ older photos. `quick` then opens the quick view on the newest (the world
 darkened in its own colours, the full photo in a frame, each button on its
 own under it, the filmstrip with the newest on the right); `delete` adds the
 deletion's confirmation ("reel-<n>.png goes to the Recycle Bin."); `send`
-sends the newest again to the inventory: it is held (freeze frame), the
-drawer opens on the Inventory destination and its price follows the held
-photo's size. The log gives `photo reel demo: <n> photos in the reel`.
+sends the newest again to the inventory at once: the price's confirmation
+shows over the quick view (its price from the photo's own size), and Upload
+sends it, the view neither frozen nor left; `mail` opens the e-mail's form
+over the quick view (Send waits for a valid recipient); `post` posts it to
+the demo's web profile at once. The log gives `photo reel demo: <n> photos in the reel`.
 
 `AURORA_DEMO_ISOLATE` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
 mode): at frame 640 `own` shows our avatar alone (My avatar), the sky,

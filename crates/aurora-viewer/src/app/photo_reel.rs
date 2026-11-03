@@ -28,7 +28,7 @@ enum Done {
     /// The quick view's picture of a photo.
     Full(u64, Result<Pixels, String>),
     /// A photo read back to be sent again, fitted to its destination.
-    Held(u64, Destination, u32, Result<Pixels, String>),
+    Held(u64, Destination, (u32, u32), Result<Pixels, String>),
     /// Its files sent to the Recycle Bin.
     Recycled(Result<(), String>),
 }
@@ -47,10 +47,20 @@ pub(super) struct ReelState {
     rx: crossbeam_channel::Receiver<Done>,
     /// The photo a destination is sending.
     sending: Option<u64>,
+    /// It is one of the reel sent again from the quick view, not a new
+    /// photo: it stays in sight, and no card shows it when it arrives.
+    again: bool,
+    /// The last photo sent was sent again: its card is not shown.
+    pub sent_again: bool,
     /// The held photo is this one of the reel, to be sent again.
     pub held: Option<u64>,
     /// A photo being read back to be held.
     holding: Option<u64>,
+    /// A photo read back for the inventory, waiting for its price to be
+    /// confirmed.
+    pub pending: Option<(u64, Pixels)>,
+    /// The photo the e-mail form of the quick view is for.
+    pub mail: Option<u64>,
     /// The photo the last photo's card shows.
     pub card: Option<u64>,
     /// AURORA_DEMO_PHOTO_ROLL (`demo`).
@@ -70,8 +80,12 @@ impl Default for ReelState {
             tx,
             rx,
             sending: None,
+            again: false,
+            sent_again: false,
             held: None,
             holding: None,
+            pending: None,
+            mail: None,
             card: None,
             demo: None,
         }
@@ -116,7 +130,7 @@ impl ReelState {
     /// when it is saved, uploaded, posted or sent, or when that fails).
     pub(super) fn view<'a>(&'a self, can_send: &'a [Destination], time: &'a dyn Fn(i64) -> String) -> ReelView<'a> {
         let photos = self.reel.photos();
-        let on_its_way = self.sending.is_some() && self.sending != self.held && photos.first().map(|p| p.id) == self.sending;
+        let on_its_way = self.sending.is_some() && !self.again && photos.first().map(|p| p.id) == self.sending;
         ReelView {
             photos: &photos[usize::from(on_its_way)..],
             thumbs: &self.thumbs,
@@ -153,11 +167,13 @@ impl ReelState {
     pub(super) fn start(&mut self, size: (u32, u32), rgba: Option<&[u8]>, cutout: bool) {
         if let Some(id) = self.held.filter(|id| self.reel.get(*id).is_some()) {
             self.sending = Some(id);
+            self.again = true;
             return;
         }
         let (id, dropped) = self.reel.add(unix_now(), size, cutout, None, rgba.is_some(), Vec::new());
         self.forget(dropped);
         self.sending = Some(id);
+        self.again = false;
         let Some(rgba) = rgba else {
             return;
         };
@@ -197,6 +213,7 @@ impl ReelState {
         let Some(id) = self.sending.take() else {
             return;
         };
+        self.sent_again = std::mem::take(&mut self.again);
         if let Some(tex) = thumb {
             self.thumbs.entry(id).or_insert(tex);
         }
@@ -205,7 +222,9 @@ impl ReelState {
                 if let Some(freed) = self.reel.sent(id, place) {
                     delete_files(vec![freed]);
                 }
-                self.card = Some(id);
+                if !self.sent_again {
+                    self.card = Some(id);
+                }
             }
             None => {
                 if self.reel.get(id).is_some_and(|p| !p.own_copy && p.places.is_empty())
@@ -282,13 +301,13 @@ impl App {
                         Err(e) => log::warn!("photo reel: photo {id} not read back: {e}"),
                     }
                 }
-                Done::Held(id, destination, side, result) => {
+                Done::Held(id, destination, window, result) => {
                     if r.holding != Some(id) {
                         continue;
                     }
                     r.holding = None;
                     match result {
-                        Ok(pixels) => self.photo_reel_hold(id, destination, side, pixels),
+                        Ok(pixels) => self.photo_reel_hold(id, destination, pixels, window),
                         Err(e) => {
                             log::warn!("photo reel: photo {id} not read back: {e}");
                             let text = aurora_i18n::tr!("photo-failed", error = e.as_str()).to_owned();
@@ -345,12 +364,19 @@ impl App {
         let island = self.settings.system_island;
         let time = move |t: i64| crate::ui::bars::clock::time_of(island, t);
         let mut quick = std::mem::take(&mut self.snapshots.reel.quick);
+        quick.blocked = self.snapshots.reel.mail.is_some() || self.snapshots.confirm.is_some() || self.snapshots.short.is_some();
         let mut out = Vec::new();
         quick.show(ctx, p, &self.snapshots.reel.view(&can_send, &time), &mut out);
         self.snapshots.reel.quick = quick;
         for a in out {
             self.photo_reel_action(a, renderer);
         }
+        // the dialogs of a send, over it: the price, the e-mail's form
+        let dialogs = self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short);
+        for a in dialogs {
+            self.photo_action(a, renderer);
+        }
+        self.photo_reel_mail_form(ctx, p, window);
     }
 
     /// What the reel's stack or quick view asks.
@@ -359,7 +385,12 @@ impl App {
             ReelAction::Show(id) => {
                 self.snapshots.reel.quick.open = Some(id);
             }
-            ReelAction::Close => self.snapshots.reel.quick.close(),
+            ReelAction::Close => {
+                self.snapshots.reel.quick.close();
+                self.snapshots.reel.mail = None;
+            }
+            // an e-mail asks its recipients first, over the quick view
+            ReelAction::Send(id, Destination::Email) => self.snapshots.reel.mail = Some(id),
             ReelAction::Send(id, destination) => self.photo_reel_send(id, destination, renderer.size()),
             ReelAction::Reveal(id) => {
                 if let Some(path) = self.snapshots.reel.reel.get(id).and_then(|p| p.on_disk()) {
@@ -401,43 +432,137 @@ impl App {
             let long = w.max(h);
             reel::fit_inside(size, (long, long))
         });
-        let side = window.0.max(window.1);
         self.snapshots.reel.holding = Some(id);
         spawn(&self.snapshots.reel.tx, move || {
             let result = reel::load(&file, fit.map(|(w, h)| w.max(h)));
-            Done::Held(id, destination, side, result)
+            Done::Held(id, destination, window, result)
         });
     }
 
-    /// The photo read back: saved to disk at once (nothing held, the view
-    /// and the window's destination unchanged), or held with its
-    /// destination shown, its own button to send it. `side`: the screen's.
-    fn photo_reel_hold(&mut self, id: u64, destination: Destination, side: u32, (w, h, rgba): Pixels) {
+    /// The photo read back: sent at once to its destination, from the quick
+    /// view (nothing held, the view, the window's destination and the
+    /// quick view unchanged). The inventory's price is confirmed first, as
+    /// for a new photo (LLPanelSnapshotInventory::onSend).
+    fn photo_reel_hold(&mut self, id: u64, destination: Destination, (w, h, rgba): Pixels, window: (u32, u32)) {
         let Some(cutout) = self.snapshots.reel.reel.get(id).map(|p| p.cutout) else {
             return;
         };
-        if destination == Destination::Disk {
-            // (the save follows this photo of the reel, not a new one)
-            let before = self.snapshots.reel.held.replace(id);
-            self.photo_save_pixels((w, h), rgba, cutout);
-            self.snapshots.reel.held = before;
+        if self.photo_busy() {
             return;
         }
-        self.photo_hold_pixels((w, h), rgba, cutout, side);
-        self.snapshots.reel.held = Some(id);
-        self.snapshots.ui.freeze = true;
-        self.snapshots.ui.destination = destination;
-        self.snapshots.preview_wanted = true;
-        // the destination's settings and its button: the viewfinder's
-        // drawer, or the photo window already open
-        self.snapshots.reel.quick.close();
-        if self.viewfinder_on() {
-            let vf = &mut self.snapshots.vf;
-            vf.drawer = true;
-            vf.looks = false;
-            vf.light = false;
-            vf.presets = false;
-            vf.isolate = false;
+        if destination == Destination::Inventory {
+            // (its price follows its size: photo_inventory_view)
+            self.snapshots.reel.pending = Some((id, (w, h, rgba)));
+            let view = self.photo_inventory_view(window);
+            let Some(cost) = view.cost.filter(|_| view.connected) else {
+                self.snapshots.reel.pending = None;
+                return;
+            };
+            if self.world.balance.is_some_and(|b| b < cost) {
+                self.snapshots.reel.pending = None;
+                self.snapshots.short = Some(cost);
+            } else if cost > 0 {
+                self.snapshots.confirm = Some(cost);
+            } else {
+                self.photo_reel_confirmed(Some(cost));
+            }
+            return;
+        }
+        // (the destination follows this photo of the reel, not a new one)
+        let before = self.snapshots.reel.held.replace(id);
+        match destination {
+            Destination::Disk => self.photo_save_pixels((w, h), rgba, cutout),
+            Destination::Profile => self.photo_post((w, h), rgba, cutout),
+            Destination::Email => self.photo_postcard((w, h), rgba, cutout),
+            Destination::Inventory => {}
+        }
+        self.snapshots.reel.held = before;
+    }
+
+    /// The price confirmed (`Some`) or not: the reel's photo waiting for it
+    /// uploaded or let go. False when none waits (the confirmation was a
+    /// new photo's).
+    pub(super) fn photo_reel_confirmed(&mut self, cost: Option<i32>) -> bool {
+        let Some((id, (w, h, rgba))) = self.snapshots.reel.pending.take() else {
+            return false;
+        };
+        let cutout = self.snapshots.reel.reel.get(id).map(|p| p.cutout);
+        if let (Some(cost), Some(cutout)) = (cost, cutout)
+            && !self.photo_busy()
+        {
+            let before = self.snapshots.reel.held.replace(id);
+            self.photo_encode((w, h), rgba, cost, cutout);
+            self.snapshots.reel.held = before;
+        }
+        true
+    }
+
+    /// The postcard's form over the quick view, for a photo of the reel:
+    /// the photo window's own fields (kept between them), sent with the
+    /// recipients checked (PromptRecipientEmail), or cancelled.
+    fn photo_reel_mail_form(&mut self, ctx: &egui::Context, p: &crate::theme::Palette, window: (u32, u32)) {
+        let Some(id) = self.snapshots.reel.mail else {
+            return;
+        };
+        if self.snapshots.reel.reel.get(id).is_none() {
+            self.snapshots.reel.mail = None;
+            return;
+        }
+        let mail = self.photo_email_view(window);
+        let mut answer = None;
+        let modal = crate::ui::widgets::Modal::new(egui::Id::unique("photo_reel_mail")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("photo-reel-email"))
+                    .strong()
+                    .size(15.0)
+                    .color(p.ink),
+            );
+            ui.add_space(6.0);
+            self.snapshots.ui.postcard_form(ui, p, &mut self.settings.snapshot, &mail);
+            ui.add_space(10.0);
+            let valid = aurora_net::postcard::valid_recipients(&self.snapshots.ui.postcard.to);
+            ui.horizontal(|ui| {
+                let size = egui::Vec2::new(0.0, 28.0);
+                let send = crate::ui::widgets::action_button_if(
+                    ui,
+                    p,
+                    "mail-filled",
+                    aurora_i18n::tr!("photo-email-send"),
+                    crate::ui::widgets::ActionKind::Primary,
+                    size,
+                    valid && mail.available,
+                );
+                if send.clicked() {
+                    answer = Some(true);
+                }
+                if crate::ui::widgets::action_button(
+                    ui,
+                    p,
+                    "x",
+                    aurora_i18n::tr!("common-cancel"),
+                    crate::ui::widgets::ActionKind::Flat,
+                    size,
+                )
+                .clicked()
+                {
+                    answer = Some(false);
+                }
+            });
+        });
+        // (over the quick view, drawn before it)
+        ctx.move_to_top(modal.backdrop_response.layer_id);
+        ctx.move_to_top(modal.response.layer_id);
+        if answer.is_none() && modal.should_close() {
+            answer = Some(false);
+        }
+        match answer {
+            Some(true) => {
+                self.snapshots.reel.mail = None;
+                self.photo_reel_send(id, Destination::Email, window);
+            }
+            Some(false) => self.snapshots.reel.mail = None,
+            None => {}
         }
     }
 
@@ -507,6 +632,8 @@ impl App {
         let photos = r.reel.clear();
         r.forget(photos);
         r.sending = None;
+        r.pending = None;
+        r.mail = None;
         r.holding = None;
         r.loading.clear();
         // (dropped: its folder is deleted)

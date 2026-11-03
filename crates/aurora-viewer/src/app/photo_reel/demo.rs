@@ -1,9 +1,10 @@
-//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:moved]: the reel filled with
+//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:mail][:post][:moved]: the reel filled with
 //! `n` real photos of the plaza, saved to a folder of the cache (never the
 //! Pictures folder), the focal length changed between them so that they
 //! differ. `quick` then opens the quick view on the newest, `delete` asks
-//! to delete it, `send` sends it again to the inventory (held, the
-//! viewfinder's drawer opened on its price). `moved` puts the tray at the middle
+//! to delete it, `send` sends it again to the inventory (its price asked over
+//! the quick view), `mail` opens the e-mail's form over it, `post` posts it to
+//! the demo's web profile. `moved` puts the tray at the middle
 //! of the screen: the photos fly to it there. From AURORA_DEMO_SNAPSHOT_FRAME
 //! (700 by default); the photo mode's look follows AURORA_DEMO_SNAPSHOT.
 
@@ -22,6 +23,8 @@ pub(in crate::app) struct Demo {
     quick: bool,
     delete: bool,
     send: bool,
+    mail: bool,
+    post: bool,
     /// The tray moved to the middle of the screen, the flights following it.
     moved: bool,
     start: u64,
@@ -45,9 +48,11 @@ impl Demo {
             .unwrap_or(700);
         Some(Demo {
             count,
-            quick: words.iter().any(|w| matches!(*w, "quick" | "delete" | "send")),
+            quick: words.iter().any(|w| matches!(*w, "quick" | "delete" | "send" | "mail" | "post")),
             delete: words.contains(&"delete"),
             send: words.contains(&"send"),
+            mail: words.contains(&"mail"),
+            post: words.contains(&"post"),
             moved: words.contains(&"moved"),
             start,
             ..Demo::default()
@@ -98,7 +103,7 @@ impl App {
         }
         // the photos all saved: the view given back, then the quick view
         d.done = true;
-        let (quick, delete, send, fov) = (d.quick, d.delete, d.send, d.fov.take());
+        let (quick, delete, send, mail, post, fov) = (d.quick, d.delete, d.send, d.mail, d.post, d.fov.take());
         if let Some(fov) = fov {
             self.settings.camera.fov = fov;
         }
@@ -117,6 +122,14 @@ impl App {
         if send {
             self.photo_reel_action(ReelAction::Send(newest, Destination::Inventory), renderer);
             log::info!("photo reel demo: sent again to the inventory");
+        }
+        if mail {
+            self.photo_reel_action(ReelAction::Send(newest, Destination::Email), renderer);
+            log::info!("photo reel demo: e-mail form opened");
+        }
+        if post {
+            self.photo_reel_action(ReelAction::Send(newest, Destination::Profile), renderer);
+            log::info!("photo reel demo: posted again to the profile");
         }
     }
 }

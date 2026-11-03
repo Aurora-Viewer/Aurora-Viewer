@@ -345,6 +345,9 @@ pub struct QuickView {
     /// The last step: when, and from which side the photo comes in (-1:
     /// from the left).
     slide: Option<(f64, f32)>,
+    /// A dialog of the app over it (the price, the e-mail): the keys and
+    /// the clicks outside are the dialog's. Set before each `show`.
+    pub blocked: bool,
 }
 
 /// How long a photo takes to slide in.
@@ -400,7 +403,7 @@ impl QuickView {
 
         // the keys are the quick view's while it shows (the viewfinder's
         // and the camera's wait); not under the confirmation
-        if self.confirm.is_none() {
+        if self.confirm.is_none() && !self.blocked {
             let (older, newer, close, delete, wheel) = ctx.input_mut(|i| {
                 let m = egui::Modifiers::NONE;
                 (
@@ -569,7 +572,7 @@ impl QuickView {
             over_bars |= area.response.hovered();
         }
 
-        if back.inner.clicked() && !on_photo && !over_bars && self.confirm.is_none() {
+        if back.inner.clicked() && !on_photo && !over_bars && self.confirm.is_none() && !self.blocked {
             self.close();
             out.push(ReelAction::Close);
             return;

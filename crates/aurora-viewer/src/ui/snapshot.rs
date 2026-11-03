@@ -433,7 +433,7 @@ impl SnapshotUi {
     /// quality (SnapshotQuality, shared with the disk's JPEG). An empty
     /// subject or message is sent with the default shown in the field
     /// (PromptMissingSubjMsg's choice, without the question).
-    fn postcard_form(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, mail: &EmailView) {
+    pub(crate) fn postcard_form(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, mail: &EmailView) {
         if !mail.available {
             ui.label(RichText::new(aurora_i18n::tr!("photo-email-unavailable")).color(p.muted));
         }
@@ -792,6 +792,9 @@ impl SnapshotUi {
                     }
                 });
             });
+            // (above the reel's quick view, which raises its layers every frame)
+            ctx.move_to_top(response.backdrop_response.layer_id);
+            ctx.move_to_top(response.response.layer_id);
             if answer.is_none() && response.should_close() {
                 answer = Some(false);
             }
@@ -807,6 +810,8 @@ impl SnapshotUi {
                     close = true;
                 }
             });
+            ctx.move_to_top(response.backdrop_response.layer_id);
+            ctx.move_to_top(response.response.layer_id);
             if close || response.should_close() {
                 out.push(Action::CloseAfford);
             }
