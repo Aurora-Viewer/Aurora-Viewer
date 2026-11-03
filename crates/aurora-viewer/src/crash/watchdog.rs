@@ -221,9 +221,29 @@ fn save_freeze(dir: &Path, main: Option<&super::native::Thread>, seconds: u64) {
 
 /// The render thread kept a frame in the GPU (the window still answers,
 /// `aurora_render::Renderer::stalled_for`): its stack in `gpu-stall.txt`.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(windows)]
 pub fn save_gpu_stall(dir: &Path, seconds: u64) {
     save_stacks(dir, "gpu-stall", &format!("GPU stall: no frame for {seconds} s"), None);
+}
+
+/// On Linux the render thread's stack is asked for by a signal, which a
+/// thread held in the driver may take up to half a second to refuse: the
+/// header is written at once (all the next start's safe graphics offer
+/// needs), the stack by a thread of its own, the main thread going on.
+/// Kept only while the stall is (`crash::gpu_answered` removes the file).
+#[cfg(target_os = "linux")]
+pub fn save_gpu_stall(dir: &Path, seconds: u64) {
+    let header = format!("GPU stall: no frame for {seconds} s");
+    let pending = dir.join("gpu-stall.pending");
+    if std::fs::write(&pending, format!("{header}\n")).is_err() || std::fs::rename(&pending, dir.join("gpu-stall.txt")).is_err() {
+        return;
+    }
+    let dir = dir.to_owned();
+    let _ = std::thread::Builder::new().name("aurora-crash-stall".into()).spawn(move || {
+        if dir.join("gpu-stall.txt").exists() {
+            save_stacks(&dir, "gpu-stall", &header, None);
+        }
+    });
 }
 
 /// Elsewhere no other thread's stack can be read: the header alone, which

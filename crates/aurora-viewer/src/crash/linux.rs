@@ -508,7 +508,7 @@ fn build_id(mut notes: &[u8]) -> Option<&[u8]> {
 }
 
 /// Another thread's stack, for a frozen window or a GPU stall: the thread
-/// is sent [`snapshot_signal`] (tgkill), whose handler unwinds its own
+/// is sent [`snapshot::signal`] (tgkill), whose handler unwinds its own
 /// stack into the fixed array below and says so; the asking thread waits
 /// for it, then writes the modules itself. A thread held in the kernel
 /// (a driver's call that does not return) does not run the handler: no
@@ -519,16 +519,22 @@ mod snapshot {
     use super::{FRAMES, capture};
     use std::ffi::{c_int, c_void};
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
-    /// The thread asked, 0 when none.
-    pub(super) static ASKED: AtomicI32 = AtomicI32::new(0);
+    /// The request: its number in the high half, the thread asked in the
+    /// low half; 0 when none. [`CLAIMED`] is set by the handler that took
+    /// it, before it writes [`FRAMES_OUT`]: an answer that comes after its
+    /// request gave up finds another value and writes nothing.
+    pub(super) static ASKED: AtomicU64 = AtomicU64::new(0);
+    pub(super) const CLAIMED: u64 = 1 << 63;
     pub(super) static FRAMES_OUT: [AtomicUsize; FRAMES] = [const { AtomicUsize::new(0) }; FRAMES];
     /// The frame count plus one once written, 0 before.
     pub(super) static WRITTEN: AtomicUsize = AtomicUsize::new(0);
-    /// One request at a time (the watchdog and the GPU stall notice).
-    pub(super) static ONE: Mutex<()> = Mutex::new(());
+    /// The handler is ours (`install_snapshot`).
+    pub(super) static OWNED: AtomicBool = AtomicBool::new(false);
+    /// One request at a time (the watchdog and the GPU stall).
+    static ONE: Mutex<u64> = Mutex::new(0);
     /// How long a thread has to answer.
     const ANSWER: Duration = Duration::from_millis(500);
 
@@ -539,13 +545,19 @@ mod snapshot {
     }
 
     pub(super) extern "C" fn on_snapshot(_signal: c_int, _info: *mut libc::siginfo_t, context: *mut c_void) {
+        let asked = ASKED.load(Ordering::Acquire);
         // SAFETY: gettid has no argument and is async-signal-safe.
-        let me = unsafe { libc::gettid() };
-        if ASKED.load(Ordering::Acquire) != me {
+        if asked == 0 || asked & CLAIMED != 0 || asked as u32 as i32 != unsafe { libc::gettid() } {
             return;
         }
         let mut frames = [0usize; FRAMES];
         let count = capture(&mut frames);
+        if ASKED
+            .compare_exchange(asked, asked | CLAIMED, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
         // SAFETY: the kernel's ucontext for this SA_SIGINFO handler.
         let (_, _, pc) = unsafe { super::fault(std::ptr::null(), context) };
         // The handler's frames and the signal trampoline come first: the
@@ -559,17 +571,38 @@ mod snapshot {
 
     /// The thread's frames, if it answered in time.
     pub fn take(tid: i32) -> Option<Vec<usize>> {
-        let _one = ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !OWNED.load(Ordering::Acquire) || tid <= 0 {
+            return None;
+        }
+        let mut number = ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *number = (*number + 1) & 0x7FFF_FFFF;
+        let asked = (*number << 32) | u64::from(tid as u32);
         WRITTEN.store(0, Ordering::Relaxed);
-        ASKED.store(tid, Ordering::Release);
+        ASKED.store(asked, Ordering::Release);
         // SAFETY: a thread of this process, sent a signal whose handler
         // was installed at start.
         let sent = unsafe { libc::syscall(libc::SYS_tgkill, libc::getpid(), tid, signal()) } == 0;
+        if !sent {
+            ASKED.store(0, Ordering::Release);
+            return None;
+        }
         let deadline = Instant::now() + ANSWER;
-        let mut count = 0;
-        while sent && Instant::now() < deadline {
+        let mut count;
+        loop {
             count = WRITTEN.load(Ordering::Acquire);
             if count != 0 {
+                break;
+            }
+            if Instant::now() >= deadline {
+                // Withdrawn unless its handler has just claimed it, in
+                // which case the frames are a few stores away.
+                if ASKED.compare_exchange(asked, 0, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                    return None;
+                }
+                while count == 0 {
+                    std::hint::spin_loop();
+                    count = WRITTEN.load(Ordering::Acquire);
+                }
                 break;
             }
             std::thread::sleep(Duration::from_millis(1));
@@ -595,6 +628,7 @@ fn install_snapshot() -> anyhow::Result<()> {
             libc::sigaction(signal, std::ptr::null(), &mut old) == 0,
             "cannot read signal {signal}"
         );
+        // Ours already (a second install), or another's: then no stacks.
         if old.sa_sigaction != libc::SIG_DFL {
             return Ok(());
         }
@@ -607,6 +641,7 @@ fn install_snapshot() -> anyhow::Result<()> {
             "cannot handle signal {signal}"
         );
     }
+    snapshot::OWNED.store(true, std::sync::atomic::Ordering::Release);
     Ok(())
 }
 
