@@ -1252,6 +1252,96 @@ pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, 
     answer
 }
 
+/// Before a Hypergrid teleport that leaves worn items behind (`world::suitcase`):
+/// the grid it goes to and what will be missing there. Some(true) teleports
+/// anyway, Some(false) cancels; `dont_ask` is the "Do not show again" box,
+/// which the caller saves once the teleport is accepted.
+pub fn suitcase_confirm(
+    ctx: &egui::Context,
+    p: &Palette,
+    grid: &str,
+    items: &[crate::world::suitcase::LeftBehind],
+    dont_ask: &mut bool,
+) -> Option<bool> {
+    use egui::RichText;
+    let mut answer = None;
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("hypergrid_suitcase_confirm")).show(ctx, |ui| {
+        ui.set_width(400.0);
+        ui.horizontal(|ui| {
+            super::widgets::glyph(ui, "alert-triangle-filled", p.amber, 20.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-hypergrid-suitcase-title"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+        });
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(aurora_i18n::tr!(
+                    "ui-hypergrid-suitcase-text",
+                    count = items.len() as i64,
+                    grid = grid.to_owned()
+                ))
+                .size(12.5)
+                .color(p.muted),
+            )
+            .wrap(),
+        );
+        ui.add_space(8.0);
+        // the items as the inventory shows them, in a card of their own
+        super::widgets::surface(ui, p, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(176.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    for item in items {
+                        ui.horizontal(|ui| {
+                            let icon = super::inventory::item_icon(item.asset_type, item.inv_type, item.flags);
+                            let tint = super::inventory::item_icon_color(item.asset_type, item.inv_type, p);
+                            super::widgets::glyph(ui, icon, tint, 16.0);
+                            ui.add(egui::Label::new(RichText::new(&item.name).size(12.5).color(p.ink)).truncate());
+                        });
+                    }
+                });
+        });
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(aurora_i18n::tr!("ui-hypergrid-suitcase-hint"))
+                    .size(11.5)
+                    .color(p.muted),
+            )
+            .wrap(),
+        );
+        ui.add_space(8.0);
+        super::widgets::checkbox(
+            ui,
+            p,
+            dont_ask,
+            RichText::new(aurora_i18n::tr!("ui-context-do-not-show-again"))
+                .size(12.5)
+                .color(p.muted),
+        );
+        ui.add_space(10.0);
+        // the action, then Cancel (the default), like the other confirmations
+        ui.horizontal(|ui| {
+            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-hypergrid-suitcase-go")).clicked() {
+                answer = Some(true);
+            }
+            if super::widgets::default_button(super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel"))).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    answer
+}
+
 /// Warning before opening a web link outside the trusted domains (phishing,
 /// fake login pages...). Some(true) opens it, Some(false) cancels;
 /// `dont_warn` is the "Do not warn me again" box. A dangerous link

@@ -814,7 +814,9 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
-            CtxAction::TeleportToPlace(region, pos) => self.teleport_to_location(region, pos),
+            CtxAction::TeleportToPlace(region, pos) => {
+                self.teleport_to_location(region, pos);
+            }
             CtxAction::AppLink(link) => self.run_app_link(link),
             CtxAction::OpenUrl(url) => {
                 use crate::link_trust::Trust;
@@ -841,7 +843,9 @@ impl App {
                     }
                 }
             }
-            CtxAction::TeleportToPlaceConfirmed(region, pos) => self.teleport_to_location(region, pos),
+            CtxAction::TeleportToPlaceConfirmed(region, pos) => {
+                self.teleport_to_location(region, pos);
+            }
             CtxAction::GrantRights { friend, rights } => {
                 let cmd = NetCommand::GrantUserRights { friend, rights };
                 self.world.profile_command(&cmd);

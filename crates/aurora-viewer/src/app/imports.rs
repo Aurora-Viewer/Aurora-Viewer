@@ -1105,6 +1105,34 @@ impl App {
         self.imports.apply_appearance_targets(&mut self.world.objects);
     }
 
+    /// After a GPU recovery (gpu_recovery.rs): the textures of the imports
+    /// shown in-world were the lost renderer's slots, and the uploads under
+    /// way were staged in its pool. Those slots are forgotten, never freed
+    /// (the new renderer has its own under the same numbers), and every
+    /// import shown is published again on the new one.
+    pub(super) fn republish_local_imports(&mut self) {
+        for prepared in std::mem::take(&mut self.imports.local_uploads) {
+            self.scene.jobs.discard(prepared);
+        }
+        self.imports.retired_local_slots.clear();
+        let shown: Vec<uuid::Uuid> = self
+            .imports
+            .entries
+            .iter_mut()
+            .filter(|e| e.local_published || e.local_pending)
+            .map(|e| {
+                e.local_slots.clear();
+                e.local_published = false;
+                e.local_pending = false;
+                e.id
+            })
+            .collect();
+        let ctx = self.egui_ctx.clone();
+        for id in shown {
+            self.publish_local_import(id, &ctx);
+        }
+    }
+
     fn publish_local_import(&mut self, id: uuid::Uuid, ctx: &egui::Context) {
         if self
             .imports

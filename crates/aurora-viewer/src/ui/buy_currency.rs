@@ -115,7 +115,7 @@ pub fn helper_host(page: &str) -> String {
 }
 
 fn money(amount: i64) -> String {
-    format!("{} L$", aurora_i18n::integer(amount))
+    format!("{} {}", aurora_i18n::integer(amount), aurora_i18n::currency())
 }
 
 /// The amount as the field shows it: nothing for zero (updateUI).
@@ -396,7 +396,7 @@ impl BuyCurrencyUi {
                             .char_limit(10)
                             .align(egui::Align2::RIGHT_TOP),
                     );
-                    ui.label(RichText::new("L$").color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::currency()).color(p.muted));
                     if field.changed() {
                         self.typed(Instant::now());
                     }

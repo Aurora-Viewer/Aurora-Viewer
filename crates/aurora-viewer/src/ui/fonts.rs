@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub mod fallback;
+pub mod preview;
 
 pub const INTER: &str = "Inter";
 pub const NOTO: &str = "Noto Sans";

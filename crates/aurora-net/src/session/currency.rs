@@ -24,6 +24,11 @@ impl Session<'_> {
     /// LLCurrencyUIManager::Impl::startCurrencyBuy.
     pub(super) fn buy_currency(&mut self, helper: String, quote: CurrencyQuote, password: Password) {
         log::info!("buyCurrency: L$ {}", quote.amount);
+        if let Some(refused) = currency::password_refused(&helper, &password) {
+            log::warn!("buyCurrency: the helper is not https, the password is not sent");
+            let _ = self.sh.events.send(NetEvent::CurrencyBought(Err(refused)));
+            return;
+        }
         let params = currency::buy_params(self.login.agent_id, self.login.secure_session_id, &quote, &password);
         let http = self.sh.http.clone();
         let events = self.sh.events.clone();
@@ -59,6 +64,11 @@ impl Session<'_> {
     /// LLFloaterBuyLandUI::runWebSitePrep.
     pub(super) fn land_tool_buy(&mut self, helper: String, request: LandToolBuy) {
         log::info!("buyLandPrep: {} m², L$ {}", request.billable_area, request.currency_buy);
+        if let Some(refused) = currency::password_refused(&helper, &request.password) {
+            log::warn!("buyLandPrep: the helper is not https, the password is not sent");
+            let _ = self.sh.events.send(NetEvent::LandToolPrepared(Err(refused)));
+            return;
+        }
         let params = land_tool::buy_params(self.login.agent_id, self.login.secure_session_id, &request);
         let http = self.sh.http.clone();
         let events = self.sh.events.clone();
