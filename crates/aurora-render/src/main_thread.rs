@@ -257,6 +257,9 @@ pub struct Renderer {
     lost: DeviceLost,
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
     demo_lost: Option<u64>,
+    /// AURORA_DEMO_GPU_HANG: the frame a real GPU hang is submitted at, and
+    /// the queue it goes on.
+    demo_hang: Option<(u64, wgpu::Queue)>,
 }
 
 impl Renderer {
@@ -493,6 +496,13 @@ impl Renderer {
         // before the first one is made
         crate::pipeline_cache::open(&device, &ainfo);
         crate::start_progress::enter(crate::start_progress::Phase::Pipelines);
+        // AURORA_DEMO_GPU_HANG: a real hang needs the queue on this thread
+        let demo_hang = crate::device_lost::demo_frame(
+            std::env::var_os("AURORA_DEMO").is_some(),
+            std::env::var("AURORA_DEMO_GPU_HANG").ok().as_deref(),
+        )
+        .filter(|_| !crate::device_lost::DEMO_HANG_TAKEN.swap(true, std::sync::atomic::Ordering::Relaxed))
+        .map(|frame| (frame, queue.clone()));
         let backend = Backend::new(BackendInit {
             vr: vr.clone(),
             gpu_frames: gpu_frames.clone(),
@@ -606,6 +616,7 @@ impl Renderer {
                 std::env::var("AURORA_DEMO_GPU_LOST").ok().as_deref(),
             )
             .filter(|_| !crate::device_lost::DEMO_LOSS_TAKEN.swap(true, std::sync::atomic::Ordering::Relaxed)),
+            demo_hang,
         })
     }
 
@@ -1166,6 +1177,11 @@ impl Renderer {
     ) -> RenderStats {
         let t0 = Instant::now();
         let mut ui = ui;
+        if let Some((frame, queue)) = &self.demo_hang
+            && *frame == self.frames
+        {
+            crate::device_lost::demo_hang(&self.device, queue);
+        }
         if self.demo_lost == Some(self.frames) && !self.lost.get() {
             self.lost.set();
             log::error!("GPU device lost (Unknown): AURORA_DEMO_GPU_LOST at frame {}", self.frames);

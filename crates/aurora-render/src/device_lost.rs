@@ -94,8 +94,78 @@ impl DeviceLost {
     }
 }
 
-/// The demo's loss was given to a renderer already.
+/// The demo's loss, and its hang, were given to a renderer already.
 pub(crate) static DEMO_LOSS_TAKEN: AtomicBool = AtomicBool::new(false);
+pub(crate) static DEMO_HANG_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// `AURORA_DEMO_GPU_HANG=<frame>`: a real GPU hang, for the recovery's test
+/// on a real driver reset. One compute dispatch whose loop runs about 12 s
+/// on a recent card: the driver's watchdog resets the GPU first (a Windows
+/// TDR after 2 s, amdgpu's lockup timeout on Linux), as in the crash
+/// reports; the loop ends by itself where no watchdog does. Other programs
+/// using the GPU may lose their work in flight with it.
+pub(crate) fn demo_hang(device: &wgpu::Device, queue: &wgpu::Queue) {
+    const SHADER: &str = "
+        @group(0) @binding(0) var<storage, read_write> out: array<f32>;
+        @group(0) @binding(1) var<uniform> n: vec4<u32>;
+        @compute @workgroup_size(64)
+        fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+            var x = f32(id.x) * 0.001;
+            for (var i = 0u; i < n.x; i++) { x = fract(sin(x) * 43758.5453 + 0.1); }
+            out[id.x] = x;
+        }";
+    const GROUPS: u32 = 4096;
+    // ~6e11 loop steps a second on an RX 9070 XT: about 12 s
+    const STEPS: u32 = 30_000_000;
+    log::warn!("AURORA_DEMO_GPU_HANG: submitting a GPU hang ({STEPS} steps in each of {} threads)", GROUPS * 64);
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("demo hang"),
+        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("demo hang"),
+        layout: None,
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let out = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("demo hang"),
+        size: u64::from(GROUPS) * 64 * 4,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    let steps = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("demo hang steps"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&steps, 0, &[STEPS.to_le_bytes(), [0; 4], [0; 4], [0; 4]].concat());
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("demo hang"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: out.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: steps.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(GROUPS, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+}
 
 /// `AURORA_DEMO_GPU_LOST=<frame>`, with `AURORA_DEMO` only: the device is
 /// taken as lost at that frame, as the device-lost callback would after a
