@@ -1440,6 +1440,8 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
 | `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
+| `AURORA_DEMO_OBJECT_SNAP=1\|on` | Boxes to snap together with "Snap to objects" |
+| `AURORA_DEMO_MOVE_HOLOGRAM=moving\|start` | The hologram of a move, for a build script |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
@@ -1488,6 +1490,36 @@ example `AURORA_DEMO_BUILD=move,object:151` with `150`. Compare the arrows,
 plane squares, rotation rings (`rotate`) and stretch handles (`stretch`)
 with a 100 % capture: everything grows by the same factor, strokes
 included, and a handle can be grabbed anywhere on its larger shape.
+
+`AURORA_DEMO_OBJECT_SNAP=1` adds six boxes 6 m along the start view (use
+`AURORA_DEMO_POS="80,100"` for open land): a slab, a blue cube floating
+0.3 m over it (`object:87701`), an orange cube 0.8 m to its +X
+(`object:87702`),
+a green box turned 30°, a purple plank tilted 20° (`object:87704`) and a 2 m
+pillar (`object:87705`); to the left, a hollow room with a yellow cube
+inside its box (`object:87707`), and a cylinder. Choose Snap › Objects in
+the construction settings, select the blue cube and drag its arrows or plane
+squares near the others: within 8 pixels it jumps flush (purple outline on
+both faces, a corner square on the plank's slope, amber for centres), and it
+stops at any face it would enter, however far the cursor goes past (a plane
+square slides along that face). A shaped prim or a mesh counts as its
+visible surface: the yellow cube stops at the room's inner walls, never at
+its outer box. `on` also chooses Objects for a build script, for example
+`AURORA_DEMO_BUILD=move,object:87701,z,0,40`.
+
+`AURORA_DEMO_BUILD=place,object:87701,87702` chooses Snap › Objects (the
+button and P go with it) and turns "Place on surface" on with the blue cube
+selected and holds the cursor over the orange cube's top:
+a pad in the accent there and a hologram of the blue cube resting on it.
+`,click` clicks, and the blue cube sits on the orange one; `,rotate:<side>`
+chooses Auto rotate with that side
+(`place,object:87704,87705,rotate:bottom`: the plank's bottom goes flat
+against the pillar's side, the face in front of the cursor).
+
+`AURORA_DEMO_MOVE_HOLOGRAM=moving|start` chooses Preferences › Aurora ›
+Behavior › "Hologram while moving" for a build script: with
+`AURORA_DEMO_BUILD=move,object:87701,x,-60,0`, `moving` draws the dragged
+cube as a hologram, `start` leaves a hologram of it where the move began.
 
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`

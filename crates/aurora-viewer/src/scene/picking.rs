@@ -689,6 +689,28 @@ impl Scene {
         Some((self.drawn_model(g, o, world.visual_scale_at(idx, now), Some(key), pos, rot), geom))
     }
 
+    /// The world triangles object `idx` shows: its drawn faces, without those
+    /// at alpha 0 or under the transparent texture (`face_undrawn`). For the
+    /// build tools' snap to objects; None while it loads, and for a rigged
+    /// mesh, as `drawn_geometry`.
+    pub fn visible_triangles(&self, world: &World, idx: usize, now: Instant) -> Option<Vec<[Vec3; 3]>> {
+        let g = self.gpu.get(idx)?;
+        let (model, geom) = self.drawn_geometry(world, idx, now)?;
+        let mut out = Vec::new();
+        for (face, f) in geom.pick_faces.iter().enumerate() {
+            let Some(f) = f.as_ref().filter(|_| !Self::face_undrawn(g, face)) else {
+                continue;
+            };
+            for t in f.indices.as_chunks::<3>().0 {
+                let v = |k: u16| f.positions.get(k as usize).map(|p| model.transform_point3(Vec3::from(*p)));
+                if let (Some(a), Some(b), Some(c)) = (v(t[0]), v(t[1]), v(t[2])) {
+                    out.push([a, b, c]);
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// What undoes the bind shape of the geometry `g` draws: a skinned mesh
     /// drawn without a skeleton (`sync_plan`'s placement).
     fn unbind_of(&self, g: &ObjGpu) -> Option<Mat4> {
@@ -1655,7 +1677,7 @@ impl Scene {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use super::*;
     /// LimitSelectDistance on, at the Legacy Viewer's default distance.
     const LIMIT: Option<f32> = Some(crate::build::MAX_SELECT_DISTANCE);
@@ -1996,7 +2018,7 @@ pub(super) mod tests {
         assert_eq!(scene.selection_pick(&world, Some(side), None, false, false, 100.0).1, Some(front));
     }
 
-    pub(in crate::scene) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
+    pub(crate) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
         for ev in crate::demo::events().into_iter().chain(crate::demo::action_events()) {

@@ -9519,6 +9519,26 @@ impl App {
             };
             self.scene.creation_preview.update(&mut gfx.renderer, preview);
             self.scene.creation_preview.append(&mut self.scene.lists);
+            // the build tools' holograms: where Place on surface would put
+            // the selection, or a move's (scene/build_hologram.rs)
+            {
+                use crate::build::MoveHologram;
+                use crate::scene::build_hologram::Ghost;
+                let landing = self.build.place.active.then_some(self.build.place.preview).flatten();
+                let moving = self.build.move_hologram(&self.world, &self.settings.build);
+                let now = moving.as_ref().map(|(_, m)| crate::build::Bounds {
+                    center: m.start.center + m.delta,
+                    ..m.start
+                });
+                let (copies, in_place) = match (&landing, &moving, &now) {
+                    (Some(l), _, _) => (Some((self.build.place.moving.as_slice(), Ghost::landing(l))), None),
+                    (None, Some((MoveHologram::Start, m)), _) => (Some((m.prims.as_slice(), Ghost::start(&m.start, m.delta))), None),
+                    (None, Some((_, m)), Some(now)) => (None, Some((m.prims.as_slice(), now))),
+                    _ => (None, None),
+                };
+                self.scene.update_build_hologram(&mut gfx.renderer, copies, in_place);
+            }
+            self.scene.build_hologram.append(&mut self.scene.lists);
             let physics = crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build);
             self.scene
                 .physics_shapes
@@ -12011,6 +12031,7 @@ impl App {
                         self.build.edit_mode = m;
                         crate::build::demo::apply_tab(&mut self.build);
                         crate::build::demo::apply_handle_size(&mut self.settings.build);
+                        crate::build::demo::apply_object_snap(&mut self.settings.build);
                         self.settings.build.land_action = land;
                     }
                     crate::build::demo::Step::Cursor(x, y) => self.cursor_pos = (x, y),
@@ -12242,6 +12263,19 @@ impl App {
                             );
                             self.panels.inventory = false;
                             self.panels.chat = false;
+                        }
+                    }
+                    crate::build::demo::Step::PlaceRotate(side) => {
+                        self.settings.build.place_rotate = true;
+                        self.settings.build.place_side = side;
+                    }
+                    crate::build::demo::Step::Place(on) => {
+                        // its button and P go with the object snap
+                        if on {
+                            self.settings.build.set_snap_mode(crate::build::SnapMode::Objects);
+                        }
+                        if self.build.place.active != on {
+                            self.build.toggle_place(&self.world);
                         }
                     }
                     crate::build::demo::Step::Linked(on) => {
