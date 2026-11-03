@@ -193,6 +193,10 @@ fn font(cx: &mut Cx) {
                     egui::Popup::open_id(ui.ctx(), popup);
                 }
                 system_font_combo(salt, shown).show_ui(ui, |ui| {
+                    if opening {
+                        // each opening starts on the whole list
+                        st.font_filter.clear();
+                    }
                     system_font_search(ui, &mut st.font_filter, opening);
                     let filter = st.font_filter.to_lowercase();
                     let shown: Vec<&fonts::SystemFont> = list
@@ -211,9 +215,15 @@ fn font(cx: &mut Cx) {
                     // the size a row's button gives its text
                     let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
                     let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
-                    egui::ScrollArea::vertical()
-                        .max_height(FONT_LIST_H)
-                        .show_rows(ui, row_h, shown.len(), |ui, rows| {
+                    // the height of the whole list, whatever the filter: egui lays
+                    // a popup out in its last frame's size, so a list the filter
+                    // shrank would not grow back when it is cleared (#2136)
+                    let full = (list.len() as f32 * (row_h + ui.spacing().item_spacing.y)).min(FONT_LIST_H);
+                    egui::ScrollArea::vertical().max_height(full).auto_shrink([true, false]).show_rows(
+                        ui,
+                        row_h,
+                        shown.len(),
+                        |ui, rows| {
                             for i in rows {
                                 let f = shown[i];
                                 let key = format!("system:{}", f.path.display());
@@ -261,7 +271,8 @@ fn font(cx: &mut Cx) {
                             if st.demo_font_list == Some(true) {
                                 ui.scroll_with_delta(egui::vec2(0.0, -6.0));
                             }
-                        });
+                        },
+                    );
                     previews.finish(ui.ctx(), &shown);
                 });
                 changed
