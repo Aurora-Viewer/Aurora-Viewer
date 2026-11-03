@@ -215,13 +215,21 @@ impl App {
             self.external.grid_ask = None;
             return;
         }
-        let Some(yes) = ui::context::grid_link_confirm(ctx, p, &ask.login, ask.name.as_deref()) else {
+        let Some(answer) = ui::context::grid_link_confirm(ctx, p, &ask.login, ask.name.as_deref()) else {
             return;
         };
         let Some(ask) = self.external.grid_ask.take() else {
             return;
         };
-        if yes {
+        if answer == ui::context::GridLinkAnswer::Add {
+            // the grid manager, its address typed: Retrieve reads its
+            // get_grid_info, over plain http when no scheme is given
+            log::info!("startup links: unknown grid opened in the grid manager");
+            let address = crate::grids::authority(&ask.login).unwrap_or_default();
+            self.grids_ui.open_new(&address);
+            return;
+        }
+        if answer == ui::context::GridLinkAnswer::Switch {
             log::info!("startup links: grid switched at the resident's request");
             self.settings.custom_login_uri = ask.login;
             self.settings.grid = crate::settings::GridChoice::Custom;

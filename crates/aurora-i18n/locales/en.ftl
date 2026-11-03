@@ -1776,6 +1776,8 @@ ui-login-other-grid = Other grid…
 ui-login-grid-link-title = Change the login grid?
 ui-login-grid-link-text = A link opened from outside Aurora asks to log in to another grid. Your password goes to the grid you log in to: only switch if you trust this one.
 ui-login-grid-link-switch = Switch grid
+ui-login-grid-link-add = Add in the grid manager…
+ui-login-grid-link-add-hint = A grid that only answers over http is not reached from a link: add it once in the grid manager, then open the link again.
 
 grids-manage = Manage grids
 grids-remove-question = Remove { $name } from the grid list?
@@ -1801,6 +1803,7 @@ grids-help = Help
 grids-about = Website
 grids-search = Search URL ([QUERY], [LANGUAGE], [MATURITY])
 grids-profile = Web profile URL
+grids-helper = Currency helper URL (Buy L$)
 grids-fetch = Retrieve grid information
 grids-fetching = Retrieving grid information…
 grids-error-address = Enter a valid HTTP or HTTPS address without credentials.
@@ -10328,6 +10331,8 @@ group-ability-experience-contributor-help = Members in a role with this ability 
 
 ## Buying L$
 currency-title = Buy L$
+currency-region-helper = This region uses its own currency service, on { $host }. A purchase made here is between you and that service, which also receives your session (and your password if it asks for one): only buy if you trust it.
+currency-service = Currency service: { $host }
 currency-menu = Buy L$…
 money-tracker-title = Money tracker
 money-tracker-legacy-title = Money Tracker

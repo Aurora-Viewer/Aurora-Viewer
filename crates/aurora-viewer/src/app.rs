@@ -617,6 +617,12 @@ pub struct App {
     stream_titles: crate::stream_title::StreamTitles,
     stream_title_ui: ui::stream_title::StreamTitleUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
+    /// The login's re-read of the OpenSim grid's get_grid_info: its
+    /// service and currency helper (`refresh_grid_helper`).
+    grid_helper_refresh: Option<crossbeam_channel::Receiver<Result<(String, String), crate::grids::Error>>>,
+    /// The currency helper the agent's region last named, told once per
+    /// change (`notice_region_helper`).
+    region_helper_seen: Option<String>,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
     /// "Money tracker" (Me menu): the L$ received and paid.
@@ -1408,6 +1414,8 @@ impl App {
             stream_titles: Default::default(),
             stream_title_ui: Default::default(),
             buy_currency_ui: Default::default(),
+            grid_helper_refresh: None,
+            region_helper_seen: None,
             pay_ui: Default::default(),
             money_tracker_ui: Default::default(),
             experiences_ui: Default::default(),
@@ -2564,7 +2572,7 @@ impl App {
             .map(|(_, _, place)| place);
         // then a SLURL given from outside (LLStartUp::getStartSLURL)
         let slurl = if let Some(l) = self.login_form.start_slurl.as_ref() {
-            let name = match crate::grids::resolve(&self.settings, &l.target()) {
+            let name = match crate::grids::resolve(&self.settings, None, &l.target()) {
                 Ok(name) => name,
                 Err(error) => {
                     self.login_form.error = Some(error.text().to_owned());
@@ -3365,6 +3373,7 @@ impl App {
             }
             NetEvent::LoggedIn(l) => {
                 self.session_started(l.session_id);
+                self.refresh_grid_helper();
                 self.named_teleport = Default::default();
                 if !self.demo {
                     let root = self.world.inventory.root;
@@ -5670,7 +5679,7 @@ impl App {
     /// Teleport to a position of a region given by name: the current region
     /// directly, others through a map lookup by name.
     fn grid_region(&mut self, region: &str) -> Option<String> {
-        match crate::grids::resolve(&self.settings, region) {
+        match crate::grids::resolve(&self.settings, self.world.opensim_extras(), region) {
             Ok(region) => Some(region),
             Err(error) => {
                 self.world.system_message(error.text());
@@ -7664,13 +7673,9 @@ impl App {
         if !self.demo
             && let Some(l) = &self.world.login
         {
-            // login "map-server-url", else MapServerURL
-            let url = l.raw["map-server-url"].as_str();
-            let url = if url.trim().is_empty() {
-                "https://map.secondlife.com/"
-            } else {
-                url
-            };
+            // the region's map-server-url (a Hypergrid visit shows the
+            // visited grid's tiles), else the login's, else MapServerURL
+            let url = crate::grids::map_server(self.world.opensim_extras(), l.raw["map-server-url"].as_str());
             self.map_tiles.configure(url, self.net.runtime(), self.net.caps_http());
         }
         self.map_tiles.update(&self.egui_ctx);
@@ -13052,14 +13057,17 @@ impl App {
             };
             return Some(crate::world::search::WebHome { url, identified: false });
         }
-        if let Some(grid) = crate::grids::active(&self.settings) {
-            return grid
-                .search_url(
-                    self.search_ui.web_query(self.settings.classic_search),
-                    aurora_i18n::language(),
-                    self.world.agent_access().preferred,
-                )
-                .map(|url| crate::world::search::WebHome { url, identified: false });
+        if self.settings.grid == crate::settings::GridChoice::Custom {
+            let login_search = self.world.login.as_ref().map(|l| l.raw["search"].as_str()).unwrap_or("");
+            return crate::grids::opensim_search_url(
+                &self.settings,
+                self.world.opensim_extras(),
+                login_search,
+                self.search_ui.web_query(self.settings.classic_search),
+                aurora_i18n::language(),
+                self.world.agent_access().preferred,
+            )
+            .map(|url| crate::world::search::WebHome { url, identified: false });
         }
         crate::world::search::web_home(
             self.search_grid(),
@@ -15807,6 +15815,8 @@ impl App {
                 if ui::owned_land::show(&ctx, &p, &mut self.world, &mut self.panels.owned_land) {
                     ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map);
                 }
+                self.poll_grid_helper();
+                self.notice_region_helper();
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
