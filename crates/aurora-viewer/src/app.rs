@@ -1055,7 +1055,6 @@ fn apply_test_overrides(settings: &mut Settings) {
     }
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
-        settings.shadows = v > 0;
     }
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
@@ -3895,32 +3894,6 @@ impl App {
                     match nearest {
                         Some(id) => self.on_ctx_action(ui::context::CtxAction::ZoomAvatar(id)),
                         None => log::warn!("demo camera: no standing resident to zoom on"),
-                    }
-                }
-                Step::ShadowZoom(distance) => {
-                    // Reuse the local neutral-pose diagnostic so idle, breathing,
-                    // gaze and physics cannot change the geometry between captures.
-                    self.scene.neutral_pose_test = Some(true);
-                    if let Some(target) = self.scene.joint_world(&self.world, &self.world.agent_id, "mChest", Instant::now()) {
-                        let eye = target + Vec3::X * distance;
-                        self.camera.set_view(eye, target, &mut self.world.agent, &self.settings.camera);
-                        if spec == "shadow-reference"
-                            && matches!(self.frame_count, 700 | 1000 | 1300)
-                            && let Some(path) = std::env::var_os("AURORA_CAPTURE")
-                            && let Some(graphics) = &self.gfx
-                        {
-                            let size = graphics.window.inner_size();
-                            let path =
-                                std::path::PathBuf::from(path).with_file_name(format!("geometry-reference-{}.json", self.frame_count));
-                            self.scene
-                                .demo_shadow_reference(&self.world, path, eye, target, self.camera.fov_y, [size.width, size.height]);
-                        }
-                        if matches!(self.frame_count, 700 | 720 | 1000 | 1020 | 1300 | 1320) {
-                            log::info!(
-                                "demo shadow zoom: frame {} eye={eye:?} target={target:?} neutral=true",
-                                self.frame_count
-                            );
-                        }
                     }
                 }
                 Step::MoveResident(x, y) => {

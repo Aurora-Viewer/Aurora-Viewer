@@ -281,8 +281,6 @@ struct DemoTight {
 }
 
 struct DemoPhoto {
-    /// Capture and release a held photo, independently of Freeze World.
-    hold: bool,
     frame: u64,
     /// None: only the window.
     save: Option<((u32, u32), snapshot::FileFormat, Option<PathBuf>)>,
@@ -2718,7 +2716,6 @@ LUT_3D_SIZE {n}
                 Some(crate::settings::PhotoWindowStyle::Panel)
             };
             self.snapshots.demo = Some(DemoPhoto {
-                hold: words.contains(&"hold"),
                 frame,
                 save,
                 full_frame: kind.starts_with("full"),
@@ -2850,21 +2847,6 @@ LUT_3D_SIZE {n}
             if self.frame_count == demo.frame {
                 self.snapshots.quiet = false;
                 self.photo_to_profile(renderer);
-            }
-            return;
-        }
-        if demo.hold {
-            if self.frame_count == demo.frame {
-                let size = renderer.size();
-                self.settings.snapshot.resolution = snapshot::Resolution::Custom;
-                self.settings.snapshot.keep_ratio = false;
-                let scale = snapshot::MAX_SIDE as f32 / size.0.max(size.1).max(1) as f32;
-                self.settings.snapshot.custom = [(size.0 as f32 * scale).round() as u32, (size.1 as f32 * scale).round() as u32];
-                self.snapshots.ui.freeze = true;
-                self.photo_action(Action::Freeze(true), renderer);
-            } else if self.frame_count == demo.frame + 120 {
-                self.snapshots.ui.freeze = false;
-                self.photo_action(Action::Freeze(false), renderer);
             }
             return;
         }

@@ -1033,10 +1033,6 @@ when unfocused") is ignored during a screenshot.
   trigger plain G (snap / guide). Releasing a key first pressed without
   AltGr must always release it, even if AltGr was held in the meantime.
 
-- **`AURORA_DEMO_SNAPSHOT=viewfinder-hidden-sharp-frozen-hold`**: with `AURORA_DEMO_CAMERA=shadow-zoom` and `AURORA_DEMO_SNAPSHOT_FRAME=1300`, freeze the world, capture an 8K Freeze Frame at frame 1300, then release Freeze Frame at 1420 while the world stays frozen. Capture at 1200/1360/1500 to compare live/held/live at the same camera and pose. `hold` can also be combined with the other viewfinder words.
-
-- **`AURORA_DEMO_CAMERA=shadow-zoom|shadow-reference`**: freeze the local avatar in a neutral T-pose and aim horizontally at its chest. Camera distances are 2.4 m at frames 300–799, 1.2 m at 800–1099 and 0.6 m from 1100; capture at 700/1000/1300 with `AURORA_DEMO_BARS=hidden`. `shadow-reference` also exports the posed and morphed opaque head/upper/lower body geometry beside `AURORA_CAPTURE` at those frames, with camera and light data. The reference excludes alpha hair, accessories and world occluders. Use a direct contact-mask diagnostic when diagnosing missing shadows: final-colour changes also depend on lighting.
-
 - **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
@@ -9104,7 +9100,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
 | `AURORA_BLEND_SHADOWS=0` | Alpha-blended faces that are not rigged cast no shadow, as before |
-| `AURORA_DEBUG_SHADOWS=1|contact` | Shadow cascades and their shadow, or the contact mask alone |
+| `AURORA_DEBUG_SHADOWS=1\|contact` | Shadow cascades and their shadow, or the contact mask alone |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_FOOT_IK_SCOPE=<mode>` | Offline foot-placement benchmark override (all or visible10) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
@@ -9146,7 +9142,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
-| `AURORA_CONTACT_SOFT=0|1|legacy` | Unfiltered, resolution-aware softening (default), or the former fixed 5 × 5 filter |
+| `AURORA_CONTACT_SOFT=0\|1\|legacy` | Unfiltered, resolution-aware softening (default), or the former fixed 5 × 5 filter |
 | `AURORA_CONTACT_VARIANT=stream`, `bend`, `full-ray`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
@@ -9525,7 +9521,7 @@ What the inventory must show with these scenarios:
   weight rather than being discarded. Support is capped at 64 pixels per
   axis (8.4 KB of workgroup storage, within the portable 16 KB minimum).
   The live and last photo kernels are cached across Freeze Frame/release.
-  Compare fixed `shadow-zoom` captures and actual 8K PNGs, inspecting thin
+  Compare the same camera angle and actual 8K PNGs, inspecting thin
   jewellery/straps and depth silhouettes for halos. This is image-space
   softening; PCSS remains a separate follow-up.
 

@@ -5352,61 +5352,6 @@ impl Scene {
         root + Vec3::Z * height
     }
 
-    /// Offline-only reference mesh: the same shape morphs and palette skin
-    /// transforms used by the GPU, without any shadow algorithm involved.
-    pub fn demo_shadow_reference(&self, world: &World, path: std::path::PathBuf, eye: Vec3, target: Vec3, fov: f32, size: [u32; 2]) {
-        let Some(index) = world.objects.index_of_uuid(&world.agent_id) else {
-            return;
-        };
-        let Some((position, rotation, _)) = Self::object_transform(world, index, Instant::now(), 0) else {
-            return;
-        };
-        let Some(pose) = world.avatar_poses.get(&world.agent_id).cloned() else {
-            return;
-        };
-        let library = self.avatar_lib.clone();
-        let visual = world.visual_params(&world.agent_id).unwrap_or(&[]).to_vec();
-        let light = crate::demo::sun_override().unwrap_or(Vec3::Z);
-        let job = std::thread::Builder::new().name("shadow-reference".into()).spawn(move || {
-            let mut weights = library.shape_params.effective_weights(&visual);
-            weights.insert(default_motions::RELAXED_HANDS, 1.0);
-            let model = Mat4::from_rotation_translation(rotation, position) * Mat4::from_translation(-library.pelvis);
-            let mut vertices = Vec::new();
-            let mut indices = Vec::new();
-            let mut parts = Vec::new();
-            // Opaque system body only. Hair/eyelash alpha and external casters
-            // are deliberately outside this self-occlusion reference.
-            for part in library.parts.iter().filter(|part| matches!(part.name, "upper" | "lower" | "head")) {
-                let morphed = morph::part_weights(part, &weights).map(|(w, _)| morph::morphed(part, &w).0);
-                let source = morphed.as_ref().map_or(part.vertices.as_slice(), |face| face.vertices.as_slice());
-                let base = vertices.len() as u32;
-                let first = indices.len();
-                for (vertex, skin) in source.iter().zip(&part.skin) {
-                    let point = Vec3::from_array(vertex.pos);
-                    let total: f32 = skin.weights.iter().map(|w| *w as f32).sum();
-                    let mut skinned = Vec3::ZERO;
-                    for (&joint, &weight) in skin.joints.iter().zip(&skin.weights) {
-                        if weight == 0 { continue; }
-                        let matrix = pose.get(joint as usize).copied().unwrap_or(Mat4::IDENTITY);
-                        skinned += matrix.transform_point3(point) * (weight as f32 / total.max(1.0));
-                    }
-                    vertices.push(model.transform_point3(if total > 0.0 { skinned } else { point }).to_array());
-                }
-                indices.extend(part.indices.iter().map(|i| base + u32::from(*i)));
-                parts.push(serde_json::json!({"name":part.name,"first_index":first,"index_count":part.indices.len()}));
-            }
-            let data = serde_json::json!({"eye":eye.to_array(),"target":target.to_array(),"fov_y":fov,"size":size,"light":light.to_array(),"vertices":vertices,"indices":indices,"parts":parts});
-            let result = serde_json::to_vec(&data).map_err(std::io::Error::other).and_then(|bytes| std::fs::write(&path,bytes));
-            match result {
-                Ok(()) => log::info!("demo shadow reference: {} vertices, {} triangles exported", vertices.len(), indices.len()/3),
-                Err(error) => log::warn!("demo shadow reference export failed: {error}"),
-            }
-        });
-        if let Err(error) = job {
-            log::warn!("demo shadow reference worker failed: {error}");
-        }
-    }
-
     /// Last rendered shape/pose, including mesh joint overrides, for framing.
     pub fn joint_world(&self, world: &World, id: &Uuid, name: &str, now: Instant) -> Option<Vec3> {
         let index = world.objects.index_of_uuid(id)?;
