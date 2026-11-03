@@ -1886,6 +1886,19 @@ fn font_search(screen_h: f32) {
     }
     assert_eq!(settings.font, path("Beta"), "Enter picks the first font found");
     assert!(!egui::Popup::is_any_open(&ctx));
+    // nothing found: Enter does nothing, and the field keeps the keyboard
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in [vec![egui::Event::Text("zz".into())], vec![], vec![key(egui::Key::Enter)], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(settings.font, path("Beta"));
+    assert!(egui::Popup::is_any_open(&ctx), "the list stays open");
+    for events in [vec![egui::Event::Text("x".into())], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(state.font_filter, "zzx", "typing still filters");
 }
 
 #[test]

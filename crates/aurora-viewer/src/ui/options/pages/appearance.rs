@@ -446,7 +446,8 @@ struct FontKeys {
 impl FontKeys {
     /// Down, Up and Enter, taken before the search field sees them, while
     /// it has the keyboard: a one-line field has no use for the arrows, and
-    /// Enter would only drop its focus. Enter only with a row selected.
+    /// Enter would only drop its focus. Enter counts only with a row
+    /// selected.
     fn take(&self, ui: &egui::Ui) -> (bool, bool, bool) {
         if !self.search.is_some_and(|id| ui.memory(|m| m.has_focus(id))) {
             return (false, false, false);
@@ -455,7 +456,9 @@ impl FontKeys {
             let none = egui::Modifiers::NONE;
             let down = i.consume_key(none, egui::Key::ArrowDown);
             let up = i.consume_key(none, egui::Key::ArrowUp);
-            let enter = self.selected.is_some() && i.consume_key(none, egui::Key::Enter);
+            // with nothing found, Enter does nothing and the field keeps
+            // the keyboard
+            let enter = i.consume_key(none, egui::Key::Enter) && self.selected.is_some();
             (down, up, enter)
         })
     }
