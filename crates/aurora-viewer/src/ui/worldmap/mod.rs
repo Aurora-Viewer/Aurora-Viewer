@@ -112,6 +112,9 @@ impl Default for WorldMapUi {
 pub enum WorldMapAction {
     TeleportHome,
     TeleportLandmark(Uuid),
+    /// A place of the history, by its global position: on another OpenSim
+    /// grid the app goes through its gatekeeper.
+    TeleportHistory(glam::DVec3),
     /// The place card's "Info": the profile of the place.
     OpenPlace(Source),
 }

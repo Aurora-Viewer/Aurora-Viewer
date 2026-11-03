@@ -636,6 +636,7 @@ pub fn session() -> Vec<TpEntry> {
         position,
         parcel: parcel.to_owned(),
         at: now - minutes_ago * 60,
+        grid: None,
     };
     vec![
         entry(
