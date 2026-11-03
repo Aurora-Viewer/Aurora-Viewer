@@ -63,6 +63,13 @@ pub struct WebView {
     pub location: String,
     /// A page is loading (between NavigateBegin and NavigateComplete).
     pub loading: bool,
+    /// The page's title (LLViewerMediaObserver MEDIA_EVENT_NAME_CHANGED).
+    pub title: String,
+    /// The browser's status line (MEDIA_EVENT_STATUS_TEXT_CHANGED: the link
+    /// under the pointer).
+    pub status: String,
+    /// Load progress, 0 to 100 (MEDIA_EVENT_PROGRESS_UPDATED).
+    pub progress: i32,
 }
 
 impl WebView {
@@ -115,6 +122,13 @@ impl WebView {
     pub fn forward(&mut self) {
         if let Some(p) = self.plugin.as_mut() {
             p.browse_forward();
+        }
+    }
+
+    /// LLMediaCtrl::navigateStop.
+    pub fn stop(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_stop();
         }
     }
 
@@ -259,6 +273,9 @@ impl WebView {
                 }
                 MediaEvent::LocationChanged(uri) if !uri.is_empty() => self.location = uri,
                 MediaEvent::CursorChanged(c) => self.cursor = c,
+                MediaEvent::NameChanged(name) => self.title = name,
+                MediaEvent::StatusText(text) => self.status = text,
+                MediaEvent::Progress(percent) => self.progress = percent,
                 MediaEvent::PluginFailed(e) => {
                     log::warn!("web view: browser stopped: {e}");
                     self.failed = Some(e);
