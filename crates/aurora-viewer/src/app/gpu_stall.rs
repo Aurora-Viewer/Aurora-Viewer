@@ -54,6 +54,8 @@ pub(super) struct GpuStall {
     lost: bool,
     /// Closing was asked from the notice.
     pub(super) close: bool,
+    /// A recovery on a new window and device is to be tried (gpu_recovery.rs).
+    pub(super) recover: bool,
 }
 
 /// Whether to show the notice now.
@@ -67,6 +69,12 @@ impl App {
         let now = Instant::now();
         let stall = &mut self.gpu_stall;
         if renderer.device_lost() {
+            if super::gpu_recovery::enabled() && !stall.lost {
+                log::error!("the graphics card is lost: recovering on a new window and device");
+                stall.lost = true;
+                stall.recover = true;
+                return;
+            }
             if !std::mem::replace(&mut stall.lost, true) {
                 log::error!("the graphics card is lost: notice shown, the viewer closes after it");
                 crate::crash::gpu_lost();

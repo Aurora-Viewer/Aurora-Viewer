@@ -56,6 +56,16 @@ pub struct PreparedGeom {
 }
 
 impl PreparedGeom {
+    /// Every face staged was staged in `pool`: false for data of a GPU
+    /// device lost since (app/gpu_recovery.rs); faces kept in memory are
+    /// always good.
+    pub fn staged_in(&self, pool: Option<&StagingPool>) -> bool {
+        self.faces.iter().flatten().all(|f| match f {
+            FaceUpload::Staged(s) => pool.is_some_and(|pool| s.data.is_from(pool)),
+            FaceUpload::Memory(_) => true,
+        })
+    }
+
     /// `pick`: keep a copy of the triangles for ray picking (not for the
     /// avatar's own body parts).
     pub fn new(faces: Vec<FaceData>, min: Vec3, max: Vec3, pick: bool, pool: Option<&StagingPool>) -> Self {

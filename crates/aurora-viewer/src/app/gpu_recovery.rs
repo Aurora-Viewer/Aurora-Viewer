@@ -1,0 +1,165 @@
+//! The window, the renderer and egui's input state, made the same way at
+//! start and when the viewer recovers from a GPU device loss on a new window
+//! and device (the window of a lost device cannot present again: its
+//! swapchain is abandoned with the device).
+
+use super::*;
+
+/// How the main window opens.
+pub(super) struct WindowPlan {
+    pub size: winit::dpi::Size,
+    pub position: Option<winit::dpi::PhysicalPosition<i32>>,
+    /// Automated captures must not steal the user's keyboard focus.
+    pub active: bool,
+    pub fullscreen: Option<winit::window::Fullscreen>,
+}
+
+impl App {
+    pub(super) fn open_window(&self, event_loop: &ActiveEventLoop, plan: &WindowPlan) -> Result<Arc<Window>, winit::error::OsError> {
+        let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
+            .with_title(crate::cli::window_title())
+            // Metal needs a visible layer to present its first drawable.
+            // Other platforms keep the unpainted client area hidden.
+            .with_visible(cfg!(target_os = "macos"))
+            .with_active(plan.active)
+            .with_inner_size(plan.size)
+            .with_min_inner_size(winit::dpi::LogicalSize::new(800, 560))
+            .with_fullscreen(plan.fullscreen.clone());
+        if let Some(position) = plan.position {
+            attrs = attrs.with_position(position);
+        }
+        let window = Arc::new(event_loop.create_window(attrs)?);
+        crate::window_hold::install(&window);
+        Ok(window)
+    }
+
+    /// The renderer for `window`, the user's settings applied once the
+    /// caller has settled them.
+    pub(super) fn open_renderer(&mut self, window: &Arc<Window>) -> Result<Renderer, aurora_render::RenderError> {
+        let size = window.inner_size();
+        if std::env::var_os("AURORA_NOVSYNC").is_some() {
+            self.settings.vsync = false;
+        }
+        // the GPU of Preferences › Graphics; AURORA_GPU=<number|name|auto>
+        // overrides it for this launch (adapter_choice.rs)
+        let gpu = std::env::var("AURORA_GPU").unwrap_or_else(|_| self.settings.gpu_adapter.clone());
+        // the pipelines the driver compiled at the earlier starts, kept in
+        // the cache folder (aurora-render's pipeline_cache.rs)
+        aurora_render::pipeline_cache::configure(crate::settings::cache_dir().join("pipelines"), aurora_version::version());
+        // AURORA_GPU_START_FAIL=1: as if no card could draw, to see the
+        // message the user gets then (graphics_start.rs); `lost` is read by
+        // the renderer, which gets as far as a real device loss does
+        if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
+            return Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()));
+        }
+        // SAFETY: the renderer lives in `Gfx` beside this window and is
+        // dropped before it (field order of `Gfx`).
+        let renderer = unsafe { Renderer::new(&**window, size.width, size.height, self.settings.vsync, &gpu) }?;
+        log::info!(
+            "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
+            renderer.info.name,
+            renderer.info.backend,
+            renderer.textures.capacity(),
+            renderer.info.max_textures,
+            renderer.info.timestamps
+        );
+        Ok(renderer)
+    }
+
+    /// What Preferences › Graphics shows of the GPUs, from the renderer's
+    /// own list: here, not with the world's frames, so the login screen has
+    /// it too (#894: only "Automatic" was offered before login).
+    pub(super) fn note_gpus(&mut self, renderer: &Renderer) {
+        self.options_ui.vram = (renderer.info.vram_mb, renderer.info.integrated);
+        self.options_ui.gpus = renderer.info.adapters.clone();
+        self.options_ui.gpu_in_use = renderer.info.name.clone();
+        self.options_ui.gpu_notice = renderer.info.notice;
+    }
+
+    pub(super) fn egui_state_for(&self, window: &Window, renderer: &Renderer) -> egui_winit::State {
+        let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
+        egui_winit::State::new(
+            self.egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            window,
+            Some(window.scale_factor() as f32),
+            None,
+            Some(max_tex),
+        )
+    }
+}
+
+/// `AURORA_GPU_RECOVERY=1`: recover from a device loss instead of closing
+/// (work in progress, off by default until it is complete).
+pub(super) fn enabled() -> bool {
+    std::env::var("AURORA_GPU_RECOVERY").is_ok_and(|v| v == "1")
+}
+
+impl App {
+    /// Before the lost renderer goes: what the scene and the app hold on it.
+    fn forget_gpu_scene(&mut self, old: &mut Renderer) {
+        self.scene.forget_gpu(old);
+        self.probes.reset();
+    }
+
+    /// On the new renderer: the textures get its slots, and what `clear`
+    /// emptied that the world does not send again comes back.
+    fn adopt_gpu_scene(&mut self, new: &mut Renderer) {
+        self.scene.adopt_gpu(new);
+    }
+
+    /// After a GPU device loss: a new window and renderer, the session and
+    /// the world kept, the scene reloaded on the new device. The old window
+    /// stays on screen until the new one has presented (`retired_window`).
+    /// False when no new renderer could be made: the caller closes as before.
+    pub(super) fn recover_from_gpu_loss(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        let Some(old) = self.gfx.take() else {
+            return false;
+        };
+        let started = Instant::now();
+        let plan = WindowPlan {
+            size: old.window.inner_size().into(),
+            position: old.window.outer_position().ok(),
+            active: old.window.has_focus(),
+            fullscreen: old.window.fullscreen(),
+        };
+        let maximized = old.window.is_maximized();
+        let Gfx { mut renderer, window, .. } = old;
+        self.forget_gpu_scene(&mut renderer);
+        // the lost renderer first: its surface is made from this window's
+        // handles (Renderer::new's contract)
+        drop(renderer);
+        self.retired_window = Some(window);
+        let window = match self.open_window(event_loop, &plan) {
+            Ok(w) => w,
+            Err(e) => {
+                log::error!("GPU recovery: cannot create a window: {e}");
+                return false;
+            }
+        };
+        let mut renderer = match self.open_renderer(&window) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("GPU recovery: no new renderer: {e}");
+                return false;
+            }
+        };
+        renderer.apply_settings(self.settings.render_settings());
+        self.adopt_gpu_scene(&mut renderer);
+        self.note_gpus(&renderer);
+        self.screen_rate.poll(&window, Instant::now());
+        let egui_state = self.egui_state_for(&window, &renderer);
+        self.gfx = Some(Gfx {
+            renderer,
+            egui_state,
+            window,
+            shown: false,
+            maximize_on_show: maximized,
+        });
+        self.gpu_stall = Default::default();
+        // the new egui renderer has none of egui's textures
+        self.egui_replay = true;
+        log::warn!("GPU recovery: new window and renderer in {} ms", started.elapsed().as_millis());
+        true
+    }
+}

@@ -1916,6 +1916,9 @@ impl Scene {
                 Part::Decoded
             };
             match r {
+                // staged in the pool of a GPU device lost since (`forget_gpu`):
+                // dropped, the next sync asks for it again
+                JobResult::Geometry { geom, .. } if !geom.staged_in(self.staging.as_deref()) => {}
                 JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
@@ -2099,6 +2102,47 @@ impl Scene {
         self.palette_fresh.clear();
         self.palette_count = self.live_morphs.slots;
         self.live_morphs.uploaded = false;
+    }
+
+    /// The GPU device is lost (app/gpu_recovery.rs): what the scene holds on
+    /// `old` is released through `clear`'s bookkeeping (CPU only: nothing
+    /// waits on the lost device), with what a logout keeps besides: the
+    /// geometry cache, the environment and projector textures, the
+    /// impostors. The world stays: `clear` forgets the render origin, whose
+    /// change at the next `sync` marks every object and terrain chunk dirty,
+    /// and all of it is built again on the new renderer ([`Self::adopt_gpu`]).
+    pub fn forget_gpu(&mut self, old: &mut Renderer) {
+        for (id, _) in std::mem::take(&mut self.env_tex) {
+            if !id.is_nil() {
+                self.textures.release(&id);
+            }
+        }
+        for (_, (id, _)) in std::mem::take(&mut self.light_textures) {
+            self.textures.release(&id);
+        }
+        self.clear(old);
+        // every GpuGeom holds allocations of the lost device's arena
+        self.geoms.clear();
+        self.geom_zero.clear();
+        self.geom_pending = 0;
+        self.geom_waiting.clear();
+        self.geom_waiting_spare.clear();
+        self.geom_trash = Default::default();
+        self.joint_boxes = Default::default();
+        self.skin_binds = Default::default();
+        self.sculpt_area.clear();
+        self.grass.clear();
+        self.impostors = Default::default();
+        self.far_avatars.clear();
+        self.meshes.gpu_reset();
+        // set again from the new renderer at the next `sync`
+        self.staging = None;
+    }
+
+    /// The new renderer of a GPU recovery: every texture held gets a slot of
+    /// it and is uploaded again from memory or the disk cache.
+    pub fn adopt_gpu(&mut self, new: &mut Renderer) {
+        self.textures.gpu_reset(new);
     }
 
     /// The nearest avatar the ray `(origin, dir)` meets before `far`, and

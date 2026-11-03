@@ -94,6 +94,9 @@ impl DeviceLost {
     }
 }
 
+/// The demo's loss was given to a renderer already.
+pub(crate) static DEMO_LOSS_TAKEN: AtomicBool = AtomicBool::new(false);
+
 /// `AURORA_DEMO_GPU_LOST=<frame>`, with `AURORA_DEMO` only: the device is
 /// taken as lost at that frame, as the device-lost callback would after a
 /// driver reset.
