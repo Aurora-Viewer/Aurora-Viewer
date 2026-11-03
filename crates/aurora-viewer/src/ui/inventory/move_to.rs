@@ -85,7 +85,7 @@ impl MoveTo {
 }
 
 fn destinations(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>) -> Vec<Destination> {
-    if ids.is_empty() || ids.iter().any(|id| !rules::move_relocatable(inv, *id, protected)) {
+    if ids.is_empty() || ids.iter().any(|id| !rules::relocatable(inv, *id, protected)) {
         return Vec::new();
     }
     let roots = rules::roots(inv, ids);
@@ -99,7 +99,7 @@ fn destinations(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>) -> Vec
     inv.folders
         .par_iter()
         .filter_map(|(&id, _)| {
-            if !rules::move_destination(inv, id) || roots.iter().all(|source| rules::parent(inv, *source) == Some(id)) {
+            if !rules::destination(inv, id) || roots.iter().all(|source| rules::parent(inv, *source) == Some(id)) {
                 return None;
             }
             let mut parts = Vec::new();
@@ -356,7 +356,7 @@ mod tests {
                 let rows = destinations(&inv, &selection, &protected);
                 for &to in inv.folders.keys() {
                     let expected = rules::under(&inv, to, inv.root)
-                        && rules::move_destination(&inv, to)
+                        && rules::destination(&inv, to)
                         && rules::move_selection(&inv, &selection, to, &protected, &HashSet::new())
                             .is_ok_and(|change| !change.operations.is_empty());
                     assert_eq!(

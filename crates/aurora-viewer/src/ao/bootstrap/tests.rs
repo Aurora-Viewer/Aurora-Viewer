@@ -77,7 +77,10 @@ fn old_native_folder_is_renamed_once_without_reimporting_or_changing_selection_a
     assert!(matches!(change.operations.as_slice(), [Operation::Patch { id, folder: true, body }]
         if *id == root && body["name"].as_str() == inventory::FOLDER));
     assert!(inventory::editable(&inv, &change, &Default::default()));
-    assert!(!inventory::editable(&inv, &change, &std::collections::HashSet::from([root])));
+    assert!(
+        inventory::editable(&inv, &change, &std::collections::HashSet::from([root])),
+        "a locked folder keeps its rename"
+    );
     assert!(startup.source.root.is_none(), "never read the legacy catalogue for a native rename");
     assert!(
         startup.poll(&mut inv, &target, selected, true).is_none(),
@@ -557,7 +560,7 @@ fn cached_firestorm_set_waits_for_inventory_services_and_reconstructs_once_when_
 }
 
 #[test]
-fn startup_write_gate_requires_both_services_arrival_and_a_released_cache_hold() {
+fn startup_write_gate_requires_the_fetch_service_arrival_and_a_released_cache_hold() {
     use crate::world::World;
     use std::sync::Arc;
     let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -571,11 +574,11 @@ fn startup_write_gate_requires_both_services_arrival_and_a_released_cache_hold()
     let region = world.main_region.expect("region");
     Arc::make_mut(&mut world.regions.get_mut(&region).expect("region").caps)
         .insert("InventoryAPIv3".into(), "https://inventory.invalid/offline".into());
-    assert!(!Bootstrap::writable(&world), "readback capability is needed too");
+    assert!(!Bootstrap::writable(&world), "AIS alone cannot read the change back");
     demo::inventory_services(&mut world, true);
     assert!(Bootstrap::writable(&world));
     Arc::make_mut(&mut world.regions.get_mut(&region).expect("region").caps).remove("InventoryAPIv3");
-    assert!(!Bootstrap::writable(&world), "readback alone cannot write");
+    assert!(Bootstrap::writable(&world), "a grid without AIS edits over the circuit");
     demo::inventory_services(&mut world, true);
     world.inventory.hold_requests();
     assert!(!Bootstrap::writable(&world));

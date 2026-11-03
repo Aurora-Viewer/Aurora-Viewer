@@ -164,12 +164,12 @@ async fn llsd(request: reqwest::RequestBuilder) -> Result<Llsd, CapsError> {
     )
     .await
     .map_err(|_| CapsError::Http("timeout".into()))?
-    .map_err(|e| CapsError::Http(e.to_string()))?;
+    .map_err(|e| CapsError::Http(e.without_url().to_string()))?;
     let status = resp.status();
     if !status.is_success() {
         return Err(CapsError::Status(status.as_u16()));
     }
-    let bytes = resp.bytes().await.map_err(|e| CapsError::Http(e.to_string()))?;
+    let bytes = resp.bytes().await.map_err(|e| CapsError::Http(e.without_url().to_string()))?;
     if bytes.is_empty() {
         return Ok(Llsd::Undef);
     }

@@ -102,15 +102,6 @@ pub fn tile_reach_for_height(on: bool, scale: f32, height: u32) -> u32 {
     }
 }
 
-/// Additional bytes per pixel for the separable filter's working mask.
-pub fn filter_extra_bytes(on: bool) -> u64 {
-    if Override::from_env().needed(on) && FilterMode::from_env() == FilterMode::Separable {
-        4
-    } else {
-        0
-    }
-}
-
 /// Bend's starting values (DispatchParameters::SetDefaults): the surface
 /// thickness is a share of the depth left to the far plane (0.5 %: about
 /// 5 cm at 10 m with the reversed depth of an infinite projection), the

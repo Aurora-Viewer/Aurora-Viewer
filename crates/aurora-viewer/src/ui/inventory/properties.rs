@@ -18,7 +18,6 @@ pub(super) fn show(
     icons: &Icons,
     inv: &Inventory,
     st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
     facts: &Facts,
     images: &HashMap<Uuid, egui::TextureHandle>,
     id: Uuid,
@@ -34,7 +33,7 @@ pub(super) fn show(
     let Some((_, edit)) = &mut st.property_edit else {
         return false;
     };
-    let can_edit = rules::mutable(inv, id, &prefs.protected) && !matches!(it.asset_type, 2 | 24 | 25) && st.pending.is_none();
+    let can_edit = rules::mutable(inv, id) && !matches!(it.asset_type, 2 | 24 | 25) && st.pending.is_none();
     let response = panel(
         ui,
         p,
@@ -58,14 +57,13 @@ pub(super) fn show(
     if let Some(resident) = response.profile {
         actions.push(InvAction::Profile(resident));
     }
-    if response.save {
+    if let Some(edit) = response.edit {
         let body = llsd_map! { "name" => rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone()), "desc" => edit.desc.clone(),
         "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
         "sale_info" => llsd_map! { "sale_type" => i32::from(edit.sale_type), "sale_price" => edit.price } };
         match rules::patch(inv, id, body) {
             Ok(change) => {
                 actions.push(InvAction::Edit(change));
-                return true;
             }
             Err(reason) => st.message = reason,
         }
@@ -122,7 +120,9 @@ pub(crate) struct PropertyPanel<'a> {
 
 #[derive(Default)]
 pub(crate) struct PropertyResponse {
-    pub save: bool,
+    /// Only committed controls are merged into the current item. A checkbox
+    /// must not submit an unfinished name or description from another field.
+    pub edit: Option<PropertyEdit>,
     pub thumbnail: bool,
     pub profile: Option<Uuid>,
 }
@@ -140,6 +140,17 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         images,
         wanted_images,
     } = data;
+    // Follow simulator readback (including refused edits) without replacing a
+    // text field's unfinished draft. Agent inventory disables edits in flight.
+    if can_edit {
+        edit.next = it.next_owner_mask;
+        edit.group = it.group_mask;
+        edit.everyone = it.everyone_mask;
+        edit.sale_type = it.sale_type;
+        if !edit.commit_price {
+            edit.price = it.sale_price;
+        }
+    }
     let mut response = PropertyResponse::default();
     egui::ScrollArea::vertical().max_height(550.0).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 3.0;
@@ -162,9 +173,22 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             } else {
                 ui.add_space(16.0);
             }
-            crate::ui::widgets::text_field(ui, can_describe, &mut edit.name, |b, ui| {
+            let name = crate::ui::widgets::text_field(ui, can_describe, &mut edit.name, |b, ui| {
                 egui::TextEdit::singleline(b).char_limit(63).desired_width(ui.available_width())
             });
+            // LLFloaterProperties::onCommitName / onCommitDescription
+            // (indra/newview/llfloaterproperties.cpp): text commits on focus
+            // loss; permission and sale controls commit on each change.
+            edit.commit_name |= name.lost_focus();
+            if can_describe && edit.commit_name && !ui.input(|input| input.pointer.any_down()) {
+                edit.commit_name = false;
+                if edit.name != it.name
+                    && let Ok(name) = rules::clean_name(&edit.name)
+                {
+                    edit.name = name.clone();
+                    response.edit.get_or_insert_with(|| PropertyEdit::from(it)).name = name;
+                }
+            }
         });
         ui.add_space(6.0);
         ui.horizontal_top(|ui| {
@@ -211,12 +235,20 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             });
         });
         ui.label(aurora_i18n::tr!("common-description"));
-        crate::ui::widgets::text_field(ui, can_describe, &mut edit.desc, |b, ui| {
+        let description = crate::ui::widgets::text_field(ui, can_describe, &mut edit.desc, |b, ui| {
             egui::TextEdit::multiline(b)
                 .char_limit(127)
                 .desired_rows(2)
                 .desired_width(ui.available_width())
         });
+        edit.commit_desc |= description.lost_focus();
+        if can_describe && edit.commit_desc && !ui.input(|input| input.pointer.any_down()) {
+            edit.commit_desc = false;
+            if edit.desc != it.desc {
+                edit.desc = edit.desc.chars().filter(|c| *c != '|').take(127).collect();
+                response.edit.get_or_insert_with(|| PropertyEdit::from(it)).desc = edit.desc.clone();
+            }
+        }
         ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-properties-experience")).color(p.muted));
         crate::ui::widgets::divider(ui, p);
         ui.label(aurora_i18n::tr!("ui-inventory-properties-permissions"));
@@ -230,20 +262,25 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         let may_share = can_edit && it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER;
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("ui-inventory-properties-anyone"));
-            check_mask(ui, p, may_share, &mut edit.everyone, rules::COPY, aurora_i18n::tr!("common-copy-2"));
+            if check_mask(ui, p, may_share, &mut edit.everyone, rules::COPY, aurora_i18n::tr!("common-copy-2")) {
+                response.edit.get_or_insert_with(|| PropertyEdit::from(it)).everyone = edit.everyone;
+            }
         });
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("common-group-2"));
             let group_share = rules::MODIFY | rules::MOVE | rules::COPY;
-            check_mask(ui, p, may_share, &mut edit.group, group_share, aurora_i18n::tr!("common-share"));
+            if check_mask(ui, p, may_share, &mut edit.group, group_share, aurora_i18n::tr!("common-share")) {
+                response.edit.get_or_insert_with(|| PropertyEdit::from(it)).group = edit.group;
+            }
         });
         ui.label(aurora_i18n::tr!("ui-inventory-properties-next-owner"));
         if it.asset_type == 56 {
             edit.next |= rules::COPY;
         }
         ui.horizontal(|ui| {
+            let mut changed = false;
             for (mask, label) in rights() {
-                check_mask(
+                changed |= check_mask(
                     ui,
                     p,
                     can_next_owner
@@ -258,9 +295,13 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
                     edit.next |= rules::TRANSFER;
                 }
             }
+            if changed {
+                response.edit.get_or_insert_with(|| PropertyEdit::from(it)).next = edit.next;
+            }
         });
         crate::ui::widgets::divider(ui, p);
         let mut for_sale = edit.sale_type != 0;
+        let mut sale_changed = false;
         ui.horizontal(|ui| {
             if ui
                 .add_enabled_ui(can_edit && it.owner_mask & rules::TRANSFER != 0, |ui| {
@@ -269,6 +310,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
                 .inner
                 .changed()
             {
+                sale_changed = true;
                 edit.sale_type = if for_sale {
                     if it.owner_mask & rules::COPY != 0 { 2 } else { 1 }
                 } else {
@@ -287,6 +329,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
                                 )
                                 .clicked()
                             {
+                                sale_changed |= edit.sale_type != value;
                                 edit.sale_type = value;
                             }
                         }
@@ -295,13 +338,27 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         });
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("ui-inventory-properties-price-l"));
-            ui.add_enabled(
-                for_sale && can_edit,
-                egui::DragValue::new(&mut edit.price)
-                    .custom_parser(aurora_i18n::parse_number)
-                    .range(0..=i32::MAX),
-            );
+            edit.commit_price |= ui
+                .add_enabled(
+                    for_sale && can_edit,
+                    egui::DragValue::new(&mut edit.price)
+                        .update_while_editing(false)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .range(0..=i32::MAX),
+                )
+                .changed();
         });
+        // Keep a numeric drag uninterrupted, and combine a typed price's
+        // focus loss with the control clicked next, like the text fields.
+        if can_edit && edit.commit_price && !ui.input(|input| input.pointer.any_down()) {
+            edit.commit_price = false;
+            sale_changed = true;
+        }
+        if sale_changed {
+            let committed = response.edit.get_or_insert_with(|| PropertyEdit::from(it));
+            committed.sale_type = edit.sale_type;
+            committed.price = edit.price;
+        }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             for (label, mask) in [
@@ -315,22 +372,6 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
                     .on_hover_text(aurora_i18n::tr!("ui-inventory-properties-b-base-o-owner-g-group-e-everyone-n"));
             }
         });
-        let modified = edit.name != it.name
-            || edit.desc != it.desc
-            || edit.next != it.next_owner_mask
-            || edit.group != it.group_mask
-            || edit.everyone != it.everyone_mask
-            || edit.sale_type != it.sale_type
-            || edit.price != it.sale_price;
-        if ui
-            .add_enabled(
-                can_edit && modified && rules::clean_name(&edit.name).is_ok(),
-                egui::Button::new(aurora_i18n::tr!("common-save")),
-            )
-            .clicked()
-        {
-            response.save = true;
-        }
     });
     response
 }
@@ -341,7 +382,7 @@ fn rights() -> [(u32, &'static str); 3] {
         (rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
     ]
 }
-fn check_mask(ui: &mut egui::Ui, p: &Palette, enabled: bool, value: &mut u32, mask: u32, label: &str) {
+fn check_mask(ui: &mut egui::Ui, p: &Palette, enabled: bool, value: &mut u32, mask: u32, label: &str) -> bool {
     let mut on = *value & mask == mask;
     if ui
         .add_enabled_ui(enabled, |ui| crate::ui::widgets::checkbox(ui, p, &mut on, label))
@@ -353,7 +394,9 @@ fn check_mask(ui: &mut egui::Ui, p: &Palette, enabled: bool, value: &mut u32, ma
         } else {
             *value &= !mask;
         }
+        return true;
     }
+    false
 }
 fn sale_name(value: u8) -> &'static str {
     match value {
@@ -383,8 +426,318 @@ pub(super) fn acquired(timestamp: i64) -> String {
 }
 
 #[cfg(test)]
-mod resident_tests {
+mod tests {
     use super::*;
+
+    fn frame(
+        ctx: &egui::Context,
+        inv: &Inventory,
+        st: &mut InventoryUi,
+        events: Vec<egui::Event>,
+    ) -> (Vec<(String, egui::Rect)>, Vec<InvAction>) {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 800.0))),
+                events,
+                focused: true,
+                ..Default::default()
+            },
+            |ui| {
+                assert!(
+                    !show(
+                        ui,
+                        &crate::theme::Theme::default().palette(),
+                        &Icons::default(),
+                        inv,
+                        st,
+                        &Facts::default(),
+                        &HashMap::new(),
+                        Uuid::from_u128(8102),
+                        &mut actions
+                    ),
+                    "Saving properties must keep the dialog open"
+                );
+            },
+        );
+        fn text(shape: &egui::Shape, result: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => result.push((t.galley.text().to_owned(), t.galley.rect.translate(t.pos.to_vec2()))),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| text(shape, result)),
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        for shape in &output.shapes {
+            text(&shape.shape, &mut texts);
+        }
+        output.textures_delta.clear();
+        (texts, actions)
+    }
+
+    fn click(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, point: egui::Pos2) -> Vec<InvAction> {
+        let mut actions = frame(ctx, inv, st, vec![egui::Event::PointerMoved(point)]).1;
+        for pressed in [true, false] {
+            actions.extend(
+                frame(
+                    ctx,
+                    inv,
+                    st,
+                    vec![egui::Event::PointerButton {
+                        pos: point,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: Default::default(),
+                    }],
+                )
+                .1,
+            );
+        }
+        actions
+    }
+
+    #[test]
+    fn inventory_properties_save_controls_once_and_ignore_uncommitted_text() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let id = Uuid::from_u128(8102);
+        let original = inv.items[&id].clone();
+        let mut st = InventoryUi::default();
+        for _ in 0..3 {
+            assert!(frame(&ctx, &inv, &mut st, vec![]).1.is_empty());
+        }
+        st.property_edit.as_mut().unwrap().1.name = "|".into();
+        st.property_edit.as_mut().unwrap().1.desc = "Uncommitted description".into();
+        for (label, next_owner) in [
+            (aurora_i18n::tr!("common-edit"), true),
+            (aurora_i18n::tr!("common-share"), false),
+            (aurora_i18n::tr!("common-copy-2"), true),
+            (aurora_i18n::tr!("ui-inventory-properties-for-sale"), false),
+        ] {
+            let (labels, actions) = frame(&ctx, &inv, &mut st, vec![]);
+            assert!(actions.is_empty());
+            assert!(!labels.iter().any(|(text, _)| text == aurora_i18n::tr!("common-save")));
+            let next_y = labels
+                .iter()
+                .find(|(text, _)| text == aurora_i18n::tr!("ui-inventory-properties-next-owner"))
+                .unwrap()
+                .1
+                .bottom();
+            let point = labels
+                .iter()
+                .find(|(text, rect)| text == label && (!next_owner || rect.center().y > next_y && rect.center().y < next_y + 30.0))
+                .unwrap()
+                .1
+                .center();
+            let actions = click(&ctx, &inv, &mut st, point);
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("Expected one inventory mutation for {label}")
+            };
+            let [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] = &change.operations[..] else {
+                panic!("Expected the original inventory item")
+            };
+            assert_eq!(*target, id);
+            assert_eq!(body["name"].as_str(), original.name);
+            assert_eq!(body["desc"].as_str(), original.desc);
+            rules::demo_mutate(&mut inv, Uuid::from_u128(2), change.clone()).unwrap();
+            for _ in 0..3 {
+                assert!(frame(&ctx, &inv, &mut st, vec![]).1.is_empty(), "No duplicate after readback");
+            }
+        }
+        assert_ne!(inv.items[&id].next_owner_mask, original.next_owner_mask);
+        assert_ne!(inv.items[&id].group_mask, original.group_mask);
+        assert_ne!(inv.items[&id].sale_type, original.sale_type);
+        st.pending = Some(Uuid::new_v4());
+        let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+        let point = labels
+            .iter()
+            .rev()
+            .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+            .unwrap()
+            .1
+            .center();
+        assert!(
+            click(&ctx, &inv, &mut st, point).is_empty(),
+            "A pending update disables further edits"
+        );
+    }
+
+    #[test]
+    fn inventory_property_name_commits_on_enter_instead_of_each_keystroke() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let id = Uuid::from_u128(8102);
+        let mut st = InventoryUi::default();
+        for _ in 0..3 {
+            frame(&ctx, &inv, &mut st, vec![]);
+        }
+        let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+        let point = labels.iter().find(|(text, _)| text == &inv.items[&id].name).unwrap().1.center();
+        assert!(click(&ctx, &inv, &mut st, point).is_empty());
+        assert!(frame(&ctx, &inv, &mut st, vec![egui::Event::Text(" renamed".into())]).1.is_empty());
+        let actions = frame(
+            &ctx,
+            &inv,
+            &mut st,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+        )
+        .1;
+        let [InvAction::Edit(change)] = &actions[..] else {
+            panic!("Name validation must save once")
+        };
+        let [aurora_net::inventory::operations::Operation::Patch { body, .. }] = &change.operations[..] else {
+            panic!("Expected a name update")
+        };
+        assert!(body["name"].as_str().contains("renamed"));
+        rules::demo_mutate(&mut inv, Uuid::from_u128(2), change.clone()).unwrap();
+        assert!(frame(&ctx, &inv, &mut st, vec![]).1.is_empty());
+
+        st.property_edit.as_mut().unwrap().1.desc = "Original description".into();
+        inv.items.get_mut(&id).unwrap().desc = "Original description".into();
+        let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+        let point = labels.iter().find(|(text, _)| text == "Original description").unwrap().1.center();
+        assert!(click(&ctx, &inv, &mut st, point).is_empty());
+        assert!(frame(&ctx, &inv, &mut st, vec![egui::Event::Text(" updated".into())]).1.is_empty());
+        let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+        let point = labels
+            .iter()
+            .rev()
+            .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+            .unwrap()
+            .1
+            .center();
+        let actions = click(&ctx, &inv, &mut st, point);
+        let [InvAction::Edit(change)] = &actions[..] else {
+            panic!("Focus loss and a permission click must save together")
+        };
+        let [aurora_net::inventory::operations::Operation::Patch { body, .. }] = &change.operations[..] else {
+            panic!("Expected a description update")
+        };
+        assert!(body["desc"].as_str().contains("updated"));
+        assert_ne!(body["permissions"]["next_owner_mask"].as_u32(), inv.items[&id].next_owner_mask);
+    }
+
+    #[test]
+    fn inventory_property_price_saves_complete_numbers_and_completed_drags() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let id = Uuid::from_u128(8102);
+        let item = inv.items.get_mut(&id).unwrap();
+        item.sale_type = 2;
+        item.sale_price = 42;
+        let mut st = InventoryUi::default();
+        for _ in 0..3 {
+            frame(&ctx, &inv, &mut st, vec![]);
+        }
+        let price_point =
+            |texts: &[(String, egui::Rect)], value: i32| texts.iter().find(|(text, _)| text == &value.to_string()).unwrap().1.center();
+        for (price, enter) in [(12, true), (345, false)] {
+            let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+            assert!(click(&ctx, &inv, &mut st, price_point(&labels, inv.items[&id].sale_price)).is_empty());
+            for digit in price.to_string().chars() {
+                assert!(
+                    frame(&ctx, &inv, &mut st, vec![egui::Event::Text(digit.to_string())]).1.is_empty(),
+                    "Typing a number must not submit its first digit and disable the field"
+                );
+            }
+            let actions = if enter {
+                frame(
+                    &ctx,
+                    &inv,
+                    &mut st,
+                    vec![egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Default::default(),
+                    }],
+                )
+                .1
+            } else {
+                let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+                let point = labels
+                    .iter()
+                    .rev()
+                    .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+                    .unwrap()
+                    .1
+                    .center();
+                click(&ctx, &inv, &mut st, point)
+            };
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("Expected one complete price update")
+            };
+            let [aurora_net::inventory::operations::Operation::Patch { body, .. }] = &change.operations[..] else {
+                panic!("Expected a price patch")
+            };
+            assert_eq!(body["sale_info"]["sale_price"].as_i32(), price);
+            if !enter {
+                assert_ne!(body["permissions"]["next_owner_mask"].as_u32(), inv.items[&id].next_owner_mask);
+            }
+            rules::demo_mutate(&mut inv, Uuid::from_u128(2), change.clone()).unwrap();
+            assert!(frame(&ctx, &inv, &mut st, vec![]).1.is_empty());
+        }
+        let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+        let start = price_point(&labels, inv.items[&id].sale_price);
+        assert!(frame(&ctx, &inv, &mut st, vec![egui::Event::PointerMoved(start)]).1.is_empty());
+        assert!(
+            frame(
+                &ctx,
+                &inv,
+                &mut st,
+                vec![egui::Event::PointerButton {
+                    pos: start,
+                    pressed: true,
+                    button: egui::PointerButton::Primary,
+                    modifiers: Default::default(),
+                }]
+            )
+            .1
+            .is_empty()
+        );
+        for offset in [40.0, 70.0] {
+            assert!(
+                frame(
+                    &ctx,
+                    &inv,
+                    &mut st,
+                    vec![egui::Event::PointerMoved(start + egui::vec2(offset, 0.0))]
+                )
+                .1
+                .is_empty(),
+                "A numeric drag stays usable until release"
+            );
+        }
+        let actions = frame(
+            &ctx,
+            &inv,
+            &mut st,
+            vec![egui::Event::PointerButton {
+                pos: start + egui::vec2(70.0, 0.0),
+                pressed: false,
+                button: egui::PointerButton::Primary,
+                modifiers: Default::default(),
+            }],
+        )
+        .1;
+        let [InvAction::Edit(change)] = &actions[..] else {
+            panic!("Expected one update after the numeric drag")
+        };
+        let [aurora_net::inventory::operations::Operation::Patch { body, .. }] = &change.operations[..] else {
+            panic!("Expected a dragged price patch")
+        };
+        assert!(body["sale_info"]["sale_price"].as_i32() > 345);
+    }
 
     #[test]
     fn an_object_without_creator_shows_unknown_multiple_without_a_link() {

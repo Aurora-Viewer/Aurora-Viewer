@@ -5113,7 +5113,8 @@ impl Scene {
                 } else {
                     world.animations_of(&owner)
                 };
-                let stopped = motions.sync(signals, pose_now, |id| anims.get(id));
+                let male = self.avatar_lib.shape_params.is_male(world.visual_params(&owner).unwrap_or(&[]));
+                let stopped = motions.sync_avatar(signals, male, pose_now, |id| anims.get(id));
                 if owner == world.agent_id {
                     completed.extend(stopped);
                 }
@@ -6193,6 +6194,7 @@ mod tests {
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
                 draw_distance: 128.0,
+                region_width: 256.0,
                 aspect: 1.0,
             };
             camera.update(&mut world, &settings, &input);
@@ -6256,6 +6258,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
             draw_distance: 128.0,
+            region_width: 256.0,
             aspect: 1.0,
         };
         camera.update(&mut world, &settings, &input);

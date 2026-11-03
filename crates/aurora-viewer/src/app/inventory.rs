@@ -48,12 +48,7 @@ impl App {
             };
             request.item = item.clone();
         }
-        if !task_inventory::destination(
-            &self.world.inventory,
-            request.folder,
-            &request.item,
-            &self.settings.inventory.protected,
-        ) {
+        if !task_inventory::destination(&self.world.inventory, request.folder, &request.item) {
             self.inventory_ui.message = aurora_i18n::tr!("task-transfer-destination").into();
             return;
         }
@@ -267,6 +262,16 @@ impl App {
         self.send(NetCommand::EditInventory { request, change });
     }
 
+    /// An inventory change, after the listings' questions; `drag` when it
+    /// comes from a drop on a folder.
+    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool) {
+        let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
+        if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
+            self.inventory_ui.consume_clipboard = cut;
+            self.submit_inventory_change(change);
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         if let InvAction::Share { resident, .. } = &action
             && !self.world.rlva.allows("share", &resident.to_string())
@@ -288,15 +293,10 @@ impl App {
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
-            InvAction::Edit(change) => {
-                let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
-                if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut) {
-                    self.inventory_ui.consume_clipboard = cut;
-                    self.submit_inventory_change(change);
-                }
-            }
+            InvAction::Edit(change) => self.edit_inventory(change, false),
+            InvAction::Drop(change) => self.edit_inventory(change, true),
             InvAction::Create { parent, kind, name } => {
-                if rules::destination(&self.world.inventory, parent, &self.settings.inventory.protected) {
+                if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
                         match crate::world::inventory::wearable::create_with_permissions(
                             kind,
@@ -526,7 +526,7 @@ impl App {
                 }
                 let worn = crate::ui::inventory::Facts::from_world(&self.world, false).worn;
                 for id in rules::roots(&self.world.inventory, &items) {
-                    match rules::offer(&self.world.inventory, id, &self.settings.inventory.protected, &worn) {
+                    match rules::offer(&self.world.inventory, id, &worn) {
                         Ok(bucket) => {
                             // LLGiveInventory removes copy-protected originals
                             // locally after the reliable offer, including folder contents.

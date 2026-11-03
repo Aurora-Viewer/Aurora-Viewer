@@ -204,6 +204,64 @@ fn is_linden_grid(uri: &str) -> bool {
     uri.contains("lindenlab.com")
 }
 
+/// The login server's host, lower case, with its port when one is given.
+fn login_authority(uri: &str) -> Option<String> {
+    let url = reqwest::Url::parse(uri.trim()).ok()?;
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
+}
+
+/// A Linden Lab login server: its host is lindenlab.com or one of its
+/// subdomains (the host itself, not a mere mention of the name anywhere in
+/// the address).
+pub fn is_linden_login(uri: &str) -> bool {
+    login_authority(uri).is_some_and(|authority| {
+        let host = authority.split(':').next().unwrap_or("");
+        host == "lindenlab.com" || host.ends_with(".lindenlab.com")
+    })
+}
+
+/// A device identifier (`mac`, `id0`, the viewer statistics' serial) as the
+/// grid of `login_uri` gets it. Linden Lab's grids get the real hash, as
+/// with their own viewer (the Third Party Viewer Policy: machine bans must
+/// hold). Any other grid gets the md5 hex of that hash and of the grid's
+/// login host: the same form and length, steady for this machine on this
+/// grid, but unlike the real one and unlike any other grid's, so that grids
+/// cannot match a machine between them nor learn the Second Life one. An
+/// empty identifier (none could be read) stays empty. Deliberate difference:
+/// the Legacy Viewer sends the same LLMachineID / llHashedUniqueID values to
+/// every grid (LLLoginInstance::constructAuthParams).
+pub fn device_id_for(login_uri: &str, id: &str) -> String {
+    if id.is_empty() || is_linden_login(login_uri) {
+        return id.to_owned();
+    }
+    let authority = login_authority(login_uri).unwrap_or_default();
+    format!("{:x}", md5::compute(format!("{id}\n{authority}")))
+}
+
+/// The network adapter address of the viewer statistics as the grid of
+/// `login_uri` gets it: the real one on Linden Lab's grids, else six bytes
+/// derived the same way as `device_id_for` (locally administered and
+/// unicast, so that it reads as an address and never as a vendor's).
+pub fn adapter_for(login_uri: &str, node: Option<[u8; 6]>) -> Option<[u8; 6]> {
+    let node = node?;
+    if is_linden_login(login_uri) {
+        return Some(node);
+    }
+    let authority = login_authority(login_uri).unwrap_or_default();
+    let mut text = node.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    text.push('\n');
+    text.push_str(&authority);
+    let digest = md5::compute(text);
+    let mut out = [0u8; 6];
+    out.copy_from_slice(&digest[..6]);
+    out[0] = (out[0] | 0x02) & !0x01;
+    Some(out)
+}
+
 fn platform_version() -> String {
     // Kept generic: the exact build number is not needed by the grid.
     if cfg!(windows) {
@@ -236,8 +294,9 @@ fn build_params(req: &LoginRequest) -> Llsd {
     p.insert("platform_version".into(), platform_version().into());
     p.insert("platform_string".into(), std::env::consts::OS.into());
     p.insert("address_size".into(), 64.into());
-    p.insert("mac".into(), req.mac.clone().into());
-    p.insert("id0".into(), req.id0.clone().into());
+    // the real hashes on Linden Lab's grids only (device_id_for)
+    p.insert("mac".into(), device_id_for(&req.login_uri, &req.mac).into());
+    p.insert("id0".into(), device_id_for(&req.login_uri, &req.id0).into());
     // the HostID setting, empty outside hosted instances (lllogininstance.cpp:240)
     p.insert("host_id".into(), "".into());
     p.insert("agree_to_tos".into(), req.agree_to_tos.into());
@@ -296,10 +355,7 @@ fn parse_success(v: Llsd) -> Result<LoginResponse, LoginError> {
     let sim_ip: Ipv4Addr = v["sim_ip"].as_str().parse().map_err(|_| LoginError::Malformed("sim_ip"))?;
     let sim_port = u16::try_from(v["sim_port"].as_i32()).map_err(|_| LoginError::Malformed("sim_port"))?;
     let inventory_root = v["inventory-root"][0]["folder_id"].as_uuid();
-    let size = |k: &str| match v[k].as_i32() {
-        n if n >= 256 => n as u32,
-        _ => 256,
-    };
+    let size = |k: &str| crate::session::region_side(u32::try_from(v[k].as_i32()).unwrap_or(256));
     Ok(LoginResponse {
         agent_id,
         session_id: uuid("session_id"),
@@ -338,9 +394,9 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
             .body(body)
             .send()
             .await
-            .map_err(|e| LoginError::Http(e.to_string()))?;
+            .map_err(|e| LoginError::Http(e.without_url().to_string()))?;
         let status = resp.status();
-        let bytes = resp.bytes().await.map_err(|e| LoginError::Http(e.to_string()))?;
+        let bytes = resp.bytes().await.map_err(|e| LoginError::Http(e.without_url().to_string()))?;
         if !status.is_success() {
             return Err(LoginError::Http(format!("HTTP {status}")));
         }
@@ -436,6 +492,93 @@ mod tests {
         assert_eq!(clean["last_exec_event"].as_i32(), 0);
         assert_eq!(clean["last_exec_duration"].as_i32(), -1);
         assert_eq!(clean["last_exec_session_id"].as_str(), Uuid::nil().to_string());
+    }
+
+    #[test]
+    fn only_linden_lab_hosts_are_linden_grids() {
+        for uri in [
+            SL_MAIN_GRID,
+            SL_BETA_GRID,
+            "https://LOGIN.agni.lindenlab.com./cgi-bin/login.cgi",
+            "https://lindenlab.com/",
+        ] {
+            assert!(is_linden_login(uri), "{uri}");
+        }
+        for uri in [
+            "https://grid.example:8002/",
+            "https://lindenlab.com.grid.example/",
+            "https://grid.example/lindenlab.com",
+            "https://login.agni.lindenlab.com@grid.example/",
+            "https://notlindenlab.com/",
+            "not an address",
+            "",
+        ] {
+            assert!(!is_linden_login(uri), "{uri}");
+        }
+    }
+
+    #[test]
+    fn other_grids_get_their_own_device_ids() {
+        let real = format!("{:x}", md5::compute("synthetic machine"));
+        // Linden Lab: the real hash, as with their viewer
+        assert_eq!(device_id_for(SL_MAIN_GRID, &real), real);
+        assert_eq!(device_id_for(SL_BETA_GRID, &real), real);
+        let a = device_id_for("https://grid.example:8002/", &real);
+        let b = device_id_for("https://other.example/", &real);
+        for derived in [&a, &b] {
+            // same form: 32 lower case hex digits
+            assert_eq!(derived.len(), 32);
+            assert!(derived.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+            assert_ne!(*derived, real);
+        }
+        assert_ne!(a, b, "two grids cannot match the machine");
+        // steady for one grid, whatever the path or the case of its host
+        assert_eq!(device_id_for("https://GRID.example:8002/other/path", &real), a);
+        // a host merely naming Linden Lab is another grid
+        assert_ne!(device_id_for("https://lindenlab.com.grid.example/", &real), real);
+        // nothing read stays nothing
+        assert_eq!(device_id_for("https://grid.example/", ""), "");
+    }
+
+    #[test]
+    fn the_login_sends_the_device_ids_of_its_grid() {
+        let real_mac = format!("{:x}", md5::compute("synthetic adapter"));
+        let real_id0 = format!("{:x}", md5::compute("synthetic disk"));
+        let req = |login_uri: &str| LoginRequest {
+            login_uri: login_uri.into(),
+            username: "synthetic".into(),
+            password: "x".into(),
+            start: StartLocation::Last,
+            agree_to_tos: false,
+            read_critical: false,
+            mfa_token: String::new(),
+            mfa_hash: String::new(),
+            mac: real_mac.clone(),
+            id0: real_id0.clone(),
+            last_exec: LastExec::default(),
+        };
+        let linden = build_params(&req(SL_MAIN_GRID));
+        assert_eq!(linden["mac"].as_str(), real_mac);
+        assert_eq!(linden["id0"].as_str(), real_id0);
+        let other = build_params(&req("https://grid.example:8002/"));
+        assert_eq!(other["mac"].as_str(), device_id_for("https://grid.example:8002/", &real_mac));
+        assert_eq!(other["id0"].as_str(), device_id_for("https://grid.example:8002/", &real_id0));
+        assert_ne!(other["mac"].as_str(), real_mac);
+        assert_ne!(other["id0"].as_str(), real_id0);
+    }
+
+    #[test]
+    fn other_grids_get_their_own_adapter_address() {
+        let node = [0x00, 0x1b, 0x21, 0x3c, 0x4d, 0x5e];
+        assert_eq!(adapter_for(SL_MAIN_GRID, Some(node)), Some(node));
+        assert_eq!(adapter_for("https://grid.example/", None), None);
+        let a = adapter_for("https://grid.example/", Some(node)).expect("an address");
+        let b = adapter_for("https://other.example/", Some(node)).expect("an address");
+        assert_ne!(a, node);
+        assert_ne!(a, b);
+        // locally administered, unicast
+        assert_eq!(a[0] & 0x03, 0x02);
+        assert_eq!(adapter_for("https://grid.example/", Some(node)), Some(a));
     }
 
     #[test]

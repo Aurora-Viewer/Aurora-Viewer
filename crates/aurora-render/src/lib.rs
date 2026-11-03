@@ -100,10 +100,7 @@ pub use arena::MeshAlloc;
 // What a tile of a photo draws around what it keeps, for the bloom, the
 // depth of field and the contact shadows (snapshot tiles in the viewer).
 pub use bloom::tile_reach as bloom_tile_reach;
-pub use contact_shadows::{
-    filter_extra_bytes as contact_filter_extra_bytes, tile_reach as contact_tile_reach,
-    tile_reach_for_height as contact_tile_reach_for_height,
-};
+pub use contact_shadows::{tile_reach as contact_tile_reach, tile_reach_for_height as contact_tile_reach_for_height};
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
 pub use gpu_cull::set_whole_chunk_uploads;

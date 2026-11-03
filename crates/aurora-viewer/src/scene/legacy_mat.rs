@@ -522,11 +522,11 @@ async fn fetch(http: &reqwest::Client, req: &Request) -> Result<Vec<(Uuid, Legac
         .timeout(Duration::from_secs(60))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.without_url().to_string())?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = resp.bytes().await.map_err(|e| e.without_url().to_string())?;
     let llsd = aurora_llsd::from_xml(&bytes).map_err(|e| e.to_string())?;
     Ok(parse_response(&llsd))
 }
