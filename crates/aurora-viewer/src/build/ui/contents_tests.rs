@@ -2,6 +2,7 @@
 use super::*;
 use crate::build::{BuildSettings, Tool};
 use aurora_net::NetCommand;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn fixture() -> (World, BuildTool, Uuid, Vec<TaskItem>) {
@@ -153,6 +154,102 @@ fn task_property_save_keeps_the_source_and_uses_update_task_inventory() {
     assert_eq!(sent.everyone_mask, perm::COPY);
     assert_eq!((sent.sale_type, sent.sale_price), (2, 42));
     assert!(matches!(&tool.out[..], [NetCommand::Build(BuildCmd::UpdateTaskInventory { .. })]));
+}
+
+#[test]
+fn script_properties_save_each_click_without_closing_and_survive_inventory_readback() {
+    let (mut world, mut tool, object, items) = fixture();
+    let script = items.iter().find(|it| it.asset_type == 10).unwrap();
+    tool.open_task_item_properties(object, script);
+    // An open properties window remains bound to the original object.
+    tool.selection.clear();
+    let ctx = egui::Context::default();
+    let mut texts = Vec::new();
+    let mut frame = |events: Vec<egui::Event>, tool: &mut BuildTool, world: &mut World| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 800.0))),
+                events,
+                focused: true,
+                ..Default::default()
+            },
+            |_| super::super::item_properties::show(&ctx, &crate::theme::Theme::default().palette(), tool, world, &HashMap::new()),
+        );
+        texts.clear();
+        fn text(shape: &egui::Shape, texts: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => texts.push((t.galley.text().to_owned(), t.galley.rect.translate(t.pos.to_vec2()))),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| text(shape, texts)),
+                _ => {}
+            }
+        }
+        for shape in &output.shapes {
+            text(&shape.shape, &mut texts);
+        }
+        output.textures_delta.clear();
+        texts.clone()
+    };
+    for _ in 0..4 {
+        frame(vec![], &mut tool, &mut world);
+    }
+    assert!(updates(&tool).is_empty());
+    for mask in [perm::MODIFY, perm::COPY, perm::COPY, perm::MODIFY] {
+        let previous = tool.ui.item_properties.as_ref().unwrap().edit.next;
+        let labels = frame(vec![], &mut tool, &mut world);
+        assert!(!labels.iter().any(|(text, _)| text == aurora_i18n::tr!("common-save")));
+        let label = if mask == perm::MODIFY {
+            aurora_i18n::tr!("common-edit")
+        } else {
+            aurora_i18n::tr!("common-copy-2")
+        };
+        let next_y = labels
+            .iter()
+            .find(|(text, _)| text == aurora_i18n::tr!("ui-inventory-properties-next-owner"))
+            .unwrap()
+            .1
+            .bottom();
+        let point = labels
+            .iter()
+            .find(|(text, rect)| text == label && rect.center().y > next_y && rect.center().y < next_y + 30.0)
+            .unwrap()
+            .1
+            .center();
+        frame(vec![egui::Event::PointerMoved(point)], &mut tool, &mut world);
+        for pressed in [true, false] {
+            frame(
+                vec![egui::Event::PointerButton {
+                    pos: point,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: Default::default(),
+                }],
+                &mut tool,
+                &mut world,
+            );
+        }
+        assert!(tool.ui.item_properties.is_some(), "Each click keeps properties open");
+        assert_eq!(updates(&tool).len(), 1, "One update per click");
+        let sent = updates(&tool)[0].clone();
+        assert_eq!(sent.next_owner_mask, previous ^ mask);
+        assert_eq!(sent.parent_id, object);
+        assert_eq!(sent.item_id, script.item_id);
+        assert_eq!(
+            sent.next_owner_mask & mask,
+            tool.ui.item_properties.as_ref().unwrap().edit.next & mask
+        );
+        assert!(matches!(&tool.out[..], [NetCommand::Build(BuildCmd::UpdateTaskInventory { .. })]));
+        let mut readback = items.clone();
+        *readback.iter_mut().find(|it| it.item_id == sent.item_id).unwrap() = sent.clone();
+        tool.on_task_inventory(&world, object, Some(2), readback);
+        tool.out.clear();
+        for _ in 0..3 {
+            frame(vec![], &mut tool, &mut world);
+        }
+        assert!(updates(&tool).is_empty(), "Readback and idle frames never resend");
+        tool.ui.item_properties = None;
+        tool.open_task_item_properties(object, &sent);
+        assert_eq!(tool.ui.item_properties.as_ref().unwrap().edit.next, sent.next_owner_mask);
+    }
 }
 
 #[test]

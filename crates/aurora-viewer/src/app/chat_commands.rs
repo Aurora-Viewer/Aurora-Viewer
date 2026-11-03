@@ -296,8 +296,11 @@ impl App {
 
     /// teleportViaLocation to a render-space point, maybe in a neighbour.
     pub(super) fn teleport_render_pos(&mut self, pos: Vec3) {
-        let size = self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32);
-        if (0.0..size).contains(&pos.x) && (0.0..size).contains(&pos.y) {
+        let size = self
+            .world
+            .main()
+            .map_or((256.0, 256.0), |r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32));
+        if (0.0..size.0).contains(&pos.x) && (0.0..size.1).contains(&pos.y) {
             self.teleport_in_region(pos);
         } else {
             let (x, y) = crate::ui::minimap::to_global(&self.world, pos);

@@ -85,6 +85,18 @@ impl Manager {
         self.open = true;
     }
 
+    /// "Add a grid", its address typed (a place link to an unknown grid).
+    pub fn open_new(&mut self, address: &str) {
+        self.draft = Grid {
+            service: address.to_owned(),
+            ..Grid::default()
+        };
+        self.previous = None;
+        self.error = None;
+        self.tab = 0;
+        self.open = true;
+    }
+
     pub fn show(&mut self, ctx: &Context, p: &Palette, settings: &mut Settings, can_edit: bool, runtime: &tokio::runtime::Handle) {
         if ctx.data_mut(|data| data.remove_temp::<bool>(request_id())).unwrap_or(false) {
             self.open = true;
@@ -410,4 +422,30 @@ fn web_edit(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut String, edi
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_grid_from_a_link_opens_as_a_new_grid_with_its_address() {
+        let mut manager = Manager {
+            previous: Some("https://saved.example".into()),
+            tab: 1,
+            ..Default::default()
+        };
+        manager.open_new("grid.example.org:8002");
+        assert!(manager.open);
+        assert_eq!(
+            manager.draft.service, "grid.example.org:8002",
+            "no scheme: Retrieve tries plain http"
+        );
+        assert!(manager.previous.is_none(), "a new grid, not an edit of the one shown before");
+        assert_eq!(manager.tab, 0, "the Connection tab, with Retrieve");
+        assert_eq!(
+            grids::service(&manager.draft.service).as_deref(),
+            Ok("http://grid.example.org:8002")
+        );
+    }
 }

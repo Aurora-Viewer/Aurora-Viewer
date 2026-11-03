@@ -23,12 +23,11 @@ pub async fn fetch(cap_url: &str) -> Result<String, String> {
     let http = reqwest::Client::builder()
         .user_agent(aurora_version::user_agent())
         .redirect(reqwest::redirect::Policy::none())
-        .tls_certs_only(crate::simulator_roots())
-        .tls_danger_accept_invalid_hostnames(true)
+        .tls_backend_preconfigured(crate::simulator_tls().map_err(|e| e.to_string())?)
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = http.get(cap_url).send().await.map_err(|e| e.to_string())?;
+    let resp = http.get(cap_url).send().await.map_err(|e| e.without_url().to_string())?;
     let location = resp.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok());
     page_of(location).ok_or_else(|| format!("status {} without a page", resp.status().as_u16()))
 }

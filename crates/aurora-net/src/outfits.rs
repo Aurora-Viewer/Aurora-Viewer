@@ -1,10 +1,14 @@
 //! Port of AISAPI::CreateInventory / SlamFolder (indra/newview/llaisapi.cpp,
 //! originally LGPL 2.1). Outfits contain links, never copies of their assets.
 
+use crate::inventory::operations::UdpEdit;
 use crate::inventory::{FolderContents, InvFolder};
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
 pub mod categories;
+
+/// LLFolderType::FT_OUTFIT.
+const OUTFIT_FOLDER: i8 = 47;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutfitLink {
@@ -94,6 +98,110 @@ pub async fn mutate(
     Ok(contents)
 }
 
+/// `mutate` on a grid without AIS, which has no call that replaces a folder's
+/// links: as slam_inventory_folder falls back to (llviewerinventory.cpp),
+/// remove_folder_contents, then link_inventory_array. Links only: the folder's
+/// other content stays.
+pub(crate) async fn mutate_udp<E, EFut>(
+    http: &reqwest::Client,
+    create_cap: Option<&str>,
+    fetch_cap: &str,
+    owner: Uuid,
+    change: OutfitMutation,
+    mut send_edit: E,
+    announce: &(dyn Fn(InvFolder) + Sync),
+) -> Result<Vec<FolderContents>, String>
+where
+    E: FnMut(UdpEdit) -> EFut,
+    EFut: std::future::Future<Output = Result<(), String>>,
+{
+    let fetch = |folders: Vec<Uuid>| async move {
+        let body = crate::inventory::fetch_request_body(&folders, owner);
+        crate::caps::post_llsd(http, fetch_cap, &body)
+            .await
+            .map(|doc| crate::inventory::parse_fetch_response(&doc))
+            .map_err(|_| aurora_i18n::tr!("outfits-the-outfit-was-sent-but-could-not-be-read").to_owned())
+    };
+    let mut change = change;
+    let mut refresh = vec![change.folder];
+    if let Some(cat) = &change.create {
+        let made = crate::inventory::operations::create_folder_without_ais(
+            http,
+            create_cap,
+            fetch_cap,
+            owner,
+            change.folder,
+            cat.parent,
+            &cat.name,
+            OUTFIT_FOLDER,
+            &mut send_edit,
+            announce,
+        )
+        .await?;
+        let Some(folder) = made else {
+            return Err(aurora_i18n::tr!("outfits-the-server-did-not-confirm-outfit-creation-refresh-inventory").into());
+        };
+        // the links go in the folder as the server named it
+        refresh = vec![cat.parent, folder];
+        change.folder = folder;
+    }
+    let mut slams = vec![(change.folder, &change.links)];
+    if let Some((cof, links)) = &change.cof {
+        slams.push((*cof, links));
+        refresh.push(*cof);
+    }
+    for (folder, links) in &slams {
+        if change.create.is_none() || *folder != change.folder {
+            for content in fetch(vec![*folder]).await? {
+                for item in content.items.iter().filter(|item| is_link(item.asset_type)) {
+                    send_edit(UdpEdit::RemoveItem(item.id)).await?;
+                }
+            }
+        }
+        for link in links.iter() {
+            send_edit(UdpEdit::Link {
+                parent: *folder,
+                target: link.target,
+                name: link.name.clone(),
+                desc: link.desc.clone(),
+                folder: link.folder,
+                inv_type: link.inv_type as i8,
+            })
+            .await?;
+        }
+    }
+    // no answer comes on the circuit: a read shows when the links landed
+    const RETRIES: u32 = 5;
+    for attempt in 0..=RETRIES {
+        let mut contents = fetch(refresh.clone()).await?;
+        let linked = slams.iter().all(|(folder, links)| {
+            links.iter().all(|link| {
+                contents
+                    .iter()
+                    .filter(|c| c.folder_id == *folder)
+                    .flat_map(|c| &c.items)
+                    .any(|item| item.asset_id == link.target && is_link(item.asset_type))
+            })
+        });
+        let complete = refresh
+            .iter()
+            .all(|id| contents.iter().any(|c| c.folder_id == *id && c.version >= 0));
+        if linked && complete {
+            contents.sort_by_key(|c| refresh.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
+            return Ok(contents);
+        }
+        if attempt < RETRIES {
+            tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
+        }
+    }
+    Err(aurora_i18n::tr!("outfits-the-outfit-is-incomplete-refresh-before-trying-again").into())
+}
+
+/// LLAssetType::AT_LINK and AT_LINK_FOLDER.
+fn is_link(asset_type: i32) -> bool {
+    matches!(asset_type, 24 | 25)
+}
+
 async fn request(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, String> {
     let req = if put { http.put(url) } else { http.post(url) };
     send(req, body).await
@@ -152,6 +260,168 @@ pub(crate) mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    fn folder_reply(folder: Uuid, children: &[Uuid], links: &[Uuid]) -> Llsd {
+        let categories = children
+            .iter()
+            .map(|id| llsd_map! { "category_id" => *id, "parent_id" => folder, "name" => "Look", "type_default" => 47, "version" => 1 })
+            .collect();
+        let items = links
+            .iter()
+            .map(|target| llsd_map! { "item_id" => Uuid::new_v4(), "parent_id" => folder, "asset_id" => *target, "name" => "Hair", "type" => 24, "inv_type" => 18 })
+            .collect();
+        llsd_map! { "folders" => Llsd::Array(vec![llsd_map! {
+            "folder_id" => folder, "version" => 3, "categories" => Llsd::Array(categories), "items" => Llsd::Array(items),
+        }]) }
+    }
+
+    fn new_outfit(folder: Uuid, parent: Uuid, target: Uuid) -> OutfitMutation {
+        OutfitMutation {
+            folder,
+            create: Some(InvFolder {
+                id: folder,
+                parent,
+                name: "Look".into(),
+                ..Default::default()
+            }),
+            links: vec![OutfitLink {
+                target,
+                name: "Hair".into(),
+                desc: String::new(),
+                folder: false,
+                inv_type: 18,
+            }],
+            cof: None,
+        }
+    }
+
+    fn recorder() -> (
+        std::sync::Arc<std::sync::Mutex<Vec<UdpEdit>>>,
+        impl FnMut(UdpEdit) -> std::future::Ready<Result<(), String>>,
+    ) {
+        let edits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = edits.clone();
+        let send = move |edit| {
+            log.lock().expect("edits").push(edit);
+            std::future::ready(Ok(()))
+        };
+        (edits, send)
+    }
+
+    #[tokio::test]
+    async fn links_wait_for_a_new_outfit_folder_to_show() {
+        let (folder, parent, target) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (url, task) = server(vec![
+            (200, folder_reply(parent, &[], &[])),
+            (200, folder_reply(parent, &[folder], &[])),
+            (
+                200,
+                llsd_map! { "folders" => Llsd::Array(vec![
+                    folder_reply(parent, &[folder], &[])["folders"].at(0).clone(),
+                    folder_reply(folder, &[], &[target])["folders"].at(0).clone(),
+                ]) },
+            ),
+        ])
+        .await;
+        let (edits, send) = recorder();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            new_outfit(folder, parent, target),
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        assert!(result.is_ok(), "{result:?}");
+        let edits = edits.lock().expect("edits");
+        assert!(
+            matches!(edits.as_slice(), [UdpEdit::CreateFolder { .. }, UdpEdit::Link { .. }]),
+            "{edits:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_outfit_folder_comes_from_create_inventory_category_when_the_region_has_it() {
+        let (requested, parent, target) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let assigned = Uuid::from_u128(9);
+        let (url, task) = server(vec![
+            (
+                200,
+                llsd_map! { "folder_id" => assigned, "parent_id" => parent, "type" => 47, "name" => "Look" },
+            ),
+            (
+                200,
+                llsd_map! { "folders" => Llsd::Array(vec![
+                    folder_reply(parent, &[assigned], &[])["folders"].at(0).clone(),
+                    folder_reply(assigned, &[], &[target])["folders"].at(0).clone(),
+                ]) },
+            ),
+        ])
+        .await;
+        let (edits, mut send) = recorder();
+        // the order the viewer learns things in: the folder, then its links
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = order.clone();
+        let send = move |edit: UdpEdit| {
+            seen.lock()
+                .expect("order")
+                .push(format!("{edit:?}").split([' ', '{']).next().unwrap_or("").to_owned());
+            send(edit)
+        };
+        let announced = order.clone();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            Some(&format!("{url}/create")),
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            new_outfit(requested, parent, target),
+            send,
+            &move |folder| {
+                assert_eq!((folder.id, folder.parent, folder.type_default), (assigned, parent, 47));
+                announced.lock().expect("order").push("Folder".into());
+            },
+        )
+        .await;
+        assert_eq!(*order.lock().expect("order"), ["Folder", "Link"], "known before its links arrive");
+        let requests = task.await.expect("requests");
+        assert!(result.is_ok(), "{result:?}");
+        // createNewCategory's body, answered at once: no polling
+        assert!(requests[0].0.starts_with("POST /create "), "{}", requests[0].0);
+        assert_eq!(requests[0].1["folder_id"].as_uuid(), requested);
+        assert_eq!(requests[0].1["parent_id"].as_uuid(), parent);
+        assert_eq!(requests[0].1["type"].as_i32(), 47);
+        assert_eq!(requests[0].1["name"].to_string_value(), "Look");
+        assert_eq!(requests.len(), 2, "the folder is not polled for");
+        let edits = edits.lock().expect("edits");
+        let [UdpEdit::Link { parent: linked, .. }] = edits.as_slice() else {
+            panic!("only the link goes over the circuit: {edits:?}");
+        };
+        assert_eq!(*linked, assigned, "in the folder as the server named it");
+    }
+
+    #[tokio::test]
+    async fn no_link_is_sent_for_a_folder_that_never_shows() {
+        let (folder, parent, target) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (url, task) = server(vec![(200, folder_reply(parent, &[], &[])); 7]).await;
+        let (edits, send) = recorder();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            new_outfit(folder, parent, target),
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        assert!(result.is_err());
+        // a link sent now would land in a default folder
+        assert!(matches!(edits.lock().expect("edits").as_slice(), [UdpEdit::CreateFolder { .. }]));
+    }
+
     pub(crate) async fn server(replies: Vec<(u16, Llsd)>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
         let url = format!("http://{}", listener.local_addr().expect("local address"));
@@ -190,7 +460,9 @@ pub(crate) mod tests {
                     if len == 0 {
                         Llsd::Undef
                     } else {
-                        aurora_llsd::from_xml(&bytes[start..start + len]).expect("LLSD request")
+                        // a raw upload (a bake) is kept as its bytes
+                        aurora_llsd::from_xml(&bytes[start..start + len])
+                            .unwrap_or_else(|_| Llsd::Binary(bytes[start..start + len].to_vec()))
                     },
                 ));
                 let body = aurora_llsd::to_xml(&reply);

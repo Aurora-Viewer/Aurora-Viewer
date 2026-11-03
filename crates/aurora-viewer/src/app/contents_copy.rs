@@ -282,7 +282,7 @@ impl App {
         } else {
             inv.root
         };
-        if !rules::destination(inv, parent, &self.settings.inventory.protected) {
+        if !rules::destination(inv, parent) {
             self.contents_copy_failed(id, aurora_i18n::tr!("task-transfer-destination").to_owned());
             return;
         }

@@ -58,7 +58,8 @@ impl App {
         self.session_ended();
         let restart = self.restart_disconnect();
         let place = if lost && restart.is_none() {
-            link_health::reconnect_place(&self.world.region_name(), self.world.agent.position)
+            let size = self.world.main().map_or((256, 256), |r| (r.heightmap.size_x, r.heightmap.size_y));
+            link_health::reconnect_place(&self.world.region_name(), size, self.world.agent.position)
         } else {
             None
         };

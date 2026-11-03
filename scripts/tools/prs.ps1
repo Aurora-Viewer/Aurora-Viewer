@@ -23,6 +23,7 @@ query($o: String!, $r: String!) {
             ... on StatusContext { context state }
           } }
         } } } }
+        authored: commits(last: 20) { nodes { commit { committedDate parents { totalCount } } } }
         comments(last: 10) { nodes { body createdAt } }
       }
     }
@@ -125,6 +126,16 @@ function Format-Ago([datetime]$When) {
     else { "$([int]$t.TotalDays) d ago" }
 }
 
+# Date of a PR's last commit of its own: merges of main into the branch (two
+# parents) bring nothing the reviewer asked for, so a PR waiting on its author
+# stays waiting through them. Falls back to the last commit when the 20 read
+# are all merges.
+function Get-LastAuthoredCommit($Pr) {
+    $own = @($Pr.authored.nodes | Where-Object { $_.commit.parents.totalCount -lt 2 })
+    if ($own.Count) { return $own[-1].commit.committedDate }
+    $Pr.commits.nodes[0].commit.committedDate
+}
+
 # What a pull request looks like on screen.
 function Get-PrRows {
     $repo = if ($GitHub.Data) { $GitHub.Data.data.repository }
@@ -184,9 +195,10 @@ function Get-PrRows {
         # waiting on its author: a draft, a red CI, or changes asked for since
         # its last commit (a GitHub review requesting changes, or a comment
         # opening with "## Maintainer review" or "## Changes requested" that
-        # the agent's later "## Review" ✅ has not answered). A new commit
-        # brings it back among the PRs to review.
-        $lastCommit = $p.commits.nodes[0].commit.committedDate
+        # the agent's later "## Review" ✅ has not answered). A new commit of
+        # its own brings it back among the PRs to review; a merge of main
+        # does not (Get-LastAuthoredCommit).
+        $lastCommit = Get-LastAuthoredCommit $p
         $lastWord = $p.comments.nodes | Where-Object { $_.body -match '^\s*## (Review|Relecture|Maintainer review|Changes requested)' } | Select-Object -Last 1
         $asked = $lastWord -and $lastWord.body -match '^\s*## (Maintainer review|Changes requested)' -and $lastWord.body -notmatch 'Verdict ?: ✅' -and
             (-not $lastCommit -or [datetime]$lastWord.createdAt -gt [datetime]$lastCommit)
