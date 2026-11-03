@@ -287,35 +287,63 @@ fn session_facts() -> (&'static str, &'static str) {
 static OTHER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 const OTHER_EVERY: Duration = Duration::from_secs(30);
 
-/// Viewers among the processes of the program's name: the crash watcher and
-/// the crash window (`--crash-watch`, `--crash-show`, crash/mod.rs) run the
-/// same exe beside every viewer and are not instances.
-fn viewer_count<'a, A: AsRef<str> + 'a>(commands: impl Iterator<Item = &'a [A]>) -> usize {
-    commands
-        .filter(|args| !args.iter().any(|a| matches!(a.as_ref(), "--crash-watch" | "--crash-show")))
-        .count()
+/// A process of the program's name: its id, its parent's and whether its
+/// command line says it is a crash helper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Proc {
+    pid: u32,
+    parent: Option<u32>,
+    helper: bool,
+}
+
+/// Viewers other than this one among the processes of the program's name.
+/// The crash watcher and the crash window run the same exe beside every
+/// viewer (`--crash-watch`, `--crash-show`, crash/mod.rs): they are left
+/// out by their command line, and by being this process's descendants (the
+/// viewer starts them), so a missing command line cannot count them.
+fn other_viewers(own: u32, procs: &[Proc]) -> usize {
+    let descends = |mut p: Proc| {
+        // a chain longer than the list is a loop of reused ids
+        for _ in 0..procs.len() {
+            match p.parent {
+                Some(parent) if parent == own => return true,
+                Some(parent) => match procs.iter().find(|q| q.pid == parent) {
+                    Some(q) => p = *q,
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+        false
+    };
+    procs.iter().filter(|p| p.pid != own && !p.helper && !descends(**p)).count()
 }
 
 /// Another viewer process of the same program name besides this one (a test
 /// window and the human's viewer, a second login). Names and counts only.
 fn other_instance_running() -> u8 {
-    use sysinfo::{ProcessesToUpdate, System};
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     let Some(own) = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_owned())) else {
         return 0;
     };
     let mut system = System::new();
-    system.refresh_processes(ProcessesToUpdate::All, true);
-    let commands: Vec<Vec<String>> = system
+    // the command line is not read unless asked for
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+    );
+    let procs: Vec<Proc> = system
         .processes()
-        .values()
-        .filter(|p| p.name().eq_ignore_ascii_case(&own))
-        .map(|p| p.cmd().iter().map(|a| a.to_string_lossy().into_owned()).collect())
+        .iter()
+        .filter(|(_, p)| p.name().eq_ignore_ascii_case(&own))
+        .map(|(pid, p)| Proc {
+            pid: pid.as_u32(),
+            parent: p.parent().map(|parent| parent.as_u32()),
+            helper: p.cmd().iter().any(|a| matches!(a.to_str(), Some("--crash-watch" | "--crash-show"))),
+        })
         .collect();
-    if viewer_count(commands.iter().map(Vec::as_slice)) > 1 {
-        2
-    } else {
-        1
-    }
+    if other_viewers(std::process::id(), &procs) > 0 { 2 } else { 1 }
 }
 
 /// The state a report shows once the GPU is lost. After the loss the viewer
@@ -665,11 +693,26 @@ mod tests {
 
     #[test]
     fn only_real_viewers_count_as_instances() {
-        let viewer: &[&str] = &["aurora-viewer.exe", "--title", "Test"];
-        let watcher: &[&str] = &["aurora-viewer.exe", "--crash-watch", "x"];
-        let window: &[&str] = &["aurora-viewer.exe", "--crash-show"];
-        assert_eq!(viewer_count([viewer, watcher, window].into_iter()), 1);
-        assert_eq!(viewer_count([viewer, viewer, watcher].into_iter()), 2);
+        let p = |pid, parent, helper| Proc { pid, parent, helper };
+        // alone: the viewer, its watcher and the window the watcher started,
+        // whatever the command lines say (they can come back empty)
+        let alone = [p(10, Some(1), false), p(11, Some(10), false), p(12, Some(11), false)];
+        assert_eq!(other_viewers(10, &alone), 0);
+        // the helpers are known by their flag too, even when orphaned
+        assert_eq!(other_viewers(10, &[p(10, Some(1), false), p(30, None, true)]), 0);
+        // a second viewer, with its own watcher
+        let two = [
+            p(10, Some(1), false),
+            p(11, Some(10), false),
+            p(20, Some(1), false),
+            p(21, Some(20), true),
+        ];
+        assert_eq!(other_viewers(10, &two), 1);
+        // a loop of reused ids does not hang
+        assert_eq!(
+            other_viewers(10, &[p(10, None, false), p(5, Some(6), false), p(6, Some(5), false)]),
+            2
+        );
     }
 
     #[test]
