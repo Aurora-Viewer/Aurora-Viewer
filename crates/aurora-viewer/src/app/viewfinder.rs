@@ -64,6 +64,9 @@ impl App {
         match (self.viewfinder_on(), self.snapshots.fov_before) {
             (true, None) => self.snapshots.fov_before = Some(self.settings.camera.fov),
             (false, Some(fov)) => {
+                // Only closing the viewfinder resets its roll; ordinary camera
+                // controls also own roll while the viewfinder is closed.
+                self.camera.roll = 0.0;
                 self.snapshots.fov_before = None;
                 if (self.settings.camera.fov - fov).abs() > 1e-6 {
                     self.settings.camera.fov = fov;
@@ -74,7 +77,6 @@ impl App {
             _ => {}
         }
         if !self.viewfinder_on() {
-            self.camera.roll = 0.0;
             let v = &mut self.snapshots.vf;
             v.ae_lock = false;
             v.countdown = None;

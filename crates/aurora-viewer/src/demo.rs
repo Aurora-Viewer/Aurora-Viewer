@@ -4246,6 +4246,7 @@ pub fn events() -> Vec<NetEvent> {
     for q in 0..4 {
         ev.push(NetEvent::ParcelOverlay {
             handle: HANDLE,
+            size: (256, 256),
             sequence: q as i32,
             data: cells[q * 1024..(q + 1) * 1024].to_vec(),
         });
