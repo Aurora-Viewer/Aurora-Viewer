@@ -5718,6 +5718,14 @@ impl App {
     /// (an address typed in its search): another grid's region, reached by
     /// handle, so the grid comes from that label.
     fn suitcase_held_map(&mut self, command: &NetCommand, label: &str, show: bool) -> bool {
+        let sim = match command {
+            NetCommand::TeleportTo { handle, .. } => {
+                let (x, y) = aurora_net::handle_to_origin(*handle);
+                self.world.map.sim_at(x / 256, y / 256).map(|(_, s)| s.name.clone())
+            }
+            _ => None,
+        };
+        log::info!("hypergrid: map teleport, label {label:?}, region {sim:?}");
         let Some(grid) = crate::slurl::parse_hypergrid(label).and_then(|place| place.grid) else {
             return false;
         };
