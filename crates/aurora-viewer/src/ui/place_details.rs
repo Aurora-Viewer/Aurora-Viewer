@@ -212,6 +212,16 @@ fn slurl_of(place: &Place, world: &World) -> Option<String> {
     (!region.is_empty() && !world.rlva_private_region(&region)).then(|| crate::slurl::make(&region, place.region_pos))
 }
 
+/// RLVa leaves the place's Teleport allowed (LLPanelPlaces::updateVerbs,
+/// FSFloaterPlaceDetails: @tplm for a landmark, canTeleportToLocation for
+/// any other place).
+pub fn teleport_allowed(place: &Place, world: &World) -> bool {
+    match &place.source {
+        Source::Landmark { .. } => world.rlva_can_teleport_landmark(),
+        _ => place.global.is_none_or(|g| world.rlva_can_teleport_global(g)),
+    }
+}
+
 /// "Teleport" of a profile (onTeleportButtonClicked).
 pub fn teleport_action(place: &Place, world: &World) -> Option<PlaceAction> {
     match &place.source {
@@ -301,7 +311,7 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
             p,
             aurora_i18n::tr!("common-teleport-3"),
             aurora_i18n::tr!("ui-place-details-teleport-to-the-specified-location"),
-            global.is_some(),
+            global.is_some() && teleport_allowed(place, world),
             108.0,
         ) && let Some(a) = teleport_action(place, world)
         {

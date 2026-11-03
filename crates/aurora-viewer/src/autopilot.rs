@@ -772,30 +772,40 @@ pub(crate) fn can_fly_for_join(world: &crate::world::World) -> bool {
         !world.agent.is_sitting()
             && !world.rlva.has("fly")
             && world.main_region.is_some()
-            && world
-                .main()
-                .and_then(|r| r.info.as_ref())
-                .is_none_or(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
+            && (world.fly_override
+                || world
+                    .main()
+                    .and_then(|r| r.info.as_ref())
+                    .is_none_or(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0))
     } else {
         world.main_region.is_some() && can_takeoff_with_unknown_policy(world, true)
     }
 }
 
 fn can_takeoff_with_unknown_policy(world: &crate::world::World, allow_unknown: bool) -> bool {
+    !world.agent.is_sitting() && !world.rlva.has("fly") && land_allows_flight(world, allow_unknown, allow_unknown)
+}
+
+/// The land part of LLAgent::canFly (indra/newview/llagent.cpp): the fly
+/// override first, then the region's no-fly, then the parcel's, which its
+/// owner and the owning group's flight managers may ignore. RLVa @fly and
+/// sitting are the callers' (they come before the override there too).
+/// `unknown_region` / `unknown_parcel`: the answer while that policy has
+/// not arrived yet.
+pub(crate) fn land_allows_flight(world: &crate::world::World, unknown_region: bool, unknown_parcel: bool) -> bool {
     use crate::world::land::{AgentRights, owned_by_agent, powers};
-    // LLAgent::canFly: parcel owners and the owning group's flight managers
-    // may fly despite ALLOW_FLY, but region and restraint rules still apply.
+    if world.fly_override {
+        return true;
+    }
     let rights = AgentRights {
         id: world.agent_id,
         groups: &world.groups.groups,
     };
-    !world.agent.is_sitting()
-        && !world.rlva.has("fly")
-        && world
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .map_or(allow_unknown, |r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
-        && world.parcel.as_ref().map_or(allow_unknown, |p| {
+    world
+        .main()
+        .and_then(|r| r.info.as_ref())
+        .map_or(unknown_region, |r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
+        && world.parcel.as_ref().map_or(unknown_parcel, |p| {
             p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0
                 || (!world.agent_id.is_nil() && owned_by_agent(p, &rights, powers::LAND_ALLOW_FLY))
         })
@@ -1706,6 +1716,58 @@ mod tests {
         world.rlva.configure(true);
         world.rlva_console_input("@fly=n");
         assert!(!can_takeoff(&world));
+    }
+
+    /// FSAlwaysFly in LLAgent::canFly: no-fly land no longer stops a takeoff
+    /// nor lands a flight (setFlying(canFly()) on RegionInfo), RLVa @fly and
+    /// sitting still do, and the switch outlives a relog but not a launch.
+    #[test]
+    fn fly_override_ignores_no_fly_land_but_not_restraints_or_sitting() {
+        use crate::{demo, scene::avatar::AvatarLibrary, world::World};
+        use aurora_net::NetEvent;
+        let mut world = World::new(std::sync::Arc::new(AvatarLibrary::load()));
+        assert!(!world.fly_override, "off at every launch");
+        world.agent_id = demo::DEMO_AGENT;
+        let mut info = demo::events()
+            .into_iter()
+            .find_map(|e| match e {
+                NetEvent::RegionHandshake(info) => Some((*info).clone()),
+                _ => None,
+            })
+            .unwrap();
+        info.region_flags |= aurora_net::region_flags::BLOCK_FLY;
+        let handle = info.handle;
+        world.main_region = Some(handle);
+        world.apply(NetEvent::RegionHandshake(std::sync::Arc::new(info.clone())));
+        world.parcel = Some(std::sync::Arc::new(aurora_net::ParcelInfo::default()));
+        assert!(!can_takeoff(&world) && !land_allows_flight(&world, false, true));
+        world.fly_override = true;
+        assert!(can_takeoff(&world), "region and parcel no-fly ignored");
+        assert!(land_allows_flight(&world, false, true), "the movement frame agrees");
+        world.agent.flying = true;
+        assert!(can_fly_for_join(&world), "a flight goes on in a no-fly region");
+        world.apply(NetEvent::RegionFlags {
+            handle,
+            flags: info.region_flags,
+            max_tasks: 0,
+        });
+        assert!(world.agent.flying, "the region's no-fly does not land the avatar");
+        world.fly_override = false;
+        world.apply(NetEvent::RegionFlags {
+            handle,
+            flags: info.region_flags,
+            max_tasks: 0,
+        });
+        assert!(!world.agent.flying, "without the override it lands");
+        world.fly_override = true;
+        world.agent.seated = true;
+        assert!(!can_takeoff(&world), "no takeoff while seated");
+        world.agent.seated = false;
+        world.rlva.configure(true);
+        world.rlva_console_input("@fly=n");
+        assert!(!can_takeoff(&world), "RLVa @fly comes first");
+        world.reset();
+        assert!(world.fly_override, "kept across a relog");
     }
 
     #[test]

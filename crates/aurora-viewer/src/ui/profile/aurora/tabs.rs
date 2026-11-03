@@ -957,7 +957,7 @@ fn publish_strip(ui: &mut egui::Ui, p: &Palette, publish: &mut Publish, name: &s
                         .color(p.amber),
                 );
                 ui.add(egui::TextEdit::singleline(&mut publish.price).desired_width(56.0).char_limit(9));
-                ui.label(RichText::new("L$").font(semibold(ui, 12.0)).color(p.amber));
+                ui.label(RichText::new(aurora_i18n::currency()).font(semibold(ui, 12.0)).color(p.amber));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = Vec2::new(0.0, 24.0);
                     if widgets::action_button(
@@ -1110,7 +1110,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                 ui.label(
-                    RichText::new(format!("L$ {}", aurora_i18n::integer(c.price as i64)))
+                    RichText::new(format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(c.price as i64)))
                         .font(semibold(ui, 12.5))
                         .color(p.amber),
                 );
@@ -1128,7 +1128,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
             picture(ui, env, Vec2::new(ui.available_width(), 110.0));
             text(ui);
             ui.label(
-                RichText::new(format!("L$ {}", aurora_i18n::integer(c.price as i64)))
+                RichText::new(format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(c.price as i64)))
                     .font(semibold(ui, 12.0))
                     .color(p.amber),
             );
@@ -1247,7 +1247,7 @@ fn stats(ui: &mut egui::Ui, env: &Env, c: &ClassifiedInfo) {
             aurora_i18n::tr!("ui-profile-aurora-stat-profiles").to_owned(),
         ),
         (
-            format!("L$ {}", aurora_i18n::integer(c.price as i64)),
+            format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(c.price as i64)),
             aurora_i18n::tr!("ui-profile-aurora-stat-cost", date = profiles::slt_date(c.creation_date)),
         ),
     ];

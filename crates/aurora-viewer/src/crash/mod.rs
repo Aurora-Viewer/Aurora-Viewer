@@ -6,6 +6,8 @@
 //! asked for by default; the full diagnostics stay in the session folder.
 
 pub mod github;
+#[cfg(target_os = "linux")]
+mod linux;
 mod native;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
@@ -313,6 +315,27 @@ pub fn gpu_stalled(seconds: u64) {
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
     mark_gpu_lost(b"");
+}
+
+/// A GPU device loss the viewer recovered from (app/gpu_recovery.rs), `ms`
+/// to its new window and renderer, `safe` with the safe graphics level: one
+/// line each in `gpu-recoveries.txt`, which the session's report counts if
+/// it ends badly later. The session goes on: nothing marks it failed.
+pub fn gpu_recovered(ms: u128, safe: bool) {
+    use std::io::Write;
+    let Some(session) = SESSION.get() else {
+        return;
+    };
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(session.dir.join("gpu-recoveries.txt"));
+    if let Ok(mut file) = file {
+        let _ = writeln!(file, "{unix} {ms} {}", if safe { "safe" } else { "same" });
+    }
 }
 
 /// The text of `gpu-lost.txt` for a device lost before the first frame.

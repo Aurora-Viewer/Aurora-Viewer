@@ -11,7 +11,7 @@
 
 use super::draw::{Painter3d, axis_color, fade};
 use super::geom::{Cam, nearest_on_line, ray_plane, round_to, seg_distance, subdivision_level};
-use super::{Bounds, BuildSettings, EditMode, Grid, MAX_PRIM_SCALE, MIN_PRIM_SCALE, Mods, bounds_of, highlighted_of};
+use super::{Bounds, BuildSettings, EditMode, Grid, Mods, PrimLimits, bounds_of, highlighted_of};
 use crate::scene::Scene;
 use crate::world::World;
 use crate::world::objects::ObjKey;
@@ -147,6 +147,8 @@ pub struct Drag {
     edge_pan_blocked: bool,
     started: bool,
     linked: bool,
+    /// The region's prim size limits when the drag began.
+    limits: PrimLimits,
     // translate
     axis: Vec3,
     normal: Vec3,
@@ -423,6 +425,7 @@ impl Manip {
             edge_pan_blocked: false,
             started: false,
             linked,
+            limits: world.prim_limits(),
             axis: Vec3::X,
             normal: Vec3::Z,
             start_hit: f.pivot,
@@ -1424,7 +1427,7 @@ fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
             for c in &m.children {
                 if let Some(o) = world.objects.get_mut(c.idx) {
                     o.position = c.local_pos * f;
-                    o.scale = (c.scale * f).clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE));
+                    o.scale = d.limits.clamp3(c.scale * f);
                     o.render.needs_records = true;
                 }
             }
@@ -1629,11 +1632,7 @@ fn scale_target(d: &Drag, m: &Mover) -> (Vec3, Quat, Vec3) {
     match d.part {
         Part::Corner(_) => {
             let f = d.factor.x;
-            (
-                d.anchor + (m.pos - d.anchor) * f,
-                m.rot,
-                (m.scale * f).clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)),
-            )
+            (d.anchor + (m.pos - d.anchor) * f, m.rot, d.limits.clamp3(m.scale * f))
         }
         Part::Face(i, _) => {
             // one prim: its axis nearest to the box axis
@@ -1647,7 +1646,7 @@ fn scale_target(d: &Drag, m: &Mover) -> (Vec3, Quat, Vec3) {
                 2
             };
             let mut sc = m.scale;
-            sc[k] = (m.scale[k] * d.factor[i]).clamp(MIN_PRIM_SCALE, MAX_PRIM_SCALE);
+            sc[k] = d.limits.clamp(m.scale[k] * d.factor[i]);
             let grown = (sc[k] - m.scale[k]) * m.visual_scale;
             let pos = if (d.anchor - d.bounds.center).length_squared() < 1e-10 {
                 m.pos
@@ -1704,8 +1703,8 @@ fn scale_corner(d: &mut Drag, s: &BuildSettings, cam: &Cam, o: Vec3, dir: Vec3, 
     for m in &d.movers {
         let mn = m.scale.min_element().max(1e-6);
         let mx = m.scale.max_element().max(1e-6);
-        lo = lo.max(MIN_PRIM_SCALE / mn);
-        hi = hi.min(MAX_PRIM_SCALE / mx);
+        lo = lo.max(d.limits.min / mn);
+        hi = hi.min(d.limits.max / mx);
     }
     f = f.clamp(lo, hi.max(lo));
     d.factor = Vec3::splat(f);
@@ -1738,7 +1737,7 @@ fn scale_face(d: &mut Drag, s: &BuildSettings, cam: &Cam, o: Vec3, dir: Vec3, cu
         d.in_snap = true;
         new_size = round_to(new_size, unit).max(unit);
     }
-    new_size = new_size.clamp(MIN_PRIM_SCALE, MAX_PRIM_SCALE);
+    new_size = d.limits.clamp(new_size);
     let mut f = Vec3::ONE;
     f[i] = new_size / size.max(1e-6);
     d.factor = f;

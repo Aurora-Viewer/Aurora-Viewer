@@ -36,36 +36,38 @@ pub mod im {
 }
 
 /// LSL permission bits (llRequestPermissions) with their wording
-/// (SCRIPT_PERMISSIONS of llscriptruntimeperms.h).
-fn permissions() -> &'static Vec<(i32, &'static str)> {
-    static TABLE: aurora_i18n::Localized<Vec<(i32, &'static str)>> = aurora_i18n::Localized::new();
-    TABLE.get(|| {
-        vec![
-            (0x2, aurora_i18n::tr!("world-notifications-take-l-from-your-account")),
-            (0x4, aurora_i18n::tr!("world-notifications-take-control-of-your-keys")),
-            (0x8, aurora_i18n::tr!("world-notifications-remap-your-control-inputs")),
-            (0x10, aurora_i18n::tr!("world-notifications-animate-your-avatar")),
-            (0x20, aurora_i18n::tr!("world-notifications-attach-to-your-avatar")),
-            (0x40, aurora_i18n::tr!("world-notifications-release-ownership")),
-            (0x80, aurora_i18n::tr!("world-notifications-link-and-unlink-objects")),
-            (0x100, aurora_i18n::tr!("world-notifications-add-and-remove-joints")),
-            (0x200, aurora_i18n::tr!("world-notifications-change-its-permissions")),
-            (0x400, aurora_i18n::tr!("world-notifications-follow-your-camera")),
-            (0x800, aurora_i18n::tr!("world-notifications-control-your-camera")),
-            (0x1000, aurora_i18n::tr!("world-notifications-teleport")),
-            // 0x2000 (JoinAnExperience) has no line, like Firestorm's empty string
-            (0x4000, aurora_i18n::tr!("world-notifications-manage-estate-silently")),
-            (0x8000, aurora_i18n::tr!("world-notifications-override-your-animations")),
-            (0x10000, aurora_i18n::tr!("world-notifications-return-objects")),
-            (0x20000, aurora_i18n::tr!("world-notifications-force-your-avatar-to-sit")),
-            (0x40000, aurora_i18n::tr!("world-notifications-change-your-environment-settings")),
-            (0x80000, aurora_i18n::tr!("world-notifications-sell-land-on-your-behalf")),
-        ]
-    })
+/// (SCRIPT_PERMISSIONS of llscriptruntimeperms.h). Built at each question,
+/// not cached: the debit line names the grid's money symbol of the moment.
+fn permissions() -> Vec<(i32, &'static str)> {
+    vec![
+        (0x2, aurora_i18n::tr!("world-notifications-take-l-from-your-account")),
+        (0x4, aurora_i18n::tr!("world-notifications-take-control-of-your-keys")),
+        (0x8, aurora_i18n::tr!("world-notifications-remap-your-control-inputs")),
+        (0x10, aurora_i18n::tr!("world-notifications-animate-your-avatar")),
+        (0x20, aurora_i18n::tr!("world-notifications-attach-to-your-avatar")),
+        (0x40, aurora_i18n::tr!("world-notifications-release-ownership")),
+        (0x80, aurora_i18n::tr!("world-notifications-link-and-unlink-objects")),
+        (0x100, aurora_i18n::tr!("world-notifications-add-and-remove-joints")),
+        (0x200, aurora_i18n::tr!("world-notifications-change-its-permissions")),
+        (0x400, aurora_i18n::tr!("world-notifications-follow-your-camera")),
+        (0x800, aurora_i18n::tr!("world-notifications-control-your-camera")),
+        (0x1000, aurora_i18n::tr!("world-notifications-teleport")),
+        // 0x2000 (JoinAnExperience) has no line, like the Legacy Viewer's empty string
+        (0x4000, aurora_i18n::tr!("world-notifications-manage-estate-silently")),
+        (0x8000, aurora_i18n::tr!("world-notifications-override-your-animations")),
+        (0x10000, aurora_i18n::tr!("world-notifications-return-objects")),
+        (0x20000, aurora_i18n::tr!("world-notifications-force-your-avatar-to-sit")),
+        (0x40000, aurora_i18n::tr!("world-notifications-change-your-environment-settings")),
+        (0x80000, aurora_i18n::tr!("world-notifications-sell-land-on-your-behalf")),
+    ]
 }
 
 pub fn permission_lines(questions: i32) -> Vec<&'static str> {
-    permissions().iter().filter(|(b, _)| questions & b != 0).map(|(_, t)| *t).collect()
+    permissions()
+        .into_iter()
+        .filter(|(b, _)| questions & b != 0)
+        .map(|(_, t)| t)
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

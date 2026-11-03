@@ -818,7 +818,7 @@ impl PlacesUi {
                     self.select(key, place, &world.inventory, history, actions);
                 }
             }
-            if out.resp.double_clicked() {
+            if out.resp.double_clicked() && Self::teleport_allowed(world, key, place) {
                 self.teleport(key, place, &world.inventory, history);
             }
             if out.star
@@ -885,6 +885,22 @@ impl PlacesUi {
         });
     }
 
+    /// RLVa leaves this place's Teleport allowed: a visit or a place link by
+    /// its position (LLPanelPlaces, LLTeleportHistoryPanel:
+    /// canTeleportToLocation), a landmark under @tplm (LLLandmarksPanel).
+    fn teleport_allowed(world: &World, key: Key, place: &Place) -> bool {
+        if let Key::Visit(i) = key
+            && let Some(entry) = world.tp_storage.items.get(i)
+        {
+            return world.rlva_can_teleport_global(entry.global);
+        }
+        if place.item.is_some() {
+            world.rlva_can_teleport_landmark()
+        } else {
+            place.global.is_none_or(|g| world.rlva_can_teleport_global(g))
+        }
+    }
+
     /// TeleportFromLandmark for a landmark, TeleportToHistoryEntry for a
     /// place of the history. A line of the history goes back to where that
     /// visit arrived, even when it shows the landmark it was a visit of
@@ -911,7 +927,13 @@ impl PlacesUi {
     fn place_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, key: Key, place: &Place, actions: &mut Vec<PlacesAction>) {
         let inv = &world.inventory;
         let history = &world.tp_storage.items;
-        if menu::item(ui, p, "location-filled", aurora_i18n::tr!("common-teleport-3")) {
+        if menu::item_if(
+            ui,
+            p,
+            "location-filled",
+            aurora_i18n::tr!("common-teleport-3"),
+            Self::teleport_allowed(world, key, place),
+        ) {
             self.teleport(key, place, inv, history);
         }
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), place.global.is_some())
@@ -1115,13 +1137,14 @@ impl PlacesUi {
             let small = 28.0;
             let map_w = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
             let tp_w = (width - map_w - small * 2.0 - 18.0).max(90.0);
-            if widgets::action_button(
+            if widgets::action_button_if(
                 ui,
                 p,
                 "location-filled",
                 aurora_i18n::tr!("common-teleport-3"),
                 widgets::ActionKind::Primary,
                 Vec2::new(tp_w, small),
+                Self::teleport_allowed(world, key, &place),
             )
             .clicked()
             {
@@ -1539,7 +1562,17 @@ impl PlacesUi {
             ui.spacing_mut().item_spacing.x = 6.0;
             let tp = aurora_i18n::tr!("common-teleport-3");
             let tw = widgets::action_button_fit(ui, "location-filled", tp);
-            if widgets::action_button(ui, p, "location-filled", tp, widgets::ActionKind::Primary, Vec2::new(tw, 26.0)).clicked() {
+            if widgets::action_button_if(
+                ui,
+                p,
+                "location-filled",
+                tp,
+                widgets::ActionKind::Primary,
+                Vec2::new(tw, 26.0),
+                Self::teleport_allowed(world, key, place),
+            )
+            .clicked()
+            {
                 self.teleport(key, place, &world.inventory, history);
             }
             let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));

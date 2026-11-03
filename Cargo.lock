@@ -725,6 +725,7 @@ dependencies = [
  "fancy-regex",
  "flate2",
  "foldhash 0.2.0",
+ "fontconfig-parser",
  "gilrs-core",
  "glam 0.34.1",
  "hidapi",
