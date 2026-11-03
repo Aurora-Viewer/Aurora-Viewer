@@ -6479,9 +6479,9 @@ failure. Grid validation and any paid upload are performed by the human.
   colour emojis, same size, in the input field and in the sent line.
   `AURORA_EMOJI_FONT=<file>` compares two fonts.
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery|freeze|oom|overflow|thread`**, only
-  with `AURORA_DEMO`: triggers a Rust panic, a native Windows
-  exception, an abnormal exit without a trace, a normal close or an
-  exit without a watcher. The `recovery` mode makes it possible to check the
+  with `AURORA_DEMO`: triggers a Rust panic, a native exception
+  (SIGSEGV on Linux), an abnormal exit without a trace, a normal close or
+  an exit without a watcher. The `recovery` mode makes it possible to check the
   recovery at the next launch (relaunch with `normal`). Linux has no
   watcher: every mode's window opens at the next launch, as with
   `recovery`, and a session closed normally is removed then, as is one
@@ -6497,7 +6497,14 @@ failure. Grid validation and any paid upload are performed by the human.
   `| Crash | Out of memory (70368744177664 bytes) |` with the allocation's
   stack. `overflow` recurses until the stack overflows (`0xC00000FD`): the
   report is a native exception with its stack, written by the vectored
-  handler. `thread`, once the window shows, makes a thread named
+  handler. On Linux, `native` and `overflow` write `native.txt` from the
+  fatal signal handler, then end with SIGSEGV and SIGABRT (after the
+  standard library's overflow message; SIGSEGV where the processor's
+  signal frames do not fit the alternate stack twice): the report says
+  `| Crash | Native signal SIGSEGV (11) |` with the stack from the fault
+  and each module's build ID; `oom` fails only with
+  `AURORA_ALLOCATOR=system` (the kernel's overcommit grants mimalloc the
+  64 TB) and ends with SIGABRT. `thread`, once the window shows, makes a thread named
   `aurora-net` panic: the viewer ends the session at its next frame, the
   window says "A part of the viewer stopped working" and the report adds
   `| Thread | aurora-net (the session was ended) |` to the panic. The window must keep the language

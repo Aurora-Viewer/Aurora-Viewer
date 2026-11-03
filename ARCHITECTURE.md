@@ -3571,7 +3571,15 @@ A vectored handler writes a stack overflow's stack as soon as it is raised
 (the unhandled filter would run on what is left of the overflowed stack),
 and `allocator.rs` hands a failed allocation to `native::out_of_memory`,
 which writes its size and stack to the pre-opened `oom.txt` without
-allocating, before the standard library aborts. `threads.rs` names the
+allocating, before the standard library aborts. On Linux, `linux.rs`
+writes the same `native.txt` from a handler of the fatal signals (SIGSEGV,
+SIGBUS, SIGILL, SIGFPE, SIGABRT) on the thread's alternate signal stack:
+the libgcc unwinder's frames through the signal frame, then each frame as
+`module+0xoffset` (the ELF virtual address) with the module's build ID,
+the unwinder and the loader's list under an alarm (another thread that
+crashes meanwhile waits for the file); it then hands the signal
+to the standard library's overflow handler or the default action, so the
+process ends as before. Panics and failed allocations get the same stacks. `threads.rs` names the
 long-lived background threads the session cannot do without (network
 runtime, texture pages, frees, disk caches, chat history): their panic,
 which used to leave the viewer running without them, ends the session at
