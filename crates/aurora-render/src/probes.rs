@@ -522,16 +522,11 @@ impl Probes {
     /// stored as the Legacy Viewer stores its probes. Without `hdr` every
     /// stage is stored in 8 bits, whatever the sky.
     ///
-    /// One compute pass, a dispatch per mip for its six faces. As render
-    /// passes, one per face and mip, there were 90 of them, and wgpu pays
-    /// for each when the encoder is finished: the frame of a sixth face
-    /// spent 1 ms there instead of 0.25.
+    /// Keep the mip chain's write-to-sample transitions between passes.
+    /// wgpu 30's Vulkan path otherwise submits this chain with mismatched
+    /// image layouts. The final, independent filtering shares one pass.
     pub fn filter(&self, encoder: &mut wgpu::CommandEncoder, slot: u32, irr_capture: bool, hdr: bool) {
         let slot = slot.min(self.slots - 1) as usize;
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("probe filter"),
-            timestamp_writes: None,
-        });
         let dispatch = |pass: &mut wgpu::ComputePass, bg: &wgpu::BindGroup, res: u32| {
             let groups = res.div_ceil(WORKGROUP);
             pass.set_bind_group(0, bg, &[]);
@@ -543,19 +538,29 @@ impl Probes {
             (true, false) => Store::Plain,
         };
         let ldr = usize::from(store == Store::Ldr);
-        pass.set_pipeline(&self.mip_pipeline[store as usize]);
-        for (mip, bg) in (1..CAPTURE_MIPS).zip(&self.mip_bgs) {
-            dispatch(&mut pass, bg, CAPTURE_RES >> mip);
+        let mip_chain = |encoder: &mut wgpu::CommandEncoder, bgs: &[wgpu::BindGroup], res: u32| {
+            for (mip, bg) in (1..).zip(bgs) {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("probe mip"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.mip_pipeline[store as usize]);
+                dispatch(&mut pass, bg, res >> mip);
+            }
+        };
+        mip_chain(encoder, &self.mip_bgs, CAPTURE_RES);
+        if irr_capture {
+            mip_chain(encoder, &self.irr_mip_bgs, IRR_CAPTURE_RES);
         }
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("probe filter"),
+            timestamp_writes: None,
+        });
         pass.set_pipeline(&self.radiance_pipeline[store as usize]);
         for (mip, bg) in (0..PROBE_MIPS).zip(&self.radiance_bgs[slot]) {
             dispatch(&mut pass, bg, PROBE_RES >> mip);
         }
         if irr_capture {
-            pass.set_pipeline(&self.mip_pipeline[store as usize]);
-            for (mip, bg) in (1..IRR_CAPTURE_MIPS).zip(&self.irr_mip_bgs) {
-                dispatch(&mut pass, bg, IRR_CAPTURE_RES >> mip);
-            }
             pass.set_pipeline(&self.irr_source_pipeline[ldr]);
             dispatch(&mut pass, &self.irr_source_bgs[slot], IRRADIANCE_RES);
         } else {
