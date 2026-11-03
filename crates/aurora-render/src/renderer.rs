@@ -6318,7 +6318,6 @@ impl Backend {
                 t,
                 light,
                 fu.proj.w_axis.z,
-                fu.proj.y_axis.y,
                 f.photo_scale,
                 contact_render_height(world_size.1, f.photo_tile, f.proj, f.fov_y),
             );

@@ -22,23 +22,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// How it works: each workgroup is one "wavefront" of WAVE_SIZE pixels lined
-// up along a ray towards the light's point on screen. Its threads read the
-// depth of their pixel and of the pixels up to SAMPLE_COUNT further towards
-// the light, divide them by their distance to the light point (in that
-// space every ray of light is parallel), share them in workgroup memory,
-// and a pixel is in shadow when one of the depths before it along the ray
-// comes within a surface thickness of its own. Changes from the original:
-// integer texel loads instead of a clamp-to-border sampler (outside the
-// screen reads the far depth), the early-out of a whole wavefront through
-// workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
-// than the light, no debug outputs, occluders taken as deep as the ray went
-// under them (up to `tuning.w`) rather than a shell (`depth_delta`), more
-// samples in a photo larger than the viewfinder (the four constants below
-// replaced in a pipeline of its own, `shader_source` in contact_shadows.rs:
-// the shadow keeps its length in the image), Bend's defaults otherwise
-// (BilinearSamplingOffsetMode and IgnoreEdgePixels off, no precision
-// offset).
+// Each workgroup is a wavefront of receivers along one light ray. Shared
+// 64-sample tiles cover the visible ray; conservative 16-sample depth bounds
+// reject spans that cannot change a receiver's minima. The scalar reference
+// visits the same sample positions independently. Both retain the original
+// depth-shell/occluder rules and hard/soft minima, without fading close-up
+// coverage or selecting a different search for enlarged photos.
 
 struct Params {
     // x, y: the light on screen (pixels, y down), z: its depth, w: 1 when
@@ -50,11 +39,6 @@ struct Params {
     // occluders' depth in units of surface thickness per unit of reversed
     // depth (0: Bend's shell of one unit)
     tuning: vec4<f32>,
-    // x near plane (metres), y metres per pixel per metre of distance, zw
-    // the contact reach (metres) over which the shadow fades in (y = 0: no
-    // fade). Close up the sun's shadow map already resolves what a short
-    // reach would add, and the depth's facets only add hard edges.
-    fade: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -63,16 +47,10 @@ struct Params {
 
 // Must match WAVE_SIZE in contact_shadows.rs.
 const WAVE_SIZE: i32 = 64;
-// Shadow samples per pixel: the length of the shadow in pixels. This line
-// and the next three are rewritten for a photo (`shader_source`): keep them
-// as they are.
-const SAMPLE_COUNT: i32 = 60;
 // The first samples: one of them alone can shadow the pixel.
 const HARD_SHADOW_SAMPLES: i32 = 4;
 // The last samples fade out, softening the end of the shadow.
 const FADE_OUT_SAMPLES: i32 = 8;
-// Depth reads per thread: SAMPLE_COUNT / WAVE_SIZE + 2.
-const READ_COUNT: i32 = 2;
 // Reversed depth: the far plane at 0, the near plane at 1.
 const FAR_DEPTH: f32 = 0.0;
 const NEAR_DEPTH: f32 = 1.0;

@@ -351,10 +351,8 @@ impl Override {
     }
 }
 
-/// `AURORA_CONTACT_VARIANT`: a diagnostic of the GPU hangs (device lost)
-/// some AMD RX 9070 XT cards had as soon as the pass ran, each variant
-/// without one construct of the window's shader (`variant_source`), to find
-/// the one the driver does not take. The photo's pipelines stay Bend's.
+/// Shared full-visible-ray search by default. `AURORA_CONTACT_VARIANT`
+/// retains the bounded implementation and driver diagnostics for comparisons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Variant {
     /// Shared full-visible-ray search, without the close-range fade.
@@ -381,12 +379,13 @@ impl Variant {
     pub(crate) fn parse(v: Option<&str>) -> Self {
         match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
             Some("stream") => Variant::Stream,
+            Some("bend") => Variant::Bend,
             Some("full-ray") => Variant::StreamReference,
             Some("no-early-out") => Variant::NoEarlyOut,
             Some("no-shared") => Variant::NoShared,
             Some("short") => Variant::Short,
             Some("skip") => Variant::Skip,
-            _ => Variant::Bend,
+            _ => Variant::Stream,
         }
     }
 
@@ -394,7 +393,7 @@ impl Variant {
         static VARIANT: std::sync::OnceLock<Variant> = std::sync::OnceLock::new();
         *VARIANT.get_or_init(|| {
             let v = Variant::parse(std::env::var("AURORA_CONTACT_VARIANT").ok().as_deref());
-            if v != Variant::Bend {
+            if v != Variant::Stream {
                 log::info!("contact shadows: diagnostic variant {v:?} (AURORA_CONTACT_VARIANT)");
             }
             v
@@ -459,33 +458,7 @@ struct ParamsU {
     light: [f32; 4],
     wave_offset: [i32; 4],
     tuning: [f32; 4],
-    fade: [f32; 4],
 }
-
-/// The close-range fade of the shader's `fade`: near plane, metres per
-/// pixel per metre (from the projection's vertical scale and the image's
-/// height) and the reach in metres over which the shadow fades in.
-/// `AURORA_CONTACT_FADE=<from>,<to>` (metres) tunes it, `0` turns it off.
-fn close_fade(near: f32, proj_y: f32, height: i32) -> [f32; 4] {
-    let (from, to) = match std::env::var("AURORA_CONTACT_FADE").ok().as_deref() {
-        Some("0") => return [0.0; 4],
-        Some(v) => {
-            let mut it = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok());
-            match (it.next(), it.next()) {
-                (Some(a), Some(b)) if b > a => (a, b),
-                _ => (CLOSE_FADE_FROM, CLOSE_FADE_TO),
-            }
-        }
-        None => (CLOSE_FADE_FROM, CLOSE_FADE_TO),
-    };
-    if near <= 0.0 || proj_y <= 0.0 || height <= 0 {
-        return [0.0; 4];
-    }
-    [near, 2.0 / (proj_y * height as f32), from, to]
-}
-
-const CLOSE_FADE_FROM: f32 = 0.015;
-const CLOSE_FADE_TO: f32 = 0.025;
 
 /// The light of the frame as Bend takes it: the direction towards it (w =
 /// 0) through the view-projection the depth prepass was drawn with.
@@ -968,7 +941,6 @@ impl ContactShadows {
         t: &Targets,
         light: [f32; 4],
         near: f32,
-        proj_y: f32,
         scale: f32,
         filter_height: u32,
     ) {
@@ -977,14 +949,12 @@ impl ContactShadows {
         let (w, h) = (t.size.0 as i32, t.size.1 as i32);
         self.list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
         let occluder = occluder_units(Override::from_env().occluder_depth(), near);
-        let fade = close_fade(near, proj_y, h);
         let mut bytes = vec![0u8; (self.stride as usize) * self.list.count];
         for (i, d) in self.list.dispatches().iter().enumerate() {
             let u = ParamsU {
                 light: self.list.light,
                 wave_offset: [d.wave_offset[0], d.wave_offset[1], 0, 0],
                 tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, occluder],
-                fade,
             };
             let at = i * self.stride as usize;
             bytes[at..at + std::mem::size_of::<ParamsU>()].copy_from_slice(bytemuck::bytes_of(&u));
@@ -1346,10 +1316,12 @@ mod tests {
 
     #[test]
     fn the_diagnostic_variant_comes_from_its_name() {
-        assert_eq!(Variant::parse(None), Variant::Bend);
-        assert_eq!(Variant::parse(Some("")), Variant::Bend);
+        assert_eq!(Variant::parse(None), Variant::Stream);
+        assert_eq!(Variant::parse(Some("")), Variant::Stream);
         assert_eq!(Variant::parse(Some("bend")), Variant::Bend);
-        assert_eq!(Variant::parse(Some("whatever")), Variant::Bend);
+        assert_eq!(Variant::parse(Some("stream")), Variant::Stream);
+        assert_eq!(Variant::parse(Some("full-ray")), Variant::StreamReference);
+        assert_eq!(Variant::parse(Some("whatever")), Variant::Stream);
         assert_eq!(Variant::parse(Some("no-early-out")), Variant::NoEarlyOut);
         assert_eq!(Variant::parse(Some(" No-Shared ")), Variant::NoShared);
         assert_eq!(Variant::parse(Some("short")), Variant::Short);
@@ -1472,7 +1444,7 @@ mod tests {
         let mask = |variant: Variant| -> Vec<u8> {
             let mut cs = ContactShadows::with_variant(&device, variant);
             let t = cs.targets(&device, &depth_view, format, w, h);
-            cs.write(&device, &queue, &t, light, 0.1, 0.0, 1.0, 1080);
+            cs.write(&device, &queue, &t, light, 0.1, 1.0, 1080);
             let mut encoder = device.create_command_encoder(&Default::default());
             cs.encode(&mut encoder, &t, false);
             let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -1652,7 +1624,7 @@ mod tests {
                 let footprint = FilterFootprint::for_height((1080.0 * scale) as u32);
                 let hot = footprint == FilterFootprint::for_height(1080) || cs.filter.cached.iter().any(|(f, _)| *f == footprint);
                 let builds = cs.filter.builds;
-                cs.write(&device, &queue, &t, light, near, 0.0, scale, (1080.0 * scale) as u32);
+                cs.write(&device, &queue, &t, light, near, scale, (1080.0 * scale) as u32);
                 if hot {
                     assert_eq!(cs.filter.builds, builds, "a hot viewport/photo must not rebuild its filter");
                 }
