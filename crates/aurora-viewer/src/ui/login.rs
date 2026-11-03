@@ -791,7 +791,13 @@ pub fn show(
                                 .size(12.5)
                                 .color(p.muted),
                         )
-                        .on_hover_text(aurora_i18n::tr!("ui-login-stored-in-windows-credential-manager-as-the-hash-sent"));
+                        .on_hover_text(if cfg!(windows) {
+                            aurora_i18n::tr!("ui-login-stored-in-windows-credential-manager-as-the-hash-sent")
+                        } else if cfg!(target_os = "macos") {
+                            aurora_i18n::tr!("ui-login-stored-in-the-macos-keychain-as-the-hash-sent")
+                        } else {
+                            aurora_i18n::tr!("ui-login-stored-in-the-secret-service-as-the-hash-sent")
+                        });
                     });
                     ui.add_space(10.0);
                     let can = form.block_reason.is_none()
