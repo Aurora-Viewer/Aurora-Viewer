@@ -284,7 +284,7 @@ fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions: &mut
         };
         text_field(ui, p, aurora_i18n::tr!("search-group-enrollment"), enrollment);
         let fee = if g.membership_fee > 0 {
-            format!("L${}", g.membership_fee)
+            format!("{}{}", aurora_i18n::currency(), g.membership_fee)
         } else {
             aurora_i18n::tr!("search-none-fee").to_owned()
         };
@@ -516,7 +516,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
             }
         });
         let fee = match e.cover {
-            Some(amount) => format!("L${amount}"),
+            Some(amount) => format!("{}{amount}", aurora_i18n::currency()),
             None => aurora_i18n::tr!("search-none-fee").to_owned(),
         };
         text_field(ui, p, aurora_i18n::tr!("search-event-fee"), &fee);
