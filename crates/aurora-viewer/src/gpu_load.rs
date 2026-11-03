@@ -3,7 +3,7 @@
 //! The driver's memory budget (aurora_render::vram) is the part of the card
 //! the system lets this process use; it knows nothing of what the other
 //! programs are about to do, and says nothing of the card's time. A tester's
-//! crash with another viewer open (and a second one with Firestorm) lost the
+//! crash with another viewer open (and a second one beside the Legacy Viewer) lost the
 //! device at 2.9 GB used of a 7.3 GB budget, with no timeout in Windows'
 //! event log: the card was shared and busy, and the budget alone never
 //! showed it. Windows counts, per adapter and per process, the memory used
@@ -46,6 +46,9 @@ pub struct Load {
     /// Busiest 3D or compute engine of the card, in percent of its time,
     /// counting the other programs only.
     pub others_busy: f32,
+    /// Counts the readings (and the loss of the counters): a figure derived
+    /// from one reading is applied once, not at every pass of the caller.
+    pub seq: u64,
 }
 
 impl Load {
@@ -61,6 +64,8 @@ struct Shared {
     adapter_used: AtomicU64,
     /// Hundredths of a percent.
     others_busy: AtomicU64,
+    /// Readings made so far, stored last.
+    seq: AtomicU64,
 }
 
 /// The reader of the counters, started once the card is known.
@@ -100,10 +105,12 @@ impl GpuLoad {
     }
 
     pub fn get(&self) -> Load {
+        let seq = self.shared.seq.load(Ordering::Acquire);
         let used = self.shared.adapter_used.load(Ordering::Relaxed);
         Load {
             adapter_used: (used != u64::MAX).then_some(used),
             others_busy: self.shared.others_busy.load(Ordering::Relaxed) as f32 / 100.0,
+            seq,
         }
     }
 }
@@ -185,34 +192,45 @@ mod reader {
     use super::*;
     use std::sync::Weak;
     use windows_sys::Win32::System::Performance::{
-        PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA, PdhAddEnglishCounterW, PdhCloseQuery,
-        PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
+        PDH_CSTATUS_NEW_DATA, PDH_CSTATUS_VALID_DATA, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA,
+        PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
     };
 
     pub(super) fn run(luid: u64, shared: Weak<Shared>) {
         let luid = luid_text(luid);
         let pid = std::process::id();
-        let mut first = true;
+        let (mut first, mut lost) = (true, false);
         loop {
             // (the instances of a wildcard are listed when the counter is
             // added: a new query each time sees the programs started since)
-            let Some((engines, memory)) = sample() else {
-                if first {
-                    log::info!("GPU load: the system's GPU counters could not be read");
-                }
-                return;
-            };
             let Some(shared) = Weak::upgrade(&shared) else { return };
-            let used = adapter_used(&memory, &luid);
-            let busy = others_busy(&engines, pid, &luid);
-            shared.adapter_used.store(used.unwrap_or(u64::MAX), Ordering::Relaxed);
-            shared.others_busy.store((busy * 100.0) as u64, Ordering::Relaxed);
-            if first {
-                first = false;
-                log::info!(
-                    "GPU load: {} MB in use on the card by every program, the others keep its busiest engine {busy:.0} % busy",
-                    used.unwrap_or(0) >> 20
-                );
+            match sample() {
+                Some((engines, memory)) => {
+                    let used = adapter_used(&memory, &luid);
+                    let busy = others_busy(&engines, pid, &luid);
+                    shared.adapter_used.store(used.unwrap_or(u64::MAX), Ordering::Relaxed);
+                    shared.others_busy.store((busy * 100.0) as u64, Ordering::Relaxed);
+                    shared.seq.fetch_add(1, Ordering::Release);
+                    if first || lost {
+                        log::info!(
+                            "GPU load: {} MB in use on the card by every program, the others keep its busiest engine {busy:.0} % busy",
+                            used.unwrap_or(0) >> 20
+                        );
+                    }
+                    (first, lost) = (false, false);
+                }
+                None => {
+                    // (stale figures would hold the window at 10 fps, or the
+                    // textures down, for the whole session: forgotten, and
+                    // tried again)
+                    shared.adapter_used.store(u64::MAX, Ordering::Relaxed);
+                    shared.others_busy.store(0, Ordering::Relaxed);
+                    shared.seq.fetch_add(1, Ordering::Release);
+                    if !lost {
+                        log::info!("GPU load: the system's GPU counters could not be read, trying again");
+                    }
+                    lost = true;
+                }
             }
             drop(shared);
             std::thread::sleep(PERIOD);
@@ -270,7 +288,7 @@ mod reader {
         }
         let mut out = Vec::with_capacity(count as usize);
         for it in buffer.iter().take(count as usize) {
-            if it.szName.is_null() || it.FmtValue.CStatus != 0 {
+            if it.szName.is_null() || !matches!(it.FmtValue.CStatus, PDH_CSTATUS_VALID_DATA | PDH_CSTATUS_NEW_DATA) {
                 continue;
             }
             // SAFETY: only the `count` items written are read; each name is
@@ -343,15 +361,15 @@ mod tests {
         );
         assert!(
             Load {
-                adapter_used: None,
-                others_busy: 50.0
+                others_busy: 50.0,
+                ..Load::default()
             }
             .busy_elsewhere()
         );
         assert!(
             !Load {
-                adapter_used: None,
-                others_busy: 5.0
+                others_busy: 5.0,
+                ..Load::default()
             }
             .busy_elsewhere()
         );

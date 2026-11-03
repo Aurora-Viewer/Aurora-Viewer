@@ -156,11 +156,33 @@ pub fn texture_target(setting: u64, pages: u64, video: Option<VideoMemory>) -> u
 /// The target with the card oversubscribed by `over` bytes (gpu_load.rs):
 /// the pages hold that much less, no less than the minimum. Nothing while
 /// the programs fit.
-pub fn relieve(target: u64, pages: u64, over: u64) -> u64 {
-    if over == 0 {
-        return target;
+pub fn relieve(target: u64, cap: Option<u64>) -> u64 {
+    cap.map_or(target, |cap| target.min(cap))
+}
+
+/// The pages' limit that gives the card `over` bytes back, fixed at each
+/// reading of the card's load. The reading changes every few seconds, the
+/// budget pass runs four times a second: taking `over` off the pages of
+/// every pass would take it off again and again for as long as the reading
+/// lasts, and the pressure would climb to its last step. The pages of the
+/// reading less `over`, once, and the next reading sees what that freed.
+#[derive(Debug, Default)]
+pub struct Relief {
+    seq: u64,
+    cap: Option<u64>,
+}
+
+impl Relief {
+    /// The limit for the reading `seq` (gpu_load::Load::seq) that found
+    /// `over` bytes to give back while `pages` were held; None while the
+    /// card has room.
+    pub fn update(&mut self, seq: u64, pages: u64, over: u64) -> Option<u64> {
+        if seq != self.seq {
+            self.seq = seq;
+            self.cap = (over > 0).then(|| pages.saturating_sub(over).max(MIN_TEXTURE_BYTES));
+        }
+        self.cap
     }
-    target.min(pages.saturating_sub(over)).max(MIN_TEXTURE_BYTES)
 }
 
 /// Most the texture target rises in a second, in bytes. A drop counts at
@@ -419,11 +441,31 @@ mod tests {
 
     #[test]
     fn an_oversubscribed_card_takes_its_excess_from_the_pages() {
-        assert_eq!(relieve(4000 * MB, 3000 * MB, 0), 4000 * MB);
-        assert_eq!(relieve(4000 * MB, 3000 * MB, 500 * MB), 2500 * MB);
-        // the target when it is lower already, the minimum when little is left
-        assert_eq!(relieve(2000 * MB, 3000 * MB, 500 * MB), 2000 * MB);
-        assert_eq!(relieve(4000 * MB, 300 * MB, 500 * MB), 256 * MB);
+        let mut relief = Relief::default();
+        assert_eq!(relieve(4000 * MB, relief.update(1, 3000 * MB, 0)), 4000 * MB);
+        assert_eq!(relieve(4000 * MB, relief.update(2, 3000 * MB, 500 * MB)), 2500 * MB);
+        // the target when it is lower already
+        assert_eq!(relieve(2000 * MB, relief.update(3, 3000 * MB, 500 * MB)), 2000 * MB);
+        // the minimum when little is left
+        assert_eq!(relieve(4000 * MB, relief.update(4, 300 * MB, 500 * MB)), 256 * MB);
+    }
+
+    #[test]
+    fn a_reading_is_taken_off_the_pages_once() {
+        let mut relief = Relief::default();
+        // the reading 5 found 500 MB to give back with 3000 MB held
+        assert_eq!(relief.update(5, 3000 * MB, 500 * MB), Some(2500 * MB));
+        // the passes until the next reading hold 2900, 2700, 2500 MB: the
+        // limit stays where the reading put it instead of falling by 500 MB
+        // each time
+        for pages in [2900, 2700, 2500] {
+            assert_eq!(relief.update(5, pages * MB, 500 * MB), Some(2500 * MB));
+        }
+        // the next reading sees what was freed
+        assert_eq!(relief.update(6, 2500 * MB, 200 * MB), Some(2300 * MB));
+        // and the card with room again
+        assert_eq!(relief.update(7, 2300 * MB, 0), None);
+        assert_eq!(relief.update(7, 2300 * MB, 400 * MB), None);
     }
 
     #[test]

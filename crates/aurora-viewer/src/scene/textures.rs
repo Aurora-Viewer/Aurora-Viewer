@@ -952,6 +952,11 @@ pub struct TextureStreamer {
     /// (read with the first budget pass), and the target eased on its rise.
     gpu: crate::gpu_load::GpuLoad,
     card_total: Option<u64>,
+    /// The card's identity, 0 until known (instances.rs).
+    card_luid: u64,
+    /// The card was asked for: not asked again when it has no answer.
+    card_asked: bool,
+    relief: texture_budget::Relief,
     target_ramp: texture_budget::TargetRamp,
     last_budget: Instant,
     /// Passes of `recompute_wants` since the step last changed.
@@ -1241,6 +1246,9 @@ impl TextureStreamer {
             video_usage: 0,
             gpu: crate::gpu_load::GpuLoad::new(),
             card_total: None,
+            card_luid: 0,
+            card_asked: false,
+            relief: Default::default(),
             target_ramp: Default::default(),
             last_budget: Instant::now(),
             passes_at_step: 0,
@@ -2971,6 +2979,11 @@ impl TextureStreamer {
         self.video_usage
     }
 
+    /// The card this viewer draws on, 0 until known (instances.rs).
+    pub fn card_luid(&self) -> u64 {
+        self.card_luid
+    }
+
     /// The window is behind and the viewer was past the driver's budget
     /// there: the 3D drawing pauses (texture_budget::Background::paused).
     pub fn drawing_paused(&self) -> bool {
@@ -2987,11 +3000,15 @@ impl TextureStreamer {
         let (used, live) = (renderer.textures.page_bytes(), renderer.textures.bytes());
         let video = renderer.video_memory.read(&renderer.device);
         self.video_usage = video.map_or(0, |v| v.usage);
-        if self.card_total.is_none()
-            && let Some((luid, total)) = renderer.video_memory.card()
-        {
-            self.card_total = Some(total);
-            self.gpu.start(luid);
+        if !self.card_asked {
+            self.card_asked = true;
+            if let Some((luid, total, dedicated)) = renderer.video_memory.card() {
+                self.card_luid = luid;
+                // (an integrated GPU has no memory of its own to measure
+                // the counters against, but its engines are read all the same)
+                self.card_total = dedicated.then_some(total);
+                self.gpu.start(luid);
+            }
         }
         // (the viewers on this PC share the budget, instances.rs, and the
         // card is shared with every program that uses it, gpu_load.rs;
@@ -3000,13 +3017,15 @@ impl TextureStreamer {
             budget: crate::instances::share_cap(v.budget, &self.peers),
             ..v
         });
-        let over = match (self.card_total, self.gpu.get().adapter_used) {
-            (Some(total), Some(used)) => crate::gpu_load::oversubscribed(total, used, self.video_usage),
+        let load = self.gpu.get();
+        let over = match (self.card_total, load.adapter_used) {
+            (Some(total), Some(held)) => crate::gpu_load::oversubscribed(total, held, self.video_usage),
             _ => 0,
         };
         let target = texture_budget::forced_target().unwrap_or_else(|| {
             let target = texture_budget::texture_target(setting, used, shared);
-            self.target_ramp.update(texture_budget::relieve(target, used, over), now)
+            let cap = self.relief.update(load.seq, used, over);
+            self.target_ramp.update(texture_budget::relieve(target, cap), now)
         });
         let before = self.pressure.step();
         // a window behind for a minute or minimised for a second gives its

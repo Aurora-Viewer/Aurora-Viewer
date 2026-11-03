@@ -7806,8 +7806,17 @@ impl App {
         // a window behind gives its textures back (texture_budget::Background)
         let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized()).unwrap_or(false);
         self.scene.textures.set_window_state(self.focused, minimized);
-        self.instances.tick(Instant::now(), self.scene.textures.video_usage());
-        self.scene.textures.set_peers(self.instances.peers());
+        // (a demo or a timed run neither publishes nor reads, instances.rs)
+        let timed = self.capture.is_some() || self.frame_profile.enabled();
+        self.instances.tick(
+            !self.demo && !timed,
+            crate::instances::Own {
+                usage: self.scene.textures.video_usage(),
+                active: self.focused && !minimized,
+                luid: self.scene.textures.card_luid(),
+            },
+        );
+        self.scene.textures.set_peers(&self.instances.peers());
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
         self.update_rlva();
@@ -10354,7 +10363,7 @@ impl App {
         // the card shared with another viewer or busy with other programs:
         // a window behind draws slowly (instances.rs, gpu_load.rs)
         let shared_card = self.instances.peers().any() || self.scene.textures.gpu_busy_elsewhere();
-        let cap = crate::instances::throttle(cap, self.focused, shared_card, timed);
+        let cap = crate::instances::throttle(cap, self.focused, shared_card, timed || !self.settings.background_fps_cap);
         let paced_by_vsync = gfx.renderer.vsync() && cap >= monitor_hz - 0.5;
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:

@@ -158,10 +158,13 @@ impl VideoMemoryProbe {
     }
 
     /// The card's identity for the system's adapter-wide counters (the LUID
-    /// Windows names its adapters by, `high << 32 | low`) and the size of its
-    /// largest device-local heap; None without the Vulkan 1.1 query.
+    /// Windows names its adapters by, `high << 32 | low`), the size of its
+    /// largest device-local heap, and whether that heap is the card's own
+    /// memory (a discrete GPU: on an integrated one it is system RAM, often
+    /// full by design, and no size to measure the card's load against); None
+    /// without the Vulkan 1.1 query.
     #[cfg(not(target_os = "macos"))]
-    pub fn card(&self) -> Option<(u64, u64)> {
+    pub fn card(&self) -> Option<(u64, u64, bool)> {
         // SAFETY: the hal adapter is only borrowed for this call; the queries
         // read properties and change no state.
         let hal = unsafe { self.adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
@@ -177,6 +180,7 @@ impl VideoMemoryProbe {
                 .raw_instance()
                 .get_physical_device_properties2(hal.raw_physical_device(), &mut props);
         }
+        let dedicated = props.properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU;
         if id.device_luid_valid != vk::TRUE {
             return None;
         }
@@ -187,12 +191,12 @@ impl VideoMemoryProbe {
                 .get_physical_device_memory_properties(hal.raw_physical_device())
         };
         let total = memory.memory_heaps_as_slice().get(self.heap?)?.size;
-        Some((u64::from_le_bytes(id.device_luid), total))
+        Some((u64::from_le_bytes(id.device_luid), total, dedicated))
     }
 
     /// Metal has no adapter-wide counters to name.
     #[cfg(target_os = "macos")]
-    pub fn card(&self) -> Option<(u64, u64)> {
+    pub fn card(&self) -> Option<(u64, u64, bool)> {
         None
     }
 
