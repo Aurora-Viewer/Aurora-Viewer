@@ -1463,7 +1463,7 @@ fn gallery(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let mut asked = Vec::new();
-            let stack = crate::ui::photo_reel::stack(ui, p, &reel, 34.0);
+            let stack = crate::ui::photo_reel::stack(ui, p, &reel, 34.0, reel.photos.len());
             if stack.clicked() {
                 asked.push(crate::ui::photo_reel::ReelAction::Show(reel.photos[0].id));
             }

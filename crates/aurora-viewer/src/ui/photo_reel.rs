@@ -68,10 +68,88 @@ pub fn picture(painter: &egui::Painter, p: &Palette, rect: Rect, radius: egui::C
     }
 }
 
-/// The stack: the newest photo, the next two peeking out behind it, and
-/// how many there are, in a square of `side`. Empty, nothing shows but its
-/// room is kept: the dock does not move when the first photo comes.
-pub fn stack(ui: &mut egui::Ui, p: &Palette, view: &ReelView, side: f32) -> egui::Response {
+/// The viewfinder's tray: its height, the gap between its places.
+pub const TRAY_HEIGHT: f32 = 44.0;
+const TRAY_GAP: f32 = 6.0;
+
+/// A photo's place in the tray (3:2, like the card's picture).
+fn tray_thumb() -> Vec2 {
+    Vec2::new(TRAY_HEIGHT * 1.5, TRAY_HEIGHT)
+}
+
+/// The viewfinder's tray, bottom left: the stack of the older photos, then
+/// the two newest, the newest on the right; a click opens the quick view on
+/// that photo. Without a photo it is not drawn (false).
+pub fn tray(ui: &mut egui::Ui, p: &Palette, view: &ReelView, out: &mut Vec<ReelAction>) -> bool {
+    let photos = &view.photos[usize::from(view.arriving).min(view.photos.len())..];
+    if photos.is_empty() {
+        return false;
+    }
+    let radius = ui.visuals().window_corner_radius;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = TRAY_GAP;
+        if photos.len() > 2 {
+            let older = ReelView {
+                photos: &photos[2..],
+                arriving: false,
+                ..*view
+            };
+            let resp = stack(ui, p, &older, TRAY_HEIGHT, photos.len());
+            if resp.clicked() {
+                resp.surrender_focus();
+                out.push(ReelAction::Show(photos[2].id));
+            }
+        }
+        for photo in photos.iter().take(2).rev() {
+            let (rect, resp) = ui.allocate_exact_size(tray_thumb(), Sense::click());
+            picture(ui.painter(), p, rect, radius, view.thumbs.get(&photo.id));
+            let edge = if resp.hovered() {
+                p.teal.gamma_multiply(0.8)
+            } else {
+                p.ink.gamma_multiply(0.5)
+            };
+            ui.painter().rect_stroke(rect, radius, Stroke::new(1.5, edge), StrokeKind::Inside);
+            let resp = resp.on_hover_text(places_text(photo));
+            if resp.clicked() {
+                resp.surrender_focus();
+                out.push(ReelAction::Show(photo.id));
+            }
+        }
+    });
+    true
+}
+
+/// Where the tray puts its newest photo once the reel holds `len`, its
+/// places starting at `origin` (their top left): the card's photo flies
+/// there.
+pub fn tray_slot(origin: Pos2, len: usize) -> Rect {
+    let mut x = origin.x;
+    if len > 2 {
+        x += TRAY_HEIGHT + TRAY_GAP;
+    }
+    if len > 1 {
+        x += tray_thumb().x + TRAY_GAP;
+    }
+    Rect::from_min_size(Pos2::new(x, origin.y), tray_thumb())
+}
+
+/// A point of the arc a photo flies along from `from` to `to` (`t` from 0
+/// to 1): a quadratic curve whose top rises above both ends by a third of
+/// the distance between them.
+pub fn arc_point(from: Pos2, to: Pos2, t: f32) -> Pos2 {
+    let lift = from.distance(to) / 3.0;
+    let control = Pos2::new((from.x + to.x) / 2.0, from.y.min(to.y) - lift);
+    let u = 1.0 - t;
+    Pos2::new(
+        u * u * from.x + 2.0 * u * t * control.x + t * t * to.x,
+        u * u * from.y + 2.0 * u * t * control.y + t * t * to.y,
+    )
+}
+
+/// The stack: the first photo of `view`, the next two peeking out behind
+/// it, and `count` on a badge, in a square of `side`. Empty, nothing shows
+/// but its room is kept.
+pub fn stack(ui: &mut egui::Ui, p: &Palette, view: &ReelView, side: f32, count: usize) -> egui::Response {
     let sense = if view.photos.is_empty() { Sense::hover() } else { Sense::click() };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), sense);
     let shown: Vec<&Photo> = view.photos.iter().skip(usize::from(view.arriving)).take(3).collect();
@@ -81,9 +159,9 @@ pub fn stack(ui: &mut egui::Ui, p: &Palette, view: &ReelView, side: f32) -> egui
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
     // the cards behind, up and to the right, darker
-    let step = (side * 0.07).round().max(2.0);
+    let step = (side * 0.1).round().max(2.0);
     for (i, photo) in shown.iter().enumerate().skip(1).rev() {
-        let r = rect.translate(Vec2::new(step, -step) * i as f32).shrink(step * i as f32 * 0.5);
+        let r = rect.translate(Vec2::new(step, -step) * i as f32).shrink(step * i as f32 * 0.25);
         picture(painter, p, r, radius, view.thumbs.get(&photo.id));
         painter.rect_filled(r, radius, p.navy.gamma_multiply(0.35 + 0.15 * i as f32));
         painter.rect_stroke(r, radius, Stroke::new(1.0, p.ink.gamma_multiply(0.25)), StrokeKind::Inside);
@@ -96,7 +174,6 @@ pub fn stack(ui: &mut egui::Ui, p: &Palette, view: &ReelView, side: f32) -> egui
     };
     painter.rect_stroke(rect, radius, Stroke::new(1.5, edge), StrokeKind::Inside);
     // the count, on a violet pill at the bottom right
-    let count = view.photos.len() - usize::from(view.arriving);
     if count > 1 {
         let font = egui::FontId::proportional(10.5);
         let text = painter.layout_no_wrap(count.to_string(), font, p.on_accent);
@@ -614,6 +691,26 @@ mod tests {
         ]);
         // the e-mail always: to someone else
         assert_eq!(destinations(&sent), [Destination::Email]);
+    }
+
+    #[test]
+    fn the_flight_arcs_above_both_ends() {
+        let (from, to) = (Pos2::new(900.0, 500.0), Pos2::new(0.0, 500.0));
+        assert_eq!(arc_point(from, to, 0.0), from);
+        assert_eq!(arc_point(from, to, 1.0), to);
+        let top = arc_point(from, to, 0.5);
+        // halfway across, above both (y grows downwards)
+        assert!((top.x - 450.0).abs() < 1e-3);
+        assert!(top.y < 500.0 - 100.0);
+    }
+
+    #[test]
+    fn the_newest_lands_after_the_stack_and_the_older_one() {
+        let o = Pos2::new(10.0, 20.0);
+        let thumb = TRAY_HEIGHT * 1.5;
+        assert_eq!(tray_slot(o, 1).min, o);
+        assert_eq!(tray_slot(o, 2).min.x, o.x + thumb + TRAY_GAP);
+        assert_eq!(tray_slot(o, 5).min.x, o.x + TRAY_HEIGHT + TRAY_GAP + thumb + TRAY_GAP);
     }
 
     #[test]
