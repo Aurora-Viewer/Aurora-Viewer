@@ -1331,9 +1331,6 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
     answer
 }
 
-/// A link opened from outside the viewer names another grid than the login
-/// screen's: switch to `address` (`name`: the grid manager's name for it)?
-/// Some(true) on "Switch grid", Some(false) on "Cancel" or a click outside.
 /// The answer to a place link naming another grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GridLinkAnswer {
@@ -1344,6 +1341,10 @@ pub enum GridLinkAnswer {
     Cancel,
 }
 
+/// A link opened from outside the viewer names another grid than the login
+/// screen's: switch to `address` (`name`: the grid manager's name for it)?
+/// `Switch` on "Switch grid", `Add` on "Add in the grid manager…" (an
+/// unknown grid only), `Cancel` on "Cancel" or a click outside.
 pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: Option<&str>) -> Option<GridLinkAnswer> {
     use egui::RichText;
     let mut answer = None;
