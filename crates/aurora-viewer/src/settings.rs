@@ -432,6 +432,9 @@ pub struct Settings {
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
     pub language_is_public: bool,
+    /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
+    /// button) opens on (Preferences › Network and cache).
+    pub browser_home_page: String,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
@@ -1721,6 +1724,7 @@ impl Default for Settings {
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
+            browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             show_bug_report: true,
             show_huds: true,
             sun_beacon: false,

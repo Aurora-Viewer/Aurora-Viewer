@@ -146,6 +146,24 @@ pub fn page(cx: &mut Cx) {
             },
         );
     });
+    cx.group(tr!("ui-options-web-browser"), |cx| {
+        // Network & Files › Browser home page (panel_preferences_setup.xml,
+        // FSBrowserHomePage)
+        cx.row(
+            tr!("ui-options-browser-home-page"),
+            tr!("ui-options-browser-home-page-help"),
+            &field!(browser_home_page),
+            |ui, s| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut s.browser_home_page)
+                        .desired_width(SLIDER_W + 60.0)
+                        .char_limit(4096)
+                        .hint_text(crate::ui::web_browser::DEFAULT_HOME),
+                )
+                .changed()
+            },
+        );
+    });
     cx.group(tr!("ui-options-logs-and-tools"), |cx| {
         cx.row(
             tr!("ui-options-session-log"),
