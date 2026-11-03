@@ -6,10 +6,18 @@
 //! on the CPU. A count read from the GPU (`multi_draw_indexed_indirect_count`)
 //! did it, but Metal has none in wgpu. Here a compute pass, right after the
 //! classify, copies the arguments of the draws that may be gated (the blend
-//! list and the creation preview) twice: the replay's copy keeps their
-//! instances only when the pool overflowed, the composite's copy only when it
-//! did not. The gated draws are then plain indirect draws of a copy, on every
+//! list and the creation preview): the replay's copy keeps their instances
+//! only when the pool overflowed, the composite's copy only when it did not.
+//! The gated draws are then plain indirect draws of a copy, on every
 //! backend.
+//!
+//! The capture is gated the same way, by a third copy written before it:
+//! after an overflow, a hold-off of a few frames (doubling after each probe
+//! that overflows again, a second at most, oit_gate.wgsl `MIN_HOLD` and
+//! `MAX_HOLD`) skips the capture, and the frame is drawn in order directly,
+//! the image an overflowed frame has anyway, for the cost of the in-order
+//! drawing alone instead of a capture, a classify and a replay each frame.
+//! The hold-off is kept and moved on in the pool's flags, on the GPU.
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
@@ -24,11 +32,15 @@ const WORKGROUP: u32 = 64;
 /// Which copy a gated draw reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Copy {
-    /// drawn only when the pool overflowed
+    /// drawn only when the pool overflowed (or the hold-off runs)
     Replay,
     /// drawn only when it did not
     Composited,
+    /// the capture: not drawn while the hold-off after an overflow runs
+    Capture,
 }
+/// Copies of the gated draws in the buffer, [`Copy`] by [`Copy`].
+const COPIES: u64 = 3;
 
 /// A range of the indirect buffer and where its draws start in each copy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -69,6 +81,7 @@ fn locate(spans: &[Span; SPANS], total: u32, copy: Copy, offset: u64, count: u32
     let base = match copy {
         Copy::Replay => 0,
         Copy::Composited => total,
+        Copy::Capture => 2 * total,
     };
     Some(u64::from(base + span.dst + (first - span.src)) * STRIDE)
 }
@@ -83,7 +96,10 @@ struct Params {
 }
 
 pub(crate) struct Gate {
+    /// after the classify: the replay's and the composite's copies
     pipeline: wgpu::ComputePipeline,
+    /// before the capture: its copy
+    capture: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     params: wgpu::Buffer,
     last_params: Option<Params>,
@@ -113,7 +129,8 @@ impl Gate {
             label: Some("oit gate"),
             entries: &[
                 storage(0, true),
-                storage(1, true),
+                // (the flags: read, and the hold-off moved on)
+                storage(1, false),
                 storage(2, false),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
@@ -136,14 +153,18 @@ impl Gate {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-            label: Some("oit gate"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("cs_gate"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let make = |label, entry_point| {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let pipeline = make("oit gate", "cs_gate");
+        let capture = make("oit capture gate", "cs_gate_capture");
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("oit gate parameters"),
             size: std::mem::size_of::<Params>() as u64,
@@ -152,6 +173,7 @@ impl Gate {
         });
         Gate {
             pipeline,
+            capture,
             layout,
             params,
             last_params: None,
@@ -176,7 +198,7 @@ impl Gate {
         let (spans, total) = layout(ranges);
         self.spans = spans;
         self.total = total;
-        let needed = (u64::from(total) * 2 * STRIDE).max(STRIDE * 2);
+        let needed = (u64::from(total) * COPIES * STRIDE).max(STRIDE * COPIES);
         if self.args.as_ref().is_none_or(|b| b.size() < needed) {
             let size = needed.next_power_of_two();
             match crate::gpu_alloc::try_buffer(
@@ -243,13 +265,24 @@ impl Gate {
         true
     }
 
-    /// Fills both copies, in the pass of the classify, after it.
+    /// Fills the replay's and the composite's copies and moves the hold-off
+    /// on, in the pass of the classify, after it.
     pub fn dispatch(&self, pass: &mut wgpu::ComputePass) {
+        self.run(pass, &self.pipeline);
+    }
+
+    /// Fills the capture's copy (none of its draws while the hold-off
+    /// runs), before the capture.
+    pub fn dispatch_capture(&self, pass: &mut wgpu::ComputePass) {
+        self.run(pass, &self.capture);
+    }
+
+    fn run(&self, pass: &mut wgpu::ComputePass, pipeline: &wgpu::ComputePipeline) {
         if self.total == 0 {
             return;
         }
         if let Some((group, ..)) = &self.group {
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(self.total.div_ceil(WORKGROUP), 1, 1);
         }
@@ -272,9 +305,11 @@ mod tests {
         // the blend list at draw 100 (40 draws), the creation preview at 7 (2)
         let (spans, total) = layout([(100 * STRIDE, 40), (7 * STRIDE, 2)]);
         assert_eq!(total, 42);
-        // the replay's copy first, the composite's after it
+        // the replay's copy first, the composite's after it, the capture's
+        // last
         assert_eq!(locate(&spans, total, Copy::Replay, 100 * STRIDE, 40), Some(0));
         assert_eq!(locate(&spans, total, Copy::Composited, 100 * STRIDE, 40), Some(42 * STRIDE));
+        assert_eq!(locate(&spans, total, Copy::Capture, 100 * STRIDE, 40), Some(84 * STRIDE));
         // a run inside the blend list, then the creation preview
         assert_eq!(locate(&spans, total, Copy::Replay, 110 * STRIDE, 5), Some(10 * STRIDE));
         assert_eq!(locate(&spans, total, Copy::Composited, 7 * STRIDE, 2), Some((42 + 40) * STRIDE));

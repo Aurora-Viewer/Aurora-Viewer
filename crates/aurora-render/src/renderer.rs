@@ -3585,8 +3585,11 @@ impl Backend {
                     layout,
                     PipeDesc {
                         cull: blend_cull(side != 0),
-                        blend: Some(suppress),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        // no colour: the fragments go to the lists (a
+                        // blend of nothing still cost the colour target's
+                        // traffic, every sample of it with MSAA)
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::empty(),
                         depth_write: false,
                         depth_compare: wgpu::CompareFunction::Greater,
                         constants: if crate::oit::early_depth(device) {
@@ -8158,13 +8161,17 @@ impl Backend {
             self.oit.as_ref().and_then(|o| o.glow_group()),
         ) {
             // the lists: every blended face once (dropped past the pool's
-            // end: the frame is then replayed in order below)
+            // end: the frame is then replayed in order below). The capture
+            // is gated too: none while the hold-off after an overflow runs
+            // (oit_gate.rs), the frame then drawn in order below as an
+            // overflowed one, without the capture's cost.
             oit.clear(&mut encoder);
+            oit.gate_capture(&mut encoder);
             {
                 let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b oit capture", false, false);
                 bind_mesh(&mut pass, &self.groups.b);
                 pass.set_bind_group(3, oit_group, &[]);
-                draw_sided(&mut pass, capture, (b0, bn), 0);
+                draw_sided_g(&mut pass, capture, (b0, bn), 0, Some(crate::oit_gate::Copy::Capture));
             }
             // sorted once per pixel, the tiles to composite listed, the
             // replay's and the glow's gated draws set

@@ -1634,14 +1634,16 @@ struct OitParams {
     tiles_x: u32,
     tiles: u32,
     slots: u32,
-    _pad0: u32,
+    // heads[tile_base + t]: 1 when a layer was captured in tile t (8 x 8
+    // pixels, oit.wgsl `TILE`): the classify skips the other tiles
+    tile_base: u32,
     _pad1: u32,
     _pad2: u32,
     _pad3: u32,
 };
 // heads[0] counts the pool's nodes; pixel p = y * width + x: heads[1 + 2p]
 // counts its fragments, heads[2 + 2p] is the first node of its list plus
-// one (0: none)
+// one (0: none); then the tiles' flags
 @group(3) @binding(20) var<storage, read_write> oit_heads: array<atomic<u32>>;
 @group(3) @binding(21) var<storage, read_write> oit_nodes: array<vec4<u32>>;
 @group(3) @binding(22) var<uniform> oit_params: OitParams;
@@ -1677,6 +1679,11 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_m
     let rest = b16 | (a8 << 16u) | ((coverage & 0xffu) << 24u);
     let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
     let slot = atomicAdd(&oit_heads[pixel], 1u);
+    if (slot == 0u) {
+        // the pixel's first layer this frame: its tile has work for the
+        // classify (one store per pixel with layers, not per fragment)
+        atomicStore(&oit_heads[oit_params.tile_base + (px.y / 8u) * oit_params.tiles_x + px.x / 8u], 1u);
+    }
     if (slot < oit_params.slots) {
         textureStore(oit_slots_w, px, slot, vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), 0u));
         return vec4<f32>(0.0);

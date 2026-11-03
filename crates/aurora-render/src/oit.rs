@@ -9,10 +9,10 @@
 //! holds every pixel's slot k, so neighbours write side by side and these
 //! fragments never touch the pool's shared counter); the following ones
 //! become nodes of the pixel's linked list in the pool, so the result stays
-//! exact. A compute
-//! pass (oit.wgsl) then sorts each pixel's layers once and lists the screen
-//! tiles that hold some; two indirect draws composite those tiles over the
-//! scene, the MSAA edge pixels sample by sample.
+//! exact. A compute pass (oit.wgsl) then sorts each pixel's layers once
+//! (the tiles the capture flagged only) and lists the screen tiles that
+//! hold some; two indirect draws composite those tiles over the scene, the
+//! MSAA edge pixels sample by sample.
 //!
 //! A new Aurora feature: the Legacy Viewer sorts its alpha by object
 //! (LLDrawPoolAlpha). What does not fit changes nothing: when the pool is
@@ -49,6 +49,8 @@ const HEADS_BYTES: u64 = 8;
 const COMPOSITE_BYTES: u64 = 8;
 /// Bytes per screen tile of the tile list (a plain and an edge entry).
 const TILE_LIST_BYTES: u64 = 8;
+/// Bytes per screen tile of its flag in the heads (set by the capture).
+const TILE_FLAG_BYTES: u64 = 4;
 /// A slot (a texel of the array) has the size of a node.
 const SLOT_BYTES: u64 = 16;
 /// Slots per pixel at most: past that the array costs more than it saves.
@@ -76,15 +78,19 @@ struct Params {
     tiles: u32,
     /// fragments per pixel kept in the slot array (the rest go to the list)
     slots: u32,
-    _pad: [u32; 4],
+    /// first word of the tiles' flags in the heads (one per tile, set by
+    /// the capture: the classify skips the tiles without any)
+    tile_base: u32,
+    _pad: [u32; 3],
 }
 
-/// The pool's `flags` buffer is the DrawIndirectArgs of the replay's depth
-/// copy (one triangle when the pool overflowed, none otherwise, set by the
-/// classify); its instance count also tells oit_gate.wgsl which gated draws
-/// keep their instances.
+/// The pool's `flags` buffer: the DrawIndirectArgs of the replay's depth
+/// copy (one triangle when the frame is replayed, none otherwise, set by the
+/// classify), whose instance count also tells oit_gate.wgsl which gated
+/// draws keep their instances; then the overflow of the frame and the
+/// hold-off that follows one (oit_gate.wgsl), kept across the frames.
 const DEPTH_COPY_ARGS: u64 = 0;
-const FLAGS_BYTES: u64 = 16;
+const FLAGS_BYTES: u64 = 32;
 
 /// Whether this device can capture: storage written from fragment shaders,
 /// with two more storage buffers than the blended faces already read. The
@@ -152,12 +158,13 @@ pub struct Plan {
     pub node_cap: u32,
 }
 
-/// Video memory that does not depend on the layer counts: the heads, the
-/// composite texture and the tile list of a `width` x `height` screen.
+/// Video memory that does not depend on the layer counts: the heads (with
+/// the tiles' flags), the composite texture and the tile list of a `width`
+/// x `height` screen.
 pub fn fixed_bytes(width: u32, height: u32) -> u64 {
     let pixels = u64::from(width.max(1)) * u64::from(height.max(1));
     let tiles = u64::from(width.max(1).div_ceil(TILE)) * u64::from(height.max(1).div_ceil(TILE));
-    pixels * (HEADS_BYTES + COMPOSITE_BYTES) + tiles * TILE_LIST_BYTES + FLAGS_BYTES
+    pixels * (HEADS_BYTES + COMPOSITE_BYTES) + tiles * (TILE_LIST_BYTES + TILE_FLAG_BYTES) + FLAGS_BYTES
 }
 
 /// Splits the budget: half of the per-pixel count goes to the slots (1 to
@@ -627,7 +634,8 @@ impl Oit {
             tiles_x: pool.tiles_x,
             tiles: pool.tiles,
             slots: pool.slots,
-            _pad: [0; 4],
+            tile_base: 1 + 2 * width * height,
+            _pad: [0; 3],
         };
         if self.last_params != Some(params) {
             queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
@@ -655,13 +663,14 @@ impl Oit {
         ) else {
             return Err("larger than the device's textures".to_owned());
         };
-        // two words per pixel: its fragment count and its list's head
-        let heads_bytes = (1 + 2 * u64::from(width) * u64::from(height)) * 4;
+        let (tiles_x, tiles_y) = (width.div_ceil(TILE), height.div_ceil(TILE));
+        let tiles = tiles_x * tiles_y;
+        // the node counter, two words per pixel (its fragment count and
+        // its list's head), then one flag per tile
+        let heads_bytes = (1 + 2 * u64::from(width) * u64::from(height)) * 4 + u64::from(tiles) * TILE_FLAG_BYTES;
         if node_cap == 0 || heads_bytes > max_binding {
             return Err("larger than the device's storage buffers".to_owned());
         }
-        let (tiles_x, tiles_y) = (width.div_ceil(TILE), height.div_ceil(TILE));
-        let tiles = tiles_x * tiles_y;
         // (COPY_DST on all: `try_buffer` checks a buffer by clearing it)
         let buffer = |label, size, usage| {
             crate::gpu_alloc::try_buffer(
@@ -839,8 +848,21 @@ impl Oit {
         self.last_params = None;
     }
 
+    /// Before the capture: the copy of its gated draws, without instances
+    /// while the hold-off after an overflow runs (oit_gate.rs).
+    pub fn gate_capture(&self, encoder: &mut wgpu::CommandEncoder) {
+        if self.pool.is_some() {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("oit capture gate"),
+                timestamp_writes: None,
+            });
+            self.gate.dispatch_capture(&mut pass);
+        }
+    }
+
     /// Sorts the lists and lists the tiles to composite (after the capture);
-    /// when the pool overflowed, lists none and sets the flags for the replay.
+    /// when the pool overflowed, or the hold-off after one skipped the
+    /// capture, lists none and sets the flags for the replay.
     pub fn classify(&self, encoder: &mut wgpu::CommandEncoder, r: &Resolve) {
         if let Some(pool) = &self.pool
             && let Some((group, _)) = &pool.groups
@@ -994,8 +1016,9 @@ mod tests {
 
     #[test]
     fn the_heads_and_the_composite_count_in_the_budget() {
-        // 16 bytes per pixel before the first slot, plus the tile list
-        assert_eq!(fixed_bytes(1600, 900), 1600 * 900 * 16 + 200 * 113 * 8 + FLAGS_BYTES);
+        // 16 bytes per pixel before the first slot, plus the tile list and
+        // the tiles' flags
+        assert_eq!(fixed_bytes(1600, 900), 1600 * 900 * 16 + 200 * 113 * 12 + FLAGS_BYTES);
         // however large the budget wanted, the total never passes the cap
         for (w, h) in [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160), (7680, 4320)] {
             for per_pixel in [2, 8, 16, 32] {
