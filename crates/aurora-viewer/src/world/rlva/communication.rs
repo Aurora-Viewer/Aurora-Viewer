@@ -15,8 +15,11 @@ pub(crate) enum Received {
 impl World {
     /// RlvActions::canStartIM: existing resident and group/conference
     /// sessions remain usable, including a session still being initialized.
+    /// Unjoined login previews do not grant an existing-session exception.
     pub fn rlva_can_start_im(&self, recipient: Uuid) -> bool {
-        self.rlva_allows_im("startim", recipient) || self.social.has_session(&recipient) || self.groups.sessions.contains_key(&recipient)
+        self.rlva_allows_im("startim", recipient)
+            || (!self.groups.restoring.contains(&recipient)
+                && (self.social.has_session(&recipient) || self.groups.sessions.contains_key(&recipient)))
     }
 
     pub(crate) fn rlva_start_ims(&mut self, recipients: &[Uuid]) -> bool {

@@ -146,6 +146,188 @@ impl Fixture {
 }
 
 #[test]
+fn ao_cycle_footer_is_fully_visible_after_scrolling_with_large_text() {
+    fn collect(shape: &egui::Shape, text: &str, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == text => out.push(egui::Rect::from_min_size(t.pos, t.galley.size())),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, text, out)),
+            _ => {}
+        }
+    }
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), "interface");
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    crate::theme::Theme::default().apply(&f.ctx, 2.0);
+    f.ctx.set_zoom_factor(0.9);
+    super::super::widgets::place_floater(&f.ctx, "ao", egui::Pos2::ZERO, egui::vec2(1400.0, 980.0));
+    for _ in 0..40 {
+        f.draw(Vec::new());
+    }
+    let mut headings = Vec::new();
+    for shape in f.draw(Vec::new()).1 {
+        collect(&shape.shape, State::Standing.label(), &mut headings);
+    }
+    let heading = headings
+        .into_iter()
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .expect("detail heading");
+    let at = egui::pos2(heading.left() + 40.0, heading.bottom() + 300.0);
+    for _ in 0..30 {
+        f.draw(vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -1000.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: Default::default(),
+            },
+        ]);
+    }
+    let mut found = false;
+    for shape in f.draw(Vec::new()).1 {
+        let mut labels = Vec::new();
+        collect(&shape.shape, aurora_i18n::tr!("common-apply"), &mut labels);
+        for rect in labels {
+            found = true;
+            assert!(
+                shape.clip_rect.contains_rect(rect),
+                "the complete Apply label stays inside the scroll viewport: {rect:?} in {:?}",
+                shape.clip_rect
+            );
+        }
+    }
+    assert!(found, "the cycle footer is visible at the end of the detail pane");
+}
+
+#[test]
+fn ao_group_and_track_rows_keep_their_summary_line() {
+    fn galley(shape: &egui::Shape, text: &str) -> Option<std::sync::Arc<egui::Galley>> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == text => Some(t.galley.clone()),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| galley(s, text)),
+            _ => None,
+        }
+    }
+    for mode in ["interface-group", "interface-track"] {
+        let mut f = Fixture::new();
+        f.inv = Inventory::default();
+        f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), mode);
+        f.catalog = Default::default();
+        f.catalog.refresh(&mut f.inv);
+        f.settle();
+        let c = &f.catalog.selected(f.account.selected).expect("set").states[&State::Standing];
+        let (name, count) = if mode == "interface-group" {
+            let group = c.steps.iter().find(|s| s.group).expect("group");
+            (group.name.clone(), group.members.len())
+        } else {
+            let track = c.tracks.first().expect("track");
+            (track.name.clone(), track.members.len())
+        };
+        let summary = if mode == "interface-group" {
+            aurora_i18n::tr!("ao-group-summary", count = count)
+        } else {
+            aurora_i18n::tr!("ao-track-summary", count = count)
+        };
+        let text = format!("{name}\n{summary}");
+        let shapes = f.draw(Vec::new()).1;
+        let text = shapes.iter().find_map(|s| galley(&s.shape, &text)).expect("group/track row");
+        assert_eq!(text.rows.len(), 2, "{mode}: name and summary are separate visible rows");
+        assert!(!text.elided, "{mode}: the summary is not elided");
+    }
+}
+
+#[test]
+fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
+    for zoom in [0.9, 0.8, 0.85, 0.95, 1.1] {
+        let mut f = Fixture::new();
+        if zoom == 0.95 {
+            let set = f
+                .catalog
+                .sets
+                .iter_mut()
+                .find(|s| s.id == f.account.selected)
+                .expect("selected set");
+            set.states.get_mut(&State::Standing).expect("standing").steps[0].name = super::super::widgets::elide_tests::LONG.repeat(4);
+        }
+        f.ctx.set_zoom_factor(zoom);
+        super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(40.0, 40.0), egui::vec2(560.0, 760.0));
+        let mut rects = Vec::new();
+        for _ in 0..120 {
+            f.draw(Vec::new());
+            rects.push(f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao"))).expect("AO shown"));
+        }
+        assert!(
+            rects[15..].iter().all(|r| *r == rects[15]),
+            "AO at scale {zoom} keeps growing: first {:?}, frame 15 {:?}, last {:?}",
+            rects[0],
+            rects[15],
+            rects[119]
+        );
+        let before = rects[119];
+        super::super::widgets::place_floater(&f.ctx, "ao", before.min, egui::vec2(440.0, 560.0));
+        rects.clear();
+        for _ in 0..30 {
+            f.draw(Vec::new());
+            rects.push(f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao"))).expect("AO shown"));
+        }
+        assert!(
+            rects[15..].iter().all(|r| *r == rects[15]),
+            "AO at scale {zoom} grows after resizing"
+        );
+        assert!(rects[29].width() < before.width() - 40.0, "AO at scale {zoom} can be made narrower");
+        let texture = super::super::icons::global("trash-filled").expect("remove icon").id();
+        let mut icons = Vec::new();
+        fn collect(shape: &egui::Shape, texture: egui::TextureId, icons: &mut Vec<egui::Rect>) {
+            match shape {
+                egui::Shape::Mesh(mesh) if mesh.texture_id == texture => icons.push(mesh.calc_bounds()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texture, icons)),
+                _ => {}
+            }
+        }
+        for shape in f.draw(Vec::new()).1 {
+            collect(&shape.shape, texture, &mut icons);
+        }
+        assert_eq!(icons.len(), 3, "set and both animation removal buttons");
+        assert!(
+            icons.iter().all(|r| rects[29].contains_rect(*r)),
+            "AO at scale {zoom}: removal icons stay in the window"
+        );
+        let first = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing].steps[0].id;
+        f.click_at(icons[1].center());
+        assert_eq!(f.state.remove, Some(first), "the first animation's removal button is accessible");
+    }
+}
+
+#[test]
+fn ao_manager_keeps_its_size_across_frames() {
+    super::super::widgets::steady_tests::assert_window_steady(
+        "ao",
+        &[egui::vec2(560.0, 760.0), egui::vec2(440.0, 560.0)],
+        aurora_i18n::tr!("ao-add"),
+        Fixture::new,
+        |f, ctx, p| {
+            show(
+                ctx,
+                p,
+                &mut f.inv,
+                &f.catalog,
+                &mut f.runtime,
+                &mut f.account,
+                &mut f.state,
+                &mut f.manager_open,
+                &mut f.movement,
+                &mut f.movement_prefs,
+                &f.keys,
+                "",
+            );
+        },
+    );
+}
+
+#[test]
 fn enable_label_and_pause_change_runtime_without_inventory_writes() {
     let mut f = Fixture::new();
     let out = f.click(aurora_i18n::tr!("ao-enabled"));

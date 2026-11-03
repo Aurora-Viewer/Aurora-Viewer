@@ -580,6 +580,22 @@ pub fn colon_emote(text: &mut String) {
     text.replace_range(..1, with);
 }
 
+/// A channel-0 local line as the Legacy Viewer sends it: the MU* pose and the
+/// gesture replacement apply first (`triggerAndReviseString`, llgesturemgr.cpp),
+/// then the channel is read from the text really sent (FSNearbyChat::sendChatFromViewer
+/// → stripChannelNumber, fsnearbychathub.cpp, llfloaterimnearbychat.cpp). A
+/// replacement opening with "/1" therefore speaks on channel 1 (#1916). The
+/// gesture id is returned to be played, as triggerAndReviseString does.
+pub fn prepare_local_line(manager: &mut crate::gestures::Manager, text: &str, pose: bool) -> (i32, String, Option<uuid::Uuid>) {
+    let mut text = text.to_owned();
+    if pose {
+        colon_emote(&mut text);
+    }
+    let (revised, gesture) = manager.revise(&text);
+    let (channel, message) = parse_channel(&revised);
+    (channel, message, gesture)
+}
+
 fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
     match kind {
         ChatKind::Own(_) => p.violet_pale,
@@ -4657,6 +4673,48 @@ mod tests {
         assert_eq!(parse_channel("/5-3"), (5, "-3".into()), "the sign only before the digits");
         assert_eq!(parse_channel("/-"), (0, "/-".into()));
         assert_eq!(parse_channel("/--5 x"), (0, "/--5 x".into()));
+    }
+
+    /// A gesture's replacement may itself open with a channel: the Legacy
+    /// Viewer reads it from the revised line, so "/cap" replaced by
+    /// "/1capture" speaks on channel 1 (#1916).
+    #[test]
+    fn gesture_replacement_channel_is_read_from_the_revised_line() {
+        let mut manager = crate::gestures::Manager::default();
+        let id = uuid::Uuid::from_u128(1);
+        manager.entries.insert(
+            id,
+            crate::gestures::Entry {
+                asset: uuid::Uuid::nil(),
+                definition: aurora_assets::gesture::Gesture {
+                    trigger: "/cap".into(),
+                    replacement: "/1capture".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        manager.active.insert(id);
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (1, "capture".into(), Some(id)));
+        // only a leading channel is read: further in the line it stays text
+        assert_eq!(
+            prepare_local_line(&mut manager, "say /cap", false),
+            (0, "say /1capture".into(), Some(id))
+        );
+        // the same channel forms as parse_channel
+        if let Some(entry) = manager.entries.get_mut(&id) {
+            entry.definition.replacement = "/-4242 ping".into();
+        }
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (-4242, "ping".into(), Some(id)));
+        if let Some(entry) = manager.entries.get_mut(&id) {
+            entry.definition.replacement = "/5 test".into();
+        }
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (5, "test".into(), Some(id)));
+        // no gesture: the MU* pose alone, and only when asked for
+        assert_eq!(prepare_local_line(&mut manager, ":waves", true), (0, "/me waves".into(), None));
+        assert_eq!(prepare_local_line(&mut manager, ":waves", false), (0, ":waves".into(), None));
+        // disabled gestures leave the line untouched
+        manager.enabled = false;
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (0, "/cap".into(), None));
     }
 
     /// ":" as "/me" (FSCommon::applyMuPose): poses and possessives become

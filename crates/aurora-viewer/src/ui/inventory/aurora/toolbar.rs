@@ -210,7 +210,7 @@ fn new_menu(
     actions: &mut Vec<InvAction>,
 ) {
     let to = new_target(inv, st, layout);
-    let enabled = st.pending.is_none() && rules::destination(inv, to, &prefs.protected);
+    let enabled = st.pending.is_none() && rules::destination(inv, to);
     context::new_menu(ui, p, to, enabled, st, prefs, actions);
 }
 

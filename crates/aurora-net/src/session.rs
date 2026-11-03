@@ -979,7 +979,7 @@ impl Session<'_> {
                     }
                 }
                 Ok(resp) => log::info!("ExtEnvironment: HTTP {}", resp.status()),
-                Err(e) => log::info!("ExtEnvironment failed: {e}"),
+                Err(e) => log::info!("ExtEnvironment failed: {}", e.without_url()),
             }
         });
     }
@@ -1888,7 +1888,7 @@ impl Session<'_> {
                                     }
                                 }
                                 Ok(resp) => log::debug!("AgentProfile {id}: HTTP {}", resp.status()),
-                                Err(e) => log::debug!("AgentProfile {id}: {e}"),
+                                Err(e) => log::debug!("AgentProfile {id}: {}", e.without_url()),
                             }
                         });
                     }
@@ -2401,7 +2401,7 @@ impl Session<'_> {
                                 let reason = r.status().canonical_reason().unwrap_or("").to_owned();
                                 crate::slm::merchant_status(r.status().as_u16(), &reason)
                             }
-                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.to_string()),
+                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.without_url().to_string()),
                         },
                     };
                     let _ = events.send(NetEvent::MerchantStatus(status));
@@ -2890,7 +2890,7 @@ impl Session<'_> {
                         NetEvent::DisplayNamesFailed(ids)
                     }
                     Err(e) => {
-                        log::warn!("GetDisplayNames: {e}");
+                        log::warn!("GetDisplayNames: {}", e.without_url());
                         NetEvent::DisplayNamesFailed(ids)
                     }
                 };
@@ -2936,7 +2936,7 @@ impl Session<'_> {
             let failed = match resp {
                 Ok(r) if r.status().is_success() => None,
                 Ok(r) => Some((r.status().as_u16() as i32, r.status().to_string())),
-                Err(e) => Some((0, e.to_string())),
+                Err(e) => Some((0, e.without_url().to_string())),
             };
             if let Some((status, reason)) = failed {
                 log::warn!("SetDisplayName failed: {reason}");
@@ -2990,7 +2990,7 @@ impl Session<'_> {
             let reason = match resp {
                 Ok(r) if r.status().is_success() => return,
                 Ok(r) => format!("HTTP {}", r.status().as_u16()),
-                Err(e) => e.to_string(),
+                Err(e) => e.without_url().to_string(),
             };
             log::warn!("AgentProfile PUT {target}: {reason}");
             let _ = events.send(NetEvent::ProfileSaveFailed { target, reason });
@@ -3409,7 +3409,7 @@ impl Session<'_> {
                     }
                 }
                 Err(e) => {
-                    log::warn!("appearance request failed: {e}");
+                    log::warn!("appearance request failed: {}", e.without_url());
                     (false, None)
                 }
             };
@@ -3452,7 +3452,7 @@ impl Session<'_> {
                         }
                     }
                     Ok(resp) => Err(format!("HTTP {}", resp.status().as_u16())),
-                    Err(e) => Err(e.to_string()),
+                    Err(e) => Err(e.without_url().to_string()),
                 };
                 match reply {
                     Ok(v) => {

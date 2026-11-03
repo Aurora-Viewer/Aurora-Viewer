@@ -237,6 +237,11 @@ pub fn bottom(
         None
     };
 
+    // Empty toolbars only expose their drop zone during a toolbar drag
+    // (LLToolBarView::draw), just like the side islands.
+    if buttons.is_empty() && (!crate::ui::toolbar::ToolbarUi::dragging(&ctx) || row.locked) {
+        return (out, action, screen.bottom() - geo.reserved(), committed);
+    }
     area(&ctx, p, "dock", geo.dock, |ui| {
         // the dock's background: its right-click menu and the drop target
         let target = ui.interact(geo.dock, Id::unique("toolbar_background"), Sense::click());

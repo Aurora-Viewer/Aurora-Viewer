@@ -187,11 +187,15 @@ fn new_conversation(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Chat
             let groups = world.groups.sorted();
             if groups.is_empty() {
                 crate::ui::menu::info(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-chat-no-groups"));
-            }
-            for g in groups {
-                if crate::ui::menu::item(ui, p, "users-group", &g.name) {
-                    actions.push(ConvAction::StartGroupChat(g.id));
-                }
+            } else {
+                let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 12.0).max(120.0);
+                egui::ScrollArea::vertical().max_height(room).show(ui, |ui| {
+                    for g in groups {
+                        if crate::ui::menu::item(ui, p, "users-group", &g.name) {
+                            actions.push(ConvAction::StartGroupChat(g.id));
+                        }
+                    }
+                });
             }
         });
         if crate::ui::menu::item(ui, p, "users", aurora_i18n::tr!("ui-chat-start-conference")) {

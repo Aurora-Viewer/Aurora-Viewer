@@ -5,10 +5,12 @@ name: CI
 # the merge queue, on the PR combined with the latest main: what lands on
 # main is exactly what was tested, and nobody has to update a branch.
 #
-# A push to main is the commit the queue has just tested: its jobs neither
-# lint nor test it again. They only rebuild the Rust cache when its key
-# changed (Cargo.lock, toolchain), because the caches are written from main
-# alone (see rust-cache below) and a queue run cannot share its own.
+# A push to main is the commit the queue has just tested: its Windows jobs
+# neither lint nor test it again. They only rebuild the Rust cache when its
+# key changed (Cargo.lock, toolchain), because the caches are written from
+# main alone (see rust-cache below) and a queue run cannot share its own.
+# The Linux job, which the queue skips for a change with nothing of Linux's
+# own (the platform-needed action), runs in full on main instead.
 on:
   pull_request:
   merge_group:
@@ -38,7 +40,7 @@ jobs:
       # the whole history (the version is read from the last tag, and the
       # changed files from the base), without the files of other commits:
       # the captures branch alone weighs hundreds of MB
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
@@ -85,25 +87,30 @@ jobs:
     # Unix permissions of the packs…) are never built on Windows: clippy on
     # Linux keeps them compiling. A pull request runs the tests of the two
     # crates whose Linux paths differ; the merge queue runs the workspace's
-    # tests. No agent can run them locally.
+    # tests. No agent can run them locally. Both only when the change has
+    # Linux code, a dependency or a build file (platform-needed): otherwise
+    # the job ends in seconds. A push to main runs clippy and every test,
+    # the net for what that guess misses.
     name: clippy (Linux)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
-      - name: Code changed?
+      - name: Linux needed?
         id: changes
-        uses: ./.github/actions/code-changed
+        uses: ./.github/actions/platform-needed
+        with:
+          platform: linux
       # ALSA for the sound, the rest for winit's X11 / Wayland back ends
       - name: System libraries
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.needed == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
       - name: Rust stable
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.needed == 'true'
         run: |
           rustup update stable --no-self-update
           rustup component add clippy
@@ -112,36 +119,67 @@ jobs:
       # (as in macos.yml)
       - uses: ./.github/actions/rust-cache
         id: cache
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.needed == 'true'
         with:
           name: linux-tests
       # dead code is the Windows job's: Windows-only helpers (system probes,
-      # toasts…) build here without their callers
+      # toasts…) build here without their callers. Not in the queue: the
+      # pull request ran it, Windows lints the combined code, and the tests
+      # below build it (about 6 of the job's 17 minutes)
       - name: Clippy (warnings are errors)
-        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
+        if: steps.changes.outputs.needed == 'true' && github.event_name != 'merge_group'
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
       # pull requests: the quick tests of the media host and the updater
       - name: Tests of the media host and the updater
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'pull_request'
+        if: steps.changes.outputs.needed == 'true' && github.event_name == 'pull_request'
         run: cargo test --profile ci --locked -p aurora-media -p aurora-updater
-      # the merge queue: the whole workspace, beside the Windows and macOS
-      # jobs (on pull requests it would take CI from ~4 to ~15 minutes). The
-      # Linux-only tests (the secondlife:// handler, its hand-over over the
-      # session bus) and the Linux paths of the others cannot run on the
-      # agents' PCs. None needs a display or a session bus.
-      - name: Tests
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
-        run: cargo test --profile ci --workspace --locked
-      # main: build the tests without running them, for the cache only, so
-      # that the queue compiles the workspace and not its dependencies
+      # main: build the tests and save the cache before running them, so
+      # that the queue compiles the workspace and not its dependencies, even
+      # when a test fails
       - name: Build the tests (cache)
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: steps.changes.outputs.needed == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
         run: cargo test --profile ci --workspace --locked --no-run
       - name: Save the Rust cache
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: steps.changes.outputs.needed == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}
+      # the merge queue and main: the whole workspace, beside the Windows and
+      # macOS jobs (on pull requests it would take CI from ~4 to ~15
+      # minutes). The Linux-only tests (the secondlife:// handler, its
+      # hand-over over the session bus) and the Linux paths of the others
+      # cannot run on the agents' PCs. None needs a display or a session bus.
+      - name: Tests
+        if: steps.changes.outputs.needed == 'true' && github.event_name != 'pull_request'
+        run: cargo test --profile ci --workspace --locked
+
+  windows-runner:
+    # The runner of the interface part below, in the merge queue only: the
+    # team's self-hosted runner (label aurora-mini, 10 cores, its build
+    # folder kept between runs) when it is online and idle, GitHub's
+    # otherwise, so that the queue never waits for a machine that is off.
+    # Never on pull requests: they could run anyone's code on it. Listing
+    # the runners needs the Administration permission, which GITHUB_TOKEN
+    # cannot have: RUNNERS_TOKEN is a fine-grained token with Administration
+    # read on this repository only. Without it, GitHub's runner.
+    name: pick the Windows runner
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    outputs:
+      interface: ${{ steps.pick.outputs.interface }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.RUNNERS_TOKEN }}
+        run: |
+          runner='"windows-latest"'
+          if [ -n "$GH_TOKEN" ] &&
+             free=$(gh api "repos/${{ github.repository }}/actions/runners" --jq '[.runners[] | select(.status == "online" and (.busy | not) and any(.labels[]; .name == "aurora-mini"))] | length') &&
+             [ "$free" -gt 0 ]; then
+            runner='["self-hosted", "aurora-mini"]'
+          fi
+          echo "interface: $runner"
+          echo "interface=$runner" >> "$GITHUB_OUTPUT"
 
   tests:
     # Not on pull requests: the agent ran them locally (check.ps1) and the
@@ -154,10 +192,14 @@ jobs:
     # everything else (about 3 minutes). Filters and `--skip` are exact
     # complements, so every test of every binary runs in one part and only
     # one, whatever modules are added later; a new module only moves the
-    # balance.
+    # balance. The interface part may run on the self-hosted runner (see
+    # windows-runner); main's cache builds stay on GitHub's runners.
     name: tests (Windows, ${{ matrix.part }})
-    if: github.event_name != 'pull_request'
-    runs-on: windows-latest
+    needs: windows-runner
+    # windows-runner is skipped outside the queue: run anyway
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: ${{ matrix.part == 'interface' && needs.windows-runner.outputs.interface && fromJSON(needs.windows-runner.outputs.interface) || 'windows-latest' }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -169,10 +211,24 @@ jobs:
           - part: rest
             filter: "--skip ui::"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
+      # self-hosted: the tools the steps below call, named in one clear
+      # error rather than a bare "command not found" midway. Windows
+      # PowerShell, the one shell every Windows machine has; a service sees
+      # a new system PATH only after a reboot
+      - name: Tools of the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        shell: powershell
+        run: |
+          $missing = @('bash', 'git', 'pwsh', 'cargo', 'rustup') | Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) }
+          if ($missing) {
+            Write-Output "::error::self-hosted runner $env:RUNNER_NAME lacks: $($missing -join ', ') (PATH seen by the service: $env:PATH)"
+            exit 1
+          }
+          (Get-Command bash).Source
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
@@ -181,10 +237,26 @@ jobs:
         run: |
           ./.github/drop-extra-targets.ps1
           rustup update stable --no-self-update
+      # self-hosted: the build folder stays between runs, outside the
+      # checkout (which `git clean` empties), and takes no cache; it is
+      # emptied when the disk runs low
+      - name: Build folder (self-hosted)
+        if: steps.changes.outputs.code == 'true' && runner.environment == 'self-hosted'
+        # PowerShell 7 named: Windows PowerShell's >> writes UTF-16, which
+        # GITHUB_ENV does not read
+        shell: pwsh
+        run: |
+          $target = Join-Path (Split-Path $env:RUNNER_WORKSPACE) 'aurora-target'
+          $drive = Get-PSDrive (Split-Path $target -Qualifier).TrimEnd(':')
+          if ($drive.Free -lt 40GB) {
+            Write-Host "Less than 40 GB free: emptying $target"
+            Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          "CARGO_TARGET_DIR=$target" >> $env:GITHUB_ENV
       # the parts share one cache, written by the interface part on main
       - uses: ./.github/actions/rust-cache
         id: cache
-        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
+        if: steps.changes.outputs.code == 'true' && runner.environment == 'github-hosted' && (github.event_name != 'push' || matrix.part == 'interface')
         with:
           name: tests
       - name: Tests (${{ matrix.part }})
@@ -218,7 +290,7 @@ jobs:
     name: secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       # The gitleaks CLI, not gitleaks-action: the action needs a paid

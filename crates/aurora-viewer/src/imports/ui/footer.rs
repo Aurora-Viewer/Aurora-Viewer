@@ -7,7 +7,6 @@ pub(super) fn show(
     imports: &mut Imports,
     prefs: &Preferences,
     world: &crate::world::World,
-    inventory_prefs: &crate::ui::inventory::InventoryPreferences,
     prices: &Prices,
     actions: &mut Vec<Action>,
 ) -> f32 {
@@ -40,7 +39,7 @@ pub(super) fn show(
             && !mesh_blocked(imports, connected, world.agent_id)
             && !busy
             && imports.pending_files.is_none()
-            && imports.folder_plan_valid(world, inventory_prefs)
+            && imports.folder_plan_valid(world)
             && selected
             && total.is_some_and(|cost| cost == 0 || world.balance.is_some_and(|b| b >= cost));
         // a wrapping row: the buttons stay in its layout
@@ -105,7 +104,7 @@ pub(super) fn show(
                     aurora_i18n::tr!("import-calculate-fee"),
                     ActionKind::Flat,
                     size,
-                    !busy && draft.pending.is_none() && imports.folder_plan_valid(world, inventory_prefs),
+                    !busy && draft.pending.is_none() && imports.folder_plan_valid(world),
                 )
                 .clicked()
             {

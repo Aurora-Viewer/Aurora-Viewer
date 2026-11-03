@@ -4119,7 +4119,7 @@ impl App {
             Action::PassWall => self.pass_wall(),
             Action::SitGround => self.sit_stand_shortcut(),
             Action::Mouselook => self.toggle_mouselook(),
-            Action::CameraControls => self.panels.camera_controls = !self.panels.camera_controls,
+            Action::CameraControls => self.request_controls(false, true),
             Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
                 if self.world.rlva.camera_owner().is_none() {
                     let aspect = self.view_aspect();
@@ -8150,16 +8150,16 @@ impl App {
                 self.neighbours_refused = refuse;
                 self.net.send(NetCommand::RefuseNeighbourRegions(refuse));
             }
-            // FSRestoreOpenIMs: the last session's private conversations,
-            // once, after login
-            if !self.world.reopen_ims.is_empty() {
-                let others = std::mem::take(&mut self.world.reopen_ims);
-                if self.settings.reopen_ims {
-                    for other in others {
-                        self.world.social.session_mut(other);
-                    }
-                }
+            // FSRestoreOpenIMs, extended to groups: wait for membership and
+            // display names now; joining still waits for the mute reply.
+            if self.demo
+                && let Some(event) = crate::demo::chatlog::delayed_mute_list(self.frame_count)
+            {
+                self.world.apply(event);
             }
+            self.world.restore_open_ims(
+                self.settings.reopen_ims || (self.demo && crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore)),
+            );
             // AURORA_DEMO_OBJECT_IM: a filter for this run only
             self.world.object_im_filter = crate::demo::object_im::settings()
                 .filter(|_| self.demo)
@@ -8279,6 +8279,7 @@ impl App {
         let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
         let photo_tile = photo.as_ref().map_or(glam::Mat4::IDENTITY, |f| f.tile);
         let photo_scale = photo.as_ref().map_or(1.0, |f| f.scale);
+        let photo_context = photo.as_ref().map_or(aurora_render::PhotoContext::None, |f| f.context);
         let lod_height = photo.as_ref().map_or(h, |f| f.height);
         let frame_proj = |camera: &crate::camera::Camera| match &photo {
             Some(f) => photo_tile * camera.photo_proj(f.aspect, window_aspect),
@@ -9531,6 +9532,7 @@ impl App {
             proj,
             photo_tile,
             photo_scale,
+            photo_context,
             camera_pos: self.camera.position,
             near: self.camera.near,
             far: self.settings.draw_distance,
@@ -12094,12 +12096,12 @@ impl App {
     /// command (FSCmdLine) or a line sent on its channel.
     fn send_local_chat(&mut self, mut c: ui::chat::OutgoingChat) {
         if c.channel == 0 {
-            // the MU* pose first, then the gesture (FSNearbyChat::sendChat)
-            if self.settings.colon_emote {
-                ui::chat::colon_emote(&mut c.message);
-            }
-            let (revised, gesture) = self.gesture_state.manager.revise(&c.message);
-            c.message = revised;
+            // the MU* pose first, then the gesture (FSNearbyChat::sendChat),
+            // and the channel read again from what the gesture says (#1916)
+            let (channel, message, gesture) =
+                ui::chat::prepare_local_line(&mut self.gesture_state.manager, &c.message, self.settings.colon_emote);
+            c.channel = channel;
+            c.message = message;
             if let Some(id) = gesture {
                 self.gesture_play(id, None);
             }
@@ -12471,6 +12473,7 @@ impl App {
             },
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
+            BarAction::PhotoToDisk => self.photo_to_disk(),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
             BarAction::PlaceBar { stretch, rights_text } => {
                 self.settings.place_bar_stretch = stretch;
@@ -12536,7 +12539,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
                 self.options_ui.open(ui::options::Page::Graphics, 0);
             }
-            BarAction::CameraControls => self.panels.camera_controls = true,
+            BarAction::Controls { movement, toggle } => self.request_controls(movement, toggle),
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
             BarAction::ToggleQuickjump => {
                 self.settings.quickjump = !self.settings.quickjump;
@@ -12978,7 +12981,14 @@ impl App {
     /// which loads nothing by itself and has no session.
     fn search_home(&self) -> Option<crate::world::search::WebHome> {
         if self.demo {
-            let url = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
+            let page = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
+            let url = if page == "teleport" {
+                use base64::Engine as _;
+                let html = include_str!("ui/search/fixtures/teleport.html");
+                format!("data:text/html;base64,{}", base64::engine::general_purpose::STANDARD.encode(html))
+            } else {
+                page
+            };
             return Some(crate::world::search::WebHome { url, identified: false });
         }
         if let Some(grid) = crate::grids::active(&self.settings) {
@@ -13719,6 +13729,7 @@ impl App {
                     &self.login_info,
                     progress,
                 );
+                self.grid_link_question(&ctx, &p);
                 self.sync_remembered_password();
                 // the cogwheel of the login screen (settings before login);
                 // the screen's cards are areas of the same order, and a click
@@ -16354,8 +16365,9 @@ impl ApplicationHandler for App {
         // the cache folder (aurora-render's pipeline_cache.rs)
         aurora_render::pipeline_cache::configure(crate::settings::cache_dir().join("pipelines"), aurora_version::version());
         // AURORA_GPU_START_FAIL=1: as if no card could draw, to see the
-        // message the user gets then (graphics_start.rs)
-        let created = if std::env::var_os("AURORA_GPU_START_FAIL").is_some() {
+        // message the user gets then (graphics_start.rs); `lost` is read by
+        // the renderer, which gets as far as a real device loss does
+        let created = if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
             Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()))
         } else {
             Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)
@@ -16370,6 +16382,11 @@ impl ApplicationHandler for App {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
                 };
                 eprintln!("{message}");
+                // unlike a missing card this is a crash, and a report is the
+                // only way to hear of it (#1892)
+                if matches!(e, aurora_render::RenderError::DeviceLost) {
+                    crate::crash::gpu_lost_at_start();
+                }
                 // the window is still hidden: without this the viewer just
                 // vanished (#894)
                 graphics_start::report(&e.to_string(), capture);
@@ -17644,13 +17661,17 @@ impl ApplicationHandler for App {
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(660.0, 560.0));
                 ui::widgets::place_floater(&self.egui_ctx, "chat_history", egui::pos2(8.0, 44.0), egui::vec2(620.0, 600.0));
                 let me = self.world.agent_id;
-                if !matches!(mode, Mode::Long { .. })
+                if !matches!(mode, Mode::Long { .. } | Mode::Restore)
                     && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
                     && let Err(e) = chatlog::seed(&dir, mode, &self.world.own_name())
                 {
                     log::warn!("demo transcripts not written: {e}");
                 }
                 match mode {
+                    Mode::Restore => {
+                        chatlog::seed_restore(&mut self.world);
+                        self.world.restore_open_ims(true);
+                    }
                     Mode::Long { lines, .. } => {
                         for i in 0..lines {
                             let (own, text) = chatlog::long_line(i);
@@ -17673,7 +17694,11 @@ impl ApplicationHandler for App {
                     let (title, file) = self.world.transcript_of(Some(chatlog::PEER));
                     self.history_ui.show_file(title, file);
                 }
-                self.chat_ui.selected = Some(chatlog::PEER);
+                self.chat_ui.selected = Some(if mode == Mode::Restore {
+                    crate::demo::DEMO_GROUP2
+                } else {
+                    chatlog::PEER
+                });
                 if chatlog::find_flag("legacy") {
                     self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
                 }
@@ -17860,6 +17885,11 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                if matches!(view.as_str(), "calling-card" | "aurora-calling-card") {
+                    // the viewer-made card naming the wolf, selected
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8114));
+                }
                 if matches!(view.as_str(), "landmark" | "aurora-landmark") {
                     let mut landmark = self.world.inventory.items[&uuid::Uuid::from_u128(8103)].clone();
                     landmark.id = uuid::Uuid::from_u128(8120);
@@ -17879,6 +17909,8 @@ impl ApplicationHandler for App {
                     view.as_str(),
                     "default-permissions"
                         | "aurora-default-permissions"
+                        | "locked"
+                        | "aurora-locked"
                         | "permissions"
                         | "lost"
                         | "bulk-permissions"
@@ -17957,6 +17989,11 @@ impl ApplicationHandler for App {
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
                     self.inventory_ui.default_permissions_open = view.ends_with("default-permissions");
+                    if view.ends_with("locked") {
+                        // a locked folder: its "Locked" tag, its contents ordinary
+                        self.settings.inventory.protected.insert(uuid::Uuid::from_u128(8000));
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                    }
                     if view.starts_with("bulk-") {
                         let ids = if view == "bulk-folder" {
                             vec![uuid::Uuid::from_u128(8000)]

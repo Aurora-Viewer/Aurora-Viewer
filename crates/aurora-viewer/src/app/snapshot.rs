@@ -11,7 +11,7 @@
 use super::App;
 use crate::snapshot::looks::{self, Placement, Resolved};
 use crate::snapshot::luts::{Imported, LutLibrary};
-use crate::snapshot::{self, TilePass, gallery, inventory, profile, save};
+use crate::snapshot::{self, ContextPass, TilePass, gallery, inventory, profile, save};
 use crate::ui::snapshot::{Action, Destination, EmailView, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
 use aurora_net::NetCommand;
@@ -121,6 +121,8 @@ struct Job {
     /// Drawn in several parts: the instant of the first, which the others
     /// show (`snapshot::Hold`).
     hold: Option<snapshot::Hold>,
+    /// The whole photo drawn small before its tiles, for their occlusion.
+    context: ContextPass,
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -145,6 +147,7 @@ pub(super) struct PhotoFrame {
     pub scale: f32,
     /// Its look, placed for the part drawn.
     pub look: Option<aurora_render::looks::PhotoLook>,
+    pub context: aurora_render::PhotoContext,
 }
 
 type Thumb = (PathBuf, Option<(u32, u32, Vec<u8>)>);
@@ -181,6 +184,9 @@ pub(super) struct Snapshots {
     pub look_focus: Option<f32>,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
+    /// A photo to disk asked while the renderer draws the frame (the
+    /// toolbar's Snapshot to disk): taken by the next `photo_update`.
+    to_disk: bool,
     /// The price to confirm before the upload.
     confirm: Option<i32>,
     /// The price the balance cannot pay.
@@ -311,8 +317,8 @@ struct DemoPhoto {
     light: bool,
     /// AURORA_DEMO_SNAPSHOT=windlight[-keep]: the library's "Coastal
     /// Sunset" sky and "Murky Water" with the sun turned low in the east,
-    /// the Light section in view; `-keep` keeps that light (frame 900) and
-    /// closes the window (960).
+    /// in the viewfinder with its light panel open; `-keep` keeps that
+    /// light (frame 900) and leaves the photo mode (960).
     windlight: Option<bool>,
 }
 
@@ -381,6 +387,7 @@ impl Default for Snapshots {
             lut_import: None,
             look_focus: None,
             quiet: false,
+            to_disk: false,
             confirm: None,
             short: None,
             upload: None,
@@ -432,7 +439,8 @@ impl App {
             clock,
             later: false,
         });
-        snapshot::Hold::for_part(job.tiles.len(), job.next, &mut job.hold, now).or(frozen)
+        let (part, parts) = job.context.part(job.next, job.tiles.len());
+        snapshot::Hold::for_part(parts, part, &mut job.hold, now).or(frozen)
     }
 
     /// The world frozen for the photo (issue #1154), from the switch to the
@@ -501,6 +509,29 @@ impl App {
             }
             job.waited += 1;
         }
+        let scale = snapshot::viewfinder_scale(job.size, renderer.size(), self.settings.render_scale_percent);
+        if let ContextPass::Pending((width, height)) = job.context {
+            // the whole photo, for the tiles' occlusion: nothing of it is kept
+            let spec = SnapshotSpec {
+                width,
+                height,
+                interface: false,
+                huds: false,
+                photo: (width, height),
+            };
+            renderer.snapshot_request = Some(spec);
+            job.asked = true;
+            s.capturing = Some(spec);
+            return Some(PhotoFrame {
+                aspect: job.size.0 as f32 / job.size.1.max(1) as f32,
+                tile: Mat4::IDENTITY,
+                // (the tiles' levels of detail: the same depth)
+                height: job.size.1,
+                scale,
+                look: None,
+                context: aurora_render::PhotoContext::Record,
+            });
+        }
         let tile = job.tiles[job.next].draw;
         let single = job.tiles.len() == 1;
         let spec = SnapshotSpec {
@@ -510,6 +541,7 @@ impl App {
             // which the window places on its own screen
             interface: job.interface && single,
             huds: job.huds && single,
+            photo: job.size,
         };
         renderer.snapshot_request = Some(spec);
         job.asked = true;
@@ -530,8 +562,13 @@ impl App {
                 snapshot::tile_matrix(job.size, tile)
             },
             height: job.size.1,
-            scale: snapshot::viewfinder_scale(job.size, renderer.size(), self.settings.render_scale_percent),
+            scale,
             look,
+            context: if job.context == ContextPass::Drawn {
+                aurora_render::PhotoContext::Use
+            } else {
+                aurora_render::PhotoContext::None
+            },
         })
     }
 
@@ -555,6 +592,17 @@ impl App {
             job.waited = 0;
         }
         job.waiting = None;
+        if let ContextPass::Pending(size) = job.context {
+            // (its pixels are not the photo's; a frame that did not come
+            // back leaves the tiles without it, as before)
+            job.context = if answer.is_some_and(|(w, h, _)| (w, h) == size) {
+                ContextPass::Drawn
+            } else {
+                log::warn!("photo: the whole photo's depth was not drawn, the tiles go without it");
+                ContextPass::None
+            };
+            return;
+        }
         let pass = job.tiles[job.next];
         let Some((_, _, pixels)) = answer.filter(|(w, h, _)| (*w, *h) == (pass.draw.width, pass.draw.height)) else {
             log::warn!("photo: part {} of {} not drawn", job.next + 1, job.tiles.len());
@@ -965,6 +1013,8 @@ impl App {
             );
         }
         let interface = s.interface && snapshot::same_proportions(full, window);
+        // (with the ambient occlusion on: GTAO may be forced over its method)
+        let context = ContextPass::plan(size, tiles.len(), self.settings.ssao > 0);
         self.snapshots.job = Some(Job {
             purpose,
             size,
@@ -983,6 +1033,7 @@ impl App {
             focus: self.snapshots.look_focus,
             photo: full,
             hold: None,
+            context,
         });
         let stack = self.settings.snapshot.looks.clone();
         let settings = self.settings.snapshot.look_settings.clone();
@@ -1356,6 +1407,8 @@ impl App {
     /// window, without it.
     pub(super) fn photo_to_disk(&mut self) {
         let Some(gfx) = self.gfx.take() else {
+            // (the frame's UI actions run while the frame is drawn)
+            self.snapshots.to_disk = true;
             return;
         };
         self.snapshots.quiet = !self.panels.snapshot;
@@ -1365,6 +1418,10 @@ impl App {
 
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
+        if std::mem::take(&mut self.snapshots.to_disk) {
+            self.snapshots.quiet = !self.panels.snapshot;
+            self.photo_take(renderer, None);
+        }
         self.photo_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);
@@ -1999,7 +2056,7 @@ LUT_3D_SIZE {n}
             let message = self.snapshots.message.clone();
             let last_saved = self.snapshots.last_saved.clone();
             let gallery = self.snapshots.gallery.clone();
-            // (lent to the drawer's Light section while the viewfinder draws)
+            // (lent to the light panel while the viewfinder draws)
             self.photo_env_lists(ctx);
             let env_ui = std::mem::take(&mut self.env_ui);
             let view = crate::ui::snapshot::View {
@@ -2040,7 +2097,6 @@ LUT_3D_SIZE {n}
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
             let email = (self.snapshots.ui.destination == Destination::Email).then(|| self.photo_email_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
-            self.photo_env_lists(ctx);
             let tiles = self.photo_tiles(renderer, photo).len();
             let s = &self.snapshots;
             let busy = if let Some(t) = s.detail_wait {
@@ -2291,6 +2347,8 @@ LUT_3D_SIZE {n}
     fn photo_light(&mut self) {
         if !self.panels.snapshot {
             self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            // (the user's own fades back in)
+            self.world.eep.close_photo();
         }
         let light = &mut self.snapshots.ui.light;
         // a change made elsewhere, a camera preset or "Keep this light"
@@ -2552,7 +2610,9 @@ LUT_3D_SIZE {n}
                 }
             });
             let words: Vec<&str> = kind.split('-').collect();
-            let viewfinder = (words[0] == "viewfinder").then(|| {
+            // (windlight: the photo's light lives in the viewfinder's panel)
+            let windlight = words[0] == "windlight";
+            let viewfinder = (words[0] == "viewfinder" || windlight).then(|| {
                 use crate::snapshot::viewfinder::Display;
                 let has = |w: &str| words.contains(&w);
                 DemoViewfinder {
@@ -2566,7 +2626,7 @@ LUT_3D_SIZE {n}
                     menu: has("menu"),
                     help: has("help"),
                     drawer: has("drawer"),
-                    light: has("light"),
+                    light: has("light") || windlight,
                     focus_mode: if has("mf") {
                         Some(crate::dof::PhotoFocus::Manual)
                     } else if has("afc") {
@@ -2727,10 +2787,6 @@ LUT_3D_SIZE {n}
                 }
             }
         }
-        // (once the window has its layout)
-        if demo.windlight.is_some() && self.frame_count == 660 {
-            self.snapshots.ui.reveal_light = true;
-        }
         if demo.windlight == Some(true) {
             if self.frame_count == 900 {
                 log::info!("demo photo: the photo's light kept");
@@ -2788,11 +2844,12 @@ fn env_view<'a>(
     env_ui: &'a crate::ui::environment::EnvironmentUi,
     eep: &crate::world::eep_env::EnvSelector,
 ) -> crate::ui::snapshot::EnvView<'a> {
-    let sky = eep.shown_sky().unwrap_or_default();
+    // (the sky's own sun: the photo's turned one would be its own reset)
+    let sun = eep.unturned_sun().unwrap_or(crate::world::eep::SkyFrame::default().sun_rotation);
     crate::ui::snapshot::EnvView {
         catalog: env_ui.catalog(),
         own: eep.local_view(),
-        sun: crate::ui::environment::azimuth_elevation(sky.sun_rotation),
+        sun: crate::ui::environment::azimuth_elevation(sun),
         locked: eep.rlva_locked,
         loading: eep.photo_loading(),
     }

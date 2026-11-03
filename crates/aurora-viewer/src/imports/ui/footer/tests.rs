@@ -41,7 +41,6 @@ fn local_upload_button_uses_checked_files_instead_of_the_active_item_and_disable
                     imports,
                     &Preferences::default(),
                     &world,
-                    &Default::default(),
                     &Prices::default(),
                     &mut actions,
                 );
