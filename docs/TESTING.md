@@ -2879,6 +2879,7 @@ To check with these scenarios:
 | `AURORA_DEMO_EMOTE=<expression>[,<hand pose>][,signal][,self]` | A facial expression and a hand pose from an animation (system body) |
 | `AURORA_DEMO_PHYSICS=1\|still\|off\|classic` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
 | `AURORA_DEMO_DERENDER=menu\|inspect\|avatar\|hat` | A resident's Inspect, Derender and the Asset blacklist window |
+| `AURORA_DEMO_FRIENDS_ONLY=1\|friend` | Show Friends Only: the other avatar leaves at frame 700 and comes back at 900 |
 | `AURORA_DEMO_SEAT_KILL=1` | A seat deleted under the resident sitting on it |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
@@ -3630,6 +3631,15 @@ tests do not establish that this report uses an invalid joint or index.
   away until removed in World › Asset blacklist. Screenshots with
   `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_CAMERA=close,830,330,40` (on the
   avatar) and `AURORA_CAPTURE_FRAMES=720,780,830,950`.
+- **`AURORA_DEMO_FRIENDS_ONLY`**: Show Friends Only (toolbar `RFO`, World
+  menu), switched on by the scenario at frame 700: Violet Wolf, who is not a
+  friend, vanishes with its hat, orb and name plate while our avatar stays;
+  at frame 900 it is switched off and they all come back at once.
+  `friend` makes the wolf a friend at frame 650: it stays when the mode
+  comes on at 700, vanishes at 800 when the friendship ends, and returns at
+  900. The state is kept per account in the settings, and a teleport
+  switches it off unless Preferences › Controls keeps it. Screenshots with
+  `AURORA_CAPTURE_FRAMES=680,760,950`.
 - **`AURORA_DEMO_SEAT_KILL=1`** (issue #746): Violet Wolf, with its hat and
   orb, sits on a violet cushion at frame 700. The cushion is deleted at
   frame 800, before the simulator stands Wolf up at 900, as a carry or pose

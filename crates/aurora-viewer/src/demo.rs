@@ -2974,6 +2974,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             // unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
                 || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
+                || std::env::var_os("AURORA_DEMO_FRIENDS_ONLY").is_some()
                 || seat_kill::on()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
                 || people::mode().is_some()

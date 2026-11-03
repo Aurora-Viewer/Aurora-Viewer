@@ -33,6 +33,7 @@ pub mod experiences;
 pub mod favorites;
 pub mod flying_at_exit;
 mod friend_join;
+pub mod friends_only;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -480,6 +481,8 @@ pub struct World {
     rlva_location_hidden: bool,
     /// Derendered objects and residents, and the asset blacklist.
     pub derender: derender::Derender,
+    /// "Show Friends Only" beside it (`friends_only.rs`).
+    pub friends_only: friends_only::State,
     /// Our groups and the group / conference chat sessions.
     pub groups: groups::GroupChats,
     /// Voice calls with residents, groups and conferences.
@@ -788,6 +791,7 @@ impl World {
             rlva_hover_privacy: Default::default(),
             rlva_location_hidden: false,
             derender: derender::Derender::default(),
+            friends_only: Default::default(),
             groups: groups::GroupChats::default(),
             calls: calls::Calls::default(),
             status: status::Status::default(),
@@ -2310,6 +2314,7 @@ impl World {
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.hud_locks = hud_lock::HudLocks::load(account.join(hud_lock::FILE));
                 self.derender = derender::Derender::load(account.join(derender::FILE));
+                self.friends_only.reload = true;
                 self.media_filter = crate::media::filter::MediaFilter::load(account.join(crate::media::filter::FILE));
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
@@ -2524,6 +2529,9 @@ impl World {
                     self.tp_status = aurora_i18n::tr!("common-loading-region").into();
                 }
                 self.arrived_once = true;
+                if self.teleporting {
+                    self.friends_only_teleport_arrival();
+                }
                 self.teleporting = false;
                 self.park_far_regions();
                 self.land_if_fly_blocked(handle);
@@ -2538,7 +2546,8 @@ impl World {
                 let mut land_changed = false;
                 let land_watches = self.land.watches(handle);
                 for u in objects {
-                    if let Some(dropped) = self.derender.filter(handle, &u) {
+                    let hide_avatar = self.hides_non_friend(&u);
+                    if let Some(dropped) = self.derender.filter_avatar(handle, &u, hide_avatar) {
                         if dropped.newly {
                             self.hide_key(dropped.key, dropped.by);
                         }
@@ -2634,6 +2643,9 @@ impl World {
                                 at,
                             );
                         }
+                    } else {
+                        // kept out of the world: it comes back where it is now
+                        self.derender.apply_terse(&key, &t);
                     }
                 }
                 None

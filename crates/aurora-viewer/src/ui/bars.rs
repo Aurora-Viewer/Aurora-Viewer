@@ -74,6 +74,8 @@ pub enum BarAction {
     /// The nearby chat bar put away or brought back with the keyboard
     /// (MainChatbarVisible, FSNearbyChat::onDefaultChatBarButtonClicked).
     ToggleChatBar,
+    /// Show Friends Only switched (RFO, FSRenderFriendsOnly).
+    ToggleFriendsOnly,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
@@ -237,6 +239,8 @@ pub struct StatusInfo<'a> {
     pub double_click: crate::autopilot::DoubleClick,
     /// Quickjump is on (Me › Quickjump).
     pub quickjump: bool,
+    /// Show Friends Only is on (World › Show Friends only).
+    pub friends_only: bool,
     /// The fly override is on (Me › Fly override).
     pub fly_override: bool,
     /// Photos are taken without the shutter sound nor the snapshot
@@ -1140,6 +1144,18 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::avatar_render_settings::WINDOW,
             &mut panels.avatar_render_settings,
         );
+        // menu_viewer.xml: World › Show Friends only (TogglePerAccountControl
+        // FSRenderFriendsOnly), after Avatar Render Settings
+        if menu::check(
+            ui,
+            p,
+            "user-check",
+            aurora_i18n::tr!("toolbar-command-friends-only"),
+            st.friends_only,
+            true,
+        ) {
+            *action = BarAction::ToggleFriendsOnly;
+        }
         menu::separator(ui, p);
         // Firestorm's View › Camera Controls and Movement Controls
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
@@ -2094,6 +2110,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "picks" => return BarAction::MyPicks,
         // MainChatbarVisible: the nearby chat bar shown or put away
         "defaultchatbar" => return BarAction::ToggleChatBar,
+        // TogglePerAccountControl FSRenderFriendsOnly
+        "RFO" => return BarAction::ToggleFriendsOnly,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
@@ -2888,6 +2906,8 @@ pub(crate) fn toolbar_row(
             toolbar.picks_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
+        } else if b.command == "RFO" {
+            toolbar.friends_only_active
         } else if b.command == "vr_view" {
             ui.ctx()
                 .data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")))
@@ -3651,6 +3671,8 @@ mod tests {
         assert!(command_active("performance", &panels, false, false, false));
         assert!(matches!(run_command(&ctx, "picks", &mut panels), BarAction::MyPicks));
         assert!(matches!(run_command(&ctx, "defaultchatbar", &mut panels), BarAction::ToggleChatBar));
+        assert!(super::super::toolbar::ready("RFO"));
+        assert!(matches!(run_command(&ctx, "RFO", &mut panels), BarAction::ToggleFriendsOnly));
     }
 
     #[test]
