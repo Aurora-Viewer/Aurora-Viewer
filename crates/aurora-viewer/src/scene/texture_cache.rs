@@ -28,8 +28,9 @@ const MAGIC: &[u8; 4] = b"AUTX";
 /// incompatible files are rewritten by the next decode. 2: the
 /// colour of the mips is the plain average of the texels (`build_mips`). 3:
 /// the ends of alpha stay exact (`aurora_render::bc7::encode_chain`).
-/// 4: retain the legacy pick mask and an exact alpha > 0 plane together.
-const VERSION: u8 = 4;
+/// 4: retain the legacy pick mask and an exact alpha plane together.
+/// 5: that plane uses the legacy alpha > 32 threshold.
+const VERSION: u8 = 5;
 const KIND_KEEP_RGBA: u8 = 0;
 const KIND_BC7: u8 = 1;
 /// Fixed part of the header, then 8 bytes per level.
@@ -262,7 +263,7 @@ enum Parsed {
 /// The header checked against the length of the file, and where to read
 /// the levels from `want` on.
 fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
-    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3 | VERSION) {
+    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3 | 4 | VERSION) {
         return None;
     }
     let kind = head[5];

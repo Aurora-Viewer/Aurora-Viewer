@@ -175,8 +175,10 @@ pub enum TexSource {
 /// block, alpha > 32 at its first texel, repeated UVs. Top-left decoded rows
 /// are indexed from the bottom, like world UVs. No OpenGL state or
 /// readback is involved; masks are built by decode workers and retired off-thread.
-/// A second, full-resolution bit plane preserves alpha > 0 for left clicks
-/// on world Blend faces, without changing the legacy mask used by HUDs.
+/// A second, full-resolution bit plane (same alpha > 32 threshold, every
+/// texel) serves left clicks on world Blend faces: lossy JPEG 2000 leaves a
+/// few levels of alpha noise in the clear areas of a texture, which the
+/// Legacy Viewer ignores for picking (LLImageGL::updatePickMask).
 pub struct PickMask {
     width: u32,
     height: u32,
@@ -214,7 +216,7 @@ impl PickMask {
         }
         for y in 0..height {
             for x in 0..width {
-                if rgba[(((height - 1 - y) * width + x) as usize) * 4 + 3] != 0 {
+                if rgba[(((height - 1 - y) * width + x) as usize) * 4 + 3] > 32 {
                     let bit = (y * width + x) as usize;
                     bits[coarse + bit / 8] |= 1 << (bit % 8);
                 }
@@ -3725,7 +3727,7 @@ mod tests {
     }
 
     #[test]
-    fn nonzero_pick_mask_preserves_each_texel_and_survives_cache_round_trip() {
+    fn exact_pick_mask_preserves_each_texel_and_survives_cache_round_trip() {
         let mut rgba = vec![255; 3 * 3 * 4];
         for (pixel, alpha) in [(0, 0), (1, 1), (2, 32), (3, 33), (4, 0), (5, 127), (6, 255), (7, 0), (8, 1)] {
             rgba[pixel * 4 + 3] = alpha;
@@ -3736,7 +3738,7 @@ mod tests {
         for y in 0..3 {
             for x in 0..3 {
                 let uv = glam::Vec2::new((x as f32 + 0.5) / 3.0, (2.5 - y as f32) / 3.0);
-                let nonzero = rgba[(y * 3 + x) * 4 + 3] != 0;
+                let nonzero = rgba[(y * 3 + x) * 4 + 3] > 32;
                 assert_eq!(mask.hits_nonzero(uv), nonzero);
                 assert_eq!(restored.hits_nonzero(uv + glam::Vec2::new(-2.0, 3.0)), nonzero);
                 assert_eq!(restored.hits(uv), mask.hits(uv));

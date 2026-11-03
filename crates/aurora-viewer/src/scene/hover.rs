@@ -797,7 +797,7 @@ impl super::Scene {
         let object = blend
             .map(|(_, idx)| idx)
             .or_else(|| point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, Some(&candidates.point))));
-        let answer = (point, object);
+        let answer = self.hover_through_clear(world, ray, far, (point, object));
         if let (Some(t_index), Some(t_point)) = (t_index, t_point) {
             let done = Instant::now();
             let ms = |a: Instant, b: Instant| (b - a).as_secs_f32() * 1000.0;
@@ -841,10 +841,34 @@ impl super::Scene {
     /// classes or triangle hierarchies.
     fn full_hover_pick(&self, world: &crate::world::World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32) -> HoverHit {
         let point = self.interaction_point(world, Some(ray), depth, false, far);
-        if let Some((t, idx)) = self.blend_hit(world, ray, point, far, None) {
-            return (Some(ray.0 + ray.1 * t), Some(idx));
+        let answer = if let Some((t, idx)) = self.blend_hit(world, ray, point, far, None) {
+            (Some(ray.0 + ray.1 * t), Some(idx))
+        } else {
+            (point, point.and_then(|point| self.interaction_at_ray(world, point, ray, false)))
+        };
+        self.hover_through_clear(world, ray, far, answer)
+    }
+
+    /// What a left click would do with a clear or click-action-None prim in
+    /// front of an actionable one (`visible_action_point`): the cursor shows
+    /// the actionable one. Only looked for when the hovered object can be
+    /// clear somewhere.
+    fn hover_through_clear(&self, world: &crate::world::World, ray: (Vec3, Vec3), far: f32, answer: HoverHit) -> HoverHit {
+        let (point, Some(idx)) = answer else { return answer };
+        let (Some(o), Some(g)) = (world.objects.get(idx), self.gpu.get(idx)) else {
+            return answer;
+        };
+        if g.owner_avatar.is_some()
+            || !(o.click_action == crate::interaction::code::DISABLED || self.see_through_face(g, true) || self.has_blend_face(world, idx))
+        {
+            return answer;
         }
-        (point, point.and_then(|point| self.interaction_at_ray(world, point, ray, false)))
+        let mut along = Vec::new();
+        self.pick.ray_candidates(ray, &mut along);
+        match self.visible_action_point(world, ray, point, far, &along) {
+            Some(p) => (Some(p), self.left_interaction_among(world, p, ray, &along).or(Some(idx))),
+            None => answer,
+        }
     }
 
     /// The class of an object for the hover search ([`class`]), from what

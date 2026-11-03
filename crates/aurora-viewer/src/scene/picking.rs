@@ -813,6 +813,7 @@ impl Scene {
             // LLVolume::lineSegmentIntersect rejects back faces. After a
             // texture hole, an invisible exit face must not reclaim the
             // click from the surface the GPU actually drew (#1574).
+            let actionable = std::cell::OnceCell::new();
             return pick::ray_faces_filtered(
                 faces,
                 model,
@@ -828,6 +829,18 @@ impl Scene {
                         .iter()
                         .find(|draw| usize::from(draw.te_index) == hit.face)
                         .map_or_else(|| o.visual_texture_face(hit.face).texture, |draw| draw.tex_id);
+                    // LLToolPie::handleMouseDown: the transparent pick (alpha
+                    // ignored) wins when its object has a touch script or a
+                    // click action, so the texels of such an object never let
+                    // the click through (priority 2), unless its own click
+                    // action is None (CLICK_ACTION_DISABLED): such a prim in
+                    // front of a script lets the visible pick behind it win.
+                    if *actionable.get_or_init(|| {
+                        crate::interaction::target(world, idx, &HashMap::new())
+                            .is_some_and(|t| t.action != crate::interaction::Action::Disabled)
+                    }) {
+                        return true;
+                    }
                     self.textures
                         .pick_masks
                         .get(&texture)
@@ -1522,9 +1535,47 @@ impl Scene {
         // texels through (#1574). Hover keeps its existing geometric policy.
         let mut candidates = Vec::new();
         self.pick.ray_candidates(ray, &mut candidates);
-        self.blend_hit_mode(world, ray, point, far, Some(&candidates), FacePick::LeftBlend)
-            .map(|(t, _)| ray.0 + ray.1 * t)
-            .or(point)
+        let blend = self.blend_hit_mode(world, ray, point, far, Some(&candidates), FacePick::LeftBlend);
+        let point = blend.map(|(t, _)| ray.0 + ray.1 * t).or(point);
+        self.visible_action_point(world, ray, point, far, &candidates).or(point)
+    }
+
+    /// LLToolPie::handleMouseDown compares two picks: the transparent one
+    /// (alpha ignored, invisible faces included) and the visible one. The
+    /// transparent one wins when it is an attachment or has a touch script or
+    /// a click action of its own; otherwise the visible one wins when it is
+    /// an attachment or actionable, and the transparent one when it is not.
+    /// So a clear or click-action-None prim in front of a scripted one lets
+    /// the click reach it. Returns the visible pick's point when it wins.
+    pub(super) fn visible_action_point(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        point: Option<Vec3>,
+        far: f32,
+        candidates: &[usize],
+    ) -> Option<Vec3> {
+        let actionable = |idx: usize| {
+            crate::interaction::target(world, idx, &HashMap::new()).is_some_and(|t| t.action != crate::interaction::Action::Disabled)
+        };
+        let attachment = |idx: usize| self.gpu.get(idx).is_some_and(|g| g.owner_avatar.is_some());
+        let transparent = self.nearest_at_ray(world, point?, ray, true, Some(candidates), FacePick::Left)?;
+        if attachment(transparent) || actionable(transparent) {
+            return None;
+        }
+        let now = Instant::now();
+        let (t, visible) = candidates
+            .iter()
+            .filter_map(|&idx| {
+                let g = self.gpu.get(idx)?;
+                if g.hud || g.is_avatar {
+                    return None;
+                }
+                let t = self.face_hit_mode(world, idx, ray, now, false, FacePick::Left)?.t;
+                (t <= far).then_some((t, idx))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))?;
+        (visible != transparent && (attachment(visible) || actionable(visible))).then(|| ray.0 + ray.1 * t)
     }
 
     /// Nearest Blend surface in front of the displayed/action point. The
@@ -1603,6 +1654,18 @@ impl Scene {
         self.interaction_at_ray_among(world, point, ray, include_hidden, None)
     }
 
+    pub(super) fn left_interaction_among(&self, world: &World, point: Vec3, ray: (Vec3, Vec3), among: &[usize]) -> Option<usize> {
+        self.interaction_at_ray_mode(world, point, ray, true, Some(among), FacePick::Left)
+    }
+
+    /// `interaction_at_ray` for the left button: a texel of a world Blend
+    /// face that the click passes through (`FacePick::Left`) does not claim
+    /// the point, so a frame texture with a clear middle in front of a
+    /// button leaves the button the target.
+    pub fn left_interaction_at_ray(&self, world: &World, point: Vec3, ray: (Vec3, Vec3), include_hidden: bool) -> Option<usize> {
+        self.interaction_at_ray_mode(world, point, ray, include_hidden, None, FacePick::Left)
+    }
+
     /// `interaction_at_ray` over the objects of `among` (None: all).
     pub(super) fn interaction_at_ray_among(
         &self,
@@ -1611,6 +1674,48 @@ impl Scene {
         ray: (Vec3, Vec3),
         include_hidden: bool,
         among: Option<&[usize]>,
+    ) -> Option<usize> {
+        self.interaction_at_ray_mode(world, point, ray, include_hidden, among, FacePick::Surface)
+    }
+
+    fn interaction_at_ray_mode(
+        &self,
+        world: &World,
+        point: Vec3,
+        ray: (Vec3, Vec3),
+        include_hidden: bool,
+        among: Option<&[usize]>,
+        mode: FacePick,
+    ) -> Option<usize> {
+        let picked = self.nearest_at_ray(world, point, ray, include_hidden, among, mode);
+        if mode != FacePick::Left || !include_hidden {
+            return picked;
+        }
+        // LLToolPie::handleMouseDown: the transparent pick (invisible faces
+        // included) only wins when it is an attachment or actionable; else a
+        // visible attachment or actionable object at the point takes the click.
+        let actionable = |idx: usize| {
+            crate::interaction::target(world, idx, &HashMap::new()).is_some_and(|t| t.action != crate::interaction::Action::Disabled)
+        };
+        let attachment = |idx: usize| self.gpu.get(idx).is_some_and(|g| g.owner_avatar.is_some());
+        let picked_idx = picked?;
+        if attachment(picked_idx) || actionable(picked_idx) {
+            return picked;
+        }
+        match self.nearest_at_ray(world, point, ray, false, among, mode) {
+            Some(v) if attachment(v) || actionable(v) => Some(v),
+            _ => picked,
+        }
+    }
+
+    fn nearest_at_ray(
+        &self,
+        world: &World,
+        point: Vec3,
+        ray: (Vec3, Vec3),
+        include_hidden: bool,
+        among: Option<&[usize]>,
+        mode: FacePick,
     ) -> Option<usize> {
         let now = Instant::now();
         const TOLERANCE: f32 = 0.06;
@@ -1643,7 +1748,12 @@ impl Scene {
             if !ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max).is_some_and(|t| t < nearest) {
                 continue;
             }
-            if let Some(t) = self.hit_distance(world, idx, ray, now, include_hidden, among)
+            let t = if mode == FacePick::Left {
+                self.face_hit_mode(world, idx, ray, now, include_hidden, mode).map(|h| h.t)
+            } else {
+                self.hit_distance(world, idx, ray, now, include_hidden, among)
+            };
+            if let Some(t) = t
                 && t < nearest
             {
                 nearest = t;
@@ -3166,9 +3276,14 @@ pub(super) mod tests {
                     texture,
                     super::super::textures::PickMask::from_rgba(1, 1, &[255, 255, 255, texel_alpha]).unwrap(),
                 );
-                let expected = if texel_alpha == 0 { depth } else { front_point };
+                let solid = texel_alpha > 32;
+                let expected = if solid { front_point } else { depth };
+                // (nothing scripted: only the texels decide)
+                let o = world.objects.get_mut(front).unwrap();
+                o.click_action = crate::interaction::code::DISABLED;
+                o.update_flags = 0;
                 assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None), Some(expected));
-                assert_eq!(scene.left_touch_surface(&world, front, ray).is_some(), texel_alpha > 0);
+                assert_eq!(scene.left_touch_surface(&world, front, ray).is_some(), solid);
                 assert!(scene.touch_surface(&world, front, ray).is_some());
                 for action in [
                     crate::interaction::code::NONE,
@@ -3178,6 +3293,13 @@ pub(super) mod tests {
                     let o = world.objects.get_mut(front).unwrap();
                     o.click_action = action;
                     o.update_flags = crate::ui::context::flags::HANDLE_TOUCH | crate::build::edits::FLAGS_PHANTOM;
+                    // LLToolPie::handleMouseDown: a touch script or a click action
+                    // of its own makes the transparent pick (alpha ignored) win
+                    let expected = if action == crate::interaction::code::DISABLED {
+                        expected
+                    } else {
+                        front_point
+                    };
                     assert_eq!(
                         scene.action_point(&world, Some(ray), Some(depth), false, 100.0),
                         Some(expected),
@@ -3188,7 +3310,7 @@ pub(super) mod tests {
                     scene.selection_pick(&world, Some(ray), Some(depth), false, false, 100.0),
                     (Some(front_point), Some(front))
                 );
-                let target = if texel_alpha == 0 { back } else { front };
+                let target = if solid { front } else { back };
                 assert_eq!(
                     scene.left_selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
                     (Some(expected), Some(target))
@@ -3513,6 +3635,41 @@ pub(super) mod tests {
         }
     }
 
+    /// A game board's invisible click-action-None tiles in front of its
+    /// scripted pieces: the click and the cursor reach the pieces
+    /// (LLToolPie::handleMouseDown priorities 2 and 4).
+    #[test]
+    fn invisible_none_prim_in_front_lets_the_click_reach_a_scripted_one() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let object = world.objects.get_mut(front).unwrap();
+        object.click_action = crate::interaction::code::DISABLED;
+        object.update_flags = 0;
+        for f in &mut Arc::make_mut(object.te.as_mut().unwrap()).faces {
+            f.color[3] = 0.0;
+        }
+        scene.gpu[front].faces.clear();
+        let o = world.objects.get_mut(back).unwrap();
+        o.click_action = crate::interaction::code::NONE;
+        o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        scene.pick.changed(front);
+        assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+        assert_eq!(scene.left_interaction_at_ray(&world, depth, ray, true), Some(back));
+        assert_eq!(scene.hover_pick(&world, Some(ray), Some(depth), 100.0), (Some(depth), Some(back)));
+        // with a script of its own the invisible prim keeps the click
+        world.objects.get_mut(front).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
+        scene.pick.changed(front);
+        let hit = scene.action_point(&world, Some(ray), Some(depth), false, 100.0).unwrap();
+        assert_eq!(scene.left_interaction_at_ray(&world, hit, ray, true), Some(front));
+    }
+
     #[test]
     fn blend_press_reaches_omitted_faces_and_respects_material_overrides() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
@@ -3551,6 +3708,14 @@ pub(super) mod tests {
                 front_point
             } else {
                 depth
+            };
+            // the Blend face has a touch script, so the transparent pick wins
+            // (LLToolPie::handleMouseDown); the Mask one has none and the
+            // click goes on to what is behind its invisible face
+            world.objects.get_mut(front).unwrap().update_flags = if mode == aurora_assets::AlphaMode::Blend {
+                crate::ui::context::flags::HANDLE_TOUCH
+            } else {
+                0
             };
             scene.pick.changed(front);
             assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(expected));

@@ -1661,8 +1661,8 @@ both keep the camera, while only the scripted attachment receives a touch.
 capture frames 690 and 780 to compare. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
 `camera-te` uses an invisible scripted TE face. Alt-focus must reach the cube
 behind both; `camera-glass` instead reaches the translucent solid pane.
-`camera-faint` uses texture alpha 1/255: it must still take the focus, since
-only alpha-zero texels pass through world Blend objects (#1574).
+`camera-faint` uses texture alpha 1/255: the focus passes through it to the
+cube, like the Legacy Viewer, which ignores alpha up to 32/255 when picking.
 `camera-mask` uses a fully transparent Mask texel and also reaches the cube.
 Add `-ctrl` to any `camera-*` mode to press Ctrl + Alt together. Repeat with
 `AURORA_DEMO_DEBUG=alpha`: all four modes must focus the highlighted panel
@@ -2134,9 +2134,10 @@ No real L$ and no connection to a grid.
   click, for manual testing (near x=138, y=126).
 - `blend-zero`, `blend-faint`, `blend-half`, `blend-solid`: non-actionable
   panel before a Buy object, with texture alpha 0, 1/255, 128/255 or 255/255.
-  `blend-zero` must pass the left click to Buy (971), with `dialog=true`;
-  the other three must reach panel 976 and leave `dialog=false`. The GPU
-  response must omit the zero-alpha panel but retain the faint/half panels.
+  `blend-zero` and `blend-faint` (alpha up to 32/255 is noise to the Legacy
+  Viewer's picker) must pass the left click to Buy (971), with `dialog=true`;
+  the other two must reach panel 976 and leave `dialog=false`. The GPU
+  response must omit the zero and faint panels but retain the half panel.
   `blend-zero-menu` must still target panel 976 with the right click.
   `blend-backface` replaces it with a cube whose transparent entry face
   reveals Buy while the opaque exit face is invisible from this camera.
