@@ -1893,6 +1893,8 @@ pub struct Settings {
     /// credential store (`credentials::store_proxy`), never here.
     pub proxy: aurora_proxy::ProxySettings,
     pub parcel_visibility: crate::world::parcel_visibility::Settings,
+    /// Environments saved for parcels (Preferences › Graphics › Parcels).
+    pub parcel_environments: Vec<crate::world::parcel_env::Entry>,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
     /// Width of the chat island of the bottom islands (px, 0 = the default
@@ -2839,6 +2841,7 @@ impl Default for Settings {
             no_neighbour_regions: false,
             proxy: Default::default(),
             parcel_visibility: Default::default(),
+            parcel_environments: Vec::new(),
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
             toolbar: Default::default(),

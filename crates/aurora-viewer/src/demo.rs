@@ -18,6 +18,8 @@ pub mod anti_spam;
 pub mod beacons;
 #[path = "demo_beams.rs"]
 pub mod beams;
+#[path = "demo_parcel_env.rs"]
+pub mod parcel_env;
 #[path = "demo_parcel_visibility.rs"]
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
