@@ -1663,7 +1663,10 @@ impl Drop for Backend {
                     self.lost.set_surface_released();
                     log::info!("GPU device lost: the window surface released");
                 }
-                Some(false) => log::warn!("GPU device lost: the window surface could not be released, left to the process"),
+                Some(false) => {
+                    self.lost.set_surface_release_failed();
+                    log::warn!("GPU device lost: the window surface could not be released, left to the process");
+                }
                 None => {}
             }
             return;

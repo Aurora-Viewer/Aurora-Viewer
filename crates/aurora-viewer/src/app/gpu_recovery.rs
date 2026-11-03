@@ -192,7 +192,13 @@ impl App {
         self.forget_gpu_scene(&mut renderer);
         // the lost renderer first: its surface is made from this window's
         // handles
-        let same_window = renderer.drop_after_loss();
+        let surface = renderer.drop_after_loss();
+        if surface == aurora_render::SurfaceRelease::ReleaseFailed {
+            // wgpu-hal's panic caught instead of the release (device_lost.rs):
+            // counted, so the reports watch it until wgpu 31
+            crate::crash::gpu_surface_release_failed(started.elapsed().as_millis());
+        }
+        let same_window = surface == aurora_render::SurfaceRelease::SameWindow;
         if safe {
             self.safe_graphics_after_losses();
         }

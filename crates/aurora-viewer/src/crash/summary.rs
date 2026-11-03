@@ -236,34 +236,48 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
 }
 
 /// The GPU device losses the session recovered from (`gpu-recoveries.txt`:
-/// `<unix> <ms> same|safe` a line), as numbers and fixed words: how many,
-/// and for the first ones when in the session, how long the recovery took
-/// and whether it fell back on the safe graphics. None without any.
+/// `<unix> <ms> same|safe` a line) and the surface releases that caught
+/// wgpu-hal's panic instead (`<unix> <ms> release`), as numbers and fixed
+/// words: how many, and for the first ones when in the session, how long the
+/// recovery took and whether it fell back on the safe graphics. None without
+/// any.
 fn gpu_recoveries(text: &str, started_unix: u64) -> Option<String> {
-    let recoveries: Vec<(u64, u64, bool)> = text
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split(' ');
-            let unix: u64 = parts.next()?.parse().ok()?;
-            let ms: u64 = parts.next()?.parse().ok()?;
-            let safe = match parts.next()? {
-                "safe" => true,
-                "same" => false,
-                _ => return None,
-            };
-            Some((unix.saturating_sub(started_unix), ms, safe))
-        })
-        .collect();
-    if recoveries.is_empty() {
+    let mut recoveries: Vec<(u64, u64, bool)> = Vec::new();
+    let mut failed = 0usize;
+    for line in text.lines() {
+        let mut parts = line.split(' ');
+        let (Some(unix), Some(ms), Some(word)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let (Ok(unix), Ok(ms)) = (unix.parse::<u64>(), ms.parse::<u64>()) else {
+            continue;
+        };
+        match word {
+            "safe" => recoveries.push((unix.saturating_sub(started_unix), ms, true)),
+            "same" => recoveries.push((unix.saturating_sub(started_unix), ms, false)),
+            "release" => failed += 1,
+            // not the viewer's line: left out, never published
+            _ => {}
+        }
+    }
+    if recoveries.is_empty() && failed == 0 {
         return None;
     }
-    let shown: Vec<String> = recoveries
-        .iter()
-        .take(5)
-        .map(|(at, ms, safe)| format!("at {at} s ({ms} ms{})", if *safe { ", safe graphics" } else { "" }))
-        .collect();
-    let more = if recoveries.len() > shown.len() { ", …" } else { "" };
-    Some(format!("{}: {}{more}", recoveries.len(), shown.join(", ")))
+    let mut parts = Vec::new();
+    if !recoveries.is_empty() {
+        let shown: Vec<String> = recoveries
+            .iter()
+            .take(5)
+            .map(|(at, ms, safe)| format!("at {at} s ({ms} ms{})", if *safe { ", safe graphics" } else { "" }))
+            .collect();
+        let more = if recoveries.len() > shown.len() { ", …" } else { "" };
+        parts.push(format!("{}: {}{more}", recoveries.len(), shown.join(", ")));
+    }
+    if failed > 0 {
+        let many = if failed == 1 { "" } else { "s" };
+        parts.push(format!("{failed} surface release{many} failed"));
+    }
+    Some(parts.join("; "))
 }
 
 /// The keys of `alive.txt` published, with their labels.
@@ -836,6 +850,15 @@ mod tests {
         assert_eq!(
             gpu_recoveries("1120 812 same\n1300 790 safe\n", 1000).as_deref(),
             Some("2: at 120 s (812 ms), at 300 s (790 ms, safe graphics)")
+        );
+        // a caught surface release failure counts apart, in its own words
+        assert_eq!(
+            gpu_recoveries("1120 812 same\n1130 40 release\n", 1000).as_deref(),
+            Some("1: at 120 s (812 ms); 1 surface release failed")
+        );
+        assert_eq!(
+            gpu_recoveries("1120 40 release\n1130 60 release\n", 1000).as_deref(),
+            Some("2 surface releases failed")
         );
         // a line that is not the viewer's is left out, never published
         assert_eq!(
