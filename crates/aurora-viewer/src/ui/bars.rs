@@ -64,6 +64,8 @@ pub enum BarAction {
     /// (World.SetHomeLocation).
     SetHome,
     ToggleFly,
+    /// Me › Fly override (Legacy Viewer FSAlwaysFly, Ctrl+Alt+V).
+    ToggleFlyOverride,
     /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
     PhotoToDisk,
     /// Our profile on its Picks tab, or closed when Picks is shown
@@ -235,6 +237,8 @@ pub struct StatusInfo<'a> {
     pub double_click: crate::autopilot::DoubleClick,
     /// Quickjump is on (Me › Quickjump).
     pub quickjump: bool,
+    /// The fly override is on (Me › Fly override).
+    pub fly_override: bool,
     /// Photos are taken without the shutter sound nor the snapshot
     /// animation (Advanced › Quiet snapshots).
     pub quiet_snapshots: bool,
@@ -717,6 +721,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         };
         if menu::item(ui, p, "plane-tilt-filled", fly) {
             *action = BarAction::ToggleFly;
+        }
+        // menu_viewer.xml: Fly Override (FSAlwaysFly), beside the flight
+        let fly_override = aurora_i18n::tr!("ui-bars-fly-override");
+        if menu::check(ui, p, "plane-departure-filled", fly_override, st.fly_override, true) {
+            *action = BarAction::ToggleFlyOverride;
         }
         // Firestorm keeps its double-click teleport beside its movement
         let locked = ui

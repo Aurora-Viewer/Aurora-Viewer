@@ -295,6 +295,8 @@ pub struct App {
     movement_runtime: crate::movement::Runtime,
     movement_probe: (Option<Instant>, bool, Option<Vec3>),
     pass_wall_at: Option<Instant>,
+    /// The fly override's first-use caution is up (ui::fly_override).
+    fly_override_caution: bool,
     scene: Scene,
     probes: crate::scene::probes::ProbeManager,
     /// Throttle of the "sky frame" log line.
@@ -1249,6 +1251,7 @@ impl App {
             movement_runtime: Default::default(),
             movement_probe: (None, false, None),
             pass_wall_at: None,
+            fly_override_caution: false,
             scene,
             probes: Default::default(),
             sky_log: Default::default(),
@@ -4210,6 +4213,7 @@ impl App {
         };
         match action {
             Action::Fly => self.toggle_fly(),
+            Action::FlyOverride => self.toggle_fly_override(),
             Action::Flycam => self.toggle_joystick_flycam(),
             Action::AlwaysRun => self.set_always_run(!self.always_run),
             Action::MoveLock => self.toggle_move_lock(),
@@ -7004,6 +7008,26 @@ impl App {
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
+    }
+
+    /// Me › Fly override / Ctrl+Alt+V (LLAgent::updateFSAlwaysFly,
+    /// indra/newview/llagent.cpp): the switch is never saved, and turning it
+    /// on the first time ever brings the FirstUseFlyOverride caution.
+    fn toggle_fly_override(&mut self) {
+        self.world.fly_override = !self.world.fly_override;
+        log::info!("fly override: {}", self.world.fly_override);
+        self.world.system_message(if self.world.fly_override {
+            aurora_i18n::tr!("ui-bars-fly-override-on")
+        } else {
+            aurora_i18n::tr!("ui-bars-fly-override-off")
+        });
+        if self.world.fly_override && !self.settings.fly_override_warned {
+            self.fly_override_caution = true;
+            self.settings.fly_override_warned = true;
+            if !self.demo {
+                self.settings.save();
+            }
+        }
     }
 
     /// A conversation the user opened (a contact, a name's menu, People)
@@ -12887,6 +12911,7 @@ impl App {
             }
             BarAction::Controls { movement, toggle } => self.request_controls(movement, toggle),
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
+            BarAction::ToggleFlyOverride => self.toggle_fly_override(),
             BarAction::ToggleQuickjump => {
                 self.settings.quickjump = !self.settings.quickjump;
                 self.settings.save();
@@ -14394,6 +14419,7 @@ impl App {
                     env_keys: self.env_keys(),
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
+                    fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
@@ -15039,6 +15065,9 @@ impl App {
                             a.bar = BarAction::HideInterface;
                         }
                     }
+                }
+                if self.fly_override_caution && ui::fly_override::caution(&ctx, &p) {
+                    self.fly_override_caution = false;
                 }
                 if self.interface.immersive && !self.camera.mouselook() {
                     let huds = self.settings.show_huds.then_some(self.settings.immersive_huds);

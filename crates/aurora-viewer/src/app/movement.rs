@@ -267,16 +267,8 @@ impl App {
         } else if !near_water || !prefs.swimming {
             self.movement_probe = (None, false, None);
         }
-        let can_fly = self
-            .world
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .is_some_and(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
-            && self
-                .world
-                .parcel
-                .as_ref()
-                .is_none_or(|p| p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0);
+        // LLAgent::canFly: the parcel owner and the fly override count too
+        let can_fly = crate::autopilot::land_allows_flight(&self.world, false, true);
         let mut frame = Frame {
             position,
             velocity: self.world.agent.velocity,

@@ -1137,6 +1137,10 @@ pub struct Settings {
     /// Quickjump: jump and land without waiting for the pre-jump and landing
     /// animations (FSIgnoreFinishAnimation, off; Me › Quickjump too).
     pub quickjump: bool,
+    /// The fly override's caution was shown (the Legacy Viewer's
+    /// FirstUseFlyOverride notification, once ever). The override itself is
+    /// never saved (`World::fly_override`).
+    pub fly_override_warned: bool,
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
@@ -1966,6 +1970,7 @@ impl Default for Settings {
             fly_after_teleport: false,
             crouch_toggle: false,
             quickjump: false,
+            fly_override_warned: false,
             block_click_sit: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
             follow: Default::default(),

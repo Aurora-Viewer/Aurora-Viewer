@@ -327,6 +327,9 @@ pub enum Action {
     Up,
     Down,
     Fly,
+    /// Fly override (Legacy Viewer menu_viewer.xml "Fly Override",
+    /// FSAlwaysFly, shortcut="control|alt|V").
+    FlyOverride,
     AlwaysRun,
     /// Physical Movelock (Firestorm Ctrl+Alt+P).
     MoveLock,
@@ -490,6 +493,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Up, aurora_i18n::tr!("extra-jump-ascend")),
                     (Action::Down, aurora_i18n::tr!("status-crouch-descend")),
                     (Action::Fly, aurora_i18n::tr!("extra-fly-land")),
+                    (Action::FlyOverride, aurora_i18n::tr!("ui-bars-fly-override")),
                     (Action::AlwaysRun, aurora_i18n::tr!("keybinds-always-run")),
                     (Action::MoveLock, aurora_i18n::tr!("movelock-title")),
                     (Action::MovementEnhancer, aurora_i18n::tr!("movement-title")),
@@ -701,6 +705,7 @@ impl KeyBindings {
             (Action::Up, [k(K::PageUp), k(K::KeyE)]),
             (Action::Down, [k(K::PageDown), k(K::KeyC)]),
             (Action::Fly, [k(K::Home), k(K::KeyF)]),
+            (Action::FlyOverride, [kalt(K::KeyV, true, false), None]),
             (Action::AlwaysRun, [kmod(K::KeyR, true, false), None]),
             (Action::MoveLock, [kalt(K::KeyP, true, false), None]),
             (Action::MovementEnhancer, [kalt(K::KeyM, true, false), None]),
@@ -2077,6 +2082,7 @@ mod tests {
                 [K::Backquote, K::Quote, K::Quote, K::Semicolon],
             ),
             (Action::Fly, (false, false, false), [K::KeyF; 4]),
+            (Action::FlyOverride, (true, false, true), [K::KeyV; 4]),
             (Action::CameraControls, (true, true, false), [K::KeyC; 4]),
             (Action::AlwaysRun, (true, false, false), [K::KeyR; 4]),
             (Action::NearbyChat, (true, false, false), [K::KeyH; 4]),

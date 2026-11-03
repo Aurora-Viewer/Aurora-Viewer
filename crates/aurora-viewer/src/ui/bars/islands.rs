@@ -1120,6 +1120,7 @@ mod tests {
             env_keys: Default::default(),
             double_click: Default::default(),
             quickjump: false,
+            fly_override: false,
             quiet_snapshots: false,
             marketplace: false,
             parcel_landmark: None,
