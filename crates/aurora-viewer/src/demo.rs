@@ -248,6 +248,10 @@ pub mod tangents;
 /// (AURORA_DEMO_TEXREFRESH).
 #[path = "demo_tex_refresh.rs"]
 pub mod tex_refresh;
+/// Boards with 2048 px streamed textures, tinted by the level shown, for
+/// the maximum texture resolution (AURORA_DEMO_TEXTURE_RES).
+#[path = "demo_texture_res.rs"]
+pub mod texture_res;
 /// Toasts of friends and messages, and the list under the bell
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]
