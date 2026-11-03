@@ -491,8 +491,9 @@ are planned or in progress: they are not in the viewer yet.
   automatically in mouselook.
 - **Ready for your keyboard**: movement keys adapt to the keyboard layout on
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
-  their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
-  action, category or key. On the Mac, Command works as Control and
+  their letter (M is M on AZERTY too). The Legacy Viewer's menu shortcuts
+  work too (Ctrl+O, Ctrl+Shift+F, H on a build selection…). Search
+  Preferences › Shortcuts by action, category or key. On the Mac, Command works as Control and
   shortcuts read ⌘ ⌥ ⇧, as macOS users expect. A gamepad's buttons,
   triggers and sticks are assigned by simply pressing them, and the flycam
   gets its own zoom controls.
