@@ -19,7 +19,12 @@ impl App {
         if shown {
             crate::ui::widgets::toggle_floater(ctx, "people", &mut self.panels.people);
         } else {
-            crate::ui::widgets::open_floater(ctx, "people", &mut self.panels.people);
+            if self.panels.people {
+                // open on another tab, or behind another window: show it
+                crate::ui::widgets::bring_floater_front(ctx, "people");
+            } else {
+                crate::ui::widgets::open_floater(ctx, "people", &mut self.panels.people);
+            }
             self.panels.people_tab = tab;
         }
     }
@@ -60,6 +65,11 @@ impl App {
             return;
         }
         self.reset_camera_view();
+        // the saved offsets are the preset's: an RLVa lock keeps them, as it
+        // does for the preset menu and the Preferences
+        if self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
+            return;
+        }
         reset_rear_offsets(&mut self.settings.camera);
         if !self.demo {
             self.settings.save();

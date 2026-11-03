@@ -912,8 +912,8 @@ fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
 /// the focus, as the Legacy Viewer's menu accelerators go before the focused
 /// field (LLViewerWindow::handleKey). The field keeps the exact editing
 /// chords (Select All is Ctrl/Cmd+A; People is Ctrl/Cmd+Shift+A).
-fn shortcut_while_typing(typing: bool, mods: Mods, code: KeyCode, bound: bool) -> bool {
-    typing && (mods.ctrl || mods.alt) && bound && !crate::keybinds::text_field_keeps(code, mods)
+fn shortcut_while_typing(typing: bool, mods: Mods, code: KeyCode, logical: Option<&winit::keyboard::Key>, bound: bool) -> bool {
+    typing && (mods.ctrl || mods.alt) && bound && !crate::keybinds::text_field_keeps_key(code, logical, mods)
 }
 
 /// The shortcut wins over the focused widget, so egui must not also treat
@@ -928,11 +928,11 @@ fn shortcut_claims_focus(
     alt: bool,
     bound: bool,
 ) -> bool {
-    if !shortcut_while_typing(true, mods, code, bound) {
+    if !shortcut_while_typing(true, mods, code, Some(logical), bound) {
         return false;
     }
     let letter = |ch: &str| matches!(logical, winit::keyboard::Key::Character(s) if s.eq_ignore_ascii_case(ch));
-    if mods.ctrl && letter("f") && ui::find_shortcut::window_takes_it(ctx) {
+    if mods.ctrl && !shift && !alt && letter("f") && ui::find_shortcut::window_takes_it(ctx) {
         return false;
     }
     if mods.ctrl && (letter("k") || (letter("s") && !shift && !alt)) && ui::scripts::editor_focused(ctx) {
@@ -18901,7 +18901,7 @@ impl ApplicationHandler for App {
             if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
                 Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
                 && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
-                    || shortcut_while_typing(true, key_mods, code, true)))
+                    || shortcut_while_typing(true, key_mods, code, None, true)))
             && self.in_world()
             && self.options_ui.capture.is_none()
             && !self.exit_prompt.open
@@ -19225,8 +19225,14 @@ impl ApplicationHandler for App {
                     }
                     // Ctrl / Alt shortcuts of the viewer still work while a text
                     // field has the focus (chat bar, login fields...)
-                    let shortcut =
-                        pressed && shortcut_while_typing(typing, mods, code, self.settings.keybinds.triggered(&input, mods).is_some());
+                    let shortcut = pressed
+                        && shortcut_while_typing(
+                            typing,
+                            mods,
+                            code,
+                            Some(&ke.logical_key),
+                            self.settings.keybinds.triggered(&input, mods).is_some(),
+                        );
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the
                     // pointer over a conversation with the keyboard nowhere:
@@ -19234,7 +19240,8 @@ impl ApplicationHandler for App {
                     // only runs otherwise. The rule: ui::find_shortcut::owner.
                     // The key is the one egui reads, which the window takes.
                     let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));
-                    let find_taken = pressed && mods.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
+                    let find_taken =
+                        pressed && mods.ctrl && !self.shift && !self.alt && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
                     let script_command = pressed
                         && mods.ctrl
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c)
@@ -19512,26 +19519,29 @@ mod tests {
         assert_eq!(action, Some(Action::Preferences), "Ctrl+P is the preferences' shortcut");
         assert_eq!(bindings.triggered(&Input::key(KeyCode::KeyP), Mods::default()), None);
         // a field focused: the key still reaches the viewer's shortcuts
-        assert!(shortcut_while_typing(true, ctrl, KeyCode::KeyP, action.is_some()));
+        assert!(shortcut_while_typing(true, ctrl, KeyCode::KeyP, None, action.is_some()));
         // the fields keep their own editing shortcuts (Ctrl+C, Ctrl+V…)
-        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyV, true));
+        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyV, None, true));
+        // Exit (Ctrl+Q) reaches the viewer from a field on a QWERTY keyboard
+        let q = winit::keyboard::Key::Character("q".into());
+        assert!(shortcut_while_typing(true, ctrl, KeyCode::KeyQ, Some(&q), true));
         // Select All stays in the field; People (Ctrl+Shift+A) does not
-        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyA, true));
+        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyA, None, true));
         let people = Mods {
             ctrl: true,
             shift: true,
             alt: false,
         };
-        assert!(shortcut_while_typing(true, people, KeyCode::KeyA, true));
+        assert!(shortcut_while_typing(true, people, KeyCode::KeyA, None, true));
         // Alt+arrows are camera chords, and Option+arrows move by word:
         // both stay in the field
         let alt = Mods {
             alt: true,
             ..Default::default()
         };
-        assert!(!shortcut_while_typing(true, alt, KeyCode::ArrowLeft, true));
+        assert!(!shortcut_while_typing(true, alt, KeyCode::ArrowLeft, None, true));
         // a plain P while typing is the field's
-        assert!(!shortcut_while_typing(true, Mods::default(), KeyCode::KeyP, false));
+        assert!(!shortcut_while_typing(true, Mods::default(), KeyCode::KeyP, None, false));
         assert!(login_shortcut(&Screen::Login, action));
         // the other shortcuts wait for the world
         assert!(!login_shortcut(&Screen::Login, Some(Action::Fly)));

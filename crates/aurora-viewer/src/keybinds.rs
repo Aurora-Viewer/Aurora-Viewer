@@ -974,6 +974,28 @@ pub fn text_field_keeps(code: KeyCode, mods: Mods) -> bool {
     }
 }
 
+/// [`text_field_keeps`] for a real key press: a Latin letter is judged by
+/// the character it types, so Ctrl+Q on a QWERTY keyboard reaches Exit while
+/// the physical Q of an AZERTY keyboard (its A) still selects all. Other
+/// keys, and layouts without Latin letters, keep the physical rule.
+pub fn text_field_keeps_key(code: KeyCode, logical: Option<&winit::keyboard::Key>, mods: Mods) -> bool {
+    if let Some(winit::keyboard::Key::Character(text)) = logical
+        && let mut chars = text.chars()
+        && let (Some(letter), None) = (chars.next(), chars.next())
+        && letter.is_ascii_alphabetic()
+    {
+        if !mods.ctrl && !mods.alt {
+            return false;
+        }
+        return match letter.to_ascii_lowercase() {
+            'a' | 'c' | 'x' | 'v' | 'y' => mods.ctrl && !mods.alt && !mods.shift,
+            'z' => mods.ctrl && !mods.alt,
+            _ => false,
+        };
+    }
+    text_field_keeps(code, mods)
+}
+
 /// Keys the chat bar hands to the avatar instead of its text: the arrows,
 /// Page Up / Down (jump, crouch) and Home (fly).
 const CHAT_BAR_MOVE_KEYS: [KeyCode; 7] = [
@@ -1930,6 +1952,31 @@ mod tests {
         assert!(kb.held(Action::PushToTalk, &down, ctrl));
         kb.set(Action::PushToTalk, 1, None);
         assert!(kb.held(Action::Forward, &down, ctrl));
+    }
+
+    #[test]
+    fn text_field_editing_chords_follow_the_typed_letter() {
+        use winit::keyboard::Key;
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        let letter = |c: &str| Key::Character(c.into());
+        // QWERTY: Ctrl+Q is Exit, not an editing chord
+        assert!(!text_field_keeps_key(KeyCode::KeyQ, Some(&letter("q")), ctrl));
+        // AZERTY: its A key (physical Q) is Select All, its Q key (physical A) is Exit
+        assert!(text_field_keeps_key(KeyCode::KeyQ, Some(&letter("a")), ctrl));
+        assert!(!text_field_keeps_key(KeyCode::KeyA, Some(&letter("q")), ctrl));
+        // Shift reads the same through the capital letter
+        assert!(text_field_keeps_key(KeyCode::KeyV, Some(&letter("V")), ctrl));
+        // no Latin letter: the physical rule stays
+        assert!(text_field_keeps_key(KeyCode::KeyQ, Some(&letter("й")), ctrl));
+        assert!(text_field_keeps_key(KeyCode::KeyQ, None, ctrl));
+        assert!(text_field_keeps_key(
+            KeyCode::ArrowLeft,
+            Some(&Key::Named(winit::keyboard::NamedKey::ArrowLeft)),
+            ctrl
+        ));
     }
 
     #[test]
