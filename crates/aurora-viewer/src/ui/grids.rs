@@ -109,7 +109,14 @@ impl Manager {
                     self.result = None;
                     match result {
                         Ok(grid) => {
-                            self.draft = std::mem::take(&mut self.draft).refreshed(grid);
+                            // the fields typed by hand are kept only for the same grid:
+                            // another address typed over a saved grid starts afresh
+                            let other = self.previous.as_deref().is_some_and(|previous| previous != grid.service);
+                            self.draft = if other {
+                                grid
+                            } else {
+                                std::mem::take(&mut self.draft).refreshed(grid)
+                            };
                             self.error = None;
                         }
                         Err(error) => self.error = Some(error),

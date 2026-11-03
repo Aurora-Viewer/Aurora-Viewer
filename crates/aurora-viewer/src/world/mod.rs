@@ -4753,7 +4753,8 @@ impl World {
     }
 
     /// The agent's region's own word on its OpenSim grid (GridURL, search
-    /// and map servers), None before its SimulatorFeatures came.
+    /// and map servers), None before the first region; empty fields until
+    /// its SimulatorFeatures came.
     pub fn opensim_extras(&self) -> Option<&aurora_net::OpenSimExtras> {
         self.main().map(|r| &r.opensim)
     }
