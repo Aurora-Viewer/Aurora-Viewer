@@ -111,7 +111,7 @@ fn font_dirs() -> Vec<PathBuf> {
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
             dirs.push(PathBuf::from(local).join("Microsoft").join("Windows").join("Fonts"));
         }
-    } else {
+    } else if cfg!(target_os = "macos") {
         dirs.push(PathBuf::from("/usr/share/fonts"));
         dirs.push(PathBuf::from("/usr/local/share/fonts"));
         if let Some(home) = std::env::var_os("HOME") {
@@ -119,7 +119,64 @@ fn font_dirs() -> Vec<PathBuf> {
         }
         dirs.push(PathBuf::from("/System/Library/Fonts"));
         dirs.push(PathBuf::from("/Library/Fonts"));
+    } else {
+        dirs = xdg_font_dirs(
+            std::env::var_os("HOME").map(PathBuf::from),
+            std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+            std::env::var_os("XDG_DATA_DIRS"),
+        );
+        for dir in fontconfig_dirs() {
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
     }
+    dirs
+}
+
+/// The `<dir>`s of fontconfig's configuration (`$FONTCONFIG_FILE`, else
+/// `/etc/fonts/fonts.conf` and what it includes, the user's own file among
+/// them). NixOS and other set-ups keep fonts only in such directories; the
+/// Legacy Viewer reaches them by asking fontconfig for each missing
+/// character (LLWindowSDL::findFallbackFontForChar).
+#[cfg(target_os = "linux")]
+fn fontconfig_dirs() -> Vec<PathBuf> {
+    let file = std::env::var_os("FONTCONFIG_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/fonts/fonts.conf"));
+    let mut config = fontconfig_parser::FontConfig::default();
+    if let Err(e) = config.merge_config(&file) {
+        log::info!("fontconfig configuration {} not read: {e}", file.display());
+    }
+    config.dirs.into_iter().map(|d| d.path).filter(|p| p.is_absolute()).collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fontconfig_dirs() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// The font directories of the XDG base directories, which fontconfig
+/// reads too: `fonts` in `$XDG_DATA_DIRS` (Flatpak exports, NixOS
+/// profiles…) after the two usual system directories, then
+/// `$XDG_DATA_HOME/fonts` and the older `~/.fonts`. Relative entries are
+/// ignored and unset or empty variables take their defaults, as the XDG
+/// specification says; each directory is listed once.
+fn xdg_font_dirs(home: Option<PathBuf>, data_home: Option<PathBuf>, data_dirs: Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from("/usr/share/fonts"), PathBuf::from("/usr/local/share/fonts")];
+    let data_dirs: Vec<PathBuf> = data_dirs
+        .map(|v| std::env::split_paths(&v).filter(|p| p.is_absolute()).collect())
+        .filter(|v: &Vec<PathBuf>| !v.is_empty())
+        .unwrap_or_else(|| vec![PathBuf::from("/usr/local/share"), PathBuf::from("/usr/share")]);
+    dirs.extend(data_dirs.into_iter().map(|d| d.join("fonts")));
+    let home = home.filter(|h| h.is_absolute());
+    let data_home = data_home
+        .filter(|d| d.is_absolute())
+        .or_else(|| home.as_ref().map(|h| h.join(".local/share")));
+    dirs.extend(data_home.map(|d| d.join("fonts")));
+    dirs.extend(home.map(|h| h.join(".fonts")));
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
     dirs
 }
 
@@ -129,13 +186,14 @@ pub fn system_fonts() -> Vec<SystemFont> {
     let mut stack = font_dirs();
     let mut visited = 0;
     while let Some(d) = stack.pop() {
+        // only directories that exist count: most XDG data directories have no fonts
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         visited += 1;
         if visited > 64 {
             break;
         }
-        let Ok(rd) = std::fs::read_dir(&d) else {
-            continue;
-        };
         for e in rd.flatten() {
             let path = e.path();
             if path.is_dir() {
@@ -426,6 +484,46 @@ fn embedded_has(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn xdg_font_dirs_follow_the_variables_and_their_defaults() {
+        let p = PathBuf::from;
+        // unset: the specification's defaults, each directory once
+        assert_eq!(
+            xdg_font_dirs(Some(p("/home/u")), None, None),
+            [
+                p("/usr/share/fonts"),
+                p("/usr/local/share/fonts"),
+                p("/home/u/.local/share/fonts"),
+                p("/home/u/.fonts"),
+            ]
+        );
+        // set: every data directory in order, relative entries ignored
+        let data_dirs = std::env::join_paths([
+            "/run/current-system/sw/share",
+            "rel/share",
+            "/var/lib/flatpak/exports/share",
+            "/usr/share",
+        ])
+        .ok();
+        assert_eq!(
+            xdg_font_dirs(Some(p("/home/u")), Some(p("/data/u")), data_dirs),
+            [
+                p("/usr/share/fonts"),
+                p("/usr/local/share/fonts"),
+                p("/run/current-system/sw/share/fonts"),
+                p("/var/lib/flatpak/exports/share/fonts"),
+                p("/data/u/fonts"),
+                p("/home/u/.fonts"),
+            ]
+        );
+        // empty or relative values count as unset; no home, no user directories
+        assert_eq!(
+            xdg_font_dirs(None, Some(p("data")), Some("".into())),
+            [p("/usr/share/fonts"), p("/usr/local/share/fonts")]
+        );
+    }
 
     fn measure(ctx: &egui::Context, family: egui::FontFamily, size: f32, width: f32) -> (egui::Vec2, usize) {
         let mut measured = Default::default();

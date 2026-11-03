@@ -269,13 +269,14 @@ fn index_files(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
     let mut stack: Vec<PathBuf> = dirs.iter().rev().cloned().collect();
     let mut visited = 0;
     while let Some(dir) = stack.pop() {
+        // only directories that exist count: most XDG data directories have no fonts
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         visited += 1;
         if visited > 512 {
             break;
         }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(kind) = entry.file_type() else { continue };
