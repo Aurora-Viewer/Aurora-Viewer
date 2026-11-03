@@ -8,7 +8,7 @@ use crate::theme::Palette;
 use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::{menu, widgets};
 use crate::world::World;
-use crate::world::radar::{CHAT_RANGE, Radar, SHOUT_RANGE};
+use crate::world::radar::{Radar, chat_ranges};
 use aurora_net::profile::flags;
 use egui::{Color32, Rect, Sense, Vec2};
 use serde::{Deserialize, Serialize};
@@ -394,9 +394,10 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
 /// Color of a range (and of a name colored by distance): within the chat,
 /// within a shout, farther.
 fn range_color(p: &Palette, range: Option<f32>) -> Color32 {
+    let r = chat_ranges();
     match range {
-        Some(d) if d <= CHAT_RANGE => p.success,
-        Some(d) if d <= SHOUT_RANGE => p.ink,
+        Some(d) if d <= r.say => p.success,
+        Some(d) if d <= r.shout => p.ink,
         _ => p.muted,
     }
 }
@@ -857,7 +858,7 @@ pub fn tab(
     let counts = (
         data.radar.total,
         list.iter().filter(|r| r.same_region).count(),
-        list.iter().filter(|r| r.range.is_some_and(|d| d <= CHAT_RANGE)).count(),
+        list.iter().filter(|r| r.range.is_some_and(|d| d <= chat_ranges().say)).count(),
     );
     let rows_id = ui.scope_id().with("radar_list");
     header(ui, p, data.settings, counts, rows_id);

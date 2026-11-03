@@ -23,6 +23,7 @@ mod editing;
 pub mod effects;
 pub mod environment;
 mod events;
+mod force_wear;
 mod groups;
 mod im_queries;
 mod inventory;

@@ -1091,7 +1091,7 @@ impl PlacesUi {
                 p,
                 aurora_i18n::tr!("common-teleport"),
                 aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
-                place.global.is_some(),
+                place.global.is_some() && place_details::teleport_allowed(place, world),
                 w,
             ) && let Some(a) = place_details::teleport_action(place, world)
             {

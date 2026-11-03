@@ -54,7 +54,7 @@ enum Transaction {
 
 pub struct BuyCurrencyUi {
     pub open: bool,
-    helper: Option<&'static str>,
+    helper: Option<String>,
     stage: Stage,
     /// When the profile was asked for (`Stage::Checking`).
     opened: Option<Instant>,
@@ -74,6 +74,9 @@ pub struct BuyCurrencyUi {
     focus: bool,
     /// AURORA_DEMO_BUY_CURRENCY: open the confirmation once the estimate is in.
     demo_confirm: bool,
+    /// OpenSim: the helper's host is shown, so the resident sees who sells
+    /// (a region may name its own).
+    show_service: bool,
 }
 
 impl Default for BuyCurrencyUi {
@@ -93,12 +96,26 @@ impl Default for BuyCurrencyUi {
             error: None,
             focus: false,
             demo_confirm: false,
+            show_service: false,
         }
     }
 }
 
+/// The host a helper page is on, as the resident is shown it.
+pub fn helper_host(page: &str) -> String {
+    reqwest::Url::parse(page)
+        .ok()
+        .and_then(|url| {
+            url.host_str().map(|host| match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_owned(),
+            })
+        })
+        .unwrap_or_else(|| page.to_owned())
+}
+
 fn money(amount: i64) -> String {
-    format!("{} L$", aurora_i18n::integer(amount))
+    format!("{} {}", aurora_i18n::integer(amount), aurora_i18n::currency())
 }
 
 /// The amount as the field shows it: nothing for zero (updateUI).
@@ -126,22 +143,29 @@ fn wrapped(ui: &mut egui::Ui, text: RichText) {
 impl BuyCurrencyUi {
     /// LLFloaterBuyCurrency::buyCurrency: an empty amount, once the profile
     /// has told whether the account can pay. `helper` is the grid's helper
-    /// page (`aurora_net::currency::helper_uri`).
-    pub fn open(&mut self, world: &mut World, helper: Option<&'static str>) {
+    /// page (`App::currency_helper`). OpenSim has no payment method on
+    /// file: its form opens at once (buyCurrency's isInOpenSim branch).
+    pub fn open(&mut self, world: &mut World, helper: Option<String>, second_life: bool) {
         if self.buying() {
             // the purchase in flight keeps its window
             self.open = true;
             return;
         }
+        let stage = match helper {
+            None => Stage::Unavailable,
+            Some(_) if second_life => Stage::Checking,
+            Some(_) => Stage::Form,
+        };
         *self = BuyCurrencyUi {
             open: true,
+            show_service: !second_life,
             helper,
-            stage: if helper.is_some() { Stage::Checking } else { Stage::Unavailable },
+            stage,
             opened: Some(Instant::now()),
             focus: true,
             ..Default::default()
         };
-        if helper.is_some() {
+        if stage == Stage::Checking {
             world.profiles.refresh(world.agent_id);
         }
     }
@@ -205,7 +229,7 @@ impl BuyCurrencyUi {
         }
         self.transaction = Some(Transaction::Quote(self.amount));
         Some(NetCommand::CurrencyQuote {
-            helper: self.helper?.to_owned(),
+            helper: self.helper.clone()?,
             amount: self.amount,
         })
     }
@@ -251,15 +275,11 @@ impl BuyCurrencyUi {
     /// startCurrencyBuy.
     fn start_buy(&mut self, password: Password) -> Option<NetCommand> {
         self.confirm = None;
-        let helper = self.helper?;
+        let helper = self.helper.clone()?;
         let quote = self.quote.take()?;
         self.transaction = Some(Transaction::Buy);
         self.changed = false;
-        Some(NetCommand::BuyCurrency {
-            helper: helper.to_owned(),
-            quote,
-            password,
-        })
+        Some(NetCommand::BuyCurrency { helper, quote, password })
     }
 
     /// finishCurrencyBuy; true when the L$ were bought (the window closes,
@@ -376,7 +396,7 @@ impl BuyCurrencyUi {
                             .char_limit(10)
                             .align(egui::Align2::RIGHT_TOP),
                     );
-                    ui.label(RichText::new("L$").color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::currency()).color(p.muted));
                     if field.changed() {
                         self.typed(Instant::now());
                     }
@@ -415,6 +435,17 @@ impl BuyCurrencyUi {
                 ui.label(RichText::new(total.map_or_else(|| "—".to_owned(), money)).strong().color(p.ink));
             });
         });
+        if self.show_service
+            && let Some(page) = self.helper.as_deref().filter(|page| page.starts_with("http"))
+        {
+            ui.add_space(6.0);
+            wrapped(
+                ui,
+                RichText::new(aurora_i18n::tr!("currency-service", host = helper_host(page)))
+                    .size(11.5)
+                    .color(p.muted),
+            );
+        }
         if let Some(error) = &self.error {
             ui.add_space(8.0);
             ui.horizontal_top(|ui| {
@@ -550,8 +581,8 @@ impl BuyCurrencyUi {
 
     /// AURORA_DEMO_BUY_CURRENCY: the window as its mode shows it, without
     /// waiting for a click (see docs/TESTING.md).
-    pub fn demo(&mut self, world: &mut World, helper: Option<&'static str>, mode: &str) {
-        self.open(world, helper.filter(|_| mode != "grid"));
+    pub fn demo(&mut self, world: &mut World, helper: Option<String>, mode: &str) {
+        self.open(world, helper.filter(|_| mode != "grid"), mode != "opensim");
         match mode {
             "grid" => {}
             "nopayment" => self.stage = Stage::NoPayment,
@@ -573,7 +604,7 @@ mod tests {
     fn form() -> BuyCurrencyUi {
         BuyCurrencyUi {
             open: true,
-            helper: Some(HELPER),
+            helper: Some(HELPER.into()),
             stage: Stage::Form,
             ..Default::default()
         }
@@ -601,6 +632,27 @@ mod tests {
         assert!(ui.poll(t0 + ESTIMATE_PAUSE).is_some());
         ui.quote_reply(amount, Ok(quote(amount, confirm)));
         ui
+    }
+
+    fn world() -> World {
+        World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()))
+    }
+
+    #[test]
+    fn opensim_opens_the_form_without_the_payment_check() {
+        let mut world = world();
+        let mut ui = BuyCurrencyUi::default();
+        ui.open(&mut world, Some(HELPER.into()), false);
+        assert_eq!(ui.stage, Stage::Form, "no payment method on file in OpenSim");
+        assert!(!world.profiles.awaiting(&world.agent_id), "no profile asked for");
+        let mut ui = BuyCurrencyUi::default();
+        ui.open(&mut world, Some(HELPER.into()), true);
+        assert_eq!(ui.stage, Stage::Checking, "Second Life checks the account first");
+        for second_life in [false, true] {
+            let mut ui = BuyCurrencyUi::default();
+            ui.open(&mut world, None, second_life);
+            assert_eq!(ui.stage, Stage::Unavailable);
+        }
     }
 
     #[test]

@@ -84,6 +84,7 @@ macro_rules! each_value {
             anisotropy,
             sharpen,
             glow,
+            max_texture_resolution,
             effects
         )
     };

@@ -259,6 +259,18 @@ fn by_default_a_message_toasts_without_staying_under_the_bell() {
 }
 
 #[test]
+fn an_emote_toasts_with_its_sender_name_not_its_me() {
+    // LLToastIMPanel: "/me waves" reads "Jane Doe waves"
+    let mut w = world();
+    receive(&mut w, JANE, JANE, "/me waves", ImKind::Private, false);
+    assert_eq!(messages(&w), vec![(JANE, 1, "Jane Doe waves".into())]);
+    let mut w = world();
+    w.notifications.toasts.group_im = true;
+    receive(&mut w, GROUP, TOM, "/me's late", ImKind::Group, false);
+    assert_eq!(messages(&w), vec![(GROUP, 1, "Tom Smith's late".into())]);
+}
+
+#[test]
 fn no_message_entry_in_sight_in_dnd_from_a_blocked_resident_or_when_turned_off() {
     // the conversation shown in the window
     let mut w = world();

@@ -41,6 +41,7 @@ pub mod home;
 pub mod hover_height;
 pub mod hud_lock;
 pub mod hud_scale;
+mod im_announce;
 pub mod inventory;
 pub mod inventory_offers;
 pub mod land;
@@ -92,6 +93,7 @@ pub mod social;
 pub mod sound_parcels;
 pub mod staff;
 pub mod status;
+pub mod suitcase;
 pub mod system_messages;
 pub mod teleport_invites;
 pub mod temp_attachments;
@@ -152,6 +154,15 @@ pub struct Region {
     /// An OpenSim grid's status feed and page (SimulatorFeatures'
     /// OpenSimExtras GridStatusRSS, GridStatus); empty when not given.
     pub grid_status: (String, String),
+    /// OpenSimExtras' currency-base-uri: this region's currency helper.
+    pub currency_base_uri: String,
+    /// What an OpenSim region says of its grid (GridURL, search and map
+    /// servers): after a Hypergrid teleport, the grid we are on now.
+    pub opensim: aurora_net::OpenSimExtras,
+    /// OpenSimExtras' currency: this region's money symbol.
+    pub currency_symbol: String,
+    /// OpenSimExtras' ExportSupported: the export permission applies here.
+    pub export_supported: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,6 +339,10 @@ pub struct World {
     /// Lines not sent by a person neither count as unread nor alert
     /// (Preferences › Chat, #741, off), given every frame by the app.
     pub quiet_automated_chat: bool,
+    /// A resident starting to type to us opens the conversation with an
+    /// announcement (FSAnnounceIncomingIM, `im_announce.rs`), given every
+    /// frame by the app.
+    pub announce_incoming_im: bool,
     /// What the notices of the nearby chat are about, for their icon.
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
@@ -402,6 +417,8 @@ pub struct World {
     /// Message of the day writes it again to the nearby chat.
     pub motd: String,
     pub balance: Option<i32>,
+    /// The grid's money symbol, from the login (`app::buy_currency::grid_currency`).
+    pub grid_currency: String,
     /// m² of land the account holds (MoneyBalanceReply SquareMetersCommitted,
     /// LLStatusBar::getSquareMetersCommitted).
     pub land_committed: i32,
@@ -554,6 +571,13 @@ pub struct World {
     /// `tp_storage` (LLViewerParcelMgr's teleport finished signal): global
     /// position and when it happened.
     tp_record: Option<(glam::DVec3, Instant)>,
+    /// A saved place whose grid was not known yet: its global position and
+    /// region, given its `hop://` SLURL when the region's SimulatorFeatures
+    /// come.
+    tp_slurl_pending: Option<(glam::DVec3, String, Vec3)>,
+    /// On an OpenSim grid, the login grid as a Hypergrid address
+    /// (`grids::home`, set by the app); None on Second Life.
+    pub home_grid: Option<String>,
     /// Between the change of region of a border crossing and its arrival.
     crossing: bool,
     /// The last arrival was a border crossing: the agent was not placed.
@@ -689,6 +713,7 @@ impl World {
             nearby_news: false,
             chat_badge: 0,
             quiet_automated_chat: false,
+            announce_incoming_im: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
             nearby_history: Default::default(),
@@ -731,6 +756,7 @@ impl World {
             events_this_frame: 0,
             motd: String::new(),
             balance: None,
+            grid_currency: "L$".into(),
             land_committed: 0,
             land_credit: 0,
             upload_cost: None,
@@ -792,6 +818,8 @@ impl World {
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
             tp_record: None,
+            tp_slurl_pending: None,
+            home_grid: None,
             crossing: false,
             arrived_by_crossing: false,
             inventory_retried: HashSet::new(),
@@ -868,7 +896,32 @@ impl World {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64());
-        self.tp_storage.add(&title, global, now);
+        // OpenSim: the SLURL names the place's grid, for going back to it
+        // after a Hypergrid teleport (LLTeleportHistoryPersistentItem::mSLURL)
+        let local = self
+            .main_region
+            .map(|h| {
+                let (ox, oy) = aurora_net::handle_to_origin(h);
+                Vec3::new((global.x - ox as f64) as f32, (global.y - oy as f64) as f32, global.z as f32)
+            })
+            .unwrap_or(Vec3::ZERO);
+        let grid = self.main_region.and_then(|h| self.grid_of(h));
+        let slurl = match &grid {
+            Some(grid) => crate::slurl::make_on(Some(grid), &region, local),
+            None => String::new(),
+        };
+        self.tp_slurl_pending = (grid.is_none() && self.home_grid.is_some()).then(|| (global, region.clone(), local));
+        self.tp_storage.add(&title, global, now, slurl);
+    }
+
+    /// On an OpenSim grid, the grid a region is on (`grids::here`): its
+    /// GridURL, else the login grid. None on Second Life, or until the
+    /// region's SimulatorFeatures came.
+    pub fn grid_of(&self, handle: RegionHandle) -> Option<String> {
+        let home = self.home_grid.as_deref()?;
+        let region = self.regions.get(&handle)?;
+        region.lsl_syntax_id?;
+        crate::grids::here(Some(home), Some(&region.opensim))
     }
 
     /// An arrival whose parcel did not come within a few seconds is saved
@@ -1268,6 +1321,9 @@ impl World {
         }
         self.inventory_background.start(&self.inventory);
         self.inventory.repair_lost_hierarchy();
+        // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
+        self.inventory_background
+            .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
         self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
@@ -1908,6 +1964,10 @@ impl World {
             materials_limits: Default::default(),
             max_tasks: 0,
             grid_status: Default::default(),
+            currency_base_uri: String::new(),
+            opensim: Default::default(),
+            currency_symbol: String::new(),
+            export_supported: false,
         })
     }
 
@@ -2307,13 +2367,31 @@ impl World {
                 lsl_syntax_id,
                 grid_status_feed,
                 grid_status_page,
+                currency_base_uri,
+                opensim,
+                currency_symbol,
+                export_supported,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.grid_status = (grid_status_feed, grid_status_page);
+                r.currency_base_uri = currency_base_uri;
+                r.opensim = opensim;
+                r.currency_symbol = currency_symbol;
+                r.export_supported = export_supported;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
+                // the place we arrived at learns its grid
+                if Some(handle) == self.main_region
+                    && let Some(grid) = self.grid_of(handle)
+                {
+                    self.tp_history.set_grid(handle, Some(grid.clone()));
+                    if let Some((global, region, local)) = self.tp_slurl_pending.take() {
+                        self.tp_storage
+                            .set_slurl(global, crate::slurl::make_on(Some(&grid), &region, local));
+                    }
+                }
                 None
             }
             NetEvent::HoverHeightUpdated { region, request, success } => {
@@ -2408,12 +2486,14 @@ impl World {
                     let at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| d.as_secs() as i64);
+                    let grid = self.grid_of(handle);
                     self.tp_history.arrived(tphistory::TpEntry {
                         region,
                         handle,
                         position,
                         parcel: String::new(),
                         at,
+                        grid,
                     });
                     // LLViewerParcelMgr::onTeleportFinished: a local teleport keeps
                     // the agent parcel (the simulator only sends ParcelProperties
@@ -3422,6 +3502,18 @@ impl World {
                 self.profiles.picks.insert(p.id, *p);
                 None
             }
+            NetEvent::AvatarPicks { target, picks } => {
+                self.profiles.merge_picks(target, picks);
+                None
+            }
+            NetEvent::AvatarNotes { target, notes } => {
+                self.profiles.merge_notes(target, notes);
+                None
+            }
+            NetEvent::AvatarGroups { avatar, groups } => {
+                self.profiles.merge_groups(avatar, groups);
+                None
+            }
             NetEvent::AvatarClassifieds { target, list } => {
                 // replies come in several messages: merge
                 let l = self.profiles.classified_lists.entry(target).or_default();
@@ -3966,6 +4058,9 @@ impl World {
         // Stop): "is typing" in their conversation, never a line
         if matches!(im.dialog, IM_TYPING_START | IM_TYPING_STOP) {
             if !im.from_agent_id.is_nil() {
+                if im.dialog == IM_TYPING_START {
+                    self.announce_typing(&im);
+                }
                 self.social.set_typing(im.from_agent_id, im.dialog == IM_TYPING_START);
             }
             return;
@@ -4749,10 +4844,15 @@ impl World {
         };
         let (from, text) = (line.source, line.text.clone());
         let group = m.kind != ImKind::Private;
+        // an emote reads "Jane waves", as LLToastIMPanel writes it
+        let emote = attention::emote_line(&line.from, &text);
         let (title, body) = if group {
-            (self.session_title(&m.session), format!("{}: {text}", line.from))
+            (
+                self.session_title(&m.session),
+                emote.unwrap_or_else(|| format!("{}: {text}", line.from)),
+            )
         } else {
-            (line.from.clone(), text)
+            (line.from.clone(), emote.unwrap_or(text))
         };
         let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
         self.notifications
@@ -4826,10 +4926,44 @@ impl World {
         self.main().is_some_and(|r| r.caps.contains_key(name))
     }
 
+    /// The currency helper the agent's region names in place of the grid's
+    /// (LFSimFeatureHandler::helperUriOverride); None when it names none.
+    pub fn currency_base_uri(&self) -> Option<&str> {
+        self.main().map(|r| r.currency_base_uri.as_str()).filter(|uri| !uri.is_empty())
+    }
+
+    /// Tea::getCurrency: the agent's region's own symbol, else the grid's
+    /// (`grid_currency`).
+    pub fn currency_symbol(&self) -> &str {
+        self.main()
+            .map(|r| r.currency_symbol.trim())
+            .filter(|symbol| !symbol.is_empty())
+            .unwrap_or(&self.grid_currency)
+    }
+
+    /// The agent's region honours OpenSim's export permission
+    /// (LFSimFeatureHandler::simSupportsExport).
+    pub fn export_supported(&self) -> bool {
+        self.main().is_some_and(|r| r.export_supported)
+    }
+
     /// The status feed and page the agent's region names for its OpenSim
     /// grid (LFSimFeatureHandler::gridStatusRSS, gridStatusURL).
     pub fn grid_status_extras(&self) -> Option<(&str, &str)> {
         self.main().map(|r| (r.grid_status.0.as_str(), r.grid_status.1.as_str()))
+    }
+
+    /// The sizes a prim may take on the agent's region (its OpenSimExtras,
+    /// else Second Life's limits).
+    pub fn prim_limits(&self) -> crate::build::PrimLimits {
+        crate::build::PrimLimits::from_extras(self.opensim_extras())
+    }
+
+    /// The agent's region's own word on its OpenSim grid (GridURL, search
+    /// and map servers), None before the first region; empty fields until
+    /// its SimulatorFeatures came.
+    pub fn opensim_extras(&self) -> Option<&aurora_net::OpenSimExtras> {
+        self.main().map(|r| &r.opensim)
     }
 
     /// `id` talked with us now (LLRecentPeople::add), here.
@@ -7789,6 +7923,10 @@ mod motion_tests {
                 lsl_syntax_id: Uuid::nil(),
                 grid_status_feed: String::new(),
                 grid_status_page: String::new(),
+                currency_base_uri: String::new(),
+                opensim: Default::default(),
+                currency_symbol: String::new(),
+                export_supported: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

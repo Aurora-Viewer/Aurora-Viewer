@@ -54,6 +54,9 @@ pub(super) struct GpuStall {
     lost: bool,
     /// Closing was asked from the notice.
     pub(super) close: bool,
+    /// A recovery on a new window and device is to be tried (gpu_recovery.rs),
+    /// with the safe graphics level when true.
+    pub(super) recover: Option<bool>,
 }
 
 /// Whether to show the notice now.
@@ -65,6 +68,26 @@ impl App {
     /// Each frame, after the renderer was asked for one.
     pub(super) fn gpu_stall_frame(&mut self, renderer: &aurora_render::Renderer) {
         let now = Instant::now();
+        if renderer.device_lost() && super::gpu_recovery::enabled() && !self.gpu_stall.lost {
+            use super::gpu_recovery::LossStep;
+            match super::gpu_recovery::loss_step(&mut self.gpu_losses, now) {
+                step @ (LossStep::Recover | LossStep::RecoverSafe) => {
+                    let safe = step == LossStep::RecoverSafe;
+                    log::error!(
+                        "the graphics card is lost: recovering on a new window and device{}",
+                        if safe {
+                            " with the safe graphics (a second loss within minutes)"
+                        } else {
+                            ""
+                        }
+                    );
+                    self.gpu_stall.lost = true;
+                    self.gpu_stall.recover = Some(safe);
+                    return;
+                }
+                LossStep::Close => log::error!("the graphics card is lost a third time within minutes: no recovery"),
+            }
+        }
         let stall = &mut self.gpu_stall;
         if renderer.device_lost() {
             if !std::mem::replace(&mut stall.lost, true) {

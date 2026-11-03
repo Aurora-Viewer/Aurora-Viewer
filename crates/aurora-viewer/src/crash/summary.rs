@@ -160,6 +160,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             format!("no frame for {seconds} s, the window still answering"),
         ));
     }
+    if let Some(recoveries) = gpu_recoveries(&text("gpu-recoveries.txt"), record.started_unix) {
+        rows.push(("GPU recoveries", recoveries));
+    }
     if let Some(hooks) = overlay_hooks(&text("overlay-hooks.txt")) {
         rows.push(("Overlay hooks", hooks));
     }
@@ -230,6 +233,37 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         ));
     }
     Summary { title, body, gpu }
+}
+
+/// The GPU device losses the session recovered from (`gpu-recoveries.txt`:
+/// `<unix> <ms> same|safe` a line), as numbers and fixed words: how many,
+/// and for the first ones when in the session, how long the recovery took
+/// and whether it fell back on the safe graphics. None without any.
+fn gpu_recoveries(text: &str, started_unix: u64) -> Option<String> {
+    let recoveries: Vec<(u64, u64, bool)> = text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split(' ');
+            let unix: u64 = parts.next()?.parse().ok()?;
+            let ms: u64 = parts.next()?.parse().ok()?;
+            let safe = match parts.next()? {
+                "safe" => true,
+                "same" => false,
+                _ => return None,
+            };
+            Some((unix.saturating_sub(started_unix), ms, safe))
+        })
+        .collect();
+    if recoveries.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = recoveries
+        .iter()
+        .take(5)
+        .map(|(at, ms, safe)| format!("at {at} s ({ms} ms{})", if *safe { ", safe graphics" } else { "" }))
+        .collect();
+    let more = if recoveries.len() > shown.len() { ", …" } else { "" };
+    Some(format!("{}: {}{more}", recoveries.len(), shown.join(", ")))
 }
 
 /// The keys of `alive.txt` published, with their labels.
@@ -795,6 +829,22 @@ mod tests {
     }
 
     const FREEZE: &str = "Freeze: no answer for 20 s\nThread: main\nNative stack (modules):\n00: ntdll+0x9d0e4\n01: aurora_viewer+0x5000\nModules:\nntdll id=0123456789ABCDEF0123456789ABCDEF1 code=1234ABCD1f8000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: aurora-render\nNative stack (modules):\n00: nvoglv64+0x9abc\n01: aurora_viewer+0x7000\nModules:\nnvoglv64 code=65000000200000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: Private Name\nNative stack (modules):\n00: secret+0x1\n";
+
+    #[test]
+    fn recoveries_are_counted_with_when_and_how_and_nothing_else() {
+        assert_eq!(gpu_recoveries("", 1000), None);
+        assert_eq!(
+            gpu_recoveries("1120 812 same\n1300 790 safe\n", 1000).as_deref(),
+            Some("2: at 120 s (812 ms), at 300 s (790 ms, safe graphics)")
+        );
+        // a line that is not the viewer's is left out, never published
+        assert_eq!(
+            gpu_recoveries("1120 812 same\nC:\\Users\\someone 1 safe\n1130 800 other\n", 1000).as_deref(),
+            Some("1: at 120 s (812 ms)")
+        );
+        let many = "1100 800 same\n".repeat(7);
+        assert!(gpu_recoveries(&many, 1000).is_some_and(|s| s.starts_with("7: ") && s.ends_with(", …")));
+    }
 
     #[test]
     fn a_session_ended_frozen_publishes_both_threads_and_its_last_state() {
