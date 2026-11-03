@@ -243,6 +243,9 @@ struct Session<'a> {
     inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
     /// AgentSetAppearance messages sent this session (their SerialNum).
     appearance_serial: u32,
+    /// Our profile as last received (AvatarPropertiesReply), which a grid
+    /// without `AgentProfile` needs whole to save a change.
+    own_profile: Option<crate::profile::OwnProfile>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
     /// When an AgentUpdate leaves (agent_update.rs).
     agent_update: AgentUpdateRule,
@@ -472,6 +475,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_move_tx,
         inventory_udp_tx,
         appearance_serial: 0,
+        own_profile: None,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -1930,6 +1934,12 @@ impl Session<'_> {
                         m.agent_data.session_id = self.session_id();
                         m.agent_data.avatar_id = id;
                         self.send_main(&m, true);
+                        // what AgentProfile would have carried
+                        // (LLAvatarPropertiesProcessor::sendAvatarPicksRequest,
+                        // sendAvatarNotesRequest); the groups come with the
+                        // properties
+                        self.send_generic("avatarpicksrequest", &[id.to_string()]);
+                        self.send_generic("avatarnotesrequest", &[id.to_string()]);
                     }
                 }
             }
@@ -3093,14 +3103,33 @@ impl Session<'_> {
     }
 
     /// LLPanelProfileTab saveAgentUserInfoCoro: PUT <AgentProfile>/<target>;
-    /// without the capability only the notes have a UDP message
-    /// (AvatarNotesUpdate).
+    /// without the capability (OpenSim), the notes are an AvatarNotesUpdate
+    /// and our own profile an AvatarPropertiesUpdate.
     fn update_profile(&mut self, target: uuid::Uuid, data: Llsd) {
         let cap = self
             .main
             .and_then(|a| self.sims.get(&a))
             .and_then(|s| s.caps.get("AgentProfile").cloned());
         let Some(url) = cap else {
+            let own = (target == self.agent_id()).then_some(self.own_profile.as_ref()).flatten();
+            if !data.has("notes")
+                && let Some(profile) = own.and_then(|own| own.with_change(&data))
+            {
+                let mut m = AvatarPropertiesUpdate::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.properties_data.image_id = profile.sl_image;
+                m.properties_data.fl_image_id = profile.fl_image;
+                m.properties_data.about_text = str_field(&profile.sl_about);
+                m.properties_data.fl_about_text = str_field(&profile.fl_about);
+                m.properties_data.allow_publish = profile.allow_publish;
+                // a profile is never mature (sendAvatarPropertiesUpdate)
+                m.properties_data.mature_publish = false;
+                m.properties_data.profile_url = str_field(&profile.profile_url);
+                self.send_main(&m, true);
+                self.own_profile = Some(profile);
+                return;
+            }
             if data.has("notes") {
                 let mut m = AvatarNotesUpdate::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -4270,6 +4299,43 @@ impl Session<'_> {
                 let m: CameraConstraint = pkt.decode()?;
                 emit(self.sh, NetEvent::CameraConstraint(m.camera_collide_plane.plane));
             }
+        } else if id == AvatarPicksReply::ID {
+            let m: AvatarPicksReply = pkt.decode()?;
+            let picks = m.data.iter().map(|p| (p.pick_id, field_str(&p.pick_name))).collect();
+            emit(
+                self.sh,
+                NetEvent::AvatarPicks {
+                    target: m.agent_data.target_id,
+                    picks,
+                },
+            );
+        } else if id == AvatarNotesReply::ID {
+            let m: AvatarNotesReply = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::AvatarNotes {
+                    target: m.data.target_id,
+                    notes: field_str(&m.data.notes),
+                },
+            );
+        } else if id == AvatarGroupsReply::ID {
+            let m: AvatarGroupsReply = pkt.decode()?;
+            let groups = m
+                .group_data
+                .iter()
+                .map(|g| crate::profile::ProfileGroup {
+                    id: g.group_id,
+                    name: field_str(&g.group_name),
+                    insignia: g.group_insignia_id,
+                })
+                .collect();
+            emit(
+                self.sh,
+                NetEvent::AvatarGroups {
+                    avatar: m.agent_data.avatar_id,
+                    groups,
+                },
+            );
         } else if id == PickInfoReply::ID {
             let m: PickInfoReply = pkt.decode()?;
             let d = &m.data;
@@ -4371,6 +4437,16 @@ impl Session<'_> {
             let pd = &m.properties_data;
             // processAvatarPropertiesReply: no groups, picks nor notes here
             let (caption_index, caption_text) = crate::profile::parse_charter_member(&pd.charter_member);
+            if m.agent_data.avatar_id == self.agent_id() {
+                self.own_profile = Some(crate::profile::OwnProfile {
+                    sl_image: pd.image_id,
+                    fl_image: pd.fl_image_id,
+                    sl_about: field_str(&pd.about_text),
+                    fl_about: field_str(&pd.fl_about_text),
+                    allow_publish: pd.flags & crate::profile::flags::ALLOW_PUBLISH != 0,
+                    profile_url: field_str(&pd.profile_url),
+                });
+            }
             let p = crate::AvatarProfile {
                 id: m.agent_data.avatar_id,
                 sl_image: pd.image_id,
@@ -6134,6 +6210,7 @@ mod event_queue_tests {
             inventory_move_tx,
             inventory_udp_tx,
             appearance_serial: 0,
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
@@ -6474,6 +6551,7 @@ mod script_dialog_tests {
             inventory_move_tx,
             inventory_udp_tx,
             appearance_serial: 0,
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
