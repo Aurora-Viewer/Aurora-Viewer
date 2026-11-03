@@ -215,6 +215,11 @@ impl App {
             maximize_on_show: maximized,
         });
         self.gpu_stall = Default::default();
+        // the crash report's state froze at the loss; it follows the session
+        // again, and a report that comes later counts this recovery
+        self.crash_kept = Default::default();
+        self.crash_swapchain = Default::default();
+        crate::crash::gpu_recovered(started.elapsed().as_millis(), safe);
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;
         log::warn!(
