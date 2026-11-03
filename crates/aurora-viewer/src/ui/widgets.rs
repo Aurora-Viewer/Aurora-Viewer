@@ -471,6 +471,11 @@ impl<'a> Floater<'a> {
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
         if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+            // its toolbar button still closes it with the interface hidden,
+            // as it does the windows it toggles itself
+            if close_asked(ctx, self.id) {
+                *open = false;
+            }
             if self.cascade.is_some() {
                 cascade::hidden(ctx, egui::Id::unique(self.id));
             }

@@ -266,6 +266,25 @@ fn a_close_asked_of_a_window_not_drawn_is_forgotten() {
     assert!(!f.open);
 }
 
+/// With the interface hidden, the toolbar button still closes the window,
+/// as it does the windows it toggles itself.
+#[test]
+fn a_close_asked_of_a_hidden_window_closes_it() {
+    let mut f = Fixture::new(false);
+    hide_windows(&f.ctx, true, false);
+    f.show(vec![]);
+    let bodies = f.bodies;
+    f.show(vec![]);
+    assert_eq!(f.bodies, bodies, "the window is hidden");
+    assert!(f.open);
+    close_floater(&f.ctx, "collapse_fixture");
+    f.show(vec![]);
+    assert!(!f.open);
+    hide_windows(&f.ctx, false, false);
+    f.show(vec![]);
+    assert!(!f.open, "it does not come back with the interface");
+}
+
 /// A window closed while minimized, by its close button or from outside,
 /// opens again expanded (LLFloater::closeFloater and openFloater unminimize).
 #[test]

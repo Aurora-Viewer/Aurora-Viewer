@@ -13746,17 +13746,15 @@ impl App {
     }
 
     /// toggleTeleportHistory (llviewermenu.cpp) without the standalone
-    /// history floater: hide Places when shown, else open it on the history.
-    /// Floater.Toggle fs_teleporthistory: Places on its History tab; the
-    /// same press with that tab shown closes it (a minimized one expands),
-    /// and Places shown on another tab turns to History.
+    /// history floater: a minimized Places expands, a shown one hides on
+    /// any tab, else it opens on the history.
     fn toggle_teleport_history(&mut self) {
-        if self.panels.places && self.places_ui.history_shown(self.settings.classic_places) {
+        if self.panels.places {
             ui::widgets::toggle_floater(&self.egui_ctx, "places", &mut self.panels.places);
         } else {
             self.world.place_details.close_panel();
             self.places_ui.open_tab(ui::places::TAB_HISTORY);
-            ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
+            self.panels.places = true;
         }
     }
 
