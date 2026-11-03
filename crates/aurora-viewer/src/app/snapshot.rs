@@ -254,14 +254,20 @@ struct QualityFit {
     step: usize,
     checked: Instant,
     changed: Instant,
+    /// Rising from where it came on (`quality::choose`), each step once
+    /// the one before has settled; over at the first reading that leaves
+    /// no room for the next, or at a step down. The shutter waits for it.
+    climbing: bool,
 }
 
 /// The video memory read again this often while the photo quality is on…
 const FIT_EVERY: Duration = Duration::from_secs(1);
 /// …but not this soon after a step, while the driver's figures follow
-/// the render targets just made or freed…
+/// the render targets just made or freed (the next step of the climb
+/// waits this long)…
 const FIT_SETTLE: Duration = Duration::from_secs(2);
-/// …and a step up only this long after the last change.
+/// …and, once it has climbed, a step up only this long after the last
+/// change.
 const FIT_RAISE_AFTER: Duration = Duration::from_secs(5);
 
 /// AURORA_DEMO_SNAPSHOT=quality-tight: the driver's budget as the photo
@@ -1438,7 +1444,8 @@ impl App {
             let off = self.settings.photo_held.is_none();
             // (no time limit for the pipelines: without them the photo
             // would not have the quality's MSAA)
-            if off || ((pending == 0 || t.elapsed() >= snapshot::quality::DETAIL_WAIT) && renderer.settings_applied()) {
+            let settled = pending == 0 && !self.photo_quality_climbing();
+            if off || ((settled || t.elapsed() >= snapshot::quality::DETAIL_WAIT) && renderer.settings_applied()) {
                 log::info!(
                     "photo quality: details loaded in {} ms ({pending} textures left)",
                     t.elapsed().as_millis()
@@ -1630,13 +1637,18 @@ impl App {
                 // compile on a worker (#1746)
                 if self.settings.photo_held.is_some()
                     && !std::mem::take(&mut self.snapshots.detail_ready)
-                    && (self.scene.textures.pending_in_view() > 0 || !renderer.settings_applied())
+                    && (self.scene.textures.pending_in_view() > 0 || !renderer.settings_applied() || self.photo_quality_climbing())
                 {
                     if self.snapshots.detail_wait.is_none() && !self.photo_busy() {
                         log::info!(
-                            "photo quality: waiting for {} textures{}",
+                            "photo quality: waiting for {} textures{}{}",
                             self.scene.textures.pending_in_view(),
-                            if renderer.settings_applied() { "" } else { " and the pipelines" }
+                            if renderer.settings_applied() { "" } else { " and the pipelines" },
+                            if self.photo_quality_climbing() {
+                                ", the boost climbing"
+                            } else {
+                                ""
+                            }
                         );
                         self.snapshots.detail_wait = Some(Instant::now());
                     }
@@ -2036,7 +2048,8 @@ LUT_3D_SIZE {n}
         }
         let window = renderer.size();
         let photo = self.photo_size(window);
-        let quality_reduced = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_some_and(|f| f.step > 0);
+        // (not while it climbs: it is on its way up, not held back)
+        let quality_reduced = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_some_and(|f| f.step > 0 && !f.climbing);
         // (the panel shows it in its own line, the viewfinder once at the top)
         let quality_note = std::mem::take(&mut self.snapshots.fit_note) && quality_reduced;
         let mut actions = self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short);
@@ -2393,8 +2406,10 @@ LUT_3D_SIZE {n}
         match (&self.settings.photo_held, want) {
             (None, true) => {
                 let mut held = snapshot::quality::boost(&mut self.settings);
-                // within what the video memory leaves, from the start: the
-                // whole boost is never drawn first on a card short of it
+                // within what the video memory leaves, from the start, and
+                // with room for what the estimate leaves out: the whole
+                // boost is never drawn first on a card short of it, it
+                // climbs there a step at a time (`photo_quality_fit`)
                 let plan = self.photo_quality_plan(renderer, held.user(), None, false);
                 if plan.reduced() {
                     held.retarget(&mut self.settings, plan.values);
@@ -2406,7 +2421,7 @@ LUT_3D_SIZE {n}
                     self.settings.shadow_quality,
                     self.settings.lod_factor,
                     if plan.reduced() {
-                        ", lowered for the video memory"
+                        ", climbing as the video memory allows"
                     } else if samples < 8 {
                         ", the most this GPU supports"
                     } else {
@@ -2421,8 +2436,10 @@ LUT_3D_SIZE {n}
                     step: plan.step,
                     checked: now,
                     changed: now,
+                    climbing: plan.reduced(),
                 });
-                self.snapshots.fit_note = plan.reduced();
+                // (said once the climb stops short of the whole boost)
+                self.snapshots.fit_note = false;
                 self.settings.photo_held = Some(held);
                 self.snapshots.settings_changed = true;
             }
@@ -2451,6 +2468,12 @@ LUT_3D_SIZE {n}
         self.scene.textures.full_resolution = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_none_or(|f| f.step == 0);
     }
 
+    /// The photo quality still climbing towards the whole boost: a photo
+    /// taken now waits for it (with the details, quality::DETAIL_WAIT).
+    fn photo_quality_climbing(&self) -> bool {
+        self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_some_and(|f| f.climbing)
+    }
+
     /// The photo quality follows the video memory while it is on (the
     /// budget the driver grants can shrink while the window stays open):
     /// a step down as soon as the boost no longer fits, a step up once
@@ -2464,23 +2487,36 @@ LUT_3D_SIZE {n}
         if self.snapshots.job.is_some() || now.duration_since(fit.checked) < FIT_EVERY || now.duration_since(fit.changed) < FIT_SETTLE {
             return;
         }
-        let (current, may_raise) = (fit.step, now.duration_since(fit.changed) >= FIT_RAISE_AFTER);
+        // climbing, the next step once this one settled; then only with
+        // time between; never before the renderer has the step's targets,
+        // which the readings must hold
+        let wait = if fit.climbing { FIT_SETTLE } else { FIT_RAISE_AFTER };
+        let (current, may_raise) = (fit.step, now.duration_since(fit.changed) >= wait && renderer.settings_applied());
         let plan = self.photo_quality_plan(renderer, held.user(), Some(current), may_raise);
         let Some(fit) = &mut self.snapshots.fit else {
             return;
         };
         fit.checked = now;
         if plan.step == current {
+            if fit.climbing && may_raise {
+                // no room for the next step: the climb ends here
+                fit.climbing = false;
+                self.snapshots.fit_note = current > 0;
+                log::info!("photo quality: climbed to step {current} of {}", plan.steps - 1);
+                self.photo_quality_log(renderer, &plan);
+            }
             return;
         }
+        let lowered = plan.step > current;
         fit.step = plan.step;
         fit.changed = now;
+        fit.climbing &= !lowered && plan.step > 0;
         held.retarget(&mut self.settings, plan.values);
         self.snapshots.settings_changed = true;
-        self.snapshots.fit_note |= plan.step > current;
+        self.snapshots.fit_note |= lowered;
         log::info!(
             "photo quality: {} (draw distance {} m, shadows {}, MSAA {}x)",
-            if plan.step > current { "lowered" } else { "raised" },
+            if lowered { "lowered" } else { "raised" },
             self.settings.draw_distance,
             self.settings.shadow_quality,
             self.msaa_samples(renderer),
@@ -2497,9 +2533,12 @@ LUT_3D_SIZE {n}
         may_raise: bool,
     ) -> snapshot::quality::Plan {
         let (w, h) = renderer.size();
+        let samples = self.msaa_samples(renderer);
         let screen = snapshot::quality::Screen {
             pixels: u64::from(w) * u64::from(h),
             max_samples: renderer.msaa_supported().iter().copied().filter(|&n| n <= 8).max().unwrap_or(1),
+            // (the renderer's measure, else the photo plan's fallback)
+            target_bytes: snapshot::pass_bytes_per_pixel(self.snapshots.target_bytes, samples) - snapshot::PASS_OUTPUT_BYTES,
         };
         let memory = self.photo_memory(renderer);
         snapshot::quality::plan(memory, user, screen, current, may_raise)

@@ -354,6 +354,10 @@ pub struct World {
     bake_refreshes: HashMap<Uuid, u64>,
     shape_preview: Option<Vec<u8>>,
     preview_bakes: HashMap<usize, Uuid>,
+    /// Our own bakes as last sent (local_bakes.rs). The region does not send
+    /// our appearance back after a change (OpenSim sends it to the others),
+    /// so ours shows them as LLVOAvatarSelf shows its own composites.
+    local_bakes: HashMap<usize, Uuid>,
     shape_preview_generation: u64,
     pub alerts: VecDeque<String>,
     /// The announced restart of the agent's region (region_restart.rs).
@@ -629,6 +633,10 @@ fn saved_prefix(timestamp: u32) -> String {
     ) + " "
 }
 
+/// The largest region a grid can have (Constants.MaximumRegionSize,
+/// OpenSim): a corrupt patch number must not make a land grid of gigabytes.
+const MAX_REGION_SIZE: u32 = 4096;
+
 impl World {
     pub fn water_visual_dz(&self, id: &Uuid) -> f32 {
         if *id == self.agent_id && !self.teleporting && self.movement_complete && !self.agent.is_sitting() {
@@ -706,6 +714,7 @@ impl World {
             bake_refreshes: HashMap::new(),
             shape_preview: None,
             preview_bakes: HashMap::new(),
+            local_bakes: HashMap::new(),
             shape_preview_generation: 0,
             alerts: VecDeque::new(),
             region_restart: Default::default(),
@@ -1161,16 +1170,62 @@ impl World {
     }
 
     /// Cached inventory can precede arrival and the login seed's services.
-    /// Match Session::EditInventory's metadata-write/readback preconditions.
+    /// Match Session::EditInventory's metadata-write/readback preconditions:
+    /// the fetch service alone, as a grid without AIS edits over the circuit.
     pub fn inventory_writable(&self) -> bool {
         self.movement_complete
             && !self.teleporting
             && self.inventory.held.is_none()
-            && self.main().is_some_and(|region| {
-                ["InventoryAPIv3", "FetchInventoryDescendents2"] // gitleaks:allow -- public protocol capability names
-                    .iter()
-                    .all(|name| region.caps.get(*name).is_some_and(|url| !url.is_empty()))
-            })
+            && self
+                .main()
+                .is_some_and(|region| region.caps.get("FetchInventoryDescendents2").is_some_and(|url| !url.is_empty()))
+    }
+
+    /// Whether we bake our own avatar: the region does not
+    /// (`UpdateAvatarAppearance`) but takes our bakes (`UploadBakedTexture`).
+    /// Only on the region's full answer: a neighbour's first seed answer can
+    /// stand for the main region's for a while after a crossing (#750), and
+    /// a partial one must never make a region that bakes get our own bakes.
+    pub fn bakes_locally(&self) -> bool {
+        self.main().is_some_and(|region| {
+            region.caps.contains_key("UploadBakedTexture")
+                && region.caps.contains_key("FetchInventoryDescendents2")
+                && !region.caps.contains_key("UpdateAvatarAppearance")
+        })
+    }
+
+    /// `inventory_writable` on a grid with AIS, for what must stay away from
+    /// the others (the bridge: FSLSLBridge does not create itself on OpenSim).
+    pub fn inventory_writable_with_ais(&self) -> bool {
+        self.inventory_writable()
+            && self
+                .main()
+                .is_some_and(|region| region.caps.get("InventoryAPIv3").is_some_and(|url| !url.is_empty()))
+    }
+
+    /// What a grid without AIS needs of the local inventory to carry out a
+    /// command (operations.rs `Known`), as it leaves for the session.
+    pub fn prepare_inventory_command(&self, cmd: &mut aurora_net::NetCommand) {
+        match cmd {
+            aurora_net::NetCommand::EditInventory { change, .. } => {
+                for op in &change.operations {
+                    let aurora_net::inventory::operations::Operation::Patch { id, folder, .. } = op else {
+                        continue;
+                    };
+                    if *folder {
+                        if let Some(known) = self.inventory.folders.get(id) {
+                            change.known.folders.insert(*id, known.info.clone());
+                        }
+                    } else if let Some(known) = self.inventory.items.get(id) {
+                        change.known.items.insert(*id, known.clone());
+                    }
+                }
+            }
+            aurora_net::NetCommand::UpdateOutfitCategory { change, .. } => {
+                change.type_default = self.inventory.folders.get(&change.folder).map(|known| known.info.type_default);
+            }
+            _ => {}
+        }
     }
 
     pub fn main_water_height(&self) -> f32 {
@@ -1823,7 +1878,20 @@ impl World {
         self.conversation_push(session, line, false);
     }
 
+    /// The region, made at `size` or grown to it. Grown, because events can
+    /// come before the handshake that gives the size: arrival and early land
+    /// made a large OpenSim region 256 x 256 for good, its land past that
+    /// dropped. LLWorld::addRegion is told the size from the start.
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {
+        // the network layer already holds the sizes; this keeps every caller safe
+        let size = (size.0.clamp(256, MAX_REGION_SIZE), size.1.clamp(256, MAX_REGION_SIZE));
+        if let Some(region) = self.regions.get_mut(&h)
+            && region.heightmap.grow(size.0, size.1)
+        {
+            region.dirty_chunks.extend(0..region.heightmap.chunk_count());
+            region.terrain_revision += 1;
+            region.terrain_surface.applied = None;
+        }
         self.regions.entry(h).or_insert_with(|| Region {
             handle: h,
             name: String::new(),
@@ -2066,6 +2134,15 @@ impl World {
 
     /// Publish one complete local editor generation without changing the
     /// authoritative appearance received from the server.
+    /// Show the bakes we just sent on our own avatar.
+    pub fn show_local_bakes(&mut self, bakes: HashMap<usize, Uuid>) {
+        if self.local_bakes != bakes {
+            self.local_bakes = bakes;
+            let agent = self.agent_id;
+            self.refresh_bakes(&agent);
+        }
+    }
+
     pub fn preview_bakes(&mut self, bakes: HashMap<usize, Uuid>) {
         if self.preview_bakes != bakes {
             self.preview_bakes = bakes;
@@ -2078,7 +2155,7 @@ impl World {
     pub fn bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
         if o.full_id == self.agent_id
-            && let Some(id) = self.preview_bakes.get(&te_index)
+            && let Some(id) = self.preview_bakes.get(&te_index).or_else(|| self.local_bakes.get(&te_index))
         {
             return Some(*id);
         }
@@ -2507,7 +2584,14 @@ impl World {
                 None
             }
             NetEvent::Terrain { handle, patches } => {
-                let r = self.ensure_region(handle, (256, 256));
+                // land can come before the handshake: its own place says
+                // the region reaches at least that far
+                let reach = |axis: fn(&aurora_net::terrain::TerrainPatch) -> u32| {
+                    let end = patches.iter().map(|p| (axis(p) + 1).saturating_mul(p.size)).max().unwrap_or(0);
+                    end.min(MAX_REGION_SIZE).next_multiple_of(256).max(256)
+                };
+                let size = (reach(|p| p.x), reach(|p| p.y));
+                let r = self.ensure_region(handle, size);
                 for p in patches {
                     let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
                     r.dirty_chunks.extend(dirty);
@@ -3338,6 +3422,18 @@ impl World {
                 self.profiles.picks.insert(p.id, *p);
                 None
             }
+            NetEvent::AvatarPicks { target, picks } => {
+                self.profiles.merge_picks(target, picks);
+                None
+            }
+            NetEvent::AvatarNotes { target, notes } => {
+                self.profiles.merge_notes(target, notes);
+                None
+            }
+            NetEvent::AvatarGroups { avatar, groups } => {
+                self.profiles.merge_groups(avatar, groups);
+                None
+            }
             NetEvent::AvatarClassifieds { target, list } => {
                 // replies come in several messages: merge
                 let l = self.profiles.classified_lists.entry(target).or_default();
@@ -3359,7 +3455,7 @@ impl World {
                 None
             }
             NetEvent::ParcelInfo(p) => {
-                self.place_details.parcel_known(p.id, p.global);
+                self.place_details.parcel_known(p.id, p.global, &self.map);
                 self.profiles.parcels.insert(p.id, *p);
                 None
             }
@@ -3644,13 +3740,17 @@ impl World {
                 self.map.apply_collision(handle, kind, use_pass, bitmap);
                 None
             }
-            NetEvent::ParcelOverlay { handle, sequence, data } => {
+            NetEvent::ParcelOverlay {
+                handle,
+                size,
+                sequence,
+                data,
+            } => {
                 self.parcel_visibility.invalidate(handle);
-                let size = self
-                    .regions
-                    .get(&handle)
-                    .map(|r| (r.heightmap.size_x, r.heightmap.size_y))
-                    .unwrap_or((256, 256));
+                // handle 0: a simulator we have no circuit to; no region for it
+                if handle != 0 {
+                    self.ensure_region(handle, size);
+                }
                 self.map.apply_overlay(handle, size, sequence, &data);
                 None
             }
@@ -8101,5 +8201,58 @@ mod group_insignia_tests {
             ..Default::default()
         })));
         assert_eq!(world.groups.group(&group).map(|g| g.insignia), Some(Uuid::nil()));
+    }
+}
+
+#[cfg(test)]
+mod region_size_order_tests {
+    use super::*;
+    use aurora_net::terrain::TerrainPatch;
+
+    fn world() -> World {
+        World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()))
+    }
+
+    fn patch(x: u32, y: u32) -> TerrainPatch {
+        TerrainPatch {
+            x,
+            y,
+            size: 16,
+            heights: vec![5.0; 256],
+        }
+    }
+
+    #[test]
+    fn a_region_made_before_its_size_is_known_grows_to_it() {
+        let mut world = world();
+        world.set_main_region(1);
+        assert_eq!(world.regions[&1].heightmap.size_x, 256);
+        let region = world.ensure_region(1, (1024, 768));
+        assert_eq!((region.heightmap.size_x, region.heightmap.size_y), (1024, 768));
+        assert_eq!(region.dirty_chunks.len() as u32, region.heightmap.chunk_count());
+    }
+
+    #[test]
+    fn land_before_the_handshake_keeps_its_place_on_a_large_region() {
+        let mut world = world();
+        world.set_main_region(1);
+        world.apply(NetEvent::Terrain {
+            handle: 1,
+            patches: vec![patch(53, 41)],
+        });
+        let map = &world.regions[&1].heightmap;
+        assert_eq!((map.size_x, map.size_y), (1024, 768));
+        assert_eq!(map.heights[(41 * 16 * 1024 + 53 * 16) as usize], 5.0);
+    }
+
+    #[test]
+    fn a_corrupt_patch_number_stays_within_the_largest_region() {
+        let mut world = world();
+        world.apply(NetEvent::Terrain {
+            handle: 1,
+            patches: vec![patch(0xFFFF, 0xFFFF)],
+        });
+        let map = &world.regions[&1].heightmap;
+        assert_eq!((map.size_x, map.size_y), (MAX_REGION_SIZE, MAX_REGION_SIZE));
     }
 }

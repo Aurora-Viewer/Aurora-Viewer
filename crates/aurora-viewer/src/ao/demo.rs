@@ -384,9 +384,15 @@ pub fn assets(scene: &mut crate::scene::Scene) {
         } else {
             crate::demo::idle_animation()
         };
-        scene
-            .anims
-            .insert(state.motion(), Arc::new(crate::scene::anim::BoundAnim::bind(a, &rig)));
+        let clip = Arc::new(crate::scene::anim::BoundAnim::bind(a, &rig));
+        scene.anims.insert(state.motion(), clip.clone());
+        if matches!(state, State::Walking | State::Running) {
+            for male in [false, true] {
+                scene
+                    .anims
+                    .insert(crate::scene::default_motions::walk_run_asset(state.motion(), male), clip.clone());
+            }
+        }
     }
     scene.anims.insert(
         SIT_GENERIC,

@@ -224,7 +224,7 @@ pub(super) fn target(
             match rules::move_selection(inv, cargo.ids(), to, &prefs.protected, &facts.worn) {
                 Ok(change) if !change.operations.is_empty() => {
                     st.message.clear();
-                    actions.push(InvAction::Edit(change));
+                    actions.push(InvAction::Drop(change));
                 }
                 Ok(_) => {}
                 Err(reason) => st.message = reason,

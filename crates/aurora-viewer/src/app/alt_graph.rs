@@ -46,10 +46,7 @@ pub(super) fn keyboard_mods(mut mods: Mods, alt_graph: bool, text_owner: bool, c
 
 impl App {
     fn shortcut_text_owner(&self) -> bool {
-        self.egui_ctx.egui_wants_keyboard_input()
-            || self.profile_ui.web_has_focus()
-            || self.search_ui.web_has_focus()
-            || self.media.focus.is_some()
+        self.egui_ctx.egui_wants_keyboard_input() || self.web_has_focus() || self.media.focus.is_some()
     }
 
     pub(super) fn altgr_text_input(&self, ke: &KeyEvent) -> bool {
