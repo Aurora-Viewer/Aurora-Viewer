@@ -220,6 +220,14 @@ fn xdg_font_dirs(home: Option<PathBuf>, data_home: Option<PathBuf>, data_dirs: O
     dirs
 }
 
+/// Is this the first time a scan reaches `dir`? A directory reached again
+/// through a link (a loop, or two links to one folder) is skipped: whatever
+/// the order the system lists entries in, a file keeps the path of its
+/// first, shortest way, and a loop does not use up the scan's budget.
+fn first_visit(seen: &mut std::collections::HashSet<PathBuf>, dir: &std::path::Path) -> bool {
+    std::fs::canonicalize(dir).map_or(true, |real| seen.insert(real))
+}
+
 /// Regular-weight TrueType/OpenType fonts installed on the system, by family name.
 pub fn system_fonts() -> Vec<SystemFont> {
     let mut out: Vec<SystemFont> = Vec::new();
@@ -227,7 +235,11 @@ pub fn system_fonts() -> Vec<SystemFont> {
     let mut stack = extra_font_dirs(&usual);
     stack.extend(usual);
     let mut visited = 0;
+    let mut seen = std::collections::HashSet::new();
     while let Some(d) = stack.pop() {
+        if !first_visit(&mut seen, &d) {
+            continue;
+        }
         // only directories that exist count: most XDG data directories have no fonts
         let Ok(rd) = std::fs::read_dir(&d) else {
             continue;

@@ -271,7 +271,11 @@ fn index_files(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
     let mut stack: Vec<PathBuf> = dirs.iter().rev().cloned().collect();
     let mut visited = 0;
+    let mut seen = std::collections::HashSet::new();
     while let Some(dir) = stack.pop() {
+        if !super::first_visit(&mut seen, &dir) {
+            continue;
+        }
         // only directories that exist count: most XDG data directories have no fonts
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -460,7 +464,8 @@ mod tests {
         std::fs::create_dir_all(&profile).expect("temp dir");
         std::fs::write(store.join("NotoSansThai-Regular.ttf"), b"x").expect("temp file");
         std::os::unix::fs::symlink(&store, profile.join("noto")).expect("link");
-        // a link back up the tree ends with the visit budget, not in a loop
+        // a link back up the tree is skipped: the file keeps its short
+        // path whichever entry the system lists first
         std::os::unix::fs::symlink(&profile, profile.join("noto-loop")).expect("link");
         let files = index_files(std::slice::from_ref(&profile));
         assert_eq!(
