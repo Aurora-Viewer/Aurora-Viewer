@@ -48,13 +48,14 @@ impl SwapchainRecent {
 
 /// What the frames since the previous note measured, for the report: a
 /// compare and a few additions a frame, nothing allocated. The longest GPU
-/// frame is kept for the five notes (10 s) before the loss.
+/// frame is kept for [`PEAK_SPAN`] before the loss.
 #[derive(Debug, Default)]
 pub(super) struct Recent {
-    /// (longest GPU ms, its heaviest pass) of each note interval, the
-    /// newest in `head`.
-    peaks: [(f32, Option<&'static str>); 5],
-    head: usize,
+    /// (when, longest GPU ms, its heaviest pass) of each past note
+    /// interval, oldest first; expired by the time of the frame itself.
+    peaks: VecDeque<(Instant, f32, Option<&'static str>)>,
+    /// The same for the interval under way.
+    current: Option<(Instant, f32, Option<&'static str>)>,
     last_ms: Option<f32>,
     last_pass: Option<&'static str>,
     uploads: u32,
@@ -63,6 +64,8 @@ pub(super) struct Recent {
     /// The longest the GPU kept the render thread (`stalled_for`).
     stall_ms: u64,
     frozen: bool,
+    /// What the note at the loss gave, which stays.
+    at_loss: Option<Sample>,
 }
 
 /// What [`Recent`] gives a note.
@@ -84,10 +87,13 @@ fn heaviest_pass(elements: &[f32; aurora_render::GpuElement::ALL.len()]) -> Opti
 
 const MB: f32 = (1 << 20) as f32;
 
+/// How far back the longest GPU frame looks.
+const PEAK_SPAN: Duration = Duration::from_secs(10);
+
 impl Recent {
     /// One frame: the GPU time the renderer measured last (it arrives a
     /// frame or two late, without waiting on the GPU) and the uploads.
-    pub(super) fn frame(&mut self, stats: &aurora_render::RenderStats, uploads: usize, upload_bytes: u64) {
+    pub(super) fn frame(&mut self, now: Instant, stats: &aurora_render::RenderStats, uploads: usize, upload_bytes: u64) {
         if self.frozen {
             return;
         }
@@ -95,8 +101,8 @@ impl Recent {
             let pass = stats.gpu_elements.as_ref().and_then(heaviest_pass);
             self.last_ms = Some(ms);
             self.last_pass = pass;
-            if ms > self.peaks[self.head].0 {
-                self.peaks[self.head] = (ms, pass);
+            if self.current.is_none_or(|c| ms > c.1) {
+                self.current = Some((now, ms, pass));
             }
         }
         self.uploads = self.uploads.saturating_add(uploads.min(u32::MAX as usize) as u32);
@@ -116,8 +122,18 @@ impl Recent {
 
     /// The numbers for a note. A new interval begins after it, except at the
     /// loss: then nothing changes any more, like the swapchain count.
-    pub(super) fn note(&mut self, device_lost: bool) -> Sample {
-        let peak = self.peaks.iter().copied().filter(|p| p.0 > 0.0).max_by(|a, b| a.0.total_cmp(&b.0));
+    pub(super) fn note(&mut self, now: Instant, device_lost: bool) -> Sample {
+        if let Some(kept) = self.at_loss {
+            return kept;
+        }
+        let peak = self
+            .peaks
+            .iter()
+            .copied()
+            .chain(self.current)
+            .filter(|p| now.saturating_duration_since(p.0) <= PEAK_SPAN)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|p| (p.1, p.2));
         let sample = Sample {
             gpu_ms: self.last_ms,
             peak,
@@ -128,9 +144,12 @@ impl Recent {
         };
         if device_lost {
             self.frozen = true;
+            self.at_loss = Some(sample);
         } else {
-            self.head = (self.head + 1) % self.peaks.len();
-            self.peaks[self.head] = (0.0, None);
+            self.peaks.extend(self.current.take());
+            while self.peaks.front().is_some_and(|p| now.saturating_duration_since(p.0) > PEAK_SPAN) {
+                self.peaks.pop_front();
+            }
             self.uploads = 0;
             self.upload_bytes = 0;
             self.upload_peak_bytes = 0;
@@ -152,8 +171,14 @@ pub(super) struct Timeline {
 
 impl Timeline {
     /// Every frame, a few comparisons.
-    pub(super) fn frame(&mut self, now: Instant, screen: &Screen, region: Option<u64>) {
+    /// `login_busy`: the login request is under way on the login screen. The
+    /// clock starts with the request and stops only when the screen is idle
+    /// again (a failed login), not while the login screen waits for it.
+    pub(super) fn frame(&mut self, now: Instant, screen: &Screen, login_busy: bool, region: Option<u64>) {
         match screen {
+            Screen::Login if login_busy => {
+                self.session.get_or_insert(now);
+            }
             Screen::Login => *self = Self::default(),
             Screen::Loading { .. } => {
                 self.session.get_or_insert(now);
@@ -232,33 +257,65 @@ pub(super) fn effects(settings: &crate::settings::Settings, photo: bool, vr: boo
 /// own (the process list takes a few ms); empty / unknown until it is done.
 fn session_facts() -> (&'static str, &'static str) {
     use std::sync::OnceLock;
-    static FACTS: OnceLock<(String, &'static str)> = OnceLock::new();
+    use std::sync::atomic::Ordering;
+    static LAYERS: OnceLock<String> = OnceLock::new();
     static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !STARTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    if !STARTED.swap(true, Ordering::Relaxed)
         && std::thread::Builder::new()
             .name("aurora-crash-facts".into())
             .spawn(|| {
-                let layers = aurora_render::vulkan_layers::loaded_names().join(",");
-                let _ = FACTS.set((layers, other_instance_running()));
+                let _ = LAYERS.set(aurora_render::vulkan_layers::loaded_names().join(","));
+                // another viewer may start later: looked at again, rarely
+                loop {
+                    OTHER.store(other_instance_running(), Ordering::Relaxed);
+                    std::thread::sleep(OTHER_EVERY);
+                }
             })
             .is_err()
     {
-        let _ = FACTS.set((String::new(), ""));
+        let _ = LAYERS.set(String::new());
     }
-    FACTS.get().map_or(("", ""), |(layers, other)| (layers.as_str(), *other))
+    let other = match OTHER.load(Ordering::Relaxed) {
+        1 => "no",
+        2 => "yes",
+        _ => "",
+    };
+    (LAYERS.get().map_or("", String::as_str), other)
 }
 
-/// Another process of the same program name besides this one (a test window
-/// and the human's viewer, a second login). Names and counts only.
-fn other_instance_running() -> &'static str {
+/// 0 not known yet, 1 no, 2 yes.
+static OTHER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+const OTHER_EVERY: Duration = Duration::from_secs(30);
+
+/// Viewers among the processes of the program's name: the crash watcher and
+/// the crash window (`--crash-watch`, `--crash-show`, crash/mod.rs) run the
+/// same exe beside every viewer and are not instances.
+fn viewer_count<'a, A: AsRef<str> + 'a>(commands: impl Iterator<Item = &'a [A]>) -> usize {
+    commands
+        .filter(|args| !args.iter().any(|a| matches!(a.as_ref(), "--crash-watch" | "--crash-show")))
+        .count()
+}
+
+/// Another viewer process of the same program name besides this one (a test
+/// window and the human's viewer, a second login). Names and counts only.
+fn other_instance_running() -> u8 {
     use sysinfo::{ProcessesToUpdate, System};
     let Some(own) = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_owned())) else {
-        return "";
+        return 0;
     };
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
-    let same = system.processes().values().filter(|p| p.name().eq_ignore_ascii_case(&own)).count();
-    if same > 1 { "yes" } else { "no" }
+    let commands: Vec<Vec<String>> = system
+        .processes()
+        .values()
+        .filter(|p| p.name().eq_ignore_ascii_case(&own))
+        .map(|p| p.cmd().iter().map(|a| a.to_string_lossy().into_owned()).collect())
+        .collect();
+    if viewer_count(commands.iter().map(Vec::as_slice)) > 1 {
+        2
+    } else {
+        1
+    }
 }
 
 /// The state a report shows once the GPU is lost. After the loss the viewer
@@ -347,7 +404,7 @@ impl App {
         let swapchain_10s = self.crash_swapchain.note(now, aurora_render::present::recreations(), lost);
         let live = Live {
             swapchain_10s,
-            sample: self.crash_recent.note(lost),
+            sample: self.crash_recent.note(now, lost),
             loss: if lost { aurora_render::loss_details() } else { None },
         };
         let mut kept = std::mem::take(&mut self.crash_kept);
@@ -421,8 +478,9 @@ impl App {
     pub(super) fn crash_frame(&mut self) {
         let tex = &self.scene.textures.stats;
         self.crash_recent
-            .frame(&self.last_render, tex.uploads_frame, tex.uploaded_bytes_frame);
-        self.crash_timeline.frame(Instant::now(), &self.screen, self.world.main_region);
+            .frame(Instant::now(), &self.last_render, tex.uploads_frame, tex.uploaded_bytes_frame);
+        self.crash_timeline
+            .frame(Instant::now(), &self.screen, self.login_form.busy, self.world.main_region);
     }
 }
 
@@ -575,11 +633,12 @@ mod tests {
     #[test]
     fn the_longest_gpu_frame_and_its_heaviest_pass_stay_for_ten_seconds() {
         let mut recent = Recent::default();
-        recent.frame(&stats(8.0, [1.0, 1.0, 1.0, 4.0, 0.0, 1.0, 0.0]), 2, 3 << 20);
-        recent.frame(&stats(2400.0, [1.0, 2300.0, 1.0, 4.0, 0.0, 1.0, 0.0]), 1, 1 << 20);
-        recent.frame(&stats(9.0, [1.0, 1.0, 1.0, 5.0, 0.0, 1.0, 0.0]), 0, 0);
+        let t = Instant::now();
+        recent.frame(t, &stats(8.0, [1.0, 1.0, 1.0, 4.0, 0.0, 1.0, 0.0]), 2, 3 << 20);
+        recent.frame(t + s(1), &stats(2400.0, [1.0, 2300.0, 1.0, 4.0, 0.0, 1.0, 0.0]), 1, 1 << 20);
+        recent.frame(t + s(1), &stats(9.0, [1.0, 1.0, 1.0, 5.0, 0.0, 1.0, 0.0]), 0, 0);
         recent.stall(Some(Duration::from_millis(2300)));
-        let first = recent.note(false);
+        let first = recent.note(t + s(2), false);
         assert_eq!(first.peak, Some((2400.0, Some("effects"))));
         assert_eq!(first.gpu_ms, Some(9.0));
         assert_eq!(first.last_pass, Some("objects"));
@@ -587,29 +646,50 @@ mod tests {
         assert!((first.uploads.1 - 4.0).abs() < 0.01 && (first.upload_peak_mb - 3.0).abs() < 0.01);
         assert_eq!(first.stall_ms, 2300);
         // the next interval counts its own uploads, the peak stays in the 10 s
-        recent.frame(&stats(7.0, [0.0; 7]), 1, 1 << 20);
-        let second = recent.note(false);
+        recent.frame(t + s(3), &stats(7.0, [0.0; 7]), 1, 1 << 20);
+        let second = recent.note(t + s(4), false);
         assert_eq!(second.peak, Some((2400.0, Some("effects"))));
         assert_eq!(second.uploads.0, 1);
+        // a loss between notes still sees the slow frame of 10 s before it
+        // (it was at 1 s; the loss at 10.9 s)
+        let between = recent.note(t + s(10) + Duration::from_millis(900), false);
+        assert_eq!(between.peak, Some((2400.0, Some("effects"))));
+        // and once it is older than that it is gone
+        recent.frame(t + s(12), &stats(5.0, [0.0; 7]), 0, 0);
+        assert_eq!(recent.note(t + s(12) + Duration::from_millis(100), false).peak, Some((7.0, None)));
         // once lost, what comes after changes nothing
-        let at_loss = recent.note(true);
-        recent.frame(&stats(5000.0, [0.0; 7]), 9, 9 << 20);
-        assert_eq!(recent.note(true), at_loss);
+        let at_loss = recent.note(t + s(13), true);
+        recent.frame(t + s(14), &stats(5000.0, [0.0; 7]), 9, 9 << 20);
+        assert_eq!(recent.note(t + s(15), true), at_loss);
+    }
+
+    #[test]
+    fn only_real_viewers_count_as_instances() {
+        let viewer: &[&str] = &["aurora-viewer.exe", "--title", "Test"];
+        let watcher: &[&str] = &["aurora-viewer.exe", "--crash-watch", "x"];
+        let window: &[&str] = &["aurora-viewer.exe", "--crash-show"];
+        assert_eq!(viewer_count([viewer, watcher, window].into_iter()), 1);
+        assert_eq!(viewer_count([viewer, viewer, watcher].into_iter()), 2);
     }
 
     #[test]
     fn the_timeline_counts_from_the_login_the_world_and_the_region() {
         let mut timeline = Timeline::default();
         let t = Instant::now();
-        timeline.frame(t, &Screen::Login, None);
+        timeline.frame(t, &Screen::Login, false, None);
         assert!(timeline.session.is_none());
-        timeline.frame(t + s(1), &Screen::Loading { since: t }, Some(7));
-        timeline.frame(t + s(5), &Screen::World, Some(7));
-        timeline.frame(t + s(9), &Screen::World, Some(8));
+        // the request runs on the login screen: the clock starts there
+        timeline.frame(t, &Screen::Login, true, None);
+        timeline.frame(t + s(1), &Screen::Loading { since: t }, true, Some(7));
+        timeline.frame(t + s(5), &Screen::World, false, Some(7));
+        timeline.frame(t + s(9), &Screen::World, false, Some(8));
         let now = t + s(10);
-        assert_eq!(Timeline::seconds(timeline.session, now), Some(9));
+        assert_eq!(Timeline::seconds(timeline.session, now), Some(10));
         assert_eq!(Timeline::seconds(timeline.world, now), Some(5));
         assert_eq!(Timeline::seconds(timeline.region, now), Some(1));
+        // a failed login: idle again, the clock stops
+        timeline.frame(t + s(20), &Screen::Login, false, None);
+        assert!(timeline.session.is_none() && timeline.region.is_none());
     }
 
     #[test]
