@@ -122,7 +122,7 @@ impl MoneyTrackerUi {
             );
         }
         let count = self.tracker.payments().len();
-        let since = self.tracker.since().map(crate::ui::chat::hhmm).unwrap_or_default();
+        let since = self.tracker.since().map(crate::ui::chat::hhmm_24).unwrap_or_default();
         ui.label(
             egui::RichText::new(aurora_i18n::tr!("money-tracker-since", time = since, count = count))
                 .size(11.5)
@@ -224,7 +224,7 @@ impl MoneyTrackerUi {
                 painter.rect_filled(rect, radius, p.raised.gamma_multiply(0.6));
             }
             let mid = rect.center().y;
-            let time = crate::ui::chat::hhmm(x.time);
+            let time = crate::ui::chat::hhmm_24(x.time);
             widgets::paint_elided(
                 ui,
                 &time,

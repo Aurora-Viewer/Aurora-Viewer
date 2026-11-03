@@ -678,14 +678,26 @@ fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> C
 }
 
 /// Time of a chat line, in Second Life time as Firestorm shows it and as
-/// the transcripts have it ("hour,datetime,slt"). Empty for a line whose
-/// time is unknown (history without a timestamp).
+/// the transcripts have it ("hour,datetime,slt"), in 12 or 24 hours as the
+/// bars' clock (`clock::chat_twelve_hours`). Empty for a line whose time
+/// is unknown (history without a timestamp).
 pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
+    hhmm_in(t, super::bars::clock::chat_twelve_hours())
+}
+
+/// `hhmm` in 24 hours whatever the clock, where the Legacy Viewer keeps 24
+/// hours: the money tracker's times (FSMoneyTracker::getTime) and the
+/// "(Saved at …)" of an offline group message (formatted_time).
+pub(crate) fn hhmm_24(t: std::time::SystemTime) -> String {
+    hhmm_in(t, false)
+}
+
+fn hhmm_in(t: std::time::SystemTime, twelve: bool) -> String {
     if t == std::time::UNIX_EPOCH {
         return String::new();
     }
     let t = Slt::of(t);
-    format!("{:02}:{:02}", t.hour, t.minute)
+    super::bars::clock::hour_text(t.hour, t.minute, "", twelve)
 }
 
 /// Color of the name and text of a history line: Firestorm greys what comes
