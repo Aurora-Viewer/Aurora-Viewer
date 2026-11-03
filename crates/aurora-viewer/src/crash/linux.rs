@@ -72,7 +72,7 @@ pub fn install(dir: &Path) -> anyhow::Result<()> {
             );
         }
     }
-    Ok(())
+    install_snapshot()
 }
 
 extern "C" fn on_fatal(signal: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
@@ -463,6 +463,151 @@ fn build_id(mut notes: &[u8]) -> Option<&[u8]> {
     None
 }
 
+/// Another thread's stack, for a frozen window or a GPU stall: the thread
+/// is sent [`snapshot_signal`] (tgkill), whose handler unwinds its own
+/// stack into the fixed array below and says so; the asking thread waits
+/// for it, then writes the modules itself. A thread held in the kernel
+/// (a driver's call that does not return) does not run the handler: no
+/// stack then. The Legacy Viewer has no equivalent: its watchdog ends a
+/// frozen viewer with a crash dump of the main thread (LLWatchdogTimeout,
+/// indra/newview/llwatchdog.cpp).
+mod snapshot {
+    use super::{FRAMES, capture};
+    use std::ffi::{c_int, c_void};
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    /// The thread asked, 0 when none.
+    pub(super) static ASKED: AtomicI32 = AtomicI32::new(0);
+    pub(super) static FRAMES_OUT: [AtomicUsize; FRAMES] = [const { AtomicUsize::new(0) }; FRAMES];
+    /// The frame count plus one once written, 0 before.
+    pub(super) static WRITTEN: AtomicUsize = AtomicUsize::new(0);
+    /// One request at a time (the watchdog and the GPU stall notice).
+    pub(super) static ONE: Mutex<()> = Mutex::new(());
+    /// How long a thread has to answer.
+    const ANSWER: Duration = Duration::from_millis(500);
+
+    /// A real-time signal nobody else in the process uses: the
+    /// standard library and the C library leave the high ones alone.
+    pub fn signal() -> c_int {
+        libc::SIGRTMAX() - 2
+    }
+
+    pub(super) extern "C" fn on_snapshot(_signal: c_int, _info: *mut libc::siginfo_t, context: *mut c_void) {
+        // SAFETY: gettid has no argument and is async-signal-safe.
+        let me = unsafe { libc::gettid() };
+        if ASKED.load(Ordering::Acquire) != me {
+            return;
+        }
+        let mut frames = [0usize; FRAMES];
+        let count = capture(&mut frames);
+        // SAFETY: the kernel's ucontext for this SA_SIGINFO handler.
+        let (_, _, pc) = unsafe { super::fault(std::ptr::null(), context) };
+        // The handler's frames and the signal trampoline come first: the
+        // stack starts at the instruction the thread was interrupted on.
+        let start = pc.and_then(|pc| frames[..count].iter().position(|&f| f == pc)).unwrap_or(0);
+        for (slot, &frame) in FRAMES_OUT.iter().zip(&frames[start..count]) {
+            slot.store(frame, Ordering::Relaxed);
+        }
+        WRITTEN.store(count - start + 1, Ordering::Release);
+    }
+
+    /// The thread's frames, if it answered in time.
+    pub fn take(tid: i32) -> Option<Vec<usize>> {
+        let _one = ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        WRITTEN.store(0, Ordering::Relaxed);
+        ASKED.store(tid, Ordering::Release);
+        // SAFETY: a thread of this process, sent a signal whose handler
+        // was installed at start.
+        let sent = unsafe { libc::syscall(libc::SYS_tgkill, libc::getpid(), tid, signal()) } == 0;
+        let deadline = Instant::now() + ANSWER;
+        let mut count = 0;
+        while sent && Instant::now() < deadline {
+            count = WRITTEN.load(Ordering::Acquire);
+            if count != 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        ASKED.store(0, Ordering::Release);
+        let frames: Vec<usize> = FRAMES_OUT[..count.saturating_sub(1)]
+            .iter()
+            .map(|f| f.load(Ordering::Relaxed))
+            .collect();
+        (!frames.is_empty()).then_some(frames)
+    }
+}
+
+/// Installs the handler that answers [`Thread::write_stack`]; left alone
+/// when the signal already has one.
+fn install_snapshot() -> anyhow::Result<()> {
+    let signal = snapshot::signal();
+    // SAFETY: plain sigaction calls on zeroed structs we own; the handler
+    // only touches static atomics and async-signal-safe calls.
+    unsafe {
+        let mut old: libc::sigaction = std::mem::zeroed();
+        anyhow::ensure!(
+            libc::sigaction(signal, std::ptr::null(), &mut old) == 0,
+            "cannot read signal {signal}"
+        );
+        if old.sa_sigaction != libc::SIG_DFL {
+            return Ok(());
+        }
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = snapshot::on_snapshot as extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void) as libc::sighandler_t;
+        action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_RESTART;
+        libc::sigemptyset(&mut action.sa_mask);
+        anyhow::ensure!(
+            libc::sigaction(signal, &action, std::ptr::null_mut()) == 0,
+            "cannot handle signal {signal}"
+        );
+    }
+    Ok(())
+}
+
+/// A thread of this process, by its kernel id.
+pub struct Thread(i32);
+
+impl Thread {
+    pub fn current() -> Option<Thread> {
+        // SAFETY: no argument.
+        Some(Thread(unsafe { libc::gettid() }))
+    }
+
+    pub fn open(id: u32) -> Option<Thread> {
+        i32::try_from(id).ok().map(Thread)
+    }
+
+    /// Its stack as module + offset; false when it did not answer.
+    pub fn write_stack(&self, out: &mut impl Write) -> bool {
+        match snapshot::take(self.0) {
+            Some(frames) => {
+                write_modules(out, &frames, None);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// This process's threads with their names (`aurora-render`…), from
+/// `/proc/self/task/<id>/comm` (15 bytes at most).
+pub fn named_threads() -> Vec<(u32, String)> {
+    let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
+        return Vec::new();
+    };
+    tasks
+        .flatten()
+        .filter_map(|task| {
+            let id = task.file_name().to_str()?.parse().ok()?;
+            let name = std::fs::read_to_string(task.path().join("comm")).ok()?;
+            let name = name.trim_end_matches('\n');
+            (!name.is_empty()).then(|| (id, name.to_owned()))
+        })
+        .collect()
+}
+
 /// A fault no Rust code can cause: a read of a page mapped without access.
 pub fn demo_exception() -> ! {
     // SAFETY: an anonymous mapping of one page with no access; the read of
@@ -579,6 +724,39 @@ mod tests {
         assert_eq!(lines.next(), Some(&*format!("00: {}", &fault["Fault: ".len()..])));
         assert_eq!(lines.next(), Some("01: ?"));
         assert_eq!(text.split_once("Modules:\n").unwrap().1.lines().count(), 1, "{text}");
+    }
+
+    #[test]
+    fn a_blocked_thread_s_stack_is_read_from_another_thread() {
+        install_snapshot().unwrap();
+        let _ = EXE.set(Name::new(b"aurora_viewer-test"));
+        let (ids, id) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let blocked = std::thread::Builder::new()
+            .name("aurora-test-blk".into())
+            .spawn(move || {
+                // SAFETY: no argument.
+                ids.send(unsafe { libc::gettid() }).unwrap();
+                let _ = wait.recv();
+            })
+            .unwrap();
+        let id = id.recv().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut out = Vec::new();
+        assert!(Thread(id).write_stack(&mut out));
+        assert!(named_threads().contains(&(id as u32, "aurora-test-blk".into())));
+        // The thread goes on after it: its wait was only interrupted.
+        release.send(()).unwrap();
+        blocked.join().unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let frames: Vec<_> = text.lines().filter(|line| line.contains("+0x")).collect();
+        // From the wait in the C library down to the thread's start, through
+        // this test binary's own code, without the handler's frames.
+        assert!(frames.len() > 4, "{text}");
+        assert!(frames[0].contains("libc.so"), "{text}");
+        assert!(frames.iter().any(|f| f.contains("aurora_viewer-test")), "{text}");
+        // A thread that does not exist answers nothing.
+        assert!(!Thread(i32::MAX).write_stack(&mut Vec::new()));
     }
 
     #[test]
