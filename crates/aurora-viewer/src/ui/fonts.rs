@@ -226,13 +226,6 @@ pub fn set_scale(ctx: &egui::Context, scale: f32) {
     install(ctx, definitions.as_deref().cloned().unwrap_or_default());
 }
 
-/// Install the interface fonts again as last set, without the faces added
-/// to them since (the previews of the system font list).
-fn reinstall(ctx: &egui::Context) {
-    let definitions = ctx.data(|data| data.get_temp::<Arc<egui::FontDefinitions>>(egui::Id::unique(DEFINITIONS_ID)));
-    install(ctx, definitions.as_deref().cloned().unwrap_or_default());
-}
-
 const CHAT_ID: &str = "aurora-chat-text-ratio";
 
 /// Size the conversations' text on their own (Preferences › Chat › Text

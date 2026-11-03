@@ -206,16 +206,18 @@ fn font(cx: &mut Cx) {
                             .iter()
                             .filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter))
                             .collect();
-                        // only the rows on screen are laid out, at one height
-                        // whatever their face (a font change re-shapes every
-                        // row laid out), each name in its own face, loaded as
-                        // it scrolls into view
-                        let mut previews = fonts::preview::Previews::begin(ui.ctx());
+                        // only the rows on screen are laid out, at one height,
+                        // each name drawn in its own face by a thread as it
+                        // scrolls into view (`fonts::preview`)
                         // no shorter than a button, or rows would drift from
                         // where `show_rows` puts them
                         let row_h = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).max(ui.spacing().interact_size.y);
                         // one width: a wide face truncates, never widens the list
                         let width = FONT_LIST_W;
+                        let pad = ui.spacing().button_padding.x;
+                        // the size a row's button gives its text
+                        let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
+                        let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
                         egui::ScrollArea::vertical()
                             .max_height(FONT_LIST_H)
                             .show_rows(ui, row_h, shown.len(), |ui, rows| {
@@ -223,9 +225,13 @@ fn font(cx: &mut Cx) {
                                     let f = shown[i];
                                     let key = format!("system:{}", f.path.display());
                                     let sel = s.font == key;
+                                    let drawn = previews.drawn(f);
                                     let mut name = RichText::new(&f.name);
-                                    if let Some(family) = previews.family(f) {
-                                        name = name.family(family);
+                                    if drawn.is_some() {
+                                        // laid out for the row's size and its
+                                        // screen reader label, its picture
+                                        // painted in its place
+                                        name = name.color(egui::Color32::TRANSPARENT);
                                     }
                                     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
                                     let layout = egui::Layout::top_down_justified(egui::Align::Min);
@@ -235,6 +241,20 @@ fn font(cx: &mut Cx) {
                                     let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
                                     row_ui.set_clip_rect(rect.intersect(ui.clip_rect()));
                                     let row = row_ui.add(egui::Button::selectable(sel, name).truncate().min_size(rect.size()));
+                                    if let Some(drawn) = drawn {
+                                        // the colour the row's text would take
+                                        // (hovered, selected), on whole pixels
+                                        let color = row_ui.style().interact_selectable(&row, sel).text_color();
+                                        let ppp = ui.ctx().pixels_per_point();
+                                        let top = rect.center().y - drawn.size.y / 2.0 + drawn.y_offset;
+                                        let min = egui::pos2(((rect.left() + pad) * ppp).round(), (top * ppp).round()) / ppp;
+                                        row_ui.painter().image(
+                                            drawn.texture(),
+                                            egui::Rect::from_min_size(min, drawn.size),
+                                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                            color,
+                                        );
+                                    }
                                     previews.visible(i);
                                     if row.clicked() && !sel {
                                         s.font = key;

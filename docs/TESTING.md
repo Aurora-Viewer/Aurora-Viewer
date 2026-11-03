@@ -5865,10 +5865,12 @@ failure. Grid validation and any paid upload are performed by the human.
     effects of Aurora's water, the eight of the depth of field…), for
     captures; each opened block has its own darker face.
   - `appearance:system-fonts`: the System fonts list kept open, each
-    family's name in its own face once its row has been on screen for a
-    frame; a name its font cannot draw (symbol fonts, another script) stays
-    in the interface font. `appearance:system-fonts-scroll` also scrolls
-    it, 6 points a frame, to measure the loading with `AURORA_PROFILE=1`.
+    family's name in its own face once its picture is drawn (a few frames
+    after its row comes on screen, the interface font until then); a name
+    its font cannot draw (symbol fonts, another script) stays in the
+    interface font. `appearance:system-fonts-scroll` also scrolls it, 6
+    points a frame, to check with `AURORA_PROFILE=1` that scrolling keeps
+    every frame short.
   - `reset`: the page reset at once, with its Undo at the bottom; the chat
     says it was reset once the Undo is gone (8 s) or the window closed.
   - `restore` (with `system`): the confirmation of a settings restore, for
