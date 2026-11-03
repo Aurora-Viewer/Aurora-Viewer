@@ -58,11 +58,13 @@ const MW_REACH: f32 = 0.785398163; // 45°
 
 struct StarSky {
     cells: array<u32, 6920>, // 2 * STAR_CELL_TABLE: real sky, then the Legacy Viewer's
-    milky_way: array<u32, 1048576>, // MW_WIDTH * MW_HEIGHT
     stars: array<GpuStar>,
 };
 
 @group(0) @binding(24) var<storage, read> star_sky: StarSky;
+// The Milky Way map (stars.rs milky_way_texels), MW_WIDTH x MW_HEIGHT, one
+// packed texel per element (mw_texel)
+@group(0) @binding(25) var milky_way_map: texture_2d<u32>;
 
 // stars.rs cell_of
 fn star_cell(q: vec3<f32>) -> u32 {
@@ -141,9 +143,9 @@ fn pcg3(v0: vec3<u32>) -> vec3<u32> {
 // One texel of the Milky Way map: glow (square root of the light), grain
 // (stars of V 6.5 to 9.5 per texel, x 16) and B-V colour (x 100), 0..255.
 fn mw_texel(x: i32, y: i32) -> vec3<f32> {
-    let xi = u32((x + i32(MW_WIDTH)) % i32(MW_WIDTH));
-    let yi = u32(clamp(y, 0, i32(MW_HEIGHT) - 1));
-    let t = star_sky.milky_way[yi * MW_WIDTH + xi];
+    let xi = (x + i32(MW_WIDTH)) % i32(MW_WIDTH);
+    let yi = clamp(y, 0, i32(MW_HEIGHT) - 1);
+    let t = textureLoad(milky_way_map, vec2<i32>(xi, yi), 0).x;
     return vec3<f32>(f32(t & 255u), f32((t >> 8u) & 255u), f32((t >> 16u) & 255u));
 }
 

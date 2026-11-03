@@ -379,8 +379,8 @@ binding 24); a sky pixel reads the stars of its own cell only and draws each
 as a Gaussian: the real stars about a pixel wide at any field of view, the
 Legacy Viewer's at their size in the sky (quads of 16 to 36 m on its 15 km
 dome), so they grow when the camera zooms in, as there. The Milky Way is the map `assets/stars/milky_way.bin` (the
-fainter Tycho-2 stars on a galactic longitude and latitude grid), in the same
-buffer and sampled by hand in the same function: the faint stars' glow, and
+fainter Tycho-2 stars on a galactic longitude and latitude grid), a `R32Uint`
+texture of its own (binding 25) read texel by texel in the same function: the faint stars' glow, and
 their grain as faint points on a lattice fixed in the sky, and `sky_full` adds both under the clouds, so water and probes
 see them too. `world/night_sky.rs` gives the frame the rotation from the
 catalogue to the region: the real sky seen from the latitude chosen (a city

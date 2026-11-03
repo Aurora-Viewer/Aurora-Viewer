@@ -1,14 +1,15 @@
 //! Night sky: the stars the sky shader draws (`sky_stars` in env.wgsl).
 //!
-//! Two catalogues and the Milky Way share one storage buffer (`StarSky` in
-//! env.wgsl):
+//! Two catalogues share one storage buffer (`StarSky` in env.wgsl), the
+//! Milky Way has a texture of its own (`milky_way_map`):
 //!
 //! - the real sky: the stars of `assets/stars/stars.bin` (Tycho-2, the
 //!   brightest completed from Hipparcos; magnitude 6.5 and brighter), in
 //!   J2000 equatorial coordinates, with their colour from the B-V index;
 //! - the Milky Way: `assets/stars/milky_way.bin`, the fainter Tycho-2 stars
 //!   on a grid of galactic longitude and latitude (their glow, colour and
-//!   count), which the shader samples by hand (no texture binding);
+//!   count), one packed `u32` per texel of a `R32Uint` texture the shader
+//!   reads texel by texel (`milky_way_texels`);
 //! - the Legacy Viewer's stars, a port of LLVOWLSky::initStars
 //!   (indra/newview/llvowlsky.cpp, originally LGPL 2.1): 1,000 random stars
 //!   on the upper half of the dome, in the region's frame.
@@ -157,8 +158,10 @@ pub fn parse_milky_way(bytes: &[u8]) -> Result<Vec<u32>, String> {
         .collect())
 }
 
-/// The Milky Way's texels; a dark sky when the built-in map is damaged.
-fn milky_way() -> Vec<u32> {
+/// The Milky Way map's texels (`milky_way_map` in env.wgsl: `R32Uint`,
+/// `MILKY_WAY_WIDTH` x `MILKY_WAY_HEIGHT`, row by row); a dark sky when the
+/// built-in map is damaged.
+pub fn milky_way_texels() -> Vec<u32> {
     parse_milky_way(MILKY_WAY).unwrap_or_else(|e| {
         log::error!("{e}: the night sky has no Milky Way");
         vec![0; MILKY_WAY_TEXELS]
@@ -341,15 +344,13 @@ fn bin(stars: &[GpuStar], base: u32) -> (Vec<u32>, Vec<GpuStar>) {
     (table, out)
 }
 
-/// Contents of the star buffer: both cell tables, the Milky Way's texels,
-/// then the stars.
+/// Contents of the star buffer: both cell tables, then the stars.
 pub fn buffer_contents() -> Vec<u8> {
     let (real_table, real) = bin(&real_stars(), 0);
     let (legacy_table, legacy) = bin(&legacy_stars(), real.len() as u32);
-    let mut bytes = Vec::with_capacity((CATALOGUES * CELL_TABLE) as usize * 4 + MILKY_WAY_TEXELS * 4 + (real.len() + legacy.len()) * 32);
+    let mut bytes = Vec::with_capacity((CATALOGUES * CELL_TABLE) as usize * 4 + (real.len() + legacy.len()) * 32);
     bytes.extend_from_slice(bytemuck::cast_slice(&real_table));
     bytes.extend_from_slice(bytemuck::cast_slice(&legacy_table));
-    bytes.extend_from_slice(bytemuck::cast_slice(&milky_way()));
     bytes.extend_from_slice(bytemuck::cast_slice(&real));
     bytes.extend_from_slice(bytemuck::cast_slice(&legacy));
     bytes
@@ -482,7 +483,7 @@ mod tests {
     fn the_cell_tables_cover_the_stars_in_order() {
         let bytes = buffer_contents();
         let words: &[u32] = bytemuck::cast_slice(&bytes[..(2 * CELL_TABLE * 4) as usize]);
-        let stars = (bytes.len() - words.len() * 4 - MILKY_WAY_TEXELS * 4) / 32;
+        let stars = (bytes.len() - words.len() * 4) / 32;
         let real = &words[..CELL_TABLE as usize];
         let legacy = &words[CELL_TABLE as usize..];
         assert_eq!(real[0], 0);
@@ -490,10 +491,8 @@ mod tests {
         assert!(legacy.windows(2).all(|w| w[0] <= w[1]));
         assert_eq!(legacy[0], real[CELLS as usize]);
         assert_eq!(legacy[CELLS as usize] as usize, stars);
-        // the map and the stars start on a 16-byte boundary, as WGSL lays
-        // out `StarSky`
+        // the stars start on a 16-byte boundary, as WGSL lays out `StarSky`
         assert_eq!(words.len() * 4 % 16, 0);
-        assert_eq!(MILKY_WAY_TEXELS * 4 % 16, 0);
     }
 
     /// The map's glow (0..1, linear) at a galactic longitude and latitude
@@ -565,7 +564,8 @@ mod tests {
         let env = include_str!("shaders/env.wgsl");
         assert!(env.contains(&format!("const MW_WIDTH: u32 = {MILKY_WAY_WIDTH}u;")));
         assert!(env.contains(&format!("const MW_HEIGHT: u32 = {MILKY_WAY_HEIGHT}u;")));
-        assert!(env.contains(&format!("milky_way: array<u32, {MILKY_WAY_TEXELS}>")));
+        assert!(env.contains("@binding(25) var milky_way_map: texture_2d<u32>;"));
+        assert_eq!(milky_way_texels().len(), MILKY_WAY_TEXELS);
         let reach = env.split("const MW_REACH: f32 = ").nth(1).and_then(|r| r.split(';').next());
         let reach: f32 = reach.and_then(|r| r.trim().parse().ok()).expect("MW_REACH");
         assert!((reach - MILKY_WAY_REACH.to_radians()).abs() < 1e-6);
