@@ -528,7 +528,7 @@ impl App {
             InvAction::EnvironmentSaveParcel(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
                     self.world.eep.request_local(asset, kind);
-                    self.world.parcel_env.request_save();
+                    self.world.save_parcel_environment();
                 }
             }
             InvAction::Marketplace(item, command) => self.inventory_marketplace_command(item, command),

@@ -223,7 +223,7 @@ impl App {
                     self.panels.time_of_day = 0;
                 }
                 EnvAction::Preset(n) => self.panels.time_of_day = n,
-                EnvAction::SaveParcel => self.world.parcel_env.request_save(),
+                EnvAction::SaveParcel => self.world.save_parcel_environment(),
                 EnvAction::ForgetParcel => {
                     if let Some(id) = self.world.parcel_env.saved_here(&self.settings.parcel_environments) {
                         self.settings.parcel_environments.retain(|e| e.parcel != id);
@@ -256,6 +256,7 @@ impl App {
                 aurora_i18n::tr!("common-environment"),
                 aurora_i18n::tr!("parcel-environment-not-saved"),
             ),
+            Outcome::Left => self.env_alert(aurora_i18n::tr!("common-environment"), aurora_i18n::tr!("parcel-environment-left")),
         }
         self.env_ui.parcel_choice = if self.world.parcel_env.saved_here(&self.settings.parcel_environments).is_some() {
             ParcelChoice::Saved

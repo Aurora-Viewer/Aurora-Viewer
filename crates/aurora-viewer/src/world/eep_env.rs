@@ -411,6 +411,8 @@ pub struct EnvSelector {
     arrival: Option<Outside>,
     /// A parcel's saved environment is on: what comes back on leaving.
     held: Option<Outside>,
+    /// A local item failed since a save for a parcel was asked.
+    failed_for_save: bool,
     /// The selector changed the photo's choice (a change made elsewhere, a
     /// camera preset, "Keep this light"): the photo window follows.
     photo_changed: bool,
@@ -879,6 +881,7 @@ impl EnvSelector {
                     // onSetEnvAssetLoaded: FailedToFindSettings, nothing changes
                     log::warn!("environment settings {} could not be loaded", p.asset);
                     self.failed_local.push(p.asset);
+                    self.failed_for_save = true;
                 }
                 PendingState::Waiting => {}
             }
@@ -1079,9 +1082,10 @@ impl EnvSelector {
     /// the agent leaves. Over the photo's light, which stays.
     pub fn hold_parcel(&mut self, data: Option<&Llsd>, preset: u8) {
         if self.held.is_none() {
-            let outside = self.arrival.take().unwrap_or_else(|| self.outside_now());
-            self.held = Some(outside);
+            // not the arrival: what was picked on the parcel left stands
+            self.held = Some(self.outside_now());
         }
+        self.arrival = None;
         let dirty = self.local_dirty;
         self.pending.clear();
         self.local = None;
@@ -1096,11 +1100,16 @@ impl EnvSelector {
         self.local_dirty = dirty;
     }
 
+    /// A save for a parcel is asked: what fails from now on fails it.
+    pub fn arm_parcel_save(&mut self) {
+        self.failed_for_save = false;
+    }
+
     /// Save here: the local environment for the parcel, and what stood on
     /// arrival set aside as if it had been saved all along. None with
     /// nothing to keep, or when the item picked for it could not load.
     pub fn capture_parcel(&mut self) -> Option<(Option<Llsd>, u8)> {
-        if !self.failed_local.is_empty() {
+        if self.failed_for_save {
             return None;
         }
         let saved = self.saved_local();
@@ -2257,6 +2266,28 @@ mod tests {
         assert_eq!(sel.wanted_settings(), vec![SKY]);
         sel.on_settings(SKY, Some(sky_asset(1.1)));
         assert_eq!(sel.local_view().sky, ListShown::Item(SKY));
+    }
+
+    #[test]
+    fn a_pick_made_on_the_way_comes_back_after_a_saved_parcel() {
+        let mut sel = arrived(1.1);
+        sel.request_local(DAY, SettingsKind::Day);
+        sel.on_settings(DAY, Some(day_asset(1.0, 2.0)));
+        sel.hold_parcel(Some(&llsd_map! {"water_id" => WATER}), 0);
+        sel.settle_parcel();
+        assert_eq!(sel.local_view().day, ListShown::Item(DAY));
+    }
+
+    #[test]
+    fn a_failed_pick_is_remembered_past_its_notification() {
+        let mut sel = arrived(1.1);
+        sel.arm_parcel_save();
+        sel.request_local(WATER, SettingsKind::Water);
+        sel.on_settings(WATER, None);
+        assert_eq!(sel.take_failed(), vec![WATER]);
+        assert!(sel.capture_parcel().is_none());
+        sel.arm_parcel_save();
+        assert!(sel.capture_parcel().is_some(), "the next save starts afresh");
     }
 
     #[test]

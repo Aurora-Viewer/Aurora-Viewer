@@ -3851,8 +3851,8 @@ impl World {
                 None
             }
             NetEvent::Land(ev) => {
-                if let aurora_net::land::LandEvent::ParcelId { local_id, id } = ev {
-                    self.parcel_env.on_parcel_id(local_id, id);
+                if let aurora_net::land::LandEvent::ParcelId { handle, local_id, id } = ev {
+                    self.parcel_env.on_parcel_id(handle, local_id, id);
                 }
                 if let aurora_net::land::LandEvent::AttachmentScripts(result) = &ev {
                     match result {

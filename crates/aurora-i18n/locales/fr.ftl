@@ -13636,6 +13636,7 @@ parcel-environment-apply-save = Appliquer localement (enregistrer pour la parcel
 parcel-environment-save = Enregistrer cet environnement pour cette parcelle : il revient chaque fois que vous y êtes
 parcel-environment-forget = Oublier l’environnement enregistré pour cette parcelle
 parcel-environment-not-saved = Cette parcelle n’a pas pu être identifiée : son environnement n’a pas été enregistré.
+parcel-environment-left = Vous avez quitté la parcelle avant l’enregistrement de son environnement : il n’a pas été enregistré.
 parcel-environment-title = Environnements enregistrés pour des parcelles
 parcel-environment-help = Votre propre environnement pour une parcelle : il remplace votre environnement local tant que vous y êtes, et ce que vous aviez avant revient quand vous en partez. Vous seul le voyez. Enregistrez-en un depuis la fenêtre Environnement ou le menu d’un environnement de votre inventaire.
 parcel-environment-empty = Aucun environnement enregistré

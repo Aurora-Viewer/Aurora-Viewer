@@ -49,8 +49,9 @@ pub struct ParcelEnv {
     /// Ids already asked this session, so that walking back and forth does
     /// not ask again.
     known: HashMap<(RegionHandle, i32), Uuid>,
-    /// "Save" was asked: done once the parcel's id and the settings are in.
-    saving: bool,
+    /// "Save" was asked on this parcel: done once its id and the settings
+    /// are in, dropped if the agent leaves it first.
+    saving: Option<(RegionHandle, i32)>,
 }
 
 /// What came of a frame.
@@ -60,31 +61,30 @@ pub enum Outcome {
     Saved(Entry),
     /// The parcel could not be identified: nothing was saved.
     NotSaved,
+    /// The agent left the parcel before the save could be done.
+    Left,
 }
 
 impl ParcelEnv {
-    /// Save the local environment for this parcel, once it has loaded.
-    pub fn request_save(&mut self) {
-        self.saving = true;
-    }
-
     /// The saved parcel under the agent, if any.
     pub fn saved_here(&self, saved: &[Entry]) -> Option<Uuid> {
         let id = self.here.as_ref()?.id?;
         saved.iter().any(|e| e.parcel == id).then_some(id)
     }
 
-    /// RemoteParcelRequest answer. A nil or missing id is asked again.
-    pub fn on_parcel_id(&mut self, local_id: i32, id: Option<Uuid>) {
+    /// RemoteParcelRequest answer, which may come after the agent left that
+    /// parcel. A nil or missing id is asked again.
+    pub fn on_parcel_id(&mut self, handle: RegionHandle, local_id: i32, id: Option<Uuid>) {
         let Some(id) = id.filter(|id| !id.is_nil()) else { return };
-        if let Some(here) = self.here.as_mut().filter(|h| h.key.1 == local_id) {
+        let key = (handle, local_id);
+        self.known.insert(key, id);
+        if let Some(here) = self.here.as_mut().filter(|h| h.key == key) {
             here.id = Some(id);
-            self.known.insert(here.key, id);
         }
     }
 
     /// Follow the agent to `key`. True when its id must be asked now;
-    /// `Err` when it is asked in vain.
+    /// `Err` once the last request had its time to answer.
     fn follow(&mut self, key: (RegionHandle, i32), wanted: bool, now: Instant) -> Result<bool, ()> {
         if self.here.as_ref().is_none_or(|h| h.key != key) {
             self.here = Some(Here {
@@ -112,6 +112,13 @@ impl ParcelEnv {
 }
 
 impl World {
+    /// Save the local environment for the parcel under the agent, once it
+    /// has loaded.
+    pub fn save_parcel_environment(&mut self) {
+        self.eep.arm_parcel_save();
+        self.parcel_env.saving = self.main_region.zip(self.parcel.as_ref()).map(|(handle, p)| (handle, p.local_id));
+    }
+
     /// One frame: ask for the parcel's id while it matters, put on or take
     /// off its saved environment, and do a save that was asked. What was
     /// shown stays until the parcel is known, so that a teleport does not
@@ -121,8 +128,13 @@ impl World {
             return (Outcome::Nothing, None);
         };
         let key = (handle, parcel.local_id);
-        let wanted = !saved.is_empty() || self.parcel_env.saving;
+        if self.parcel_env.saving.is_some_and(|asked| asked != key) {
+            self.parcel_env.saving = None;
+            return (Outcome::Left, None);
+        }
+        let wanted = !saved.is_empty() || self.parcel_env.saving.is_some();
         let mut ask = None;
+        let mut gave_up = false;
         match self.parcel_env.follow(key, wanted, now) {
             Ok(true) => {
                 let region = self.regions.get(&handle);
@@ -135,18 +147,17 @@ impl World {
                 }));
             }
             Ok(false) => {}
-            Err(()) if self.parcel_env.saving => {
-                self.parcel_env.saving = false;
+            Err(()) if self.parcel_env.saving.is_some() => {
+                self.parcel_env.saving = None;
                 return (Outcome::NotSaved, None);
             }
-            Err(()) => {}
+            Err(()) => gave_up = true,
         }
         // RLVa holds the environment (@setenv): decided once it lets go
         let Some(here) = self.parcel_env.here.as_mut().filter(|_| !self.eep.rlva_locked) else {
             return (Outcome::Nothing, ask);
         };
-        let waiting = wanted && here.id.is_none() && here.asks < MAX_ASKS;
-        if waiting {
+        if wanted && here.id.is_none() && !gave_up {
             return (Outcome::Nothing, ask);
         }
         let target = here.id.and_then(|id| saved.iter().find(|e| e.parcel == id));
@@ -164,10 +175,10 @@ impl World {
             here.settled = true;
             here.shown = target.map(|e| e.parcel);
         }
-        if !self.parcel_env.saving || self.eep.local_loading() {
+        if self.parcel_env.saving.is_none() || self.eep.local_loading() {
             return (Outcome::Nothing, ask);
         }
-        self.parcel_env.saving = false;
+        self.parcel_env.saving = None;
         let Some(id) = here.id else {
             return (Outcome::NotSaved, ask);
         };
@@ -190,6 +201,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     const KEY: (RegionHandle, i32) = (7, 3);
 
@@ -207,7 +219,7 @@ mod tests {
         assert_eq!(env.follow(KEY, true, now), Ok(true));
         assert_eq!(env.follow(KEY, true, now), Ok(false), "the answer is awaited");
         let id = Uuid::from_u128(9);
-        env.on_parcel_id(3, Some(id));
+        env.on_parcel_id(7, 3, Some(id));
         assert_eq!(env.follow(KEY, true, now + ASK_EVERY), Ok(false));
         // away and back: no second request
         assert_eq!(env.follow((7, 4), true, now), Ok(true));
@@ -216,11 +228,17 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_for_another_parcel_is_ignored() {
+    fn an_answer_for_another_parcel_names_that_parcel() {
         let mut env = ParcelEnv::default();
-        let _ = env.follow(KEY, true, Instant::now());
-        env.on_parcel_id(4, Some(Uuid::from_u128(9)));
+        let now = Instant::now();
+        let _ = env.follow(KEY, true, now);
+        let id = Uuid::from_u128(9);
+        env.on_parcel_id(7, 4, Some(id));
         assert_eq!(env.here.as_ref().and_then(|h| h.id), None);
+        // the same local id in the region left behind
+        env.on_parcel_id(8, 3, Some(id));
+        assert_eq!(env.here.as_ref().and_then(|h| h.id), None);
+        assert_eq!(env.follow((8, 3), true, now), Ok(false), "known for when the agent is there");
     }
 
     #[test]
@@ -229,11 +247,54 @@ mod tests {
         let mut now = Instant::now();
         for _ in 0..MAX_ASKS {
             assert_eq!(env.follow(KEY, true, now), Ok(true));
-            env.on_parcel_id(3, None);
-            env.on_parcel_id(3, Some(Uuid::nil()));
+            env.on_parcel_id(7, 3, None);
+            env.on_parcel_id(7, 3, Some(Uuid::nil()));
             now += ASK_EVERY;
         }
         assert_eq!(env.follow(KEY, true, now), Err(()));
+    }
+
+    fn a_world_on(local_id: i32) -> World {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.main_region = Some(7);
+        put_on(&mut world, local_id);
+        world
+    }
+
+    fn put_on(world: &mut World, local_id: i32) {
+        world.parcel = Some(Arc::new(aurora_net::ParcelInfo {
+            local_id,
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn a_save_does_not_follow_the_agent_to_the_next_parcel() {
+        let mut world = a_world_on(3);
+        let now = Instant::now();
+        world.save_parcel_environment();
+        let (outcome, ask) = world.parcel_environment_frame(&[], now);
+        assert_eq!(outcome, Outcome::Nothing);
+        assert!(ask.is_some());
+        put_on(&mut world, 4);
+        world.parcel_env.on_parcel_id(7, 4, Some(Uuid::from_u128(9)));
+        assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::Left);
+        assert_eq!(world.parcel_env.saving, None);
+        assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::Nothing);
+    }
+
+    #[test]
+    fn the_last_request_has_its_time_to_answer() {
+        let mut world = a_world_on(3);
+        let mut now = Instant::now();
+        world.save_parcel_environment();
+        for _ in 0..MAX_ASKS {
+            let (outcome, ask) = world.parcel_environment_frame(&[], now);
+            assert_eq!(outcome, Outcome::Nothing);
+            assert!(ask.is_some());
+            now += ASK_EVERY;
+        }
+        assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::NotSaved);
     }
 
     #[test]
@@ -248,7 +309,7 @@ mod tests {
             time_of_day: 0,
         };
         let _ = env.follow(KEY, true, Instant::now());
-        env.on_parcel_id(3, Some(id));
+        env.on_parcel_id(7, 3, Some(id));
         assert_eq!(env.saved_here(&[]), None);
         assert_eq!(env.saved_here(std::slice::from_ref(&entry)), Some(id));
     }

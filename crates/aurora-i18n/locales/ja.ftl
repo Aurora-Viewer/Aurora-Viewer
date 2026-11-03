@@ -13561,6 +13561,7 @@ parcel-environment-apply-save = ローカルに適用(区画に保存)
 parcel-environment-save = この環境をこの区画に保存します:ここにいるときは毎回この環境に戻ります
 parcel-environment-forget = この区画に保存した環境を削除
 parcel-environment-not-saved = この区画を特定できなかったため、環境は保存されませんでした。
+parcel-environment-left = 環境を保存する前に区画を離れたため、保存されませんでした。
 parcel-environment-title = 区画に保存した環境
 parcel-environment-help = 区画ごとの自分用の環境です。その区画にいる間はローカル環境の代わりに使われ、離れると元の環境に戻ります。表示されるのは自分だけです。環境ウィンドウ、またはインベントリの環境アイテムのメニューから保存できます。
 parcel-environment-empty = 保存された環境はありません

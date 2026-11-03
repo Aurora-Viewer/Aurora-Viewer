@@ -913,7 +913,7 @@ impl Land {
                     c.text = Some(text.unwrap_or_else(|| aurora_i18n::tr!("world-land-could-not-load-this-estate-s-covenant").into()));
                 }
             }
-            LandEvent::ParcelId { local_id, id } => {
+            LandEvent::ParcelId { local_id, id, .. } => {
                 if let Some(sel) = self.sel.as_mut().filter(|s| s.local_id() == Some(local_id)) {
                     if id.is_none() {
                         // setErrorStatus: asked again on the next refresh

@@ -35,7 +35,7 @@ pub fn frame(world: &mut World, time_of_day: &mut u8, mode: &str, frame: u64) {
             world.eep.edit_personal(crate::demo::env::edit_lighting);
         }
         400 => *time_of_day = 4,
-        420 => world.parcel_env.request_save(),
+        420 => world.save_parcel_environment(),
         560 => walk(world, 132.0, 132.0),
         700 => walk(world, 124.0, 132.0),
         _ => {}

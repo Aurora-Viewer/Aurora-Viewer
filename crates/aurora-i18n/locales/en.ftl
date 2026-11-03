@@ -13637,6 +13637,7 @@ parcel-environment-apply-save = Apply Locally (Save to Parcel)
 parcel-environment-save = Save this environment for this parcel: it comes back whenever you are here
 parcel-environment-forget = Forget the environment saved for this parcel
 parcel-environment-not-saved = This parcel could not be identified, so its environment was not saved.
+parcel-environment-left = You left the parcel before its environment could be saved, so it was not saved.
 parcel-environment-title = Environments saved for parcels
 parcel-environment-help = Your own environment for a parcel: it replaces your local environment while you stand there, and what you had before comes back when you leave. Only you see it. Save one from the Environment window or an environment item's menu in your inventory.
 parcel-environment-empty = No environments saved

@@ -398,7 +398,11 @@ pub enum LandEvent {
     /// The covenant notecard text (None: it could not be loaded).
     CovenantText { covenant_id: Uuid, text: Option<String> },
     /// RemoteParcelRequest answer (None: the parcel id could not be resolved).
-    ParcelId { local_id: i32, id: Option<Uuid> },
+    ParcelId {
+        handle: RegionHandle,
+        local_id: i32,
+        id: Option<Uuid>,
+    },
     /// ExtEnvironment of a parcel (`environment` map), or why it failed.
     Environment { local_id: i32, result: Result<Llsd, String> },
     /// GetExperienceInfo: (experience, name).
