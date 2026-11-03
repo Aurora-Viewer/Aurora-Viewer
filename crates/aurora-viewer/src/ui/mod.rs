@@ -98,6 +98,7 @@ pub mod places;
 pub mod portals;
 pub mod presence;
 pub mod profile;
+pub mod quick_prefs;
 pub mod region;
 pub mod region_message_prompt;
 pub mod region_restart;
@@ -194,6 +195,8 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// "Quick preferences" (toolbar `quickprefs`).
+    pub quick_prefs: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
@@ -256,6 +259,7 @@ impl Panels {
             experiences: false,
             bumps: false,
             grid_status: false,
+            quick_prefs: false,
             voice_controls: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
