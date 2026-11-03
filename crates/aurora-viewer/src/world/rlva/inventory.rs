@@ -770,6 +770,8 @@ impl World {
     }
     /// Resolve forced wear through the same COF planner as the native UI.
     /// Requests remain queued while folders or originals are still loading.
+    /// The removals and wears join the source's open `Action::Force` batch
+    /// (`force_wear`), applied as one COF update.
     pub fn rlva_inventory_force(&mut self, source: Uuid, c: &Command) -> bool {
         let Some(name) = force_kind(&c.behaviour) else { return false };
         let context = c.behaviour.contains("this");
@@ -790,10 +792,10 @@ impl World {
         }
         let worn = self.rlva_worn_attachment_points();
         let group = GROUPS.contains(&c.option.as_str()) && resolve(&self.inventory, &c.option).is_none();
-        let action = if name == "detachme" {
+        let removal = if name == "detachme" {
             self.rlva_attachment_item(source).map(|item| {
                 self.rlva.self_detach = Some((source, item));
-                appearance::Action::Remove(item)
+                vec![item]
             })
         } else if !context
             && matches!(name, "detach" | "remattach")
@@ -811,7 +813,7 @@ impl World {
                 .map(|(id, _)| *id)
                 .filter(|id| self.rlva_can_remove(*id, source))
                 .collect();
-            Some(appearance::Action::RemoveItems(ids))
+            Some(ids)
         } else if name == "remoutfit" && (c.option.is_empty() || layer(&c.option).is_some()) {
             let ids = appearance::cof(&self.inventory)
                 .map(|cof| appearance::folder_links(&self.inventory, cof))
@@ -822,7 +824,7 @@ impl World {
                 .filter(|it| self.rlva_can_remove(it.id, source))
                 .map(|it| it.id)
                 .collect();
-            Some(appearance::Action::RemoveItems(ids))
+            Some(ids)
         } else {
             if !self.rlva_shared_ready() {
                 return false;
@@ -859,7 +861,7 @@ impl World {
             ids.dedup();
             if matches!(name, "detach" | "detachall" | "remattach" | "remoutfit") {
                 ids.retain(|id| self.inventory.items.get(id).is_some_and(|it| it.asset_type != 13) && self.rlva_can_remove(*id, source));
-                Some(appearance::Action::RemoveItems(ids))
+                Some(ids)
             } else {
                 ids.sort_by(|a, b| {
                     modes
@@ -906,20 +908,20 @@ impl World {
                         continue;
                     }
                     replaced.insert(key);
-                    self.rlva.appearance.push((
+                    self.rlva_force_wear(
                         source,
-                        appearance::Action::WearItem {
+                        appearance::WearRequest {
                             item,
                             replace: replace_item,
                             point,
                         },
-                    ));
+                    );
                 }
                 None
             }
         };
-        if let Some(action) = action {
-            self.rlva.appearance.push((source, action));
+        if let Some(items) = removal {
+            self.rlva_force_remove(source, items);
         }
         true
     }

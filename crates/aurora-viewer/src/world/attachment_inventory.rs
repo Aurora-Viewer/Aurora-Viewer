@@ -77,9 +77,10 @@ impl World {
         action: appearance::Action,
         allow_recovery: bool,
     ) -> (Vec<NetCommand>, Option<appearance::Action>) {
-        let (items, multiple) = match action {
-            appearance::Action::Remove(item) => (vec![item], false),
-            appearance::Action::RemoveItems(items) => (items, true),
+        let (items, multiple, wear) = match action {
+            appearance::Action::Remove(item) => (vec![item], false, None),
+            appearance::Action::RemoveItems(items) => (items, true, None),
+            appearance::Action::Force { remove, wear } => (remove, true, Some(wear)),
             other => return (Vec::new(), Some(other)),
         };
         let incomplete = self
@@ -104,7 +105,10 @@ impl World {
                 remaining.push(item);
             }
         }
-        let action = if remaining.is_empty() {
+        // The wears of a forced batch stay in its COF update.
+        let action = if let Some(wear) = wear {
+            (!remaining.is_empty() || !wear.is_empty()).then_some(appearance::Action::Force { remove: remaining, wear })
+        } else if remaining.is_empty() {
             None
         } else if multiple {
             Some(appearance::Action::RemoveItems(remaining))
