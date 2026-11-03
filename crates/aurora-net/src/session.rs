@@ -2883,6 +2883,10 @@ impl Session<'_> {
                 let m = crate::local_bakes::agent_set_appearance(self.agent_id(), self.session_id(), self.appearance_serial, &appearance);
                 self.send_main(&m, true);
             }
+            NetCommand::QueryCachedBakes { serial, keys } => {
+                let m = crate::local_bakes::agent_cached_texture(self.agent_id(), self.session_id(), serial, &keys);
+                self.send_main(&m, true);
+            }
             NetCommand::RequestServerAppearance { cof_version } => self.request_server_appearance(cof_version),
             NetCommand::IncrementCofVersion => self.increment_cof_version(),
             NetCommand::AvatarTexturesRequest(id) => self.send_generic("avatartexturesrequest", &[id.to_string()]),
@@ -4348,6 +4352,15 @@ impl Session<'_> {
                 NetEvent::UserRights {
                     agent: m.agent_data.agent_id,
                     rights: m.rights.iter().map(|r| (r.agent_related, r.related_rights)).collect(),
+                },
+            );
+        } else if id == AgentCachedTextureResponse::ID {
+            let m: AgentCachedTextureResponse = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::CachedBakes {
+                    serial: m.agent_data.serial_num,
+                    faces: m.wearable_data.iter().map(|w| (w.texture_index, w.texture_id)).collect(),
                 },
             );
         } else if id == RebakeAvatarTextures::ID {
