@@ -217,10 +217,11 @@ fn font(cx: &mut Cx) {
                         } else {
                             (!shown.is_empty()).then_some(0)
                         };
+                        keys.reveal = true;
                     }
-                    let stepped = down || up;
-                    if stepped {
+                    if down || up {
                         keys.selected = step_font(keys.selected, shown.len(), down);
+                        keys.reveal = true;
                     }
                     let mut pointed = None;
                     // only the rows on screen are laid out, at one height,
@@ -293,13 +294,16 @@ fn font(cx: &mut Cx) {
                                     ui.close();
                                 }
                             }
-                            if stepped && let (Some(selected), Some(top)) = (keys.selected, first_top) {
+                            if keys.reveal
+                                && let (Some(selected), Some(top)) = (keys.selected, first_top)
+                            {
                                 // rows off screen are not laid out: the
                                 // selected one's place from the first drawn
                                 let step = row_h + ui.spacing().item_spacing.y;
                                 let y = top + (selected as f32 - first as f32) * step;
                                 let rect = egui::Rect::from_min_size(egui::pos2(ui.min_rect().left(), y), egui::vec2(width, row_h));
                                 ui.scroll_to_rect(rect, None);
+                                keys.reveal = false;
                             }
                             if st.demo_font_list == Some(true) {
                                 ui.scroll_with_delta(egui::vec2(0.0, -6.0));
@@ -427,13 +431,16 @@ fn colors(cx: &mut Cx) {
 }
 
 /// The keyboard on the System fonts list, kept between frames: the search
-/// field, the query the selection was set for, and the selected row of
-/// the fonts found. Like the menu's search (`ui/menu.rs`).
+/// field, the query the selection was set for, the selected row of the
+/// fonts found, and whether that row still has to be scrolled into view
+/// (it was set by the keys, the query or the opening; Enter picks it, so it
+/// is never off screen). Like the menu's search (`ui/menu.rs`).
 #[derive(Clone, Default)]
 struct FontKeys {
     search: Option<egui::Id>,
     filter: String,
     selected: Option<usize>,
+    reveal: bool,
 }
 
 impl FontKeys {
