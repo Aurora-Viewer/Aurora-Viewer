@@ -4286,13 +4286,24 @@ both open states and the selection count. Capture at frame 620.
   megabytes or more made through `aurora-render/src/gpu_alloc.rs` fails as
   if video memory were full (`0`: all of them): the geometry arena, the
   draw records, the culling tables, the joint palettes and skin bindings,
-  the texture pages. With `AURORA_DEMO_GEOMETRY=700,60` and a value of 64,
+  particle and world-label upload buffers, and the texture pages. With
+  `AURORA_DEMO_GEOMETRY=700,60` and a value of 64,
   the vertex arena grows by smaller steps up to 63 MB, then the log says
   once `vertex arena could not grow past 63 MB (out of video memory
   (AURORA_GPU_OOM))` and the meshes left over are not drawn; the view keeps
   drawing and the log holds no `wgpu error` line. Without the variable, a
   buffer the driver could not make used to be installed anyway, invalid,
   and every write into it was an error, every frame.
+  World labels that cannot fit are omitted for that frame; a smaller frame
+  resumes from the retained valid buffers. Excess particles wait while the
+  portion that fits is uploaded and drawn. Hardware-limit regressions use
+  real Vulkan devices with reduced declared limits, without exhausting the
+  physical card: `cargo test --workspace --locked whole_storage_binding_limit
+  -- --ignored --nocapture` covers the mirrored tables and draw records.
+  Run `refused_upload_buffer_growth`, `refused_label_upload_growth` and
+  `gpu_cull_growth_keeps_working_buffers_after_oom` as separate filtered
+  workspace test processes with `AURORA_GPU_OOM=0`; unset it before the
+  normal growth tests.
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
   turn at that rate (180 if the value is not a number) for the first

@@ -1,5 +1,32 @@
 # Aurora Viewer architecture
 
+`aurora-render/src/vram.rs` samples the driver's memory budget on the
+`aurora-vram` worker every 250 ms. Frame, photo and diagnostic paths only
+copy the last complete reading; neither reads nor shutdown wait for a stuck
+driver query. The one-minute budget floor remains on the sampling worker.
+GPU-culling growth validates all replacement buffers before installing them,
+respects the complete storage binding and dispatch limits, and retains its
+working allocation with backoff after failure. Scenes beyond those limits
+select the existing CPU draw lists before list construction.
+Reflection-probe capture mips use separate compute passes before the final
+radiance/irradiance pass. This avoids invalid Vulkan image layouts in wgpu
+30 when a mip written by one dispatch is sampled by later dispatches.
+Particle uploads grow through `gpu_alloc::grow_upload_buffer`: replacement
+allocations are checked and bounded by device limits, and failures retain
+the working buffer with backoff. Uploads and draw counts use its actual
+capacity while excess particles wait for a successful growth.
+World-label vertex and index uploads use the same helper. A failed growth
+omits that frame's labels while retaining valid buffers; a later frame that
+fits can draw immediately, including during the retry delay.
+Mirrored culling tables use the same whole-binding limit. Draw records and
+previous models grow as a validated pair, capped to their storage binding
+capacity, with smaller retries and retained buffers on failure. Geometry
+preallocation rounds and caps its wishes before applying the memory
+allowance, so rounding cannot bypass that allowance.
+The existing crashing-layer exclusions also disable Bandicam's implicit
+64-bit Vulkan layer using its manifest's `VK_LAYER_bandicam_helper_DEBUG_1`
+variable (#2080); its 32-bit disabling variable does not affect that DLL.
+
 Avatar gait playback resolves standard walk/run signals to the modern male or
 female assets selected by LLVOAvatar::remapMotionID with its default settings
 (#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the
