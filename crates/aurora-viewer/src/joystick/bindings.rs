@@ -1,88 +1,35 @@
-//! Shared bindings used by both controller preference pages and input sampling.
+//! Gamepad bindings shared by preferences and input sampling.
 
 use super::{Device, GamepadStick, Settings};
 
 const BUTTON_PATHS: [&str; 24] = [
-    "joystick.jump_button",
-    "joystick.rise_button",
-    "joystick.fall_button",
-    "joystick.flycam_button",
-    "joystick.flycam_rise_button",
-    "joystick.flycam_fall_button",
-    "joystick.zoom_in_button",
-    "joystick.zoom_out_button",
-    "joystick.zoom_hold_button",
-    "joystick.gamepad_flycam_slowdown_button",
-    "joystick.gamepad_flycam_speedup_button",
-    "joystick.gamepad_avatar_zoom_in_button",
-    "joystick.gamepad_avatar_zoom_out_button",
-    "joystick.gamepad_avatar_pan_up_button",
-    "joystick.gamepad_avatar_pan_down_button",
-    "joystick.gamepad_avatar_next_button",
-    "joystick.gamepad_avatar_previous_button",
-    "joystick.first_person.jump_button",
-    "joystick.first_person.rise_button",
-    "joystick.first_person.fall_button",
-    "joystick.first_person.zoom_in_button",
-    "joystick.first_person.zoom_out_button",
-    "joystick.first_person.view_button",
-    "joystick.gamepad_flycam_view_button",
+    "jump_button",
+    "rise_button",
+    "fall_button",
+    "flycam_button",
+    "flycam_rise_button",
+    "flycam_fall_button",
+    "zoom_in_button",
+    "zoom_out_button",
+    "zoom_hold_button",
+    "gamepad_flycam_slowdown_button",
+    "gamepad_flycam_speedup_button",
+    "gamepad_avatar_zoom_in_button",
+    "gamepad_avatar_zoom_out_button",
+    "gamepad_avatar_pan_up_button",
+    "gamepad_avatar_pan_down_button",
+    "gamepad_avatar_next_button",
+    "gamepad_avatar_previous_button",
+    "first_person.jump_button",
+    "first_person.rise_button",
+    "first_person.fall_button",
+    "first_person.zoom_in_button",
+    "first_person.zoom_out_button",
+    "first_person.view_button",
+    "gamepad_flycam_view_button",
 ];
 
 impl Settings {
-    /// New automatic camera defaults must not steal controls from an older
-    /// customized avatar layout. Resolve only after native device metadata exists.
-    pub fn reconcile_avatar_camera_defaults(&mut self, device: &Device) -> bool {
-        // A previously enabled raw default may be a SpaceMouse setup. Upgrade
-        // it only after the selected native device is confirmed to be a pad.
-        let mut changed = device.is_gamepad && self.untouched_raw_layout();
-        if changed {
-            self.gamepad();
-            if self.flycam_button == 0 {
-                self.flycam_button = super::AUTO_SOUTH;
-            }
-            if self.jump_button == 1 {
-                self.jump_button = super::AUTO_EAST;
-            }
-        }
-        let bindings = self.resolved_buttons(Some(device));
-        // Released raw defaults used axis 2 for lift. On standard pads that
-        // can be a trigger already claimed by zoom/travel-speed controls.
-        if device.is_gamepad
-            && self.mapping[2] >= 0
-            && device.gamepad_triggers.contains(&Some(self.mapping[2] as usize))
-            && [
-                self.gamepad_avatar_zoom_in_button,
-                self.gamepad_avatar_zoom_out_button,
-                self.gamepad_flycam_slowdown_button,
-                self.gamepad_flycam_speedup_button,
-            ]
-            .into_iter()
-            .map(|value| super::resolve_binding(device, value))
-            .any(|value| super::button_axis(value).is_some_and(|(axis, _)| axis == self.mapping[2] as usize))
-        {
-            self.mapping[2] = -1;
-            changed = true;
-        }
-        for index in 11..17 {
-            let binding = bindings[index];
-            if *self.button_slot(index) >= super::INHERIT_BUTTON || binding < 0 {
-                continue;
-            }
-            let action_conflict = bindings[..4].contains(&binding);
-            let axis_conflict = super::button_axis(binding).is_some_and(|(axis, _)| {
-                [0, 1, 2, 4, 5]
-                    .into_iter()
-                    .any(|channel| self.resolved_axis(device, false, channel) == Some(axis))
-            });
-            if action_conflict || axis_conflict {
-                *self.button_slot(index) = -1;
-                changed = true;
-            }
-        }
-        changed
-    }
-
     fn button_slot(&mut self, index: usize) -> &mut i8 {
         match index {
             0 => &mut self.jump_button,
@@ -151,6 +98,12 @@ impl Settings {
     }
 
     pub fn bind_button(&mut self, path: &str, binding: i8, device: Option<&Device>) {
+        let path = path.split_once('.').map_or(
+            path,
+            |(profile, field)| {
+                if matches!(profile, "joystick" | "gamepad") { field } else { path }
+            },
+        );
         let Some(index) = BUTTON_PATHS.iter().position(|p| *p == path) else {
             return;
         };
@@ -294,39 +247,6 @@ impl Settings {
             }
         }
     }
-    pub fn axis_binding_modified(&self, defaults: &Self, channel: usize, device: Option<&Device>) -> bool {
-        device.map_or_else(
-            || self.mapping[channel] != defaults.mapping[channel],
-            |device| {
-                [false, true]
-                    .into_iter()
-                    .filter(|flycam| *flycam || !matches!(channel, 3 | 6))
-                    .any(|flycam| self.resolved_axis(device, flycam, channel) != defaults.resolved_axis(device, flycam, channel))
-            },
-        ) || match channel {
-            0 | 1 => [false, true]
-                .into_iter()
-                .any(|mode| self.stick(mode, false) != defaults.stick(mode, false)),
-            4 | 5 => [false, true]
-                .into_iter()
-                .any(|mode| self.stick(mode, true) != defaults.stick(mode, true)),
-            _ => false,
-        }
-    }
-
-    pub fn reset_axis_binding(&mut self, defaults: &Self, channel: usize, device: Option<&Device>) {
-        self.mapping[channel] = defaults.mapping[channel];
-        if matches!(channel, 0 | 1 | 4 | 5) {
-            for mode in [false, true] {
-                self.set_stick(
-                    device.filter(|d| d.is_gamepad),
-                    mode,
-                    channel >= 4,
-                    defaults.stick(mode, channel >= 4),
-                );
-            }
-        }
-    }
     pub fn stick(&self, flycam: bool, camera: bool) -> GamepadStick {
         match (flycam, camera) {
             (false, false) => self.gamepad_move_stick,
@@ -408,59 +328,6 @@ impl Settings {
         }
         self.store_stick(flycam, camera, value);
     }
-
-    /// Raw-axis assignments are shared by the controller modes. Preserve the
-    /// paired axis, then relinquish any gamepad action claiming that input.
-    pub fn assign_axis(&mut self, device: Option<&Device>, channel: usize, axis: i8) {
-        let group = match channel {
-            0 | 1 => Some(false),
-            4 | 5 => Some(true),
-            _ => None,
-        };
-        if let Some(device) = device.filter(|d| d.is_gamepad) {
-            if let Some(camera) = group {
-                let pair = if camera { [4, 5] } else { [0, 1] };
-                let other = pair.into_iter().find(|i| *i != channel).unwrap_or(channel);
-                self.mapping[other] = self.resolved_axis(device, true, other).map_or(-1, |i| i as i8);
-                for flycam in [false, true] {
-                    self.store_stick(flycam, camera, GamepadStick::Custom);
-                }
-            }
-            if axis >= 0 && !(channel == 6 && self.zoom_mode == super::ZoomMode::HoldAxis) {
-                if let Some(camera) = group {
-                    if camera {
-                        self.first_person.camera_stick = GamepadStick::Custom;
-                    } else {
-                        self.first_person.move_stick = GamepadStick::Custom;
-                    }
-                }
-                self.release_first_person_axis(device, axis as usize, group);
-                for (index, binding) in self.resolved_buttons(Some(device)).into_iter().enumerate() {
-                    if index >= 17
-                        && self.button_scope(index) & 4 != 0
-                        && super::button_axis(binding).is_some_and(|(bound, _)| bound == axis as usize)
-                    {
-                        *self.button_slot(index) = -1;
-                    }
-                }
-                for flycam in [false, true] {
-                    if flycam || !matches!(channel, 3 | 6) {
-                        self.release_axis(device, flycam, axis as usize, group);
-                        self.release_axis_buttons(device, flycam, axis as usize);
-                    }
-                }
-                for i in 0..self.mapping.len() {
-                    if i != channel && self.mapping[i] == axis {
-                        self.mapping[i] = -1;
-                    }
-                }
-            }
-        }
-        self.mapping[channel] = axis;
-        if axis >= 0 && matches!(channel, 3 | 6) && self.flycam.gain[channel] == 0.0 {
-            self.flycam.gain[channel] = 1.0f32.copysign(self.flycam.gain[channel]);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -468,6 +335,13 @@ mod tests {
     use super::*;
     use crate::joystick::{Controller, GamepadButton, GamepadStyle, Motion, Snapshot};
     use std::time::Instant;
+
+    fn gamepad_settings() -> Settings {
+        Settings {
+            enabled: true,
+            ..Settings::gamepad_defaults()
+        }
+    }
 
     #[test]
     fn joystick_native_button_order_does_not_turn_full_triggers_into_movement() {
@@ -490,7 +364,7 @@ mod tests {
                 B::DpadDown,
             ],
         );
-        let defaults = Settings::default();
+        let defaults = gamepad_settings();
         assert_eq!(resolve_binding(&d, defaults.jump_button), 4);
         assert_eq!(resolve_binding(&d, defaults.flycam_button), 2);
         assert_eq!(resolve_binding(&d, defaults.flycam_fall_button), 7);
@@ -501,14 +375,7 @@ mod tests {
         assert_eq!(&defaults.flycam.gain[4..6], &[4.0, 4.0]);
         for (flycam, first) in [(false, false), (false, true), (true, false)] {
             for (axis, digital, direction) in [(2, 1, -1.0), (5, 3, 1.0)] {
-                let mut settings = defaults.clone();
-                // Simulate the old hidden vertical mapping independently of
-                // the lift buttons. Camera/travel triggers own that axis now.
-                settings.mapping[2] = 2;
-                settings.avatar.gain[2] = 2.0;
-                settings.flycam.gain[2] = 2.0;
-                assert!(settings.reconcile_avatar_camera_defaults(&d));
-                assert_eq!(settings.mapping[2], -1);
+                let settings = defaults.clone();
                 let mut snap = Snapshot {
                     devices: vec![d.clone()],
                     updated: Some(Instant::now()),
@@ -550,27 +417,8 @@ mod tests {
     }
 
     #[test]
-    fn joystick_untouched_enabled_pad_layout_upgrades_without_touching_custom_raw_axes() {
-        let mut settings = Settings::default();
-        settings.spacemouse();
-        settings.enabled = true;
-        settings.jump_button = 1;
-        settings.flycam_button = 0;
-        assert!(settings.reconcile_avatar_camera_defaults(&device()));
-        assert_eq!(settings.jump_button, super::super::AUTO_EAST);
-        assert_eq!(settings.flycam_button, super::super::AUTO_SOUTH);
-        assert_eq!(settings.mapping[2], -1);
-        let mut custom = Settings::default();
-        custom.spacemouse();
-        custom.avatar.gain[5] = 0.7;
-        let before = custom.avatar.clone();
-        custom.reconcile_avatar_camera_defaults(&device());
-        assert_eq!(custom.avatar, before);
-    }
-
-    #[test]
     fn joystick_first_person_uses_its_own_axes_buttons_and_pressure_without_pan_or_targets() {
-        let mut s = Settings::default();
+        let mut s = gamepad_settings();
         s.first_person.tuning.feather = 0.0;
         s.first_person.tuning.gain[5] = -4.0;
         s.first_person.tuning.dead_zone[5] = 0.0;
@@ -608,19 +456,19 @@ mod tests {
 
     #[test]
     fn joystick_first_person_mapping_conflicts_stay_in_their_mode() {
-        let mut s = Settings::default();
+        let mut s = gamepad_settings();
         let d = device();
-        s.bind_button("joystick.first_person.jump_button", 0, Some(&d));
+        s.bind_button("first_person.jump_button", 0, Some(&d));
         assert_eq!(s.first_person.view_button, -1);
         assert_eq!(super::super::resolve_binding(&d, s.flycam_button), 0);
         assert_eq!(super::super::resolve_binding(&d, s.view_button(true, false)), 0);
         s.set_first_person_stick(Some(&d), false, GamepadStick::Right);
         assert_eq!(s.first_person.camera_stick, GamepadStick::None);
         assert_eq!(s.gamepad_camera_stick, GamepadStick::Right);
-        s.bind_button("joystick.first_person.zoom_in_button", super::super::BUTTONS as i8, Some(&d));
+        s.bind_button("first_person.zoom_in_button", super::super::BUTTONS as i8, Some(&d));
         assert_eq!(s.first_person.move_stick, GamepadStick::None);
         assert_eq!(s.gamepad_move_stick, GamepadStick::Left);
-        s.bind_button("joystick.gamepad_flycam_view_button", 1, Some(&d));
+        s.bind_button("gamepad_flycam_view_button", 1, Some(&d));
         assert_eq!(s.view_button(true, false), 1);
         assert_eq!(super::super::resolve_binding(&d, s.jump_button), 1);
         assert_eq!(super::super::resolve_binding(&d, s.view_button(false, false)), 0);
@@ -628,7 +476,7 @@ mod tests {
 
     #[test]
     fn joystick_view_mode_press_is_one_edge_across_all_three_modes() {
-        let s = Settings::default();
+        let s = gamepad_settings();
         let mut snap = Snapshot {
             devices: vec![device()],
             updated: Some(Instant::now()),
@@ -670,103 +518,71 @@ mod tests {
     }
 
     #[test]
-    fn joystick_bindings_roll_reclaims_a_stick_axis_and_gamepad_can_reclaim_it_back() {
-        let mut settings = Settings::default();
-        settings.flycam.feather = 0.0;
-        let device = device();
-        assert_eq!(settings.resolved_axis(&device, true, 5), Some(0));
-        settings.assign_axis(Some(&device), 3, 0);
-        assert_eq!(settings.gamepad_flycam_camera_stick, GamepadStick::None);
-        assert_eq!(
-            settings.gamepad_camera_stick,
-            GamepadStick::Right,
-            "avatar and flycam are separate modes"
-        );
-        let motion = sample(&settings, true, 0, 0.8);
-        assert!(motion.axes[3].abs() > 0.1, "an explicitly captured roll axis has a usable gain");
-        assert_eq!((motion.axes[4], motion.axes[5]), (0.0, 0.0));
-        assert!(sample(&settings, false, 0, 0.8).axes[5].abs() > 0.1);
-        settings.set_stick(Some(&device), true, true, GamepadStick::Right);
-        assert_eq!(settings.mapping[3], -1);
-        assert!(sample(&settings, true, 0, 0.8).axes[5].abs() > 0.1);
-        assert_eq!(sample(&settings, true, 0, 0.8).axes[3], 0.0);
-    }
-
-    #[test]
-    fn joystick_bindings_custom_axes_displace_conflicts_and_survive_reload() {
-        let mut settings = Settings::default();
-        let device = device();
-        settings.assign_axis(Some(&device), 4, 5);
-        for flycam in [false, true] {
-            assert_eq!(settings.stick(flycam, true), GamepadStick::Custom);
-            assert_eq!(settings.stick(flycam, false), GamepadStick::None);
-            assert_eq!(settings.resolved_axis(&device, flycam, 4), Some(5));
-            assert_eq!(settings.resolved_axis(&device, flycam, 5), Some(0));
-        }
-        let saved = serde_json::to_string(&settings).expect("save bindings");
-        let restored: Settings = serde_json::from_str(&saved).expect("load bindings");
-        assert_eq!(settings, restored);
-        settings.set_stick(Some(&device), true, false, GamepadStick::Right);
-        assert_eq!(settings.gamepad_flycam_camera_stick, GamepadStick::None);
-        assert_eq!(settings.gamepad_camera_stick, GamepadStick::Custom);
-    }
-
-    #[test]
     fn joystick_bindings_trigger_and_button_actions_are_exclusive_within_each_mode() {
-        let mut settings = Settings::default();
+        let mut settings = gamepad_settings();
         let device = device();
         let trigger = super::super::gamepad_trigger_binding(&device, 1).expect("right trigger");
-        settings.bind_button("joystick.zoom_in_button", trigger, Some(&device));
+        settings.bind_button("zoom_in_button", trigger, Some(&device));
         assert_eq!(settings.gamepad_flycam_speedup_button, -1);
-        settings.bind_button("joystick.jump_button", trigger, Some(&device));
+        assert!(
+            sample(&settings, true, 6, 1.0).axes[6] < 0.0,
+            "the gamepad zoom mapping operates its own lens"
+        );
+        settings.bind_button("jump_button", trigger, Some(&device));
         assert_eq!(settings.zoom_in_button, trigger, "different modes may reuse a physical control");
         assert!(
             sample(&settings, false, 6, 1.0).jump,
             "mapped analog triggers activate normal actions"
         );
-        settings.bind_button("joystick.flycam_button", trigger, Some(&device));
+        settings.bind_button("flycam_button", trigger, Some(&device));
         assert_eq!((settings.zoom_in_button, settings.jump_button), (-1, -1));
         settings.flycam_rise_button = super::super::INHERIT_BUTTON;
-        settings.bind_button("joystick.rise_button", 9, Some(&device));
+        settings.bind_button("rise_button", 9, Some(&device));
         assert_eq!(settings.flycam_rise_button, super::super::INHERIT_BUTTON);
-        settings.bind_button("joystick.flycam_fall_button", 9, Some(&device));
+        settings.bind_button("flycam_fall_button", 9, Some(&device));
         assert_eq!(settings.rise_button, 9, "flycam remapping preserves the avatar action");
         assert_eq!(settings.flycam_rise_button, -1);
     }
 
     #[test]
-    fn joystick_bindings_auto_detection_is_visible_without_enabling_raw_hid() {
-        let mut snapshot = Snapshot::default();
-        let mut settings = Settings::default();
-        assert!(!snapshot.input_enabled(&settings));
-        snapshot.devices.push(device());
-        assert!(snapshot.input_enabled(&settings));
-        assert!(!settings.enabled, "gamepad hotplug does not enable raw HID enumeration");
-        settings.automatic_gamepad = false;
-        assert!(!snapshot.input_enabled(&settings));
-    }
+    fn joystick_profiles_select_and_enable_their_own_device_types() {
+        let raw = Settings {
+            enabled: true,
+            ..Settings::default()
+        };
+        let mut gamepad = Settings::gamepad_defaults();
+        let mut snapshot = Snapshot {
+            devices: vec![device(), Device::new("raw".into(), "Raw joystick".into(), 8)],
+            updated: Some(Instant::now()),
+            ..Default::default()
+        };
+        assert!(!gamepad.enabled);
+        assert_eq!(snapshot.selected_joystick(&raw).map(|device| device.id.as_str()), Some("raw"));
+        assert!(snapshot.selected_gamepad(&gamepad).is_some_and(|device| device.is_gamepad));
 
-    #[test]
-    fn joystick_bindings_resets_and_presets_reclaim_their_inputs() {
-        let defaults = Settings::default();
-        let mut settings = defaults.clone();
-        let device = device();
-        settings.assign_axis(Some(&device), 3, 0);
-        assert!(settings.axis_binding_modified(&defaults, 5, Some(&device)));
-        settings.reset_axis_binding(&defaults, 5, Some(&device));
-        assert_eq!(settings.gamepad_flycam_camera_stick, GamepadStick::Right);
-        assert_eq!(settings.mapping[3], -1, "restoring camera look unbinds conflicting roll");
-        settings.spacemouse();
-        assert_eq!(settings.gamepad_flycam_camera_stick, GamepadStick::Custom);
-        assert_eq!(settings.resolved_axis(&device, true, 5), usize::try_from(settings.mapping[5]).ok());
-        settings.gamepad();
-        assert_eq!(settings.gamepad_flycam_camera_stick, GamepadStick::Right);
-        assert_eq!(settings.resolved_axis(&device, true, 5), Some(0));
+        let mut controller = Controller::default();
+        snapshot.devices[0].axes[0] = 1.0;
+        assert!(
+            !controller
+                .sample_device(snapshot.selected_gamepad(&gamepad), &gamepad, false, false, 0.1)
+                .moving()
+        );
+        gamepad.enabled = true;
+        snapshot.devices[0].axes[0] = 0.0;
+        controller.sample_device(snapshot.selected_gamepad(&gamepad), &gamepad, false, false, 0.1);
+        snapshot.devices[0].axes[0] = 1.0;
+        assert!(
+            controller
+                .sample_device(snapshot.selected_gamepad(&gamepad), &gamepad, false, false, 0.1)
+                .moving()
+        );
+        gamepad.device = "raw".into();
+        assert!(snapshot.selected_gamepad(&gamepad).is_none());
     }
 
     #[test]
     fn joystick_bindings_sensitivity_and_inversion_use_the_shared_gains() {
-        let mut settings = Settings::default();
+        let mut settings = gamepad_settings();
         for channel in [4, 5] {
             settings.avatar.gain[channel] = 1.5;
             settings.flycam.gain[channel] = 1.5;
@@ -790,15 +606,15 @@ mod tests {
     fn joystick_bindings_speedup_is_limited_to_fifty_in_the_motion_path() {
         let settings = Settings {
             gamepad_flycam_speedup_speed: 100.0,
-            ..Default::default()
+            ..gamepad_settings()
         };
         let motion = sample(&settings, true, 6, 1.0);
-        assert_eq!(motion.flycam_speed, Some(50.0 / settings.flycam_speed));
+        assert_eq!(motion.flycam_speed, Some(50.0));
     }
 
     #[test]
     fn joystick_avatar_camera_uses_analog_trigger_pressure_and_releases_cleanly() {
-        let settings = Settings::default();
+        let settings = gamepad_settings();
         let mut snapshot = Snapshot {
             devices: vec![device()],
             updated: Some(Instant::now()),
@@ -835,7 +651,7 @@ mod tests {
 
     #[test]
     fn joystick_avatar_camera_dpad_hat_axes_pan_and_cycle_without_repeating() {
-        let settings = Settings::default();
+        let settings = gamepad_settings();
         let mut device = Device::gamepad(
             "hat".into(),
             "Hat controller".into(),
@@ -864,23 +680,5 @@ mod tests {
         assert_eq!(controller.sample(&snapshot, &settings, true, false, 0.1).avatar_cycle, 0);
         snapshot.devices[0].axes[6] = -1.0;
         assert_eq!(controller.sample(&snapshot, &settings, true, false, 0.1).avatar_cycle, -1);
-    }
-
-    #[test]
-    fn joystick_avatar_camera_defaults_preserve_existing_custom_actions() {
-        let mut settings = Settings::default();
-        let device = device();
-        settings.jump_button = super::super::gamepad_trigger_binding(&device, 1).expect("right trigger");
-        settings.rise_button = super::super::gamepad_dpad_binding(&device, 0).expect("D-pad up");
-        assert!(settings.reconcile_avatar_camera_defaults(&device));
-        assert_eq!(settings.gamepad_avatar_zoom_in_button, -1);
-        assert_eq!(settings.gamepad_avatar_pan_up_button, -1);
-        assert_eq!(settings.gamepad_avatar_zoom_out_button, super::super::AUTO_LEFT_TRIGGER);
-        assert_eq!(
-            settings.gamepad_flycam_speedup_button,
-            super::super::AUTO_RIGHT_TRIGGER,
-            "separate modes reuse inputs"
-        );
-        assert!(!settings.reconcile_avatar_camera_defaults(&device), "normalization is idempotent");
     }
 }

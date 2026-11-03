@@ -403,40 +403,9 @@ fn a_setting_has_one_page() {
         if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
         }
-        // Gamepad is another view of these existing joystick settings.
-        // Keep the exception confined to the two controller preference pages.
-        let shared_controller = |path: &str| {
-            [
-                "joystick.automatic_gamepad",
-                "joystick.avatar",
-                "joystick.flycam",
-                "joystick.gamepad_move_stick",
-                "joystick.gamepad_camera_stick",
-                "joystick.gamepad_flycam_move_stick",
-                "joystick.gamepad_flycam_camera_stick",
-                "joystick.jump_button",
-                "joystick.rise_button",
-                "joystick.fall_button",
-                "joystick.flycam_button",
-                "joystick.flycam_rise_button",
-                "joystick.flycam_fall_button",
-                "joystick.zoom_in_button",
-                "joystick.zoom_out_button",
-                "joystick.zoom_hold_button",
-                "joystick.flycam_speed",
-                "joystick.auto_level",
-            ]
-            .iter()
-            .any(|shared| path == *shared || path.starts_with(&format!("{shared}.")))
-        };
         let elsewhere: Vec<_> = paths
             .iter()
-            .filter(|(other, p)| {
-                let controller_pair = matches!((page, other), (Page::Controls, Page::Gamepad) | (Page::Gamepad, Page::Controls));
-                other != page
-                    && (p == path || p.starts_with(&format!("{path}.")) || path.starts_with(&format!("{p}.")))
-                    && !(controller_pair && shared_controller(path) && shared_controller(p))
-            })
+            .filter(|(other, p)| other != page && (p == path || p.starts_with(&format!("{path}.")) || path.starts_with(&format!("{p}."))))
             .collect();
         assert!(elsewhere.is_empty(), "`{path}` of {page:?} is also on {elsewhere:?}");
     }
@@ -511,11 +480,30 @@ fn a_page_reset_leaves_the_other_pages_alone() {
 }
 
 #[test]
+fn gamepad_and_joystick_preferences_reset_independently() {
+    let mut settings = Settings::default();
+    settings.joystick.enabled = true;
+    settings.joystick.device = "raw-device".into();
+    settings.joystick.avatar.gain[5] = 0.35;
+    settings.gamepad.enabled = true;
+    settings.gamepad.device = "pad-device".into();
+    settings.gamepad.avatar.gain[5] = 7.0;
+    let raw = settings.joystick.clone();
+    let pad = settings.gamepad.clone();
+    reset_page_settings(Page::Controls, &mut settings);
+    assert_eq!(settings.gamepad, pad);
+    settings.joystick = raw.clone();
+    reset_page_settings(Page::Gamepad, &mut settings);
+    assert_eq!(settings.joystick, raw);
+    assert_eq!(settings.gamepad, Settings::default().gamepad);
+}
+
+#[test]
 fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     let mut s = Settings::default();
     s.joystick.enabled = true;
     s.joystick.device = "test-device".into();
-    s.joystick.gamepad();
+    s.joystick.raw_gamepad_preset();
     s.joystick.flycam.gain[3] = 0.7;
     s.joystick.avatar.dead_zone[0] = 0.4;
     s.joystick.auto_level = false;

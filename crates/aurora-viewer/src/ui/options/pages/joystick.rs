@@ -39,7 +39,7 @@ impl ZoomCapture {
         if let Some(button) = self.button.poll(snapshot, settings)? {
             return Ok(Some(button));
         }
-        let device = snapshot.selected(settings).ok_or(())?;
+        let device = snapshot.selected_joystick(settings).ok_or(())?;
         let held = crate::joystick::axis_button_mask(device);
         for (axis, &value) in device.axes.iter().take(device.axis_count.min(crate::joystick::AXES)).enumerate() {
             let pair = 3u16 << (axis * 2);
@@ -83,7 +83,7 @@ impl ButtonCapture {
     /// button at the start of capture is not a new choice.
     fn poll(&self, snapshot: &crate::joystick::Snapshot, settings: &crate::joystick::Settings) -> Result<Option<i8>, ()> {
         let device = snapshot
-            .selected(settings)
+            .selected_joystick(settings)
             .filter(|d| d.id == self.device && snapshot.updated.is_some_and(|at| at.elapsed().as_millis() < 250))
             .ok_or(())?;
         // A reconnected device with the same id can restart its counters.
@@ -122,12 +122,7 @@ fn button(cx: &mut Cx, label: &str, field: F<i8>) {
 fn button_hint(cx: &mut Cx, label: &str, hint: &str, field: F<i8>, capture_axes: bool) {
     use aurora_i18n::tr;
     cx.row_with(label, hint, &field, |ui, s, st, _| {
-        let capture_axes = capture_axes || st.joystick.selected(&s.joystick).is_some_and(|device| device.is_gamepad);
         let mut value = *(field.get)(s);
-        let shown = st
-            .joystick
-            .selected(&s.joystick)
-            .map_or(value, |device| crate::joystick::resolve_binding(device, value));
         let mut changed = false;
         let captured = match st.joystick_capture.as_mut() {
             Some(JoystickCapture::Button(capture)) if capture.path == field.path => {
@@ -154,7 +149,8 @@ fn button_hint(cx: &mut Cx, label: &str, hint: &str, field: F<i8>, capture_axes:
             Some(JoystickCapture::Zoom(capture)) => capture.button.path == field.path,
             _ => false,
         };
-        let available = st.joystick.selected(&s.joystick).is_some() && st.joystick.updated.is_some_and(|at| at.elapsed().as_millis() < 250);
+        let available =
+            st.joystick.selected_joystick(&s.joystick).is_some() && st.joystick.updated.is_some_and(|at| at.elapsed().as_millis() < 250);
         let text = if capturing {
             if capture_axes {
                 tr!("joystick-zoom-press")
@@ -162,23 +158,16 @@ fn button_hint(cx: &mut Cx, label: &str, hint: &str, field: F<i8>, capture_axes:
                 tr!("joystick-button-press")
             }
             .to_owned()
-        } else if shown < 0 {
-            automatic_binding_label(value, effective_gamepad_style(s.joystick.gamepad_style, None))
-                .unwrap_or_else(|| tr!("joystick-button-assign").to_owned())
-        } else if let Some(label) = st
-            .joystick
-            .selected(&s.joystick)
-            .and_then(|device| connected_binding_label(device, s.joystick.gamepad_style, shown))
-        {
-            label
-        } else if capture_axes && let Some((axis, positive)) = crate::joystick::button_axis(shown) {
+        } else if value < 0 {
+            tr!("joystick-button-assign").to_owned()
+        } else if capture_axes && let Some((axis, positive)) = crate::joystick::button_axis(value) {
             tr!(
                 "joystick-axis-button-value",
                 axis = axis,
                 direction = if positive { "+" } else { "−" }
             )
         } else {
-            tr!("joystick-button-value", button = shown + 1)
+            tr!("joystick-button-value", button = value)
         };
         ui.horizontal(|ui| {
             if ui
@@ -186,7 +175,7 @@ fn button_hint(cx: &mut Cx, label: &str, hint: &str, field: F<i8>, capture_axes:
                 .clicked()
             {
                 st.cancel_capture();
-                if !capturing && let Some(device) = st.joystick.selected(&s.joystick) {
+                if !capturing && let Some(device) = st.joystick.selected_joystick(&s.joystick) {
                     let button = ButtonCapture::new(field.path, device);
                     st.joystick_capture = Some(if capture_axes && device.axis_count > 0 {
                         JoystickCapture::Zoom(ZoomCapture {
@@ -201,7 +190,7 @@ fn button_hint(cx: &mut Cx, label: &str, hint: &str, field: F<i8>, capture_axes:
             }
             if ui
                 .add_enabled(
-                    capturing || value != -1,
+                    capturing || value >= 0,
                     egui::Button::new(if capturing { tr!("common-cancel") } else { tr!("common-none") }),
                 )
                 .clicked()
@@ -213,9 +202,7 @@ fn button_hint(cx: &mut Cx, label: &str, hint: &str, field: F<i8>, capture_axes:
                 }
             }
         });
-        if changed {
-            s.joystick.bind_button(field.path, value, st.joystick.selected(&s.joystick));
-        }
+        *(field.get_mut)(s) = value;
         changed
     });
 }
@@ -238,7 +225,7 @@ fn axis_binding(
     };
     match captured {
         Some(Ok(Some(axis))) => {
-            settings.assign_axis(st.joystick.selected(settings), channel, axis);
+            settings.mapping[channel] = axis;
             if channel == 6 && settings.flycam.gain[channel] == 0.0 {
                 // Explicitly assigning zoom should produce a usable lens
                 // control, rather than retain the inactive preset's zero gain.
@@ -251,28 +238,14 @@ fn axis_binding(
         _ => {}
     }
     let capturing = matches!(&st.joystick_capture, Some(JoystickCapture::Axis(capture)) if capture.channel == channel);
-    let available = st.joystick.selected(settings).is_some_and(|device| device.axis_count != 0)
+    let available = st.joystick.selected_joystick(settings).is_some_and(|device| device.axis_count != 0)
         && st.joystick.updated.is_some_and(|at| at.elapsed().as_millis() < 250);
-    let device = st.joystick.selected(settings);
-    let camera_axis = device.map_or_else(
-        || usize::try_from(settings.mapping[channel]).ok(),
-        |d| settings.resolved_axis(d, true, channel),
-    );
-    let avatar_axis = device.map_or(camera_axis, |d| settings.resolved_axis(d, false, channel));
-    let axis_label =
-        |axis: Option<usize>| axis.map_or_else(|| tr!("common-none").to_owned(), |axis| tr!("joystick-axis-value", axis = axis));
     let text = if capturing {
         tr!("joystick-axis-move").to_owned()
-    } else if !matches!(channel, 3 | 6) && camera_axis != avatar_axis {
-        tr!(
-            "joystick-axis-mode-values",
-            avatar = axis_label(avatar_axis),
-            camera = axis_label(camera_axis)
-        )
-    } else if camera_axis.is_none() {
+    } else if settings.mapping[channel] < 0 {
         tr!("joystick-button-assign").to_owned()
     } else {
-        axis_label(camera_axis)
+        tr!("joystick-axis-value", axis = settings.mapping[channel])
     };
     ui.horizontal(|ui| {
         if ui
@@ -280,20 +253,20 @@ fn axis_binding(
             .clicked()
         {
             st.cancel_capture();
-            if !capturing && let Some(device) = st.joystick.selected(settings) {
+            if !capturing && let Some(device) = st.joystick.selected_joystick(settings) {
                 st.joystick_capture = Some(JoystickCapture::Axis(AxisCapture::new(channel, device)));
             }
         }
         if ui
             .add_enabled(
-                capturing || camera_axis.is_some() || avatar_axis.is_some(),
+                capturing || settings.mapping[channel] >= 0,
                 egui::Button::new(if capturing { tr!("common-cancel") } else { tr!("common-none") }),
             )
             .clicked()
         {
             st.cancel_capture();
             if !capturing {
-                settings.assign_axis(st.joystick.selected(settings), channel, -1);
+                settings.mapping[channel] = -1;
                 changed = true;
             }
         }
@@ -385,26 +358,8 @@ fn axis_controls(
     changed
 }
 
-type BindingDevice = (bool, usize, [[Option<usize>; 2]; 2], [Option<usize>; 2], [Option<usize>; 2]);
-
-fn bindings_device(native: Option<BindingDevice>) -> Option<crate::joystick::Device> {
-    native.map(|(gamepad, count, sticks, triggers, dpad)| {
-        let mut device = crate::joystick::Device::new(String::new(), String::new(), count);
-        device.is_gamepad = gamepad;
-        device.gamepad_sticks = sticks;
-        device.gamepad_triggers = triggers;
-        device.gamepad_dpad = dpad;
-        device
-    })
-}
-
 fn axis_row(cx: &mut Cx, n: usize, label: &str, hint: &str) {
     let p = cx.p;
-    let native = cx
-        .st
-        .joystick
-        .selected(&cx.s.joystick)
-        .map(|d| (d.is_gamepad, d.axis_count, d.gamepad_sticks, d.gamepad_triggers, d.gamepad_dpad));
     let paths = [
         "joystick.mapping[0]",
         "joystick.mapping[1]",
@@ -418,7 +373,7 @@ fn axis_row(cx: &mut Cx, n: usize, label: &str, hint: &str) {
         path: paths[n],
         modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
             let (s, d) = (&s.joystick, &d.joystick);
-            s.axis_binding_modified(d, n, bindings_device(native).as_ref())
+            s.mapping[n] != d.mapping[n]
                 || s.axis_inverted(n) != d.axis_inverted(n)
                 || s.avatar.gain[n] != d.avatar.gain[n]
                 || s.flycam.gain[n] != d.flycam.gain[n]
@@ -427,7 +382,7 @@ fn axis_row(cx: &mut Cx, n: usize, label: &str, hint: &str) {
         },
         reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
             let (s, d) = (&mut s.joystick, &d.joystick);
-            s.reset_axis_binding(d, n, bindings_device(native).as_ref());
+            s.mapping[n] = d.mapping[n];
             s.avatar.gain[n] = d.avatar.gain[n];
             s.flycam.gain[n] = d.flycam.gain[n];
             s.avatar.dead_zone[n] = d.avatar.dead_zone[n];
@@ -514,60 +469,13 @@ pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
     cx.group(tr!("joystick-title"), |cx| {
-        cx.row_with(
-            tr!("joystick-enabled"),
-            tr!("joystick-enable-hint"),
-            &Many(&[&field!(joystick.enabled), &field!(joystick.automatic_gamepad)]),
-            |ui, s, st, _| {
-                let gamepad = st.joystick.selected_gamepad(&s.joystick).is_some();
-                let mut enabled = st.joystick.input_enabled(&s.joystick);
-                let changed = widgets::switch(ui, &p, &mut enabled).changed();
-                if changed {
-                    if !enabled {
-                        s.joystick.enabled = false;
-                        s.joystick.automatic_gamepad = false;
-                    } else if gamepad {
-                        s.joystick.automatic_gamepad = true;
-                    } else {
-                        s.joystick.enabled = true;
-                    }
-                }
-                changed
-            },
-        );
-        cx.row_with(tr!("joystick-device"), "", &field!(joystick.device), |ui, s, st, _| {
-            let name = if s.joystick.device.is_empty() {
-                tr!("joystick-first-device")
-            } else {
-                st.joystick
-                    .selected(&s.joystick)
-                    .map_or(tr!("joystick-disconnected"), |d| d.name.as_str())
-            };
-            let mut changed = false;
-            egui::ComboBox::from_id_salt("joystick-device")
-                .selected_text(name)
-                .show_ui(ui, |ui| {
-                    changed |= ui
-                        .selectable_value(&mut s.joystick.device, String::new(), tr!("joystick-first-device"))
-                        .changed();
-                    for d in &st.joystick.devices {
-                        changed |= ui.selectable_value(&mut s.joystick.device, d.id.clone(), &d.name).changed();
-                    }
-                });
-            if changed && let Some(device) = st.joystick.selected(&s.joystick) {
-                if device.is_gamepad {
-                    s.joystick.automatic_gamepad = true;
-                } else {
-                    s.joystick.enabled = true;
-                }
-            }
-            changed
-        });
+        cx.toggle(tr!("joystick-enabled"), tr!("joystick-enable-hint"), &field!(joystick.enabled));
+        device_dropdown(cx, false);
         cx.row_with(tr!("joystick-monitor"), tr!("joystick-center-hint"), &Nothing, |ui, s, st, _| {
             ui.vertical(|ui| {
                 ui.set_width(210.0);
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                if let Some(d) = st.joystick.selected(&s.joystick) {
+                if let Some(d) = st.joystick.selected_joystick(&s.joystick) {
                     for (row, pair) in d.axes[..d.axis_count].chunks(2).enumerate() {
                         let values = pair
                             .iter()
@@ -579,7 +487,7 @@ pub fn page(cx: &mut Cx) {
                     }
                     let buttons = (0..32)
                         .filter(|n| d.buttons & (1 << n) != 0)
-                        .map(|n| (n + 1).to_string())
+                        .map(|n| n.to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
                     ui.label(tr!(
@@ -602,35 +510,16 @@ pub fn page(cx: &mut Cx) {
         cx.row(
             tr!("joystick-preset"),
             tr!("joystick-preset-hint"),
-            &Many(&[
-                &field!(joystick.mapping),
-                &field!(joystick.avatar),
-                &field!(joystick.flycam),
-                &field!(joystick.gamepad_move_stick),
-                &field!(joystick.gamepad_camera_stick),
-                &field!(joystick.gamepad_flycam_move_stick),
-                &field!(joystick.gamepad_flycam_camera_stick),
-                &field!(joystick.rise_button),
-                &field!(joystick.fall_button),
-                &field!(joystick.flycam_rise_button),
-                &field!(joystick.flycam_fall_button),
-            ]),
+            &Many(&[&field!(joystick.mapping), &field!(joystick.avatar), &field!(joystick.flycam)]),
             |ui, s| {
                 let mut changed = false;
                 ui.horizontal(|ui| {
                     if widgets::flat_button(ui, &p, tr!("joystick-gamepad")).clicked() {
-                        s.joystick.gamepad();
+                        s.joystick.raw_gamepad_preset();
                         changed = true;
                     }
                     if widgets::flat_button(ui, &p, tr!("joystick-spacemouse")).clicked() {
-                        let mut d = crate::joystick::Settings::default();
-                        d.spacemouse();
-                        s.joystick.gamepad_move_stick = d.gamepad_move_stick;
-                        s.joystick.gamepad_camera_stick = d.gamepad_camera_stick;
-                        s.joystick.gamepad_flycam_move_stick = d.gamepad_flycam_move_stick;
-                        s.joystick.gamepad_flycam_camera_stick = d.gamepad_flycam_camera_stick;
-                        s.joystick.flycam_rise_button = d.flycam_rise_button;
-                        s.joystick.flycam_fall_button = d.flycam_fall_button;
+                        let d = crate::joystick::Settings::default();
                         s.joystick.mapping = d.mapping;
                         s.joystick.avatar = d.avatar;
                         s.joystick.flycam = d.flycam;
@@ -645,9 +534,7 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("joystick-avatar-enabled"), "", &field!(joystick.avatar_enabled));
         cx.toggle(tr!("joystick-flycam-enabled"), "", &field!(joystick.flycam_enabled));
         cx.row_with(tr!("joystick-flycam"), tr!("joystick-flycam-hint"), &Nothing, |ui, s, st, r| {
-            let available = s.joystick.flycam_enabled
-                && (s.joystick.enabled || (s.joystick.automatic_gamepad && st.joystick.selected_gamepad(&s.joystick).is_some()))
-                && st.joystick.selected(&s.joystick).is_some();
+            let available = s.joystick.enabled && s.joystick.flycam_enabled && st.joystick.selected_joystick(&s.joystick).is_some();
             if ui
                 .add_enabled(
                     available,
@@ -689,13 +576,6 @@ pub fn page(cx: &mut Cx) {
             0.0..=32.0,
             "",
         );
-        cx.slider(
-            tr!("joystick-flycam-travel-speed"),
-            tr!("joystick-flycam-travel-speed-hint"),
-            &field!(joystick.flycam_speed),
-            0.1..=5.0,
-            "×",
-        );
         cx.toggle(tr!("joystick-auto-level"), "", &field!(joystick.auto_level));
     });
     cx.group(tr!("joystick-axes"), |cx| {
@@ -712,6 +592,53 @@ pub fn page(cx: &mut Cx) {
         }
     });
     zoom_settings(cx);
+}
+
+fn device_dropdown(cx: &mut Cx, gamepad: bool) {
+    use aurora_i18n::tr;
+    let (label, field) = if gamepad {
+        (tr!("joystick-input-gamepad"), field!(gamepad.device))
+    } else {
+        (tr!("joystick-device"), field!(joystick.device))
+    };
+    cx.row_with(label, "", &field, |ui, s, st, _| {
+        let profile = if gamepad { &mut s.gamepad } else { &mut s.joystick };
+        let selected = if gamepad {
+            st.joystick.selected_gamepad(profile)
+        } else {
+            st.joystick.selected_joystick(profile)
+        };
+        let name = if profile.device.is_empty() {
+            tr!("joystick-first-device")
+        } else {
+            selected.map_or(tr!("joystick-disconnected"), |d| d.name.as_str())
+        };
+        let mut changed = false;
+        egui::ComboBox::from_id_salt("joystick-device")
+            .selected_text(name)
+            .show_ui(ui, |ui| {
+                changed |= ui
+                    .selectable_value(&mut profile.device, String::new(), tr!("joystick-first-device"))
+                    .changed();
+                for d in st.joystick.devices.iter().filter(|device| device.is_gamepad == gamepad) {
+                    changed |= ui.selectable_value(&mut profile.device, d.id.clone(), &d.name).changed();
+                }
+            });
+        changed
+    });
+}
+
+type BindingDevice = (bool, usize, [[Option<usize>; 2]; 2], [Option<usize>; 2], [Option<usize>; 2]);
+
+fn bindings_device(native: Option<BindingDevice>) -> Option<crate::joystick::Device> {
+    native.map(|(gamepad, count, sticks, triggers, dpad)| {
+        let mut device = crate::joystick::Device::new(String::new(), String::new(), count);
+        device.is_gamepad = gamepad;
+        device.gamepad_sticks = sticks;
+        device.gamepad_triggers = triggers;
+        device.gamepad_dpad = dpad;
+        device
+    })
 }
 
 fn effective_gamepad_style(
@@ -804,33 +731,6 @@ fn automatic_binding_label(binding: i8, style: crate::joystick::GamepadStyle) ->
     )
 }
 
-fn connected_binding_label(device: &crate::joystick::Device, style: crate::joystick::GamepadStyle, binding: i8) -> Option<String> {
-    use aurora_i18n::tr;
-    if !device.is_gamepad {
-        return None;
-    }
-    let style = effective_gamepad_style(style, Some(device));
-    if let Some((axis, _)) = crate::joystick::button_axis(binding) {
-        if let Some(direction) = (0..4).find(|direction| crate::joystick::gamepad_dpad_binding(device, *direction) == Some(binding)) {
-            return Some(dpad_label(direction).to_owned());
-        }
-        let side = device.gamepad_triggers.iter().position(|candidate| *candidate == Some(axis))?;
-        return Some(
-            match (side, style) {
-                (0, crate::joystick::GamepadStyle::Xbox) => tr!("joystick-button-left-trigger-xbox"),
-                (1, crate::joystick::GamepadStyle::Xbox) => tr!("joystick-button-right-trigger-xbox"),
-                (0, crate::joystick::GamepadStyle::Playstation) => tr!("joystick-button-left-trigger-playstation"),
-                (1, crate::joystick::GamepadStyle::Playstation) => tr!("joystick-button-right-trigger-playstation"),
-                (0, _) => tr!("joystick-button-left-trigger"),
-                _ => tr!("joystick-button-right-trigger"),
-            }
-            .to_owned(),
-        );
-    }
-    let index = usize::try_from(binding).ok()?;
-    Some(gamepad_button_label(*device.gamepad_buttons.get(index)?, index, style))
-}
-
 fn gamepad_button_binding(cx: &mut Cx, label: &str, field: F<i8>) {
     gamepad_button_binding_with_fallback(cx, label, field, None);
 }
@@ -839,8 +739,8 @@ fn gamepad_button_binding_with_fallback(cx: &mut Cx, label: &str, field: F<i8>, 
     use aurora_i18n::tr;
     let hint = tr!("joystick-control-mapping-hint");
     cx.row_with(label, hint, &field, |ui, s, st, _| {
-        let device = st.joystick.selected_gamepad(&s.joystick);
-        let style = effective_gamepad_style(s.joystick.gamepad_style, device);
+        let device = st.joystick.selected_gamepad(&s.gamepad);
+        let style = effective_gamepad_style(s.gamepad.gamepad_style, device);
         let buttons = device.map_or_else(
             || crate::joystick::GamepadButton::STANDARD.to_vec(),
             |device| device.gamepad_buttons.clone(),
@@ -897,7 +797,7 @@ fn gamepad_button_binding_with_fallback(cx: &mut Cx, label: &str, field: F<i8>, 
             }
         });
         if changed {
-            s.joystick.bind_button(field.path, value, device);
+            s.gamepad.bind_button(field.path, value, device);
         }
         changed
     });
@@ -906,16 +806,16 @@ fn gamepad_button_binding_with_fallback(cx: &mut Cx, label: &str, field: F<i8>, 
 fn gamepad_stick_binding(cx: &mut Cx, label: &str, field: F<crate::joystick::GamepadStick>) {
     use crate::joystick::GamepadStick as S;
     use aurora_i18n::tr;
-    let first_person = field.path.starts_with("joystick.first_person.");
+    let first_person = field.path.starts_with("gamepad.first_person.");
     let (flycam, camera) = match field.path {
-        "joystick.first_person.move_stick" => (false, false),
-        "joystick.first_person.camera_stick" => (false, true),
-        "joystick.gamepad_move_stick" => (false, false),
-        "joystick.gamepad_camera_stick" => (false, true),
-        "joystick.gamepad_flycam_move_stick" => (true, false),
+        "gamepad.first_person.move_stick" => (false, false),
+        "gamepad.first_person.camera_stick" => (false, true),
+        "gamepad.gamepad_move_stick" => (false, false),
+        "gamepad.gamepad_camera_stick" => (false, true),
+        "gamepad.gamepad_flycam_move_stick" => (true, false),
         _ => (true, true),
     };
-    let native = cx.st.joystick.selected_gamepad(&cx.s.joystick).map(|device| {
+    let native = cx.st.joystick.selected_gamepad(&cx.s.gamepad).map(|device| {
         (
             device.is_gamepad,
             device.axis_count,
@@ -931,9 +831,9 @@ fn gamepad_stick_binding(cx: &mut Cx, label: &str, field: F<crate::joystick::Gam
         reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
             let device = bindings_device(native);
             if first_person {
-                s.joystick.set_first_person_stick(device.as_ref(), camera, *get(d));
+                s.gamepad.set_first_person_stick(device.as_ref(), camera, *get(d));
             } else {
-                s.joystick.set_stick(device.as_ref(), flycam, camera, *get(d));
+                s.gamepad.set_stick(device.as_ref(), flycam, camera, *get(d));
             }
         },
     };
@@ -957,11 +857,11 @@ fn gamepad_stick_binding(cx: &mut Cx, label: &str, field: F<crate::joystick::Gam
                 }
             });
         if changed {
-            let device = st.joystick.selected_gamepad(&s.joystick);
+            let device = st.joystick.selected_gamepad(&s.gamepad);
             if first_person {
-                s.joystick.set_first_person_stick(device, camera, value);
+                s.gamepad.set_first_person_stick(device, camera, value);
             } else {
-                s.joystick.set_stick(device, flycam, camera, value);
+                s.gamepad.set_stick(device, flycam, camera, value);
             }
         }
         changed
@@ -1005,24 +905,24 @@ fn set_camera_inverted(s: &mut crate::joystick::Settings, mode: usize, channel: 
 fn gamepad_camera_gain(cx: &mut Cx, mode: usize, channel: usize) {
     use aurora_i18n::tr;
     let path = match (mode, channel) {
-        (2, 4) => "joystick.first_person.tuning.gain[4]",
-        (2, _) => "joystick.first_person.tuning.gain[5]",
-        (0, 4) => "joystick.avatar.gain[4]",
-        (0, _) => "joystick.avatar.gain[5]",
-        (1, 4) => "joystick.flycam.gain[4]",
-        _ => "joystick.flycam.gain[5]",
+        (2, 4) => "gamepad.first_person.tuning.gain[4]",
+        (2, _) => "gamepad.first_person.tuning.gain[5]",
+        (0, 4) => "gamepad.avatar.gain[4]",
+        (0, _) => "gamepad.avatar.gain[5]",
+        (1, 4) => "gamepad.flycam.gain[4]",
+        _ => "gamepad.flycam.gain[5]",
     };
     let track = Custom {
         path,
         modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
-            let s = camera_tuning(&s.joystick, mode);
-            let d = camera_tuning(&d.joystick, mode);
+            let s = camera_tuning(&s.gamepad, mode);
+            let d = camera_tuning(&d.gamepad, mode);
             s.gain[channel].abs() != d.gain[channel].abs()
         },
         reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
-            let sign = if camera_inverted(&s.joystick, mode, channel) { -1.0 } else { 1.0 };
-            let defaults = camera_tuning(&d.joystick, mode);
-            let tuning = camera_tuning_mut(&mut s.joystick, mode);
+            let sign = if camera_inverted(&s.gamepad, mode, channel) { -1.0 } else { 1.0 };
+            let defaults = camera_tuning(&d.gamepad, mode);
+            let tuning = camera_tuning_mut(&mut s.gamepad, mode);
             tuning.gain[channel] = defaults.gain[channel].abs() * sign;
         },
     };
@@ -1035,12 +935,12 @@ fn gamepad_camera_gain(cx: &mut Cx, mode: usize, channel: usize) {
         if mode == 2 {
             tr!("joystick-first-person-sensitivity-hint")
         } else {
-            tr!("joystick-camera-shared-sensitivity-hint")
+            tr!("joystick-gamepad-sensitivity-hint")
         },
         &track,
         |ui, s| {
-            let sign = if camera_inverted(&s.joystick, mode, channel) { -1.0 } else { 1.0 };
-            let tuning = camera_tuning_mut(&mut s.joystick, mode);
+            let sign = if camera_inverted(&s.gamepad, mode, channel) { -1.0 } else { 1.0 };
+            let tuning = camera_tuning_mut(&mut s.gamepad, mode);
             let mut gain = tuning.gain[channel].abs();
             let changed = super::super::slider(ui, &mut gain, 0.0..=20.0, "");
             if changed {
@@ -1056,19 +956,19 @@ fn gamepad_camera_inversion(cx: &mut Cx, mode: usize, channel: usize) {
     let palette = cx.p;
     let track = Custom {
         path: if mode == 2 && channel == 4 {
-            "joystick.first_person.vertical_inverted"
+            "gamepad.first_person.vertical_inverted"
         } else if mode == 2 {
-            "joystick.first_person.horizontal_inverted"
+            "gamepad.first_person.horizontal_inverted"
         } else if channel == 4 {
-            "joystick.camera_vertical_inverted"
+            "gamepad.camera_vertical_inverted"
         } else {
-            "joystick.camera_horizontal_inverted"
+            "gamepad.camera_horizontal_inverted"
         },
         modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
-            camera_inverted(&s.joystick, mode, channel) != camera_inverted(&d.joystick, mode, channel)
+            camera_inverted(&s.gamepad, mode, channel) != camera_inverted(&d.gamepad, mode, channel)
         },
         reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
-            set_camera_inverted(&mut s.joystick, mode, channel, camera_inverted(&d.joystick, mode, channel))
+            set_camera_inverted(&mut s.gamepad, mode, channel, camera_inverted(&d.gamepad, mode, channel))
         },
     };
     cx.row(
@@ -1084,10 +984,10 @@ fn gamepad_camera_inversion(cx: &mut Cx, mode: usize, channel: usize) {
         },
         &track,
         |ui, s| {
-            let mut inverted = camera_inverted(&s.joystick, mode, channel);
+            let mut inverted = camera_inverted(&s.gamepad, mode, channel);
             let changed = widgets::switch(ui, &palette, &mut inverted).changed();
             if changed {
-                set_camera_inverted(&mut s.joystick, mode, channel, inverted);
+                set_camera_inverted(&mut s.gamepad, mode, channel, inverted);
             }
             changed
         },
@@ -1097,10 +997,10 @@ fn gamepad_camera_inversion(cx: &mut Cx, mode: usize, channel: usize) {
 fn gamepad_style_selector(cx: &mut Cx) {
     use aurora_i18n::tr;
     let palette = cx.p;
-    let field = field!(joystick.gamepad_style);
+    let field = field!(gamepad.gamepad_style);
     cx.row_with(tr!("joystick-controller-style"), "", &field, |ui, s, st, _| {
-        let detected = st.joystick.selected_gamepad(&s.joystick);
-        let mut value = effective_gamepad_style(s.joystick.gamepad_style, detected);
+        let detected = st.joystick.selected_gamepad(&s.gamepad);
+        let mut value = effective_gamepad_style(s.gamepad.gamepad_style, detected);
         let mut changed = false;
         ui.horizontal(|ui| {
             for (style, label) in [
@@ -1112,7 +1012,7 @@ fn gamepad_style_selector(cx: &mut Cx) {
             }
         });
         if changed {
-            s.joystick.gamepad_style = value;
+            s.gamepad.gamepad_style = value;
         }
         changed
     });
@@ -1121,10 +1021,11 @@ fn gamepad_style_selector(cx: &mut Cx) {
 pub fn gamepad_page(cx: &mut Cx, tab: usize) {
     use aurora_i18n::tr;
     if tab == 0 {
+        device_dropdown(cx, true);
         cx.toggle(
-            tr!("joystick-auto-gamepad"),
-            tr!("joystick-auto-gamepad-hint"),
-            &field!(joystick.automatic_gamepad),
+            tr!("joystick-enable-gamepad"),
+            tr!("joystick-enable-gamepad-hint"),
+            &field!(gamepad.enabled),
         );
         cx.group(tr!("joystick-avatar-mode"), |cx| {
             gamepad_camera_gain(cx, 0, 5);
@@ -1144,98 +1045,97 @@ pub fn gamepad_page(cx: &mut Cx, tab: usize) {
             cx.slider(
                 tr!("joystick-flycam-travel-speed"),
                 tr!("joystick-flycam-travel-speed-hint"),
-                &field!(joystick.flycam_speed),
+                &field!(gamepad.flycam_speed),
                 0.1..=5.0,
                 "×",
             );
             cx.slider(
                 tr!("joystick-gamepad-flycam-slowdown-speed"),
                 tr!("joystick-gamepad-flycam-speed-hint"),
-                &field!(joystick.gamepad_flycam_slowdown_speed),
+                &field!(gamepad.gamepad_flycam_slowdown_speed),
                 0.05..=1.0,
                 "×",
             );
             cx.slider(
                 tr!("joystick-gamepad-flycam-speedup-speed"),
                 tr!("joystick-gamepad-flycam-speed-hint"),
-                &field!(joystick.gamepad_flycam_speedup_speed),
+                &field!(gamepad.gamepad_flycam_speedup_speed),
                 1.0..=50.0,
                 "×",
             );
             cx.toggle(
                 tr!("joystick-auto-level"),
                 tr!("joystick-auto-level-hint"),
-                &field!(joystick.auto_level),
+                &field!(gamepad.auto_level),
             );
         });
     } else {
         gamepad_style_selector(cx);
         cx.group(tr!("joystick-avatar-mode"), |cx| {
-            gamepad_stick_binding(cx, tr!("joystick-control-move-avatar"), field!(joystick.gamepad_move_stick));
-            gamepad_stick_binding(cx, tr!("joystick-control-move-camera"), field!(joystick.gamepad_camera_stick));
-            gamepad_button_binding(cx, tr!("joystick-control-jump"), field!(joystick.jump_button));
-            gamepad_button_binding(cx, tr!("joystick-control-fly-up"), field!(joystick.rise_button));
-            gamepad_button_binding(cx, tr!("joystick-control-fly-down"), field!(joystick.fall_button));
-            gamepad_button_binding(cx, tr!("joystick-control-flycam"), field!(joystick.flycam_button));
-            gamepad_button_binding(cx, tr!("joystick-avatar-zoom-in"), field!(joystick.gamepad_avatar_zoom_in_button));
-            gamepad_button_binding(cx, tr!("joystick-avatar-zoom-out"), field!(joystick.gamepad_avatar_zoom_out_button));
-            gamepad_button_binding(cx, tr!("joystick-avatar-pan-up"), field!(joystick.gamepad_avatar_pan_up_button));
-            gamepad_button_binding(cx, tr!("joystick-avatar-pan-down"), field!(joystick.gamepad_avatar_pan_down_button));
-            gamepad_button_binding(cx, tr!("joystick-avatar-next"), field!(joystick.gamepad_avatar_next_button));
-            gamepad_button_binding(cx, tr!("joystick-avatar-previous"), field!(joystick.gamepad_avatar_previous_button));
+            gamepad_stick_binding(cx, tr!("joystick-control-move-avatar"), field!(gamepad.gamepad_move_stick));
+            gamepad_stick_binding(cx, tr!("joystick-control-move-camera"), field!(gamepad.gamepad_camera_stick));
+            gamepad_button_binding(cx, tr!("joystick-control-jump"), field!(gamepad.jump_button));
+            gamepad_button_binding(cx, tr!("joystick-control-fly-up"), field!(gamepad.rise_button));
+            gamepad_button_binding(cx, tr!("joystick-control-fly-down"), field!(gamepad.fall_button));
+            gamepad_button_binding(cx, tr!("joystick-control-flycam"), field!(gamepad.flycam_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-zoom-in"), field!(gamepad.gamepad_avatar_zoom_in_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-zoom-out"), field!(gamepad.gamepad_avatar_zoom_out_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-pan-up"), field!(gamepad.gamepad_avatar_pan_up_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-pan-down"), field!(gamepad.gamepad_avatar_pan_down_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-next"), field!(gamepad.gamepad_avatar_next_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-previous"), field!(gamepad.gamepad_avatar_previous_button));
         });
         cx.group(tr!("joystick-first-person-mode"), |cx| {
-            gamepad_stick_binding(cx, tr!("joystick-control-move-avatar"), field!(joystick.first_person.move_stick));
-            gamepad_stick_binding(cx, tr!("joystick-control-move-camera"), field!(joystick.first_person.camera_stick));
-            gamepad_button_binding(cx, tr!("joystick-control-jump"), field!(joystick.first_person.jump_button));
-            gamepad_button_binding(cx, tr!("joystick-control-fly-up"), field!(joystick.first_person.rise_button));
-            gamepad_button_binding(cx, tr!("joystick-control-fly-down"), field!(joystick.first_person.fall_button));
+            gamepad_stick_binding(cx, tr!("joystick-control-move-avatar"), field!(gamepad.first_person.move_stick));
+            gamepad_stick_binding(cx, tr!("joystick-control-move-camera"), field!(gamepad.first_person.camera_stick));
+            gamepad_button_binding(cx, tr!("joystick-control-jump"), field!(gamepad.first_person.jump_button));
+            gamepad_button_binding(cx, tr!("joystick-control-fly-up"), field!(gamepad.first_person.rise_button));
+            gamepad_button_binding(cx, tr!("joystick-control-fly-down"), field!(gamepad.first_person.fall_button));
             gamepad_button_binding_with_fallback(
                 cx,
                 tr!("joystick-control-flycam"),
-                field!(joystick.first_person.view_button),
-                Some(field!(joystick.flycam_button)),
+                field!(gamepad.first_person.view_button),
+                Some(field!(gamepad.flycam_button)),
             );
-            gamepad_button_binding(cx, tr!("joystick-avatar-zoom-in"), field!(joystick.first_person.zoom_in_button));
-            gamepad_button_binding(cx, tr!("joystick-avatar-zoom-out"), field!(joystick.first_person.zoom_out_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-zoom-in"), field!(gamepad.first_person.zoom_in_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-zoom-out"), field!(gamepad.first_person.zoom_out_button));
         });
         cx.group(tr!("joystick-flycam-section"), |cx| {
-            gamepad_stick_binding(cx, tr!("joystick-control-flycam-move"), field!(joystick.gamepad_flycam_move_stick));
+            gamepad_stick_binding(cx, tr!("joystick-control-flycam-move"), field!(gamepad.gamepad_flycam_move_stick));
             gamepad_stick_binding(
                 cx,
                 tr!("joystick-control-flycam-camera"),
-                field!(joystick.gamepad_flycam_camera_stick),
+                field!(gamepad.gamepad_flycam_camera_stick),
             );
             gamepad_button_binding_with_fallback(
                 cx,
                 tr!("joystick-control-flycam"),
-                field!(joystick.gamepad_flycam_view_button),
-                Some(field!(joystick.flycam_button)),
+                field!(gamepad.gamepad_flycam_view_button),
+                Some(field!(gamepad.flycam_button)),
             );
             gamepad_button_binding_with_fallback(
                 cx,
                 tr!("joystick-control-flycam-up"),
-                field!(joystick.flycam_rise_button),
-                Some(field!(joystick.rise_button)),
+                field!(gamepad.flycam_rise_button),
+                Some(field!(gamepad.rise_button)),
             );
             gamepad_button_binding_with_fallback(
                 cx,
                 tr!("joystick-control-flycam-down"),
-                field!(joystick.flycam_fall_button),
-                Some(field!(joystick.fall_button)),
+                field!(gamepad.flycam_fall_button),
+                Some(field!(gamepad.fall_button)),
             );
-            gamepad_button_binding(cx, tr!("joystick-zoom-in-button"), field!(joystick.zoom_in_button));
-            gamepad_button_binding(cx, tr!("joystick-zoom-out-button"), field!(joystick.zoom_out_button));
-            gamepad_button_binding(cx, tr!("joystick-zoom-hold-button"), field!(joystick.zoom_hold_button));
+            gamepad_button_binding(cx, tr!("joystick-zoom-in-button"), field!(gamepad.zoom_in_button));
+            gamepad_button_binding(cx, tr!("joystick-zoom-out-button"), field!(gamepad.zoom_out_button));
             gamepad_button_binding(
                 cx,
                 tr!("joystick-control-travel-slowdown"),
-                field!(joystick.gamepad_flycam_slowdown_button),
+                field!(gamepad.gamepad_flycam_slowdown_button),
             );
             gamepad_button_binding(
                 cx,
                 tr!("joystick-control-travel-speedup"),
-                field!(joystick.gamepad_flycam_speedup_button),
+                field!(gamepad.gamepad_flycam_speedup_button),
             );
         });
     }
@@ -1363,14 +1263,14 @@ mod tests {
                 gamepad_button_binding_with_fallback(
                     &mut cx,
                     "First person",
-                    field!(joystick.first_person.view_button),
-                    Some(field!(joystick.flycam_button)),
+                    field!(gamepad.first_person.view_button),
+                    Some(field!(gamepad.flycam_button)),
                 );
                 gamepad_button_binding_with_fallback(
                     &mut cx,
                     "Flycam",
-                    field!(joystick.gamepad_flycam_view_button),
-                    Some(field!(joystick.flycam_button)),
+                    field!(gamepad.gamepad_flycam_view_button),
+                    Some(field!(gamepad.flycam_button)),
                 );
             });
         }
@@ -1738,10 +1638,7 @@ mod tests {
             texts = frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
         }
         for button in [8i8, 9, 31] {
-            let label = tr!(
-                "joystick-button-value",
-                button = crate::joystick::resolve_binding(&state.joystick.devices[0], settings.joystick.flycam_button) + 1
-            );
+            let label = tr!("joystick-button-value", button = settings.joystick.flycam_button);
             click(&mut frames, &mut settings, &mut state, &texts, &label);
             assert!(state.joystick_capturing());
             frame(&mut frames, &mut settings, &mut state, Vec::new());
@@ -1754,10 +1651,7 @@ mod tests {
             assert_eq!(settings.joystick.flycam_button, button);
             assert!(!state.joystick_capturing());
         }
-        let label = tr!(
-            "joystick-button-value",
-            button = crate::joystick::resolve_binding(&state.joystick.devices[0], settings.joystick.flycam_button) + 1
-        );
+        let label = tr!("joystick-button-value", button = settings.joystick.flycam_button);
         texts = click(&mut frames, &mut settings, &mut state, &texts, &label);
         texts = click(&mut frames, &mut settings, &mut state, &texts, tr!("common-cancel"));
         assert_eq!(settings.joystick.flycam_button, 31);

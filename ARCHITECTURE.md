@@ -3292,10 +3292,11 @@ The upper-left controls and help in `ui/viewfinder.rs` document the shortcut.
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam
 pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
-HID reports through hidapi on one worker; automatic gamepad mode starts only
-gilrs-core and skips SpaceMouse HID enumeration. It runs by default, hotplugs
-controllers while the viewer is open, and uses the gamepad axis preset without
-requiring the separate joystick-input switch. The frame copies a bounded latest
+HID reports through hidapi on one worker. Joystick and Gamepad preferences
+store separate device selections, enable switches and tuning. Each lists its
+own devices, and both switches default off. Native gamepads are recognized by
+two stick pairs and four face buttons. Recognized pads use the console defaults
+and unsigned trigger pressure. The frame copies a bounded latest
 snapshot without waiting. `Controller` applies mapping, dead zones, gain,
 button edges, focus/stale-input gating and re-centring after changes.
 Relative channels re-arm independently; absolute zoom needs no centre.
@@ -3313,8 +3314,7 @@ codes, so driver-specific trigger ordering cannot swap orbit and elevation.
 It also identifies standardized buttons and triggers, detects Xbox and
 PlayStation styles from device metadata when possible, and retains a Generic
 fallback. Preferences › Controls › Gamepad (a dedicated page immediately below
-Mouse and keyboard in the Controls sidebar section) configures plug-and-play
-detection, camera sensitivity and independent horizontal and vertical inversion.
+Mouse and keyboard in the Controls sidebar section) configures gamepad mappings, camera sensitivity and independent horizontal and vertical inversion.
 Its Settings and Map controls tabs keep configuration together. Map controls has
 separate Avatar Mode, First person and Flycam sections: each mode can choose its movement and
 camera sticks, while buttons and analog triggers are selected from the connected
@@ -3322,25 +3322,20 @@ controller's available inputs. Older joystick profiles can retain inherited avat
 the user assigns a flycam-specific input. Gamepad defaults resolve A/B and bumpers through native control metadata rather
 than fixed button indices. Avatar fly-up/down default to RB/R1 and LB/L1; flycam uses D-pad up
 for up and D-pad down for down. Avatar and Flycam camera gains default to 4.0, first
-person to 1.875. Camera/travel trigger bindings relinquish an old raw trigger
-lift axis on detection, preventing trigger zoom/speed from moving the avatar
-or camera vertically. Gamepad Settings also exposes the
-shared flycam travel-speed multiplier and the existing Keep the flycam level
-setting used by the Joystick page. The enabled switch holds a strict horizon. With it disabled, the existing
-feathered leveling calculation allows gentle banking and returns roll toward
-center after rotation input is released.
+person to 1.875 in the Gamepad profile. Gamepad Settings exposes a
+gamepad-only flycam travel-speed multiplier and the existing Keep the flycam
+level setting. Leveling uses the original feathered return when enabled and
+allows free roll when disabled.
 The Flycam mappings include pressure-sensitive slowdown and speedup triggers,
 with separate minimum and maximum speed multipliers that blend linearly from
 the default speed according to trigger pressure. The first trigger pressed
 owns speed adjustment until it is released, and the configured default speed
 resumes after release.
-`joystick/bindings.rs` resolves the same per-mode stick assignments for the
-input sampler and both preference pages. Explicit raw-axis captures replace
-conflicting gamepad actions, and stick choices relinquish raw roll/zoom or
-button-axis bindings using those inputs. Custom or partially unbound layouts
-remain visible in both pages and survive reloads. Camera gain and inversion
-controls edit the existing Avatar/Camera tuning directly. The legacy enable switch
-shows effective automatic gamepad input without opting into raw HID scanning.
+`joystick/bindings.rs` resolves Gamepad mappings for preferences and sampling.
+Each profile arms and samples independently. When both send input in one
+frame, gamepad input takes priority. Flycam keeps the profile that entered it.
+Legacy settings files keep their joystick axes and button numbers and get a
+separate disabled Gamepad profile.
 Avatar-mode camera bindings expose pressure-sensitive trigger zoom, D-pad
 vertical pan, and nearest/previous avatar cycling. Cycling calls
 `ui::people::nearby` for its existing nearest-first ordering and dispatches the

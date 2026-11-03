@@ -8008,9 +8008,8 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
-        let joystick_up = self.camera.free().is_none()
-            && self.settings.joystick.avatar_enabled
-            && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
+        let joystick_up =
+            self.camera.free().is_none() && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
         let player_movement_input = i.forward
             || i.back
             || i.strafe_left
@@ -8029,7 +8028,7 @@ impl App {
             i.up || joystick_up,
         );
         self.joystick_avatar(&mut i);
-        let gamepad = self.joystick_gamepad_selected();
+        let gamepad = self.joystick.motion.gamepad && self.joystick.motion.moving();
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start).
@@ -8117,17 +8116,18 @@ impl App {
         } else {
             i.resets_camera(self.crouch_toggle.latched())
         };
+        let gamepad_movement = gamepad && self.joystick.motion.player_movement_input();
         if moving && self.mouse_mode != MouseMode::FocusOrbit {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
-            let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0 || gamepad;
+            let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0 || gamepad_movement;
             let roll = self.camera.roll;
             self.camera.reset_view(
                 &mut self.world.agent,
                 &self.settings.camera,
                 true,
                 false,
-                !gamepad && self.camera.gamepad_avatar_target().is_none(),
+                !gamepad_movement,
                 steering,
             );
             // walking with the photo viewfinder open keeps its tilt: the shot
@@ -15495,7 +15495,7 @@ impl App {
         self.sync_appearance_camera();
         self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before_camera);
         if res.toggle_flycam {
-            self.toggle_joystick_flycam();
+            self.toggle_flycam_from_input(false);
         }
         // the panels hold the time of day shown and write it back to the
         // settings later in the frame: a choice made here (or by a reset)

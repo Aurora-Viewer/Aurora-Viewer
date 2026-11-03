@@ -484,10 +484,8 @@ or a grid. `preferences` opens Mouse and keyboard › Joystick and 3D mouse;
 `gamepad-preferences` opens Preferences › Controls › Gamepad › Map controls.
 A connected physical gamepad remains active; without one, a synthetic gamepad
 walks after frame 650 so mappings can be explored while moving;
-Gamepad › Settings shows the shared flycam travel speed and level-camera
-control. Horizontal and vertical sensitivity sliders edit the same per-mode
-axis gains as Joystick and 3D mouse. Capturing an occupied stick axis for Roll
-unbinds the conflicting Flycam action; selecting that stick again unbinds Roll.
+Gamepad › Settings shows the gamepad-only flycam travel speed and level-camera
+control. Horizontal and vertical sensitivity sliders edit the gamepad profile’s per-mode axis gains.
 Avatar Mode maps zoom to RT/LT, player pan to D-pad up/down, and nearest/previous
 avatar cycling to D-pad right/left by default. Controller zoom stays in third
 person at close range; mouse-wheel zoom can still enter mouselook. Cycling before the nearest or
@@ -500,8 +498,11 @@ look sensitivity/inversion. Change view mode cycles Avatar → First person →
 Flycam → Avatar; disabled modes are skipped. First-person zoom uses a
 smooth transient lens zoom: it stays after release and looking around, then
 resets on player movement input or when entering flycam (passive avatar motion does not reset it); saved camera and mouse zoom settings are unchanged.
-The legacy enable switch shows active automatic gamepads without enabling raw
-HID scanning. The Flycam mapping list includes pressure-sensitive travel slowdown
+In normal use, select **Input gamepad** in Gamepad Settings and turn on
+**Enable gamepad input**. The gamepad profile uses the mappings above by
+default. Joystick and 3D mouse has its own device, enable switch and tuning.
+Keep the flycam level gradually levels the camera when
+enabled and preserves free roll when disabled. The Flycam mapping list includes pressure-sensitive travel slowdown
 and speedup triggers;
 `axes` filters the axis mapping rows in preference search; `avatar` walks and turns;
 `flycam` starts at frame 630 and moves after 650;
@@ -530,7 +531,7 @@ existing camera transition easing into the new pan pivot, panned rear view, pann
 front view and continued front zoom. `RUST_LOG=aurora_viewer=info` traces the
 player/focus positions, radius and mode at these frames; panned focus X/Y
 should match the moving player and the close radius should match front/back.
-`gamepad-defaults` applies the shipped defaults in memory with an Xbox-style
+`gamepad-defaults` uses the gamepad profile defaults in memory with an Xbox-style
 synthetic device whose native button order places triggers before A/B. Combine
 with `AURORA_DEMO_OPTIONS=gamepad/0` or `gamepad/1` to inspect settings/mappings;
 capture after frame 680. Nothing is saved by the scenario.
