@@ -216,7 +216,7 @@ fn font(cx: &mut Cx) {
                     // the size a row's button gives its text
                     let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
                     let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
-                    egui::ScrollArea::vertical()
+                    let list_area = egui::ScrollArea::vertical()
                         .max_height(FONT_LIST_H)
                         .show_rows(ui, row_h, shown.len(), |ui, rows| {
                             for i in rows {
@@ -267,6 +267,11 @@ fn font(cx: &mut Cx) {
                                 ui.scroll_with_delta(egui::vec2(0.0, -6.0));
                             }
                         });
+                    // rows cut off by the popup's last size: room next frame
+                    if list_area.inner_rect.height() + 0.5 < list_area.content_size.y.min(FONT_LIST_H) {
+                        ui.ctx().data_mut(|d| d.insert_temp(popup.with("grow"), true));
+                        ui.ctx().request_repaint();
+                    }
                     previews.finish(ui.ctx(), &shown);
                 });
                 changed
@@ -377,13 +382,18 @@ fn system_font_popup(ui: &egui::Ui, salt: egui::Id) -> egui::Id {
 
 /// Room for the System fonts list to grow back as its search is erased.
 /// egui lays a popup out in its last frame's size, so a list the filter
-/// had shrunk kept that size (#2136). The popup gets back the height of
-/// the whole list, measured as it opens, and still fits its rows once
-/// drawn.
+/// had shrunk kept that size (#2136). On a frame after rows were cut off,
+/// the popup gets back the height of the whole list, measured as it opens,
+/// and fits its rows again once drawn. Only then: the room counts as the
+/// popup's for clicks, and above its button it would set the rows apart.
 fn let_font_list_grow(ctx: &egui::Context, popup: egui::Id, opening: bool) {
     let whole = popup.with("whole-height");
+    let grow = popup.with("grow");
     if opening {
-        ctx.data_mut(|d| d.remove::<f32>(whole));
+        ctx.data_mut(|d| {
+            d.remove::<f32>(whole);
+            d.remove::<bool>(grow);
+        });
         return;
     }
     let Some(mut area) = egui::AreaState::load(ctx, popup) else {
@@ -392,12 +402,12 @@ fn let_font_list_grow(ctx: &egui::Context, popup: egui::Id, opening: bool) {
     let Some(size) = area.size.as_mut() else {
         return;
     };
-    let height = ctx.data_mut(|d| {
+    let (height, cut) = ctx.data_mut(|d| {
         let height = d.get_temp_mut_or_default::<f32>(whole);
         *height = height.max(size.y);
-        *height
+        (*height, d.remove_temp::<bool>(grow).unwrap_or(false))
     });
-    if size.y < height {
+    if cut && size.y < height {
         size.y = height;
         ctx.memory_mut(|m| m.areas_mut().set_state(egui::LayerId::new(egui::Order::Foreground, popup), area));
     }
