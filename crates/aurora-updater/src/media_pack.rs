@@ -110,11 +110,21 @@ impl Pack {
 /// The folder that holds `llplugin\`, when this pack is installed under `root`.
 /// From then on this viewer holds the pack in use until it exits.
 pub fn installed(root: &Path, pack: &Pack) -> Option<PathBuf> {
+    let held = holds(root, pack.version);
+    // locked before the check: a pack being replaced is never found half-way
     if !hold(root, pack.version) {
         return None;
     }
     let dir = root.join(pack.version);
-    pack.complete(&dir).then_some(dir)
+    if pack.complete(&dir) {
+        return Some(dir);
+    }
+    // a damaged pack or another build: kept, it would stop another viewer
+    // from repairing a folder this one never uses
+    if !held {
+        release(root, pack.version);
+    }
+    None
 }
 
 /// Each viewer holds a shared lock on `.in-use-<version>` from the moment it
@@ -122,7 +132,8 @@ pub fn installed(root: &Path, pack: &Pack) -> Option<PathBuf> {
 /// under an exclusive one. Windows also refuses to rename a folder whose
 /// plugins run; Linux and macOS rename and delete it whatever is open in it,
 /// so without this lock a newer viewer would take the pack from under an
-/// older one still running.
+/// older one still running. The file is never deleted: a viewer may have
+/// opened it just before, and would then lock a file no other viewer sees.
 fn in_use_path(root: &Path, version: &str) -> PathBuf {
     root.join(format!(".in-use-{version}"))
 }
@@ -132,6 +143,16 @@ static HELD: std::sync::Mutex<Vec<(PathBuf, File)>> = std::sync::Mutex::new(Vec:
 
 fn open_in_use(path: &Path) -> std::io::Result<File> {
     OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)
+}
+
+fn holds(root: &Path, version: &str) -> bool {
+    let path = in_use_path(root, version);
+    HELD.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(p, _)| *p == path)
+}
+
+fn release(root: &Path, version: &str) {
+    let path = in_use_path(root, version);
+    HELD.lock().unwrap_or_else(|e| e.into_inner()).retain(|(p, _)| *p != path);
 }
 
 /// False while another viewer removes or replaces that pack.
@@ -152,10 +173,9 @@ fn hold(root: &Path, version: &str) -> bool {
 /// The pack of `version` no longer used by any viewer, this one included:
 /// removed or replaced while the returned lock is held.
 fn claim(root: &Path, version: &str) -> Option<File> {
-    let path = in_use_path(root, version);
     // this viewer is installing another build in its place
-    HELD.lock().unwrap_or_else(|e| e.into_inner()).retain(|(p, _)| *p != path);
-    let file = open_in_use(&path).ok()?;
+    release(root, version);
+    let file = open_in_use(&in_use_path(root, version)).ok()?;
     file.try_lock().ok()?;
     Some(file)
 }
@@ -223,9 +243,7 @@ fn prune(root: &Path, pack: &Pack, stage: &Path) {
             if fs::rename(&path, &trash).is_err() {
                 continue;
             }
-            // renamed first: a viewer that locks it from now on finds no pack
             drop(in_use);
-            let _ = fs::remove_file(in_use_path(root, &name));
             trash
         } else if leftover {
             path
@@ -287,7 +305,9 @@ pub async fn install(
         fs::rename(&prepared, &dir).context("cannot put the media plugins in place")?;
         // held before the install lock is released: no other viewer can
         // claim the pack in between
-        hold(&root, pack.version);
+        if !hold(&root, pack.version) {
+            log::warn!("media plugins: pack {} is not marked in use by this viewer", pack.version);
+        }
         prune(&root, &pack, &stage.0);
         drop(lock);
         Ok(dir)
@@ -331,7 +351,6 @@ mod tests {
         prune(&root, &PACK_4, &stage);
         assert!(root.join("1/llplugin").is_dir(), "a running viewer keeps its pack");
         assert!(!root.join("3").exists(), "a pack nobody uses is removed");
-        assert!(!in_use_path(&root, "3").exists(), "with its lock file");
         assert!(stage.is_dir());
         drop(running);
         prune(&root, &PACK_4, &stage);
@@ -358,6 +377,17 @@ mod tests {
         assert!(claim(&root, "5").is_some());
         drop(other);
         HELD.lock().expect("held").retain(|(p, _)| !p.starts_with(&root));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_damaged_pack_found_at_start_is_not_held() {
+        let root = temp_root();
+        fs::create_dir_all(root.join("4/llplugin")).expect("damaged pack");
+        assert!(installed(&root, &PACK_4).is_none());
+        let other = open_in_use(&in_use_path(&root, "4")).expect("lock file");
+        assert!(other.try_lock().is_ok(), "another viewer can repair it");
+        drop(other);
         let _ = fs::remove_dir_all(&root);
     }
 }
