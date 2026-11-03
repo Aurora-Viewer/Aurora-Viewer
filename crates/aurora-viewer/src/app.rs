@@ -5704,10 +5704,17 @@ impl App {
         let at_home = crate::grids::current(&self.settings, extras)
             .zip(crate::grids::home(&self.settings))
             .is_some_and(|(here, home)| crate::grids::same_grid(&self.settings, &here, &home));
-        if !at_home || crate::grids::same_grid(&self.settings, grid, &crate::grids::home(&self.settings).unwrap_or_default()) {
-            return false;
-        }
-        let names = crate::world::suitcase::left_behind(&self.world.inventory);
+        let going_home = crate::grids::same_grid(&self.settings, grid, &crate::grids::home(&self.settings).unwrap_or_default());
+        let names = if at_home && !going_home {
+            crate::world::suitcase::left_behind(&self.world.inventory)
+        } else {
+            Vec::new()
+        };
+        log::info!(
+            "hypergrid: to {grid}, from the home grid {at_home}, going home {going_home}, suitcase {}, {} worn items outside it",
+            crate::world::suitcase::folder(&self.world.inventory).is_some(),
+            names.len()
+        );
         if names.is_empty() {
             return false;
         }
