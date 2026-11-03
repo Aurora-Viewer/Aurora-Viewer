@@ -509,7 +509,13 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
                 p.muted_dim,
             );
         }
-        let lead = if th.compact { 4.0 + 14.0 } else { GUTTER };
+        // compact: the icon where the names start after the time column
+        // (its own 4 px margin without one), the text at the object rows'
+        let lead = match (th.compact, time.is_empty()) {
+            (true, false) => 14.0,
+            (true, true) => 4.0 + 14.0,
+            (false, _) => GUTTER,
+        };
         let (r, _) = ui.allocate_exact_size(egui::vec2(lead, 18.0), egui::Sense::hover());
         let icon = if th.compact {
             egui::Rect::from_min_size(egui::pos2(r.right() - 14.0, r.top() + 2.0), egui::Vec2::splat(14.0))

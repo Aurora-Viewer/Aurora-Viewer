@@ -196,12 +196,9 @@ fn card<'a>(
     if first.kind.is_notice() {
         // its time above it, as a card's head shows it (FSChatHistory::
         // appendMessage stamps the system's lines too, #1999)
-        if times {
-            ui.label(
-                egui::RichText::new(hhmm(first.time))
-                    .size(chat_size(ui.ctx(), 10.5))
-                    .color(p.muted_dim),
-            );
+        let time = hhmm(first.time);
+        if times && !time.is_empty() {
+            ui.label(egui::RichText::new(time).size(chat_size(ui.ctx(), 10.5)).color(p.muted_dim));
         }
         body(
             ui,
