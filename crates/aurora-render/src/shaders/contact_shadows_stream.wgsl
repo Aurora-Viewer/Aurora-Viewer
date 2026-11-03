@@ -45,6 +45,65 @@ struct Params {
 @group(0) @binding(1) var depth_tex: texture_depth_2d;
 @group(0) @binding(2) var out_tex: texture_storage_2d<rgba8unorm, write>;
 
+
+// Several projected wavefront rays may land in one pixel. Select the ray
+// closest to that pixel's centre, then stronger occlusion on an exact tie.
+// An atomic key makes that choice independent of workgroup/dispatch order.
+@group(0) @binding(3) var<storage, read_write> contact_owners0: array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read_write> contact_owners1: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read_write> contact_owners2: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read_write> contact_owners3: array<atomic<u32>>;
+@group(0) @binding(7) var<storage, read_write> contact_owners4: array<atomic<u32>>;
+@group(0) @binding(8) var<storage, read_write> contact_owners5: array<atomic<u32>>;
+@group(0) @binding(9) var<storage, read_write> contact_owners6: array<atomic<u32>>;
+@group(0) @binding(10) var<storage, read_write> contact_owners7: array<atomic<u32>>;
+
+fn owner_clear(index: u32) {
+    let words = arrayLength(&contact_owners0);
+    let at = index % words;
+    switch (index / words) {
+        case 0u: { atomicStore(&contact_owners0[at], 0xffffffffu); }
+        case 1u: { atomicStore(&contact_owners1[at], 0xffffffffu); }
+        case 2u: { atomicStore(&contact_owners2[at], 0xffffffffu); }
+        case 3u: { atomicStore(&contact_owners3[at], 0xffffffffu); }
+        case 4u: { atomicStore(&contact_owners4[at], 0xffffffffu); }
+        case 5u: { atomicStore(&contact_owners5[at], 0xffffffffu); }
+        case 6u: { atomicStore(&contact_owners6[at], 0xffffffffu); }
+        case 7u: { atomicStore(&contact_owners7[at], 0xffffffffu); }
+        default: {}
+    }
+}
+fn owner_store(index: u32, key: u32) {
+    let words = arrayLength(&contact_owners0);
+    let at = index % words;
+    switch (index / words) {
+        case 0u: { atomicMin(&contact_owners0[at], key); }
+        case 1u: { atomicMin(&contact_owners1[at], key); }
+        case 2u: { atomicMin(&contact_owners2[at], key); }
+        case 3u: { atomicMin(&contact_owners3[at], key); }
+        case 4u: { atomicMin(&contact_owners4[at], key); }
+        case 5u: { atomicMin(&contact_owners5[at], key); }
+        case 6u: { atomicMin(&contact_owners6[at], key); }
+        case 7u: { atomicMin(&contact_owners7[at], key); }
+        default: {}
+    }
+}
+fn owner_load(index: u32) -> u32 {
+    let words = arrayLength(&contact_owners0);
+    let at = index % words;
+    switch (index / words) {
+        case 0u: { return atomicLoad(&contact_owners0[at]); }
+        case 1u: { return atomicLoad(&contact_owners1[at]); }
+        case 2u: { return atomicLoad(&contact_owners2[at]); }
+        case 3u: { return atomicLoad(&contact_owners3[at]); }
+        case 4u: { return atomicLoad(&contact_owners4[at]); }
+        case 5u: { return atomicLoad(&contact_owners5[at]); }
+        case 6u: { return atomicLoad(&contact_owners6[at]); }
+        case 7u: { return atomicLoad(&contact_owners7[at]); }
+        default: { return 0xffffffffu; }
+    }
+}
+
 // Must match WAVE_SIZE in contact_shadows.rs.
 const WAVE_SIZE: i32 = 64;
 // The first samples: one of them alone can shadow the pixel.
@@ -222,15 +281,28 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     if (!skip_pixel) {
         let contrast = params.tuning.z;
         let result = min(saturate(hard * contrast + 1.0 - contrast), dot(saturate(soft * contrast + 1.0 - contrast), vec4<f32>(0.25)));
-        textureStore(out_tex, write_xy, vec4<f32>(1.0 - result, 0.0, 0.0, 0.0));
+        let error = pixel_xy - (vec2<f32>(write_xy) + 0.5);
+        let priority = u32(round(clamp(2.0 * dot(error, error), 0.0, 1.0) * 16777214.0));
+        let opacity = u32(round(saturate(1.0 - result) * 255.0));
+        owner_store(u32(write_xy.y * size.x + write_xy.x), (priority << 8u) | (255u - opacity));
     }
 }
-// Every pixel lit, before the wavefronts (wgpu's clear_texture needs a
-// device feature).
+// No candidate owns a pixel until the trace has completed.
 @compute @workgroup_size(8, 8, 1)
 fn clear(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(out_tex);
     if (id.x < size.x && id.y < size.y) {
-        textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(0.0));
+        owner_clear(id.y * size.x + id.x);
+    }
+}
+
+// Resolve exactly once per output pixel after every candidate has finished.
+@compute @workgroup_size(8, 8, 1)
+fn resolve(@builtin(global_invocation_id) id: vec3<u32>) {
+    let size = textureDimensions(out_tex);
+    if (id.x < size.x && id.y < size.y) {
+        let key = owner_load(id.y * size.x + id.x);
+        let shadow = select(f32(255u - (key & 255u)) / 255.0, 0.0, key == 0xffffffffu);
+        textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(shadow, 0.0, 0.0, 0.0));
     }
 }

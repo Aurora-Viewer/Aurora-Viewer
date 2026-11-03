@@ -477,6 +477,7 @@ pub(crate) struct ContactShadows {
     samples: (i32, i32),
     pipeline_layout: wgpu::PipelineLayout,
     clear: wgpu::ComputePipeline,
+    resolve: Option<wgpu::ComputePipeline>,
     layout: wgpu::BindGroupLayout,
     buffer: wgpu::Buffer,
     /// Bytes between the constants of two dispatches.
@@ -687,6 +688,14 @@ pub(crate) struct Targets {
     raw: wgpu::TextureView,
 }
 
+// Eight chunks keep a 16K ownership image within the portable 128 MiB
+// storage binding limit. Only streaming variants allocate them.
+const OWNER_CHUNKS: u32 = 8;
+
+fn owner_chunk_bytes(size: (u32, u32)) -> u64 {
+    (u64::from(size.0) * u64::from(size.1)).div_ceil(u64::from(OWNER_CHUNKS)) * 4
+}
+
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 impl Targets {
@@ -712,40 +721,54 @@ impl ContactShadows {
             source: wgpu::ShaderSource::Wgsl(variant_source(variant).into()),
         });
         let stride = std::mem::size_of::<ParamsU>().next_multiple_of(device.limits().min_uniform_buffer_offset_alignment as usize) as u64;
+        let stable = matches!(variant, Variant::Stream | Variant::StreamReference);
+        let mut entries = vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<ParamsU>() as u64),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: RESULT_FORMAT,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
+        ];
+        if stable {
+            entries.extend((0..OWNER_CHUNKS).map(|i| wgpu::BindGroupLayoutEntry {
+                binding: 3 + i,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(4),
+                },
+                count: None,
+            }));
+        }
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("contact shadows"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<ParamsU>() as u64),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: RESULT_FORMAT,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &entries,
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("contact shadows"),
@@ -763,6 +786,7 @@ impl ContactShadows {
             })
         };
         let (pipeline, clear) = (make("main"), make("clear"));
+        let resolve = stable.then(|| make("resolve"));
         let filter = Filter::new(device);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("contact shadows params"),
@@ -776,6 +800,7 @@ impl ContactShadows {
             samples: samples(1.0),
             pipeline_layout: pl,
             clear,
+            resolve,
             layout,
             buffer,
             stride,
@@ -863,28 +888,47 @@ impl ContactShadows {
             view_formats: &[],
         });
         let own_depth = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let owners: Vec<_> = if self.resolve.is_some() {
+            (0..OWNER_CHUNKS)
+                .map(|_| {
+                    device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("contact shadow ownership"),
+                        size: owner_chunk_bytes(size),
+                        usage: wgpu::BufferUsages::STORAGE,
+                        mapped_at_creation: false,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let group = |depth: &wgpu::TextureView| {
+            let mut entries = vec![
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(std::mem::size_of::<ParamsU>() as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&raw),
+                },
+            ];
+            entries.extend(owners.iter().enumerate().map(|(i, buffer)| wgpu::BindGroupEntry {
+                binding: 3 + i as u32,
+                resource: buffer.as_entire_binding(),
+            }));
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("contact shadows"),
                 layout: &self.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.buffer,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(std::mem::size_of::<ParamsU>() as u64),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(depth),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&raw),
-                    },
-                ],
+                entries: &entries,
             })
         };
         let filter_group = |depth: &wgpu::TextureView, input: &wgpu::TextureView, output: &wgpu::TextureView| {
@@ -965,11 +1009,10 @@ impl ContactShadows {
     }
 
     /// The dispatches of `write`, after the depth prepass (`more`: after
-    /// the blended faces and the cards were drawn into `depth`). No barrier is
-    /// needed between them: each writes its own pixels. The target is
-    /// emptied first (0, lit): the pixel under the light's point, which no
-    /// wavefront writes, and the sky stay lit. Then the filter softens the
-    /// mask into `result`, over the same depth.
+    /// the blended faces and the cards were drawn into `depth`). Streaming
+    /// wavefronts can overlap: atomically select the nearest pixel-centre
+    /// candidate, then resolve once per pixel before filtering. Initialization,
+    /// tracing and resolving are separate passes. Unwritten pixels stay lit.
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, more: bool) {
         let (group, filter_group) = if more {
             (&t.group_more, &t.filter_group_more)
@@ -983,6 +1026,14 @@ impl ContactShadows {
         pass.set_pipeline(&self.clear);
         pass.set_bind_group(0, group, &[0]);
         pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        // End initialization before any candidate can update an ownership key.
+        if self.resolve.is_some() {
+            drop(pass);
+            pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("contact shadows trace"),
+                timestamp_writes: None,
+            });
+        }
         let pipeline = match &self.photo {
             Some((s, photo)) if *s == self.samples => photo,
             _ => &self.pipeline,
@@ -996,6 +1047,22 @@ impl ContactShadows {
         for (i, d) in list.iter().enumerate() {
             pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
             pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
+        }
+        if let Some(resolve) = &self.resolve {
+            drop(pass);
+            {
+                let mut resolve_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("contact shadows resolve"),
+                    timestamp_writes: None,
+                });
+                resolve_pass.set_pipeline(resolve);
+                resolve_pass.set_bind_group(0, group, &[0]);
+                resolve_pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+            }
+            pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("contact shadows filter"),
+                timestamp_writes: None,
+            });
         }
         if let Some(groups) = &t.filter_passes {
             let groups = &groups[usize::from(more)];
@@ -1019,6 +1086,17 @@ impl ContactShadows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ownership_chunks_cover_a_16k_image_with_portable_bindings() {
+        for size in [(1, 1), (960, 192), (7680, 5400), (15360, 15360), (16384, 16384)] {
+            let bytes = owner_chunk_bytes(size);
+            let pixels = u64::from(size.0) * u64::from(size.1);
+            assert!(bytes <= 128 * 1024 * 1024);
+            assert!(bytes * u64::from(OWNER_CHUNKS) >= pixels * 4);
+            assert!(bytes * u64::from(OWNER_CHUNKS) - pixels * 4 < u64::from(OWNER_CHUNKS) * 4);
+        }
+    }
 
     // Scalar, independently scheduled reference for the two filter passes.
     fn reference_filter(depth: &[f32], mask: &[u8], width: usize, height: usize, render_height: u32) -> Vec<u8> {
@@ -1496,7 +1574,7 @@ mod tests {
             bend.iter()
                 .zip(other)
                 .enumerate()
-                .filter(|(i, (a, b))| a != b && writes[*i] == 1)
+                .filter(|(_, (a, b))| a != b)
                 .map(|(i, (a, b))| (i, *a, *b))
                 .collect()
         };
@@ -1722,8 +1800,8 @@ mod tests {
             if near == 0.1 {
                 assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
             }
-            // the pixels two wavefronts write (where Bend's dispatches meet) take
-            // whichever lands last: only the others are compared
+            // Keep every pixel, including those covered by several wavefronts.
+            // The chosen nearest-centre candidate must not depend on scheduling.
             let mut writes = vec![0u8; (w * h) as usize];
             let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
             written_pixels(&list, WAVE_SIZE, |x, y| {
@@ -1739,7 +1817,7 @@ mod tests {
                 bend.iter()
                     .zip(other)
                     .enumerate()
-                    .filter(|(i, (a, b))| a != b && writes[*i] == 1)
+                    .filter(|(_, (a, b))| a != b)
                     .map(|(i, (a, b))| (i, *a, *b))
                     .collect()
             };
