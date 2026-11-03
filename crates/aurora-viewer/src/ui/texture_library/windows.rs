@@ -372,7 +372,7 @@ impl LibraryUi {
                 if window.texture.display.actual_size || window.texture.export.is_some() {
                     scene.textures.note_usage_fixed(&asset, 16384.0);
                 }
-                scene.textures.note_usage(
+                scene.textures.note_usage_boosted(
                     &asset,
                     if window.texture.display.actual_size || window.texture.export.is_some() {
                         16384.0

@@ -29,8 +29,21 @@ use std::collections::HashSet;
 /// The gutter of the pictures (roomy) and their side.
 pub(super) const GUTTER: f32 = 56.0;
 const AVATAR: f32 = 36.0;
-/// The time column of the compact rows.
+/// The time column of the compact rows: "23:59", or "12:59 PM" in 12 hours
+/// (`time_w`).
 const TIME_W: f32 = 40.0;
+const TIME_W_12: f32 = 62.0;
+
+/// The width of the compact rows' time column, as the chat writes its times;
+/// it grows with the chat's text size, like the time it holds.
+fn time_w(ctx: &egui::Context) -> f32 {
+    let w = if crate::ui::bars::clock::chat_twelve_hours() {
+        TIME_W_12
+    } else {
+        TIME_W
+    };
+    w * chat_size(ctx, 1.0)
+}
 const TEXT: f32 = 13.5;
 /// Room kept at the right of a row.
 const RIGHT: f32 = 14.0;
@@ -76,7 +89,7 @@ pub(super) fn draw(
     if look.new {
         new_separator(ui, p);
     }
-    let indent = if th.compact { TIME_W + 8.0 } else { GUTTER };
+    let indent = if th.compact { time_w(ui.ctx()) + 8.0 } else { GUTTER };
     if let ChatKind::Invite(invite) = line.kind {
         super::invite_card::draw_card(ui, env, line, invite, indent);
         return;
@@ -100,7 +113,7 @@ pub(super) fn draw(
             super::object_row::Place {
                 icon_center: 0.0,
                 text_left: 0.0,
-                time_column: th.times.then_some(TIME_W),
+                time_column: th.times.then(|| time_w(ui.ctx())),
             }
         } else {
             super::object_row::Place {
@@ -156,11 +169,20 @@ pub(super) fn draw(
         // the time of a following line, in the gutter
         let t = hhmm(line.time);
         if th.times && !t.is_empty() {
+            // smaller when it would reach the text (a 12-hour time at a
+            // large chat size)
+            let size = chat_size(ui.ctx(), 10.0);
+            let w = ui
+                .painter()
+                .layout_no_wrap(t.clone(), egui::FontId::proportional(size), p.muted_dim)
+                .size()
+                .x;
+            let size = if w > GUTTER - 2.0 { size * (GUTTER - 2.0) / w } else { size };
             ui.painter().text(
                 egui::pos2(left + GUTTER * 0.5, rect.top() + 11.0),
                 egui::Align2::CENTER_CENTER,
                 t,
-                egui::FontId::proportional(chat_size(ui.ctx(), 10.0)),
+                egui::FontId::proportional(size),
                 p.muted_dim,
             );
         }
@@ -393,7 +415,7 @@ fn compact_row(
         if th.times {
             // the column grows with the chat's text size
             let k = chat_size(ui.ctx(), 1.0);
-            let (r, _) = ui.allocate_exact_size(egui::vec2(TIME_W * k, 20.0 * k), egui::Sense::hover());
+            let (r, _) = ui.allocate_exact_size(egui::vec2(time_w(ui.ctx()), 20.0 * k), egui::Sense::hover());
             ui.painter().text(
                 egui::pos2(r.right(), r.top() + 10.5 * k),
                 egui::Align2::RIGHT_CENTER,
@@ -490,12 +512,31 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
     let tone = history_tone(p, line.origin).unwrap_or(p.muted);
     ui.add_space(4.0);
     let top = ui.cursor().top();
+    // its time like any line's (FSChatHistory::appendMessage stamps the
+    // system's lines too, #1999): in the compact column, else before its
+    // text, as a group's head shows it after the name
+    let time = if th.times { hhmm(line.time) } else { String::new() };
     let row = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let lead = if th.compact {
-            4.0 + if th.times { TIME_W + 6.0 } else { 0.0 }
-        } else {
-            GUTTER
+        if th.compact && !time.is_empty() {
+            ui.add_space(4.0);
+            // the column grows with the chat's text size, as the lines'
+            let k = chat_size(ui.ctx(), 1.0);
+            let (r, _) = ui.allocate_exact_size(egui::vec2(time_w(ui.ctx()), 18.0), egui::Sense::hover());
+            ui.painter().text(
+                egui::pos2(r.right(), r.top() + 9.0),
+                egui::Align2::RIGHT_CENTER,
+                &time,
+                egui::FontId::proportional(10.5 * k),
+                p.muted_dim,
+            );
+        }
+        // compact: the icon where the names start after the time column
+        // (its own 4 px margin without one), the text at the object rows'
+        let lead = match (th.compact, time.is_empty()) {
+            (true, false) => 14.0,
+            (true, true) => 4.0 + 14.0,
+            (false, _) => GUTTER,
         };
         let (r, _) = ui.allocate_exact_size(egui::vec2(lead, 18.0), egui::Sense::hover());
         let icon = if th.compact {
@@ -510,6 +551,9 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
             "info-circle-filled"
         };
         paint_icon(ui.painter(), name, icon, p.muted_dim);
+        if !th.compact && !time.is_empty() {
+            ui.label(RichText::new(&time).size(chat_size(ui.ctx(), 11.0)).color(p.muted_dim));
+        }
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
@@ -634,6 +678,34 @@ pub(super) fn names_in(text: &str, names: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_twelve_hours_time_fits_its_column() {
+        // the widest times, with the markers of every catalogue ("AM" /
+        // "PM" in English and French, 午前 / 午後 in Japanese), at the size
+        // the compact rows paint them (10.5, scaled with the column)
+        for font in [
+            crate::ui::fonts::INTER,
+            crate::ui::fonts::NOTO,
+            crate::ui::fonts::ROBOTO,
+            crate::ui::fonts::OPEN_DYSLEXIC,
+        ] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::apply(&ctx, font);
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+            for (text, column) in [("00:00", TIME_W), ("12:58 PM", TIME_W_12), ("12:58 午後", TIME_W_12)] {
+                let w = ctx
+                    .fonts_mut(|f| f.layout_no_wrap(text.into(), egui::FontId::proportional(10.5), egui::Color32::PLACEHOLDER))
+                    .size()
+                    .x;
+                assert!(w <= column, "font={font}: {text} is {w} wide, its column {column}");
+            }
+            // the glyphs measured went to egui's atlas: its changes are
+            // handed back before the context goes, as egui's debug
+            // assertions ask (the merge queue's test profile)
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        }
+    }
 
     #[test]
     fn our_name_counts_as_a_word_only() {
