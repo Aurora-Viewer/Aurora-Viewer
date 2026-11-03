@@ -435,6 +435,9 @@ impl App {
             ReelAction::ShowItem(id) => {
                 if let Some(item) = self.snapshots.reel.reel.get(id).and_then(|p| p.item()) {
                     self.snapshots.reel.quick.close();
+                    // photo mode left too: the inventory takes over
+                    self.snapshots.reel.mail = None;
+                    self.panels.snapshot = false;
                     self.panels.inventory = true;
                     self.inventory_ui.show_original(&self.world.inventory, item);
                 }

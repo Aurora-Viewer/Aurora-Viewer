@@ -1,11 +1,12 @@
-//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:mail][:post][:moved][:toolbar]:
+//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:post][:moved][:toolbar]:
 //! the reel filled with `n` real photos of the plaza, saved to a folder of
 //! the cache (never the Pictures folder), the focal length changed between
 //! them so that they differ. `quick` then opens the quick view on the
 //! newest, `delete` asks to delete it, `send` sends it again to the
 //! inventory (its price asked over the quick view), `upload` too with its
 //! price confirmed: uploaded, the photo shows its check in the strip and
-//! Post to profile takes the upload's place. `mail` opens the e-mail's form
+//! Post to profile takes the upload's place. `item` then presses Show in
+//! inventory: the quick view and photo mode close, the inventory shows it. `mail` opens the e-mail's form
 //! over it, `post` posts it to the demo's web profile (whether uploaded or
 //! not). `moved` puts the tray at the middle
 //! of the screen: the photos fly to it there. `toolbar` puts the Photo roll
@@ -30,6 +31,8 @@ pub(in crate::app) struct Demo {
     send: bool,
     /// `send`, its price confirmed at once.
     upload: bool,
+    /// `upload`, then its Show in inventory pressed.
+    item: bool,
     mail: bool,
     post: bool,
     /// The tray moved to the middle of the screen, the flights following it.
@@ -59,10 +62,11 @@ impl Demo {
             count,
             quick: words
                 .iter()
-                .any(|w| matches!(*w, "quick" | "delete" | "send" | "upload" | "mail" | "post")),
+                .any(|w| matches!(*w, "quick" | "delete" | "send" | "upload" | "item" | "mail" | "post")),
             delete: words.contains(&"delete"),
-            send: words.contains(&"send") || words.contains(&"upload"),
-            upload: words.contains(&"upload"),
+            send: words.iter().any(|w| matches!(*w, "send" | "upload" | "item")),
+            upload: words.iter().any(|w| matches!(*w, "upload" | "item")),
+            item: words.contains(&"item"),
             mail: words.contains(&"mail"),
             post: words.contains(&"post"),
             moved: words.contains(&"moved"),
@@ -102,6 +106,14 @@ impl App {
         let frame = self.frame_count;
         let busy = self.photo_busy();
         let fov_now = self.settings.camera.fov;
+        let uploaded = self
+            .snapshots
+            .reel
+            .reel
+            .photos()
+            .first()
+            .filter(|p| p.item().is_some())
+            .map(|p| p.id);
         let Some(d) = self.snapshots.reel.demo.as_mut() else {
             return;
         };
@@ -110,6 +122,16 @@ impl App {
             d.upload = false;
             log::info!("photo reel demo: price confirmed");
             self.photo_action(crate::ui::snapshot::Action::Confirm(true), renderer);
+            return;
+        }
+        // `item`: uploaded, its Show in inventory pressed
+        if d.done
+            && d.item
+            && let Some(id) = uploaded
+        {
+            d.item = false;
+            log::info!("photo reel demo: show in inventory");
+            self.photo_reel_action(ReelAction::ShowItem(id), renderer);
             return;
         }
         if d.done || busy || frame < d.start || frame < d.last + 20 {

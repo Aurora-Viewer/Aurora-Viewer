@@ -344,7 +344,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
-| `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:mail][:post][:moved][:toolbar]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail, profile), the tray moved or the toolbar's Photo roll |
+| `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:post][:moved][:toolbar]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail, profile), the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
@@ -664,7 +664,7 @@ environment`) and leaves the photo mode (960): the scene keeps that light.
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
 
-`AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:mail][:post][:moved][:toolbar]`: from
+`AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:post][:moved][:toolbar]`: from
 `AURORA_DEMO_SNAPSHOT_FRAME` (700 by default) the photo mode takes `n` real
 photos (12 at most), 20 frames apart, saved to `demo-photo-reel` in the
 cache folder (never the Pictures folder), the focal length going through
@@ -685,7 +685,9 @@ sends the newest again to the inventory at once: the price's confirmation
 shows over the quick view (its price from the photo's own size), and Upload
 sends it, the view neither frozen nor left; `upload` confirms that price at once: the photo is uploaded, its
 thumbnail in the strip gets a green check and Post to profile takes the
-Upload button's place (Post only shows for an uploaded photo); `mail` opens the e-mail's form
+Upload button's place (Post only shows for an uploaded photo); `item` then
+presses Show in inventory: the quick view and photo mode close and the
+inventory shows the photo; `mail` opens the e-mail's form
 over the quick view (Send waits for a valid recipient); `post` posts it to
 the demo's web profile at once, then photo mode closes and our profile opens
 on its Web tab (the feed; "No web profile on this grid" in the demo). `toolbar` puts the Photo roll button on
