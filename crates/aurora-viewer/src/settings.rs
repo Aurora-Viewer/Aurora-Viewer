@@ -1324,9 +1324,9 @@ pub struct Settings {
     /// graphics card once it is known (`graphics_presets::for_machine`).
     #[serde(skip)]
     pub new_profile: bool,
-    /// The keyboard's defaults were placed this launch (a new profile, the
-    /// version 12 migration) for a layout that may only stand in for the
-    /// active one (`keybinds::LayoutWatch`): its first report moves them.
+    /// The keyboard's defaults were placed for a layout that may only stand
+    /// in for the active one (a new profile, or a file older than version
+    /// 31): the first report of `keybinds::LayoutWatch` moves them.
     #[serde(skip)]
     pub defaults_follow_reported_layout: bool,
 }
@@ -1366,7 +1366,7 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 30;
+const SETTINGS_VERSION: u32 = 31;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -2408,7 +2408,6 @@ impl Settings {
         if self.settings_version < 12 {
             // letter shortcuts follow the layout (M is the M key on AZERTY)
             self.keybinds.follow_layout_letters();
-            self.defaults_follow_reported_layout = true;
         }
         if self.settings_version < 13 && self.chat_style == ChatStyle::Bubbles {
             // the bubbles were the default every file wrote: Aurora's
@@ -2512,6 +2511,13 @@ impl Settings {
             // a rectangle drawn from a skybox took the ground's objects far
             // below. Every earlier file wrote the former default, off
             self.build.limit_select_distance = true;
+        }
+        if self.settings_version < 31 {
+            // the letter shortcuts of version 12 (or older defaults moved
+            // then) were placed for the first layout of a Wayland keymap,
+            // which only stood in for the active one: they follow the layout
+            // the compositor reports first (`keybinds::LayoutWatch`)
+            self.defaults_follow_reported_layout = true;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3803,6 +3809,25 @@ mod tests {
         let bytes = serde_json::to_vec(&existing).expect("serialize synthetic settings");
         let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
         assert_eq!(saved.sanitized().keybinds, existing.keybinds);
+    }
+
+    /// A file older than version 31 had its letters placed for the first
+    /// layout of a Wayland keymap: they follow the first reported layout,
+    /// once (`KeyBindings::follow_layout_change`); a newer file waits for none.
+    #[test]
+    fn older_files_follow_the_reported_keyboard_layout_once() {
+        for (version, follows) in [(12, true), (30, true), (SETTINGS_VERSION, false)] {
+            let file = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            let loaded = file.sanitized();
+            assert_eq!(loaded.defaults_follow_reported_layout, follows, "version {version}");
+            assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+            // saved, the file is version 31: the next launch waits for no report
+            let saved: Settings = serde_json::from_slice(&serde_json::to_vec(&loaded).expect("write settings")).expect("read settings");
+            assert!(!saved.sanitized().defaults_follow_reported_layout, "only once");
+        }
     }
 
     /// The move of the letter shortcuts to the layout's letters runs once

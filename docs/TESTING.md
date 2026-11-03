@@ -1395,8 +1395,9 @@ when unfocused") is ignored during a screenshot.
   defaults (settings version 12). With `system` on Wayland and several
   layouts (`us,fr`), the first layout stands in until the window gets the
   focus; the log then says `layout N reported active`, and when it differs,
-  `this launch's default shortcuts move to the reported layout`. Switching
-  the layout while the viewer runs changes the labels, never the bindings.
+  `the default shortcuts move to the reported layout` (a new profile, or a
+  file older than settings version 31, once). Switching the layout while
+  the viewer runs changes the labels, never the bindings.
 - **`AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20"`**: lines typed in the chat
   bar at frame 240, separated by `;` (chat bar commands: `calc`, `rolld`,
   `gtp`…).

@@ -5427,13 +5427,13 @@ impl App {
 
     /// The active keyboard layout changed (Wayland reports it once the
     /// window has the focus): the labels follow on their own; defaults placed
-    /// this launch for the layout that stood in move to the reported one.
+    /// for the layout that stood in move to the reported one, once.
     fn follow_keyboard_layout(&mut self) {
         let Some(change) = self.gfx.as_mut().and_then(|g| g.layout_watch.as_mut()).and_then(|w| w.poll()) else {
             return;
         };
         if std::mem::take(&mut self.settings.defaults_follow_reported_layout) && change.guessed {
-            log::info!("keyboard layout: this launch's default shortcuts move to the reported layout");
+            log::info!("keyboard layout: the default shortcuts move to the reported layout");
             self.settings.keybinds.follow_layout_change(&change);
             self.settings.save();
         }
