@@ -15,6 +15,11 @@ impl App {
         if !self.panels.wearable_favorites {
             return;
         }
+        // a wear asked here is refused here too, once the outfit has answered
+        if self.wearable_favorites_ui.wearing && self.appearance_ui.pending.is_none() {
+            self.wearable_favorites_ui.wearing = false;
+            self.wearable_favorites_ui.message.clone_from(&self.appearance_ui.message);
+        }
         favorites::fetch(&mut self.world.inventory);
         let requested = &mut self.wearable_favorites_ui.requested;
         let items: Vec<Uuid> = favorites::missing(&self.world.inventory)
@@ -40,6 +45,14 @@ impl App {
             self.wearable_favorites_ui.show_folder(folder);
             self.panels.wearable_favorites = true;
         }
+        if self.frame_count == 660 && mode.starts_with("wear") {
+            let items = crate::demo::wearable_favorites::worn_items().to_vec();
+            self.wearable_favorites_apply(vec![FavoritesAction::Wear(crate::world::appearance::Action::WearItems {
+                items,
+                replace: false,
+                point: 0,
+            })]);
+        }
         if self.frame_count == 720 && mode == "sync" {
             let mut actions = Vec::new();
             self.wearable_favorites_ui.sync(&self.world, &mut actions);
@@ -58,7 +71,11 @@ impl App {
     fn wearable_favorites_apply(&mut self, actions: Vec<FavoritesAction>) {
         for action in actions {
             match action {
-                FavoritesAction::Wear(action) => self.apply_appearance_action(action),
+                FavoritesAction::Wear(action) => {
+                    self.appearance_ui.message.clear();
+                    self.wearable_favorites_ui.wearing = true;
+                    self.apply_appearance_action(action);
+                }
                 FavoritesAction::Sort(order) => {
                     self.settings.wearable_favorites_sort = order;
                     if !self.demo {

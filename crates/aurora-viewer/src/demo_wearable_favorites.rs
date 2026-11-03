@@ -4,7 +4,9 @@
 //! `1`: favorites in `#Aurora/Wearable Favorites` and a subfolder, beside a
 //! Legacy folder. `folder`: the same, showing the subfolder. `sync`: only the
 //! Legacy folder at first; Sync runs by itself at frame 720. `legacy-none`:
-//! no favorites and no Legacy folder (no Sync button).
+//! no favorites and no Legacy folder (no Sync button). `wear`: as `1`, with
+//! the shirt and the hair worn from the list at frame 660. `wear-refused`: the
+//! same without a current outfit folder, so the window says why it refused.
 
 use crate::world::inventory::{FetchState, Folder, Inventory};
 use aurora_net::inventory::{InvFolder, InvItem};
@@ -31,6 +33,11 @@ const ITEMS: [(&str, i32, i32, u32); 7] = [
 
 pub fn mode() -> Option<String> {
     std::env::var("AURORA_DEMO_WEARABLE_FAVORITES").ok()
+}
+
+/// What `wear` puts on: the shirt, the hair.
+pub fn worn_items() -> [Uuid; 2] {
+    [item(0), item(4)]
 }
 
 fn item(index: usize) -> Uuid {
@@ -78,6 +85,10 @@ fn links(inv: &mut Inventory, owner: Uuid, parent: Uuid, seed: u128, targets: &[
 
 /// The folders of `mode`; the subfolder to show, for `folder`.
 pub fn seed(inv: &mut Inventory, owner: Uuid, mode: &str) -> Option<Uuid> {
+    // the base demo has no current outfit: nothing could be worn
+    if mode != "wear-refused" {
+        crate::world::appearance::seed_demo(inv, owner);
+    }
     let root = inv.root;
     folder(inv, WARDROBE, root, "Wardrobe");
     for (index, (name, asset_type, inv_type, wearable)) in ITEMS.iter().enumerate() {

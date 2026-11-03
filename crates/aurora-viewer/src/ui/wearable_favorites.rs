@@ -68,6 +68,8 @@ pub struct WearableFavoritesUi {
     dialog: Option<Dialog>,
     focus: bool,
     pub message: String,
+    /// A wear asked from the list, until the outfit answers.
+    pub wearing: bool,
     pub pending: Option<Pending>,
     /// The originals already asked for, once each.
     pub requested: HashSet<Uuid>,
