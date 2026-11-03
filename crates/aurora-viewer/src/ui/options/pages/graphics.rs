@@ -378,6 +378,19 @@ fn quality(cx: &mut Cx) {
             &field!(anisotropy),
             &choices,
         );
+        // RenderMaxTextureResolution (panel_preferences_graphics1.xml,
+        // FSRestrictMaxTexturePixels): 512, 1024 or 2048 pixels
+        let names: Vec<(u32, String)> = crate::settings::MAX_TEXTURE_RESOLUTIONS
+            .into_iter()
+            .map(|v| (v, tr!("ui-options-texture-resolution-pixels", size = v.to_string())))
+            .collect();
+        let choices: Vec<(u32, &str)> = names.iter().map(|(v, l)| (*v, l.as_str())).collect();
+        cx.combo(
+            tr!("ui-options-maximum-texture-resolution"),
+            tr!("ui-options-world-textures-load-no-larger-more-fit-before-blurring"),
+            &field!(max_texture_resolution),
+            &choices,
+        );
     });
     cx.group(tr!("ui-options-avatars"), |cx| {
         cx.slider(

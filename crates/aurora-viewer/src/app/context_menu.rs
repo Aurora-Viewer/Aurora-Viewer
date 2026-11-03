@@ -174,6 +174,17 @@ impl App {
             particle_only: self.object_menu.particle_only,
             ..Facts::default()
         };
+        // the same check as the send, so a greyed entry never disagrees
+        let refused = |command: NetCommand| !w.rlva_allows_command(&command, uuid::Uuid::nil());
+        f.ground_sit_blocked = refused(NetCommand::OneShotControl(aurora_net::control::SIT_ON_GROUND));
+        f.stand_blocked = refused(NetCommand::OneShotControl(aurora_net::control::STAND_UP));
+        if let Some(Target::Object { key, full_id, offset }) = self.context_menu.as_ref().map(|m| &m.target) {
+            f.object_sit_blocked = refused(NetCommand::RequestSit {
+                handle: key.region,
+                target: *full_id,
+                offset: *offset,
+            });
+        }
         match self.context_menu.as_ref().map(|m| &m.target) {
             Some(Target::Object { key, .. } | Target::Attachment { key }) => {
                 if let Some(idx) = w.objects.index_of(key) {
