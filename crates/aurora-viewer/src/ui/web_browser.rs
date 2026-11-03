@@ -235,12 +235,19 @@ impl WebBrowserUi {
             }
         });
         ui.add_space(4.0);
-        // the status line is drawn under the page: its height comes off the page
-        let status_h = 18.0;
-        let size = Vec2::new(ui.available_width(), (ui.available_height() - status_h - 4.0).max(120.0));
+        // The status line takes a fixed strip at the bottom and the page the
+        // rest: a row taller than its share would make the window grow, frame
+        // after frame, until it covered the bars.
+        const STATUS_H: f32 = 20.0;
+        let size = Vec2::new(
+            ui.available_width(),
+            (ui.available_height() - STATUS_H - 2.0 - 2.0 * ui.spacing().item_spacing.y).max(120.0),
+        );
         self.web.show(ui, p, env.paths, env.browser, None, size);
         ui.add_space(2.0);
-        ui.horizontal(|ui| {
+        let (strip, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), STATUS_H), egui::Sense::hover());
+        let layout = egui::Layout::left_to_right(egui::Align::Center);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(strip).layout(layout), |ui| {
             let loading = self.web.loading;
             let text = if self.web.status.is_empty() {
                 if loading {
@@ -251,9 +258,8 @@ impl WebBrowserUi {
             } else {
                 self.web.status.clone()
             };
-            let bar = 120.0;
             if loading {
-                widgets::progress(ui, p, "web_browser_load", self.web.progress as f32 / 100.0, bar, "", None);
+                widgets::progress(ui, p, "web_browser_load", self.web.progress as f32 / 100.0, 120.0, "", None);
             }
             ui.add(egui::Label::new(RichText::new(text).size(11.5).color(p.muted)).truncate());
         });
@@ -309,5 +315,44 @@ mod tests {
         assert!(!is_secure("http://example.org"));
         assert!(!is_secure("file:///x"));
         assert!(!is_secure(""));
+    }
+
+    /// The window opens inside the work area, with its status line, and does
+    /// not grow from one frame to the next (a defect once covered the bars).
+    #[test]
+    fn the_window_stays_between_the_bars_and_does_not_grow() {
+        let mut frames = widgets::elide_tests::Frames::new();
+        let ctx = frames.ctx.clone();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let mut ui_state = WebBrowserUi::default();
+        let (mut open, env_home) = (true, DEFAULT_HOME.to_owned());
+        let browser = aurora_media::BrowserSettings::default();
+        let mut heights = Vec::new();
+        for _ in 0..12 {
+            frames.run(Vec::new(), |ui| {
+                let env = BrowserWeb {
+                    paths: None,
+                    browser: &browser,
+                    home: &env_home,
+                };
+                ui_state.show(ui.ctx(), &p, &mut open, &env);
+            });
+            if let Some(rect) = egui::AreaState::load(&ctx, egui::Id::unique(WINDOW)).map(|a| a.rect()) {
+                heights.push(rect);
+            }
+        }
+        let work = super::super::layout::work_area(&ctx);
+        let last = *heights.last().expect("the window was shown");
+        assert!(
+            last.bottom() <= work.bottom() + 0.5 && last.top() >= work.top() - 0.5,
+            "{last:?} in {work:?}"
+        );
+        let n = heights.len();
+        assert!(
+            (heights[n - 1].height() - heights[n - 3].height()).abs() < 0.5,
+            "keeps growing: {heights:?}"
+        );
     }
 }
