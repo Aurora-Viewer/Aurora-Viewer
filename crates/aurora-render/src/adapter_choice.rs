@@ -95,7 +95,8 @@ impl Wanted {
                 // must not take its place
                 let exact = |c: &Candidate| c.name.to_lowercase() == *n;
                 let part = |c: &Candidate| c.name.to_lowercase().contains(n.as_str());
-                let matches: &dyn Fn(&Candidate) -> bool = if candidates.iter().any(exact) { &exact } else { &part };
+                let strict = candidates.iter().any(exact);
+                let matches = |c: &Candidate| if strict { exact(c) } else { part(c) };
                 candidates
                     .iter()
                     .position(|c| matches(c) && c.surface)
