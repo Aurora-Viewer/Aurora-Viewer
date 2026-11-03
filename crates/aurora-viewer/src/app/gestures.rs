@@ -324,10 +324,12 @@ impl App {
                 Effect::Sound(asset) => self.send_sound_trigger(asset),
                 Effect::Chat(text) => {
                     let (channel, message) = crate::ui::chat::parse_channel(&text);
-                    // A bare "/-1234" says an empty line to the scripts on
-                    // that channel (#2095), as send_chat_from_viewer does
-                    // ("Don't break null messages", fsnearbychathub.cpp).
-                    if channel != 0 || (!message.is_empty() && !self.chat_command(&message)) {
+                    // LLGestureMgr::runStep: a step that is not a chat bar
+                    // command is said as it is, an empty one included; a bare
+                    // "/-1234" says an empty line to the scripts on that
+                    // channel (#2095, send_chat_from_viewer: "Don't break
+                    // null messages", fsnearbychathub.cpp).
+                    if channel != 0 || !self.chat_command(&message) {
                         self.send(NetCommand::Chat {
                             message: crate::ui::emoji::expand_shortcodes(&message),
                             channel,
