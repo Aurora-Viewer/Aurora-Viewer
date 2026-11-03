@@ -139,7 +139,11 @@ enum SuitcaseGo {
     /// A named destination (navigation bar, links, history), resolved again.
     Named { destination: String, pos: Vec3, look_at: Vec3 },
     /// The world map's teleport to its tracked spot, sent as it was.
-    Map { command: NetCommand, label: String, show: bool },
+    Map {
+        command: Box<NetCommand>,
+        label: String,
+        show: bool,
+    },
 }
 
 /// A Hypergrid teleport waiting for its question (`App::suitcase_held`).
@@ -5737,7 +5741,7 @@ impl App {
             return false;
         };
         let go = SuitcaseGo::Map {
-            command: command.clone(),
+            command: Box::new(command.clone()),
             label: label.to_owned(),
             show,
         };
@@ -15659,7 +15663,7 @@ impl App {
                             self.teleport_to_location_looking(destination, pos, look_at);
                         }
                         SuitcaseGo::Map { command, label, show } => {
-                            self.request_user_teleport(command, label, show);
+                            self.request_user_teleport(*command, label, show);
                         }
                     }
                 }
