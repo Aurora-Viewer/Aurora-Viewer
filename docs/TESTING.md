@@ -2879,6 +2879,7 @@ To check with these scenarios:
 | `AURORA_DEMO_EMOTE=<expression>[,<hand pose>][,signal][,self]` | A facial expression and a hand pose from an animation (system body) |
 | `AURORA_DEMO_PHYSICS=1\|still\|off\|classic` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
 | `AURORA_DEMO_DERENDER=menu\|inspect\|avatar\|hat` | A resident's Inspect, Derender and the Asset blacklist window |
+| `AURORA_DEMO_FRIENDS_ONLY=1\|friend` | Show Friends Only: the other avatar leaves at frame 700 and comes back at 900 |
 | `AURORA_DEMO_SEAT_KILL=1` | A seat deleted under the resident sitting on it |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
@@ -3630,6 +3631,15 @@ tests do not establish that this report uses an invalid joint or index.
   away until removed in World › Asset blacklist. Screenshots with
   `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_CAMERA=close,830,330,40` (on the
   avatar) and `AURORA_CAPTURE_FRAMES=720,780,830,950`.
+- **`AURORA_DEMO_FRIENDS_ONLY`**: Show Friends Only (toolbar `RFO`, World
+  menu), switched on by the scenario at frame 700: Violet Wolf, who is not a
+  friend, vanishes with its hat, orb and name plate while our avatar stays;
+  at frame 900 it is switched off and they all come back at once.
+  `friend` makes the wolf a friend at frame 650: it stays when the mode
+  comes on at 700, vanishes at 800 when the friendship ends, and returns at
+  900. The state is kept per account in the settings, and a teleport
+  switches it off unless Preferences › Controls keeps it. Screenshots with
+  `AURORA_CAPTURE_FRAMES=680,760,950`.
 - **`AURORA_DEMO_SEAT_KILL=1`** (issue #746): Violet Wolf, with its hat and
   orb, sits on a violet cushion at frame 700. The cushion is deleted at
   frame 800, before the simulator stands Wolf up at 900, as a carry or pose
@@ -4734,6 +4744,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SIM_VERSION=1\|on` | The region's simulator version changes during the run: no notice by default, one with `on` |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_ABOUT=info\|licences[:end]` | Help › About Aurora Viewer opens on its Info or Licences tab |
+| `AURORA_DEMO_VOICE_CONTROLS=1` | The toolbar's Voice controls window opens (frame 600) on the nearby channel with three demo residents; with `AURORA_DEMO_CALL=conference` on the call's channel |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
@@ -5486,6 +5497,17 @@ failure. Grid validation and any paid upload are performed by the human.
   rows, no-copy/transfer rules and fixed environment-copy controls. Import rows
   edit the same saved values as the unchanged Permissions tab in import windows.
   New demo inventory items use their category's selected permissions.
+- **`AURORA_DEMO_INVENTORY=folder-colors|aurora-folder-colors`**: turns
+  folder colors on, colors five demo folders and opens the palette window on
+  "A personal folder", over the Legacy or Aurora inventory. Check the tinted
+  icons in the tree (and Aurora's sidebar), the outlined current swatch, the
+  custom swatch's picker and Restore default.
+  `aurora-folder-colors-behind` keeps the palette open, widens the inventory at
+  frame 640, brings it over the palette at 700 (a click on it) and chooses
+  Folder color… again at 760: capture 750 (palette covered) and 820 (palette
+  in front). `aurora-folder-colors-follow`: the palette follows the selection;
+  Clothing selected at 700, an item at 780: capture 750 (Clothing named, its
+  pink outlined) and 830 ("Select a folder to color it.", palette greyed).
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory
@@ -5717,6 +5739,20 @@ failure. Grid validation and any paid upload are performed by the human.
   "Reading…" line for a moment), and "Copy to clipboard"; Licences lists
   NOTICE.md, a card per heading. Capture at frame 700 with
   `AURORA_FPS_LIMIT=60`, in `--language en` and `fr`.
+- **`AURORA_DEMO_VOICE_CONTROLS=1`**: the Voice controls window
+  (`ui/voice_controls.rs`, the toolbar's `voice` command) opens at frame
+  600. Nearby channel: Nova talks in bursts, Tess is in voice and silent,
+  Loup talks in turn with Nova, leaves the channel at 20 s (listed "Left"
+  and dimmed, removed 10 s later) and comes back at 40 s; the title says
+  "Nearby voice", there is no "Leave call" button, and our own row (top)
+  follows the microphone. Right-click a row for the sort (by name, the
+  default, or by recent speakers, which puts whoever spoke last on top) and
+  the avatar menu. With `AURORA_DEMO_CALL=conference` (or `group`, `p2p`)
+  the window follows the call: its title ("Conference call", "Group call
+  with …", "Call with …"), the call's participants (Tess muted by the
+  moderator) and "Leave call", which hangs up and brings the title back to
+  nearby voice. Capture at frame 700 for the nearby list, after frame 1800
+  to see Loup leave.
 - **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
   sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
   pushes & hits" window opens at frame 600, a resident bumps the agent at
@@ -8062,7 +8098,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
 — opens Appearance with four synthetic outfits:
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
@@ -8173,6 +8209,14 @@ gallery's double-click continues to open the outfit's contents.
   Lipstick under Star from frame 701 and drops it at frame 760 (the list
   then reads Freckles, Star, Lipstick); `layers-hold` holds it over its
   landing place, for a capture of the marker.
+- `json-import`: the Import from JSON confirmation with the synthetic
+  current outfit and an editable name. `json-partial` adds one unavailable
+  attachment: check its missing count and name, Import partial outfit, and
+  Cancel. The Appearance gear menu places Export to JSON and Import from
+  JSON below Restore saved outfit. Export backs up the selected saved outfit
+  in the gallery/list, otherwise the current outfit, including unsaved
+  changes. JSON restores inventory references, not assets: the same
+  inventory items must still be available to the account.
 
 `wearables`, `wearables-outfits` and `wearables-edit` show all 17 system
 wearable types in Worn, My Outfits and the editor respectively. Each type

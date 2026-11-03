@@ -655,6 +655,8 @@ pub struct App {
     group_titles_ui: ui::group_titles::GroupTitlesUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
+    /// The toolbar's Voice controls window (`ui/voice_controls.rs`).
+    voice_controls_ui: ui::voice_controls::VoiceControlsUi,
     /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
     /// its button stands on a toolbar, and whether the window was open
     /// last frame.
@@ -706,6 +708,9 @@ pub struct App {
     /// The session's account whose favourites the login screen gets
     /// (app/login_favorites.rs).
     login_favorites: login_favorites::Session,
+    /// The account whose Show Friends Only choice the world carries
+    /// (app/derender.rs).
+    friends_only_account: uuid::Uuid,
     /// SLURLs from outside and the command line's login (app/external_links.rs).
     external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
@@ -1467,6 +1472,7 @@ impl App {
             blacklist_ui: Default::default(),
             group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
+            voice_controls_ui: Default::default(),
             grid_status: Default::default(),
             grid_status_listed: false,
             grid_status_was_open: false,
@@ -1497,6 +1503,7 @@ impl App {
             attention: Default::default(),
             reconnect_place: None,
             login_favorites: Default::default(),
+            friends_only_account: uuid::Uuid::nil(),
             external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
@@ -2778,6 +2785,10 @@ impl App {
         // that ends here
         self.search_ui = Default::default();
         self.panels.search = false;
+        // Voice controls: closed, and its list (the last session's nearby
+        // participants) forgotten
+        self.voice_controls_ui = Default::default();
+        self.panels.voice_controls = false;
         self.save_local_environment();
         self.env_ui = Default::default();
         self.env_scan = false;
@@ -7578,6 +7589,7 @@ impl App {
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.voice_controls_ui.wanted_pics.drain());
         wanted.extend(self.contacts_people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
@@ -8441,6 +8453,7 @@ impl App {
         self.poll_ao();
         self.sync_static_eyes();
         if self.in_world() {
+            self.sync_friends_only();
             self.step_gestures();
         }
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
@@ -10174,6 +10187,7 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            ui::inventory::folder_colors_demo_frame(&ctx, &mut self.inventory_ui, &self.settings.inventory, self.frame_count);
             ui::inventory::bulk_permissions_demo(self.frame_count, &mut self.inventory_ui);
             if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
                 match self.frame_count {
@@ -11071,6 +11085,9 @@ impl App {
                 }
             }
         }
+        if self.demo && crate::demo::voice_controls::enabled() && self.frame_count == crate::demo::voice_controls::OPEN {
+            ui::widgets::open_floater(&self.egui_ctx, ui::voice_controls::WINDOW, &mut self.panels.voice_controls);
+        }
         if self.demo && crate::demo::collisions::mode().is_some() {
             for event in crate::demo::collisions::events(self.frame_count) {
                 self.world.apply(event);
@@ -11375,6 +11392,7 @@ impl App {
         }
         self.demo_worn_steps();
         self.demo_derender_steps();
+        self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
@@ -12729,6 +12747,12 @@ impl App {
             }
         }
         self.poll_stream_list();
+        for command in self.appearance_ui.json.poll(&self.egui_ctx, &mut self.world) {
+            self.send(command);
+        }
+        if self.appearance_ui.json.has_confirmation() {
+            self.panels.appearance = true;
+        }
         match a.bar {
             BarAction::ImportStreamList => self.import_stream_list(),
             BarAction::ExportStreamList => self.export_stream_list(),
@@ -12853,6 +12877,10 @@ impl App {
                     .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
             }
             BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
+            BarAction::ToggleFriendsOnly => {
+                let on = !self.world.friends_only();
+                self.world.set_friends_only(on);
+            }
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
@@ -13927,6 +13955,7 @@ impl App {
             second_life,
         });
         self.options_ui.login_favorites = self.login_favorites.key().map(|key| self.login_form.favorites.shown(key));
+        self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
             self.options_ui.anti_spam_version = self.world.anti_spam.version;
@@ -14021,6 +14050,9 @@ impl App {
             if shown {
                 self.keep_login_favorites(true);
             }
+        }
+        if let Some(keep) = res.friends_only_keep {
+            self.world.friends_only.keep_after_teleport = keep;
         }
         if let Some(maturity) = res.maturity {
             self.world.set_maturity_preference(maturity);
@@ -14296,6 +14328,7 @@ impl App {
                     );
                     crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
                     crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::voice_controls::voice(&mut levels, ctx.input(|i| i.time));
                     levels
                 } else {
                     self.voice.levels(self.world.agent_id)
@@ -14497,6 +14530,7 @@ impl App {
                     env_keys: self.env_keys(),
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
+                    friends_only: self.world.friends_only(),
                     fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,
@@ -16212,6 +16246,18 @@ impl App {
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
+                if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
+                    &ctx,
+                    &p,
+                    &ui::voice_controls::Inputs {
+                        world: &self.world,
+                        levels: &voice_levels,
+                        pics: &self.avatar_pics,
+                    },
+                    &mut self.panels.voice_controls,
+                ) {
+                    self.world.end_call();
+                }
                 let shown = self.stream_title_ui.show(
                     &ctx,
                     &p,
@@ -16288,6 +16334,7 @@ impl App {
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
+                self.toolbar_ui.friends_only_active = self.world.friends_only();
                 let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
                 self.chat_ui.note_frame(pointer_busy);
                 for pa in acts {
@@ -18298,6 +18345,10 @@ impl ApplicationHandler for App {
                 if view == "save" {
                     self.appearance_ui.begin_save_as(&self.world.inventory);
                 }
+                if matches!(view.as_str(), "json-import" | "json-partial") {
+                    self.appearance_ui.open(2, false);
+                    ui::appearance::json::demo(&self.world, &mut self.appearance_ui, view == "json-partial");
+                }
                 if matches!(view.as_str(), "multi-gallery" | "multi-outfits") {
                     self.appearance_ui.demo_multiselection();
                 }
@@ -18433,6 +18484,10 @@ impl ApplicationHandler for App {
                         | "smart"
                         | "aurora-smart"
                         | "aurora-smart-wide"
+                        | "folder-colors"
+                        | "aurora-folder-colors"
+                        | "aurora-folder-colors-behind"
+                        | "aurora-folder-colors-follow"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -18448,6 +18503,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui
                             .show_original(&self.world.inventory, crate::world::inventory::demo::LOST_FOLDER);
                         self.inventory_ui.expand_all = Some(true);
+                    }
+                    if view.contains("folder-colors") {
+                        ui::inventory::folder_colors_demo(&mut self.inventory_ui, &mut self.settings.inventory);
                     }
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";

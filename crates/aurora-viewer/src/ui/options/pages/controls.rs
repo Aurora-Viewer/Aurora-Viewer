@@ -2,7 +2,8 @@
 //! Movement" (panel_preferences_move.xml) and what the keys move.
 
 use super::super::Page;
-use super::super::cx::{Cx, field};
+use super::super::cx::{Cx, Nothing, field};
+use super::super::toggle;
 
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
@@ -76,6 +77,7 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-fly-after-teleport-help"),
             &field!(fly_after_teleport),
         );
+        friends_only_keep_row(cx);
         cx.link(
             tr!("ui-options-shortcuts"),
             tr!("ui-options-keys-and-mouse-buttons-for-each-action"),
@@ -83,5 +85,26 @@ pub fn page(cx: &mut Cx) {
             Page::Shortcuts,
             0,
         );
+    });
+}
+
+/// "Keep 'Show Friends Only' enabled after teleporting" (FSRenderFriendsOnlyPersistsTP of
+/// panel_preferences_move.xml): kept per account, so it waits for a login,
+/// as in the Legacy Viewer.
+fn friends_only_keep_row(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    let p = cx.p;
+    let state = cx.st.friends_only_keep;
+    let mut kept = state.unwrap_or(false);
+    let hint = if state.is_some() {
+        tr!("ui-options-friends-only-keep-help")
+    } else {
+        tr!("ui-options-friends-only-keep-login")
+    };
+    cx.row_with(tr!("ui-options-friends-only-keep"), hint, &Nothing, |ui, _, _, r| {
+        if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut kept)).inner {
+            r.friends_only_keep = Some(kept);
+        }
+        false
     });
 }
