@@ -280,7 +280,8 @@ fn index_files(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(kind) = entry.file_type() else { continue };
-            if kind.is_dir() {
+            // a linked directory too: NixOS profiles are trees of links
+            if kind.is_dir() || (kind.is_symlink() && path.is_dir()) {
                 stack.push(path);
                 continue;
             }
@@ -444,6 +445,25 @@ mod tests {
         assert_eq!(files.get("demo.ttf"), Some(&a.join("Demo.TTF")));
         assert_eq!(files.get("other.otf"), Some(&b.join("Other.otf")));
         assert_eq!(files.len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_directories_are_indexed() {
+        let root = std::env::temp_dir().join(format!("aurora-font-links-{}", std::process::id()));
+        let (store, profile) = (root.join("store").join("noto"), root.join("profile"));
+        std::fs::create_dir_all(&store).expect("temp dir");
+        std::fs::create_dir_all(&profile).expect("temp dir");
+        std::fs::write(store.join("NotoSansThai-Regular.ttf"), b"x").expect("temp file");
+        std::os::unix::fs::symlink(&store, profile.join("noto")).expect("link");
+        // a link back up the tree ends with the visit budget, not in a loop
+        std::os::unix::fs::symlink(&profile, profile.join("noto-loop")).expect("link");
+        let files = index_files(std::slice::from_ref(&profile));
+        assert_eq!(
+            files.get("notosansthai-regular.ttf"),
+            Some(&profile.join("noto").join("NotoSansThai-Regular.ttf"))
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

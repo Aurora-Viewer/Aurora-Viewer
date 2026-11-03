@@ -125,30 +125,67 @@ fn font_dirs() -> Vec<PathBuf> {
             std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
             std::env::var_os("XDG_DATA_DIRS"),
         );
-        for dir in fontconfig_dirs() {
-            if !dirs.contains(&dir) {
-                dirs.push(dir);
-            }
-        }
+        // fontconfig's own directories first: `system_fonts` takes the
+        // directories from the end and the fallback index keeps the first
+        // copy of a file, so either way they come after the usual ones and
+        // a large tree of theirs (TeX Live's) cannot use up the budget
+        let extra: Vec<PathBuf> = fontconfig_dirs().into_iter().filter(|d| !dirs.contains(d)).collect();
+        dirs.splice(0..0, extra);
     }
     dirs
 }
 
-/// The `<dir>`s of fontconfig's configuration (`$FONTCONFIG_FILE`, else
-/// `/etc/fonts/fonts.conf` and what it includes, the user's own file among
-/// them). NixOS and other set-ups keep fonts only in such directories; the
-/// Legacy Viewer reaches them by asking fontconfig for each missing
-/// character (LLWindowSDL::findFallbackFontForChar).
+/// The `<dir>`s of fontconfig's configuration file and of what it
+/// includes, the user's own file among them. NixOS and other set-ups keep
+/// fonts only in such directories; the Legacy Viewer reaches them by asking
+/// fontconfig for each missing character
+/// (LLWindowSDL::findFallbackFontForChar).
 #[cfg(target_os = "linux")]
 fn fontconfig_dirs() -> Vec<PathBuf> {
-    let file = std::env::var_os("FONTCONFIG_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/etc/fonts/fonts.conf"));
+    let Some(file) = fontconfig_file(
+        std::env::var_os("FONTCONFIG_FILE"),
+        std::env::var_os("FONTCONFIG_PATH"),
+        std::env::var_os("HOME").map(PathBuf::from),
+        |p| p.is_file(),
+    ) else {
+        log::info!("no fontconfig configuration found");
+        return Vec::new();
+    };
     let mut config = fontconfig_parser::FontConfig::default();
     if let Err(e) = config.merge_config(&file) {
-        log::info!("fontconfig configuration {} not read: {e}", file.display());
+        // the directories read before the error are kept
+        log::warn!("fontconfig configuration {} not fully read: {e}", file.display());
     }
     config.dirs.into_iter().map(|d| d.path).filter(|p| p.is_absolute()).collect()
+}
+
+/// The configuration file fontconfig reads (FcConfigGetFilename):
+/// `$FONTCONFIG_FILE`, else `fonts.conf`; a name that is not absolute (nor
+/// starts with `~/`) is looked for in each directory of `$FONTCONFIG_PATH`,
+/// then in `/etc/fonts`.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn fontconfig_file(
+    file: Option<std::ffi::OsString>,
+    path: Option<std::ffi::OsString>,
+    home: Option<PathBuf>,
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> Option<PathBuf> {
+    let name = file
+        .filter(|f| !f.is_empty())
+        .map_or_else(|| PathBuf::from("fonts.conf"), PathBuf::from);
+    if let Ok(rest) = name.strip_prefix("~") {
+        return home.map(|h| h.join(rest)).filter(|p| exists(p));
+    }
+    if name.is_absolute() {
+        return Some(name).filter(|p| exists(p));
+    }
+    let search = path.map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty()).collect::<Vec<_>>());
+    search
+        .unwrap_or_default()
+        .into_iter()
+        .chain([PathBuf::from("/etc/fonts")])
+        .map(|d| d.join(&name))
+        .find(|p| exists(p))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -484,6 +521,33 @@ fn embedded_has(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn fontconfig_file_is_looked_for_like_fontconfig() {
+        let p = PathBuf::from;
+        let present = [
+            p("/etc/fonts/fonts.conf"),
+            p("/opt/fc/fonts.conf"),
+            p("/opt/fc/app.conf"),
+            p("/home/u/fc.conf"),
+        ];
+        let find = |file: Option<&str>, path: Option<&str>| {
+            fontconfig_file(file.map(Into::into), path.map(Into::into), Some(p("/home/u")), |f| {
+                present.iter().any(|x| x == f)
+            })
+        };
+        // default name in /etc/fonts, or first in FONTCONFIG_PATH
+        assert_eq!(find(None, None), Some(p("/etc/fonts/fonts.conf")));
+        assert_eq!(find(Some(""), Some("/missing:/opt/fc")), Some(p("/opt/fc/fonts.conf")));
+        // a relative FONTCONFIG_FILE is searched the same way, not in the working directory
+        assert_eq!(find(Some("app.conf"), Some("/opt/fc")), Some(p("/opt/fc/app.conf")));
+        assert_eq!(find(Some("app.conf"), None), None);
+        // absolute and home names are taken as they are
+        assert_eq!(find(Some("~/fc.conf"), Some("/opt/fc")), Some(p("/home/u/fc.conf")));
+        assert_eq!(find(Some("/home/u/fc.conf"), None), Some(p("/home/u/fc.conf")));
+        assert_eq!(find(Some("/nowhere.conf"), None), None);
+    }
 
     #[cfg(unix)]
     #[test]
