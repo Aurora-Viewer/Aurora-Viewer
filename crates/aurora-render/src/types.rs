@@ -965,6 +965,10 @@ pub struct SnapshotSpec {
     pub interface: bool,
     /// HUD attachments drawn (RenderHUDInSnapshot).
     pub huds: bool,
+    /// The whole photo's size, which a tile's GTAO resolution follows:
+    /// tiles of different sizes, at full and half resolution side by
+    /// side, would differ along their border.
+    pub photo: (u32, u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1231,6 +1235,24 @@ pub struct OverlayEffect {
     pub texture: [u32; 4],
 }
 
+/// A photo drawn in tiles reads GTAO's depth of the whole photo beyond
+/// each tile: a tile drawn alone has no scene past its guard band, and near
+/// the camera GTAO's radius (0.73 m) spans thousands of pixels, so its
+/// horizon search read the border's depth again for a wall, light and dark
+/// steps along the seams. The farther a sample, the coarser the depth level
+/// it reads: a whole frame at a fraction of the photo's size serves them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PhotoContext {
+    /// Outside a tiled photo: a context kept from one is freed.
+    #[default]
+    None,
+    /// The whole photo, drawn small before its tiles: GTAO's depth levels
+    /// are kept.
+    Record,
+    /// A tile: GTAO's samples past it read the kept depth.
+    Use,
+}
+
 /// Camera and environment for one frame.
 #[derive(Debug, Clone)]
 pub struct FrameParams {
@@ -1262,6 +1284,8 @@ pub struct FrameParams {
     /// the viewfinder's in a photo. The screen-space effects measured in
     /// pixels (the contact shadows) keep their size in the image with it.
     pub photo_scale: f32,
+    /// The whole photo's depth around the tiles (`PhotoContext`).
+    pub photo_context: PhotoContext,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,
@@ -1498,6 +1522,12 @@ pub struct RenderStats {
     /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
     /// the photo's).
     pub gpu_pixels: u64,
+    /// Video memory the render targets that follow the image's size take
+    /// for each of its pixels, with the MSAA samples, the effects and the
+    /// TAA history of the current settings: measured with wgpu's counters
+    /// when they were last made. A photo pass needs as much for each of its
+    /// pixels, besides its output and readback.
+    pub target_bytes_per_pixel: Option<f32>,
     /// CPU time the main thread spent on the frame's rendering (ms): the
     /// whole encoding when the renderer runs on it, only the frame packet
     /// with a render thread.

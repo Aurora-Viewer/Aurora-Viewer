@@ -312,8 +312,21 @@ pub fn gpu_stalled(seconds: u64) {
 /// The GPU device is lost for good (app/gpu_stall.rs): the session, which
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
+    mark_gpu_lost(b"");
+}
+
+/// The text of `gpu-lost.txt` for a device lost before the first frame.
+const GPU_LOST_AT_START: &str = "start";
+
+/// The same before the first frame (app.rs): reported under its own title,
+/// apart from the driver resets of a running session.
+pub fn gpu_lost_at_start() {
+    mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
+}
+
+fn mark_gpu_lost(when: &[u8]) {
     if let Some(session) = SESSION.get() {
-        let _ = std::fs::write(session.dir.join("gpu-lost.txt"), []);
+        let _ = std::fs::write(session.dir.join("gpu-lost.txt"), when);
         let _ = std::fs::write(session.dir.join("failed"), []);
         ending_in_gpu_trouble(&session.dir);
     }

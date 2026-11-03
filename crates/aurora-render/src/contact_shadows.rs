@@ -411,7 +411,7 @@ pub(crate) fn variant_source(variant: Variant) -> String {
         }
         Variant::NoShared => {
             let mut src = lf();
-            cut(&mut src, "var<workgroup> depth_data", "var<workgroup> any_live: u32;\n", "");
+            cut(&mut src, "var<workgroup> depth_data", "var<workgroup> any_live: atomic<u32>;\n", "");
             cut(
                 &mut src,
                 "    // ---- early out of a wavefront",

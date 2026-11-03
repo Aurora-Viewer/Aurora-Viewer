@@ -40,6 +40,7 @@ pub mod env_editor;
 pub mod environment;
 pub mod exit;
 pub mod experience_profile;
+pub mod experiences;
 pub mod find_shortcut;
 pub mod follow;
 pub mod fonts;
@@ -49,6 +50,7 @@ pub(crate) mod give_drop;
 pub mod grid_status;
 pub mod grids;
 pub mod group_profile;
+pub mod group_titles;
 pub mod hover_height;
 pub mod hover_tips;
 pub mod hud;
@@ -140,6 +142,9 @@ pub struct Panels {
     pub dev_toolbox: bool,
     /// Advanced › Region console (SimConsoleAsync, estate managers).
     pub sim_console: bool,
+    /// Group titles (FSFloaterGroupTitles): the toolbar's command and
+    /// Contacts › Groups › Titles.
+    pub group_titles: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -181,6 +186,8 @@ pub struct Panels {
     pub asset_blacklist: bool,
     /// "Money tracker" (Me menu): the L$ received and paid.
     pub money_tracker: bool,
+    /// "Experiences" (Me menu): the agent's experiences by tab.
+    pub experiences: bool,
     /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
@@ -213,6 +220,7 @@ impl Panels {
             perf: settings.show_perf,
             dev_toolbox: false,
             sim_console: false,
+            group_titles: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
@@ -241,6 +249,7 @@ impl Panels {
             avatar_render_settings: false,
             asset_blacklist: false,
             money_tracker: false,
+            experiences: false,
             bumps: false,
             grid_status: false,
             about: false,

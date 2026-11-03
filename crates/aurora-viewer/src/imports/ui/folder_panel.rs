@@ -41,7 +41,7 @@ pub(super) fn destination_row(
                     Imports::batch_folder(world, prefs.batch_folder)
                 };
                 ui.add_enabled_ui(!prefs.use_default_folders, |ui| {
-                    imports.destination.show(ui, p, &world.inventory, &inventory.protected, &mut folder);
+                    imports.destination.show(ui, p, &world.inventory, &mut folder);
                 });
                 if !prefs.use_default_folders {
                     prefs.batch_folder = folder;
@@ -72,7 +72,7 @@ pub(super) fn destination_row(
                 if imports.demo_mode == "destination" {
                     imports.destination.demo(ui);
                 }
-                imports.destination.show(ui, p, &world.inventory, &inventory.protected, &mut folder);
+                imports.destination.show(ui, p, &world.inventory, &mut folder);
                 if !prefs.use_default_folders {
                     prefs.batch_folder = folder;
                 }

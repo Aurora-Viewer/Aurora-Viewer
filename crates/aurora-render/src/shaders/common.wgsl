@@ -112,6 +112,7 @@ struct Frame {
     motion_vp: mat4x4<f32>,
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
+    photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -1819,8 +1820,7 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
                         lo = mid;
                     }
                 }
-                let edge = min(min(huv.x, 1.0 - huv.x), min(huv.y, 1.0 - huv.y));
-                let conf = clamp(edge * 10.0, 0.0, 1.0) * (1.0 - f32(i) / f32(steps));
+                let conf = ssr_edge_fade(huv) * (1.0 - f32(i) / f32(steps));
                 let col = textureSampleLevel(scene_tex, lin_clamp, huv, 0.0).rgb;
                 return vec4<f32>(col, conf);
             }
@@ -1829,6 +1829,44 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
         t = t * 1.18 + 0.1;
     }
     return vec4<f32>(0.0);
+}
+
+// Pixels of a photo tile's inner edges over which a reflection's hit fades:
+// past them the ray finds nothing, the scene beyond is not drawn. Within
+// the guard band (at least 128 pixels, `snapshot::TILE_GUARD`), so the
+// pixels the tile keeps read their hits whole.
+const SSR_TILE_FADE: f32 = 64.0;
+
+// How much of a reflection's hit at `uv` is kept: it fades over the last
+// tenth of the image towards its edges. A photo tile fades at the photo's
+// edges, as the photo in one pass does, and at its inner edges only over
+// `SSR_TILE_FADE`: fading over a tenth of the tile took the reflections
+// out along every seam.
+fn ssr_edge_fade(uv: vec2<f32>) -> f32 {
+    if (frame.photo.z <= 0.0) {
+        let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+        return clamp(edge * 10.0, 0.0, 1.0);
+    }
+    let p = frame.photo.xy + uv * frame.photo.zw;
+    let edge = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));
+    // in this tile's pixels from each side; a side on the photo's edge
+    // fades with the photo
+    let px = uv * frame.screen.xy;
+    let to_end = frame.screen.xy - px;
+    var inner = 1.0;
+    if (frame.photo.x > 1e-6) {
+        inner = min(inner, px.x / SSR_TILE_FADE);
+    }
+    if (frame.photo.y > 1e-6) {
+        inner = min(inner, px.y / SSR_TILE_FADE);
+    }
+    if (frame.photo.x + frame.photo.z < 1.0 - 1e-6) {
+        inner = min(inner, to_end.x / SSR_TILE_FADE);
+    }
+    if (frame.photo.y + frame.photo.w < 1.0 - 1e-6) {
+        inner = min(inner, to_end.y / SSR_TILE_FADE);
+    }
+    return clamp(edge * 10.0, 0.0, 1.0) * clamp(inner, 0.0, 1.0);
 }
 
 // calcLegacyDistanceAttenuation (deferredUtil.glsl): `d` is the distance

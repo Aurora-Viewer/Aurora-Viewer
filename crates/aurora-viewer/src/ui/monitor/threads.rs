@@ -29,7 +29,7 @@ fn role(group: &str) -> &'static str {
         "aurora-cache" => tr!("monitor-thread-cache"),
         "aurora-trash" => tr!("monitor-thread-trash"),
         "aurora-inventory-cache" => tr!("monitor-thread-inventory"),
-        "aurora-chatlog" | "aurora-transcript" | "aurora-notification-history" => tr!("monitor-thread-logs"),
+        "aurora-chatlog" | "aurora-transcript" | "aurora-notification-history" | "aurora-experience-log" => tr!("monitor-thread-logs"),
         "aurora-monitor" | "aurora-probe" => tr!("monitor-thread-monitor"),
         "unnamed" => tr!("monitor-thread-unnamed"),
         _ => "",

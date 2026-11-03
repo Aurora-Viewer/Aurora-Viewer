@@ -124,7 +124,7 @@ impl App {
             && !self.imports.demo_upload_started
             && self.imports.pending_files.is_none()
             && !self.imports.entries.is_empty()
-            && self.imports.folder_plan_valid(&self.world, &self.settings.inventory)
+            && self.imports.folder_plan_valid(&self.world)
         {
             let missing_quotes: Vec<_> = self
                 .imports

@@ -65,13 +65,15 @@ impl PluginProcess {
     }
 
     /// Bind the listening socket and launch `launcher` (SLPlugin) with the
-    /// port as its only argument, in `plugin_dir`.
-    pub fn launch(launcher: &Path, plugin_dir: &Path, plugin_file: &Path) -> std::io::Result<PluginProcess> {
+    /// port as its only argument, in `plugin_dir`, with `env` added to its
+    /// environment.
+    pub fn launch(launcher: &Path, plugin_dir: &Path, plugin_file: &Path, env: &[(String, String)]) -> std::io::Result<PluginProcess> {
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let mut cmd = Command::new(launcher);
         cmd.arg(port.to_string()).current_dir(plugin_dir);
+        cmd.envs(env.iter().map(|(name, value)| (name, value)));
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
