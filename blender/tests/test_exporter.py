@@ -496,6 +496,30 @@ class ExporterTests(unittest.TestCase):
         pelvis["bind_mat"] = [stale[row][column] for column in range(4) for row in range(4)]
         assert_matrix(inverses()["mPelvis"], Matrix.Translation((0, 0, -1)))
 
+    def test_collision_volume_bind_mat_is_not_stacked_on_its_default_axes(self):
+        # A volume's bind_mat already holds its SL rotation and small scale; the
+        # viewer's rest axes for it hold the same, so only one may apply (#2022).
+        from mathutils import Matrix
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        belly = self.rig.data.edit_bones.new("BELLY")
+        belly.head, belly.tail = (0, 0, 1.1), (0, 0, 1.2)
+        belly.parent = self.rig.data.edit_bones["mPelvis"]
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.new(name="BELLY").add([2], 1.0, "REPLACE")
+        self.mesh.vertex_groups["mPelvis"].remove([2])
+        volume = Matrix.Rotation(0.14, 4, "Y") @ Matrix.Diagonal((0.09, 0.13, 0.15, 1.0))
+        bind = Matrix.Translation((0, 0, 1.1)) @ volume
+        self.rig.data.bones["BELLY"]["bind_mat"] = [bind[row][column] for column in range(4) for row in range(4)]
+        axes = volume.inverted()
+        value = exporter.snapshot([self.mesh], {"mPelvis", "BELLY"}, 1,
+                                  rest_axes={"BELLY": [axes[row][column] for column in range(4) for row in range(4)]})["meshes"][0]
+        inverse = Matrix([value["inverse_bind"][value["joints"].index("BELLY")][i:i + 4] for i in range(0, 16, 4)]).transposed()
+        expected = volume.inverted() @ Matrix.Translation((0, 0, -1.1))
+        for row in range(4):
+            for column in range(4):
+                self.assertAlmostEqual(inverse[row][column], expected[row][column], places=4)
+
     def test_avastar_rig_without_bind_data_binds_from_its_default_rest(self):
         # Avastar kits with "Use Bind Pose" and no bind_mat (#2022): the A-pose
         # is the rest matrix against the bone's default one, mat0.
