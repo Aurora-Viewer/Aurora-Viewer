@@ -15,6 +15,7 @@
 mod linux;
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use winit::keyboard::KeyCode;
 
 #[derive(Default)]
@@ -284,37 +285,133 @@ pub(super) fn named_code(code: &str) -> Option<KeyCode> {
     NAMED_KEYS.iter().map(|(key, ..)| *key).find(|key| format!("{key:?}") == code)
 }
 
-pub(super) fn current() -> &'static KeyboardLayout {
-    static LAYOUT: OnceLock<KeyboardLayout> = OnceLock::new();
-    LAYOUT.get_or_init(|| {
+/// The layouts of the keymap and the one in use. An XKB keymap can hold
+/// several layouts (`us,fr`), one of them active; Windows and X11 name it at
+/// start, Wayland only to a focused window (`Watch`), so there the first
+/// layout stands in until the compositor reports the active one.
+pub(super) struct Layouts {
+    all: Vec<KeyboardLayout>,
+    active: AtomicUsize,
+    /// The active layout was not reported at start and no report came since.
+    guessed: AtomicBool,
+}
+
+impl Layouts {
+    fn one(layout: KeyboardLayout) -> Self {
+        Self::new(vec![layout], 0, false)
+    }
+
+    fn new(all: Vec<KeyboardLayout>, active: usize, guessed: bool) -> Self {
+        let active = active.min(all.len().saturating_sub(1));
+        Self {
+            all,
+            active: AtomicUsize::new(active),
+            guessed: AtomicBool::new(guessed),
+        }
+    }
+
+    fn current(&self) -> &KeyboardLayout {
+        &self.all[self.active.load(Ordering::Relaxed)]
+    }
+
+    /// Layout `group` is reported active: the change, if the layout in use
+    /// changes. A group out of range (a keymap changed since the detection)
+    /// keeps the layout in use.
+    fn activate(&self, group: u32) -> Option<LayoutChange<'_>> {
+        let guessed = self.guessed.swap(false, Ordering::Relaxed);
+        let group = usize::try_from(group).ok().filter(|g| *g < self.all.len())?;
+        let before = self.active.swap(group, Ordering::Relaxed);
+        (before != group).then(|| LayoutChange {
+            before: &self.all[before],
+            after: &self.all[group],
+            guessed,
+        })
+    }
+}
+
+/// The layout in use changed while the viewer runs.
+pub struct LayoutChange<'a> {
+    pub(super) before: &'a KeyboardLayout,
+    pub(super) after: &'a KeyboardLayout,
+    /// `before` was only the stand-in for a layout not reported yet: the
+    /// defaults chosen with it were chosen for the wrong layout.
+    pub guessed: bool,
+}
+
+fn layouts() -> &'static Layouts {
+    static LAYOUTS: OnceLock<Layouts> = OnceLock::new();
+    LAYOUTS.get_or_init(|| {
         if std::env::var_os("AURORA_DEMO").is_some() {
             match std::env::var("AURORA_DEMO_KEYBOARD").as_deref() {
-                Ok("wasd") => return KeyboardLayout::wasd(),
-                Ok("zqsd") => return KeyboardLayout::zqsd(),
-                Ok("qwertz") => return KeyboardLayout::qwertz(),
-                Ok("fallback") => return KeyboardLayout::default(),
+                Ok("wasd") => return Layouts::one(KeyboardLayout::wasd()),
+                Ok("zqsd") => return Layouts::one(KeyboardLayout::zqsd()),
+                Ok("qwertz") => return Layouts::one(KeyboardLayout::qwertz()),
+                Ok("fallback") => return Layouts::one(KeyboardLayout::default()),
                 _ => {}
             }
         }
         detect().unwrap_or_else(|| {
             log::info!("keyboard layout detection unavailable; using WASD defaults and US QWERTY shortcut keys");
-            KeyboardLayout::default()
+            Layouts::one(KeyboardLayout::default())
         })
     })
 }
 
+pub(super) fn current() -> &'static KeyboardLayout {
+    layouts().current()
+}
+
+/// Follows the active layout while the viewer runs, where only a focused
+/// window learns it (Wayland). `None` elsewhere: the layout read at start
+/// stays.
+pub struct Watch {
+    #[cfg(target_os = "linux")]
+    inner: linux::GroupWatch,
+    #[cfg(not(target_os = "linux"))]
+    never: std::convert::Infallible,
+}
+
+impl Watch {
+    pub fn new(window: &winit::window::Window) -> Option<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            // a single layout has nothing to follow
+            if layouts().all.len() < 2 {
+                return None;
+            }
+            linux::GroupWatch::new(window).map(|inner| Self { inner })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = window;
+            None
+        }
+    }
+
+    /// The change of layout reported since the last call, if any.
+    pub fn poll(&mut self) -> Option<LayoutChange<'static>> {
+        #[cfg(target_os = "linux")]
+        let group = self.inner.poll()?;
+        #[cfg(not(target_os = "linux"))]
+        let group = match self.never {};
+        let change = layouts().activate(group)?;
+        log::info!("keyboard layout: layout {} reported active", group + 1);
+        Some(change)
+    }
+}
+
 #[cfg(target_os = "linux")]
-fn detect() -> Option<KeyboardLayout> {
+fn detect() -> Option<Layouts> {
     linux::detect()
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-fn detect() -> Option<KeyboardLayout> {
+fn detect() -> Option<Layouts> {
     None
 }
 
 #[cfg(windows)]
-fn detect() -> Option<KeyboardLayout> {
+fn detect() -> Option<Layouts> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardLayout, MAPVK_VK_TO_CHAR, MAPVK_VSC_TO_VK_EX, MapVirtualKeyExW};
     use winit::platform::scancode::PhysicalKeyExtScancode;
 
@@ -346,7 +443,7 @@ fn detect() -> Option<KeyboardLayout> {
             layout.labels.push((key, label_char(c)));
         }
     }
-    detected(layout)
+    detected(layout).map(Layouts::one)
 }
 
 #[cfg(test)]
@@ -394,6 +491,26 @@ mod tests {
         assert_eq!(azerty.label("Semicolon").as_deref(), Some("M"));
         assert_eq!(azerty.label("Quote").as_deref(), Some("Ù"));
         assert_eq!(KeyboardLayout::qwertz().label("Semicolon").as_deref(), Some("Ö"));
+    }
+
+    #[test]
+    fn a_stand_in_layout_gives_way_to_the_reported_one_once() {
+        let layouts = Layouts::new(vec![KeyboardLayout::wasd(), KeyboardLayout::zqsd()], 0, true);
+        assert_eq!(layouts.current().letters(), ['W', 'S', 'A', 'D']);
+        let change = layouts.activate(1).expect("the second layout is reported");
+        assert!(change.guessed);
+        assert_eq!(change.before.letters(), ['W', 'S', 'A', 'D']);
+        assert_eq!(change.after.letters(), ['Z', 'S', 'Q', 'D']);
+        assert_eq!(layouts.current().letters(), ['Z', 'S', 'Q', 'D']);
+        assert!(layouts.activate(1).is_none(), "the same layout again");
+        assert!(layouts.activate(7).is_none(), "a layout the keymap lacks");
+        let change = layouts.activate(0).expect("the user switches back");
+        assert!(!change.guessed, "only the first report replaces a stand-in");
+
+        // the stand-in confirmed: nothing moves, and a later switch is the user's
+        let layouts = Layouts::new(vec![KeyboardLayout::wasd(), KeyboardLayout::zqsd()], 0, true);
+        assert!(layouts.activate(0).is_none());
+        assert!(!layouts.activate(1).expect("a switch").guessed);
     }
 
     #[test]

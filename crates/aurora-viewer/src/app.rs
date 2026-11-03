@@ -141,6 +141,8 @@ struct Gfx {
     maximize_on_show: bool,
     renderer: Renderer,
     egui_state: egui_winit::State,
+    /// The active keyboard layout, on the window's connection (Wayland).
+    layout_watch: Option<crate::keybinds::LayoutWatch>,
 }
 
 /// Teleport screen state (also the login loading screen fading out).
@@ -1085,6 +1087,7 @@ impl App {
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
             // Exercise a first launch without changing the user's bindings.
             settings.keybinds = Default::default();
+            settings.defaults_follow_reported_layout = true;
         }
         apply_test_overrides(&mut settings);
         external_links::apply_grid(&mut settings);
@@ -5420,6 +5423,20 @@ impl App {
             self.applied_audio = Some(a.clone());
         }
         self.sync_minimized_mute();
+    }
+
+    /// The active keyboard layout changed (Wayland reports it once the
+    /// window has the focus): the labels follow on their own; defaults placed
+    /// this launch for the layout that stood in move to the reported one.
+    fn follow_keyboard_layout(&mut self) {
+        let Some(change) = self.gfx.as_mut().and_then(|g| g.layout_watch.as_mut()).and_then(|w| w.poll()) else {
+            return;
+        };
+        if std::mem::take(&mut self.settings.defaults_follow_reported_layout) && change.guessed {
+            log::info!("keyboard layout: this launch's default shortcuts move to the reported layout");
+            self.settings.keybinds.follow_layout_change(&change);
+            self.settings.save();
+        }
     }
 
     /// MuteWhenMinimized (audio_update_volume): every sound stops while the
@@ -16511,12 +16528,14 @@ impl ApplicationHandler for App {
             None,
             Some(max_tex),
         );
+        let layout_watch = crate::keybinds::LayoutWatch::new(&window);
         self.gfx = Some(Gfx {
             window,
             shown: false,
             maximize_on_show: self.settings.window_maximized && !capture,
             renderer,
             egui_state,
+            layout_watch,
         });
         if std::env::var_os("AURORA_DEMO").is_some() {
             self.demo = true;
@@ -19407,6 +19426,7 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.sync_minimized_mute();
+        self.follow_keyboard_layout();
         self.record_window_geometry();
         self.attention_window();
         self.external_links();

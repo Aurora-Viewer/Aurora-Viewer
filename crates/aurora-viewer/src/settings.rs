@@ -1324,6 +1324,11 @@ pub struct Settings {
     /// graphics card once it is known (`graphics_presets::for_machine`).
     #[serde(skip)]
     pub new_profile: bool,
+    /// The keyboard's defaults were placed this launch (a new profile, the
+    /// version 12 migration) for a layout that may only stand in for the
+    /// active one (`keybinds::LayoutWatch`): its first report moves them.
+    #[serde(skip)]
+    pub defaults_follow_reported_layout: bool,
 }
 
 /// The default strength of GTAO's indirect light: at 1 (one physical
@@ -2022,6 +2027,7 @@ impl Default for Settings {
             settings_version: SETTINGS_VERSION,
             newer_file: None,
             new_profile: false,
+            defaults_follow_reported_layout: false,
         }
     }
 }
@@ -2231,6 +2237,7 @@ impl Settings {
         let forced = std::env::var_os("AURORA_CAPTURE").is_some();
         s.window_maximized = window_starts_maximized(saved_window.0, saved_window.1, forced);
         s.new_profile = new_profile;
+        s.defaults_follow_reported_layout = new_profile;
         s.finished(newer)
     }
 
@@ -2401,6 +2408,7 @@ impl Settings {
         if self.settings_version < 12 {
             // letter shortcuts follow the layout (M is the M key on AZERTY)
             self.keybinds.follow_layout_letters();
+            self.defaults_follow_reported_layout = true;
         }
         if self.settings_version < 13 && self.chat_style == ChatStyle::Bubbles {
             // the bubbles were the default every file wrote: Aurora's
