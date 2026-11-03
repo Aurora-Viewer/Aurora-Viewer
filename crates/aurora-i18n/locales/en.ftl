@@ -1681,6 +1681,9 @@ app-gpu-stall =
     • at the next start, choose the safe graphics that Aurora will offer.
 
     Keep waiting? Yes keeps waiting; No closes Aurora (you are logged out properly).
+app-gpu-recovered-title = The graphics card was reset
+app-gpu-recovered = The graphics card's driver was reset (an image took too long to draw, its video memory was full, or another program took the card). Aurora reopened its window on the card again: you stayed logged in, and the world reloads in a moment.
+app-gpu-recovered-safe = The graphics card's driver was reset again within a few minutes. Aurora reopened its window with the safe graphics (the Potato level) so that it does not happen again: you stayed logged in. Your graphics settings are kept: the login screen offers them back.
 app-gpu-lost-title = Aurora Viewer: the graphics card was lost
 app-gpu-lost =
     The graphics card stopped working for Aurora: its driver was reset (it took too long to draw an image, or its video memory was full), or the card was removed or taken by another program. Nothing can be drawn any more: Aurora closes when you press OK (you are logged out properly).
@@ -4158,6 +4161,7 @@ ui-options-same-sounds-and-defaults-as-firestorm-these-are-second = Same sounds 
 ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot = Any resident experience can be blocked. Blocked experiences cannot run on this land.
 build-ui-floaters-anyone = Anyone
 build-ui-general-anyone = Anyone:
+build-ui-general-export = Export
 build-ui-floaters-anyone-can-copy = Anyone can copy
 ui-land-media-web-browser = Web browser
 ui-land-objects-count = Count
@@ -10403,6 +10407,7 @@ currency-contacting-lindex = Contacting LindeX…
 currency-cannot-buy = Unable to buy
 currency-more-information = More information
 currency-helper-unreachable = The L$ purchase service is not responding. Please try again later.
+currency-password-needs-https = Your password was not sent: this purchase service does not use a secure (https) connection.
 currency-checking-account = Checking your account…
 currency-unavailable-on-this-grid = Buying L$ from the viewer is not available on this grid.
 currency-add-payment-method = Add a payment method to buy Lindens and get the most out of Second Life.

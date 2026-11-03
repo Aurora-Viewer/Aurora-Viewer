@@ -65,6 +65,7 @@ mod contents_folder_drag_demo;
 mod dof;
 mod double_click;
 mod driver_check;
+mod egui_shadow;
 mod env_apply;
 mod env_day_editor;
 mod env_editor;
@@ -72,6 +73,7 @@ mod external_links;
 mod follow;
 mod gestures;
 mod give_demo;
+mod gpu_recovery;
 mod gpu_stall;
 mod graphics_start;
 mod grid_status;
@@ -160,12 +162,15 @@ struct SuitcaseAsk {
 }
 
 struct Gfx {
+    /// Before the window: the renderer's surface, made from the window's
+    /// raw handles, goes first (the renderer also keeps the window until
+    /// then, `Renderer::new`).
+    renderer: Renderer,
+    egui_state: egui_winit::State,
     window: Arc<Window>,
     /// Revealed only once the renderer has presented its first image.
     shown: bool,
     maximize_on_show: bool,
-    renderer: Renderer,
-    egui_state: egui_winit::State,
 }
 
 /// Teleport screen state (also the login loading screen fading out).
@@ -267,9 +272,16 @@ pub struct App {
     palette: Palette,
     net: NetClient,
     gfx: Option<Gfx>,
+    /// The window of a lost GPU device, kept on screen until the new one has
+    /// presented its first image (gpu_recovery.rs).
+    retired_window: Option<Arc<Window>>,
+    /// When the GPU device was lost lately (gpu_recovery.rs `loss_step`).
+    gpu_losses: std::collections::VecDeque<Instant>,
     egui_ctx: egui::Context,
     logo: Option<egui::TextureHandle>,
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
+    /// The window's icon, kept for a window a GPU recovery opens.
+    window_icon: Option<winit::window::Icon>,
     world: World,
     bridge_runtime: crate::world::bridge::Bridge,
     native_anchor: crate::movement::movelock::Controller,
@@ -373,6 +385,10 @@ pub struct App {
     /// The interface's shapes leave for the render thread, which
     /// tessellates them (aurora-render, ui_frame.rs).
     egui_hand_over: EguiHandOver,
+    /// egui's textures kept on the CPU, for the renderer of a GPU recovery
+    /// (egui_shadow.rs), and whether the next frame hands them all over.
+    egui_shadow: egui_shadow::EguiShadow,
+    egui_replay: bool,
     last_frame: Instant,
     /// Duration of the frame before the last one (s).
     prev_dt: f32,
@@ -1211,9 +1227,12 @@ impl App {
             palette,
             net,
             gfx: None,
+            retired_window: None,
+            gpu_losses: Default::default(),
             egui_ctx,
             logo: None,
             logo_rx: Some(rx),
+            window_icon: None,
             world: {
                 let mut w = World::new(lib);
                 w.cache_dir = Some(cache_root);
@@ -1278,6 +1297,8 @@ impl App {
             demo_people_states: false,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
+            egui_shadow: Default::default(),
+            egui_replay: false,
             last_frame: Instant::now(),
             prev_dt: 0.0,
             start: Instant::now(),
@@ -2677,6 +2698,8 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        // the login screen and Preferences say "L$" again, not the last grid's money
+        aurora_i18n::set_currency("");
         // Capture the layout before replacing account-specific UI state.
         self.chat_ui.remember_layout(&mut self.settings);
         self.settings.show_camera_controls = self.panels.camera_controls;
@@ -3403,6 +3426,7 @@ impl App {
             NetEvent::LoggedIn(l) => {
                 self.session_started(l.session_id);
                 self.refresh_grid_helper();
+                self.world.grid_currency = buy_currency::grid_currency(&l.raw, self.settings.grid == crate::settings::GridChoice::Custom);
                 self.named_teleport = Default::default();
                 if !self.demo {
                     let root = self.world.inventory.root;
@@ -7902,6 +7926,9 @@ impl App {
             self.world.home_grid = home;
         }
         crate::slurl::set_grid(crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras()));
+        // the region's chat ranges, for every range the interface draws or
+        // counts (OpenSim regions may set their own)
+        crate::world::radar::set_chat_ranges(crate::world::radar::ChatRanges::from_extras(self.world.opensim_extras()));
         if !self.demo
             && let Some(l) = &self.world.login
         {
@@ -8258,10 +8285,13 @@ impl App {
             && let Ok(l) = rx.try_recv()
         {
             self.logo = Some(self.egui_ctx.load_texture("logo", l.ui, egui::TextureOptions::LINEAR));
-            if let (Some(g), Some((rgba, w, h))) = (&self.gfx, l.icon)
+            if let Some((rgba, w, h)) = l.icon
                 && let Ok(icon) = winit::window::Icon::from_rgba(rgba, w, h)
             {
-                g.window.set_window_icon(Some(icon));
+                if let Some(g) = &self.gfx {
+                    g.window.set_window_icon(Some(icon.clone()));
+                }
+                self.window_icon = Some(icon);
             }
             self.logo_rx = None;
         }
@@ -10404,12 +10434,17 @@ impl App {
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
-        let egui_frame = self.egui_hand_over.frame(
-            &ctx,
-            std::mem::take(&mut full.shapes),
-            std::mem::take(&mut full.textures_delta),
-            full.pixels_per_point,
-        );
+        let mut textures = std::mem::take(&mut full.textures_delta);
+        if gpu_recovery::enabled() {
+            self.egui_shadow.note(&textures);
+        }
+        if std::mem::take(&mut self.egui_replay) {
+            log::info!("GPU recovery: egui's textures sent again ({} KB)", self.egui_shadow.bytes() >> 10);
+            textures = self.egui_shadow.replay(textures);
+        }
+        let egui_frame = self
+            .egui_hand_over
+            .frame(&ctx, std::mem::take(&mut full.shapes), textures, full.pixels_per_point);
 
         // apply UI actions
         if actions.font_changed {
@@ -10603,6 +10638,12 @@ impl App {
             // shown once, with the focus (window_show.rs)
             crate::window_show::show(&gfx.window, gfx.maximize_on_show);
             log::info!("startup window shown after the first presented frame");
+            // a recovery's old window goes once its successor is on screen;
+            // hidden first, as a render thread left behind in the driver
+            // keeps it (`Renderer::new`)
+            if let Some(old) = self.retired_window.take() {
+                old.set_visible(false);
+            }
             crate::crash::watch_window(&gfx.window);
             crate::crash::demo_freeze();
             crate::crash::demo_thread_death();
@@ -11187,6 +11228,13 @@ impl App {
         self.crash_state(&gfx.renderer, &gfx.window);
         self.gpu_stall_frame(&gfx.renderer);
         self.gfx = Some(gfx);
+        if let Some(safe) = self.gpu_stall.recover.take() {
+            if !self.recover_from_gpu_loss(event_loop, safe) {
+                crate::crash::gpu_lost();
+                self.close_while_gpu_stalled(event_loop);
+            }
+            return;
+        }
         if std::mem::take(&mut self.gpu_stall.close) {
             self.close_while_gpu_stalled(event_loop);
             return;
@@ -12398,7 +12446,7 @@ impl App {
                 self.gesture_play(id, None);
             }
         }
-        if c.message.is_empty() || (c.channel == 0 && self.chat_command(&c.message)) {
+        if !ui::chat::sends_local_line(c.channel, &c.message) || (c.channel == 0 && self.chat_command(&c.message)) {
             return;
         }
         // :shortcode: emoji
@@ -15105,8 +15153,9 @@ impl App {
                 // never one whose chat is blocked, #1395)
                 self.chat_ui.nearby_count = 0;
                 self.chat_ui.nearby_typing.clear();
+                let say = crate::world::radar::chat_ranges().say;
                 for e in self.radar.entries() {
-                    if !e.left_behind && e.range.is_some_and(|d| d <= crate::world::radar::CHAT_RANGE) {
+                    if !e.left_behind && e.range.is_some_and(|d| d <= say) {
                         self.chat_ui.nearby_count += 1;
                         if e.typing && !self.world.nearby_typing_hidden(&e.id) {
                             self.chat_ui.nearby_typing.push(e.id);
@@ -16080,6 +16129,7 @@ impl App {
                 }
                 self.poll_grid_helper();
                 self.notice_region_helper();
+                self.follow_currency_symbol();
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
@@ -16687,20 +16737,15 @@ impl ApplicationHandler for App {
                 ));
             }
         }
-        let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
-            .with_title(crate::cli::window_title())
-            // Metal needs a visible layer to present its first drawable.
-            // Other platforms keep the unpainted client area hidden.
-            .with_visible(cfg!(target_os = "macos"))
+        let plan = gpu_recovery::WindowPlan {
+            size: winit::dpi::LogicalSize::new(w, h).into(),
+            position: pos.map(|(x, y)| winit::dpi::PhysicalPosition::new(x, y)),
             // Automated captures must not steal the user's keyboard focus.
-            .with_active(!capture)
-            .with_inner_size(winit::dpi::LogicalSize::new(w, h))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(800, 560));
-        if let Some((x, y)) = pos {
-            attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x, y));
-        }
-        let window = match event_loop.create_window(attrs) {
-            Ok(w) => Arc::new(w),
+            active: !capture,
+            fullscreen: None,
+        };
+        let window = match self.open_window(event_loop, &plan) {
+            Ok(w) => w,
             Err(e) => {
                 log::error!("cannot create window: {e}");
                 graphics_start::report(&e.to_string(), capture);
@@ -16708,28 +16753,10 @@ impl ApplicationHandler for App {
                 return;
             }
         };
-        crate::window_hold::install(&window);
         // Cmd+Q asks like the close button (mac_quit.rs). Cmd+H stays Hide.
         #[cfg(target_os = "macos")]
         crate::mac_quit::route_quit_to_close();
-        let size = window.inner_size();
-        if std::env::var_os("AURORA_NOVSYNC").is_some() {
-            self.settings.vsync = false;
-        }
-        // the GPU of Preferences › Graphics; AURORA_GPU=<number|name|auto>
-        // overrides it for this launch (adapter_choice.rs)
-        let gpu = std::env::var("AURORA_GPU").unwrap_or_else(|_| self.settings.gpu_adapter.clone());
-        // the pipelines the driver compiled at the earlier starts, kept in
-        // the cache folder (aurora-render's pipeline_cache.rs)
-        aurora_render::pipeline_cache::configure(crate::settings::cache_dir().join("pipelines"), aurora_version::version());
-        // AURORA_GPU_START_FAIL=1: as if no card could draw, to see the
-        // message the user gets then (graphics_start.rs); `lost` is read by
-        // the renderer, which gets as far as a real device loss does
-        let created = if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
-            Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()))
-        } else {
-            Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)
-        };
+        let created = self.open_renderer(&window);
         let renderer = match created {
             Ok(r) => r,
             Err(e) => {
@@ -16752,14 +16779,6 @@ impl ApplicationHandler for App {
                 return;
             }
         };
-        log::info!(
-            "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
-            renderer.info.name,
-            renderer.info.backend,
-            renderer.textures.capacity(),
-            renderer.info.max_textures,
-            renderer.info.timestamps
-        );
         let mut renderer = renderer;
         if std::mem::take(&mut self.settings.new_profile) {
             // a first launch: the graphics level from the card, like
@@ -16781,25 +16800,11 @@ impl ApplicationHandler for App {
             self.settings.save();
         }
         renderer.apply_settings(self.settings.render_settings());
-        // what Preferences › Graphics shows of the GPUs, from the renderer's
-        // own list: here, not with the world's frames, so the login screen
-        // has it too (#894: only "Automatic" was offered before login)
-        self.options_ui.vram = (renderer.info.vram_mb, renderer.info.integrated);
-        self.options_ui.gpus = renderer.info.adapters.clone();
-        self.options_ui.gpu_in_use = renderer.info.name.clone();
-        self.options_ui.gpu_notice = renderer.info.notice;
+        self.note_gpus(&renderer);
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
         self.screen_rate.poll(&window, Instant::now());
-        let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
-        let egui_state = egui_winit::State::new(
-            self.egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            Some(max_tex),
-        );
+        let egui_state = self.egui_state_for(&window, &renderer);
         self.gfx = Some(Gfx {
             window,
             shown: false,
@@ -19197,7 +19202,12 @@ impl ApplicationHandler for App {
         self.gfx = None;
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // the window of a lost device, on screen until its successor has
+        // presented: its redraws and sizes are not the new renderer's
+        if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
+            return;
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event

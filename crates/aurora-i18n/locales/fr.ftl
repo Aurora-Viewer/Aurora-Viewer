@@ -1684,6 +1684,9 @@ app-gpu-stall =
     • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 
     Continuer d'attendre ? Oui continue d'attendre ; Non ferme Aurora (vous êtes déconnecté proprement).
+app-gpu-recovered-title = La carte graphique a été réinitialisée
+app-gpu-recovered = Le pilote de la carte graphique a été réinitialisé (une image trop longue à dessiner, sa mémoire vidéo pleine, ou la carte prise par un autre programme). Aurora a rouvert sa fenêtre sur la carte : vous êtes resté connecté, et le monde se recharge dans un instant.
+app-gpu-recovered-safe = Le pilote de la carte graphique a de nouveau été réinitialisé en quelques minutes. Aurora a rouvert sa fenêtre avec les graphismes de secours (le niveau Potato) pour que cela ne se reproduise pas : vous êtes resté connecté. Vos réglages graphiques sont gardés : l'écran de connexion vous les propose à nouveau.
 app-gpu-lost-title = Aurora Viewer : la carte graphique a été perdue
 app-gpu-lost =
     La carte graphique a cessé de fonctionner pour Aurora : son pilote a été réinitialisé (une image trop longue à dessiner, ou sa mémoire vidéo pleine), ou la carte a été retirée ou prise par un autre programme. Plus rien ne peut être affiché : Aurora se ferme quand vous appuyez sur OK (vous êtes déconnecté proprement).
@@ -4161,6 +4164,7 @@ ui-options-same-sounds-and-defaults-as-firestorm-these-are-second = Mêmes sons 
 ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot = N'importe quelle expérience de résident peut être bloquée. Les expériences bloquées ne peuvent pas s'exécuter sur ce terrain.
 build-ui-floaters-anyone = N'importe qui
 build-ui-general-anyone = N'importe qui :
+build-ui-general-export = Exporter
 build-ui-floaters-anyone-can-copy = N'importe qui peut copier
 ui-land-media-web-browser = Navigateur Web
 ui-land-objects-count = Nbre
@@ -10399,6 +10403,7 @@ currency-contacting-lindex = Contact avec LindeX…
 currency-cannot-buy = Achat impossible
 currency-more-information = En savoir plus
 currency-helper-unreachable = Le service d'achat de L$ ne répond pas. Veuillez réessayer plus tard.
+currency-password-needs-https = Votre mot de passe n'a pas été envoyé : ce service d'achat n'utilise pas de connexion sécurisée (https).
 currency-checking-account = Vérification de votre compte…
 currency-unavailable-on-this-grid = L'achat de L$ depuis le viewer n'est pas disponible sur cette grille.
 currency-add-payment-method = Ajouter un moyen de paiement pour acheter des Lindens et mieux profiter de Second Life.

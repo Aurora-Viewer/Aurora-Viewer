@@ -158,6 +158,10 @@ pub struct Region {
     /// What an OpenSim region says of its grid (GridURL, search and map
     /// servers): after a Hypergrid teleport, the grid we are on now.
     pub opensim: aurora_net::OpenSimExtras,
+    /// OpenSimExtras' currency: this region's money symbol.
+    pub currency_symbol: String,
+    /// OpenSimExtras' ExportSupported: the export permission applies here.
+    pub export_supported: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -408,6 +412,8 @@ pub struct World {
     /// Message of the day writes it again to the nearby chat.
     pub motd: String,
     pub balance: Option<i32>,
+    /// The grid's money symbol, from the login (`app::buy_currency::grid_currency`).
+    pub grid_currency: String,
     /// m² of land the account holds (MoneyBalanceReply SquareMetersCommitted,
     /// LLStatusBar::getSquareMetersCommitted).
     pub land_committed: i32,
@@ -744,6 +750,7 @@ impl World {
             events_this_frame: 0,
             motd: String::new(),
             balance: None,
+            grid_currency: "L$".into(),
             land_committed: 0,
             land_credit: 0,
             upload_cost: None,
@@ -1953,6 +1960,8 @@ impl World {
             grid_status: Default::default(),
             currency_base_uri: String::new(),
             opensim: Default::default(),
+            currency_symbol: String::new(),
+            export_supported: false,
         })
     }
 
@@ -2354,12 +2363,16 @@ impl World {
                 grid_status_page,
                 currency_base_uri,
                 opensim,
+                currency_symbol,
+                export_supported,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
                 r.opensim = opensim;
+                r.currency_symbol = currency_symbol;
+                r.export_supported = export_supported;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -4905,10 +4918,31 @@ impl World {
         self.main().map(|r| r.currency_base_uri.as_str()).filter(|uri| !uri.is_empty())
     }
 
+    /// Tea::getCurrency: the agent's region's own symbol, else the grid's
+    /// (`grid_currency`).
+    pub fn currency_symbol(&self) -> &str {
+        self.main()
+            .map(|r| r.currency_symbol.trim())
+            .filter(|symbol| !symbol.is_empty())
+            .unwrap_or(&self.grid_currency)
+    }
+
+    /// The agent's region honours OpenSim's export permission
+    /// (LFSimFeatureHandler::simSupportsExport).
+    pub fn export_supported(&self) -> bool {
+        self.main().is_some_and(|r| r.export_supported)
+    }
+
     /// The status feed and page the agent's region names for its OpenSim
     /// grid (LFSimFeatureHandler::gridStatusRSS, gridStatusURL).
     pub fn grid_status_extras(&self) -> Option<(&str, &str)> {
         self.main().map(|r| (r.grid_status.0.as_str(), r.grid_status.1.as_str()))
+    }
+
+    /// The sizes a prim may take on the agent's region (its OpenSimExtras,
+    /// else Second Life's limits).
+    pub fn prim_limits(&self) -> crate::build::PrimLimits {
+        crate::build::PrimLimits::from_extras(self.opensim_extras())
     }
 
     /// The agent's region's own word on its OpenSim grid (GridURL, search
@@ -7877,6 +7911,8 @@ mod motion_tests {
                 grid_status_page: String::new(),
                 currency_base_uri: String::new(),
                 opensim: Default::default(),
+                currency_symbol: String::new(),
+                export_supported: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

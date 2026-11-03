@@ -38,7 +38,7 @@ const WIDTH: f32 = 380.0;
 const BUTTON_H: f32 = 30.0;
 
 fn money(amount: i32) -> String {
-    format!("L$ {}", aurora_i18n::integer(i64::from(amount.max(0))))
+    format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(i64::from(amount.max(0))))
 }
 
 /// Where the window is in a payment.
@@ -993,7 +993,7 @@ fn amount_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, focus: &mut b
                     + 8.0;
                 let cur_w = 26.0;
                 ui.add_space(((ui.available_width() - digits_w - cur_w) / 2.0).max(0.0));
-                ui.label(RichText::new("L$").size(18.0).strong().color(p.muted));
+                ui.label(RichText::new(aurora_i18n::currency()).size(18.0).strong().color(p.muted));
                 // the hint in the figures' font: egui lays a hint out in the
                 // body text style, not in the field's `font` (a small "0"
                 // above the baseline of "L$")

@@ -414,7 +414,14 @@ impl World {
                 if !self.rlva_inventory_force(source, &c) {
                     self.rlva.pending.push((source, c));
                 }
-                if !self.rlva.pending.is_empty() || !self.rlva.appearance.is_empty() {
+                // The next force command of the same object joins this one's
+                // COF update (RlvForceWear::done runs once per batch); any
+                // other command waits for the update, as before.
+                let joins = pending
+                    .as_slice()
+                    .first()
+                    .is_some_and(|(next, c)| *next == source && super::inventory::force_kind(&c.behaviour).is_some());
+                if !self.rlva.pending.is_empty() || (!self.rlva.appearance.is_empty() && !joins) {
                     self.rlva.pending.extend(pending);
                     break;
                 }
