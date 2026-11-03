@@ -60,7 +60,7 @@ fn soften(group: vec3<u32>, local: vec3<u32>, index: u32, horizontal: bool) {
         weight += w;
     }
     // The centre always has positive weight, even at the viewport border.
-    textureStore(out_tex, p, vec4<f32>(sum / weight, 0.0, 0.0, 0.0));
+    textureStore(out_tex, p, vec4<f32>(sum / weight, textureLoad(mask_tex, p, 0).gba));
 }
 
 @compute @workgroup_size(8, 8, 1)

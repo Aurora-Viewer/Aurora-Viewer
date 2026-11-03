@@ -80,7 +80,7 @@ fn main(
         }
     }
     // the pixel itself always counts (weight 9 at least)
-    textureStore(out_tex, p, vec4<f32>(sum / weight, 0.0, 0.0, 0.0));
+    textureStore(out_tex, p, vec4<f32>(sum / weight, textureLoad(mask_tex, p, 0).gba));
 }
 
 // The mask as it is (`AURORA_CONTACT_SOFT=0`).

@@ -5169,7 +5169,7 @@ impl Backend {
             // Leave room inside the atlas tile for the complete PCSS footprint
             // and receiver offset, even at a frustum corner.
             let guard = if self.settings.shadow_pcss {
-                crate::shadow_cull::PCSS_MAX_RADIUS + 0.02 + 0.04 * i as f32
+                crate::shadow_cull::PCSS_MAX_RADIUS + crate::shadow_cull::SMOOTH_RECEIVER_MAX_OFFSET + 0.02 + 0.04 * i as f32
             } else {
                 0.0
             };
@@ -6008,6 +6008,10 @@ impl Backend {
             Ok("before") => 0x300,
             _ => 0,
         });
+        let area_contacts = self.settings.shadow_pcss && crate::contact_shadows::area_mode(self.frame_index);
+        if area_contacts {
+            main.light_sets.mode[2] |= 0x40000;
+        }
         if !self.settings.shadow_pcss {
             main.light_sets.mode[2] |= 0x20000; // SHADOW_FILTER_PCF
         }
@@ -6322,6 +6326,8 @@ impl Backend {
             // an infinite reversed projection keeps its near plane there
             // (centred or not: tiled photos); a photo larger than the
             // viewfinder marches as much further
+            self.contact
+                .set_area_geometry(area_contacts.then(|| (fu.proj.inverse(), fu.view.transform_vector3(f.sun_dir))));
             self.contact.write(
                 &self.device,
                 &self.queue,

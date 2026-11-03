@@ -4,6 +4,7 @@ use crate::pipeline_cache::CachedPipelines;
 #[test]
 #[ignore = "requires a GPU"]
 fn pcss_penumbra_grows_in_metres_and_stays_inside_its_cascade() {
+    let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::default();
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
         return;
@@ -109,6 +110,9 @@ fn pcss_penumbra_grows_in_metres_and_stays_inside_its_cascade() {
 @group(0) @binding(0) var shadow_map: texture_depth_2d;
 @group(0) @binding(1) var shadow_sampler: sampler_comparison;
 {body}
+fn pcss_contact_gap() -> f32 {{ return -1.0; }}
+fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 {{ return 1.0; }}
+fn pcss_contact_complete() {{ }}
 struct Query {{ a: vec4<f32>, b: vec4<f32> }};
 @group(0) @binding(2) var<storage, read> queries: array<Query>;
 @group(0) @binding(3) var<storage, read_write> results: array<vec4<f32>>;
@@ -126,7 +130,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     );
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("PCSS contract"),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
+        source: wgpu::ShaderSource::Wgsl(source.clone().into()),
     });
     let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
         label: Some("PCSS contract"),
@@ -210,6 +214,80 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
         values[profiles..].iter().all(|v| *v > 0.999),
         "a neighbouring atlas tile must not shadow these receivers"
     );
+
+    // An infinitesimal blocker-distance change across the small/wide
+    // filter threshold must not visibly change shadow coverage.
+    let transition_source = source.replace("const PCSS_AA_RADIUS: f32 = 0.01;", "const PCSS_AA_RADIUS: f32 = 0.0;");
+    let transition_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("PCSS kernel transition"),
+        source: wgpu::ShaderSource::Wgsl(transition_source.into()),
+    });
+    let transition_pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("PCSS kernel transition"),
+        layout: None,
+        module: &transition_module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut transition_queries = Vec::new();
+    for u in [0.746_f32, 0.747, 0.748, 0.749, 0.750, 0.751, 0.752, 0.753, 0.754] {
+        for gap in [0.390625_f32 - 0.0001, 0.390625 + 0.0001] {
+            transition_queries.push([u, 0.5, 0.4 + 0.01 * gap, 1.0, 0.0, 0.0, 0.0, 0.01]);
+        }
+    }
+    let transition = run_queries(&device, &queue, &transition_pipeline, &depth, &transition_queries);
+    assert!(
+        transition
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|pair| (pair[0][0] - pair[1][0]).abs() < 0.005),
+        "small/wide PCSS transition must be continuous: {transition:?}"
+    );
+
+    // A shared far caster must not acquire a hard screen-space silhouette.
+    // A separate near contact must stay sharp without shrinking the far map
+    // penumbra. These fail if finished masks are simply min-composed, or if
+    // both filters use the nearest caster's radius.
+    let joint_queries = [
+        [0.5 + 0.495 / 2.0, 0.5, 0.48, 1.0, 0.0, 0.0, 0.0, 0.01],
+        [0.5 + 0.520 / 2.0, 0.5, 0.48, 1.0, 0.0, 0.0, 0.0, 0.01],
+    ];
+    let mapped = run_queries(&device, &queue, &pipeline, &depth, &joint_queries);
+    for contact_gap in [8.0, 0.05] {
+        let joint = source
+            .replace("fn pcss_contact_gap() -> f32 { return -1.0; }",
+                &format!("fn pcss_contact_gap() -> f32 {{ return {contact_gap}; }}"))
+            .replace("fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 { return 1.0; }",
+                "var<private> test_world_x: f32;\nfn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 { return select(1.0, 0.0, test_world_x + offset.x * (2.0 * radius) < 0.5); }")
+            .replace("    let soft = pcss_shadow(", "    test_world_x = (q.a.x - 0.5) * (2.0 * q.a.w);\n    let soft = pcss_shadow(");
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("joint contact/map visibility"),
+            source: wgpu::ShaderSource::Wgsl(joint.into()),
+        });
+        let joint_pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: Some("joint contact/map visibility"),
+            layout: None,
+            module: &module,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let samples = run_queries(&device, &queue, &joint_pipeline, &depth, &joint_queries);
+        if contact_gap > 1.0 {
+            assert!(
+                samples[0][0] > 0.2 && samples[0][0] < 0.8,
+                "contact detail must not harden a shared far penumbra: {samples:?}"
+            );
+        } else {
+            assert!(samples[0][0] < 0.01, "true near contact stays sharp");
+            assert!(
+                (samples[1][0] - mapped[1][0]).abs() < 0.002,
+                "a near contact must not shrink the far mapped penumbra"
+            );
+        }
+    }
     // A sloping, unoccluded receiver must not become its own blocker as
     // sub-texel sample positions change. The point depth is at a texel centre.
     let plane = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -294,6 +372,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     }
     let samples = run_queries(&device, &queue, &pipeline, &depth, &tilted);
     assert!(
+        samples.iter().all(|s| s[0] > 0.999),
+        "bilinear filtering must not shadow an unoccluded receiver plane: {samples:?}"
+    );
+    assert!(
         samples.iter().all(|s| s[1] < 0.0),
         "a receiver plane must not produce false blockers: {samples:?}"
     );
@@ -303,6 +385,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
 #[test]
 #[ignore = "requires a GPU"]
 fn projector_pcss_hardens_at_contact_and_isolates_atlas_tiles() {
+    let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::default();
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
         return;
@@ -407,6 +490,9 @@ fn projector_pcss_hardens_at_contact_and_isolates_atlas_tiles() {
 @group(0) @binding(0) var shadow_map: texture_depth_2d;
 @group(0) @binding(1) var shadow_sampler: sampler_comparison;
 {body}
+fn pcss_contact_gap() -> f32 {{ return -1.0; }}
+fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 {{ return 1.0; }}
+fn pcss_contact_complete() {{ }}
 struct Query {{ a: vec4<f32>, b: vec4<f32> }};
 @group(0) @binding(2) var<storage, read> queries: array<Query>;
 @group(0) @binding(3) var<storage, read_write> results: array<vec4<f32>>;
@@ -415,9 +501,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     if (id.x >= arrayLength(&queries)) {{ return; }}
     let q = queries[id.x];
     let texel = 1.0 / 128.0;
-    let soft = spot_pcss(q.a.xy, q.b.xy, texel, q.a.z, vec2<f32>(0.0), q.a.w,
+    let gradient = vec2<f32>(0.0);
+    let soft = spot_pcss(q.a.xy, q.b.xy, texel, q.a.z, gradient, q.a.w,
         q.b.zw, vec2<f32>(4.0));
-    let fallback = spot_pcss_compare(q.a.xy, vec2<f32>(0.0), q.b.xy, texel, q.a.z, vec2<f32>(0.0));
+    let fallback = spot_pcss_compare(q.a.xy, vec2<f32>(0.0), q.b.xy, texel, q.a.z, gradient);
     results[id.x] = vec4<f32>(select(soft, fallback, soft < 0.0), soft, 0.0, 0.0);
 }}
 "#
@@ -537,7 +624,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
         pass.draw(0..3, 0..1);
     }
     queue.submit([encoder.finish()]);
-    let tilted_source = source.replace("vec2<f32>(0.0), q.a.w", "vec2<f32>(0.06, 0.0), q.a.w");
+    let tilted_source = source.replace("let gradient = vec2<f32>(0.0);", "let gradient = vec2<f32>(0.06, 0.0);");
     let tilted_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tilted projector PCSS"),
         source: wgpu::ShaderSource::Wgsl(tilted_source.into()),
@@ -562,7 +649,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     }
     let samples = run_queries(&device, &queue, &tilted_pipeline, &depth, &tilted);
     assert!(
-        samples.iter().all(|s| s[1] < 0.0),
+        samples.iter().all(|s| s[1] < 0.0 && s[0] > 0.999),
         "projector plane must not shadow itself: {samples:?}"
     );
 }
@@ -641,4 +728,183 @@ fn run_queries(
         .iter()
         .map(|bytes| std::array::from_fn(|i| f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().expect("float"))))
         .collect()
+}
+
+#[test]
+#[ignore = "requires a GPU"]
+fn pcss_terminator_preserves_unperturbed_normals_and_softens_the_horizon() {
+    let _gpu = crate::test_gpu::lock();
+    let instance = wgpu::Instance::default();
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+        return;
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("test device");
+    let body = crate::COMMON_SHADER
+        .split("// TERMINATOR BEGIN")
+        .nth(1)
+        .expect("terminator start")
+        .split("// TERMINATOR END")
+        .next()
+        .expect("terminator end");
+    let smooth_body = crate::COMMON_SHADER
+        .split("// SMOOTH RECEIVER BEGIN")
+        .nth(1)
+        .expect("smooth receiver start")
+        .split("// SMOOTH RECEIVER END")
+        .next()
+        .expect("smooth receiver end");
+    let source = format!(
+        r#"
+{body}
+const SMOOTH_RECEIVER_MAX_OFFSET: f32 = 0.05;
+{smooth_body}
+@group(0) @binding(0) var shadow_map: texture_depth_2d;
+@group(0) @binding(1) var shadow_sampler: sampler_comparison;
+struct Query {{ a: vec4<f32>, b: vec4<f32> }};
+@group(0) @binding(2) var<storage, read> queries: array<Query>;
+@group(0) @binding(3) var<storage, read_write> results: array<vec4<f32>>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
+    if (id.x >= arrayLength(&queries)) {{ return; }}
+    let q = queries[id.x];
+    var factor = 1.0;
+    var offset = vec3<f32>(0.0);
+    if (q.b.w < 0.5) {{
+        let n = vec3<f32>(sin(q.a.x), 0.0, cos(q.a.x));
+        let l = vec3<f32>(sin(q.a.y), 0.0, cos(q.a.y));
+        factor = terminator_visibility(vec3<f32>(0.0, 0.0, 1.0), n, l);
+    }} else {{
+        offset = smooth_receiver_offset(q.a.xyz, q.b.xyz, q.a.w);
+    }}
+    results[id.x] = vec4<f32>(factor, textureSampleCompareLevel(shadow_map, shadow_sampler, vec2<f32>(0.5), 0.0), offset.z, length(offset.xy));
+}}
+"#
+    );
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Disney terminator contract"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("Disney terminator contract"),
+        layout: None,
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("terminator test map"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let depth = texture.create_view(&Default::default());
+    let mut queries = Vec::new();
+    let mut expected = Vec::new();
+    for tilt in [-75.0_f64, -45.0, -15.0, 0.0, 15.0, 45.0, 75.0] {
+        for angle in -179..=179 {
+            let ns = tilt.to_radians();
+            let light = f64::from(angle).to_radians();
+            let nl = (ns - light).cos();
+            let gl = light.cos();
+            let g = if tilt == 0.0 {
+                1.0
+            } else if nl <= 0.0 || gl <= 0.0 {
+                0.0
+            } else {
+                (gl / (nl * ns.cos())).min(1.0)
+            };
+            expected.push(-g * g * g + g * g + g);
+            queries.push([ns as f32, light as f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        }
+    }
+    let mut expected_offsets = vec![[0.0_f32; 2]; queries.len()];
+    let mut probe = |raw: glam::DVec3, position: glam::DVec3, moment: f64, offset: glam::DVec3| {
+        queries.push([
+            raw.x as f32,
+            raw.y as f32,
+            raw.z as f32,
+            moment as f32,
+            position.x as f32,
+            position.y as f32,
+            position.z as f32,
+            1.0,
+        ]);
+        expected.push(1.0);
+        expected_offsets.push([offset.z as f32, offset.truncate().length() as f32]);
+    };
+    // Analytic signed sphere/cylinder sag, independent of eye translation
+    // and orientation; vertices remain fixed and large corrections are capped.
+    for radius in [-20.0_f64, -1.0, -0.2, 0.05, 0.2, 1.0, 20.0] {
+        for size in [0.8_f64, 0.95, 1.0] {
+            for angle in [0.0_f64, 0.5, 1.2] {
+                let axis = glam::DVec3::new(angle.sin(), 0.0, angle.cos());
+                let raw = axis * size;
+                for eye_shift in [
+                    glam::DVec3::ZERO,
+                    glam::DVec3::new(100.0, -50.0, 20.0),
+                    glam::DVec3::new(-200.0, 120.0, -70.0),
+                ] {
+                    let position = axis * (radius * size) + eye_shift;
+                    let moment = radius + eye_shift.dot(raw);
+                    let offset = axis * (radius * (1.0 - size)).clamp(-0.05, 0.05);
+                    probe(raw, position, moment, offset);
+                }
+            }
+        }
+    }
+    // Flat faces and folded normals must not invent surface displacement.
+    probe(glam::DVec3::Z, glam::DVec3::new(100.0, 40.0, 20.0), 20.0, glam::DVec3::ZERO);
+    probe(glam::DVec3::Z * 0.1, glam::DVec3::ZERO, 1.0, glam::DVec3::ZERO);
+    // Invalid geometric metadata must not introduce a non-finite shadow query.
+    probe(glam::DVec3::splat(f64::NAN), glam::DVec3::ZERO, 0.0, glam::DVec3::ZERO);
+    probe(glam::DVec3::splat(f64::INFINITY), glam::DVec3::ZERO, 0.0, glam::DVec3::ZERO);
+    probe(glam::DVec3::Z * 0.95, glam::DVec3::ZERO, f64::NAN, glam::DVec3::ZERO);
+    // Symmetric small quadratic patches: positive, negative and mixed
+    // curvatures recover the smooth centre to second order, including saddles.
+    for (kx, ky) in [(5.0_f64, 5.0_f64), (-5.0, -5.0), (5.0, -2.0), (5.0, -5.0)] {
+        let mut position = glam::DVec3::ZERO;
+        let mut raw = glam::DVec3::ZERO;
+        let mut moment = 0.0;
+        for (x, y) in [(0.005_f64, 0.0), (-0.005, 0.0), (0.0, 0.005), (0.0, -0.005)] {
+            let p = glam::DVec3::new(x, y, 0.5 * (kx * x * x + ky * y * y));
+            let n = glam::DVec3::new(-kx * x, -ky * y, 1.0).normalize();
+            position += p * 0.25;
+            raw += n * 0.25;
+            moment += p.dot(n) * 0.25;
+        }
+        probe(raw, position, moment, -position);
+    }
+    let result = run_queries(&device, &queue, &pipeline, &depth, &queries);
+    for (i, (got, reference)) in result.iter().zip(expected).enumerate() {
+        assert!(
+            got[0].is_finite() && (0.0..=1.0).contains(&got[0]),
+            "finite bounded response at {i}: {got:?}"
+        );
+        assert!(
+            (got[2] - expected_offsets[i][0]).abs() < 2e-5 && (got[3] - expected_offsets[i][1]).abs() < 2e-5,
+            "analytic smooth receiver at {i}: {got:?}, expected {:?}",
+            expected_offsets[i]
+        );
+        // The exact horizon's f32 cosine may land either side of zero.
+        let q = queries[i];
+        if q[7] < 0.5 && q[1].cos().abs() > 1e-6 && (q[0] - q[1]).cos().abs() > 1e-6 {
+            assert!(
+                (f64::from(got[0]) - reference).abs() < 2e-5,
+                "paper reference at {i}: {} vs {reference}",
+                got[0]
+            );
+        }
+        if q[0] == 0.0 {
+            assert_eq!(got[0], 1.0, "no normal perturbation must preserve the original response");
+        }
+    }
 }

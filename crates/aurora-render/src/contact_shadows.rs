@@ -458,12 +458,29 @@ struct ParamsU {
     light: [f32; 4],
     wave_offset: [i32; 4],
     tuning: [f32; 4],
+    inverse_projection: [[f32; 4]; 4],
+    area_light: [f32; 4],
 }
 
 /// The light of the frame as Bend takes it: the direction towards it (w =
 /// 0) through the view-projection the depth prepass was drawn with.
 pub(crate) fn light_projection(view_proj: Mat4, towards_light: Vec3) -> [f32; 4] {
     (view_proj * towards_light.normalize_or(Vec3::Z).extend(0.0)).to_array()
+}
+
+/// Isolated area-contact comparison; `alt` switches every 120 rendered
+/// frames so a frozen scene and camera can be compared without a relaunch.
+pub(crate) fn area_mode(frame: u64) -> bool {
+    static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    match *MODE.get_or_init(|| match std::env::var("AURORA_CONTACT_PCSS").as_deref() {
+        Ok("1") => 1,
+        Ok("alt") => 2,
+        _ => 0,
+    }) {
+        1 => true,
+        2 => (frame / 120).is_multiple_of(2),
+        _ => false,
+    }
 }
 
 /// The pipeline and the constants of the dispatches, made once.
@@ -487,6 +504,7 @@ pub(crate) struct ContactShadows {
     filter: Filter,
     /// `AURORA_CONTACT_VARIANT`: `Skip` dispatches no wavefront.
     variant: Variant,
+    area_geometry: Option<(Mat4, Vec3)>,
 }
 
 /// A normalized footprint: 3.5 pixels of tent support at 1080 render lines.
@@ -807,7 +825,14 @@ impl ContactShadows {
             list: DispatchList::default(),
             filter,
             variant,
+            area_geometry: None,
         }
+    }
+
+    /// Geometry for the area-light contact prototype. View space avoids
+    /// subtracting large region positions when measuring short blocker gaps.
+    pub(crate) fn set_area_geometry(&mut self, geometry: Option<(Mat4, Vec3)>) {
+        self.area_geometry = geometry;
     }
 
     /// Choose the pipeline of an image `scale` times taller than the
@@ -999,6 +1024,10 @@ impl ContactShadows {
                 light: self.list.light,
                 wave_offset: [d.wave_offset[0], d.wave_offset[1], 0, 0],
                 tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, occluder],
+                inverse_projection: self.area_geometry.map_or(Mat4::IDENTITY, |g| g.0).to_cols_array_2d(),
+                area_light: self
+                    .area_geometry
+                    .map_or([0.0; 4], |g| g.1.normalize_or(Vec3::Z).extend(1.0).to_array()),
             };
             let at = i * self.stride as usize;
             bytes[at..at + std::mem::size_of::<ParamsU>()].copy_from_slice(bytemuck::bytes_of(&u));
@@ -1692,61 +1721,48 @@ mod tests {
             ([0.6, 0.2, 0.0, -0.6], 0.0001),
             ([-1.6, 0.0001, 0.0, -0.0001], 0.1),
         ] {
-            let mut cached: Option<(Variant, ContactShadows)> = None;
-            let mut mask = |variant: Variant, scale: f32| -> Vec<u8> {
-                if cached.as_ref().is_none_or(|(v, _)| *v != variant) {
-                    cached = Some((variant, ContactShadows::with_variant(&device, variant)));
-                }
-                let cs = &mut cached.as_mut().expect("test shader installed").1;
-                let t = cs.targets(&device, &depth_view, format, w, h);
-                let footprint = FilterFootprint::for_height((1080.0 * scale) as u32);
-                let hot = footprint == FilterFootprint::for_height(1080) || cs.filter.cached.iter().any(|(f, _)| *f == footprint);
-                let builds = cs.filter.builds;
-                cs.write(&device, &queue, &t, light, near, scale, (1080.0 * scale) as u32);
-                if hot {
-                    assert_eq!(cs.filter.builds, builds, "a hot viewport/photo must not rebuild its filter");
-                }
-                assert!(cs.filter.cached.len() <= 2);
-                if matches!(variant, Variant::Stream | Variant::StreamReference) {
-                    assert!(cs.photo.is_none(), "full-ray photo must keep its selected shader");
-                }
-                let mut encoder = device.create_command_encoder(&Default::default());
-                cs.encode(&mut encoder, &t, false);
-                let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-                let check_filter = variant == Variant::Stream
-                    && near == 0.1
-                    && light[3] > 0.0
-                    && matches!(scale, 1.0 | 4.0)
-                    && FilterMode::from_env() == FilterMode::Separable;
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: None,
-                    size: u64::from(row * h) * if check_filter { 2 } else { 1 },
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    mapped_at_creation: false,
-                });
-                encoder.copy_texture_to_buffer(
-                    t.raw.texture().as_image_copy(),
-                    wgpu::TexelCopyBufferInfo {
-                        buffer: &buffer,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(row),
-                            rows_per_image: Some(h),
-                        },
-                    },
-                    wgpu::Extent3d {
-                        width: w,
-                        height: h,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                if check_filter {
+            for area in [false, true] {
+                let mut cached: Option<(Variant, ContactShadows)> = None;
+                let mut mask = |variant: Variant, scale: f32| -> Vec<u8> {
+                    if cached.as_ref().is_none_or(|(v, _)| *v != variant) {
+                        cached = Some((variant, ContactShadows::with_variant(&device, variant)));
+                    }
+                    let cs = &mut cached.as_mut().expect("test shader installed").1;
+                    let t = cs.targets(&device, &depth_view, format, w, h);
+                    let footprint = FilterFootprint::for_height((1080.0 * scale) as u32);
+                    let hot = footprint == FilterFootprint::for_height(1080) || cs.filter.cached.iter().any(|(f, _)| *f == footprint);
+                    let builds = cs.filter.builds;
+                    let inverse_projection =
+                        glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, w as f32 / h as f32, near).inverse();
+                    cs.set_area_geometry(area.then_some((inverse_projection, Vec3::new(0.2, 1.0, 0.5))));
+                    cs.write(&device, &queue, &t, light, near, scale, (1080.0 * scale) as u32);
+                    if hot {
+                        assert_eq!(cs.filter.builds, builds, "a hot viewport/photo must not rebuild its filter");
+                    }
+                    assert!(cs.filter.cached.len() <= 2);
+                    if matches!(variant, Variant::Stream | Variant::StreamReference) {
+                        assert!(cs.photo.is_none(), "full-ray photo must keep its selected shader");
+                    }
+                    let mut encoder = device.create_command_encoder(&Default::default());
+                    cs.encode(&mut encoder, &t, false);
+                    let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+                    let check_filter = variant == Variant::Stream
+                        && near == 0.1
+                        && light[3] > 0.0
+                        && matches!(scale, 1.0 | 4.0)
+                        && FilterMode::from_env() == FilterMode::Separable;
+                    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: None,
+                        size: u64::from(row * h) * if check_filter { 2 } else { 1 },
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
                     encoder.copy_texture_to_buffer(
-                        t.result.texture().as_image_copy(),
+                        t.raw.texture().as_image_copy(),
                         wgpu::TexelCopyBufferInfo {
                             buffer: &buffer,
                             layout: wgpu::TexelCopyBufferLayout {
-                                offset: u64::from(row * h),
+                                offset: 0,
                                 bytes_per_row: Some(row),
                                 rows_per_image: Some(h),
                             },
@@ -1757,100 +1773,128 @@ mod tests {
                             depth_or_array_layers: 1,
                         },
                     );
-                }
-                queue.submit([encoder.finish()]);
-                buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
-                device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
-                let data = buffer.slice(..).get_mapped_range().expect("mapped");
-                let raw: Vec<u8> = data[..(row * h) as usize]
-                    .chunks(row as usize)
-                    .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
-                    .collect();
-                if check_filter {
-                    let filtered: Vec<u8> = data[(row * h) as usize..]
+                    if check_filter {
+                        encoder.copy_texture_to_buffer(
+                            t.result.texture().as_image_copy(),
+                            wgpu::TexelCopyBufferInfo {
+                                buffer: &buffer,
+                                layout: wgpu::TexelCopyBufferLayout {
+                                    offset: u64::from(row * h),
+                                    bytes_per_row: Some(row),
+                                    rows_per_image: Some(h),
+                                },
+                            },
+                            wgpu::Extent3d {
+                                width: w,
+                                height: h,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                    }
+                    queue.submit([encoder.finish()]);
+                    buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+                    device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+                    let data = buffer.slice(..).get_mapped_range().expect("mapped");
+                    let raw: Vec<u8> = data[..(row * h) as usize]
                         .chunks(row as usize)
                         .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
                         .collect();
-                    let depth: Vec<f32> = (0..h)
-                        .flat_map(|y| {
-                            (0..w).map(move |x| {
-                                let px = x as f32 + 0.5;
-                                let py = y as f32 + 0.5;
-                                let ground = 0.0005 * (py + 96.0);
-                                if py < 20.0 {
-                                    0.0
-                                } else if (230.0..231.0).contains(&px) && (50.0..150.0).contains(&py) {
-                                    ground * 1.005
-                                } else if (120.0..170.0).contains(&px) && (90.0..130.0).contains(&py) {
-                                    ground * 1.02
-                                } else {
-                                    ground
-                                }
+                    if check_filter {
+                        let filtered: Vec<u8> = data[(row * h) as usize..]
+                            .chunks(row as usize)
+                            .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
+                            .collect();
+                        let depth: Vec<f32> = (0..h)
+                            .flat_map(|y| {
+                                (0..w).map(move |x| {
+                                    let px = x as f32 + 0.5;
+                                    let py = y as f32 + 0.5;
+                                    let ground = 0.0005 * (py + 96.0);
+                                    if py < 20.0 {
+                                        0.0
+                                    } else if (230.0..231.0).contains(&px) && (50.0..150.0).contains(&py) {
+                                        ground * 1.005
+                                    } else if (120.0..170.0).contains(&px) && (90.0..130.0).contains(&py) {
+                                        ground * 1.02
+                                    } else {
+                                        ground
+                                    }
+                                })
                             })
-                        })
-                        .collect();
-                    let expected = reference_filter(&depth, &raw, w as usize, h as usize, (1080.0 * scale) as u32);
-                    let wrong = expected.iter().zip(&filtered).filter(|(a, b)| a.abs_diff(**b) > 1).count();
-                    assert_eq!(wrong, 0, "filter differs from scalar reference at scale {scale}");
+                            .collect();
+                        let expected = reference_filter(&depth, &raw, w as usize, h as usize, (1080.0 * scale) as u32);
+                        let wrong = expected.iter().zip(&filtered).filter(|(a, b)| a.abs_diff(**b) > 1).count();
+                        assert_eq!(wrong, 0, "filter differs from scalar reference at scale {scale}");
+                    }
+                    if area {
+                        let mut payload = raw;
+                        payload.extend(
+                            data[..(row * h) as usize]
+                                .chunks(row as usize)
+                                .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[1])),
+                        );
+                        payload
+                    } else {
+                        raw
+                    }
+                };
+                let bend = mask(Variant::StreamReference, 1.0);
+                let shadowed = bend[..(w * h) as usize].iter().filter(|&&v| v > 128).count();
+                if near == 0.1 {
+                    assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
                 }
-                raw
-            };
-            let bend = mask(Variant::StreamReference, 1.0);
-            let shadowed = bend.iter().filter(|&&v| v > 128).count();
-            if near == 0.1 {
-                assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
-            }
-            // Keep every pixel, including those covered by several wavefronts.
-            // The chosen nearest-centre candidate must not depend on scheduling.
-            let mut writes = vec![0u8; (w * h) as usize];
-            let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
-            written_pixels(&list, WAVE_SIZE, |x, y| {
-                if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
-                    writes[(y * w as i32 + x) as usize] += 1;
-                }
-            });
-            let once = writes.iter().filter(|&&n| n == 1).count();
-            // A light behind the camera has slightly wider dispatch overlaps.
-            let percent = if light[3] > 0.0 { 75 } else { 70 };
-            assert!(once > writes.len() * percent / 100, "{once} pixels written once");
-            let differ = |other: &[u8]| -> Vec<(usize, u8, u8)> {
-                bend.iter()
-                    .zip(other)
-                    .enumerate()
-                    .filter(|(_, (a, b))| a != b)
-                    .map(|(i, (a, b))| (i, *a, *b))
-                    .collect()
-            };
-            let again = differ(&mask(Variant::StreamReference, 1.0));
-            assert!(
-                again.is_empty(),
-                "Scalar reference twice: {} pixels differ, {:?}",
-                again.len(),
-                &again[..again.len().min(8)]
-            );
-            {
-                let variant = Variant::Stream;
-                let d = differ(&mask(variant, 1.0));
-                assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
-            }
-            for scale in [1.25, 4.0, 1.25, 2.0, 4.0, 8.0, 1.0] {
-                let d = differ(&mask(Variant::Stream, scale));
-                assert!(d.is_empty(), "stream photo scale {scale}: {} pixels differ", d.len());
-            }
-            if light[0] < -1.0 {
-                let bounded = mask(Variant::Short, 1.0);
-                // A one-pixel wire can darken only one of the four soft
-                // groups (at most 25%); require visible shadow, not full shade.
-                let recovered = (70..130)
-                    .flat_map(|y| (750..900).map(move |x| (y * w + x) as usize))
-                    .filter(|&i| bend[i] > 16 && bounded[i] == 0)
-                    .count();
+                // Keep every pixel, including those covered by several wavefronts.
+                // The chosen nearest-centre candidate must not depend on scheduling.
+                let mut writes = vec![0u8; (w * h) as usize];
+                let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
+                written_pixels(&list, WAVE_SIZE, |x, y| {
+                    if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
+                        writes[(y * w as i32 + x) as usize] += 1;
+                    }
+                });
+                let once = writes.iter().filter(|&&n| n == 1).count();
+                // A light behind the camera has slightly wider dispatch overlaps.
+                let percent = if light[3] > 0.0 { 75 } else { 70 };
+                assert!(once > writes.len() * percent / 100, "{once} pixels written once");
+                let differ = |other: &[u8]| -> Vec<(usize, u8, u8)> {
+                    bend.iter()
+                        .zip(other)
+                        .enumerate()
+                        .filter(|(_, (a, b))| a != b)
+                        .map(|(i, (a, b))| (i, *a, *b))
+                        .collect()
+                };
+                let again = differ(&mask(Variant::StreamReference, 1.0));
                 assert!(
-                    recovered > 100,
-                    "full-view search must recover the wire beyond 480 pixels: {recovered}"
+                    again.is_empty(),
+                    "Scalar reference twice: {} pixels differ, {:?}",
+                    again.len(),
+                    &again[..again.len().min(8)]
                 );
+                {
+                    let variant = Variant::Stream;
+                    let d = differ(&mask(variant, 1.0));
+                    assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
+                }
+                for scale in [1.25, 4.0, 1.25, 2.0, 4.0, 8.0, 1.0] {
+                    let d = differ(&mask(Variant::Stream, scale));
+                    assert!(d.is_empty(), "stream photo scale {scale}: {} pixels differ", d.len());
+                }
+                if light[0] < -1.0 {
+                    let bounded = mask(Variant::Short, 1.0);
+                    // A one-pixel wire can darken only one of the four soft
+                    // groups (at most 25%); require visible shadow, not full shade.
+                    let recovered = (70..130)
+                        .flat_map(|y| (750..900).map(move |x| (y * w + x) as usize))
+                        .filter(|&i| bend[i] > 16 && bounded[i] == 0)
+                        .count();
+                    assert!(
+                        recovered > 100,
+                        "full-view search must recover the wire beyond 480 pixels: {recovered}"
+                    );
+                }
+                assert!(mask(Variant::Skip, 1.0).iter().all(|&v| v == 0), "skip: nothing");
             }
-            assert!(mask(Variant::Skip, 1.0).iter().all(|&v| v == 0), "skip: nothing");
         }
     }
 }

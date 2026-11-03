@@ -248,6 +248,8 @@ const BLEND_BAND: f32 = 0.15;
 const FILTER_TEXELS: f32 = 6.0;
 /// Maximum directional PCSS half-width in metres (common.wgsl).
 pub(crate) const PCSS_MAX_RADIUS: f32 = 0.25;
+/// Maximum smooth-surface receiver displacement in metres (common.wgsl).
+pub(crate) const SMOOTH_RECEIVER_MAX_OFFSET: f32 = 0.05;
 
 /// Taps per axis of the shadow filter for a span of `span_texels`
 /// (`shadow_taps` in common.wgsl): never more than a texel apart, since a
@@ -707,6 +709,7 @@ mod tests {
     #[test]
     fn pcss_culling_guard_keeps_the_whole_world_space_footprint() {
         assert!(crate::COMMON_SHADER.contains(&format!("const PCSS_MAX_RADIUS: f32 = {PCSS_MAX_RADIUS};")));
+        assert!(crate::COMMON_SHADER.contains(&format!("const SMOOTH_RECEIVER_MAX_OFFSET: f32 = {SMOOTH_RECEIVER_MAX_OFFSET};")));
         for cascade in 0..3 {
             for texel in [0.001, 0.008, 0.04, 0.2] {
                 let legacy = lookup_margin_for(cascade, texel, false);
@@ -714,6 +717,7 @@ mod tests {
                 let receiver = 0.02 + 0.04 * cascade as f32 + 0.05;
                 assert!(pcss >= legacy);
                 assert!(pcss + 1e-6 >= PCSS_MAX_RADIUS + texel + receiver);
+                assert!(pcss + 1e-6 >= PCSS_MAX_RADIUS + texel + 0.02 + 0.04 * cascade as f32 + SMOOTH_RECEIVER_MAX_OFFSET);
                 assert!((legacy - (6.0 * texel + receiver)).abs() < 1e-6);
             }
         }
