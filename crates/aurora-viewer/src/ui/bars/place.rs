@@ -9,7 +9,7 @@
 //! (`Settings::place_bar_stretch`); what it shows follows the room it has
 //! (`choose`).
 
-use super::islands::{GAP, ICON, PAD, SLOT, demo_open, icon_slot, slot_face, slot_ink};
+use super::islands::{GAP, ICON, PAD, SLOT, demo_open, icon_slot, icon_slot_greyable, slot_face, slot_ink};
 use super::{BarAction, StarAction, StatusInfo, paint_icon};
 use crate::theme::Palette;
 use crate::ui::Panels;
@@ -245,9 +245,17 @@ pub fn island(
             action = chosen;
         }
     }
-    let home = icon_slot(ui, p, icons, next(SLOT), Id::unique("bars_place_home"), "home-filled", true)
-        .on_hover_text(aurora_i18n::tr!("common-go-home"));
-    if home.clicked() {
+    let (home, go) = icon_slot_greyable(
+        ui,
+        p,
+        icons,
+        next(SLOT),
+        Id::unique("bars_place_home"),
+        "home-filled",
+        st.can_go_home,
+    );
+    let home = home.on_hover_text(aurora_i18n::tr!("common-go-home"));
+    if go {
         action = Some(BarAction::TeleportHome);
     }
     if super::home_menu(&home, p, st.can_set_home) {
@@ -631,7 +639,7 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
         action = Some(BarAction::TeleportHistory);
     }
-    if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
+    if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.can_go_home) {
         action = Some(BarAction::TeleportHome);
     }
     if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("common-places")) {

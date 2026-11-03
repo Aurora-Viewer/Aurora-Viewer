@@ -80,10 +80,16 @@ What each part tells the one who fixes it:
   viewer): the duration then comes from the last sign of life (`alive.txt`,
   every 5 s), and a Windows start right after it says the system went down
   (system crash, power loss). A shutdown or restart of Windows itself is
-  heard by the watcher and never reported.
+  heard by the watcher and never reported. On Linux, a viewer stopped by
+  SIGTERM, SIGHUP or SIGINT (log out, shutdown, a closed terminal, Ctrl+C)
+  is not reported either.
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
+- **GPU recoveries**: the graphics card resets the viewer recovered from
+  during the session (`AURORA_GPU_RECOVERY=1`), how many, and for the first
+  five when in the session, how long the recovery took and whether it came
+  back with the safe graphics. Only shown when the session ended badly later.
 - **Overlay hooks**: the overlay or capture programs that injected their
   hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
   game capture), named from the viewer's fixed list only.

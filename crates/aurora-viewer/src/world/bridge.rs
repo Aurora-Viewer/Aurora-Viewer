@@ -19,6 +19,16 @@ pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
 const VERSION: &str = "1.40";
+/// The controller's and query script's owner-say tags, never shown in chat.
+const PRIVATE_TAGS: [&str; 7] = [
+    "<auroraBridge>",
+    "<auroraBridgeQuery>",
+    "<auroraPose>",
+    "<auroraPortal>",
+    "<auroraMoveLock>",
+    "<auroraBridgeError>",
+    "<auroraBridgeStatus>",
+];
 const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
@@ -98,6 +108,8 @@ pub enum QueryState {
     Failed,
     /// The wearer took the bridge off.
     Detached,
+    /// Turned off in Preferences › Aurora.
+    Off,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -222,6 +234,10 @@ pub struct Bridge {
     capture_sent: Option<Instant>,
     firestorm_poll: Option<Instant>,
     firestorm_detached: HashSet<Uuid>,
+    /// Preferences › Aurora "Use the Aurora bridge" is off.
+    disabled: bool,
+    own_poll: Option<Instant>,
+    own_detached: HashSet<Uuid>,
     ack: Ack,
     watch: Watch,
     query_watch: Watch,
@@ -265,7 +281,9 @@ impl Bridge {
     /// whose query script stays silent past SILENCE_CHECK (it stopped, or did
     /// not compile as in bridge 1.34) is not "missing".
     pub fn query_state(&self, now: Instant) -> QueryState {
-        if self.query_endpoint().is_some() {
+        if self.disabled {
+            QueryState::Off
+        } else if self.query_endpoint().is_some() {
             QueryState::Ready
         } else if self.user_detached {
             QueryState::Detached
@@ -436,6 +454,11 @@ impl Bridge {
         self.pending = None;
     }
     pub fn retry(&mut self, now: Instant) {
+        // Repair and the features that retry a failed bridge must not bring
+        // back one the wearer turned off.
+        if self.disabled {
+            return;
+        }
         self.force_update = true;
         self.user_detached = false;
         self.mutation = None;
@@ -465,7 +488,11 @@ impl Bridge {
     pub fn observe_command(&mut self, command: &NetCommand, now: Instant) -> bool {
         match command {
             NetCommand::DetachAttachments(items)
-                if !self.item.is_nil() && !self.user_detached && items.contains(&self.item) && self.phase != Phase::Store =>
+                if !self.disabled
+                    && !self.item.is_nil()
+                    && !self.user_detached
+                    && items.contains(&self.item)
+                    && self.phase != Phase::Store =>
             {
                 let release = self.release();
                 self.retry(now);
@@ -485,6 +512,75 @@ impl Bridge {
                 false
             }
             _ => false,
+        }
+    }
+    /// Preferences › Aurora "Use the Aurora bridge", the Legacy Viewer's
+    /// UseLSLBridge (fslslbridge.cpp: initBridge and processDetach do
+    /// nothing while it is off). Off, nothing is made, worn or checked; unlike
+    /// the Legacy Viewer, which leaves a worn bridge running and ignores its
+    /// handshake, a worn bridge is unlocked then detached, so no script of
+    /// ours runs on the avatar. Its inventory is kept for the way back.
+    pub fn set_enabled(&mut self, enabled: bool, now: Instant) {
+        if enabled != self.disabled {
+            return;
+        }
+        if enabled {
+            self.disabled = false;
+            self.own_detached.clear();
+            self.retry(now);
+            return;
+        }
+        let release = self.release();
+        self.retry(now);
+        self.force_update = false;
+        self.disabled = true;
+        self.hold_off(now);
+        self.commands.extend(release);
+    }
+    fn hold_off(&mut self, now: Instant) {
+        if self.phase != Phase::Failed {
+            self.enter(Phase::Failed, now);
+        }
+        let reason = aurora_i18n::tr!("bridge-disabled");
+        if self.error.as_deref() != Some(reason) {
+            self.error = Some(reason.into());
+        }
+    }
+    /// Detach our own worn bridge, found by its exact name in `#Aurora`,
+    /// each worn object once: wearing it again while off detaches it again.
+    fn detach_own(&mut self, world: &World, now: Instant) {
+        if self.own_poll.is_some_and(|at| now.duration_since(at) < Duration::from_secs(1)) {
+            return;
+        }
+        self.own_poll = Some(now);
+        let inv = &world.inventory;
+        let folder = inv.folders.get(&inv.root).and_then(|root| {
+            root.children.iter().copied().find(|id| {
+                inv.folders
+                    .get(id)
+                    .is_some_and(|f| f.info.parent == inv.root && f.info.name == FOLDER && !f.library)
+            })
+        });
+        let mut detach = Vec::new();
+        for item in world.worn_attachment_items() {
+            let ours = item == self.item
+                || inv.items.get(&item).is_some_and(|entry| {
+                    entry.owner == world.agent_id
+                        && entry.asset_type == 6
+                        && entry.name == NAME
+                        && folder.is_some_and(|folder| super::inventory::actions::under(inv, item, folder))
+                });
+            if ours
+                && !item.is_nil()
+                && let Some(root) = world.worn_attachment(&item).and_then(|i| world.objects.get(i))
+                && self.own_detached.insert(root.full_id)
+            {
+                detach.push(item);
+            }
+        }
+        if !detach.is_empty() {
+            log::info!("Aurora bridge: turned off in Preferences, detaching the worn bridge");
+            self.commands.push(NetCommand::DetachAttachments(detach));
         }
     }
     pub fn release(&mut self) -> Option<NetCommand> {
@@ -707,10 +803,17 @@ impl Bridge {
                 agent: world.agent_id,
                 candidate,
                 since: Some(now),
+                disabled: self.disabled,
                 ..Default::default()
             };
         }
         self.detach_firestorm(world, now);
+        if self.disabled {
+            self.hold_off(now);
+            self.detach_own(world, now);
+            self.region = world.main_region;
+            return;
+        }
         if self.user_detached {
             self.region = world.main_region;
             return;
@@ -826,12 +929,15 @@ impl Bridge {
             self.phase,
             Phase::Inventory | Phase::Folder | Phase::Subfolder | Phase::Move | Phase::Copy
         ) && self.mutation.is_none()
-            && !world.inventory_writable()
+            && !world.inventory_writable_with_ais()
         {
             // A cache hit is not proof that AIS and its readback service are
             // ready. Wait before sending anything, without spending the stage
             // timeout or consuming a rename/create attempt. In-flight edits
-            // retain their own deadline and never get silently replayed.
+            // retain their own deadline and never get silently replayed. On a
+            // grid without AIS the wait lasts: the Legacy Viewer's bridge does
+            // not create itself on OpenSim (FSLSLBridge::recreateBridge,
+            // fslslbridge.cpp), as its object may not be in the Library.
             self.since = Some(now);
             return;
         }
@@ -1201,6 +1307,22 @@ impl Bridge {
     /// Return true only for events consumed by this bridge. Never show an
     /// Aurora handshake, token, endpoint or script's raw protocol in chat.
     pub fn event(&mut self, world: &mut World, event: &NetEvent, now: Instant) -> bool {
+        if self.disabled {
+            // Hide a still-worn bridge's messages until its detach lands, as
+            // FSLSLBridge::lslToViewer does while UseLSLBridge is off.
+            return match event {
+                NetEvent::Chat(chat) => {
+                    chat.source_type == ChatSourceType::Object
+                        && chat.chat_type == ChatType::OwnerSay
+                        && PRIVATE_TAGS
+                            .iter()
+                            .chain(["<auroraBridgeIK>", "<auroraIKRelay>"].iter())
+                            .any(|tag| chat.message.starts_with(tag))
+                }
+                NetEvent::BridgeReply { .. } => true,
+                _ => false,
+            };
+        }
         if self.ik_event(world, event, now) {
             return true;
         }
@@ -1208,17 +1330,7 @@ impl Bridge {
             NetEvent::Chat(chat)
                 if chat.source_type == ChatSourceType::Object
                     && chat.chat_type == ChatType::OwnerSay
-                    && [
-                        "<auroraBridge>",
-                        "<auroraBridgeQuery>",
-                        "<auroraPose>",
-                        "<auroraPortal>",
-                        "<auroraMoveLock>",
-                        "<auroraBridgeError>",
-                        "<auroraBridgeStatus>",
-                    ]
-                    .iter()
-                    .any(|tag| chat.message.starts_with(tag)) =>
+                    && PRIVATE_TAGS.iter().any(|tag| chat.message.starts_with(tag)) =>
             {
                 if chat.owner_id == world.agent_id && chat.message.len() <= 1200 {
                     if chat.message.starts_with("<auroraBridgeQuery>") {

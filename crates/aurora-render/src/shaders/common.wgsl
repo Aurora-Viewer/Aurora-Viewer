@@ -72,7 +72,7 @@ struct Frame {
     sky_misc: vec4<f32>,        // dome offset, dome radius, moon brightness, star brightness
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier, z 1 = PBR materials' occlusion applied, w 1 = specular occlusion from GTAO's bent normal (in ao_tex.gba)
-    sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
+    sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1), w colored sky ambient
     sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22° halo)
     sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
     // night sky (stars.rs StarFrame): region directions of the catalogue's
@@ -112,6 +112,7 @@ struct Frame {
     motion_vp: mat4x4<f32>,
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
+    photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -145,6 +146,7 @@ struct DrawRecord {
 const FLAG_FULLBRIGHT: u32 = 1u;
 const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
+const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;
@@ -1818,8 +1820,7 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
                         lo = mid;
                     }
                 }
-                let edge = min(min(huv.x, 1.0 - huv.x), min(huv.y, 1.0 - huv.y));
-                let conf = clamp(edge * 10.0, 0.0, 1.0) * (1.0 - f32(i) / f32(steps));
+                let conf = ssr_edge_fade(huv) * (1.0 - f32(i) / f32(steps));
                 let col = textureSampleLevel(scene_tex, lin_clamp, huv, 0.0).rgb;
                 return vec4<f32>(col, conf);
             }
@@ -1828,6 +1829,44 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
         t = t * 1.18 + 0.1;
     }
     return vec4<f32>(0.0);
+}
+
+// Pixels of a photo tile's inner edges over which a reflection's hit fades:
+// past them the ray finds nothing, the scene beyond is not drawn. Within
+// the guard band (at least 128 pixels, `snapshot::TILE_GUARD`), so the
+// pixels the tile keeps read their hits whole.
+const SSR_TILE_FADE: f32 = 64.0;
+
+// How much of a reflection's hit at `uv` is kept: it fades over the last
+// tenth of the image towards its edges. A photo tile fades at the photo's
+// edges, as the photo in one pass does, and at its inner edges only over
+// `SSR_TILE_FADE`: fading over a tenth of the tile took the reflections
+// out along every seam.
+fn ssr_edge_fade(uv: vec2<f32>) -> f32 {
+    if (frame.photo.z <= 0.0) {
+        let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+        return clamp(edge * 10.0, 0.0, 1.0);
+    }
+    let p = frame.photo.xy + uv * frame.photo.zw;
+    let edge = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));
+    // in this tile's pixels from each side; a side on the photo's edge
+    // fades with the photo
+    let px = uv * frame.screen.xy;
+    let to_end = frame.screen.xy - px;
+    var inner = 1.0;
+    if (frame.photo.x > 1e-6) {
+        inner = min(inner, px.x / SSR_TILE_FADE);
+    }
+    if (frame.photo.y > 1e-6) {
+        inner = min(inner, px.y / SSR_TILE_FADE);
+    }
+    if (frame.photo.x + frame.photo.z < 1.0 - 1e-6) {
+        inner = min(inner, to_end.x / SSR_TILE_FADE);
+    }
+    if (frame.photo.y + frame.photo.w < 1.0 - 1e-6) {
+        inner = min(inner, to_end.y / SSR_TILE_FADE);
+    }
+    return clamp(edge * 10.0, 0.0, 1.0) * clamp(inner, 0.0, 1.0);
 }
 
 // calcLegacyDistanceAttenuation (deferredUtil.glsl): `d` is the distance
@@ -2170,9 +2209,22 @@ fn ll_atmos_core(rel_in: vec3<f32>, up_axis: vec3<f32>, glow_norm: vec3<f32>, gl
     var o: LLAtmos;
     o.sunlit = sunlight;
     o.amblit = pow(max(tmp_ambient, vec3<f32>(0.0)), vec3<f32>(0.9)) * 0.57;
+    if (colored_sky_ambient()) {
+        o.amblit = max(tmp_ambient, vec3<f32>(0.0)) * 0.7;
+    }
     o.additive = min(additive * (vec3<f32>(1.0) - atten), vec3<f32>(10.0));
     o.atten = atten;
     return o;
+}
+
+// The experimental colored sky ambient: the first PBR release lit with the
+// sky's ambient colour x RenderSkyAmbientScale 0.7, neither softened (pow
+// 0.9, x 0.57) nor turned grey in linear mode (atmosphericsFuncs.glsl
+// calcAtmosphericVarsLinear, settings.xml, tag
+// Second_Life_Release#843866d-DRTVWR-559). It had no classic branch: a
+// classic sky keeps its colour either way and only takes the 0.7 curve.
+fn colored_sky_ambient() -> bool {
+    return frame.sky_obj_light.w > 0.5;
 }
 
 // ambientLighting: a touch of light opposite the sun.
@@ -2223,7 +2275,8 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     }
     // linear mode: grey sky ambient, linear sunlight, plain lambert
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
-    let irr = ll_ssao(vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722))), frag);
+    let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
+    let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
     return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
 }
 

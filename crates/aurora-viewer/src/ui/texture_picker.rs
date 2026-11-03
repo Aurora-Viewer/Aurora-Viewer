@@ -26,7 +26,7 @@ const TRANSPARENT_TEXTURE: Uuid = aurora_prim::te::TRANSPARENT_TEXTURE;
 const BLANK_MATERIAL: Uuid = Uuid::from_u128(0x968cbad0_4dad_d64e_71b5_72bf13ad051a);
 
 /// LLFloaterTexturePicker::onBakeTextureSelect: keep the magic bake UUID
-/// in the texture entry; its current image is only used by the preview.
+/// in the texture entry and show its coloured reference image while editing.
 fn bom_choices() -> [(&'static str, Uuid); 11] {
     let names = [
         aurora_i18n::tr!("picker-bom-head"),
@@ -231,16 +231,10 @@ impl TexturePicker {
         self.material_model = None;
     }
 
-    fn preview_texture(&self, world: &World) -> Option<Uuid> {
-        let asset = self.selected.filter(|asset| !self.materials && !asset.is_nil())?;
-        if let Some((slot, _)) = crate::scene::avatar::bake_slot_for(&asset) {
-            world
-                .objects
-                .index_of_uuid(&world.agent_id)
-                .and_then(|avatar| world.bake_texture(avatar, slot))
-        } else {
-            Some(asset)
-        }
+    /// Editing windows identify a BOM channel by its coloured BAKED_* image.
+    /// Only scene rendering resolves it to the wearer's current bake.
+    fn preview_texture(&self) -> Option<Uuid> {
+        self.selected.filter(|asset| !self.materials && !asset.is_nil())
     }
 
     /// The asset chosen with "OK" (the picker closes). Nil: "None".
@@ -291,7 +285,7 @@ impl TexturePicker {
         }
         let mut floater = Floater::new("texture_picker", self.title.clone(), screen.center() - size * 0.5, size);
         floater.min_size = Vec2::new(320.0, 480.0);
-        let preview_texture = self.preview_texture(world);
+        let preview_texture = self.preview_texture();
         floater.show(ctx, p, &mut open, |ui| {
             let radius = ui.visuals().window_corner_radius;
             ui.horizontal_top(|ui| {
@@ -843,7 +837,10 @@ pub(crate) mod tests {
         }
 
         pub(crate) fn click(&mut self, label: &str, mut draw: impl FnMut(&egui::Context, &Palette)) {
-            let pos = self.labels[label];
+            let pos = *self
+                .labels
+                .get(label)
+                .unwrap_or_else(|| panic!("missing picker label {label:?}: {:?}", self.labels.keys()));
             self.time += 1.0;
             for pressed in [true, false] {
                 self.frame(
@@ -1154,12 +1151,16 @@ pub(crate) mod tests {
         assert_eq!(picker.take_preview(), Some(magic));
         assert_eq!(picker.uuid_text, magic.to_string());
         assert_eq!(
-            picker.preview_texture(&world),
-            None,
-            "a magic bake id is never downloaded as an ordinary texture"
+            picker.preview_texture(),
+            Some(magic),
+            "editing previews show the coloured BAKED_* reference image"
         );
         labels = frame(&ctx, &mut picker, &mut world, 1.3, vec![]);
         assert!(labels.contains_key(name));
+        assert!(
+            picker.wanted_images.contains(&magic),
+            "request the BAKED_* image, including without an avatar bake"
+        );
         click(&ctx, &mut picker, &mut world, 1.4, labels[aurora_i18n::tr!("common-blank")]);
         labels = frame(&ctx, &mut picker, &mut world, 1.5, vec![]);
         assert!(labels.contains_key(aurora_i18n::tr!("picker-bom")));

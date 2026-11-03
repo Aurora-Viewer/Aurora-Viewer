@@ -12,11 +12,12 @@ mod contents_list;
 #[cfg(test)]
 mod contents_tests;
 
+pub(crate) use contents_list::demo_root as contents_demo_root;
 pub(crate) use contents_list::demo_select_all as contents_demo_select_all;
 pub(crate) use contents_list::shortcuts as contents_shortcuts;
 
 fn money(amount: i32) -> String {
-    format!("L$ {}", super::hud::group_digits(amount.max(0) as u32))
+    format!("{} {}", aurora_i18n::currency(), super::hud::group_digits(amount.max(0) as u32))
 }
 
 fn permission_name(name: &str, mask: u32) -> String {
@@ -170,13 +171,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                             .show(ui, |ui| {
                                 for index in 0..4 {
                                     if let Some(&amount) = buttons.get(index).filter(|v| **v > 0) {
-                                        if ui
-                                            .add_enabled_ui(affordable(amount), |ui| {
-                                                flat_button_sized(ui, p, &money(amount), Vec2::new(button_width, 24.0))
-                                            })
-                                            .inner
-                                            .clicked()
-                                        {
+                                        // never greyed: short of L$, Buy L$ opens
+                                        // (give_money)
+                                        if flat_button_sized(ui, p, &money(amount), Vec2::new(button_width, 24.0)).clicked() {
                                             confirm = Some(Some(amount));
                                         }
                                     } else {
@@ -194,7 +191,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                         ui.horizontal(|ui| {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.add(egui::TextEdit::singleline(&mut d.amount).desired_width(110.0).char_limit(10));
-                                ui.label("L$");
+                                ui.label(aurora_i18n::currency());
                             });
                         });
                     }
@@ -225,7 +222,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                 let valid = available
                     && d.props.as_ref().is_some_and(|props| {
                         let price = if buy { Some(props.sale_price) } else { amount };
-                        price.is_some_and(|v| v >= 0 && world.balance.is_some_and(|b| v <= b))
+                        price.is_some_and(|v| v >= 0)
                             && if buy {
                                 (1..=3).contains(&props.sale_type)
                                     && (props.sale_type != 3

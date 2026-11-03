@@ -59,12 +59,18 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         .and_then(hex32)
     {
         (format!("Native exception 0x{code:08X}"), format!("native exception 0x{code:08X}"))
+    } else if let Some((number, name)) = native_text.lines().next().and_then(native_signal) {
+        (format!("Native signal {name} ({number})"), format!("native signal {name}"))
     } else if dir.join("failure.txt").exists() {
         // Its text is an error chain with paths: the kind alone is public.
         (
             "Startup or event loop failure".to_owned(),
             "startup or event loop failure".to_owned(),
         )
+    } else if text("gpu-lost.txt").trim() == super::GPU_LOST_AT_START {
+        // Before the first frame (app.rs): never a driver reset of a session
+        // under load, whatever the rest of the report looks like.
+        ("GPU device lost at startup".to_owned(), "GPU device lost at startup".to_owned())
     } else if dir.join("gpu-lost.txt").exists() {
         // The viewer closed itself after the device loss (app/gpu_stall.rs).
         ("GPU device lost".to_owned(), "GPU device lost".to_owned())
@@ -129,12 +135,15 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         rows.push(("System", label(&record.os, 120)));
     }
     let (head, tail) = log(&dir.join("session.log"));
-    let gpu = head
-        .lines()
-        .find_map(|line| line.split_once("] GPU: "))
-        .map(|(_, gpu)| label(gpu, 160));
+    let gpu = gpu_in(&head).map(|gpu| label(gpu, 160));
     if let Some(gpu) = &gpu {
         rows.push(("GPU", gpu.clone()));
+    }
+    if let Some(notice) = gpu_notice_in(&head) {
+        rows.push(("GPU notice", label(notice, 160)));
+    }
+    if let Some(descriptors) = logged(&head, "] GPU descriptors: ") {
+        rows.push(("GPU descriptors", label(descriptors, 160)));
     }
     // aurora-render's device lost callback (main_thread.rs).
     if device_lost_in(&tail) {
@@ -150,6 +159,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             "GPU not responding",
             format!("no frame for {seconds} s, the window still answering"),
         ));
+    }
+    if let Some(recoveries) = gpu_recoveries(&text("gpu-recoveries.txt"), record.started_unix) {
+        rows.push(("GPU recoveries", recoveries));
     }
     if let Some(hooks) = overlay_hooks(&text("overlay-hooks.txt")) {
         rows.push(("Overlay hooks", hooks));
@@ -223,6 +235,37 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     Summary { title, body, gpu }
 }
 
+/// The GPU device losses the session recovered from (`gpu-recoveries.txt`:
+/// `<unix> <ms> same|safe` a line), as numbers and fixed words: how many,
+/// and for the first ones when in the session, how long the recovery took
+/// and whether it fell back on the safe graphics. None without any.
+fn gpu_recoveries(text: &str, started_unix: u64) -> Option<String> {
+    let recoveries: Vec<(u64, u64, bool)> = text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split(' ');
+            let unix: u64 = parts.next()?.parse().ok()?;
+            let ms: u64 = parts.next()?.parse().ok()?;
+            let safe = match parts.next()? {
+                "safe" => true,
+                "same" => false,
+                _ => return None,
+            };
+            Some((unix.saturating_sub(started_unix), ms, safe))
+        })
+        .collect();
+    if recoveries.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = recoveries
+        .iter()
+        .take(5)
+        .map(|(at, ms, safe)| format!("at {at} s ({ms} ms{})", if *safe { ", safe graphics" } else { "" }))
+        .collect();
+    let more = if recoveries.len() > shown.len() { ", …" } else { "" };
+    Some(format!("{}: {}{more}", recoveries.len(), shown.join(", ")))
+}
+
 /// The keys of `alive.txt` published, with their labels.
 const STATE_ROWS: &[(&str, &str)] = &[
     ("screen", "Screen"),
@@ -269,6 +312,16 @@ fn out_of_memory(text: &str) -> Option<(u64, Stack)> {
     let (first, rest) = last.split_once('\n')?;
     let size = first.strip_suffix(" bytes")?.parse().ok()?;
     Some((size, Stack::parse(rest)))
+}
+
+/// `Native signal 11 (SIGSEGV)`, the first line of a Linux `native.txt`
+/// (crash/linux.rs): the number and a name of the fixed list only.
+fn native_signal(line: &str) -> Option<(u8, &'static str)> {
+    let (number, name) = line.strip_prefix("Native signal ")?.split_once(' ')?;
+    let name = ["SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT"]
+        .into_iter()
+        .find(|known| name.strip_prefix('(').and_then(|n| n.strip_suffix(')')) == Some(*known))?;
+    Some((number.parse().ok()?, name))
 }
 
 /// The usual meaning of an exit code, for the reader of the report.
@@ -388,7 +441,8 @@ fn module(line: &str) -> Option<String> {
         if !matches!(key, "id" | "code") {
             return None;
         }
-        result.push_str(&format!(" {key}={}", hex(value, 48)?));
+        // A GNU build ID can be 32 bytes (crash/linux.rs).
+        result.push_str(&format!(" {key}={}", hex(value, 64)?));
     }
     Some(result)
 }
@@ -461,6 +515,49 @@ fn overlay_hooks(text: &str) -> Option<String> {
 
 /// The start of the session log (the GPU line) and its end (the last
 /// warnings); a long session's log is never read whole.
+/// What follows `marker` on the first line of the log that has it.
+fn logged<'a>(log: &'a str, marker: &str) -> Option<&'a str> {
+    log.lines().find_map(|line| line.split_once(marker)).map(|(_, value)| value)
+}
+
+/// The card of the session and its driver: the line that names the card
+/// opened. The warnings about the cards share its start, and come first, so
+/// they are left out: "GPU: no discrete GPU visible…" stood for the card in
+/// every report from an integrated GPU. A crash while the device opens comes
+/// before that line: then the card that would have been chosen, in the order
+/// of adapter_choice.rs, from the list of adapters.
+fn gpu_in(log: &str) -> Option<&str> {
+    let opened = log
+        .lines()
+        .filter(|line| !line.contains(" WARN "))
+        .find_map(|line| line.split_once("] GPU: "));
+    if let Some((_, gpu)) = opened {
+        return Some(gpu);
+    }
+    let adapters: Vec<&str> = log
+        .lines()
+        .filter_map(|line| line.split_once("] GPU adapter "))
+        .filter_map(|(_, adapter)| adapter.split_once(": "))
+        .map(|(_, adapter)| adapter)
+        .collect();
+    let can_present = |adapter: &&&str| adapter.contains(", can present");
+    adapters
+        .iter()
+        .filter(can_present)
+        .find(|adapter| adapter.contains("(discrete, "))
+        .or_else(|| adapters.iter().find(can_present))
+        .or(adapters.first())
+        .copied()
+}
+
+/// The warning about the cards, when there is one (adapter_choice.rs).
+fn gpu_notice_in(log: &str) -> Option<&str> {
+    log.lines()
+        .filter(|line| line.contains(" WARN "))
+        .find_map(|line| line.split_once("] GPU: "))
+        .map(|(_, notice)| notice)
+}
+
 fn device_lost_in(tail: &str) -> bool {
     tail.lines().any(|line| line.contains("] GPU device lost ("))
 }
@@ -518,6 +615,75 @@ mod tests {
 
     const NATIVE: &str = "Native exception 0xC0000005\nFault address: 0x00007FF6A1B2C3D4\nNative stack (addresses):\n00: 0x00007ffb12345678\n01: 0x00007FF6A1B2C3D4\nFault: aurora_viewer+0x1b2c3d4\nNative stack (modules):\n00: KERNELBASE+0x5678\n01: aurora_viewer+0x1b2c3d4\n02: ?\n03: nvoglv64+0x9abc\nModules:\nKERNELBASE id=0123456789ABCDEF0123456789ABCDEF1 code=6712ABCD3f0000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nnvoglv64 code=65000000200000\n";
 
+    const NOTICE: &str = "[t WARN  aurora_render::main_thread] GPU: no discrete GPU visible to Vulkan: on a hybrid PC";
+
+    #[test]
+    fn the_notice_about_the_cards_does_not_stand_for_the_card() {
+        let log = format!(
+            "{NOTICE}\n[t INFO  aurora_render::main_thread] GPU: Intel(R) Iris(R) Xe Graphics (Vulkan, driver Intel Corporation 101.7092)\n"
+        );
+        assert_eq!(
+            gpu_in(&log),
+            Some("Intel(R) Iris(R) Xe Graphics (Vulkan, driver Intel Corporation 101.7092)")
+        );
+        assert_eq!(gpu_notice_in(&log), Some("no discrete GPU visible to Vulkan: on a hybrid PC"));
+    }
+
+    #[test]
+    fn a_crash_while_the_device_opens_names_the_card_from_the_adapters() {
+        let adapter = |i: u32, what: &str| format!("[t INFO  aurora_render::main_thread] GPU adapter {i}: {what}\n");
+        // only an integrated GPU, with the notice before the card is opened
+        let log = format!(
+            "{}{NOTICE}\n",
+            adapter(0, "Intel(R) UHD Graphics (integrated, 32678 MB, can present)")
+        );
+        assert_eq!(gpu_in(&log), Some("Intel(R) UHD Graphics (integrated, 32678 MB, can present)"));
+        // the discrete card that can present, as adapter_choice.rs picks it
+        let log = format!(
+            "{}{}{}",
+            adapter(0, "Intel(R) UHD Graphics (integrated, 512 MB, can present)"),
+            adapter(1, "NVIDIA One (discrete, 4096 MB, cannot present to the window)"),
+            adapter(2, "NVIDIA Two (discrete, 8192 MB, can present)"),
+        );
+        assert_eq!(gpu_in(&log), Some("NVIDIA Two (discrete, 8192 MB, can present)"));
+        // none can present: still a name
+        let log = adapter(0, "Intel(R) UHD Graphics (integrated, 512 MB, cannot present to the window)");
+        assert_eq!(
+            gpu_in(&log),
+            Some("Intel(R) UHD Graphics (integrated, 512 MB, cannot present to the window)")
+        );
+        assert_eq!(gpu_in("[t INFO  viewer] nothing about the card\n"), None);
+    }
+
+    #[test]
+    fn a_device_lost_at_startup_has_its_own_title_and_says_why() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("gpu-lost.txt"), super::super::GPU_LOST_AT_START).unwrap();
+        std::fs::write(
+            dir.join("session.log"),
+            format!(
+                "{NOTICE}\n[t INFO  aurora_render::main_thread] GPU descriptors: 1048576 in an array, 200 sampled per stage, 1048576 in all pools, 16384 texture pages\n[t INFO  aurora_render::main_thread] GPU: Intel(R) Iris(R) Xe Graphics (Vulkan, driver Intel Corporation 101.7092)\n[t ERROR aurora_render::main_thread] GPU device lost (Unknown): Out of memory\n"
+            ),
+        )
+        .unwrap();
+        let summary = build(&record, &dir);
+        assert_eq!(summary.title, "Crash: GPU device lost at startup (0.7.1+3.gabcdef)");
+        assert_eq!(
+            summary.gpu.as_deref(),
+            Some("Intel(R) Iris(R) Xe Graphics (Vulkan, driver Intel Corporation 101.7092)")
+        );
+        for expected in [
+            "| Crash | GPU device lost at startup |",
+            "| GPU notice | no discrete GPU visible to Vulkan",
+            "| GPU descriptors | 1048576 in an array, 200 sampled per stage, 1048576 in all pools, 16384 texture pages |",
+        ] {
+            assert!(summary.body.contains(expected), "{expected} missing from {}", summary.body);
+        }
+        // a loss in a running session stays the plain kind
+        std::fs::write(dir.join("gpu-lost.txt"), "").unwrap();
+        assert_eq!(build(&record, &dir).title, "Crash: GPU device lost (0.7.1+3.gabcdef)");
+    }
+
     #[test]
     fn a_native_crash_publishes_module_offsets_from_the_fault_and_no_raw_address() {
         let (dir, record) = session();
@@ -554,6 +720,42 @@ mod tests {
         for private in ["0x00007", "PRIVATE_LOG_PATH", "SECRET", "Alice", "Demo session"] {
             assert!(!body.contains(private), "leaked {private}:\n{body}");
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A Linux `native.txt` (crash/linux.rs): the handler's frames and the
+    /// signal trampoline above the fault, build IDs as module identities.
+    const SIGNAL: &str = "Native signal 11 (SIGSEGV)\nSignal code: 1\nFault address: 0x7f0012345000\nNative stack (addresses):\n00: 0x5612aa001000\n01: 0x7f00aa0451d0\n02: 0x5612aa1b2c3d\nFault: aurora-viewer+0x1b2c3d\nNative stack (modules):\n00: aurora-viewer+0x1000\n01: libc.so.6+0x451d0\n02: aurora-viewer+0x1b2c3d\n03: libvulkan_radeon.so+0x9abc\nModules:\naurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314\nlibc.so.6 id=AABBCCDD11223344556677889900AABB0 code=ddccbbaa443322116677889900aabbccddeeff00\nlibvulkan_radeon.so id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20\n";
+
+    #[test]
+    fn a_linux_signal_publishes_its_name_and_module_offsets_from_the_fault() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("native.txt"), SIGNAL).unwrap();
+        let summary = build(&record, &dir);
+        assert_eq!(
+            summary.title,
+            "Crash: native signal SIGSEGV at aurora-viewer+0x1b2c3d (0.7.1+3.gabcdef)"
+        );
+        let body = &summary.body;
+        for expected in [
+            "| Crash | Native signal SIGSEGV (11) |",
+            "00 aurora-viewer+0x1b2c3d\n01 libvulkan_radeon.so+0x9abc\n",
+            "aurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314",
+            // A 32-byte build ID.
+            "libvulkan_radeon.so id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20\n",
+        ] {
+            assert!(body.contains(expected), "missing {expected:?} in\n{body}");
+        }
+        // The handler's frames above the fault, and every raw address, stay out.
+        for private in ["libc.so.6+0x451d0", "0x7f00", "0x5612"] {
+            assert!(!body.contains(private), "leaked {private}:\n{body}");
+        }
+        // Only the fixed signal names are published.
+        assert_eq!(native_signal("Native signal 11 (SIGSEGV)"), Some((11, "SIGSEGV")));
+        assert_eq!(native_signal("Native signal 6 (SIGABRT)"), Some((6, "SIGABRT")));
+        assert_eq!(native_signal("Native signal 11 (Alice)"), None);
+        assert_eq!(native_signal("Native signal x (SIGSEGV)"), None);
+        assert_eq!(native_signal("Native signal 11 (?)"), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -627,6 +829,22 @@ mod tests {
     }
 
     const FREEZE: &str = "Freeze: no answer for 20 s\nThread: main\nNative stack (modules):\n00: ntdll+0x9d0e4\n01: aurora_viewer+0x5000\nModules:\nntdll id=0123456789ABCDEF0123456789ABCDEF1 code=1234ABCD1f8000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: aurora-render\nNative stack (modules):\n00: nvoglv64+0x9abc\n01: aurora_viewer+0x7000\nModules:\nnvoglv64 code=65000000200000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: Private Name\nNative stack (modules):\n00: secret+0x1\n";
+
+    #[test]
+    fn recoveries_are_counted_with_when_and_how_and_nothing_else() {
+        assert_eq!(gpu_recoveries("", 1000), None);
+        assert_eq!(
+            gpu_recoveries("1120 812 same\n1300 790 safe\n", 1000).as_deref(),
+            Some("2: at 120 s (812 ms), at 300 s (790 ms, safe graphics)")
+        );
+        // a line that is not the viewer's is left out, never published
+        assert_eq!(
+            gpu_recoveries("1120 812 same\nC:\\Users\\someone 1 safe\n1130 800 other\n", 1000).as_deref(),
+            Some("1: at 120 s (812 ms)")
+        );
+        let many = "1100 800 same\n".repeat(7);
+        assert!(gpu_recoveries(&many, 1000).is_some_and(|s| s.starts_with("7: ") && s.ends_with(", …")));
+    }
 
     #[test]
     fn a_session_ended_frozen_publishes_both_threads_and_its_last_state() {

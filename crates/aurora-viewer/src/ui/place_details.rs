@@ -20,6 +20,7 @@ use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::place_details::{Place, PlaceError, Source, Stage};
+use crate::world::worldmap::WorldMap;
 use aurora_net::ParcelSummary;
 use aurora_net::land::RemoteParcelError;
 use egui::{RichText, Vec2};
@@ -111,13 +112,10 @@ pub fn maturity(flags: u8) -> &'static str {
 /// LLPanelPlaceInfo::processParcelInfo: "%s (%d, %d, %d)" with the position
 /// in the region rounded, or the parcel's global position modulo 256 when
 /// there is none.
-pub fn region_name_pos(sim_name: &str, pos: glam::Vec3, global: DVec3) -> String {
+pub fn region_name_pos(sim_name: &str, pos: glam::Vec3, global: DVec3, map: &WorldMap) -> String {
     let (x, y, z) = if pos == glam::Vec3::ZERO {
-        (
-            (global.x.round() as i64).rem_euclid(256),
-            (global.y.round() as i64).rem_euclid(256),
-            global.z.round() as i64,
-        )
+        let (x, y) = map.local_xy(global.x.round(), global.y.round());
+        (x.round() as i64, y.round() as i64, global.z.round() as i64)
     } else {
         (pos.x.round() as i64, pos.y.round() as i64, pos.z.round() as i64)
     };
@@ -214,6 +212,16 @@ fn slurl_of(place: &Place, world: &World) -> Option<String> {
     (!region.is_empty() && !world.rlva_private_region(&region)).then(|| crate::slurl::make(&region, place.region_pos))
 }
 
+/// RLVa leaves the place's Teleport allowed (LLPanelPlaces::updateVerbs,
+/// FSFloaterPlaceDetails: @tplm for a landmark, canTeleportToLocation for
+/// any other place).
+pub fn teleport_allowed(place: &Place, world: &World) -> bool {
+    match &place.source {
+        Source::Landmark { .. } => world.rlva_can_teleport_landmark(),
+        _ => place.global.is_none_or(|g| world.rlva_can_teleport_global(g)),
+    }
+}
+
 /// "Teleport" of a profile (onTeleportButtonClicked).
 pub fn teleport_action(place: &Place, world: &World) -> Option<PlaceAction> {
     match &place.source {
@@ -303,7 +311,7 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
             p,
             aurora_i18n::tr!("common-teleport-3"),
             aurora_i18n::tr!("ui-place-details-teleport-to-the-specified-location"),
-            global.is_some(),
+            global.is_some() && teleport_allowed(place, world),
             108.0,
         ) && let Some(a) = teleport_action(place, world)
         {
@@ -420,7 +428,7 @@ fn titles(data: &Shown, place: &Place, world: &World) -> (String, Option<String>
             (!d.sim_name.is_empty()).then(|| {
                 aurora_i18n::tr!(
                     "ui-place-details-region-3",
-                    value0 = region_name_pos(&d.sim_name, place.region_pos, d.global).to_string()
+                    value0 = region_name_pos(&d.sim_name, place.region_pos, d.global, &world.map).to_string()
                 )
             }),
         ),
@@ -715,11 +723,14 @@ mod tests {
     fn region_and_position() {
         let g = DVec3::new(256_140.4, 256_119.6, 24.5);
         assert_eq!(
-            region_name_pos("Aurora Démo", Vec3::new(140.4, 119.6, 24.6), g),
+            region_name_pos("Aurora Démo", Vec3::new(140.4, 119.6, 24.6), g, &WorldMap::default()),
             "Aurora Démo (140, 120, 25)"
         );
         // no position of our own: the parcel's, modulo the region width
-        assert_eq!(region_name_pos("Aurora Démo", Vec3::ZERO, g), "Aurora Démo (140, 120, 25)");
+        assert_eq!(
+            region_name_pos("Aurora Démo", Vec3::ZERO, g, &WorldMap::default()),
+            "Aurora Démo (140, 120, 25)"
+        );
     }
 
     #[test]

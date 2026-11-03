@@ -37,7 +37,7 @@ fn editable(tool: &BuildTool, world: &World, object: Uuid, item: &TaskItem) -> b
         && !matches!(item.asset_type, 2 | 24 | 25)
 }
 
-pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &super::Env) {
+pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, images: &HashMap<Uuid, egui::TextureHandle>) {
     let Some(mut state) = tool.ui.item_properties.take() else { return };
     let item = tool
         .contents
@@ -57,7 +57,6 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         })
         .collect::<HashMap<_, _>>();
     let mut open = true;
-    let mut saved = false;
     properties::window(ctx, "task_item_props").show(ctx, p, &mut open, |ui| {
         let response = properties::panel(
             ui,
@@ -73,18 +72,25 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                 // TaskInventory has no thumbnail field or agent-thumbnail capability.
                 can_thumbnail: false,
                 names: &names,
-                images: env.images,
+                images,
                 wanted_images: &mut tool.ui.wanted_images,
             },
         );
         if let Some(id) = response.profile {
             tool.ui.requests.push(super::Request::Profile(id));
         }
-        if response.save {
-            saved = tool.save_item_properties(world, &state);
+        if let Some(edit) = response.edit {
+            tool.save_item_properties(
+                world,
+                &TaskProperties {
+                    object: state.object,
+                    item: state.item,
+                    edit,
+                },
+            );
         }
     });
-    if open && !saved {
+    if open {
         tool.ui.item_properties = Some(state);
     }
 }

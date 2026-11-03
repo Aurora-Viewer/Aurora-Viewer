@@ -56,6 +56,8 @@ pub mod settings;
 pub mod shape;
 mod shown_bakes;
 mod skin_binds;
+pub mod sound_occlusion;
+pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
 mod sync_check;
@@ -987,6 +989,10 @@ pub struct Scene {
     object_signals: FastMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
     pub sounds: sounds::SoundManager,
+    /// How muffled each world sound is behind walls (sound_occlusion.rs).
+    sound_occlusion: sound_occlusion::SoundOcclusion,
+    /// The reverb of the surroundings (sound_reverb.rs).
+    sound_reverb: sound_reverb::SoundReverb,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -1531,6 +1537,8 @@ impl Scene {
             last_origin: None,
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
+            sound_occlusion: Default::default(),
+            sound_reverb: Default::default(),
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
             anims,
@@ -1835,24 +1843,7 @@ impl Scene {
         // what the jobs staged so far becomes copyable (once a frame, before
         // the geometry here and the textures in `stream`)
         renderer.prepare_uploads();
-        if self.staging.is_none() {
-            let pool = renderer.staging_pool();
-            self.textures.staging = Some(pool.clone());
-            // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
-            let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
-            self.textures.bc7 = wanted && renderer.textures.bc7();
-            // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
-            // texture decoded from its JPEG 2000 data as before)
-            let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
-            self.textures.bc7_cache = self.textures.bc7 && cached;
-            log::info!(
-                "textures: BC7 compression {} (GPU support: {})",
-                if self.textures.bc7 { "on" } else { "off" },
-                renderer.textures.bc7()
-            );
-            self.meshes.staging = Some(pool.clone());
-            self.staging = Some(pool);
-        }
+        self.take_staging(renderer);
         // Three kinds of results share the budget, each with a part of it so
         // that none starves the others, and each at least one a frame:
         // geometry whose staging chunk became copyable (the first half),
@@ -1908,6 +1899,9 @@ impl Scene {
                 Part::Decoded
             };
             match r {
+                // staged in the pool of a GPU device lost since (`forget_gpu`):
+                // dropped, the next sync asks for it again
+                JobResult::Geometry { geom, .. } if !geom.staged_in(self.staging.as_deref()) => {}
                 JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
@@ -2091,6 +2085,77 @@ impl Scene {
         self.palette_fresh.clear();
         self.palette_count = self.live_morphs.slots;
         self.live_morphs.uploaded = false;
+    }
+
+    /// The GPU device is lost (app/gpu_recovery.rs): what the scene holds on
+    /// `old` is released through `clear`'s bookkeeping (CPU only: nothing
+    /// waits on the lost device), with what a logout keeps besides: the
+    /// geometry cache, the environment and projector textures, the
+    /// impostors. The world stays: `clear` forgets the render origin, whose
+    /// change at the next `sync` marks every object and terrain chunk dirty,
+    /// and all of it is built again on the new renderer ([`Self::adopt_gpu`]).
+    pub fn forget_gpu(&mut self, old: &mut Renderer) {
+        for (id, _) in std::mem::take(&mut self.env_tex) {
+            if !id.is_nil() {
+                self.textures.release(&id);
+            }
+        }
+        for (_, (id, _)) in std::mem::take(&mut self.light_textures) {
+            self.textures.release(&id);
+        }
+        self.clear(old);
+        // every GpuGeom holds allocations of the lost device's arena
+        self.geoms.clear();
+        self.geom_zero.clear();
+        self.geom_pending = 0;
+        self.geom_waiting.clear();
+        self.geom_waiting_spare.clear();
+        self.geom_trash = Default::default();
+        self.joint_boxes = Default::default();
+        self.skin_binds = Default::default();
+        self.sculpt_area.clear();
+        self.grass.clear();
+        self.impostors = Default::default();
+        self.far_avatars.clear();
+        // Blender Live's images: installed again from its snapshot
+        self.preview_images.clear();
+        self.preview_appearances.clear();
+        self.meshes.gpu_reset();
+        // set again from the new renderer at the next `sync`
+        self.staging = None;
+    }
+
+    /// The renderer's staging pool for the streamers' jobs, taken once (and
+    /// again for the renderer of a GPU recovery, `adopt_gpu`).
+    fn take_staging(&mut self, renderer: &mut Renderer) {
+        if self.staging.is_some() {
+            return;
+        }
+        let pool = renderer.staging_pool();
+        self.textures.staging = Some(pool.clone());
+        // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
+        let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
+        self.textures.bc7 = wanted && renderer.textures.bc7();
+        // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
+        // texture decoded from its JPEG 2000 data as before)
+        let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
+        self.textures.bc7_cache = self.textures.bc7 && cached;
+        log::info!(
+            "textures: BC7 compression {} (GPU support: {})",
+            if self.textures.bc7 { "on" } else { "off" },
+            renderer.textures.bc7()
+        );
+        self.meshes.staging = Some(pool.clone());
+        self.staging = Some(pool);
+    }
+
+    /// The new renderer of a GPU recovery: every texture held gets a slot of
+    /// it and is uploaded again from memory or the disk cache, and the jobs
+    /// stage into its pool from now on (the imports published again at once
+    /// need it).
+    pub fn adopt_gpu(&mut self, new: &mut Renderer) {
+        self.textures.gpu_reset(new);
+        self.take_staging(new);
     }
 
     /// The nearest avatar the ray `(origin, dir)` meets before `far`, and
@@ -2625,6 +2690,9 @@ impl Scene {
                     .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, mat_gen))
                 {
                     self.sets.dirty.insert(idx);
+                    if let Some((_, wearer)) = Self::wearer_avatar(world, idx) {
+                        self.bom_stale.insert(wearer);
+                    }
                 }
             }
         }
@@ -3622,23 +3690,22 @@ impl Scene {
                 rec.spec_color = so(te_);
                 rec.legacy = [tn.rotation, tmr.rotation, te_.rotation, 0.0];
                 base_tex = m.base_color_texture.unwrap_or(Uuid::nil());
-                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> u32 {
+                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> (Uuid, u32) {
                     match id {
                         Some(id) if !id.is_nil() => {
+                            let (id, source) = s.face_texture(renderer, world, id, bake_wearer);
+                            if id.is_nil() {
+                                return (id, default);
+                            }
                             g.tex_ids.push(id);
-                            s.textures.acquire(renderer, id, TexSource::Asset)
+                            (id, s.textures.acquire(renderer, id, source))
                         }
-                        _ => default,
+                        _ => (Uuid::nil(), default),
                     }
                 };
-                aux_tex = [
-                    m.normal_texture.unwrap_or_default(),
-                    m.metallic_roughness_texture.unwrap_or_default(),
-                    m.emissive_texture.unwrap_or_default(),
-                ];
-                rec.tex[1] = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
-                rec.tex[2] = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
-                rec.tex[3] = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
+                (aux_tex[0], rec.tex[1]) = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
+                (aux_tex[1], rec.tex[2]) = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
+                (aux_tex[2], rec.tex[3]) = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
                 pbr_alpha = Some(match m.alpha_mode {
                     aurora_assets::AlphaMode::Opaque => 0,
                     aurora_assets::AlphaMode::Blend => 1,
@@ -3699,18 +3766,8 @@ impl Scene {
             }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
-            let mut source = TexSource::Asset;
-            if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex)
-                && let Some((aid, a)) = bake_wearer
-            {
-                match self.shown_bake(renderer, world, a, bake_te) {
-                    Some(tid) => {
-                        base_tex = tid;
-                        source = world.bake_source(aid, bake, tid);
-                    }
-                    None => base_tex = Uuid::nil(),
-                }
-            }
+            let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
+            base_tex = texture;
             // media replaces the diffuse texture (LLViewerMediaTexture::switchTexture)
             if let Some(media_tex) = world.media.face_texture(&o.full_id, fi as u8, &base_tex) {
                 base_tex = media_tex;
@@ -3752,6 +3809,12 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_world_blend_pick(
+                !g.hud
+                    && wearer.is_none()
+                    && matches!(pbr_alpha, None | Some(1))
+                    && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
+            );
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -3861,17 +3924,44 @@ impl Scene {
     }
 
     /// Bake slots (texture-entry index bits) shown by the avatar's attachments
-    /// and their child prims.
-    pub(crate) fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
+    /// and their child prims. Preserve the texture-entry rule of
+    /// LLVOAvatar::updateMeshVisibility and also count rendered PBR maps so
+    /// a body using only PBR BOM does not overlap the system body.
+    pub(crate) fn bom_mask(&self, world: &World, avatar_idx: usize) -> u64 {
         let Some(av) = world.objects.get(avatar_idx) else {
             return 0;
         };
         let mut mask = 0u64;
         let mut scan = |i: usize| {
-            if let Some(te) = world.objects.get(i).and_then(|o| o.te.as_ref()) {
-                for f in &te.faces {
-                    if let Some((slot, _)) = avatar::bake_slot_for(&f.texture) {
-                        mask |= 1u64 << slot.min(63);
+            if let Some(o) = world.objects.get(i)
+                && let Some(te) = &o.te
+            {
+                for (fi, _) in te.faces.iter().enumerate() {
+                    let mut maps = [Some(o.visual_texture_face(fi).texture), None, None, None, None];
+                    if let Some(mid) = o.visual_material(fi) {
+                        let ov = world
+                            .gltf_overrides
+                            .get(&o.key)
+                            .and_then(|s| s.iter().rev().find(|(face, _)| *face as usize == fi))
+                            .map(|(_, ov)| ov)
+                            .filter(|_| o.local_appearance(fi).is_none());
+                        let status = self
+                            .materials
+                            .peek(&mid)
+                            .map_or(meshes::MaterialStatus::Pending, meshes::MaterialStatus::Loaded);
+                        let m = meshes::render_material(&status, ov);
+                        maps = [
+                            maps[0],
+                            m.base_color_texture,
+                            m.normal_texture,
+                            m.metallic_roughness_texture,
+                            m.emissive_texture,
+                        ];
+                    }
+                    for id in maps.into_iter().flatten() {
+                        if let Some((slot, _)) = avatar::bake_slot_for(&id) {
+                            mask |= 1u64 << slot.min(63);
+                        }
                     }
                 }
             }
@@ -3913,7 +4003,7 @@ impl Scene {
         // BOM_SWEEP_FRAMES in case (each time it walks every prim worn)
         let bom_mask =
             if !self.gpu[idx].is_avatar || self.bom_stale.remove(&idx) || (self.frame as usize + idx).is_multiple_of(BOM_SWEEP_FRAMES) {
-                Self::bom_mask(world, idx)
+                self.bom_mask(world, idx)
             } else {
                 self.gpu[idx].bom_mask
             };
@@ -4614,6 +4704,7 @@ impl Scene {
                             distance: blend_d,
                             cmd,
                             glow: f.glow,
+                            double_sided: f.two_sided,
                             rigged: g.rigged,
                             object: idx as u32,
                             face: f.te_index,
@@ -4672,19 +4763,23 @@ impl Scene {
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
         self.blend_tmp.extend(
-            [(self.banlines.cmds.as_slice(), false), (self.portals.cmds.as_slice(), true)]
-                .into_iter()
-                .flat_map(|(cmds, glow)| {
-                    cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                        distance: *d,
-                        cmd: *c,
-                        glow,
-                        rigged: false,
-                        object: u32::MAX,
-                        face: 0,
-                        rig: None,
-                    })
-                }),
+            [
+                (self.banlines.cmds.as_slice(), false, false),
+                (self.portals.cmds.as_slice(), true, true),
+            ]
+            .into_iter()
+            .flat_map(|(cmds, glow, double_sided)| {
+                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
+                    distance: *d,
+                    cmd: *c,
+                    glow,
+                    double_sided,
+                    rigged: false,
+                    object: u32::MAX,
+                    face: 0,
+                    rig: None,
+                })
+            }),
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
@@ -4701,7 +4796,9 @@ impl Scene {
         let mut under = result.blend_under;
         blend_order::sort(&mut under, true);
         self.lists.blend_under_water.extend(under.iter().map(|e| e.cmd));
+        self.lists.blend_under_double_sided.extend(under.iter().map(|e| e.double_sided));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
+        self.lists.blend_double_sided.extend(self.blend_tmp.iter().map(|e| e.double_sided));
         self.lists.shadow_casters.extend(result.casters);
         self.lists.reflection = result.refl;
         self.lists.probe = result.probe;
@@ -4751,9 +4848,12 @@ impl Scene {
         if usage_phase == 0 {
             // LLTerrainMaterials::boost: TERRAIN_DECODE_PRIORITY = 2048²,
             // for every material map too. A 512 px cap loses terrain relief.
+            // BOOST_TERRAIN is under BOOST_HIGH: the maximum texture
+            // resolution chosen in Preferences still caps it.
+            let px = terrain_surface::DECODE_PIXELS.min(self.textures.max_resolution() as f32);
             for r in self.regions.values() {
                 for id in &r.surface.texture_ids {
-                    self.textures.note_usage_fixed(id, terrain_surface::DECODE_PIXELS);
+                    self.textures.note_usage_fixed(id, px);
                 }
             }
             self.textures.recompute_wants();
@@ -5073,7 +5173,8 @@ impl Scene {
                 } else {
                     world.animations_of(&owner)
                 };
-                let stopped = motions.sync(signals, pose_now, |id| anims.get(id));
+                let male = self.avatar_lib.shape_params.is_male(world.visual_params(&owner).unwrap_or(&[]));
+                let stopped = motions.sync_avatar(signals, male, pose_now, |id| anims.get(id));
                 if owner == world.agent_id {
                     completed.extend(stopped);
                 }
@@ -5760,6 +5861,54 @@ mod tests {
     }
 
     #[test]
+    fn pbr_bom_mask_uses_material_maps_and_face_overrides() {
+        let avatars = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let att = world.objects.iter().find(|(_, o)| o.key.local_id == 9100).map(|(i, _)| i).unwrap();
+        let (_, avatar) = Scene::wearer_avatar(&world, att).unwrap();
+        let asset = Uuid::from_u128(1793);
+        let object = world.objects.get_mut(att).unwrap();
+        object.extra.render_materials = (0..aurora_prim::te::MAX_TES).map(|face| (face as u8, asset)).collect();
+        let mut te = object.te.as_deref().unwrap().clone();
+        for face in &mut te.faces {
+            face.texture = avatar::BAKES[3].2;
+        }
+        object.te = Some(Arc::new(te));
+        let key = object.key;
+        let mut scene = Scene::new(std::env::temp_dir(), avatars);
+        let maps = [avatar::BAKES[0], avatar::BAKES[1], avatar::BAKES[2], avatar::BAKES[8]];
+        scene.materials.insert(
+            asset,
+            aurora_assets::PbrMaterial {
+                base_color_texture: Some(maps[0].2),
+                normal_texture: Some(maps[1].2),
+                metallic_roughness_texture: Some(maps[2].2),
+                emissive_texture: Some(maps[3].2),
+                ..Default::default()
+            },
+        );
+        let legacy_mask = 1u64 << avatar::BAKES[3].0;
+        let expected = maps.iter().fold(legacy_mask, |mask, (slot, _, _)| mask | (1u64 << slot));
+        assert_eq!(scene.bom_mask(&world, avatar), expected);
+        let override_ = aurora_assets::material::PbrOverride {
+            textures: [aurora_assets::material::OVERRIDE_NULL_UUID; 4],
+            ..Default::default()
+        };
+        let faces = world.objects.get(att).unwrap().te.as_ref().unwrap().faces.len();
+        world
+            .gltf_overrides
+            .insert(key, (0..faces).map(|face| (face as u8, override_.clone())).collect());
+        assert_eq!(
+            scene.bom_mask(&world, avatar),
+            legacy_mask,
+            "removed PBR maps preserve the legacy texture-entry visibility"
+        );
+    }
+
+    #[test]
     fn first_person_visibility_uses_attachment_roots_and_preserves_huds_and_other_avatars() {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
@@ -6050,6 +6199,7 @@ mod tests {
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
                 draw_distance: 128.0,
+                region_width: 256.0,
                 aspect: 1.0,
             };
             camera.update(&mut world, &settings, &input);
@@ -6113,6 +6263,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
             draw_distance: 128.0,
+            region_width: 256.0,
             aspect: 1.0,
         };
         camera.update(&mut world, &settings, &input);

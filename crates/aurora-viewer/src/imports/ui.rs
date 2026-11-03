@@ -361,7 +361,7 @@ pub fn show(
                         ui.label(aurora_i18n::tr!("import-confirm-shared-textures"));
                     }
                 }
-                if imports.folders.active() && !imports.folder_plan_ready(world, inventory_prefs) {
+                if imports.folders.active() && !imports.folder_plan_ready(world) {
                     ui.label(aurora_i18n::tr!("import-folders-auto-create"));
                 }
                 ui.horizontal(|ui| {

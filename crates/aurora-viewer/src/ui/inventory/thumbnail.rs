@@ -80,7 +80,7 @@ impl ThumbnailUi {
             return;
         }
         let asset = image(&world.inventory, item);
-        let ready = self.pending.is_none() && !mutation_pending && rules::mutable(&world.inventory, item, &prefs.protected);
+        let ready = self.pending.is_none() && !mutation_pending && rules::mutable(&world.inventory, item);
         let position = ctx.content_rect().center() - egui::vec2(360.0, 200.0);
         let mut open = true;
         let mut caption = String::new();

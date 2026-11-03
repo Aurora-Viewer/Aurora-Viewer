@@ -580,7 +580,7 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(&mut f.price).desired_width(90.0));
         f.price.retain(|c| c.is_ascii_digit());
-        dim(ui, p, "L$");
+        dim(ui, p, aurora_i18n::currency());
         if price >= 0 && parcel.area > 0 {
             dim(
                 ui,

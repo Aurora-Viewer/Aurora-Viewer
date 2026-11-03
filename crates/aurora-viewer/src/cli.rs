@@ -15,6 +15,9 @@ pub struct Cli {
     pub language: Option<String>,
     /// Additional cap for this process only, including captures and online tests.
     pub fps_limit: Option<u32>,
+    /// `--vr`: enter VR once the world shows (the restart that the VR
+    /// button offers when the headset came after startup passes it).
+    pub vr: bool,
     /// `--grid <name>` or `--loginuri <uri>` (CmdLineGridChoice,
     /// CmdLineLoginURI): the grid the login screen starts on.
     pub grid: Option<Grid>,
@@ -105,6 +108,8 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.title = Some(v.to_owned());
         } else if a == "--title" {
             cli.title = args.next();
+        } else if a == "--vr" {
+            cli.vr = true;
         } else if let Some(v) = a.strip_prefix("--fps-limit=") {
             cli.fps_limit = parse_fps_limit(v);
         } else if a == "--fps-limit" {

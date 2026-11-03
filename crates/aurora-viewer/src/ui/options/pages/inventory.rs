@@ -29,6 +29,7 @@ pub fn page(cx: &mut Cx) {
         );
         // the order of the Received tab, chosen in its own preferences
         cx.track(&field!(inventory.received_sort));
+        cx.track(&field!(inventory.recent_sort));
     });
     cx.group(tr!("common-display"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-show-library"), "", &field!(inventory.show_library));

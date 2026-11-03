@@ -19,6 +19,7 @@ use crate::ui::widgets::ActionKind;
 use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::profiles;
+use crate::world::worldmap::WorldMap;
 use aurora_llsd::llsd_map;
 use aurora_net::profile::{ClassifiedClick, MINIMUM_PRICE_FOR_LISTING, classified_flags};
 use aurora_net::{ClassifiedInfo, NetCommand, ParcelSummary};
@@ -42,15 +43,15 @@ const NOTES_MAX: usize = 65_530;
 
 /// "Place, Region (x, y, z)" of the mock-up: the parts known, then the
 /// position in the region.
-fn place_line(parcel: &str, sim: &str, pos: DVec3) -> String {
+fn place_line(parcel: &str, sim: &str, pos: DVec3, map: &WorldMap) -> String {
     let names: Vec<&str> = [parcel, sim].into_iter().filter(|s| !s.trim().is_empty()).collect();
     let mut s = names.join(" · ");
     if pos != DVec3::ZERO {
-        let local = |v: f64| (v.rem_euclid(256.0)).round() as i64;
+        let (x, y) = map.local_xy(pos.x, pos.y);
         if !s.is_empty() {
             s.push(' ');
         }
-        s.push_str(&format!("({}, {}, {})", local(pos.x), local(pos.y), pos.z.round() as i64));
+        s.push_str(&format!("({}, {}, {})", x.round() as i64, y.round() as i64, pos.z.round() as i64));
     }
     s
 }
@@ -120,17 +121,30 @@ fn cover(ui: &egui::Ui, tex: &egui::TextureHandle, rect: Rect, radius: egui::Cor
         .paint_at(ui, rect);
 }
 
-/// A snapshot, or the place icon on a darker face while there is none.
+/// The largest centred rect with the picture's aspect that fits in `rect`.
+fn contain_rect(rect: Rect, size: [usize; 2]) -> Rect {
+    let aspect = size[0].max(1) as f32 / size[1].max(1) as f32;
+    let fitted = if aspect > rect.width() / rect.height().max(1.0) {
+        Vec2::new(rect.width(), rect.width() / aspect)
+    } else {
+        Vec2::new(rect.height() * aspect, rect.height())
+    };
+    Rect::from_center_size(rect.center(), fitted)
+}
+
+/// A snapshot shown whole, or the place icon on a darker face while there is
+/// none; the bars left by another ratio show that face.
 fn snapshot(ui: &egui::Ui, env: &mut Env, id: Uuid, rect: Rect, radius: egui::CornerRadius, icon: &str) {
     if !id.is_nil() {
         env.wanted_images.insert(id);
     }
+    ui.painter().rect_filled(rect, radius, env.p.raised.gamma_multiply(0.6));
     match env.images.get(&id).filter(|_| !id.is_nil()) {
-        Some(t) => cover(ui, t, rect, radius),
-        None => {
-            ui.painter().rect_filled(rect, radius, env.p.raised.gamma_multiply(0.6));
-            paint_icon(ui, icon, rect.center(), 26.0, env.p.muted_dim);
+        Some(t) => {
+            let fitted = contain_rect(rect, t.size());
+            egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), fitted.size())).paint_at(ui, fitted);
         }
+        None => paint_icon(ui, icon, rect.center(), 26.0, env.p.muted_dim),
     }
 }
 
@@ -259,7 +273,7 @@ fn pick_view(env: &mut Env, w: &mut Window, id: Uuid) -> Option<PickView> {
         let parcel = info.and_then(|i| world.profiles.parcels.get(&i.parcel));
         let place = match (&e.location, info) {
             (Some(l), _) => l.clone(),
-            (None, Some(i)) => place_line(parcel.map_or("", |p| p.name.as_str()), &i.sim_name, e.pos),
+            (None, Some(i)) => place_line(parcel.map_or("", |p| p.name.as_str()), &i.sim_name, e.pos, &env.world.map),
             (None, None) => String::new(),
         };
         return Some(PickView {
@@ -287,7 +301,12 @@ fn pick_view(env: &mut Env, w: &mut Window, id: Uuid) -> Option<PickView> {
         desc: info.desc.clone(),
         snapshot: info.snapshot,
         pos: info.pos_global,
-        place: place_line(parcel.map_or("", |p| p.name.as_str()), &info.sim_name, info.pos_global),
+        place: place_line(
+            parcel.map_or("", |p| p.name.as_str()),
+            &info.sim_name,
+            info.pos_global,
+            &env.world.map,
+        ),
         sim: info.sim_name.clone(),
         maturity: maturity_of(parcel),
     })
@@ -433,7 +452,7 @@ fn feature(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView, editi
             egui::Layout::left_to_right(egui::Align::Min)
         };
         ui.with_layout(layout, |ui| {
-            let (rect, _) = ui.allocate_exact_size(image_size, Sense::hover());
+            let (rect, picture) = ui.allocate_exact_size(image_size, Sense::click());
             let corners = if compact {
                 egui::CornerRadius {
                     nw: radius.nw,
@@ -450,6 +469,9 @@ fn feature(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView, editi
                 }
             };
             snapshot(ui, env, v.snapshot, rect, corners, "map-pin-filled");
+            if !editing && !v.snapshot.is_nil() && picture.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
+                w.open_photo(PictureSlot::Pick(w.id), v.snapshot);
+            }
             if let Some(m) = v.maturity {
                 let badge = Rect::from_min_size(rect.min + Vec2::splat(8.0), Vec2::splat(15.0));
                 widgets::paint_maturity_badge(ui.painter(), p, m, badge, widgets::inner_radius(ui.visuals()));
@@ -528,7 +550,7 @@ fn pick_buttons(ui: &mut egui::Ui, env: &mut Env, pos: DVec3, region: &str) {
         if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, has_pos).clicked() {
             env.actions.push(ProfileAction::ShowOnMap(pos));
         }
-        if let Some(slurl) = slurl(region, pos)
+        if let Some(slurl) = slurl(region, pos, &env.world.map)
             && widgets::action_button(ui, p, "copy-filled", "", ActionKind::Flat, Vec2::new(30.0, 28.0))
                 .on_hover_text(aurora_i18n::tr!("ui-profile-aurora-copy-slurl"))
                 .clicked()
@@ -539,16 +561,16 @@ fn pick_buttons(ui: &mut egui::Ui, env: &mut Env, pos: DVec3, region: &str) {
 }
 
 /// The place link of a position in a region (LLSLURL's maps address).
-fn slurl(region: &str, pos: DVec3) -> Option<String> {
+fn slurl(region: &str, pos: DVec3, map: &WorldMap) -> Option<String> {
     if pos == DVec3::ZERO || region.trim().is_empty() {
         return None;
     }
-    let local = |v: f64| v.rem_euclid(256.0).round() as i64;
+    let (x, y) = map.local_xy(pos.x, pos.y);
     Some(format!(
         "http://maps.secondlife.com/secondlife/{}/{}/{}/{}",
         region.trim().replace(' ', "%20"),
-        local(pos.x),
-        local(pos.y),
+        x.round() as i64,
+        y.round() as i64,
         pos.z.round() as i64
     ))
 }
@@ -935,7 +957,7 @@ fn publish_strip(ui: &mut egui::Ui, p: &Palette, publish: &mut Publish, name: &s
                         .color(p.amber),
                 );
                 ui.add(egui::TextEdit::singleline(&mut publish.price).desired_width(56.0).char_limit(9));
-                ui.label(RichText::new("L$").font(semibold(ui, 12.0)).color(p.amber));
+                ui.label(RichText::new(aurora_i18n::currency()).font(semibold(ui, 12.0)).color(p.amber));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = Vec2::new(0.0, 24.0);
                     if widgets::action_button(
@@ -1069,7 +1091,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
                 let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 16.0), Sense::hover());
                 paint_icon(ui, "map-pin-filled", r.center(), 11.0, p.muted);
                 ui.label(
-                    RichText::new(world.rlva_filter_text(&place_line(&c.parcel_name, &c.sim_name, c.pos_global)))
+                    RichText::new(world.rlva_filter_text(&place_line(&c.parcel_name, &c.sim_name, c.pos_global, &world.map)))
                         .size(11.5)
                         .color(p.muted),
                 );
@@ -1088,7 +1110,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                 ui.label(
-                    RichText::new(format!("L$ {}", aurora_i18n::integer(c.price as i64)))
+                    RichText::new(format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(c.price as i64)))
                         .font(semibold(ui, 12.5))
                         .color(p.amber),
                 );
@@ -1106,7 +1128,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
             picture(ui, env, Vec2::new(ui.available_width(), 110.0));
             text(ui);
             ui.label(
-                RichText::new(format!("L$ {}", aurora_i18n::integer(c.price as i64)))
+                RichText::new(format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(c.price as i64)))
                     .font(semibold(ui, 12.0))
                     .color(p.amber),
             );
@@ -1225,7 +1247,7 @@ fn stats(ui: &mut egui::Ui, env: &Env, c: &ClassifiedInfo) {
             aurora_i18n::tr!("ui-profile-aurora-stat-profiles").to_owned(),
         ),
         (
-            format!("L$ {}", aurora_i18n::integer(c.price as i64)),
+            format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(c.price as i64)),
             aurora_i18n::tr!("ui-profile-aurora-stat-cost", date = profiles::slt_date(c.creation_date)),
         ),
     ];
@@ -1398,7 +1420,10 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
     );
     e.category = category;
     e.mature = mature;
-    let place = e.location.clone().unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos));
+    let place = e
+        .location
+        .clone()
+        .unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos, &env.world.map));
     let place = world.rlva_filter_text(&place);
     let mut here = false;
     let mut renew = e.auto_renew;
@@ -1888,13 +1913,14 @@ mod tests {
 
     #[test]
     fn a_place_line_like_the_mockup() {
+        let map = WorldMap::default();
         let pos = DVec3::new(256_000.0 + 140.2, 256_000.0 + 119.6, 25.4);
         assert_eq!(
-            place_line("Place d'Aurora", "Aurora Démo", pos),
+            place_line("Place d'Aurora", "Aurora Démo", pos, &map),
             "Place d'Aurora · Aurora Démo (140, 120, 25)"
         );
-        assert_eq!(place_line("", "Sablière", pos), "Sablière (140, 120, 25)");
-        assert_eq!(place_line("", "Sablière", DVec3::ZERO), "Sablière");
+        assert_eq!(place_line("", "Sablière", pos, &map), "Sablière (140, 120, 25)");
+        assert_eq!(place_line("", "Sablière", DVec3::ZERO, &map), "Sablière");
     }
 
     #[test]
@@ -1914,5 +1940,20 @@ mod tests {
         // a new one gets its id when sent
         let fresh = ClassifiedEdit::default();
         assert!(!classified_of(&fresh).id.is_nil());
+    }
+}
+
+#[cfg(test)]
+mod contain_tests {
+    use super::*;
+
+    #[test]
+    fn contain_keeps_the_whole_picture() {
+        let rect = Rect::from_min_size(pos2(10.0, 10.0), Vec2::new(200.0, 100.0));
+        let tall = contain_rect(rect, [100, 200]);
+        assert_eq!(tall.size(), Vec2::new(50.0, 100.0));
+        assert_eq!(tall.center(), rect.center());
+        let wide = contain_rect(rect, [400, 100]);
+        assert_eq!(wide.size(), Vec2::new(200.0, 50.0));
     }
 }

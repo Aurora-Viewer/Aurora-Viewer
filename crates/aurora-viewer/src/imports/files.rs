@@ -472,6 +472,50 @@ pub(super) fn load(
     Ok(vec![entry])
 }
 
+/// Paid mixed-file imports use the type choices captured when Add files opens.
+/// Explicit type windows and local previews retain their dedicated loaders.
+fn load_selected(
+    path: &Path,
+    choice: Choice,
+    options: import_texture::Options,
+    sound_limit: u32,
+    prefs: &Preferences,
+    local: bool,
+    filters: [bool; 5],
+) -> Result<Vec<Entry>, AssetError> {
+    if choice != Choice::Bulk
+        || !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("gltf") || ext.eq_ignore_ascii_case("glb"))
+    {
+        return load(path, choice, options, sound_limit, prefs, local);
+    }
+    match (filters[3], filters[4]) {
+        (false, false) => Ok(Vec::new()),
+        (true, false) => load(path, Choice::Material, options, sound_limit, prefs, local),
+        (false, true) => load(path, Choice::Mesh, options, sound_limit, prefs, local),
+        (true, true) => {
+            let mut entries = load(path, Choice::Bulk, options, sound_limit, prefs, local)?;
+            // The mesh decoder appends a fallback beyond declared materials.
+            if entries
+                .iter()
+                .any(|entry| matches!(&entry.source, Some(Source::Mesh(draft)) if draft.scene.materials.len() > 1))
+            {
+                match load(path, Choice::Material, options, sound_limit, prefs, local) {
+                    Ok(mut materials) => {
+                        for material in &mut materials {
+                            material.selected = true;
+                        }
+                        entries.extend(materials);
+                    }
+                    Err(error) => entries.push(Entry::new(path.to_owned(), Err(error.to_string()), options)),
+                }
+            }
+            Ok(entries)
+        }
+    }
+}
+
 pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
     for entry in entries {
         entry.local = true;
@@ -771,6 +815,7 @@ impl Imports {
             .map(Source::retained_bytes)
             .sum::<usize>();
         let existing = self.entries.len();
+        let filters = self.type_filters;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
@@ -812,7 +857,7 @@ impl Imports {
                     entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
                     break;
                 }
-                match load(&path, choice, options, sound_limit, &prefs, local) {
+                match load_selected(&path, choice, options, sound_limit, &prefs, local, filters) {
                     Ok(mut loaded) => {
                         let size = loaded
                             .iter()
@@ -844,6 +889,33 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn add_files_gltf_respects_material_and_mesh_choices_and_explicit_windows() {
+        let root = std::env::temp_dir().join(format!("aurora-file-types-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("preview.glb");
+        std::fs::write(&path, include_bytes!("../../../../assets/models/aurora-3d.glb")).unwrap();
+        let prefs = Preferences::default();
+        for (material, mesh) in [(true, false), (false, true), (true, true), (false, false)] {
+            let mut filters = [true; 5];
+            filters[3] = material;
+            filters[4] = mesh;
+            let entries = load_selected(&path, Choice::Bulk, prefs.texture(), 30, &prefs, false, filters).unwrap();
+            assert_eq!(
+                entries.iter().any(|entry| matches!(entry.source, Some(Source::Material { .. }))),
+                material
+            );
+            assert_eq!(entries.iter().any(|entry| matches!(entry.source, Some(Source::Mesh(_)))), mesh);
+            assert!(entries.iter().all(|entry| entry.source.is_some()));
+        }
+        for choice in [Choice::Material, Choice::Mesh] {
+            let entries = load_selected(&path, choice, prefs.texture(), 30, &prefs, false, [false; 5]).unwrap();
+            assert!(!entries.is_empty());
+            assert!(entries.iter().all(|entry| Imports::type_choice(entry) == choice));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn batch_loads_collada_and_detects_glb_meshes_without_changing_material_extraction() {
@@ -1083,6 +1155,22 @@ mod tests {
             files.load("texture-demo.png", Choice::Texture)[0].source,
             Some(Source::Texture(_))
         ));
+        let rgba = image::RgbaImage::from_fn(4, 4, |x, y| image::Rgba([(x * 60) as u8, (y * 50) as u8, 30, (y * 70) as u8]));
+        let mut tga = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(rgba.clone())
+            .write_to(&mut tga, image::ImageFormat::Tga)
+            .expect("TGA fixture");
+        std::fs::write(files.0.join("texture-demo.TGA"), tga.into_inner()).expect("write TGA");
+        for choice in [Choice::Texture, Choice::Bulk, Choice::Local] {
+            let entry = files.load("texture-demo.TGA", choice).remove(0);
+            let Some(Source::Texture(pixels)) = &entry.source else {
+                panic!("TGA texture in {choice:?}")
+            };
+            assert_eq!((pixels.width, pixels.height, pixels.components), (4, 4, 4));
+            assert_eq!(pixels.data, rgba.as_raw().as_slice());
+            let bytes = encode(entry.source.as_ref().expect("texture"), entry.options, entry.sound.options).expect("encode TGA upload");
+            assert_eq!(aurora_assets::decode_j2k(&bytes, 0).expect("decode TGA upload"), **pixels);
+        }
         assert!(matches!(
             files.load("sound-demo.wav", Choice::Sound)[0].source,
             Some(Source::Sound(_))

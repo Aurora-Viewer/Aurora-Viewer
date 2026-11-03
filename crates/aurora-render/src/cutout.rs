@@ -9,6 +9,8 @@
 //! pass turns it into a coverage (post.wgsl, `PostParams::cutout`), SMAA
 //! carries it, and the snapshot's readback keeps it.
 
+use crate::pipeline_cache::CachedPipelines;
+
 /// The pipelines and their layouts, made on first use.
 pub(crate) struct Cutout {
     single: (wgpu::BindGroupLayout, wgpu::RenderPipeline),
@@ -46,7 +48,7 @@ fn pipeline(
         bind_group_layouts: &[Some(layout)],
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some("cutout coverage"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {

@@ -696,11 +696,31 @@ pub(super) fn history_list(
     asks: &mut Vec<Ask>,
     privacy: &crate::world::rlva::privacy::TextFilter,
 ) {
-    ui.add(
-        egui::TextEdit::singleline(query)
-            .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
-            .desired_width(f32::INFINITY),
-    );
+    // laid out from the right: the button takes the width of its label in
+    // every language ("Effacer l'historique"), the search field the rest; one
+    // row high, or Align::Center would centre it in the panel's height
+    let row = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if ui
+            .add_enabled(
+                !hist.is_empty(),
+                egui::Button::new(
+                    RichText::new(aurora_i18n::tr!("ui-notifications-clear-history"))
+                        .size(11.5)
+                        .color(p.muted),
+                )
+                .frame(false),
+            )
+            .clicked()
+        {
+            hist.clear();
+        }
+        ui.add(
+            egui::TextEdit::singleline(query)
+                .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
+                .desired_width(ui.available_width()),
+        );
+    });
     ui.add_space(4.0);
     let query = query.trim().to_lowercase();
     let found: Vec<(usize, Entry)> = history::search(hist, "")
@@ -969,11 +989,12 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e:
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         // keep room for the time
-                        let w = (ui.available_width() - 40.0).max(40.0);
+                        let time = hhmm(e.time);
+                        let w = (ui.available_width() - 12.0 - cards::time_width(ui, &time)).max(40.0);
                         ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
                             cards::text::show(ui, p, &e.title, &e.name_links, 12.5, p.ink, true, true);
                         });
-                        ui.label(RichText::new(hhmm(e.time)).size(10.5).color(p.muted_dim));
+                        ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {
                         super::chat::text_with_links(ui, p, world, &e.body, &e.name_links, 12.0, p.muted);

@@ -36,36 +36,38 @@ pub mod im {
 }
 
 /// LSL permission bits (llRequestPermissions) with their wording
-/// (SCRIPT_PERMISSIONS of llscriptruntimeperms.h).
-fn permissions() -> &'static Vec<(i32, &'static str)> {
-    static TABLE: aurora_i18n::Localized<Vec<(i32, &'static str)>> = aurora_i18n::Localized::new();
-    TABLE.get(|| {
-        vec![
-            (0x2, aurora_i18n::tr!("world-notifications-take-l-from-your-account")),
-            (0x4, aurora_i18n::tr!("world-notifications-take-control-of-your-keys")),
-            (0x8, aurora_i18n::tr!("world-notifications-remap-your-control-inputs")),
-            (0x10, aurora_i18n::tr!("world-notifications-animate-your-avatar")),
-            (0x20, aurora_i18n::tr!("world-notifications-attach-to-your-avatar")),
-            (0x40, aurora_i18n::tr!("world-notifications-release-ownership")),
-            (0x80, aurora_i18n::tr!("world-notifications-link-and-unlink-objects")),
-            (0x100, aurora_i18n::tr!("world-notifications-add-and-remove-joints")),
-            (0x200, aurora_i18n::tr!("world-notifications-change-its-permissions")),
-            (0x400, aurora_i18n::tr!("world-notifications-follow-your-camera")),
-            (0x800, aurora_i18n::tr!("world-notifications-control-your-camera")),
-            (0x1000, aurora_i18n::tr!("world-notifications-teleport")),
-            // 0x2000 (JoinAnExperience) has no line, like Firestorm's empty string
-            (0x4000, aurora_i18n::tr!("world-notifications-manage-estate-silently")),
-            (0x8000, aurora_i18n::tr!("world-notifications-override-your-animations")),
-            (0x10000, aurora_i18n::tr!("world-notifications-return-objects")),
-            (0x20000, aurora_i18n::tr!("world-notifications-force-your-avatar-to-sit")),
-            (0x40000, aurora_i18n::tr!("world-notifications-change-your-environment-settings")),
-            (0x80000, aurora_i18n::tr!("world-notifications-sell-land-on-your-behalf")),
-        ]
-    })
+/// (SCRIPT_PERMISSIONS of llscriptruntimeperms.h). Built at each question,
+/// not cached: the debit line names the grid's money symbol of the moment.
+fn permissions() -> Vec<(i32, &'static str)> {
+    vec![
+        (0x2, aurora_i18n::tr!("world-notifications-take-l-from-your-account")),
+        (0x4, aurora_i18n::tr!("world-notifications-take-control-of-your-keys")),
+        (0x8, aurora_i18n::tr!("world-notifications-remap-your-control-inputs")),
+        (0x10, aurora_i18n::tr!("world-notifications-animate-your-avatar")),
+        (0x20, aurora_i18n::tr!("world-notifications-attach-to-your-avatar")),
+        (0x40, aurora_i18n::tr!("world-notifications-release-ownership")),
+        (0x80, aurora_i18n::tr!("world-notifications-link-and-unlink-objects")),
+        (0x100, aurora_i18n::tr!("world-notifications-add-and-remove-joints")),
+        (0x200, aurora_i18n::tr!("world-notifications-change-its-permissions")),
+        (0x400, aurora_i18n::tr!("world-notifications-follow-your-camera")),
+        (0x800, aurora_i18n::tr!("world-notifications-control-your-camera")),
+        (0x1000, aurora_i18n::tr!("world-notifications-teleport")),
+        // 0x2000 (JoinAnExperience) has no line, like the Legacy Viewer's empty string
+        (0x4000, aurora_i18n::tr!("world-notifications-manage-estate-silently")),
+        (0x8000, aurora_i18n::tr!("world-notifications-override-your-animations")),
+        (0x10000, aurora_i18n::tr!("world-notifications-return-objects")),
+        (0x20000, aurora_i18n::tr!("world-notifications-force-your-avatar-to-sit")),
+        (0x40000, aurora_i18n::tr!("world-notifications-change-your-environment-settings")),
+        (0x80000, aurora_i18n::tr!("world-notifications-sell-land-on-your-behalf")),
+    ]
 }
 
 pub fn permission_lines(questions: i32) -> Vec<&'static str> {
-    permissions().iter().filter(|(b, _)| questions & b != 0).map(|(_, t)| *t).collect()
+    permissions()
+        .into_iter()
+        .filter(|(b, _)| questions & b != 0)
+        .map(|(_, t)| t)
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -655,6 +657,9 @@ impl Notifications {
         // information read, an offer left unanswered ignored
         self.seen = self
             .listed()
+            // llDialog and llTextBox are temporary in-world prompts, not
+            // notifications the resident needs to search after answering them
+            .filter(|n| !script_prompt(&n.data))
             .map(|n| {
                 let mut e = n.history_entry(if n.interactive() { Outcome::Ignored } else { Outcome::Read });
                 if let Data::Inventory { object, .. } = n.data
@@ -702,7 +707,11 @@ impl Notifications {
         if matches!(&n.data, Data::Inventory { .. }) && !n.transient && !self.seen.iter().any(|(seen, _)| *seen == id) {
             self.seen.push((id, n.history_entry(outcome)));
         }
-        self.outcomes.insert(id, outcome);
+        // a script prompt never enters `seen`, so take_departures would
+        // never collect its outcome
+        if !script_prompt(&n.data) {
+            self.outcomes.insert(id, outcome);
+        }
         let mut out = Vec::new();
         let mut url = None;
         let accept = matches!(r, Response::Accept);
@@ -837,6 +846,13 @@ impl Notifications {
     }
 }
 
+/// A script's llDialog menu or llTextBox prompt: it waits in "To do" until
+/// answered, then leaves no trace in the history (#1745; a `ScriptDialog`,
+/// never in the notification well: indra/newview/skins/default/xui/en/notifications.xml).
+fn script_prompt(data: &Data) -> bool {
+    matches!(data, Data::Dialog { .. } | Data::TextBox { .. })
+}
+
 /// What an answer did, for the history.
 pub(super) fn outcome_of(n: &Notification, r: &Response) -> Outcome {
     match r {
@@ -952,6 +968,70 @@ mod tests {
             matches!(&cmds[..], [NetCommand::ScriptDialogReply { channel: -42, index: 1, label, .. }] if label == aurora_i18n::tr!("common-no"))
         );
         assert!(n.list.is_empty());
+    }
+
+    #[test]
+    fn script_menus_stay_in_todo_but_do_not_enter_history() {
+        let mut n = Notifications::default();
+        n.push(
+            Kind::Script,
+            "Menu",
+            "Choose a seat",
+            Data::Dialog {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::new_v4(),
+                object_name: "Seat menu".into(),
+                own_object: false,
+                channel: -42,
+                buttons: vec!["Sit".into()],
+            },
+        );
+        assert_eq!(n.listed().count(), 1);
+        assert!(n.take_departures().is_empty());
+        n.list.clear();
+        assert!(n.take_departures().is_empty());
+    }
+
+    #[test]
+    fn answered_script_prompts_leave_no_history_nor_outcome() {
+        let mut n = Notifications::default();
+        let sender: std::net::SocketAddr = ([127, 0, 0, 1], 13000).into();
+        let menu = n.push(
+            Kind::Script,
+            "Menu",
+            "Choose a seat",
+            Data::Dialog {
+                sender,
+                object: Uuid::new_v4(),
+                object_name: "Seat menu".into(),
+                own_object: false,
+                channel: -42,
+                buttons: vec!["Sit".into()],
+            },
+        );
+        let text_box = n.push(
+            Kind::Script,
+            "Prompt",
+            "Name your pet",
+            Data::TextBox {
+                sender,
+                object: Uuid::new_v4(),
+                channel: -43,
+            },
+        );
+        assert_eq!(n.listed().count(), 2);
+        assert!(n.take_departures().is_empty());
+        n.list.iter_mut().find(|x| x.id == text_box).expect("text box").text = "Rex".into();
+        let (cmds, _) = n.respond(text_box, Response::SendText, |_| Uuid::nil(), Uuid::nil());
+        assert!(
+            matches!(&cmds[..], [NetCommand::ScriptDialogReply { channel: -43, label, .. }] if label == "Rex"),
+            "{cmds:?}"
+        );
+        let (cmds, _) = n.respond(menu, Response::Button(0), |_| Uuid::nil(), Uuid::nil());
+        assert_eq!(cmds.len(), 1);
+        assert!(n.list.is_empty());
+        assert!(n.take_departures().is_empty());
+        assert!(n.outcomes.is_empty());
     }
 
     #[test]

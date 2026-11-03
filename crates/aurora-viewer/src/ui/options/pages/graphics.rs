@@ -61,6 +61,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 let legacy = cx.s.night_sky != NightSky::Real;
                 cx.subs(legacy, night_sky_rows);
             }
+            // an Aurora difference, also listed in Preferences › Aurora
+            cx.experimental().toggle(
+                tr!("ui-options-colored-sky-ambient"),
+                tr!("ui-options-colored-sky-ambient-help"),
+                &field!(colored_sky_ambient),
+            );
             cx.toggle(
                 tr!("ui-options-keep-environment"),
                 tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
@@ -370,6 +376,19 @@ fn quality(cx: &mut Cx) {
             tr!("ui-options-anisotropic-filtering"),
             tr!("ui-options-sharp-textures-viewed-at-an-angle"),
             &field!(anisotropy),
+            &choices,
+        );
+        // RenderMaxTextureResolution (panel_preferences_graphics1.xml,
+        // FSRestrictMaxTexturePixels): 512, 1024 or 2048 pixels
+        let names: Vec<(u32, String)> = crate::settings::MAX_TEXTURE_RESOLUTIONS
+            .into_iter()
+            .map(|v| (v, tr!("ui-options-texture-resolution-pixels", size = v.to_string())))
+            .collect();
+        let choices: Vec<(u32, &str)> = names.iter().map(|(v, l)| (*v, l.as_str())).collect();
+        cx.combo(
+            tr!("ui-options-maximum-texture-resolution"),
+            tr!("ui-options-world-textures-load-no-larger-more-fit-before-blurring"),
+            &field!(max_texture_resolution),
             &choices,
         );
     });

@@ -20,7 +20,7 @@ pub(crate) fn inventory_item_label(
     inventory_item_label_tagged(ui, label, selected, sense, bold_name, None)
 }
 
-/// `inventory_item_label` with a row tag (`paint_row_tag`), such as "Worn",
+/// `inventory_item_label` with a row tag (`paint_row_tag`), such as "Worn" (active),
 /// in the room `reserve_row_tag` left in `label` before the character `at`.
 pub(crate) fn inventory_item_label_tagged(
     ui: &mut egui::Ui,
@@ -28,14 +28,14 @@ pub(crate) fn inventory_item_label_tagged(
     selected: bool,
     sense: Sense,
     bold_name: Option<std::sync::Arc<egui::Galley>>,
-    tag: Option<(&Palette, &str, usize)>,
+    tag: Option<(&Palette, &str, usize, bool)>,
 ) -> egui::Response {
     inventory_spacing(ui);
     let text_id = egui::IdSalt::new("label");
-    let tag = tag.map(|(p, text, at)| {
+    let tag = tag.map(|(p, text, at, active)| {
         let galley = ui.fonts_mut(|fonts| fonts.layout_job(label.clone()));
         let x = galley.pos_from_cursor(egui::text::CCursor::new(at)).min.x;
-        (p, text, x - row_tag_width(ui, text))
+        (p, text, x - row_tag_width(ui, text), active)
     });
     ui.add_sized([ui.available_width(), 20.0], |ui: &mut egui::Ui| {
         let response = egui::Button::selectable(selected, "")
@@ -52,8 +52,8 @@ pub(crate) fn inventory_item_label_tagged(
             let color = ui.visuals().text_color();
             ui.painter().galley(rect.min + offset, name, color);
         }
-        if let Some(((p, text, x), rect)) = tag.zip(response.rect(text_id)) {
-            paint_row_tag(ui, p, text, true, rect.left() + x, rect.center().y);
+        if let Some(((p, text, x, active), rect)) = tag.zip(response.rect(text_id)) {
+            paint_row_tag(ui, p, text, active, rect.left() + x, rect.center().y);
         }
         response.response
     })
@@ -479,6 +479,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "chat_history" => "history",
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
+        "group_titles" => "tags-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",

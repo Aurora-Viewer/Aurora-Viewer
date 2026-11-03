@@ -130,6 +130,19 @@ pub struct CameraSettings {
     /// mouselook; otherwise they go (LLAgent::changeCameraToMouselook) and
     /// the chat bar only shows with text in it.
     pub show_interface_in_mouselook: bool,
+    /// Where the headset view starts when VR is entered (Aurora-specific).
+    pub vr_view: VrView,
+}
+
+/// Where the headset view starts on VR entry (Preferences › Camera › VR).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VrView {
+    /// At the avatar's eyes, as in mouselook: the head and what is worn on
+    /// it are hidden the same way.
+    #[default]
+    FirstPerson,
+    /// Where the desktop camera was when VR was entered.
+    DesktopCamera,
 }
 
 impl Default for CameraSettings {
@@ -164,6 +177,7 @@ impl Default for CameraSettings {
             mouselook_alt_right_menu: false,
             show_mouselook_instructions: true,
             show_interface_in_mouselook: false,
+            vr_view: VrView::FirstPerson,
         }
     }
 }

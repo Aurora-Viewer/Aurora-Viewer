@@ -175,7 +175,7 @@ fn folder_target(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    task_drop::target(ui, p, response, inv, id, prefs, actions);
+    task_drop::target(ui, p, response, inv, id, actions);
     drag::target(ui, p, response, inv, id, st, prefs, facts, actions);
     drag::navigation::folder(ui, response, st.ui_id, id, open);
     menu::context_menu(response, p, |ui| context::show(ui, p, inv, id, st, prefs, facts, actions));
@@ -428,6 +428,7 @@ pub(super) fn show(
             let name = folder_name(inv, row.id);
             let icon = match tree::folder_icon(folder.info.type_default, row.open) {
                 "Inv_TrashClosed" => "trash-filled",
+                "Inv_SuitcaseOpen" | "Inv_SuitcaseClosed" => "briefcase-filled",
                 "Inv_FolderOpen" => "folder-open-filled",
                 _ => "folder-filled",
             };

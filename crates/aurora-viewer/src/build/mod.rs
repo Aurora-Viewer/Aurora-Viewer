@@ -65,6 +65,46 @@ const UNLIMITED_PLACEMENT_RAY: f32 = 129.0;
 /// SL prim size limits (llmath/xform.h: DEFAULT_MIN_PRIM_SCALE / MAX).
 pub const MIN_PRIM_SCALE: f32 = 0.01;
 pub const MAX_PRIM_SCALE: f32 = 64.0;
+
+/// The sizes a prim may take on the agent's region: OpenSim regions may set
+/// their own in OpenSimExtras (MinPrimScale, MaxPrimScale, which
+/// LFSimFeatureHandler hands to LLWorld::setRegionMin/MaxPrimScale for
+/// LLManipScale), else Second Life's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PrimLimits {
+    pub min: f32,
+    pub max: f32,
+}
+
+impl Default for PrimLimits {
+    fn default() -> Self {
+        PrimLimits {
+            min: MIN_PRIM_SCALE,
+            max: MAX_PRIM_SCALE,
+        }
+    }
+}
+
+impl PrimLimits {
+    pub fn from_extras(extras: Option<&aurora_net::OpenSimExtras>) -> Self {
+        let usual = Self::default();
+        let Some(e) = extras else { return usual };
+        let limits = PrimLimits {
+            min: e.min_prim_scale.unwrap_or(usual.min),
+            max: e.max_prim_scale.unwrap_or(usual.max),
+        };
+        // a region contradicting itself keeps the usual limits
+        if limits.min <= limits.max { limits } else { usual }
+    }
+
+    pub fn clamp(self, v: f32) -> f32 {
+        v.clamp(self.min, self.max)
+    }
+
+    pub fn clamp3(self, v: Vec3) -> Vec3 {
+        v.clamp(Vec3::splat(self.min), Vec3::splat(self.max))
+    }
+}
 /// How far from its point of the body an attachment may be typed
 /// (llviewerjointattachment.h).
 pub const MAX_ATTACHMENT_DIST: f32 = 3.5;
@@ -297,6 +337,37 @@ pub(crate) fn take_folder(inv: &crate::world::inventory::Inventory, folders: imp
     let known = inv.folders.get(&folder).is_some_and(|f| !f.library);
     let trashed = !trash.is_nil() && crate::world::inventory::actions::under(inv, folder, trash);
     (known && !trashed).then_some(folder)
+}
+
+#[cfg(test)]
+mod prim_limit_tests {
+    use super::PrimLimits;
+    use glam::Vec3;
+
+    #[test]
+    fn opensim_regions_widen_or_narrow_the_prim_sizes() {
+        assert_eq!(PrimLimits::from_extras(None), PrimLimits::default());
+        let big = aurora_net::OpenSimExtras {
+            max_prim_scale: Some(256.0),
+            min_prim_scale: Some(0.001),
+            ..Default::default()
+        };
+        let limits = PrimLimits::from_extras(Some(&big));
+        assert_eq!(limits.clamp3(Vec3::new(0.0005, 100.0, 300.0)), Vec3::new(0.001, 100.0, 256.0));
+        // only one side given: the other stays Second Life's
+        let only_max = aurora_net::OpenSimExtras {
+            max_prim_scale: Some(128.0),
+            ..Default::default()
+        };
+        assert_eq!(PrimLimits::from_extras(Some(&only_max)).min, 0.01);
+        // a region contradicting itself keeps the usual limits
+        let broken = aurora_net::OpenSimExtras {
+            min_prim_scale: Some(10.0),
+            max_prim_scale: Some(1.0),
+            ..Default::default()
+        };
+        assert_eq!(PrimLimits::from_extras(Some(&broken)), PrimLimits::default());
+    }
 }
 
 #[cfg(test)]
@@ -582,6 +653,10 @@ struct PendingUnlink {
 }
 
 pub struct BuildTool {
+    /// The asset ids our inventory lets be exported, for Build › General's
+    /// Export box, with the inventory generation and agent they were read
+    /// for: rebuilt when the inventory changes, never walked each frame.
+    pub(crate) export_assets: Option<(u64, Uuid, HashSet<Uuid>)>,
     wheel_selection: cycle::Wheel,
     /// Last inspected selection/mode; object display choices live in the world.
     material_preview_selection: HashSet<Uuid>,
@@ -664,6 +739,7 @@ pub struct BuildTool {
 impl Default for BuildTool {
     fn default() -> Self {
         BuildTool {
+            export_assets: None,
             wheel_selection: cycle::Wheel::default(),
             material_preview_selection: HashSet::new(),
             material_preview_mode: None,
@@ -1720,7 +1796,7 @@ impl BuildTool {
     // ---- per frame
 
     /// Mouse, drags and land brush, once per frame (before the UI).
-    pub fn update(&mut self, world: &mut World, s: &BuildSettings, cursor: (f32, f32), over_ui: bool, mods: Mods) {
+    pub fn update(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, cursor: (f32, f32), over_ui: bool, mods: Mods) {
         let now = Instant::now();
         let dt = self
             .last_frame
@@ -1770,6 +1846,10 @@ impl BuildTool {
                     );
                     for c in cmds {
                         self.send(c);
+                    }
+                    for idx in self.manip.take_te_dirty() {
+                        self.send_te(world, idx);
+                        self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
                     }
                 }
                 if let Some(r) = self.rect.as_mut() {
@@ -1996,6 +2076,10 @@ impl BuildTool {
         for c in cmds {
             self.send(c);
         }
+        for idx in self.manip.take_te_dirty() {
+            self.send_te(world, idx);
+            self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
+        }
         self.grab_up();
     }
 
@@ -2082,7 +2166,7 @@ impl BuildTool {
                 sh.raw(),
                 sh.rotation(),
                 0,
-                Vec3::from_array(s.new_prim_size).clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)),
+                world.prim_limits().clamp3(Vec3::from_array(s.new_prim_size)),
                 FLAGS_CREATE_SELECTED,
             )
         };
@@ -2338,7 +2422,8 @@ impl BuildTool {
             ),
             None => (new_world_pos - off, new_world_rot.normalize()),
         };
-        let scale = size.map(|v| v.clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)));
+        let limits = world.prim_limits();
+        let scale = size.map(|v| limits.clamp3(v));
         if let Some(o) = world.objects.get_mut(idx) {
             o.position = local_pos;
             o.rotation = local_rot;

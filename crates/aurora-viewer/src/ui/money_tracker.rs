@@ -266,7 +266,7 @@ pub fn party_name(world: &World, payment: &Payment) -> String {
 /// Viewer's column ([hour]:[min]:[sec]).
 pub fn hhmmss(time: SystemTime) -> String {
     let seconds = time.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() % 60);
-    format!("{}:{seconds:02}", crate::ui::chat::hhmm(time))
+    format!("{}:{seconds:02}", crate::ui::chat::hhmm_24(time))
 }
 
 /// The selected rows as the Legacy Viewer copies them: one

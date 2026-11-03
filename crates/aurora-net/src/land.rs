@@ -776,11 +776,13 @@ pub fn parse_object_owners(b: &Llsd) -> Vec<ObjectOwner> {
 }
 
 /// Split an access list into ParcelAccessListUpdate messages
-/// (sendParcelAccessListUpdate): `Sections` is computed like the viewer
-/// (integer division, then ceil), and an empty list still sends one
+/// (sendParcelAccessListUpdate): `Sections` is computed like the viewer,
+/// `ceil(count / 48.f)` (PARCEL_MAX_ENTRIES_PER_PACKET is a float, so one
+/// entry is one section; the simulator ignores a list that says 0), and an
+/// empty list still sends one
 /// message with a null entry so the simulator clears it.
 pub fn access_list_chunks(entries: &[AccessEntry]) -> (i32, Vec<Vec<AccessEntry>>) {
-    let sections = (entries.len() / PARCEL_MAX_ENTRIES_PER_PACKET) as i32;
+    let sections = entries.len().div_ceil(PARCEL_MAX_ENTRIES_PER_PACKET) as i32;
     if entries.is_empty() {
         let null = AccessEntry {
             id: Uuid::nil(),
@@ -1103,8 +1105,31 @@ mod tests {
         assert!(chunks[0][0].id.is_nil());
         let list: Vec<_> = (0..100).map(e).collect();
         let (sections, chunks) = access_list_chunks(&list);
-        assert_eq!(sections, 2);
+        assert_eq!(sections, 3);
         assert_eq!(chunks.iter().map(Vec::len).collect::<Vec<_>>(), [48, 48, 4]);
+        let (sections, _) = access_list_chunks(&list[..1]);
+        assert_eq!(sections, 1);
+        let (sections, _) = access_list_chunks(&list[..48]);
+        assert_eq!(sections, 1);
+    }
+
+    #[test]
+    fn access_list_update_survives_its_wire_form() {
+        use aurora_msg::msgs::{ParcelAccessListUpdate, parcel_access_list_update};
+        use aurora_msg::{Msg, Writer};
+        let id = Uuid::from_u128(0xabc);
+        let mut m = ParcelAccessListUpdate::default();
+        m.data.flags = AL_ACCESS;
+        m.data.local_id = 7;
+        m.data.sequence_id = 1;
+        m.list = vec![parcel_access_list_update::List { id, time: 0, flags: 0 }];
+        let mut w = Writer::new();
+        m.encode_body(&mut w);
+        let back = ParcelAccessListUpdate::decode(&w.buf).expect("decodes");
+        assert_eq!(back.data.flags, AL_ACCESS);
+        assert_eq!(back.data.local_id, 7);
+        assert_eq!(back.list.len(), 1);
+        assert_eq!(back.list[0].id, id);
     }
 
     #[test]

@@ -6,6 +6,8 @@
 //! asked for by default; the full diagnostics stay in the session folder.
 
 pub mod github;
+#[cfg(target_os = "linux")]
+mod linux;
 mod native;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
@@ -16,7 +18,7 @@ mod threads;
 mod watchdog;
 mod window;
 
-pub use watchdog::{State, note as note_state, watch_window};
+pub use watchdog::{State, note as note_state, pumped, watch_window};
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -301,23 +303,55 @@ pub fn failure(message: &str) {
 }
 
 /// The GPU has kept a frame for `seconds` while the window still answers:
-/// the render thread's stack goes to `gpu-stall.txt`, so a session ended
-/// now is reported as such. [`gpu_answered`] takes it back.
+/// `gpu-stall.txt` (with the render thread's stack on Windows and Linux), so a
+/// session ended now is reported as such. [`gpu_answered`] takes it back.
 pub fn gpu_stalled(seconds: u64) {
-    #[cfg(windows)]
     if let Some(session) = SESSION.get() {
         watchdog::save_gpu_stall(&session.dir, seconds);
     }
-    #[cfg(not(windows))]
-    let _ = seconds;
 }
 
 /// The GPU device is lost for good (app/gpu_stall.rs): the session, which
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
+    mark_gpu_lost(b"");
+}
+
+/// A GPU device loss the viewer recovered from (app/gpu_recovery.rs), `ms`
+/// to its new window and renderer, `safe` with the safe graphics level: one
+/// line each in `gpu-recoveries.txt`, which the session's report counts if
+/// it ends badly later. The session goes on: nothing marks it failed.
+pub fn gpu_recovered(ms: u128, safe: bool) {
+    use std::io::Write;
+    let Some(session) = SESSION.get() else {
+        return;
+    };
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(session.dir.join("gpu-recoveries.txt"));
+    if let Ok(mut file) = file {
+        let _ = writeln!(file, "{unix} {ms} {}", if safe { "safe" } else { "same" });
+    }
+}
+
+/// The text of `gpu-lost.txt` for a device lost before the first frame.
+const GPU_LOST_AT_START: &str = "start";
+
+/// The same before the first frame (app.rs): reported under its own title,
+/// apart from the driver resets of a running session.
+pub fn gpu_lost_at_start() {
+    mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
+}
+
+fn mark_gpu_lost(when: &[u8]) {
     if let Some(session) = SESSION.get() {
-        let _ = std::fs::write(session.dir.join("gpu-lost.txt"), []);
+        let _ = std::fs::write(session.dir.join("gpu-lost.txt"), when);
         let _ = std::fs::write(session.dir.join("failed"), []);
+        ending_in_gpu_trouble(&session.dir);
     }
 }
 
@@ -341,10 +375,15 @@ pub fn overlay_hook(file: &str) {
 pub fn gpu_closed() {
     if let Some(session) = SESSION.get() {
         let _ = std::fs::write(session.dir.join("failed"), []);
+        ending_in_gpu_trouble(&session.dir);
     }
 }
 
 pub fn gpu_answered() {
+    // first, so that a stall's stacks still being read do not bring the
+    // file back once it is removed
+    #[cfg(target_os = "linux")]
+    watchdog::gpu_answered();
     if let Some(session) = SESSION.get() {
         let _ = std::fs::remove_file(session.dir.join("gpu-stall.txt"));
     }
@@ -368,6 +407,17 @@ fn note_gpu_trouble(dir: &Path) {
     {
         let _ = std::fs::write(root.join(GPU_TROUBLE), []);
     }
+}
+
+/// The session ends now with the GPU in trouble. On Windows its watcher
+/// marks it once the viewer is gone ([`preserve`], which also leaves out a
+/// session Windows itself ended); elsewhere no watcher outlives the viewer
+/// (crash/native.rs), so the session marks itself.
+fn ending_in_gpu_trouble(dir: &Path) {
+    #[cfg(not(windows))]
+    note_gpu_trouble(dir);
+    #[cfg(windows)]
+    let _ = dir;
 }
 
 /// The last session that ended badly had the GPU in trouble: true once,
@@ -428,6 +478,11 @@ fn recover_in(root: &Path, mut show: impl FnMut(&Path)) {
             .create_new(true)
             .open(dir.join("recovery-attempted"))
             .is_ok()
+            // A session the system cannot tell from a live one (written on
+            // Linux before its start time was recorded) is kept, not shown:
+            // a window for each of those older sessions at once would report
+            // what may only have been a viewer killed or still running.
+            && native::identifies(record.process_started)
         {
             // Its watcher died with it: nobody marked it at its end.
             note_gpu_trouble(&dir);
@@ -587,6 +642,30 @@ mod tests {
         root
     }
 
+    /// Off Windows no watcher outlives the viewer: a session that ends with
+    /// the GPU stalled or lost marks the next start itself, once.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_session_ending_in_gpu_trouble_marks_the_next_start_itself() {
+        let root = scratch_root();
+        for trouble in ["stall", "lost"] {
+            let dir = root.join(uuid::Uuid::new_v4().to_string());
+            std::fs::create_dir(&dir).unwrap();
+            if trouble == "stall" {
+                watchdog::save_gpu_stall(&dir, 6);
+                let text = std::fs::read_to_string(dir.join("gpu-stall.txt")).unwrap();
+                assert_eq!(text, "GPU stall: no frame for 6 s\n");
+            } else {
+                std::fs::write(dir.join("gpu-lost.txt"), []).unwrap();
+            }
+            assert!(!root.join(GPU_TROUBLE).exists());
+            ending_in_gpu_trouble(&dir);
+            assert!(root.join(GPU_TROUBLE).exists(), "{trouble}");
+            std::fs::remove_file(root.join(GPU_TROUBLE)).unwrap();
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// What the viewer hands to its helper process (session argument, demo
     /// root, working directory) must lead that process back to the folder
     /// the viewer created.
@@ -662,38 +741,42 @@ mod tests {
         std::fs::remove_dir_all(elsewhere).unwrap();
     }
 
-    /// A session whose watcher never started stays behind: the next launch
-    /// removes it after a normal close and reports it once after a crash.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn test_session(root: &Path, pid: u32, process_started: u64, markers: &[&str]) -> PathBuf {
+        let dir = root.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&dir).unwrap();
+        let record = Record {
+            schema: 1,
+            pid,
+            process_started,
+            started_unix: 456,
+            version: "0.4.0".into(),
+            commit: "abcdef".into(),
+            profile: "debug".into(),
+            language: "en".into(),
+            font: "Inter".into(),
+            font_scale: 1.0,
+            theme: Default::default(),
+            log_path: dir.join("viewer.log"),
+            demo: true,
+            os: String::new(),
+            crash_reports: Default::default(),
+        };
+        save(&dir, &record).unwrap();
+        for marker in markers {
+            std::fs::write(dir.join(marker), []).unwrap();
+        }
+        dir
+    }
+
+    /// A session whose watcher never started (on Linux there is none) stays
+    /// behind: the next launch removes it after a normal close and reports
+    /// it once after a crash.
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn the_next_launch_clears_closed_sessions_and_reports_crashed_ones_once() {
         let root = scratch_root();
-        let session = |pid: u32, process_started: u64, markers: &[&str]| {
-            let dir = root.join(uuid::Uuid::new_v4().to_string());
-            std::fs::create_dir(&dir).unwrap();
-            let record = Record {
-                schema: 1,
-                pid,
-                process_started,
-                started_unix: 456,
-                version: "0.4.0".into(),
-                commit: "abcdef".into(),
-                profile: "debug".into(),
-                language: "en".into(),
-                font: "Inter".into(),
-                font_scale: 1.0,
-                theme: Default::default(),
-                log_path: dir.join("viewer.log"),
-                demo: true,
-                os: String::new(),
-                crash_reports: Default::default(),
-            };
-            save(&dir, &record).unwrap();
-            for marker in markers {
-                std::fs::write(dir.join(marker), []).unwrap();
-            }
-            dir
-        };
+        let session = |pid: u32, process_started: u64, markers: &[&str]| test_session(&root, pid, process_started, markers);
         // No process started at instant 1: these viewers have stopped.
         let closed = session(std::process::id(), 1, &["normal"]);
         let failed = session(std::process::id(), 1, &["normal", "failed"]);
@@ -714,6 +797,28 @@ mod tests {
         shown.clear();
         recover_in(&root, |dir| shown.push(dir.to_owned()));
         assert!(shown.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Sessions written on Linux before the start time was recorded: the
+    /// ones closed normally are removed, the others kept without a window,
+    /// and one whose PID still runs is left alone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sessions_without_a_start_time_are_cleared_but_never_reported() {
+        let root = scratch_root();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        let closed = test_session(&root, dead, 0, &["normal"]);
+        let killed = test_session(&root, dead, 0, &[]);
+        let running = test_session(&root, std::process::id(), 0, &[]);
+        let mut shown = Vec::new();
+        recover_in(&root, |dir| shown.push(dir.to_owned()));
+        assert!(shown.is_empty(), "{shown:?}");
+        assert!(!closed.exists());
+        assert!(killed.join("recovery-attempted").exists());
+        assert!(!running.join("recovery-attempted").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

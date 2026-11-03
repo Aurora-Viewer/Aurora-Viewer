@@ -8,6 +8,8 @@
 pub mod adapter_choice;
 pub mod arena;
 pub mod bc7;
+#[cfg(test)]
+mod blend_tests;
 mod bloom;
 mod contact_shadows;
 mod cutout;
@@ -15,6 +17,7 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
+pub use device_lost::{in_guarded_poll, is_loss_panic};
 mod dof;
 mod drawn_pick;
 mod exposure;
@@ -35,6 +38,7 @@ mod occlusion;
 pub mod pacing;
 mod packet;
 mod pick;
+pub mod pipeline_cache;
 #[cfg(test)]
 mod portal_tests;
 pub mod present;
@@ -49,6 +53,8 @@ mod shadow_merge;
 #[cfg(test)]
 mod specular_aa;
 pub mod stars;
+pub mod start_progress;
+pub mod stereo_view;
 #[cfg(test)]
 mod terrain_tests;
 #[cfg(test)]
@@ -62,13 +68,33 @@ mod ui_frame;
 mod ui_glass;
 mod ui_world;
 pub mod upload;
+mod vr_control;
 pub mod vram;
 pub mod vulkan_drivers;
 pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
+pub use vr_control::VrState;
+/// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
+/// restart that brings VR when the headset came after startup; not probed
+/// on macOS yet (its Metal path is unvalidated).
+pub fn vr_headset_ready() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    return xr_device::headset_ready();
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    false
+}
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+mod vr_mirror;
 pub mod writes;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod xr_device;
+#[cfg(target_os = "macos")]
+#[path = "xr_metal.rs"]
+mod xr_device;
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+mod xr_frame;
 pub use water_effects::{WaterEffects, WaterEvent, WaterGround};
 
 pub use arena::MeshAlloc;
@@ -87,7 +113,7 @@ pub use renderer::{CASCADES, RenderError};
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
-pub use ui_frame::{EguiFrame, EguiHandOver};
+pub use ui_frame::{EguiFrame, EguiHandOver, vr_hint_marker};
 pub use ui_glass::{glass_panel, glass_panel_faded, glass_region};
 pub use ui_world::end_world_labels;
 pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
@@ -137,6 +163,8 @@ pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
 
 #[cfg(test)]
 mod shader_tests {
+    use crate::pipeline_cache::CachedPipelines;
+
     #[test]
     fn rlva_sphere_shader_is_valid() {
         validate(include_str!("shaders/rlva.wgsl"));
@@ -314,7 +342,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                 if hardware && features.is_empty() {
                     continue;
                 }
-                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                     label: Some("water mesh depth"),
                     layout: None,
                     vertex: wgpu::VertexState {
@@ -450,7 +478,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
             1,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         );
-        let interface_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let interface_pipe = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("production water interface ordering"),
             layout: None,
             vertex: wgpu::VertexState {
@@ -616,7 +644,7 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
             immediate_size: 0,
         });
         let make_pipe = |entry: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -841,7 +869,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
             label: Some("water fog boundary regression"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("water fog boundary regression"),
             layout: None,
             module: &shader,
@@ -1025,6 +1053,11 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         validate(&crate::contact_shadows::shader_source(192, 13));
         let (count, hard) = crate::contact_shadows::samples(100.0);
         validate(&crate::contact_shadows::shader_source(count, hard));
+        // the diagnostic variants (AURORA_CONTACT_VARIANT)
+        use crate::contact_shadows::{Variant, variant_source};
+        for v in [Variant::NoEarlyOut, Variant::NoShared, Variant::Short] {
+            validate(&variant_source(v));
+        }
     }
 
     #[test]
