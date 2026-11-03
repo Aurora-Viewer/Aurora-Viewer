@@ -209,7 +209,7 @@ pub(super) fn show(
                                 icon.id(),
                                 egui::Rect::from_min_size(rect.min + egui::vec2(6.0, 5.0), Vec2::splat(16.0)),
                                 egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                                p.muted,
+                                super::folder_colors::tint(prefs, row.id).unwrap_or(p.muted),
                             );
                         }
                         for (text, offset, size, color) in [
