@@ -301,6 +301,8 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         st.modified_view = true;
     } else if what == "cogs" {
         st.demo_open_cogs = true;
+    } else if what == "system-fonts" || what == "system-fonts-scroll" {
+        st.demo_font_list = Some(what == "system-fonts-scroll");
     } else if let Some(query) = what.strip_prefix("search=") {
         st.query = query.to_owned();
     } else if page == Page::Shortcuts && !what.is_empty() && what != "altgr" && st.reveal.is_none() {
@@ -383,6 +385,9 @@ pub struct OptionsUi {
     pub demo_reset: bool,
     /// Open every cog once counted (`AURORA_DEMO_OPTIONS=…:cogs`, captures).
     pub demo_open_cogs: bool,
+    /// Keep the system font list open, scrolling it when true
+    /// (`AURORA_DEMO_OPTIONS=appearance:system-fonts`, `…:system-fonts-scroll`).
+    pub demo_font_list: Option<bool>,
     interface_scale: scale::ScaleSlider,
     text_scale: scale::ScaleSlider,
     /// The account's content ceiling and the rating it wants, while logged
