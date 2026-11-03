@@ -959,6 +959,9 @@ impl Session<'_> {
                     let extras = &v["OpenSimExtras"];
                     let grid_status_feed = extras["GridStatusRSS"].to_string_value();
                     let grid_status_page = extras["GridStatus"].to_string_value();
+                    let currency_base_uri = extras["currency-base-uri"].to_string_value();
+                    let opensim = crate::types::OpenSimExtras::from_llsd(extras);
+                    let currency_symbol = extras["currency"].to_string_value();
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
@@ -969,6 +972,9 @@ impl Session<'_> {
                         lsl_syntax_id,
                         grid_status_feed,
                         grid_status_page,
+                        currency_base_uri,
+                        opensim,
+                        currency_symbol,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -1564,10 +1570,11 @@ impl Session<'_> {
                 chat_type,
             } => {
                 // SL limits chat to 1023 bytes; longer lines leave in parts
-                // (message_split). The typing notices are empty lines, sent
-                // whole (send_chat_from_viewer: "Don't break null messages").
+                // (message_split). An empty line (a typing notice, a
+                // gesture's bare "/-1234", #2095) is sent once, as
+                // send_chat_from_viewer does: "Don't break null messages".
                 let mut parts = crate::message_split::message_parts(&message);
-                if parts.is_empty() && matches!(chat_type, ChatType::StartTyping | ChatType::StopTyping) {
+                if parts.is_empty() {
                     parts.push("");
                 }
                 for part in parts {
@@ -6875,8 +6882,9 @@ mod script_dialog_tests {
         // Chat on a negative channel (a gesture's "/-4242 ping", #952) goes
         // as the agent's own dialog answer, as really_send_chat_from_viewer
         // does; a positive channel stays a ChatFromViewer.
+        // An empty line (a gesture's bare "/-1234", #2095) still goes once.
         let long = "é".repeat(200);
-        for (channel, message) in [(-4242, "ping"), (-1, long.as_str()), (5, "cmd")] {
+        for (channel, message) in [(-4242, "ping"), (-1, long.as_str()), (5, "cmd"), (-1234, ""), (7, "")] {
             session.on_command(NetCommand::Chat {
                 message: message.into(),
                 channel,
@@ -6895,7 +6903,7 @@ mod script_dialog_tests {
                 assert_eq!(reply.data.object_id, Uuid::from_u128(1));
                 assert_eq!((reply.data.chat_channel, reply.data.button_index), (channel, 0));
                 let label = field_str(&reply.data.button_label);
-                assert!(label.len() <= 254 && message.starts_with(&label) && !label.is_empty());
+                assert!(label.len() <= 254 && message.starts_with(&label) && label.is_empty() == message.is_empty());
                 assert_eq!(reply.data.button_label.len(), label.len() + 1, "kept its NUL");
             } else {
                 assert_eq!(packet.id, ChatFromViewer::ID);

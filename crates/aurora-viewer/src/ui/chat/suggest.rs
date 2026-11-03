@@ -31,9 +31,6 @@ use uuid::Uuid;
 
 /// NearMeRange: the residents whose name the nearby chat predicts.
 const NEAR_ME_RANGE: f32 = 162.0;
-/// The nearby chat's participants for `@` (FSNearbyChatControl, the say
-/// range).
-const SAY_RANGE: f32 = crate::world::radar::CHAT_RANGE;
 /// NAME_PREDICTION_MINIMUM_LENGTH.
 const PREDICTION_LETTERS: usize = 3;
 /// Letters after `/` before the gestures' list (the field holds two).
@@ -492,12 +489,10 @@ pub fn after(
         list.generation = shared.generation;
         list.items = match (&token, scope) {
             (Some(Token::Mention(_, letters)), Scope::Nearby(_)) => {
-                let around: Vec<Person> = shared
-                    .nearby
-                    .iter()
-                    .filter(|(_, d)| *d <= SAY_RANGE)
-                    .map(|(p, _)| p.clone())
-                    .collect();
+                // the nearby chat's participants for `@`: the region's say
+                // range (FSNearbyChatControl, LFSimFeatureHandler::sayRange)
+                let say = crate::world::radar::chat_ranges().say;
+                let around: Vec<Person> = shared.nearby.iter().filter(|(_, d)| *d <= say).map(|(p, _)| p.clone()).collect();
                 mention_matches(&around, letters, SHOWN).into_iter().map(Item::Person).collect()
             }
             (Some(Token::Mention(_, letters)), Scope::Session(_, people)) => {

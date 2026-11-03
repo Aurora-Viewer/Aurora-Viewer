@@ -17,7 +17,7 @@ pub(crate) use contents_list::demo_select_all as contents_demo_select_all;
 pub(crate) use contents_list::shortcuts as contents_shortcuts;
 
 fn money(amount: i32) -> String {
-    format!("L$ {}", super::hud::group_digits(amount.max(0) as u32))
+    format!("{} {}", aurora_i18n::currency(), super::hud::group_digits(amount.max(0) as u32))
 }
 
 fn permission_name(name: &str, mask: u32) -> String {
@@ -191,7 +191,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                         ui.horizontal(|ui| {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.add(egui::TextEdit::singleline(&mut d.amount).desired_width(110.0).char_limit(10));
-                                ui.label("L$");
+                                ui.label(aurora_i18n::currency());
                             });
                         });
                     }

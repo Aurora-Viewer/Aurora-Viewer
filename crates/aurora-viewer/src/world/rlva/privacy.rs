@@ -393,6 +393,7 @@ mod tests {
             position: glam::Vec3::ONE,
             parcel: String::new(),
             at: 0,
+            grid: None,
         });
         world.tp_history.arrived(TpEntry {
             region: name.clone(),
@@ -400,6 +401,7 @@ mod tests {
             position: world.agent.position,
             parcel: String::new(),
             at: 0,
+            grid: None,
         });
         let old = HistoryItem {
             title: "Older destination".into(),

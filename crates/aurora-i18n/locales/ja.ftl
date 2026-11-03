@@ -1687,6 +1687,9 @@ app-gpu-stall =
     ・次回の起動時に、Auroraが提案する安全なグラフィックを選ぶ。
 
     待ち続けますか？「はい」で待ち続け、「いいえ」でAuroraを閉じます（正しくログアウトされます）。
+app-gpu-recovered-title = グラフィックカードがリセットされました
+app-gpu-recovered = グラフィックカードのドライバーがリセットされました（画像の描画に時間がかかりすぎた、ビデオメモリがいっぱいになった、または他のプログラムがグラフィックカードを使用した可能性があります）。Auroraはグラフィックカードでウィンドウを開き直しました。ログインしたままで、ワールドはまもなく再読み込みされます。
+app-gpu-recovered-safe = 数分のうちに、グラフィックカードのドライバーが再びリセットされました。再発を防ぐため、Auroraは安全なグラフィック設定（Potatoレベル）でウィンドウを開き直しました。ログインしたままです。グラフィック設定は保存されており、ログイン画面で元に戻すことができます。
 app-gpu-lost-title = Auroraビューア：グラフィックカードが失われました
 app-gpu-lost =
     Auroraでグラフィックカードが動作しなくなりました。ドライバーがリセットされた（画像の描画に時間がかかりすぎた、またはビデオメモリがいっぱいになった）、あるいはグラフィックカードが取り外されたか、他のプログラムによって使用された可能性があります。これ以上何も描画できません。ＯＫをクリックするとAuroraが終了します（正常にログアウトされます）。
@@ -1782,6 +1785,8 @@ ui-login-other-grid = その他のグリッド…
 ui-login-grid-link-title = ログインするグリッドを変更しますか？
 ui-login-grid-link-text = Aurora の外から開いたリンクが、別のグリッドへのログインを求めています。パスワードはログイン先のグリッドに送られます。信頼できるグリッドの場合のみ変更してください。
 ui-login-grid-link-switch = グリッドを変更
+ui-login-grid-link-add = グリッド管理に追加…
+ui-login-grid-link-add-hint = httpでしか応答しないグリッドにはリンクから接続できません。グリッド管理で一度追加してから、もう一度リンクを開いてください。
 
 grids-manage = グリッドの管理
 grids-remove-question = { $name }をグリッドのリストから削除してもよろしいですか？
@@ -1807,6 +1812,7 @@ grids-help = ヘルプ
 grids-about = Webサイト
 grids-search = 検索ＵＲＬ（[QUERY]、[LANGUAGE]、[MATURITY]）
 grids-profile = WebプロフィールのＵＲＬ
+grids-helper = 通貨ヘルパーのＵＲＬ（L$の購入）
 grids-fetch = グリッド情報を取得
 grids-fetching = グリッド情報を取得しています…
 grids-error-address = 認証情報を含まない有効なＨＴＴＰまたはＨＴＴＰＳのアドレスを入力してください。
@@ -10325,6 +10331,8 @@ group-ability-experience-contributor-help = この能力を持つ役割のメン
 
 ## Buying L$
 currency-title = L$ の購入
+currency-region-helper = このリージョンは独自の通貨サービス（{ $host }）を使っています。ここでの購入はあなたとそのサービスとの取引で、そのサービスにはセッション（求められた場合はパスワードも）が送られます。信頼できる場合のみ購入してください。
+currency-service = 通貨サービス: { $host }
 currency-menu = L$ の購入…
 money-tracker-title = 取引ログ
 money-tracker-legacy-title = 取引ログ
@@ -10389,6 +10397,7 @@ currency-contacting-lindex = LindeXに接続しています…
 currency-cannot-buy = 購入できません
 currency-more-information = 詳細情報
 currency-helper-unreachable = L$購入サービスが応答していません。後でもう一度お試しください。
+currency-password-needs-https = パスワードは送信されませんでした。この購入サービスは安全な接続（https）を使用していません。
 currency-checking-account = アカウントを確認しています…
 currency-unavailable-on-this-grid = このグリッドではビューアからL$を購入できません。
 currency-add-payment-method = リンデンドルを購入してSecond Lifeを最大限に楽しむには、支払い方法を追加してください。
