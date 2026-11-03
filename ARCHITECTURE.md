@@ -1198,6 +1198,12 @@ ordinary inventory model without restarting the naming workflow.
 and taking off, by item, point, layer and folder, for the inventory menus
 and buttons (`Facts::rlva`), which see the inventory but not the world; its
 per-folder lock sets are cached while the lock inputs stay equal.
+`rlva/force_wear.rs` gathers the force commands one object sends in a row
+(`@detachall:a=force,@attachallover:b=force`) into one `appearance::Action::Force`,
+a single COF update, merged like RlvForceWear (a wear cancels a pending removal
+of the item, a replacing wear drops the pending wears of its slot). The RLVa
+queue also waits (up to 10 s) while a requested detach is still on the avatar,
+since the COF write is acknowledged before the objects leave.
 `rlva/last_points.rs` remembers, per account (`rlva_attach_points.json`,
 written by one background writer once changes settle and on logout or quit),
 the point each object was last seen attached to while RLVa is on: an
