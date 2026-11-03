@@ -807,6 +807,95 @@ fn preference_shapes(
 }
 
 #[test]
+fn preference_rows_settle_with_a_scrollbar_at_compact_widths() {
+    for (width, height) in [700.0, 740.0, 760.0, 780.0, 800.0, 820.0, 900.0]
+        .into_iter()
+        .flat_map(|width| [460.0, 500.0, 540.0, 580.0, 620.0].map(move |height| (width, height)))
+    {
+        let mut frames = Frames::new();
+        crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::INTER);
+        let theme = crate::theme::Theme::default();
+        theme.apply(&frames.ctx, 1.0);
+        let p = theme.palette();
+        let (mut s, d, mut st, mut r) = (
+            Settings::default(),
+            Settings::default(),
+            OptionsUi::default(),
+            OptionsResult::default(),
+        );
+        let mut previous = None;
+        let mut previous_text = None;
+        for frame in 0..90 {
+            let texts = frames.run(Vec::new(), |ui| {
+                count(ui, &p, &mut s, &d, &mut st, &mut r);
+                page_area(
+                    ui,
+                    &p,
+                    &mut s,
+                    &d,
+                    &mut st,
+                    &mut r,
+                    Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height)),
+                    false,
+                );
+            });
+            if frame >= 60 {
+                if let Some(previous) = &previous {
+                    assert!(
+                        &st.control_sizes == previous,
+                        "rows still reflowing at {width}x{height}, frame {frame}"
+                    );
+                }
+                previous = Some(st.control_sizes.clone());
+                let painted: Vec<_> = texts.into_iter().map(|text| (text.source, text.rect)).collect();
+                if let Some(previous_text) = &previous_text {
+                    assert_eq!(&painted, previous_text, "text still moving at {width}x{height}, frame {frame}");
+                }
+                previous_text = Some(painted);
+            }
+        }
+    }
+}
+
+#[test]
+fn rows_after_a_width_change_match_a_fresh_layout() {
+    fn texts(shapes: &[egui::Shape], out: &mut Vec<(String, i32, i32)>) {
+        for shape in shapes {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.pos.x.round() as i32, t.pos.y.round() as i32)),
+                egui::Shape::Vec(v) => texts(v, out),
+                _ => {}
+            }
+        }
+    }
+    let layout = |widths: &[f32], page: Page, tab: usize| {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        let mut shapes = Vec::new();
+        for &w in widths {
+            for _ in 0..6 {
+                shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, (page, tab, w), Vec::new());
+            }
+        }
+        let mut out = Vec::new();
+        texts(&shapes, &mut out);
+        out.sort();
+        out
+    };
+    let mut bad = Vec::new();
+    for page in Page::ALL {
+        for tab in 0..page.tabs().len() {
+            for (from, to) in [(900.0, 420.0), (420.0, 900.0)] {
+                if layout(&[from, to], page, tab) != layout(&[to], page, tab) {
+                    bad.push(format!("{page:?}/{tab} {from}->{to}"));
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "laid out differently after a width change:\n{}", bad.join("\n"));
+}
+
+#[test]
 fn graphics_profile_save_has_a_button_face_to_the_right_of_the_list() {
     for width in [420.0, 700.0, 900.0] {
         let mut frames = Frames::new();

@@ -74,7 +74,7 @@ fn loose_file_controls_update_names_immediately_and_block_invalid_names_in_full_
         assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-include-source-folder"))));
         click(&mut imports, &mut prefs, "import_create_folder");
         frame(&mut imports, &mut prefs, vec![]);
-        assert!(!imports.folder_plan_valid(&world, &Default::default()));
+        assert!(!imports.folder_plan_valid(&world));
         click(&mut imports, &mut prefs, "import_loose_folder_name");
         let output = frame(&mut imports, &mut prefs, vec![egui::Event::Text("Release".into())]);
         assert!(
@@ -84,7 +84,7 @@ fn loose_file_controls_update_names_immediately_and_block_invalid_names_in_full_
                 .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("common-apply")))
         );
         assert_eq!(imports.entries[0].upload_path.as_ref().unwrap(), &vec!["Release"]);
-        assert!(imports.folder_plan_valid(&world, &Default::default()));
+        assert!(imports.folder_plan_valid(&world));
         for name in ["", "invalid/name", "Renamed"] {
             let mut events = Vec::new();
             for pressed in [true, false] {
@@ -111,7 +111,7 @@ fn loose_file_controls_update_names_immediately_and_block_invalid_names_in_full_
             }
             frame(&mut imports, &mut prefs, events);
             frame(&mut imports, &mut prefs, vec![]);
-            assert_eq!(imports.folder_plan_valid(&world, &Default::default()), name == "Renamed");
+            assert_eq!(imports.folder_plan_valid(&world), name == "Renamed");
         }
         assert_eq!(imports.entries[0].upload_path.as_ref().unwrap(), &vec!["Renamed"]);
         assert!(prefs.include_source_folder && imports.entries[0].source_folders.is_empty());

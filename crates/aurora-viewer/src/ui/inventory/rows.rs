@@ -348,6 +348,7 @@ fn rows(
                 facts,
                 row.id,
                 matches!(row.kind, Kind::Folder { .. }),
+                prefs.protected.contains(&row.id),
                 row.level,
                 st.show_next_owner,
             );

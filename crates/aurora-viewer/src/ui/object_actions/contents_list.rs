@@ -114,6 +114,46 @@ pub(crate) fn shortcuts(
     actions
 }
 
+fn root_id() -> Id {
+    Id::unique("open_object_contents_root")
+}
+
+/// Where the root "Contents" row was drawn, for the `open-folder` demo.
+pub(crate) fn demo_root(ctx: &egui::Context) -> Option<egui::Rect> {
+    ctx.data(|d| d.get_temp(root_id()))
+}
+
+/// The root "Contents" folder of the Open window's panel
+/// (LLFloaterOpenObject holds an LLPanelObjectInventory): dragged onto an
+/// inventory folder, it carries every item (task_drop::root_source).
+fn root_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, object: Uuid, items: &[InvItem], world: &World, build: &BuildTool) {
+    let row = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        if let Some(t) = icons.get("folder-open-filled") {
+            ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.violet_light));
+        }
+        let title = aurora_i18n::tr!("contents-count", count = items.len());
+        ui.add(egui::Label::new(egui::RichText::new(title).color(p.ink)).selectable(false));
+    });
+    let r = ui
+        .interact(row.response.rect, root_id().with(object), egui::Sense::click_and_drag())
+        .on_hover_text(aurora_i18n::tr!("contents-root-drag-tip"));
+    if r.hovered() || r.drag_started() || r.dragged() {
+        let all: Vec<_> = items.iter().map(|item| task_inventory::from_inventory(object, item)).collect();
+        inventory::task_drop::root_source(
+            ui,
+            &r,
+            world,
+            object,
+            &all,
+            task_inventory::owned(world, object, build.props.get(&object)),
+        );
+    }
+    if cfg!(test) || inventory::task_drop::demo_enabled() {
+        ui.ctx().data_mut(|d| d.insert_temp(root_id(), r.rect));
+    }
+}
+
 pub(super) fn show(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -154,12 +194,16 @@ pub(super) fn show(
                 .min_scrolled_height(height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    root_row(ui, p, icons, object, items, world, build);
                     if items.is_empty() {
                         ui.label(aurora_i18n::tr!("ui-object-actions-this-object-is-empty"));
                     }
+                    let indent = ui.spacing().indent;
                     for item in items {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
+                            // under the root folder, as in the Build tools' Contents tab
+                            ui.add_space(indent - 4.0);
                             if let Some(t) = icons.get(inventory::item_icon(item.asset_type, item.inv_type, item.flags)) {
                                 let color = inventory::item_icon_color(item.asset_type, item.inv_type, p);
                                 ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(color));

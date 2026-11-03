@@ -13,10 +13,7 @@ fn a_named_loose_file_folder_preserves_real_source_roots_inner_edits_and_default
     };
     assert!(imports.set_loose_folder(Some("")));
     imports.sync_destinations(&prefs, &world, &inventory);
-    assert!(
-        !imports.folder_plan_valid(&world, &inventory),
-        "an enabled unnamed folder blocks upload"
-    );
+    assert!(!imports.folder_plan_valid(&world), "an enabled unnamed folder blocks upload");
     for invalid in ["a/b", "..", " bad", "a|b"] {
         assert!(!imports.set_loose_folder(Some(invalid)));
     }
@@ -41,7 +38,7 @@ fn a_named_loose_file_folder_preserves_real_source_roots_inner_edits_and_default
     prefs.use_default_folders = true;
     imports.sync_destinations(&prefs, &world, &inventory);
     assert!(!imports.folders.active());
-    assert!(imports.folder_plan_ready(&world, &inventory));
+    assert!(imports.folder_plan_ready(&world));
     assert_eq!(world.inventory.folders.len(), 1, "editing the plan creates nothing");
 }
 
@@ -156,12 +153,12 @@ fn single_destination_creates_the_named_wrapper_and_uses_its_acknowledged_uuid()
         &world,
         &inventory,
     );
-    assert!(!imports.folder_plan_ready(&world, &inventory));
+    assert!(!imports.folder_plan_ready(&world));
     assert_eq!(world.inventory.folders.len(), 1, "inspection creates nothing");
-    imports.prepare_import_folders(&world, &inventory);
-    let wrapper = complete_one(&mut imports, &mut world, &inventory, true).unwrap();
-    assert!(complete_one(&mut imports, &mut world, &inventory, true).is_none());
-    assert!(imports.folder_plan_ready(&world, &inventory));
+    imports.prepare_import_folders(&world);
+    let wrapper = complete_one(&mut imports, &mut world, true).unwrap();
+    assert!(complete_one(&mut imports, &mut world, true).is_none());
+    assert!(imports.folder_plan_ready(&world));
     assert_eq!(world.inventory.folders[&wrapper].info.name, "Release");
     assert_eq!(world.inventory.folders[&wrapper].info.parent, world.inventory.root);
     assert_eq!(imports.entries[0].folder, wrapper);

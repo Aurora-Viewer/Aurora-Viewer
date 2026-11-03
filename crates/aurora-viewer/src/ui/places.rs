@@ -323,6 +323,7 @@ impl PlacesUi {
         let mut actions = Vec::new();
         self.show_confirm(ctx, c.p, confirm_teleports, &mut actions);
         if !*open {
+            self.aurora.pending_click = None;
             return actions;
         }
         if std::mem::take(&mut self.raise) {
@@ -351,6 +352,7 @@ impl PlacesUi {
             });
             return actions;
         }
+        self.aurora.pending_click = None;
         floater.show(ctx, c.p, open, |ui| {
             let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
             ui.allocate_rect(body, Sense::hover());

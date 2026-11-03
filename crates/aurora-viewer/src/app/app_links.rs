@@ -87,8 +87,9 @@ impl App {
             }
             AppLink::Inventory { id, .. } => {
                 // the Legacy Viewer always shows the item
-                // (openInventoryPanelAndSetSelection)
-                self.inventory_ui.show_original(&self.world.inventory, id);
+                // (openInventoryPanelAndSetSelection), on the Received tab
+                // for Received Items and what it holds (#1604)
+                self.inventory_ui.show_notified(&self.world.inventory, id);
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             AppLink::InventoryShow => ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),

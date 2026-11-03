@@ -141,6 +141,10 @@ impl LocalBakes {
                 if self.tries < UPLOAD_TRIES {
                     self.tries += 1;
                     self.dirty = Some(Instant::now() + Duration::from_secs(2 << self.tries) - SETTLE);
+                } else {
+                    // given up: a later RebakeAvatarTextures may try again,
+                    // past the cooldown, instead of waiting for an outfit change
+                    self.rebake_pending = false;
                 }
             }
         }
@@ -526,6 +530,22 @@ mod tests {
         bakes.rebake_pending = false;
         assert!(!bakes.rebake(t0 + Duration::from_secs(10)), "within the cooldown");
         assert!(bakes.rebake(t0 + REBAKE_COOLDOWN + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_bake_given_up_on_lets_a_later_rebake_through() {
+        let mut bakes = LocalBakes::default();
+        let t0 = Instant::now();
+        assert!(bakes.rebake(t0));
+        bakes.tries = UPLOAD_TRIES;
+        let request = Uuid::from_u128(1);
+        bakes.uploads.insert(request, 0);
+        assert!(bakes.uploaded(request, &Err("refused".into())));
+        assert!(!bakes.rebake(t0 + Duration::from_secs(1)), "within the cooldown");
+        assert!(
+            bakes.rebake(t0 + REBAKE_COOLDOWN + Duration::from_secs(1)),
+            "not stuck until the outfit changes"
+        );
     }
 
     #[test]
