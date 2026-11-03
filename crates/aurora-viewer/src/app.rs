@@ -3591,6 +3591,8 @@ impl App {
                             crate::world::notice_topics::Topic::Warning,
                         );
                         if !self.demo {
+                            // A hash of an older password may still be there: the account no longer owns it.
+                            crate::credentials::forget(&uri, &user);
                             self.settings.save();
                         }
                     }

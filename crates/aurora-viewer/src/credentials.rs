@@ -2,8 +2,8 @@
 //! `$1$` + md5 form the login sends is kept (never the password itself), in
 //! the system credential store (Windows Credential Manager, the macOS
 //! keychain, the Secret Service on Linux, each protected by the user's
-//! session) instead of Firestorm's bin_conf.dat file. With no store at hand
-//! nothing is kept: there is no fallback file.
+//! session) instead of the Legacy Viewer's bin_conf.dat file. With no store
+//! at hand nothing is kept: there is no fallback file.
 
 const SERVICE: &str = "Aurora Viewer";
 const MFA_SERVICE: &str = "Aurora Viewer MFA";
