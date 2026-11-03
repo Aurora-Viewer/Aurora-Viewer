@@ -796,6 +796,32 @@ impl Camera {
         self.set_camera_pos_and_focus(camera, focus, object, s);
     }
 
+    /// Build › Focus on Selection (H) and Zoom to Selection (Shift+H).
+    /// Port of handle_look_at_selection (indra/newview/llviewermenu.cpp,
+    /// originally LGPL 2.1): focus moves the focus point to the selection's
+    /// centre; zoom also brings the camera to the distance that frames its
+    /// box, never farther than it already is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn look_at_selection(
+        &mut self,
+        center: Vec3,
+        extent: f32,
+        object: Option<(Uuid, FocusObject)>,
+        zoom: bool,
+        aspect: f32,
+        agent: &mut AgentState,
+        s: &CameraSettings,
+    ) {
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        if zoom {
+            let distance = selection_distance(extent, s.fov, aspect).min((self.position - center).length());
+            let dir = (self.position - center).normalize_or(-self.forward());
+            self.set_camera_pos_and_focus(center + dir * distance, center, object, s);
+        } else {
+            self.set_focus_global(Some(center), object.map(|o| o.0), object.map(|o| o.1), s);
+        }
+    }
+
     /// Context menu "Zoom" (handle_look_at_selection "zoom"): the focus stays
     /// attached to `object` when there is one, so the camera follows it as
     /// it moves (TrackFocusObject).
@@ -2032,6 +2058,15 @@ pub fn focus_object_geom(world: &World, id: &Uuid, now: Instant) -> Option<Focus
         avatar: o.is_avatar(),
         mesh: o.volume.is_mesh(),
     })
+}
+
+/// The camera distance that frames a selection whose box diagonal is
+/// `extent` (handle_look_at_selection: PADDING_FACTOR 1.75 over the wider
+/// angle of view, at least 0.1 radian).
+pub fn selection_distance(extent: f32, fov: f32, aspect: f32) -> f32 {
+    const PADDING_FACTOR: f32 = 1.75;
+    let angle = if aspect > 1.0 { fov * aspect } else { fov }.max(0.1);
+    extent * PADDING_FACTOR / angle.atan()
 }
 
 /// The alt-camera focus object of a clicked object: an attachment focuses
