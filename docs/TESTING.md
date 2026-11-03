@@ -4715,7 +4715,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
-| `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new window and device instead of closing (work in progress) |
+| `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new device, in the same window, instead of closing (work in progress) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
@@ -6760,13 +6760,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   close. Without `AURORA_GPU_RECOVERY=1` the viewer then closes as after
   any loss. Once a run.
 - **`AURORA_GPU_RECOVERY=1`** (work in progress, off by default): a GPU
-  device loss no longer ends the session. The window, the renderer and
-  egui's input state are made again the way the start makes them
-  (`app/gpu_recovery.rs`); the old window stays until the new one has
-  presented, the network session and the world are kept, the scene reloads
-  from memory and the disk cache (no download) and egui's textures come back
-  from their CPU copy (`app/egui_shadow.rs`). The log says `GPU recovery: new
-  window and renderer in … ms` and `egui's textures sent again (… KB)`. With
+  device loss no longer ends the session. The renderer and egui's input
+  state are made again the way the start makes them (`app/gpu_recovery.rs`),
+  in the same window: the lost surface is released (`GPU device lost: the
+  window surface released`, with the wgpu fix the workspace patches in).
+  When it cannot be, a new window is opened and the old one stays until the
+  new one has presented. The network session and the world are kept, the
+  scene reloads from memory and the disk cache (no download) and egui's
+  textures come back from their CPU copy (`app/egui_shadow.rs`). The log says
+  `GPU recovery: new renderer in the same window in … ms` (or `on a new
+  window`) and `egui's textures sent again (… KB)`. With
   `AURORA_DEMO_GPU_LOST=600` (simulated) or `AURORA_DEMO_GPU_HANG=900` (a real
   reset): the plaza, its particles, the avatars and the interface are back
   within a second.

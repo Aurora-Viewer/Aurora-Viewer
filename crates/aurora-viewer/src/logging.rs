@@ -295,7 +295,11 @@ pub fn init() {
         // wgpu's panic for a device lost during a wait, caught by the
         // renderer and taken as the loss (aurora-render device_lost.rs);
         // any other panic there is reported
-        if aurora_render::in_guarded_poll() && info.payload_as_str().is_some_and(aurora_render::is_loss_panic) {
+        // and a lost device's surface that cannot be released (renderer.rs
+        // `Backend::drop`): the recovery opens a new window then
+        if aurora_render::in_guarded_poll() && info.payload_as_str().is_some_and(aurora_render::is_loss_panic)
+            || aurora_render::in_lost_surface_release()
+        {
             log::warn!("wgpu: {info}");
             return;
         }

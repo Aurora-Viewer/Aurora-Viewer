@@ -263,6 +263,16 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Drops a renderer whose device is lost: true when its window surface
+    /// was released, so the window can take a new renderer (a GPU recovery
+    /// in the same window). False when it was left to the process, or when
+    /// the render thread stayed in the driver with it.
+    pub fn drop_after_loss(self) -> bool {
+        let lost = self.lost.clone();
+        drop(self);
+        lost.surface_released()
+    }
+
     /// Create the renderer on the native graphics backend for the given window, on
     /// the GPU `gpu` asks for (`adapter_choice::Wanted`: empty for the
     /// automatic choice).
