@@ -1843,24 +1843,7 @@ impl Scene {
         // what the jobs staged so far becomes copyable (once a frame, before
         // the geometry here and the textures in `stream`)
         renderer.prepare_uploads();
-        if self.staging.is_none() {
-            let pool = renderer.staging_pool();
-            self.textures.staging = Some(pool.clone());
-            // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
-            let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
-            self.textures.bc7 = wanted && renderer.textures.bc7();
-            // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
-            // texture decoded from its JPEG 2000 data as before)
-            let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
-            self.textures.bc7_cache = self.textures.bc7 && cached;
-            log::info!(
-                "textures: BC7 compression {} (GPU support: {})",
-                if self.textures.bc7 { "on" } else { "off" },
-                renderer.textures.bc7()
-            );
-            self.meshes.staging = Some(pool.clone());
-            self.staging = Some(pool);
-        }
+        self.take_staging(renderer);
         // Three kinds of results share the budget, each with a part of it so
         // that none starves the others, and each at least one a frame:
         // geometry whose staging chunk became copyable (the first half),
@@ -2134,15 +2117,45 @@ impl Scene {
         self.grass.clear();
         self.impostors = Default::default();
         self.far_avatars.clear();
+        // Blender Live's images: installed again from its snapshot
+        self.preview_images.clear();
+        self.preview_appearances.clear();
         self.meshes.gpu_reset();
         // set again from the new renderer at the next `sync`
         self.staging = None;
     }
 
+    /// The renderer's staging pool for the streamers' jobs, taken once (and
+    /// again for the renderer of a GPU recovery, `adopt_gpu`).
+    fn take_staging(&mut self, renderer: &mut Renderer) {
+        if self.staging.is_some() {
+            return;
+        }
+        let pool = renderer.staging_pool();
+        self.textures.staging = Some(pool.clone());
+        // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
+        let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
+        self.textures.bc7 = wanted && renderer.textures.bc7();
+        // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
+        // texture decoded from its JPEG 2000 data as before)
+        let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
+        self.textures.bc7_cache = self.textures.bc7 && cached;
+        log::info!(
+            "textures: BC7 compression {} (GPU support: {})",
+            if self.textures.bc7 { "on" } else { "off" },
+            renderer.textures.bc7()
+        );
+        self.meshes.staging = Some(pool.clone());
+        self.staging = Some(pool);
+    }
+
     /// The new renderer of a GPU recovery: every texture held gets a slot of
-    /// it and is uploaded again from memory or the disk cache.
+    /// it and is uploaded again from memory or the disk cache, and the jobs
+    /// stage into its pool from now on (the imports published again at once
+    /// need it).
     pub fn adopt_gpu(&mut self, new: &mut Renderer) {
         self.textures.gpu_reset(new);
+        self.take_staging(new);
     }
 
     /// The nearest avatar the ray `(origin, dir)` meets before `far`, and

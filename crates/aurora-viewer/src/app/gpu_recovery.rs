@@ -157,6 +157,10 @@ impl App {
             region.terrain_surface.gpu_reset();
         }
         self.media.gpu_reset();
+        // the local images of the imports, the wearable editor and Blender Live
+        self.republish_local_imports();
+        self.wearable_ui.preview.gpu_reset();
+        self.blender_live.gpu_reset(self.scene.textures.staging.as_deref());
     }
 
     /// After a GPU device loss: a new window and renderer, the session and
