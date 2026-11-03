@@ -87,6 +87,41 @@ impl App {
         }
     }
 
+    /// Show Friends Only: the account's choice loaded after a login, the
+    /// changes kept in the settings (per account, FSRenderFriendsOnly and
+    /// FSRenderFriendsOnlyPersistsTP), and the friendships followed.
+    pub(super) fn sync_friends_only(&mut self) {
+        let id = self.world.agent_id;
+        if id.is_nil() {
+            return;
+        }
+        if self.friends_only_account != id || std::mem::take(&mut self.world.friends_only.reload) {
+            self.friends_only_account = id;
+            let saved = self.settings.friends_only.get(&id).copied().unwrap_or_default();
+            self.world.friends_only.keep_after_teleport = saved.keep_after_teleport;
+            self.world.set_friends_only(saved.enabled);
+        }
+        self.world.follow_friends_for_friends_only();
+        let now = crate::world::friends_only::Preferences {
+            enabled: self.world.friends_only(),
+            keep_after_teleport: self.world.friends_only.keep_after_teleport,
+        };
+        let saved = self.settings.friends_only.get(&id).copied().unwrap_or_default();
+        if now != saved {
+            if now == Default::default() {
+                self.settings.friends_only.remove(&id);
+            } else {
+                self.settings.friends_only.insert(id, now);
+            }
+            self.settings.save();
+            log::info!(
+                "show friends only: {} (kept after a teleport: {})",
+                now.enabled,
+                now.keep_after_teleport
+            );
+        }
+    }
+
     /// The Asset blacklist window, while open.
     pub(super) fn blacklist_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
         let mut open = self.panels.asset_blacklist;
@@ -117,6 +152,36 @@ impl App {
             if let Some(name) = props.map(|p| p.name.clone()).filter(|n| !n.is_empty()) {
                 self.world.derender.rename(&id, &name);
             }
+        }
+    }
+
+    /// AURORA_DEMO_FRIENDS_ONLY: Show Friends Only switched on at frame
+    /// 700, then off at 900 (docs/TESTING.md).
+    pub(super) fn demo_friends_only_steps(&mut self) {
+        if !self.demo {
+            return;
+        }
+        let Ok(mode) = std::env::var("AURORA_DEMO_FRIENDS_ONLY") else {
+            return;
+        };
+        let wolf = crate::demo::DEMO_LOUP;
+        let friend = mode.trim() == "friend";
+        match self.frame_count {
+            // its look (shape and bakes), as an avatar of the grid has: it
+            // must come back dressed (the plain demo's wolf has none)
+            5 => {
+                if let Some(look) = crate::demo::classic_events(&self.world.avatar_lib.shape_params).into_iter().nth(1) {
+                    let _ = self.world.apply(look);
+                }
+            }
+            // (the wolf is a friend: it stays, until the friendship ends)
+            650 if friend => self.world.social.form_friendship(wolf),
+            700 => self.world.set_friends_only(true),
+            800 if friend => {
+                self.world.social.end_friendship(&wolf);
+            }
+            900 => self.world.set_friends_only(false),
+            _ => {}
         }
     }
 

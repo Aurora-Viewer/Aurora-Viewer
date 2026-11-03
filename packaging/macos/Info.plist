@@ -26,7 +26,16 @@
 	<key>CFBundleVersion</key>
 	<string>@VERSION@</string>
 	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.social-networking</string>
+	<string>public.app-category.games</string>
+	<!-- macOS Game Mode: the games category makes macOS treat the viewer as a
+	     game (Sonoma 14 and later) and LSSupportsGameMode opts in explicitly
+	     on macOS 26; GCSupportsGameMode is the GameController key of the same
+	     support. Unknown keys are ignored by older systems. Game Mode turns on
+	     when the viewer is in native full screen, not merely maximized. -->
+	<key>LSSupportsGameMode</key>
+	<true/>
+	<key>GCSupportsGameMode</key>
+	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
 	<key>NSHighResolutionCapable</key>
