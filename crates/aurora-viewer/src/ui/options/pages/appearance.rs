@@ -192,6 +192,7 @@ fn font(cx: &mut Cx) {
                 if st.demo_font_list.is_some() {
                     egui::Popup::open_id(ui.ctx(), popup);
                 }
+                let_font_list_grow(ui.ctx(), popup, opening);
                 system_font_combo(salt, shown).show_ui(ui, |ui| {
                     if opening {
                         // each opening starts on the whole list
@@ -215,15 +216,9 @@ fn font(cx: &mut Cx) {
                     // the size a row's button gives its text
                     let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
                     let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
-                    // the height of the whole list, whatever the filter: egui lays
-                    // a popup out in its last frame's size, so a list the filter
-                    // shrank would not grow back when it is cleared (#2136)
-                    let full = (list.len() as f32 * (row_h + ui.spacing().item_spacing.y)).min(FONT_LIST_H);
-                    egui::ScrollArea::vertical().max_height(full).auto_shrink([true, false]).show_rows(
-                        ui,
-                        row_h,
-                        shown.len(),
-                        |ui, rows| {
+                    egui::ScrollArea::vertical()
+                        .max_height(FONT_LIST_H)
+                        .show_rows(ui, row_h, shown.len(), |ui, rows| {
                             for i in rows {
                                 let f = shown[i];
                                 let key = format!("system:{}", f.path.display());
@@ -271,8 +266,7 @@ fn font(cx: &mut Cx) {
                             if st.demo_font_list == Some(true) {
                                 ui.scroll_with_delta(egui::vec2(0.0, -6.0));
                             }
-                        },
-                    );
+                        });
                     previews.finish(ui.ctx(), &shown);
                 });
                 changed
@@ -379,6 +373,34 @@ fn colors(cx: &mut Cx) {
 /// The System fonts list's popup, which the demo keeps open.
 fn system_font_popup(ui: &egui::Ui, salt: egui::Id) -> egui::Id {
     ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup")
+}
+
+/// Room for the System fonts list to grow back as its search is erased.
+/// egui lays a popup out in its last frame's size, so a list the filter
+/// had shrunk kept that size (#2136). The popup gets back the height of
+/// the whole list, measured as it opens, and still fits its rows once
+/// drawn.
+fn let_font_list_grow(ctx: &egui::Context, popup: egui::Id, opening: bool) {
+    let whole = popup.with("whole-height");
+    if opening {
+        ctx.data_mut(|d| d.remove::<f32>(whole));
+        return;
+    }
+    let Some(mut area) = egui::AreaState::load(ctx, popup) else {
+        return;
+    };
+    let Some(size) = area.size.as_mut() else {
+        return;
+    };
+    let height = ctx.data_mut(|d| {
+        let height = d.get_temp_mut_or_default::<f32>(whole);
+        *height = height.max(size.y);
+        *height
+    });
+    if size.y < height {
+        size.y = height;
+        ctx.memory_mut(|m| m.areas_mut().set_state(egui::LayerId::new(egui::Order::Foreground, popup), area));
+    }
 }
 
 /// The System fonts list. A click in its search field must not close it

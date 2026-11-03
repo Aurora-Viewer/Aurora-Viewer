@@ -1711,6 +1711,12 @@ fn the_system_font_search_filters_and_resets() {
             .map(|n| (*n).to_owned())
             .collect()
     };
+    // the list's popup, the top area once open
+    let height = || {
+        ctx.memory(|m| m.areas().top_layer_id(egui::Order::Foreground).and_then(|l| m.area_rect(l.id)))
+            .map(|r| r.height())
+            .expect("the list's popup")
+    };
     let all: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
     let mut texts = vec![];
     for _ in 0..12 {
@@ -1754,14 +1760,17 @@ fn the_system_font_search_filters_and_resets() {
         texts = draw(events, &mut state, &mut settings);
     }
     assert_eq!(shown(&texts), all, "opened");
+    let whole = height();
     for events in typed() {
         texts = draw(events, &mut state, &mut settings);
     }
     assert_eq!(shown(&texts), ["Beta"], "typed in the focused search field");
+    assert!(height() < whole - 1.0, "the list shrinks to its matches");
     for events in erase() {
         texts = draw(events, &mut state, &mut settings);
     }
     assert_eq!(shown(&texts), all, "a cleared search shows the whole list again");
+    assert!((height() - whole).abs() < 0.5, "and its whole height");
     for events in typed() {
         texts = draw(events, &mut state, &mut settings);
     }
@@ -1773,5 +1782,6 @@ fn the_system_font_search_filters_and_resets() {
         texts = draw(events, &mut state, &mut settings);
     }
     assert_eq!(shown(&texts), all, "the list reopens on the whole list");
+    assert!((height() - whole).abs() < 0.5);
     assert!(state.font_filter.is_empty());
 }
