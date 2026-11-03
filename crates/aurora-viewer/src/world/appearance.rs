@@ -93,22 +93,10 @@ pub enum Action {
     Revert,
 }
 
-/// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp):
-/// a system folder is a child of the root, the smallest id when the server
-/// left two. Every inventory rule asks this for each entry it checks, so it
-/// reads the root's few children instead of every folder (#1580); the whole
-/// inventory is only scanned when the root does not list one.
+/// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp),
+/// indexed across inventory and Appearance rules until the inventory changes.
 pub fn system_folder(inv: &Inventory, kind: i32) -> Option<Uuid> {
-    let is_system = |f: &super::inventory::Folder| f.info.type_default == kind && !f.library;
-    inv.folders
-        .get(&inv.root)
-        .into_iter()
-        .flat_map(|root| &root.children)
-        .filter_map(|id| inv.folders.get(id))
-        .filter(|f| f.info.parent == inv.root && is_system(f))
-        .map(|f| f.info.id)
-        .min()
-        .or_else(|| inv.folders.values().find(|f| is_system(f)).map(|f| f.info.id))
+    inv.system_folder(kind)
 }
 
 pub fn cof(inv: &Inventory) -> Option<Uuid> {
@@ -954,6 +942,78 @@ pub struct CofSync {
     pub unknown: Vec<Uuid>,
 }
 
+/// LLAppearanceMgr::wearItemsOnAvatar / LLAttachmentsMgr::linkRecentlyArrivedAttachments
+/// (indra/newview/llappearancemgr.cpp, llattachmentsmgr.cpp): request objects
+/// first, and link only those that arrive worn. Inventory flags do not say
+/// whether an object is Animesh; the simulator decides its account limit.
+/// A refused request must not leave a COF link that retries at every login.
+/// Saved outfits retain their requested objects; only the COF write changes.
+pub fn defer_attachment_links(
+    inv: &Inventory,
+    change: &mut OutfitMutation,
+    worn: &HashSet<Uuid>,
+    attachments: &mut Vec<AttachRequest>,
+    agent: Uuid,
+) {
+    let Some(cof) = cof(inv) else { return };
+    let before = folder_links(inv, cof);
+    let links = if change.folder == cof {
+        &mut change.links
+    } else if let Some((folder, links)) = &mut change.cof {
+        if *folder != cof {
+            return;
+        }
+        links
+    } else {
+        return;
+    };
+    links.retain(|link| {
+        let Some(item) = inv.items.get(&link.target).filter(|item| !link.folder && item.asset_type == 6) else {
+            return true;
+        };
+        if worn.contains(&item.id) {
+            return true;
+        }
+        // An existing link may still be restoring at login. Do not remove
+        // it just because the region has not sent the object yet, unless
+        // this action explicitly retries that item.
+        if before.iter().any(|old| old.target == item.id) && !attachments.iter().any(|request| request.item_id == item.id) {
+            return true;
+        }
+        if !attachments.iter().any(|request| request.item_id == item.id) {
+            attachments.push(super::outfit::attach_request(item, agent));
+        }
+        false
+    });
+}
+
+/// An object can arrive while the COF write is in flight. Keep explicit
+/// requests and objects that arrived during the write out of the detach
+/// list until their arrival is linked. Keep the chosen point and mode.
+pub fn sync_with_attachments(
+    inv: &Inventory,
+    agent: Uuid,
+    worn: &HashSet<Uuid>,
+    worn_before: &HashSet<Uuid>,
+    attachments: Vec<AttachRequest>,
+) -> CofSync {
+    let mut sync = sync_plan(inv, agent, worn);
+    for command in &mut sync.commands {
+        if let NetCommand::DetachAttachments(items) = command {
+            items.retain(|id| worn_before.contains(id) && !attachments.iter().any(|request| request.item_id == *id));
+        }
+    }
+    sync.commands
+        .retain(|command| !matches!(command, NetCommand::DetachAttachments(items) if items.is_empty()));
+    for attachment in attachments {
+        if worn.contains(&attachment.item_id) && attachment.point == 0 && attachment.add {
+            continue;
+        }
+        apply_attachment_override(&mut sync.commands, attachment);
+    }
+    sync
+}
+
 pub fn sync_plan(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> CofSync {
     let Some(cof) = cof(inv) else {
         return CofSync::default();
@@ -1002,21 +1062,13 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
 }
 
 /// Explicit attachment requests retain the chosen point and replace/add mode.
-/// They are sent only after the COF update has been acknowledged. "Add" of a
-/// coalesced object is asked here too: the COF does not link it, so the sync
-/// would not ask for it, and the simulator's refusal is shown once, as the
-/// Legacy Viewer's rez_attachment does.
+/// They are sent only after the COF update has been acknowledged. Objects
+/// are linked on arrival, so "Add" also needs its explicit rez request.
 pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> Vec<AttachRequest> {
     let (items, point, replace) = match action {
         Action::WearItem { item, point, replace } => (std::slice::from_ref(item), *point, *replace),
         Action::WearItems { items, point, replace } => (items.as_slice(), *point, *replace),
-        Action::Add(item)
-            if super::inventory::actions::original(inv, *item)
-                .and_then(|id| inv.items.get(&id))
-                .is_some_and(coalesced) =>
-        {
-            (std::slice::from_ref(item), 0, false)
-        }
+        Action::Add(item) => (std::slice::from_ref(item), 0, false),
         _ => return Vec::new(),
     };
     let mut seen = HashSet::new();
@@ -2307,8 +2359,9 @@ mod tests {
             asked.iter().map(|a| (a.item_id, a.point, a.add)).collect::<Vec<_>>(),
             [(item, 0, true)]
         );
-        // an ordinary Add is still asked by the COF sync alone
-        assert!(attachments_for_action(&inv, agent, &Action::Add(linked)).is_empty());
+        // Ordinary Add also requests the object explicitly: its COF link
+        // is deferred until the simulator confirms the attachment.
+        assert_eq!(attachments_for_action(&inv, agent, &Action::Add(linked))[0].item_id, linked);
         demo_mutate(&mut inv, agent, &change).expect("mutation");
         let asks_for = |inv: &Inventory, id: Uuid| {
             sync_commands(inv, agent, &HashSet::new())
@@ -2336,6 +2389,164 @@ mod tests {
         // the next COF rewrite drops the link, freeing its attachment slot
         let (change, _) = plan(&inv, Action::Add(Uuid::from_u128(723)), &HashMap::new()).expect("add");
         assert!(!change.links.iter().any(|l| l.target == stale));
+    }
+
+    #[test]
+    fn refused_attachments_leave_no_cof_link_for_a_later_sync_or_login() {
+        let agent = Uuid::from_u128(1);
+        for limit in [2, 3] {
+            let mut inv = fixture();
+            let cof = cof(&inv).expect("COF");
+            let worn: HashMap<_, _> = (717..717 + limit).map(|id| (Uuid::from_u128(id), 5)).collect();
+            let rejected = Uuid::from_u128(723);
+            // Also recover a phantom link left by an earlier viewer when
+            // the user explicitly attempts that object again.
+            let mut links = folder_links(&inv, cof);
+            links.push(item_link(&inv.items[&rejected]));
+            demo_replace(&mut inv, agent, cof, &links);
+            let action = Action::Add(rejected);
+            let (mut change, _) = plan(&inv, action.clone(), &worn).expect("add at account limit");
+            let mut attachments = attachments_for_action(&inv, agent, &action);
+            defer_attachment_links(&inv, &mut change, &worn.keys().copied().collect(), &mut attachments, agent);
+            assert!(!change.links.iter().any(|link| link.target == rejected));
+            assert!(worn.keys().all(|id| change.links.iter().any(|link| link.target == *id)));
+            demo_mutate(&mut inv, agent, &change).expect("COF write");
+            let sync = sync_with_attachments(
+                &inv,
+                agent,
+                &worn.keys().copied().collect(),
+                &worn.keys().copied().collect(),
+                attachments,
+            );
+            assert_eq!(
+                sync.commands
+                    .iter()
+                    .flat_map(|cmd| match cmd {
+                        NetCommand::RezAttachments(items) => items.iter().filter(|a| a.item_id == rejected).collect(),
+                        _ => Vec::new(),
+                    })
+                    .count(),
+                1,
+                "one request, whose refusal does not link the object"
+            );
+            assert!(
+                !super::super::outfit::cof_objects(&inv, cof).contains(&rejected),
+                "login cannot re-request it"
+            );
+            let subsequent = sync_plan(&inv, agent, &worn.keys().copied().collect());
+            assert!(
+                !subsequent
+                    .commands
+                    .iter()
+                    .any(|cmd| matches!(cmd, NetCommand::RezAttachments(items) if items.iter().any(|a| a.item_id == rejected)))
+            );
+            assert!(inv.items.contains_key(&rejected), "the inventory original remains");
+        }
+    }
+
+    #[test]
+    fn deferred_bulk_requests_keep_the_point_mode_and_deduplicate_aliases() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let original = Uuid::from_u128(723);
+        let alias = Uuid::from_u128(9001);
+        inv.items.insert(
+            alias,
+            InvItem {
+                id: alias,
+                asset_type: 24,
+                asset_id: original,
+                ..Default::default()
+            },
+        );
+        for replace in [false, true] {
+            let action = Action::WearItems {
+                items: vec![original, alias],
+                replace,
+                point: 35,
+            };
+            let (mut change, _) = plan(&inv, action.clone(), &HashMap::new()).expect("bulk request");
+            let mut attachments = attachments_for_action(&inv, agent, &action);
+            defer_attachment_links(&inv, &mut change, &HashSet::new(), &mut attachments, agent);
+            let requests: Vec<_> = attachments.iter().filter(|a| a.item_id == original).collect();
+            assert_eq!(requests.len(), 1);
+            assert_eq!((requests[0].point, requests[0].add), (35, !replace));
+            assert!(!change.links.iter().any(|link| link.target == original));
+        }
+    }
+
+    #[test]
+    fn an_attachment_arriving_during_the_cof_write_is_not_detached() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let item = Uuid::from_u128(723);
+        let action = Action::Add(item);
+        let (mut change, _) = plan(&inv, action.clone(), &HashMap::new()).expect("add");
+        let mut attachments = attachments_for_action(&inv, agent, &action);
+        defer_attachment_links(&inv, &mut change, &HashSet::new(), &mut attachments, agent);
+        demo_mutate(&mut inv, agent, &change).expect("COF readback");
+        let another = Uuid::from_u128(9999);
+        let removed = Uuid::from_u128(9998);
+        let sync = sync_with_attachments(
+            &inv,
+            agent,
+            &HashSet::from([item, another, removed]),
+            &HashSet::from([removed]),
+            attachments,
+        );
+        assert!(
+            !sync
+                .commands
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::DetachAttachments(items) if items.contains(&another)))
+        );
+        assert!(
+            sync.commands
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::DetachAttachments(items) if items.contains(&removed)))
+        );
+        assert!(
+            !sync
+                .commands
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::DetachAttachments(items) if items.contains(&item)))
+        );
+        assert!(
+            !sync
+                .commands
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::RezAttachments(items) if items.iter().any(|a| a.item_id == item)))
+        );
+    }
+
+    #[test]
+    fn saved_outfit_objects_stay_saved_while_their_cof_links_wait_for_arrival() {
+        let inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let saved = Uuid::from_u128(704);
+        let before = folder_links(&inv, saved);
+        let (mut change, _) = plan(&inv, Action::Wear(saved, false), &HashMap::new()).expect("wear outfit");
+        let mut attachments = Vec::new();
+        defer_attachment_links(&inv, &mut change, &HashSet::new(), &mut attachments, agent);
+        assert!(!attachments.is_empty());
+        assert!(
+            attachments
+                .iter()
+                .all(|request| !change.links.iter().any(|link| link.target == request.item_id))
+        );
+        assert_eq!(folder_links(&inv, saved), before, "the saved outfit is not rewritten");
+        let (mut save, _) = plan(&inv, Action::Save(Some("Saved outfit".into())), &HashMap::new()).expect("save");
+        let saved_objects: Vec<_> = save
+            .links
+            .iter()
+            .filter(|link| inv.items[&link.target].asset_type == 6)
+            .cloned()
+            .collect();
+        defer_attachment_links(&inv, &mut save, &HashSet::new(), &mut Vec::new(), agent);
+        assert!(
+            saved_objects.iter().all(|link| save.links.contains(link)),
+            "only the COF side of a save is deferred"
+        );
     }
 
     #[test]

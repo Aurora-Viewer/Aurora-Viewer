@@ -117,6 +117,8 @@ pub enum ContactsAction {
     },
     /// Detach from / back into the Conversations window.
     ToggleTornOff,
+    /// The Group titles window (onGroupTitlesButtonClicked).
+    GroupTitles,
 }
 
 /// Confirmations and text prompts (Firestorm notifications).
@@ -1506,7 +1508,9 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     if side_button(ui, p, aurora_i18n::tr!("ui-contacts-information"), "", real) {
         super::group_profile::request_open(ui.ctx(), sel);
     }
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-titles"), soon, false);
+    if side_button(ui, p, aurora_i18n::tr!("ui-contacts-titles"), "", true) {
+        actions.push(ContactsAction::GroupTitles);
+    }
     if side_button(ui, p, aurora_i18n::tr!("common-enable"), "", sel != world.groups.active) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(sel)));
     }

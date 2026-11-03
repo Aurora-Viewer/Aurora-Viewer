@@ -977,6 +977,9 @@ pub struct Settings {
     /// elapsed time, including late loading and edit release. Off by default:
     /// the Legacy Viewer starts at asset activation and suspends during edits.
     pub synchronize_animations: bool,
+    /// Preferences › Aurora › Behavior: make, wear and use the Aurora bridge
+    /// (`world/bridge.rs`). On by default, as the Legacy Viewer's UseLSLBridge.
+    pub use_bridge: bool,
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
@@ -1878,6 +1881,7 @@ impl Default for Settings {
             classic_hover_tips: false,
             predict_own_motion: false,
             synchronize_animations: false,
+            use_bridge: true,
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,

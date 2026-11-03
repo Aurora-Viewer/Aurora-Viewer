@@ -75,6 +75,13 @@ pub struct LoginForm {
     /// where the next login starts, whatever the account's choice, shown in
     /// the start menus (FSPanelLogin::onUpdateStartSLURL). Not saved.
     pub start_slurl: Option<crate::slurl::Location>,
+    /// Every account's favourite landmarks, written by the sessions
+    /// (`login_favorites.rs`), offered in the start menus.
+    pub favorites: crate::login_favorites::Store,
+    /// The favourite chosen in an account's start menu: where that
+    /// account's next login starts. Not saved, like the Legacy Viewer's
+    /// start combo (only Home and Last are kept as LoginLocation).
+    pub start_favorite: Option<(crate::login_favorites::Key, uuid::Uuid)>,
     /// The graphics driver is out of date (`gpu_driver::check`), and the
     /// user has not dismissed the warning for this driver.
     pub driver_notice: Option<crate::gpu_driver::Notice>,
@@ -215,29 +222,122 @@ fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(-2.0);
 }
 
-/// The start location menu: last location, home or a region; a place given
-/// from outside (`slurl`) comes first and stays chosen until another entry
-/// is, as the Legacy Viewer's location combo shows the start SLURL
+/// The favourites of one account's start menu and the one chosen (its
+/// item), as FSPanelLogin::addFavoritesToStartLocation adds them after
+/// Last, Home and the typed region.
+pub(super) struct StartFavorites<'a> {
+    pub list: &'a [crate::login_favorites::Favorite],
+    pub chosen: Option<uuid::Uuid>,
+}
+
+impl<'a> StartFavorites<'a> {
+    #[cfg(test)]
+    pub fn none() -> Self {
+        StartFavorites { list: &[], chosen: None }
+    }
+
+    /// The account `key`'s favourites, and its choice in `slot`.
+    pub fn of(
+        store: &'a crate::login_favorites::Store,
+        slot: &Option<(crate::login_favorites::Key, uuid::Uuid)>,
+        key: &crate::login_favorites::Key,
+    ) -> Self {
+        StartFavorites {
+            list: store.favorites(key),
+            chosen: slot.as_ref().filter(|(k, _)| k == key).map(|(_, id)| *id),
+        }
+    }
+
+    /// Keep in `slot` a choice made in the account `key`'s menu; another
+    /// account's choice stays until this one changes.
+    pub fn keep(&self, slot: &mut Option<(crate::login_favorites::Key, uuid::Uuid)>, key: crate::login_favorites::Key) {
+        let before = slot.as_ref().filter(|(k, _)| *k == key).map(|(_, id)| *id);
+        if before != self.chosen {
+            *slot = self.chosen.map(|id| (key, id));
+        }
+    }
+
+    /// The chosen favourite, while the account still has it.
+    pub fn chosen(&self) -> Option<&crate::login_favorites::Favorite> {
+        self.chosen.and_then(|id| self.list.iter().find(|f| f.item == id))
+    }
+}
+
+/// "Region, x, y, z" under a favourite of the start menu.
+fn favorite_place(favorite: &crate::login_favorites::Favorite) -> String {
+    let [x, y, z] = favorite.pos;
+    format!("{} ({}, {}, {})", favorite.region, x.round(), y.round(), z.round())
+}
+
+/// AURORA_DEMO_LOGIN_FAVORITES=open: the first start menu with favourites
+/// (the combo `salt` of `ui`) opens once, after the login screen's first
+/// frames, for captures.
+pub(super) fn demo_open_start_menu(ui: &egui::Ui, salt: &str, favorites: &StartFavorites) {
+    static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !favorites.list.is_empty()
+        && crate::login_favorites::demo() == Some(crate::login_favorites::Demo::Open)
+        && ui.ctx().cumulative_frame_nr() >= 30
+        && !OPENED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
+    }
+}
+
+/// The start location menu: last location, home or a region, then the
+/// account's favourite landmarks; a place given from outside (`slurl`)
+/// comes first and stays chosen until another entry is, as the Legacy
+/// Viewer's location combo shows the start SLURL
 /// (FSPanelLogin::onUpdateStartSLURL).
-pub(super) fn start_menu(ui: &mut egui::Ui, combo: egui::ComboBox, start: &mut String, slurl: &mut Option<crate::slurl::Location>) {
+pub(super) fn start_menu(
+    ui: &mut egui::Ui,
+    combo: egui::ComboBox,
+    start: &mut String,
+    slurl: &mut Option<crate::slurl::Location>,
+    favorites: &mut StartFavorites,
+) {
     let place = slurl.as_ref().map(crate::external_url::place_label);
-    let selected = match (&place, start.as_str()) {
-        (Some(place), _) => place.clone(),
-        (None, "home") => aurora_i18n::tr!("common-home").to_owned(),
-        (None, "region") => aurora_i18n::tr!("ui-login-region").to_owned(),
+    let chosen = favorites.chosen().cloned();
+    let selected = match (&place, &chosen, start.as_str()) {
+        (Some(place), ..) => place.clone(),
+        (None, Some(favorite), _) => favorite.name.clone(),
+        (None, None, "home") => aurora_i18n::tr!("common-home").to_owned(),
+        (None, None, "region") => aurora_i18n::tr!("ui-login-region").to_owned(),
         _ => aurora_i18n::tr!("ui-login-last-location").to_owned(),
+    };
+    // the favourites unfold over up to half the screen before scrolling
+    let combo = if favorites.list.is_empty() {
+        combo
+    } else {
+        combo.height(ui.spacing().combo_height.max(ui.ctx().content_rect().height() * 0.5))
     };
     let shown = combo.selected_text(selected).show_ui(ui, |ui| {
         if let Some(place) = &place {
             let _ = ui.selectable_label(true, place);
         }
+        let usual = place.is_none() && chosen.is_none();
         for (value, text) in [
             ("last", aurora_i18n::tr!("ui-login-last-location")),
             ("home", aurora_i18n::tr!("common-home")),
             ("region", aurora_i18n::tr!("ui-login-region")),
         ] {
-            if ui.selectable_label(place.is_none() && start == value, text).clicked() {
+            if ui.selectable_label(usual && start == value, text).clicked() {
                 *start = value.into();
+                *slurl = None;
+                favorites.chosen = None;
+            }
+        }
+        if !favorites.list.is_empty() {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(aurora_i18n::tr!("ui-login-favorites")).size(11.5).weak());
+        }
+        for favorite in favorites.list {
+            let on = place.is_none() && chosen.as_ref().is_some_and(|c| c.item == favorite.item);
+            if ui
+                .selectable_label(on, &favorite.name)
+                .on_hover_text(favorite_place(favorite))
+                .clicked()
+            {
+                favorites.chosen = Some(favorite.item);
                 *slurl = None;
             }
         }
@@ -245,6 +345,10 @@ pub(super) fn start_menu(ui: &mut egui::Ui, combo: egui::ComboBox, start: &mut S
     // a card's narrow menu cuts the place short
     if let Some(place) = place {
         shown.response.on_hover_text(place);
+    } else if let Some(favorite) = &chosen {
+        shown
+            .response
+            .on_hover_text(format!("{}\n{}", favorite.name, favorite_place(favorite)));
     }
 }
 
@@ -631,13 +735,20 @@ pub fn show(
                         }
                         caption(&mut cols[1], p, aurora_i18n::tr!("ui-login-start"));
                         let width = cols[1].available_width();
+                        let key = crate::login_favorites::key(&settings.login_uri(), &settings.username);
+                        let mut favorites = StartFavorites::of(&form.favorites, &form.start_favorite, &key);
+                        demo_open_start_menu(&cols[1], "start", &favorites);
                         start_menu(
                             &mut cols[1],
                             egui::ComboBox::from_id_salt("start").width(width),
                             &mut settings.start_location,
                             &mut form.start_slurl,
+                            &mut favorites,
                         );
+                        favorites.keep(&mut form.start_favorite, key);
                     });
+                    let key = crate::login_favorites::key(&settings.login_uri(), &settings.username);
+                    let favorite_chosen = StartFavorites::of(&form.favorites, &form.start_favorite, &key).chosen().is_some();
                     if settings.grid == GridChoice::Custom {
                         field(
                             ui,
@@ -650,7 +761,7 @@ pub fn show(
                             None,
                         );
                     }
-                    if settings.start_location == "region" && form.start_slurl.is_none() {
+                    if settings.start_location == "region" && form.start_slurl.is_none() && !favorite_chosen {
                         field(
                             ui,
                             p,

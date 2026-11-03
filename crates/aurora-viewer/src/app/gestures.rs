@@ -536,6 +536,14 @@ impl App {
                 chat_type: ChatType::Normal,
             });
         }
+        // `channel-replace`: the replacement itself says "/5capture" (#1916)
+        if self.demo && self.frame_count == 650 && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "channel-replace") {
+            self.send_local_chat(crate::ui::chat::OutgoingChat {
+                message: "/hudreplace".into(),
+                channel: 0,
+                chat_type: ChatType::Normal,
+            });
+        }
         self.tick_gestures();
     }
 
@@ -948,6 +956,15 @@ impl App {
                     true,
                 );
             }
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "channel-replace") {
+                self.seed_demo_gesture(
+                    &template,
+                    951008,
+                    aurora_i18n::tr!("gesture-demo-channel-replace-name"),
+                    demo_channel_replace_gesture(),
+                    true,
+                );
+            }
             if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "list") {
                 let hug = Gesture {
                     trigger: "/hug".into(),
@@ -1028,6 +1045,16 @@ fn demo_channel_gesture() -> Gesture {
     Gesture {
         trigger: "/hudping".into(),
         steps: vec![chat("/-4242 ping"), chat("/5 test"), chat("/5test")],
+        ..Default::default()
+    }
+}
+
+/// The `channel-replace` scenario's gesture: a replacement opening with a
+/// channel, as a gesture made in the Legacy Viewer may have (#1916).
+fn demo_channel_replace_gesture() -> Gesture {
+    Gesture {
+        trigger: "/hudreplace".into(),
+        replacement: "/5capture".into(),
         ..Default::default()
     }
 }

@@ -73,6 +73,8 @@ pub enum Source {
 pub struct AuroraState {
     pub source: Source,
     selected: Option<Key>,
+    /// Wait for a possible double click before changing the narrow details.
+    pub(super) pending_click: Option<(Key, f64)>,
     /// The place profile asked for the preview (OpenProfile sent).
     previewed: Option<Profile>,
     /// The notes being typed, for that place.
@@ -99,6 +101,38 @@ impl AuroraState {
             _ => Source::All,
         };
         self.selected = None;
+        self.pending_click = None;
+    }
+
+    fn row_clicked(&mut self, key: Key, response: &egui::Response, wide: bool) -> bool {
+        if response.double_clicked() {
+            self.pending_click = None;
+            return false;
+        }
+        if wide {
+            self.pending_click = None;
+            return response.clicked();
+        }
+        let now = response.ctx.input(|i| i.time);
+        if response.clicked() {
+            let delay = response.ctx.options(|o| o.input_options.max_double_click_delay);
+            self.pending_click = Some((key, now + delay));
+        }
+        if let Some((pending, deadline)) = self.pending_click
+            && pending == key
+        {
+            if response.drag_started() || response.secondary_clicked() || response.clicked_elsewhere() {
+                self.pending_click = None;
+            } else if now >= deadline {
+                self.pending_click = None;
+                return true;
+            } else {
+                response
+                    .ctx
+                    .request_repaint_after(std::time::Duration::from_secs_f64(deadline - now));
+            }
+        }
+        false
     }
 }
 
@@ -357,6 +391,7 @@ impl PlacesUi {
         if let Some(l) = &link
             && self.aurora.previewed.as_ref() != Some(l)
         {
+            self.aurora.pending_click = None;
             self.aurora.selected = None;
             self.aurora.previewed = Some(l.clone());
         }
@@ -401,6 +436,7 @@ impl PlacesUi {
 
     /// Select a line and ask for its profile.
     fn select(&mut self, key: Key, place: &Place, inv: &Inventory, history: &[HistoryItem], actions: &mut Vec<PlacesAction>) {
+        self.aurora.pending_click = None;
         self.aurora.selected = Some(key);
         if self.aurora.note.as_ref().is_some_and(|(k, _)| *k != key) {
             self.aurora.note = None;
@@ -631,7 +667,7 @@ impl PlacesUi {
                     p,
                     "pencil-filled",
                     aurora_i18n::tr!("common-rename"),
-                    actions::renameable(inv, f.id, &no_protection()),
+                    actions::renameable(inv, f.id),
                 ) {
                     self.aurora.rename_folder = Some((f.id, f.name.clone()));
                 }
@@ -666,6 +702,7 @@ impl PlacesUi {
 
     fn set_source(&mut self, source: Source) {
         if self.aurora.source != source {
+            self.aurora.pending_click = None;
             self.aurora.source = source;
             self.aurora.selected = None;
         }
@@ -715,6 +752,13 @@ impl PlacesUi {
         let world = c.world;
         let history = &world.tp_storage.items;
         ui.spacing_mut().item_spacing.y = 1.0;
+        if self
+            .aurora
+            .pending_click
+            .is_some_and(|(key, _)| !lines.iter().any(|l| matches!(l, Line::Place(k, _) if *k == key)))
+        {
+            self.aurora.pending_click = None;
+        }
         if lines.is_empty() {
             self.empty(ui, p, world);
             return;
@@ -765,7 +809,7 @@ impl PlacesUi {
             if let Some(fav) = place.favorite.filter(|_| reorder) {
                 rects.push((out.resp.rect, fav));
             }
-            if out.resp.clicked() {
+            if self.aurora.row_clicked(key, &out.resp, wide) {
                 if !wide && selected {
                     // a second click folds the row back
                     self.aurora.selected = None;
@@ -901,7 +945,7 @@ impl PlacesUi {
                 }
                 actions.push(PlacesAction::Edit(change));
             }
-            let renameable = place.item.is_some_and(|i| actions::renameable(inv, i, &no_protection()));
+            let renameable = place.item.is_some_and(|i| actions::renameable(inv, i));
             if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-rename"), renameable) {
                 self.aurora.rename = Some((key, place.name.clone()));
             }
@@ -1217,9 +1261,7 @@ impl PlacesUi {
                 let g = line(ui, &place.name, 15.0, p.ink, true, width);
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, g.size().y), Sense::click());
                 ui.painter().galley(rect.min, g, p.ink);
-                let renameable = place
-                    .item
-                    .is_some_and(|i| actions::renameable(&world.inventory, i, &no_protection()));
+                let renameable = place.item.is_some_and(|i| actions::renameable(&world.inventory, i));
                 if renameable && resp.double_clicked() {
                     self.aurora.rename = Some((key, place.name.clone()));
                 }
@@ -1277,7 +1319,7 @@ impl PlacesUi {
         if self.aurora.note.as_ref().is_none_or(|(k, _)| *k != key) {
             self.aurora.note = Some((key, place.note.clone()));
         }
-        let editable = place.item.is_some_and(|i| actions::renameable(inv, i, &no_protection()));
+        let editable = place.item.is_some_and(|i| actions::renameable(inv, i));
         if let Some((_, text)) = self.aurora.note.as_mut() {
             let r = crate::ui::widgets::text_field(ui, editable, text, |b, _| {
                 egui::TextEdit::multiline(b)
@@ -1889,5 +1931,131 @@ mod tests {
         assert_eq!(spot(&history, 0), nordheim);
         // a landmark whose asset is not read yet waits for it
         assert_eq!(snapshot_spot(&place(&inventory(), 1000), &lm), None);
+    }
+
+    #[test]
+    fn places_double_click_teleports_without_toggling_details() {
+        use crate::scene::avatar::AvatarLibrary;
+        use std::collections::HashMap;
+
+        fn pointer(pos: Pos2, pressed: bool) -> Vec<egui::Event> {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        }
+
+        let library = Arc::new(AvatarLibrary::load());
+        for source in [Source::Favorites, Source::All, Source::History] {
+            for initially_open in [false, true] {
+                let ctx = egui::Context::default();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&ctx, 1.0);
+                // Exercise the configured interval rather than assuming 300 ms.
+                ctx.options_mut(|o| o.input_options.max_double_click_delay = 0.4);
+                let p = theme.palette();
+                let mut world = World::new(Arc::clone(&library));
+                world.inventory = inventory();
+                world.tp_storage.items = vec![HistoryItem {
+                    title: "Test visit".into(),
+                    global: DVec3::new(256_040.0, 256_300.0, 22.0),
+                    date: 1.0,
+                    slurl: String::new(),
+                }];
+                let history = &world.tp_storage.items;
+                let env = Env {
+                    sort: PlacesSort::default(),
+                    favorites: &[id(200)],
+                };
+                let cat = model::catalog(&world.inventory, &world.landmarks, &world.map, history, false);
+                let mut places = PlacesUi::default();
+                places.aurora.source = source;
+                let lines = places.lines(&cat, history, &env);
+                let key = lines
+                    .iter()
+                    .find_map(|l| match l {
+                        Line::Place(k, _) => Some(*k),
+                        _ => None,
+                    })
+                    .expect("a place in every source");
+                let initial = initially_open.then_some(key);
+                places.aurora.selected = initial;
+                let images = HashMap::new();
+                let mut emoji = crate::ui::emoji::Emoji::load();
+                let mut names = HashSet::new();
+                let mut wanted_images = HashSet::new();
+                let mut groups = HashSet::new();
+                let mut row_pos = Pos2::ZERO;
+                let mut frame = |time, events, places: &mut PlacesUi| {
+                    let mut actions = Vec::new();
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 1200.0))),
+                            time: Some(time),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let mut c = Ctx {
+                                p: &p,
+                                world: &world,
+                                images: &images,
+                                emoji: &mut emoji,
+                                want_names: &mut names,
+                                wanted_images: &mut wanted_images,
+                                want_groups: &mut groups,
+                            };
+                            // History has a section header before its first row.
+                            row_pos = ui.cursor().min + Vec2::new(80.0, if source == Source::History { 46.0 } else { 16.0 });
+                            places.rows(ui, &mut c, &lines, false, &mut actions);
+                        },
+                    );
+                    output.textures_delta.clear();
+                    (row_pos, actions)
+                };
+                frame(0.0, vec![], &mut places);
+                let (pos, _) = frame(0.01, vec![], &mut places);
+                frame(1.0, pointer(pos, true), &mut places);
+                let (_, actions) = frame(1.01, pointer(pos, false), &mut places);
+                assert_eq!(places.aurora.selected, initial, "first click: {source:?}");
+                assert!(actions.is_empty());
+                assert!(places.confirm.is_none());
+                frame(1.1, pointer(pos, true), &mut places);
+                let (_, actions) = frame(1.11, pointer(pos, false), &mut places);
+                assert_eq!(places.aurora.selected, initial, "double click: {source:?}");
+                assert!(actions.is_empty(), "no profile request for a double click");
+                match source {
+                    Source::History => {
+                        assert!(matches!(places.confirm, Some(Confirm::History { global, .. }) if global == history[0].global))
+                    }
+                    _ => assert!(matches!(places.confirm, Some(Confirm::Landmark { asset, .. }) if asset == id(1000))),
+                }
+                frame(1.8, vec![], &mut places);
+                assert_eq!(places.aurora.selected, initial, "no delayed toggle after teleport");
+
+                // A genuine single click still opens or closes the details, once.
+                places.confirm = None;
+                frame(2.0, pointer(pos, true), &mut places);
+                frame(2.01, pointer(pos, false), &mut places);
+                frame(2.35, vec![], &mut places);
+                assert_eq!(places.aurora.selected, initial, "wait for the full configured interval");
+                frame(2.5, vec![], &mut places);
+                let toggled = (!initially_open).then_some(key);
+                assert_eq!(places.aurora.selected, toggled, "single click: {source:?}");
+                frame(2.8, vec![], &mut places);
+                assert_eq!(places.aurora.selected, toggled, "only one toggle");
+
+                frame(3.0, pointer(pos, true), &mut places);
+                frame(3.01, pointer(pos, false), &mut places);
+                places.set_source(Source::Folder(id(11)));
+                frame(3.5, vec![], &mut places);
+                assert_eq!(places.aurora.selected, None, "navigation cancels the pending click");
+            }
+        }
     }
 }

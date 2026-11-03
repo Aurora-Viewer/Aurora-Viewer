@@ -1904,6 +1904,7 @@ fn vs_particle(in: PartIn) -> PartOut {
     var right = frame.cam_right.xyz;
     var up = frame.cam_up.xyz;
     var offset: vec3<f32>;
+    var uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
     if ((in.flags & PART_FOLLOW_VELOCITY) != 0u) {
         // LLVOPartGroup::getGeometry projects velocity into the billboard
         // plane, then rotates it without shortening the requested scale.
@@ -1930,13 +1931,18 @@ fn vs_particle(in: PartIn) -> PartOut {
         let side = cross(to_cam, normalize(in.axis));
         right = select(frame.cam_right.xyz, normalize(side), dot(side, side) > 1e-6);
         offset = right * c.x * in.size.x * 0.5 + up * c.y;
+        // LLVOPartGroup lays the texture along the segment: u from the
+        // parent end (c.y = 1) to this particle, v across the width. With
+        // the billboard mapping a leash's lengthwise texture turned into a
+        // crossbar on every link, a dashed line (#1924).
+        uv = vec2<f32>(0.5 - c.y * 0.5, 0.5 - c.x * 0.5);
     } else {
         offset = right * c.x * in.size.x * 0.5 + up * c.y * in.size.y * 0.5;
     }
     let wp = in.pos + offset;
     var out: PartOut;
     out.clip = frame.view_proj * vec4<f32>(wp, 1.0);
-    out.uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
+    out.uv = uv;
     out.color = vec4<f32>(srgb_to_linear(in.color.rgb), in.color.a);
     // glow brightens the particle (no bloom pass)
     out.color = vec4<f32>(out.color.rgb * (1.0 + in.glow * 2.0), out.color.a);

@@ -78,6 +78,7 @@ pub struct Editor {
     saving: Option<PendingSave>,
     pub can_read: bool,
     pub can_edit: bool,
+    pub can_reset: bool,
     pub mono: bool,
     baseline_mono: bool,
     experience: experiences::State,
@@ -188,6 +189,7 @@ impl Editors {
             e.tools.external = None;
             e.can_read = false;
             e.can_edit = false;
+            e.can_reset = false;
             e.running = None;
             e.close_prompt = false;
             e.close_after_save = false;
@@ -458,6 +460,7 @@ impl Editors {
             saving: None,
             can_read,
             can_edit,
+            can_reset: !target.object.is_nil(),
             mono: true,
             baseline_mono: true,
             experience: experiences::State::default(),
