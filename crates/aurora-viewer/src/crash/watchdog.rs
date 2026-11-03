@@ -54,7 +54,73 @@ pub struct State {
     /// Swapchain recreations (window resizes among them) in the 10 s
     /// before this note, or before the GPU was lost.
     pub swapchain_10s: u64,
+    /// The GPU effects and quality switches on, as fixed words
+    /// ([`EFFECT_WORDS`]) with a number where they have a level, comma
+    /// separated: `shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100`.
+    pub effects: String,
+    /// `focused`, `background`, `minimized` or `occluded`.
+    pub window_state: &'static str,
+    /// The latest GPU frame time measured, the longest one of the last
+    /// 10 s (up to a GPU loss), and the pass that took most of each
+    /// (`GpuElement::key`). A driver reset follows a GPU task of more than
+    /// about 2 s: frames getting longer before the loss show it.
+    pub gpu_ms: Option<f32>,
+    pub gpu_peak_ms: Option<f32>,
+    pub gpu_peak_pass: Option<&'static str>,
+    pub gpu_last_pass: Option<&'static str>,
+    /// Texture uploads since the previous note: how many and how many MB,
+    /// and the most MB one frame uploaded in that time.
+    pub uploads: (u32, f32),
+    pub upload_peak_mb: f32,
+    /// Seconds since the login began, since the world showed (None while
+    /// loading) and since the agent's region changed (a teleport, a
+    /// crossing).
+    pub session_s: Option<u64>,
+    pub world_s: Option<u64>,
+    pub region_s: Option<u64>,
+    /// Still loading: textures being fetched or decoded, textures waiting
+    /// for their upload, geometry pending.
+    pub loading: (usize, usize, usize),
+    /// The Vulkan layers on offer to the viewer, comma separated
+    /// (`VK_LAYER_*` names only).
+    pub layers: String,
+    /// What is known of a GPU loss, as fixed words: the reason wgpu gave,
+    /// what its message is about, and how the loss was first seen.
+    pub loss: Option<(&'static str, &'static str, &'static str)>,
+    /// The longest time the render thread was held by the GPU before the
+    /// loss (ms, 0 when the GPU never stalled for 2 s).
+    pub stall_ms: u64,
+    /// Another Aurora process was running (`yes` / `no`, empty unknown).
+    pub other_instance: &'static str,
 }
+
+/// The words of [`State::effects`], before an optional level number.
+pub const EFFECT_WORDS: &[&str] = &[
+    "shadows",
+    "projector-shadows",
+    "contact-shadows",
+    "ao-legacy",
+    "ao-gtao",
+    "ssr",
+    "aa-fxaa",
+    "aa-msaa",
+    "aa-taa",
+    "aa-smaa",
+    "bloom",
+    "glow",
+    "indirect-light",
+    "probes",
+    "water-reflections",
+    "mirrors",
+    "scale",
+    "draw",
+    "hdr",
+    "photo",
+    "vr",
+];
+
+/// The names `window_state` takes.
+pub const WINDOW_STATES: &[&str] = &["focused", "background", "minimized", "occluded"];
 
 impl State {
     fn lines(&self, out: &mut String) {
@@ -72,6 +138,48 @@ impl State {
         let _ = writeln!(out, "avatars={}", self.avatars);
         let _ = writeln!(out, "regions={}", self.regions);
         let _ = writeln!(out, "swapchain_10s={}", self.swapchain_10s);
+        if !self.effects.is_empty() {
+            let _ = writeln!(out, "effects={}", self.effects);
+        }
+        if !self.window_state.is_empty() {
+            let _ = writeln!(out, "window_state={}", self.window_state);
+        }
+        if let Some(ms) = self.gpu_ms {
+            let _ = writeln!(out, "gpu_ms={ms:.1}");
+        }
+        if let Some(ms) = self.gpu_peak_ms {
+            let _ = writeln!(out, "gpu_peak_ms={ms:.1}");
+        }
+        if let Some(pass) = self.gpu_peak_pass {
+            let _ = writeln!(out, "gpu_peak_pass={pass}");
+        }
+        if let Some(pass) = self.gpu_last_pass {
+            let _ = writeln!(out, "gpu_last_pass={pass}");
+        }
+        let _ = writeln!(out, "uploads={}/{:.1}", self.uploads.0, self.uploads.1);
+        let _ = writeln!(out, "upload_peak_mb={:.1}", self.upload_peak_mb);
+        if let Some(s) = self.session_s {
+            let _ = writeln!(out, "session_s={s}");
+        }
+        if let Some(s) = self.world_s {
+            let _ = writeln!(out, "world_s={s}");
+        }
+        if let Some(s) = self.region_s {
+            let _ = writeln!(out, "region_s={s}");
+        }
+        let _ = writeln!(out, "loading={}/{}/{}", self.loading.0, self.loading.1, self.loading.2);
+        if !self.layers.is_empty() {
+            let _ = writeln!(out, "layers={}", self.layers);
+        }
+        if let Some((reason, cause, seen)) = self.loss {
+            let _ = writeln!(out, "loss_reason={reason}");
+            let _ = writeln!(out, "loss_cause={cause}");
+            let _ = writeln!(out, "loss_seen_by={seen}");
+        }
+        let _ = writeln!(out, "stall_ms={}", self.stall_ms);
+        if !self.other_instance.is_empty() {
+            let _ = writeln!(out, "other_instance={}", self.other_instance);
+        }
     }
 }
 
