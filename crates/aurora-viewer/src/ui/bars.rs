@@ -2115,6 +2115,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
+        // Floater.Toggle quickprefs
+        "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
         // Avatar.TogglePicks: our profile on its Picks tab
         "picks" => return BarAction::MyPicks,
         // MainChatbarVisible: the nearby chat bar shown or put away
@@ -2204,6 +2206,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
+        "quickprefs" => panels.quick_prefs,
         "preferences" => panels.settings,
         "move" => panels.movement_controls,
         "view" => panels.camera_controls,
@@ -3629,6 +3632,7 @@ mod tests {
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
+            ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
         ] {
@@ -3740,6 +3744,21 @@ mod tests {
         }
         assert_eq!(all.lit("landmark_here"), None);
         assert_eq!(all.lit("inventory"), None);
+    }
+
+    /// The toolbar's Quick preferences button toggles its window and lights
+    /// while it is open.
+    #[test]
+    fn the_quick_preferences_toolbar_command_toggles_its_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("quickprefs"));
+        assert!(!command_active("quickprefs", &panels, false, false, false));
+        run_command(&ctx, "quickprefs", &mut panels);
+        assert!(panels.quick_prefs);
+        assert!(command_active("quickprefs", &panels, false, false, false));
+        run_command(&ctx, "quickprefs", &mut panels);
+        assert!(!panels.quick_prefs);
     }
 
     #[test]
