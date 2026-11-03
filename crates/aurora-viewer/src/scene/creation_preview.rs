@@ -2,7 +2,7 @@
 //! shape on rayon; pointer motion only updates one GPU placement record.
 //! Uses the loading shader's own HOLOGRAM mode, independently of Rez::enabled.
 
-use crate::build::{BuildSettings, MAX_PRIM_SCALE, MIN_PRIM_SCALE, shapes};
+use crate::build::{BuildSettings, shapes};
 use crate::world::World;
 use aurora_render::{DrawCmd, DrawLists, DrawRecord, MeshAlloc, Renderer, rez_mode};
 use crossbeam_channel::{Receiver, TryRecvError};
@@ -33,7 +33,7 @@ impl Placement {
         }
         crate::build::BuildTool::region_at(world, point)?;
         let shape = shapes::shapes().into_iter().nth(settings.create_shape)?;
-        let scale = Vec3::from_array(settings.new_prim_size).clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE));
+        let scale = world.prim_limits().clamp3(Vec3::from_array(settings.new_prim_size));
         let rotation = shape.rotation();
         let axes = glam::Mat3::from_quat(rotation);
         let half_height = Vec3::new(axes.x_axis.z, axes.y_axis.z, axes.z_axis.z).abs().dot(scale) * 0.5;

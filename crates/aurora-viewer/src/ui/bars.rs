@@ -1892,7 +1892,7 @@ pub fn top_bars(
                     if let Some(b) = st.balance.filter(|_| st.show_balance) {
                         // a click opens the L$ purchase, a right click hides it
                         let balance = ui
-                            .add(egui::Label::new(small(format!("{b} L$"), p.ink)).sense(egui::Sense::click()))
+                            .add(egui::Label::new(small(format!("{b} {}", aurora_i18n::currency()), p.ink)).sense(egui::Sense::click()))
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l"));
                         if balance.clicked() {

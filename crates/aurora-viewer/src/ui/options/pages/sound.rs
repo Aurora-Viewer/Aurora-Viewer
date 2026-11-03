@@ -273,7 +273,7 @@ fn interface_sounds(cx: &mut Cx) {
                         .custom_parser(aurora_i18n::parse_number)
                         .range(0.0..=100_000.0)
                         .speed(1.0)
-                        .suffix(" L$"),
+                        .suffix(format!(" {}", aurora_i18n::currency())),
                 )
                 .changed()
             },
