@@ -1,14 +1,14 @@
-//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:post][:moved][:toolbar]:
+//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar]:
 //! the reel filled with `n` real photos of the plaza, saved to a folder of
 //! the cache (never the Pictures folder), the focal length changed between
 //! them so that they differ. `quick` then opens the quick view on the
 //! newest, `delete` asks to delete it, `send` sends it again to the
 //! inventory (its price asked over the quick view), `upload` too with its
 //! price confirmed: uploaded, the photo shows its check in the strip and
-//! Post to profile takes the upload's place. `item` then presses Show in
+//! Apply to profile takes the upload's place. `item` then presses Show in
 //! inventory: the quick view and photo mode close, the inventory shows it. `mail` opens the e-mail's form
-//! over it, `post` posts it to the demo's web profile (whether uploaded or
-//! not). `moved` puts the tray at the middle
+//! over it, `apply` uploads it, then asks to make it our profile picture;
+//! `applied` accepts: photo mode closes, our profile shows it. `moved` puts the tray at the middle
 //! of the screen: the photos fly to it there. `toolbar` puts the Photo roll
 //! button on the right toolbar (dimmed until the first photo), then closes
 //! photo mode and opens the quick view with it. From AURORA_DEMO_SNAPSHOT_FRAME
@@ -34,7 +34,10 @@ pub(in crate::app) struct Demo {
     /// `upload`, then its Show in inventory pressed.
     item: bool,
     mail: bool,
-    post: bool,
+    /// `upload`, then Apply to profile pressed.
+    apply: bool,
+    /// `apply`, accepted.
+    applied: bool,
     /// The tray moved to the middle of the screen, the flights following it.
     moved: bool,
     /// The toolbar's Photo roll: shown, then the quick view opened with it.
@@ -62,13 +65,14 @@ impl Demo {
             count,
             quick: words
                 .iter()
-                .any(|w| matches!(*w, "quick" | "delete" | "send" | "upload" | "item" | "mail" | "post")),
+                .any(|w| matches!(*w, "quick" | "delete" | "send" | "upload" | "item" | "mail" | "apply" | "applied")),
             delete: words.contains(&"delete"),
-            send: words.iter().any(|w| matches!(*w, "send" | "upload" | "item")),
-            upload: words.iter().any(|w| matches!(*w, "upload" | "item")),
+            send: words.iter().any(|w| matches!(*w, "send" | "upload" | "item" | "apply" | "applied")),
+            upload: words.iter().any(|w| matches!(*w, "upload" | "item" | "apply" | "applied")),
             item: words.contains(&"item"),
             mail: words.contains(&"mail"),
-            post: words.contains(&"post"),
+            apply: words.iter().any(|w| matches!(*w, "apply" | "applied")),
+            applied: words.contains(&"applied"),
             moved: words.contains(&"moved"),
             toolbar: words.contains(&"toolbar"),
             start,
@@ -125,6 +129,21 @@ impl App {
             return;
         }
         // `item`: uploaded, its Show in inventory pressed
+        // `apply`: uploaded, Apply to profile pressed; `applied`: accepted
+        if d.done
+            && d.apply
+            && let Some(id) = uploaded
+        {
+            d.apply = false;
+            let accept = d.applied;
+            log::info!("photo reel demo: apply to profile");
+            self.photo_reel_action(ReelAction::Send(id, Destination::Profile), renderer);
+            if accept {
+                self.snapshots.reel.apply = None;
+                self.photo_reel_apply(id);
+            }
+            return;
+        }
         if d.done
             && d.item
             && let Some(id) = uploaded
@@ -156,7 +175,7 @@ impl App {
         // the photos all saved: the view given back, then the quick view
         d.done = true;
         let toolbar = d.toolbar;
-        let (quick, delete, send, mail, post, fov) = (d.quick, d.delete, d.send, d.mail, d.post, d.fov.take());
+        let (quick, delete, send, mail, fov) = (d.quick, d.delete, d.send, d.mail, d.fov.take());
         if let Some(fov) = fov {
             self.settings.camera.fov = fov;
         }
@@ -186,10 +205,6 @@ impl App {
         if mail {
             self.photo_reel_action(ReelAction::Send(newest, Destination::Email), renderer);
             log::info!("photo reel demo: e-mail form opened");
-        }
-        if post {
-            self.photo_reel_action(ReelAction::Send(newest, Destination::Profile), renderer);
-            log::info!("photo reel demo: posted again to the profile");
         }
     }
 }

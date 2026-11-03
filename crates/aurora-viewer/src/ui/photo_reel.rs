@@ -310,9 +310,9 @@ fn place_name(place: &Place) -> &'static str {
 }
 
 /// The photo's destinations offered again: those it has not gone to, the
-/// e-mail always (to someone else). The profile's post comes once the
-/// photo is uploaded to the inventory, in the upload's place (the human's
-/// choice: upload first, then post).
+/// e-mail always (to someone else). The profile picture comes once the
+/// photo is uploaded to the inventory, whose texture it uses, in the
+/// upload's place.
 fn destinations(photo: &Photo) -> Vec<Destination> {
     let mut out = Vec::new();
     if photo.on_disk().is_none() {
@@ -331,7 +331,7 @@ fn send_button(d: Destination) -> (&'static str, &'static str) {
     match d {
         Destination::Disk => ("device-floppy-filled", aurora_i18n::tr!("photo-reel-save")),
         Destination::Inventory => ("briefcase-filled", aurora_i18n::tr!("photo-reel-upload")),
-        Destination::Profile => ("user-filled", aurora_i18n::tr!("photo-reel-post")),
+        Destination::Profile => ("user-filled", aurora_i18n::tr!("photo-reel-apply")),
         Destination::Email => ("mail-filled", aurora_i18n::tr!("photo-reel-email")),
     }
 }
@@ -777,10 +777,10 @@ mod tests {
 
     #[test]
     fn offered_where_it_has_not_gone() {
-        // not uploaded: no post to the profile yet
+        // not uploaded: no texture for the profile picture yet
         let fresh = [Destination::Disk, Destination::Inventory, Destination::Email];
         assert_eq!(destinations(&photo(vec![])), fresh);
-        // uploaded: the post in the upload's place
+        // uploaded: the profile picture in the upload's place
         let uploaded = photo(vec![Place::Disk("a.png".into()), Place::Inventory(Uuid::nil())]);
         assert_eq!(destinations(&uploaded), [Destination::Profile, Destination::Email]);
         let sent = photo(vec![

@@ -61,6 +61,8 @@ pub(super) struct ReelState {
     pub pending: Option<(u64, Pixels)>,
     /// The photo the e-mail form of the quick view is for.
     pub mail: Option<u64>,
+    /// The photo the prompt to make it our profile picture is for.
+    pub apply: Option<u64>,
     /// The quick view was opened in photo mode (it closes with it), not
     /// from the toolbar's Photo roll without it.
     pub in_photo_mode: bool,
@@ -89,6 +91,7 @@ impl Default for ReelState {
             holding: None,
             pending: None,
             mail: None,
+            apply: None,
             in_photo_mode: false,
             card: None,
             demo: None,
@@ -348,7 +351,7 @@ impl App {
             out.push(Destination::Inventory);
         }
         let profile = self.photo_profile_view(window);
-        if profile.connected && profile.ready {
+        if profile.connected {
             out.push(Destination::Profile);
         }
         if self.photo_email_view(window).available {
@@ -368,7 +371,10 @@ impl App {
         let island = self.settings.system_island;
         let time = move |t: i64| crate::ui::bars::clock::time_of(island, t);
         let mut quick = std::mem::take(&mut self.snapshots.reel.quick);
-        quick.blocked = self.snapshots.reel.mail.is_some() || self.snapshots.confirm.is_some() || self.snapshots.short.is_some();
+        quick.blocked = self.snapshots.reel.mail.is_some()
+            || self.snapshots.reel.apply.is_some()
+            || self.snapshots.confirm.is_some()
+            || self.snapshots.short.is_some();
         let mut out = Vec::new();
         quick.show(ctx, p, &self.snapshots.reel.view(&can_send, &time), &mut out);
         self.snapshots.reel.quick = quick;
@@ -381,6 +387,7 @@ impl App {
             self.photo_action(a, renderer);
         }
         self.photo_reel_mail_form(ctx, p, window);
+        self.photo_reel_apply_form(ctx, p);
     }
 
     /// The toolbar's Photo roll: the quick view on the newest photo shown
@@ -391,6 +398,7 @@ impl App {
         if r.quick.is_open() {
             r.quick.close();
             r.mail = None;
+            r.apply = None;
             return;
         }
         let Some(id) = r.view(&[], &|_| String::new()).photos.first().map(|p| p.id) else {
@@ -400,14 +408,14 @@ impl App {
         r.in_photo_mode = self.panels.snapshot;
     }
 
-    /// Our profile on its feed, where the photos posted show; the quick
-    /// view closed (it covers the windows) and photo mode left, the reel
-    /// kept.
+    /// Our profile on its main tab, where its picture shows; the quick view
+    /// closed (it covers the windows) and photo mode left, the reel kept.
     pub(super) fn photo_reel_action_show_profile(&mut self) {
         self.snapshots.reel.quick.close();
         self.snapshots.reel.mail = None;
+        self.snapshots.reel.apply = None;
         self.panels.snapshot = false;
-        self.profile_ui.open_feed(&mut self.world);
+        self.profile_ui.open_main(&mut self.world);
     }
 
     /// What the reel's stack or quick view asks.
@@ -420,9 +428,12 @@ impl App {
             ReelAction::Close => {
                 self.snapshots.reel.quick.close();
                 self.snapshots.reel.mail = None;
+                self.snapshots.reel.apply = None;
             }
             // an e-mail asks its recipients first, over the quick view
             ReelAction::Send(id, Destination::Email) => self.snapshots.reel.mail = Some(id),
+            // the profile picture is accepted first
+            ReelAction::Send(id, Destination::Profile) => self.snapshots.reel.apply = Some(id),
             ReelAction::Send(id, destination) => self.photo_reel_send(id, destination, renderer.size()),
             ReelAction::Reveal(id) => {
                 if let Some(path) = self.snapshots.reel.reel.get(id).and_then(|p| p.on_disk()) {
@@ -435,6 +446,7 @@ impl App {
                     self.snapshots.reel.quick.close();
                     // photo mode left too: the inventory takes over
                     self.snapshots.reel.mail = None;
+                    self.snapshots.reel.apply = None;
                     self.panels.snapshot = false;
                     self.panels.inventory = true;
                     self.inventory_ui.show_original(&self.world.inventory, item);
@@ -503,9 +515,9 @@ impl App {
         let before = self.snapshots.reel.held.replace(id);
         match destination {
             Destination::Disk => self.photo_save_pixels((w, h), rgba, cutout),
-            Destination::Profile => self.photo_post((w, h), rgba, cutout),
             Destination::Email => self.photo_postcard((w, h), rgba, cutout),
-            Destination::Inventory => {}
+            // (the inventory: above; the profile takes the uploaded item)
+            Destination::Inventory | Destination::Profile => {}
         }
         self.snapshots.reel.held = before;
     }
@@ -528,6 +540,92 @@ impl App {
         true
     }
 
+    /// "Use this photo as your profile picture?" over the quick view, for a
+    /// photo uploaded to the inventory: accepted, its texture becomes our
+    /// profile's picture (LLPanelProfileSecondLife::onCommitProfileImage,
+    /// sl_image_id); a refusal of the server is said by ProfileSaveFailed.
+    fn photo_reel_apply_form(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        let Some(id) = self.snapshots.reel.apply else {
+            return;
+        };
+        let modal = crate::ui::widgets::Modal::new(egui::Id::unique("photo_reel_apply")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("photo-reel-apply-title"))
+                    .strong()
+                    .size(15.0)
+                    .color(p.ink),
+            );
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(egui::RichText::new(aurora_i18n::tr!("photo-reel-apply-text")).color(p.ink)).wrap());
+            ui.add_space(10.0);
+            crate::ui::widgets::dialog_buttons(
+                ui,
+                p,
+                &[
+                    crate::ui::widgets::DialogButton {
+                        icon: "",
+                        label: aurora_i18n::tr!("common-cancel"),
+                        kind: crate::ui::widgets::ActionKind::Flat,
+                        enabled: true,
+                    },
+                    crate::ui::widgets::DialogButton {
+                        icon: "user-filled",
+                        label: aurora_i18n::tr!("photo-reel-apply-ok"),
+                        kind: crate::ui::widgets::ActionKind::Primary,
+                        enabled: true,
+                    },
+                ],
+                32.0,
+            )
+        });
+        // (over the quick view, drawn before it)
+        ctx.move_to_top(modal.backdrop_response.layer_id);
+        ctx.move_to_top(modal.response.layer_id);
+        match modal.inner {
+            Some(1) => {
+                self.snapshots.reel.apply = None;
+                self.photo_reel_apply(id);
+            }
+            Some(_) => self.snapshots.reel.apply = None,
+            None if modal.should_close() => self.snapshots.reel.apply = None,
+            None => {}
+        }
+    }
+
+    /// The photo's uploaded texture becomes our profile picture, and our
+    /// profile shows it.
+    pub(super) fn photo_reel_apply(&mut self, id: u64) {
+        let asset = self
+            .snapshots
+            .reel
+            .reel
+            .get(id)
+            .and_then(|photo| photo.item())
+            .and_then(|item| self.world.inventory.items.get(&item))
+            .map(|item| item.asset_id)
+            .filter(|asset| !asset.is_nil());
+        let Some(asset) = asset else {
+            log::warn!("photo reel: photo {id} has no uploaded texture to apply");
+            self.photo_reel_say(aurora_i18n::tr!("photo-reel-apply-failed").to_owned(), true);
+            return;
+        };
+        log::info!("photo reel: photo {id} applied as the profile picture");
+        // (the demo's upload keeps no pixels for the grid to send back)
+        if self.demo
+            && let Some(thumb) = self.snapshots.reel.thumbs.get(&id)
+        {
+            self.avatar_pic_images.insert(asset, thumb.clone());
+        }
+        let mut data = aurora_llsd::Llsd::new_map();
+        data.insert("sl_image_id", asset);
+        let me = self.world.agent_id;
+        let command = self.world.save_profile(me, data);
+        self.send(command);
+        self.snapshots.reel.reel.sent(id, Place::Profile);
+        self.photo_reel_action_show_profile();
+    }
+
     /// The postcard's form over the quick view, for a photo of the reel:
     /// the photo window's own fields (kept between them), sent with the
     /// recipients checked (PromptRecipientEmail), or cancelled.
@@ -537,6 +635,7 @@ impl App {
         };
         if self.snapshots.reel.reel.get(id).is_none() {
             self.snapshots.reel.mail = None;
+            self.snapshots.reel.apply = None;
             return;
         }
         let mail = self.photo_email_view(window);
@@ -590,6 +689,7 @@ impl App {
         match answer {
             Some(true) => {
                 self.snapshots.reel.mail = None;
+                self.snapshots.reel.apply = None;
                 self.photo_reel_send(id, Destination::Email, window);
             }
             Some(false) => self.snapshots.reel.mail = None,
@@ -665,6 +765,7 @@ impl App {
         r.sending = None;
         r.pending = None;
         r.mail = None;
+        r.apply = None;
         r.holding = None;
         r.loading.clear();
         // (dropped: its folder is deleted)

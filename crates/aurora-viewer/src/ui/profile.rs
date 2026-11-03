@@ -395,14 +395,21 @@ impl ProfileUi {
         }
     }
 
-    /// Our profile on its Feed tab, raised: where a photo just posted to the
-    /// profile feed shows.
-    pub fn open_feed(&mut self, world: &mut World) {
+    /// Our profile on its main tab, raised, where the picture just applied
+    /// shows. No reload, unlike `open`: its answer could carry the picture
+    /// from before the save, which the Legacy Viewer only asks again once
+    /// saved (onCommitProfileImage's callback).
+    pub fn open_main(&mut self, world: &mut World) {
         let me = world.agent_id;
-        self.open(world, me);
-        if let Some(w) = self.windows.iter_mut().find(|w| w.id == me) {
-            w.tab = TAB_FEED;
-            w.raise = true;
+        world.profiles.want(me);
+        world.social.want_name(me);
+        match self.windows.iter_mut().find(|w| w.id == me) {
+            Some(w) => {
+                w.open = true;
+                w.raise = true;
+                w.tab = TAB_SL;
+            }
+            None => self.windows.push(Window::new(me)),
         }
     }
 
