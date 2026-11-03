@@ -1,6 +1,6 @@
 //! The result tree combines real inventory ancestry with virtual destination paths.
 use super::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 pub(super) struct Node {
     pub name: String,
@@ -10,6 +10,53 @@ pub(super) struct Node {
 pub(super) struct Preview {
     pub nodes: BTreeMap<Vec<String>, Node>,
     pub files: BTreeMap<Vec<String>, Vec<usize>>,
+}
+
+impl Preview {
+    pub(super) fn ordered_rows(&self, collapsed: &HashSet<Vec<String>>) -> Vec<(Vec<String>, Option<usize>)> {
+        fn append(
+            preview: &Preview,
+            parent: &[String],
+            collapsed: &HashSet<Vec<String>>,
+            rows: &mut Vec<(Vec<String>, Option<usize>)>,
+        ) {
+            let mut children: Vec<_> = preview
+                .nodes
+                .keys()
+                .filter(|path| path.len() == parent.len() + 1 && path.starts_with(parent))
+                .collect();
+            children.sort_by(|left, right| {
+                crate::imports::folders::explorer_name_cmp(&preview.nodes[*left].name, &preview.nodes[*right].name)
+                    .then_with(|| left.cmp(right))
+            });
+            for path in children {
+                let path = path.clone();
+                rows.push((path.clone(), None));
+                if collapsed.contains(&path) {
+                    continue;
+                }
+                append(preview, &path, collapsed, rows);
+                rows.extend(
+                    preview
+                        .files
+                        .get(&path)
+                        .into_iter()
+                        .flatten()
+                        .map(|index| (path.clone(), Some(*index))),
+                );
+            }
+        }
+
+        let mut rows = self
+            .files
+            .get(&Vec::new())
+            .into_iter()
+            .flatten()
+            .map(|index| (Vec::new(), Some(*index)))
+            .collect();
+        append(self, &[], collapsed, &mut rows);
+        rows
+    }
 }
 
 pub(super) fn build(ctx: &egui::Context, imports: &Imports, world: &crate::world::World) -> Preview {
@@ -67,6 +114,39 @@ pub(super) fn build(ctx: &egui::Context, imports: &Imports, world: &crate::world
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_orders_sibling_folders_naturally_before_files() {
+        let mut preview = Preview::default();
+        for name in ["Set10", "Zeta", "alpha", "Set2"] {
+            preview.nodes.insert(
+                vec![name.into()],
+                Node {
+                    name: name.into(),
+                    edit: None,
+                },
+            );
+        }
+        preview.nodes.insert(
+            vec!["Set2".into(), "Nested".into()],
+            Node {
+                name: "Nested".into(),
+                edit: None,
+            },
+        );
+        preview.files.insert(Vec::new(), vec![9]);
+        preview.files.insert(vec!["Set2".into()], vec![2]);
+        preview.files.insert(vec!["Set2".into(), "Nested".into()], vec![1]);
+
+        let rows = preview.ordered_rows(&HashSet::new());
+        let ordered: Vec<_> = rows
+            .iter()
+            .map(|(path, file)| {
+                file.map_or_else(|| path.join("/"), |index| format!("file{index}"))
+            })
+            .collect();
+        assert_eq!(ordered, ["file9", "Set2", "Set2/Nested", "file1", "file2", "Set10", "alpha", "Zeta"]);
+    }
 
     #[test]
     fn preview_follows_real_uuid_ancestry_and_shared_routing_instead_of_the_source_tree() {
