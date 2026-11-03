@@ -1,5 +1,16 @@
 # Aurora Viewer architecture
 
+`world/outfit_backup.rs` defines versioned, pretty-printed JSON outfit recipes:
+inventory item UUIDs, clothing link descriptions (layer order), item types and
+attachment points, without assets or permissions. `ui/appearance/json.rs` shares
+native cross-platform file dialogs with the other exports and runs bounded reads,
+parsing and atomic writes on a worker. Import checks missing originals through
+the existing inventory reader, reports unavailable items/attachments and asks
+for an editable name and explicit partial-import consent. The ordinary
+`appearance::Action::ImportJson` creates a new saved outfit and updates the COF
+through acknowledged inventory mutations, retaining required current body parts
+when absent and the existing attachment limits and RLVa command guards.
+
 `aurora-render/src/vram.rs` samples the driver's memory budget on the
 `aurora-vram` worker every 250 ms. Frame, photo and diagnostic paths only
 copy the last complete reading; neither reads nor shutdown wait for a stuck
@@ -2507,6 +2518,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/appearance/folders.rs`, `world/outfit_folders.rs` | Folders of My Outfits grouping outfits (#1002): the Legacy subfolder rules (plain folders, old-style outfits, four levels), the outfit tree in list or gallery order with the filter, the folders kept loaded; group rows and gallery sections, their menu, Move to folder, New / Rename / Delete dialogs, all sent as inventory mutations (moves as MoveInventoryFolder). Move destinations scroll within the viewport with New folder pinned below; inventory outfit/group drops share these move rules and retain inventory protection checks (#1485). |
 | `world/night_sky.rs`, `demo_night_sky.rs`, `aurora-render/src/stars.rs` | The night sky (Preferences › Graphics › Environment, "Night sky"): `night_sky.rs` turns the star catalogue into the region's sky each frame (the real sky seen from the latitude of a preset city or a custom one, its hour from the region's sun and its season from today's date, with the stars' brightness gain, or the Legacy Viewer's slow turn about the vertical); `stars.rs` decodes `assets/stars/stars.bin` (HYG v4.4, CC BY-SA 4.0), makes the Legacy Viewer's 1,000 random stars and sorts both into the cube-map cells of the frame's storage buffer 24; `demo_night_sky.rs` is `AURORA_DEMO_NIGHT_SKY` (the stars at midnight, the camera looking at the sky) |
 | `world/outfit.rs`, `aurora-net/src/session/attach_queue.rs`, `demo_outfit_restore.rs` | Outfit restore at login (LLAppearanceMgr::updateAppearanceFromCOF): COF and items fetched, the region's own restore waited for until it is quiet, the other objects requested, those the region takes off asked for again with their COF link kept, one retry at 30 s; objects a COF change links before their items are known worn once fetched; attachment requests leave one at a time, a limited number waiting for their object (eight at first, more as objects arrive, half after a simulator refusal, which also pauses the queue) (LLAttachmentsMgr::requestAttachments); `AURORA_DEMO_OUTFIT_RESTORE` |
+| `ui/appearance/json.rs`, `world/outfit_backup.rs` | Outfit backup to JSON (#2115): Export to JSON and Import from JSON in the Appearance gear menu; native file dialogs, bounded reads, parsing and atomic writes on a worker; versioned recipe of inventory references (item UUIDs, clothing layer order in the link descriptions cut to the server's 127 bytes, gestures, attachment points), no asset copies; import confirmation with an editable name, missing originals fetched then listed, partial import only on an explicit choice, an empty or fully unavailable backup refused; the new outfit is created and worn through `appearance::Action::ImportJson`, keeping the current body parts the backup lacks |
 | `ui/appearance/layers.rs` | Worn clothing layers in the outfit editor: listed furthest from the body first within each wearable type, arrows hidden past either end, and the drag of a layer within its type to a new place (insertion marker, edge scrolling), sent as `Action::PlaceLayer` and written in the COF links' `@<type * 100 + index>` descriptions |
 | `ui/appearance/selection.rs` | Shared gallery/list outfit selection in display order: Ctrl/Cmd toggles, Shift ranges, stable UUID anchors, right-click preservation and pruning of hidden or deleted outfits |
 | `ui/appearance/clipboard.rs`, `world/outfit_paste.rs` | Ctrl+C / Ctrl+X / Ctrl+V in Appearance on the inventory's clipboard (outfits, items of an outfit, Worn, the outfit editor; links copied, not originals), and the outfit branches of the Legacy paste shared with the inventory: items linked into an outfit (a cut link of another outfit moves), worn when pasted into the Current Outfit, folders made outfits or groups in My Outfits, cut outfits and groups moved |

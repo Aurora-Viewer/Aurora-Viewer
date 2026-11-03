@@ -5241,6 +5241,28 @@ ui-options-cascaded-shadow-resolution-and-distance = Résolution et distance des
 cmdline-dice-total-result-for-d = { "Résultat total pour " }{ $dice }d{ $faces }{ $modifier_text }{ ": " }{ $result }.
 ui-options-restore = Rétablir
 ui-appearance-restore-saved-outfit = Rétablir la tenue enregistrée
+outfit-json-export = Exporter en JSON
+outfit-json-import = Importer depuis JSON
+outfit-json-title = Sauvegarde de tenue
+outfit-json-file-type = Tenue JSON (*.json)
+outfit-json-invalid = Ce fichier n'est pas une sauvegarde de tenue prise en charge, ou il est invalide ou trop volumineux.
+outfit-json-failed = Impossible de lire ou d'écrire la sauvegarde de tenue. Veuillez réessayer.
+outfit-json-saved = Tenue exportée vers { $file }
+outfit-json-confirm = Voulez-vous créer et porter une nouvelle tenue appelée « { $name } » ? Vous pouvez la renommer ci-dessous.
+outfit-json-name = Nom de la tenue
+outfit-json-references-only = Ce fichier contient des références d'inventaire, pas des copies des ressources. Les éléments doivent toujours être disponibles dans votre inventaire.
+outfit-json-checking = Vérification des éléments de la tenue dans votre inventaire…
+outfit-json-missing = { $count ->
+    [one] Un élément est introuvable ou n'a pas pu être vérifié dans votre inventaire.
+   *[other] { $count } éléments sont introuvables ou n'ont pas pu être vérifiés dans votre inventaire.
+    }
+    Objets attachés concernés : { $attachments }.
+outfit-json-partial-help = Vous pouvez importer les éléments disponibles comme tenue partielle, ou annuler. Les parties du corps manquantes conservent celles actuellement portées.
+outfit-json-none-found = Aucun élément sauvegardé n'est disponible. L'importation est indisponible.
+outfit-json-empty = Cette sauvegarde ne contient aucun élément de tenue. L'importation est indisponible.
+outfit-json-missing-changed = Certains éléments de la tenue sont indisponibles. Relancez l'importation pour les examiner et choisir une importation partielle.
+outfit-json-create-wear = Créer et porter
+outfit-json-import-partial = Importer la tenue partielle
 common-unmute = Rétablir le son
 ui-options-restore-default-shortcuts = Rétablir les raccourcis par défaut
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Rétablit l'environnement local (ciel, eau, cycle du jour choisis) à la prochaine connexion

@@ -64,6 +64,7 @@ pub mod object_im_filter;
 pub mod objects;
 pub mod open_ims;
 pub mod outfit;
+pub mod outfit_backup;
 pub mod outfit_folders;
 pub mod outfit_paste;
 pub mod parcel_visibility;

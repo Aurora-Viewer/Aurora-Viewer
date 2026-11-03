@@ -8058,7 +8058,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
 — opens Appearance with four synthetic outfits:
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
@@ -8169,6 +8169,14 @@ gallery's double-click continues to open the outfit's contents.
   Lipstick under Star from frame 701 and drops it at frame 760 (the list
   then reads Freckles, Star, Lipstick); `layers-hold` holds it over its
   landing place, for a capture of the marker.
+- `json-import`: the Import from JSON confirmation with the synthetic
+  current outfit and an editable name. `json-partial` adds one unavailable
+  attachment: check its missing count and name, Import partial outfit, and
+  Cancel. The Appearance gear menu places Export to JSON and Import from
+  JSON below Restore saved outfit. Export backs up the selected saved outfit
+  in the gallery/list, otherwise the current outfit, including unsaved
+  changes. JSON restores inventory references, not assets: the same
+  inventory items must still be available to the account.
 
 `wearables`, `wearables-outfits` and `wearables-edit` show all 17 system
 wearable types in Worn, My Outfits and the editor respectively. Each type
