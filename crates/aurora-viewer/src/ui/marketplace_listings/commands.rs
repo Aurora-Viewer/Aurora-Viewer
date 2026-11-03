@@ -109,13 +109,18 @@ impl ListingsUi {
             }
         };
         let active = in_active_folder(&self.data, inv, root, to) || (!copy && ids.iter().any(|id| self.affects_active(inv, root, *id)));
-        if !confirmed && (active || ids.iter().any(|id| mp::depth(inv, root, *id) < 0)) {
+        let prompt = if active {
+            Some(Prompt::ActiveChange)
+        } else {
+            ids.iter().any(|id| mp::depth(inv, root, *id) < 0).then_some(Prompt::MoveInventory)
+        };
+        if let Some(prompt) = prompt.filter(|prompt| !confirmed && self.asks(*prompt)) {
             self.open = true;
             self.confirm = Some(Confirm::Paste {
                 to,
                 ids: ids.to_vec(),
                 copy,
-                active,
+                prompt,
             });
         } else {
             actions.push(Action::Paste { change, cut: !copy });
@@ -133,7 +138,7 @@ impl ListingsUi {
     /// dragItemIntoFolder and pasteFromClipboard (llinventorybridge.cpp), in
     /// their order. A listed listing and its version folder never get here:
     /// they cannot move or go to the Trash (`marketplace::Holds`).
-    pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool) -> Option<Mutation> {
+    pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool, drag: bool) -> Option<Mutation> {
         let Some(root) = mp::root(inv) else { return Some(change) };
         if change.operations.iter().any(|operation| {
             let id = match operation {
@@ -170,15 +175,19 @@ impl ListingsUi {
             || into.iter().any(|id| in_active_folder(&self.data, inv, root, *id))
         {
             Some(Prompt::ActiveChange)
-        } else if !cut && moved.iter().any(|id| self.data.is_version_folder(*id)) {
-            // a drag only: the paste of a cut version folder asks nothing
+        } else if drag && moved.iter().any(|id| self.data.is_version_folder(*id)) {
+            // a drag only: Delete and the paste of a cut version folder ask nothing
             Some(Prompt::ClearVersion)
         } else if moved.iter().chain(&removed).any(|id| self.data.is_listed(*id)) {
             Some(Prompt::ListingCutOrDelete)
+        } else if drag && moved.iter().any(|id| mp::depth(inv, root, *id) < 0) && into.iter().any(|id| mp::depth(inv, root, *id) >= 0) {
+            // a drag in from the inventory; "Move to Marketplace Listings"
+            // asks nothing
+            Some(Prompt::MoveInventory)
         } else {
             None
         };
-        match prompt {
+        match prompt.filter(|prompt| self.asks(*prompt)) {
             Some(prompt) => {
                 self.open = true;
                 self.confirm = Some(Confirm::Inventory { change, cut, prompt });
