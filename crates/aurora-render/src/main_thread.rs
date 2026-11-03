@@ -270,15 +270,12 @@ impl Renderer {
     /// The surface is made from the window's raw handles and does not keep
     /// the window alive: after a device loss the surface is abandoned, never
     /// dropped (`Backend::drop`), and an `Arc` of the window inside it kept
-    /// the old window open behind a new one.
-    ///
-    /// # Safety
-    ///
-    /// `window` must outlive the renderer: drop the renderer first (its
-    /// swapchain is torn down through the window's handles).
-    pub unsafe fn new<W>(window: &W, width: u32, height: u32, vsync: bool, gpu: &str) -> Result<Renderer, RenderError>
+    /// the old window open behind a new one. The renderer's host keeps
+    /// `window` instead, dropped after the backend, or kept by a render
+    /// thread left behind in the driver (`render_thread::KeepAlive`).
+    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str) -> Result<Renderer, RenderError>
     where
-        W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle,
+        W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
     {
         crate::start_progress::enter(crate::start_progress::Phase::GpuDevice);
         let desc = || {
@@ -318,12 +315,13 @@ impl Renderer {
             instance = wgpu::Instance::new(desc());
             adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
         }
-        // SAFETY: the caller keeps the window alive for as long as the
-        // renderer (this function's contract); an abandoned surface is never
-        // used again once its device is lost.
+        // SAFETY: `window` goes to the host with the backend that owns the
+        // surface and drops after it (`Host`'s field order and join), or
+        // stays with a render thread left behind; an abandoned surface is
+        // never used again once its device is lost.
         let surface = unsafe {
             let target =
-                wgpu::SurfaceTargetUnsafe::from_display_and_window(window, window).map_err(|e| RenderError::Surface(e.to_string()))?;
+                wgpu::SurfaceTargetUnsafe::from_display_and_window(&*window, &*window).map_err(|e| RenderError::Surface(e.to_string()))?;
             instance.create_surface_unsafe(target)
         }
         .map_err(|e| RenderError::Surface(e.to_string()))?;
@@ -537,7 +535,11 @@ impl Renderer {
         let msaa_supported = backend.msaa_supported().to_vec();
         let can_capture = backend.can_capture();
         let output_format = backend.output_format();
-        let host = Host::new(backend, thread_wanted(std::env::var("AURORA_RENDER_THREAD").ok().as_deref()));
+        let host = Host::new(
+            backend,
+            window,
+            thread_wanted(std::env::var("AURORA_RENDER_THREAD").ok().as_deref()),
+        );
         log::info!(
             "renderer: {}",
             if host.threaded() {
@@ -1298,7 +1300,7 @@ impl Renderer {
         let mut waited = free_wait;
         let mut gone = false;
         match &mut self.host {
-            Host::Inline(backend) => results[0] = Some(Box::new(backend.render(packet))),
+            Host::Inline(backend, _) => results[0] = Some(Box::new(backend.render(packet))),
             Host::Thread { owner, .. } => {
                 match owner.submit(Job::Frame(Box::new(packet))) {
                     Ok(s) => {
@@ -1439,7 +1441,7 @@ impl Renderer {
                 self.gpu_frames.wait_finished(before, t + GPU_WAIT);
             }
             // alone on the device: the wait is this thread's
-            Host::Inline(backend) => backend.finish_frames_before(before + 1, GPU_WAIT),
+            Host::Inline(backend, _) => backend.finish_frames_before(before + 1, GPU_WAIT),
         }
         self.gpu_waited = t.elapsed();
         self.gpu_waited
@@ -1543,7 +1545,7 @@ impl Renderer {
         let mut frame = None;
         let mut gone = false;
         let hit = match &mut self.host {
-            Host::Inline(backend) => backend.pick_world(x, y),
+            Host::Inline(backend, _) => backend.pick_world(x, y),
             Host::Thread { owner, .. } => {
                 match owner.submit(Job::Pick { x, y }) {
                     Ok(s) => {

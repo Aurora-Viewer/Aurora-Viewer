@@ -24,7 +24,9 @@ impl App {
             .with_active(plan.active)
             .with_inner_size(plan.size)
             .with_min_inner_size(winit::dpi::LogicalSize::new(800, 560))
-            .with_fullscreen(plan.fullscreen.clone());
+            .with_fullscreen(plan.fullscreen.clone())
+            // none yet at start (it is decoded in the background)
+            .with_window_icon(self.window_icon.clone());
         if let Some(position) = plan.position {
             attrs = attrs.with_position(position);
         }
@@ -52,9 +54,7 @@ impl App {
         if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
             return Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()));
         }
-        // SAFETY: the renderer lives in `Gfx` beside this window and is
-        // dropped before it (field order of `Gfx`).
-        let renderer = unsafe { Renderer::new(&**window, size.width, size.height, self.settings.vsync, &gpu) }?;
+        let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)?;
         log::info!(
             "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
             renderer.info.name,
@@ -122,7 +122,9 @@ pub(super) fn loss_step(history: &mut std::collections::VecDeque<Instant>, now: 
 /// `AURORA_GPU_RECOVERY=1`: recover from a device loss instead of closing
 /// (work in progress, off by default until it is complete).
 pub(super) fn enabled() -> bool {
-    std::env::var("AURORA_GPU_RECOVERY").is_ok_and(|v| v == "1")
+    // read every frame: once per run
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_GPU_RECOVERY").is_ok_and(|v| v == "1"))
 }
 
 impl App {

@@ -1578,12 +1578,6 @@ impl TextureStreamer {
         true
     }
 
-    /// The slot of a texture met for the first time. With the table full,
-    /// the textures nothing uses any more give theirs back at once, oldest
-    /// release first, instead of after `evict_after`: on arrival in a region
-    /// they are those of the region just left, and a texture in use is
-    /// never the one that goes without. [`NO_SLOT`], counted for the log,
-    /// when every slot holds a texture in use.
     /// The GPU device is lost (app/gpu_recovery.rs): the slots of the old
     /// renderer are gone. Every texture keeps its bytes, its cache state and
     /// its users, gets a slot of `new` and is uploaded again as it was: from
@@ -1636,6 +1630,12 @@ impl TextureStreamer {
         }
     }
 
+    /// The slot of a texture met for the first time. With the table full,
+    /// the textures nothing uses any more give theirs back at once, oldest
+    /// release first, instead of after `evict_after`: on arrival in a region
+    /// they are those of the region just left, and a texture in use is
+    /// never the one that goes without. [`NO_SLOT`], counted for the log,
+    /// when every slot holds a texture in use.
     fn new_slot(&mut self, table: &mut impl SlotTable) -> u32 {
         if let Some(slot) = table.placeholder() {
             return slot;

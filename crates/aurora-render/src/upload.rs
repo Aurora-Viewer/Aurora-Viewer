@@ -710,11 +710,6 @@ impl FrameUploads {
 mod tests {
     use super::*;
 
-    /// GPU round trip of the staging pool: regions staged from several
-    /// threads at once, copied into a buffer and read back, over enough
-    /// rounds that every chunk is closed, unmapped, recycled and written
-    /// again. Needs a GPU, so not run by check.ps1:
-    /// `cargo test -p aurora-render staging_round_trip -- --ignored`.
     /// After a device loss the viewer makes a new pool: what a job staged in
     /// the old one is told apart (GPU test).
     #[test]
@@ -733,6 +728,11 @@ mod tests {
         assert!(!staged.is_from(&new));
     }
 
+    /// GPU round trip of the staging pool: regions staged from several
+    /// threads at once, copied into a buffer and read back, over enough
+    /// rounds that every chunk is closed, unmapped, recycled and written
+    /// again. Needs a GPU, so not run by check.ps1:
+    /// `cargo test -p aurora-render staging_round_trip -- --ignored`.
     #[test]
     #[ignore]
     fn staging_round_trip_on_the_gpu() {

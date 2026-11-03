@@ -21,10 +21,19 @@ thread_local! {
     static GUARDED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// True while [`poll_guarded`] waits on this thread: a panic now is wgpu's
-/// answer to a device lost during the wait, caught there.
+/// True while [`poll_guarded`] waits on this thread: a panic now whose
+/// message is the loss ([`is_loss_panic`]) is wgpu's answer to a device
+/// lost during the wait, caught there.
 pub fn in_guarded_poll() -> bool {
     GUARDED.with(Cell::get)
+}
+
+/// A panic message of wgpu's for a lost device ("Error in Device::poll:
+/// Parent device is lost", wgpu-core's `DeviceError::Lost`); any other
+/// panic during a guarded wait is a bug, reported as one.
+pub fn is_loss_panic(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("device is lost") || message.contains("device lost")
 }
 
 /// `device.poll`, `None` when wgpu found the device lost during it
@@ -39,8 +48,8 @@ pub fn poll_guarded(device: &wgpu::Device, poll: wgpu::PollType) -> Option<Resul
     result
 }
 
-/// Runs `wait`, its panic taken as a lost device (`None`), the flag the
-/// panic hook reads set meanwhile.
+/// Runs `wait`, its panic for a lost device taken as the loss (`None`),
+/// the flag the panic hook reads set meanwhile; another panic goes on.
 fn guarded<T>(wait: impl FnOnce() -> T) -> Option<T> {
     struct Reset;
     impl Drop for Reset {
@@ -50,7 +59,20 @@ fn guarded<T>(wait: impl FnOnce() -> T) -> Option<T> {
     }
     GUARDED.with(|g| g.set(true));
     let _reset = Reset;
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(wait)).ok()
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(wait)) {
+        Ok(done) => Some(done),
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied());
+            if message.is_some_and(is_loss_panic) {
+                None
+            } else {
+                std::panic::resume_unwind(payload)
+            }
+        }
+    }
 }
 
 /// Shared between the device-lost callback, the main thread and the render
@@ -216,6 +238,13 @@ mod tests {
         assert!(SEEN.load(Ordering::Relaxed), "the hook knew the panic was the guarded wait's");
         assert!(!in_guarded_poll(), "the guard is reset after the panic");
         assert_eq!(guarded(|| 7), Some(7));
+        assert!(!in_guarded_poll());
+        // any other panic is not the loss: it goes on
+        let before = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let bug = std::panic::catch_unwind(|| guarded(|| -> u32 { panic!("index out of bounds") }));
+        std::panic::set_hook(before);
+        assert!(bug.is_err());
         assert!(!in_guarded_poll());
     }
 

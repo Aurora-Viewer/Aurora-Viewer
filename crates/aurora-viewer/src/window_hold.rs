@@ -66,7 +66,8 @@ pub fn paces(period: Option<Duration>) -> bool {
     }
 }
 
-/// Called once, on the thread that created the window.
+/// Called for every main window (at start and after a GPU recovery), on
+/// the thread that created it.
 pub fn install(window: &Window) {
     #[cfg(windows)]
     if std::env::var("AURORA_WINDOW_HOLD").as_deref() != Ok("0") {
@@ -201,6 +202,11 @@ mod imp {
         unsafe {
             let hook: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT = hook;
             let previous = SetWindowLongPtrW(hwnd as HWND, GWLP_WNDPROC, hook as usize as isize);
+            if previous == 0 {
+                // refused: the window keeps its own procedure
+                log::warn!("window hold: the window procedure could not be replaced, left without the hold");
+                return;
+            }
             let kept = PREVIOUS.load(Ordering::Acquire);
             if kept != 0 && kept != previous {
                 SetWindowLongPtrW(hwnd as HWND, GWLP_WNDPROC, previous);

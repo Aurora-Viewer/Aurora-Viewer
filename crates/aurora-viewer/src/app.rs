@@ -137,9 +137,9 @@ enum Screen {
 }
 
 struct Gfx {
-    /// Before the window: fields drop in this order, and the renderer's
-    /// surface, made from the window's raw handles, must go first
-    /// (`Renderer::new`'s safety contract).
+    /// Before the window: the renderer's surface, made from the window's
+    /// raw handles, goes first (the renderer also keeps the window until
+    /// then, `Renderer::new`).
     renderer: Renderer,
     egui_state: egui_winit::State,
     window: Arc<Window>,
@@ -255,6 +255,8 @@ pub struct App {
     egui_ctx: egui::Context,
     logo: Option<egui::TextureHandle>,
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
+    /// The window's icon, kept for a window a GPU recovery opens.
+    window_icon: Option<winit::window::Icon>,
     world: World,
     bridge_runtime: crate::world::bridge::Bridge,
     native_anchor: crate::movement::movelock::Controller,
@@ -1193,6 +1195,7 @@ impl App {
             egui_ctx,
             logo: None,
             logo_rx: Some(rx),
+            window_icon: None,
             world: {
                 let mut w = World::new(lib);
                 w.cache_dir = Some(cache_root);
@@ -8030,10 +8033,13 @@ impl App {
             && let Ok(l) = rx.try_recv()
         {
             self.logo = Some(self.egui_ctx.load_texture("logo", l.ui, egui::TextureOptions::LINEAR));
-            if let (Some(g), Some((rgba, w, h))) = (&self.gfx, l.icon)
+            if let Some((rgba, w, h)) = l.icon
                 && let Ok(icon) = winit::window::Icon::from_rgba(rgba, w, h)
             {
-                g.window.set_window_icon(Some(icon));
+                if let Some(g) = &self.gfx {
+                    g.window.set_window_icon(Some(icon.clone()));
+                }
+                self.window_icon = Some(icon);
             }
             self.logo_rx = None;
         }
@@ -10380,8 +10386,12 @@ impl App {
             // shown once, with the focus (window_show.rs)
             crate::window_show::show(&gfx.window, gfx.maximize_on_show);
             log::info!("startup window shown after the first presented frame");
-            // a recovery's old window goes once its successor is on screen
-            self.retired_window = None;
+            // a recovery's old window goes once its successor is on screen;
+            // hidden first, as a render thread left behind in the driver
+            // keeps it (`Renderer::new`)
+            if let Some(old) = self.retired_window.take() {
+                old.set_visible(false);
+            }
             crate::crash::watch_window(&gfx.window);
             crate::crash::demo_freeze();
             crate::crash::demo_thread_death();
@@ -18895,7 +18905,12 @@ impl ApplicationHandler for App {
         self.gfx = None;
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // the window of a lost device, on screen until its successor has
+        // presented: its redraws and sizes are not the new renderer's
+        if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
+            return;
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event

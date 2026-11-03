@@ -293,8 +293,9 @@ pub fn init() {
     .init();
     std::panic::set_hook(Box::new(|info| {
         // wgpu's panic for a device lost during a wait, caught by the
-        // renderer and taken as the loss (aurora-render device_lost.rs)
-        if aurora_render::in_guarded_poll() {
+        // renderer and taken as the loss (aurora-render device_lost.rs);
+        // any other panic there is reported
+        if aurora_render::in_guarded_poll() && info.payload_as_str().is_some_and(aurora_render::is_loss_panic) {
             log::warn!("wgpu: {info}");
             return;
         }
