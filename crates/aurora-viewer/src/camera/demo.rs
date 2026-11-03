@@ -16,6 +16,10 @@
 //! - `drift,x,y[,n]`: the same close-up, then a very slow Ctrl+Alt orbit
 //!   (a fiftieth of a pixel per frame) until frame 1200: edges that drift
 //!   steadily when the picture is exact, for comparing consecutive captures
+//! - `orbit,x,y[,px]`: Alt+click at (x, y) at frame 600, then a Ctrl+Alt
+//!   orbit of `px` pixels per frame (0.5 by default) that never stops, its
+//!   pitch swinging slowly: a camera moving around the scene for as long as
+//!   the run lasts (stability runs of several minutes)
 //! - `zoom-resident`: the People list's Zoom on the nearest standing resident
 //!   at frame 600, who then walks south from 660 to 760 and west until 860:
 //!   the camera keeps facing them all along
@@ -236,6 +240,33 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                     },
                     Step::Log,
                 ]),
+                _ => {}
+            }
+        }
+        "orbit" => {
+            let (Some(x), Some(y)) = (num(1), num(2)) else {
+                return out;
+            };
+            let px = num(3).map_or(0.5, |n| n.clamp(0.01, 20.0));
+            match frame {
+                600 => out.extend([
+                    Step::Cursor(x, y),
+                    Step::Mods {
+                        ctrl: true,
+                        shift: false,
+                        alt: true,
+                    },
+                    Step::Press,
+                    Step::Log,
+                ]),
+                f if f > 600 => {
+                    // around, and slowly up and down (a swing of ±3 s at 120 fps)
+                    let pitch = ((f - 600) as f32 / 120.0).sin() * 0.3 * px;
+                    out.push(Step::Drag(px, pitch));
+                    if f.is_multiple_of(600) {
+                        out.push(Step::Log);
+                    }
+                }
                 _ => {}
             }
         }
