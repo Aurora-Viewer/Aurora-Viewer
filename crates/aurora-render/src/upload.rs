@@ -63,6 +63,8 @@ fn align(v: u64) -> u64 {
 
 struct Chunk {
     buffer: wgpu::Buffer,
+    /// The pool it belongs to ([`StagingPool::id`]).
+    pool: u64,
     /// Jobs writing in this chunk right now (counted at allocation, under
     /// the pool lock, released when their view is dropped).
     writers: AtomicU32,
@@ -101,6 +103,10 @@ type Returned = Arc<(Mutex<Vec<(Arc<Chunk>, bool)>>, Condvar)>;
 
 /// Mapped staging memory shared by the background jobs and the renderer.
 pub struct StagingPool {
+    /// Unique to the pool: data a job staged before the GPU device was lost
+    /// belongs to the old device's pool and is never copied with the new one
+    /// (`Staged::is_from`, the viewer's GPU recovery).
+    id: u64,
     state: Mutex<PoolState>,
     /// Memory of the pool (bytes) and size of its chunks.
     total: u64,
@@ -123,6 +129,12 @@ pub struct Staged {
 impl Staged {
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Staged in `pool`: false for data of a pool made for a device since
+    /// lost.
+    pub fn is_from(&self, pool: &StagingPool) -> bool {
+        self.chunk.pool == pool.id
     }
 
     /// The data can be copied: its chunk is closed and unmapped.
@@ -156,6 +168,8 @@ impl StagingPool {
 
     /// `small`: a GPU with little memory (integrated, or under 4 GB).
     pub fn new(device: &wgpu::Device, small: bool) -> Arc<Self> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let (count, chunk_bytes) = if small { CHUNKS_SMALL } else { CHUNKS };
         let free = (0..count)
             .map(|_| {
@@ -166,6 +180,7 @@ impl StagingPool {
                         usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
                         mapped_at_creation: true,
                     }),
+                    pool: id,
                     writers: AtomicU32::new(0),
                     staged: AtomicU32::new(0),
                     unmapped: AtomicBool::new(false),
@@ -173,6 +188,7 @@ impl StagingPool {
             })
             .collect();
         Arc::new(StagingPool {
+            id,
             state: Mutex::new(PoolState {
                 open: None,
                 free,
@@ -693,6 +709,24 @@ impl FrameUploads {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// After a device loss the viewer makes a new pool: what a job staged in
+    /// the old one is told apart (GPU test).
+    #[test]
+    #[ignore]
+    fn data_staged_in_another_pool_is_told_apart() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let (old, new) = (StagingPool::new(&device, true), StagingPool::new(&device, true));
+        let staged = old.stage(64, |_| {}).expect("staged");
+        assert!(staged.is_from(&old));
+        assert!(!staged.is_from(&new));
+    }
 
     /// GPU round trip of the staging pool: regions staged from several
     /// threads at once, copied into a buffer and read back, over enough

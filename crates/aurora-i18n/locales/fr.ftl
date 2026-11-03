@@ -1684,6 +1684,9 @@ app-gpu-stall =
     • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 
     Continuer d'attendre ? Oui continue d'attendre ; Non ferme Aurora (vous êtes déconnecté proprement).
+app-gpu-recovered-title = La carte graphique a été réinitialisée
+app-gpu-recovered = Le pilote de la carte graphique a été réinitialisé (une image trop longue à dessiner, sa mémoire vidéo pleine, ou la carte prise par un autre programme). Aurora a rouvert sa fenêtre sur la carte : vous êtes resté connecté, et le monde se recharge dans un instant.
+app-gpu-recovered-safe = Le pilote de la carte graphique a de nouveau été réinitialisé en quelques minutes. Aurora a rouvert sa fenêtre avec les graphismes de secours (le niveau Potato) pour que cela ne se reproduise pas : vous êtes resté connecté. Vos réglages graphiques sont gardés : l'écran de connexion vous les propose à nouveau.
 app-gpu-lost-title = Aurora Viewer : la carte graphique a été perdue
 app-gpu-lost =
     La carte graphique a cessé de fonctionner pour Aurora : son pilote a été réinitialisé (une image trop longue à dessiner, ou sa mémoire vidéo pleine), ou la carte a été retirée ou prise par un autre programme. Plus rien ne peut être affiché : Aurora se ferme quand vous appuyez sur OK (vous êtes déconnecté proprement).

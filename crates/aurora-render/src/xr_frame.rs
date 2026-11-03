@@ -478,8 +478,9 @@ impl Session {
 }
 impl Drop for Session {
     fn drop(&mut self) {
-        // Teardown only: keep runtime-owned images alive until submitted rendering completes.
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        // Teardown only: keep runtime-owned images alive until submitted
+        // rendering completes; a lost device has nothing left to finish.
+        let _ = crate::device_lost::poll_guarded(&self.device, wgpu::PollType::wait_indefinitely());
         self.images.clear();
     }
 }
