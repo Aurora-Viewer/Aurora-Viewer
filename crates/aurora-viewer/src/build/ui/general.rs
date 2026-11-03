@@ -66,11 +66,30 @@ fn allows_export(base: u32, everyone: u32) -> bool {
     base & perm::EXPORT != 0 && everyone & perm::EXPORT != 0
 }
 
+/// The standard textures every viewer has (plywood, blank, transparent):
+/// nobody's work, so they never hold an export back.
+fn standard_texture(id: Uuid) -> bool {
+    use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
+    id.is_nil() || [DEFAULT_TEXTURE, BLANK_TEXTURE, TRANSPARENT_TEXTURE].contains(&id)
+}
+
+/// An inventory item that lets its texture be exported: one that allows it
+/// to everyone (perms_allow_export), or the agent's own upload, Export in
+/// its base and own masks. Deliberate difference: the Legacy Viewer counts
+/// the first alone, and as no viewer gives an upload Everyone's Export, the
+/// box could almost never be ticked; another creator's texture still holds
+/// the export back.
+fn item_lets_export(item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
+    allows_export(item.base_mask, item.everyone_mask)
+        || (item.creator == agent && item.base_mask & perm::EXPORT != 0 && item.owner_mask & perm::EXPORT != 0)
+}
+
 /// Whether the agent may tick Export (LLPanelPermissions::refresh, FS:CR):
 /// its own objects, which it created, with Export in base and own and an
 /// unrestricted next owner; their contents read so far allow export, and
-/// so does one of its inventory items for each face's texture. Every prim
-/// of the linksets is looked at, not only the root as in the Legacy Viewer.
+/// each face's texture is a standard one or has an item of the agent that
+/// lets it be exported (`item_lets_export`). Every prim of the linksets is
+/// looked at, not only the root as in the Legacy Viewer.
 fn export_settable(tool: &BuildTool, world: &World, props: &[ObjectProps]) -> bool {
     let own_work = !props.is_empty()
         && props.iter().all(|x| {
@@ -94,13 +113,13 @@ fn export_settable(tool: &BuildTool, world: &World, props: &[ObjectProps]) -> bo
         .into_iter()
         .filter_map(|i| world.objects.get(i).and_then(|o| o.te.clone()))
         .flat_map(|te| te.faces.iter().map(|f| f.texture).collect::<Vec<_>>())
-        .filter(|id| !id.is_nil())
+        .filter(|id| !standard_texture(*id))
         .collect();
     for item in world.inventory.items.values() {
         if textures.is_empty() {
             break;
         }
-        if allows_export(item.base_mask, item.everyone_mask) {
+        if item_lets_export(item, world.agent_id) {
             textures.remove(&item.asset_id);
         }
     }
@@ -711,6 +730,39 @@ mod tests {
         assert!(allows_export(full, perm::EXPORT));
         assert!(!allows_export(full, perm::COPY), "Everyone's bit decides");
         assert!(!allows_export(perm::UNRESTRICTED, perm::EXPORT), "base without Export");
+    }
+
+    #[test]
+    fn own_uploads_and_standard_textures_let_an_export_through() {
+        use aurora_net::inventory::InvItem;
+        let me = Uuid::from_u128(1);
+        let full = perm::UNRESTRICTED | perm::MOVE | perm::EXPORT;
+        assert!(standard_texture(aurora_prim::te::DEFAULT_TEXTURE), "a new box's plywood");
+        assert!(standard_texture(aurora_prim::te::BLANK_TEXTURE));
+        assert!(!standard_texture(Uuid::from_u128(77)));
+        let upload = InvItem {
+            creator: me,
+            base_mask: full,
+            owner_mask: full,
+            everyone_mask: 0,
+            ..Default::default()
+        };
+        assert!(item_lets_export(&upload, me), "our own upload, Everyone without Export");
+        let bought = InvItem {
+            creator: Uuid::from_u128(2),
+            ..upload.clone()
+        };
+        assert!(!item_lets_export(&bought, me), "another creator's texture holds it back");
+        let shared = InvItem {
+            everyone_mask: perm::EXPORT,
+            ..bought.clone()
+        };
+        assert!(item_lets_export(&shared, me), "unless its creator allows export to everyone");
+        let no_base = InvItem {
+            base_mask: perm::UNRESTRICTED,
+            ..upload
+        };
+        assert!(!item_lets_export(&no_base, me), "our own, but its base has no Export");
     }
 
     #[test]
