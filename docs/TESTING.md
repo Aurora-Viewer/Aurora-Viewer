@@ -9203,7 +9203,7 @@ What the inventory must show with these scenarios:
   the environment as it is. To see which drivers the loader loads:
   `VK_LOADER_DEBUG=driver` in a console.
 - **`AURORA_GPU=<number>|<name>|auto`**: the adapter the renderer opens,
-  over Preferences › Graphics › Fluidity › Graphics card (#894): its number
+  over Preferences › Graphics › Smoothness › Graphics card (#894): its number
   in the `GPU adapter <n>:` lines of the log, or a part of its name in any
   case (`nvidia`, `intel`); `auto` or empty for the automatic choice
   (discrete before integrated, then the most video memory, among the
@@ -9218,7 +9218,7 @@ What the inventory must show with these scenarios:
   on a PC that has a dedicated one, the NVIDIA Control Panel's "Preferred
   graphics processor" for `aurora-viewer.exe` hides it from Vulkan
   (`VK_LAYER_NV_optimus`): the log says so, and Preferences › Graphics ›
-  Fluidity › Graphics card shows a note under its title (the same for a
+  Smoothness › Graphics card shows a note under its title (the same for a
   dedicated card that cannot present). The list of that choice comes from
   the renderer's own list as soon as it is created, so the login screen has
   it too.
