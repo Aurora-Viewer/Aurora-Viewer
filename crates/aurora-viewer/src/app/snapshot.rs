@@ -37,7 +37,7 @@ const PHOTO_WAIT: Duration = Duration::from_secs(30);
 const DEFAULT_TARGET_BYTES: u64 = 1_600_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
-enum Purpose {
+pub(super) enum Purpose {
     Preview,
     /// To a file; Some: the one chosen in "Save as".
     Save(Option<PathBuf>),
@@ -363,6 +363,19 @@ struct DemoInventory {
     confirm: bool,
     /// A balance below the price.
     poor: bool,
+}
+
+impl Snapshots {
+    /// The photo window's line (the reel's outcomes).
+    pub(super) fn reel_message(&mut self, text: String, error: bool) {
+        self.message = Some((text, error));
+    }
+
+    /// The photo window's latest photos read again from the folder (one of
+    /// them deleted).
+    pub(super) fn gallery_reread(&mut self) {
+        self.gallery_folder = None;
+    }
 }
 
 impl Default for Snapshots {
@@ -697,22 +710,8 @@ impl App {
                 self.snapshots.preview = Some(self.egui_ctx.load_texture("photo_preview", image, egui::TextureOptions::LINEAR));
             }
             Purpose::Hold => {
-                let (tx, rx) = crossbeam_channel::bounded(1);
-                let (w, h) = job.size;
-                let rgba = job.pixels.clone();
-                // shown at the screen's size, reduced on a worker
                 let side = renderer.size().0.max(renderer.size().1);
-                std::thread::spawn(move || {
-                    let _ = tx.send(save::downscale(w, h, &rgba, side));
-                });
-                self.snapshots.held_view = Some(rx);
-                self.snapshots.held = Some(Held {
-                    width: w,
-                    height: h,
-                    rgba: job.pixels,
-                    cutout: job.cutout,
-                    texture: None,
-                });
+                self.photo_hold_pixels(job.size, job.pixels, job.cutout, side);
                 self.photo_shutter();
             }
             Purpose::Save(path) => self.photo_save(job.size, job.pixels, path, job.cutout),
@@ -725,8 +724,41 @@ impl App {
     /// The size of the photo for the chosen destination: the disk's
     /// settings, or the inventory's size before it becomes a texture.
     pub(super) fn photo_size(&self, window: (u32, u32)) -> (u32, u32) {
+        self.photo_size_for(self.snapshots.ui.destination, window)
+    }
+
+    /// Hold a photo (the freeze frame, or one of the reel sent again):
+    /// "Take" and the destinations send it; shown at the screen's `side`,
+    /// reduced on a worker.
+    pub(super) fn photo_hold_pixels(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool, side: u32) {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let (w, h) = size;
+        let view = rgba.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(save::downscale(w, h, &view, side));
+        });
+        self.snapshots.held_view = Some(rx);
+        self.snapshots.held = Some(Held {
+            width: w,
+            height: h,
+            rgba,
+            cutout,
+            texture: None,
+        });
+    }
+
+    /// Save pixels to disk now, named and formatted as "Take" would (a
+    /// photo of the reel saved again).
+    pub(super) fn photo_save_pixels(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
+        if !self.photo_busy() {
+            self.photo_save(size, rgba, None, cutout);
+        }
+    }
+
+    /// The size of a photo for `destination` (`photo_size`).
+    pub(super) fn photo_size_for(&self, destination: Destination, window: (u32, u32)) -> (u32, u32) {
         let s = &self.settings.snapshot;
-        match self.snapshots.ui.destination {
+        match destination {
             Destination::Disk => s.size(window),
             Destination::Inventory => inventory::capture_size(s.aspect, s.inventory_size, window),
             Destination::Profile => profile::capture_size(s.aspect, s.profile_size, window),
@@ -763,7 +795,7 @@ impl App {
     }
 
     /// What the window shows of a photo for the profile feed.
-    fn photo_profile_view(&mut self, window: (u32, u32)) -> ProfileView {
+    pub(super) fn photo_profile_view(&self, window: (u32, u32)) -> ProfileView {
         ProfileView {
             connected: self.demo || self.world.login.is_some(),
             ready: self.demo || (self.world.login.is_some() && self.media.openid.raw().is_some()),
@@ -835,7 +867,7 @@ impl App {
 
     /// What the window shows of a postcard: the region takes them
     /// (SendPostcard), or the demo.
-    fn photo_email_view(&self, window: (u32, u32)) -> EmailView {
+    pub(super) fn photo_email_view(&self, window: (u32, u32)) -> EmailView {
         EmailView {
             available: self.demo || self.world.main_has_cap("SendPostcard"),
             size: self.photo_size(window),
@@ -981,7 +1013,7 @@ impl App {
     }
 
     /// Start a photo of the destination's size.
-    fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
+    pub(super) fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
         let window = renderer.size();
         let full = self.photo_size(window);
         let s = &self.settings.snapshot;
@@ -1191,7 +1223,7 @@ impl App {
     }
 
     /// A photo is being taken, saved or uploaded.
-    fn photo_busy(&self) -> bool {
+    pub(super) fn photo_busy(&self) -> bool {
         let s = &self.snapshots;
         s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
     }
@@ -1213,8 +1245,14 @@ impl App {
     }
 
     /// What the window shows of a photo for the inventory.
-    fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
-        let texture = inventory::texture_size(self.photo_size(window));
+    pub(super) fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
+        // a photo of the reel held to be sent again goes at its own size
+        // (fitted to the inventory's when it was held): its price follows
+        let capture = match (&self.snapshots.held, self.snapshots.reel.held) {
+            (Some(held), Some(_)) => (held.width, held.height),
+            _ => self.photo_size(window),
+        };
+        let texture = inventory::texture_size(capture);
         InventoryView {
             texture,
             cost: self.photo_prices().cost(Kind::Snapshot, texture),
@@ -1441,6 +1479,7 @@ impl App {
             self.photo_take(renderer, None);
         }
         self.photo_demo(renderer);
+        self.photo_reel_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);
         self.photo_light();
@@ -1769,6 +1808,7 @@ impl App {
                 let _ = std::fs::create_dir_all(&dir);
                 gallery::reveal(&dir, None);
             }
+            Action::Reel(a) => self.photo_reel_action(a, renderer),
         }
     }
 
@@ -2074,6 +2114,8 @@ LUT_3D_SIZE {n}
                 message: message.as_ref(),
                 last_saved: last_saved.as_deref(),
                 gallery: &gallery,
+                // (the dock has the reel's stack)
+                reel: None,
                 folder: self.settings.snapshot.folder(),
                 inventory,
                 item_saved: self.snapshots.message_item.is_some(),
@@ -2086,7 +2128,11 @@ LUT_3D_SIZE {n}
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
                 quality_reduced,
             };
-            self.viewfinder_ui(ctx, p, projector, renderer, &view);
+            // (under the reel's quick view, nothing of the viewfinder acts:
+            // no focus by a click, no shutter)
+            if !self.snapshots.reel.quick.is_open() {
+                self.viewfinder_ui(ctx, p, projector, renderer, &view);
+            }
             drop(view);
             self.env_ui = env_ui;
         } else if self.snapshots.ui.full_frame && self.panels.snapshot {
@@ -2133,6 +2179,8 @@ LUT_3D_SIZE {n}
                     (f, what)
                 })
             };
+            let classic = self.photo_style() == crate::settings::PhotoWindowStyle::Legacy;
+            let no_time = |_: i64| String::new();
             let gallery = s.gallery.clone();
             let view = crate::ui::snapshot::View {
                 window,
@@ -2143,6 +2191,7 @@ LUT_3D_SIZE {n}
                 message: s.message.as_ref(),
                 last_saved: s.last_saved.as_deref(),
                 gallery: &gallery,
+                reel: (!classic).then(|| s.reel.view(&[], &no_time)),
                 folder: self.settings.snapshot.folder(),
                 inventory,
                 item_saved: s.message_item.is_some(),
@@ -2156,7 +2205,6 @@ LUT_3D_SIZE {n}
                 quality_reduced,
             };
             let mut open = self.panels.snapshot;
-            let classic = self.photo_style() == crate::settings::PhotoWindowStyle::Legacy;
             actions.extend(state.show(
                 ctx,
                 p,
@@ -2173,7 +2221,10 @@ LUT_3D_SIZE {n}
         for a in actions {
             self.photo_action(a, renderer);
         }
-        if !self.panels.snapshot {
+        if self.panels.snapshot {
+            self.photo_reel_quick(ctx, p, renderer);
+        } else {
+            self.snapshots.reel.quick.close();
             self.snapshots.ui.full_frame = false;
             if self.snapshots.held.take().is_some() {
                 self.snapshots.ui.freeze = false;

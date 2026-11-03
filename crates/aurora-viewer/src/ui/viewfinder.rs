@@ -109,6 +109,12 @@ pub struct Viewfinder {
     /// The display level drawn last frame (the interface just hidden says
     /// how to show it again).
     shown_display: Option<Display>,
+    /// The last photo's picture on its card, and the reel's stack in the
+    /// dock, as drawn last frame: when the card goes, its photo flies from
+    /// one to the other (started then, from there).
+    card_rect: Option<Rect>,
+    stack_rect: Option<Rect>,
+    fly: Option<(f64, Rect)>,
 }
 
 /// What the app gives the viewfinder each frame.
@@ -162,6 +168,8 @@ pub struct Frame<'a> {
     pub preset_object: Option<String>,
     /// The poser's window shows over the viewfinder.
     pub posing: bool,
+    /// The session's photos (`ui::photo_reel`).
+    pub reel: &'a crate::ui::photo_reel::ReelView<'a>,
 }
 
 /// The keys the help and the hints name.
@@ -211,6 +219,8 @@ pub enum Out {
     Preset(Preset),
     /// The poser's window opened or closed (#1389).
     Poser,
+    /// The reel's stack or quick view.
+    Reel(crate::ui::photo_reel::ReelAction),
     /// Out of the photo mode.
     Exit,
 }
@@ -573,8 +583,16 @@ impl Viewfinder {
             self.pad = Pad::default();
         }
         if f.now < self.review_until && !self.menu {
-            review(ctx, p, screen, f, &mut out, if pad { 300.0 } else { 132.0 });
+            self.card_rect = review(ctx, p, screen, f, &mut out, if pad { 300.0 } else { 132.0 });
+        } else if let Some(from) = self.card_rect.take()
+            && f.now >= self.review_until
+            && shows
+        {
+            // the card's time is up (not covered by the menu): its photo
+            // flies into the reel's stack
+            self.fly = Some((f.now, from));
         }
+        self.fly_to_stack(ctx, p, f);
         self.countdown(ctx, p, screen, f.now);
         if self.menu {
             self.quick_menu(ctx, p, screen, s, panel, f, &mut out);
@@ -1555,6 +1573,21 @@ impl Viewfinder {
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
                     ui.add_space(6.0);
+                    // the reel, under the shutter like a phone's (`ui::photo_reel`)
+                    // the photo just taken joins the stack once it has
+                    // flown there from its card
+                    let reel = crate::ui::photo_reel::ReelView {
+                        arriving: (f.now < self.review_until && f.review.is_some()) || self.fly.is_some(),
+                        ..*f.reel
+                    };
+                    let stack = crate::ui::photo_reel::stack(ui, p, &reel, 44.0);
+                    self.stack_rect = Some(stack.rect);
+                    keep_keys(&stack);
+                    if stack.clicked()
+                        && let Some(newest) = f.reel.photos.first()
+                    {
+                        out.push(Out::Reel(crate::ui::photo_reel::ReelAction::Show(newest.id)));
+                    }
                     let isolating = self.isolate || f.isolation.mode != crate::snapshot::isolate::Mode::Off;
                     if dock_button(ui, p, Face::Icon("user-scan"), aurora_i18n::tr!("photo-isolate-tip"), isolating) {
                         self.isolate = !self.isolate;
@@ -1609,10 +1642,6 @@ impl Viewfinder {
                     if dock_button(ui, p, Face::Icon("wand"), aurora_i18n::tr!("photo-vf-poser-tip"), f.posing) {
                         out.push(Out::Poser);
                     }
-                    let has_photo = f.review.is_some();
-                    if dock_button(ui, p, Face::Icon("photo-filled"), aurora_i18n::tr!("photo-vf-last-photo"), false) && has_photo {
-                        self.review_until = if f.now < self.review_until { 0.0 } else { f.now + 4.8 };
-                    }
                     if dock_button(ui, p, Face::Text("?"), aurora_i18n::tr!("photo-vf-help-tip"), self.help) {
                         self.help = !self.help;
                         self.menu = false;
@@ -1622,6 +1651,30 @@ impl Viewfinder {
                     }
                 });
             });
+    }
+
+    /// The card's photo on its way to the stack: it shrinks and slides
+    /// there, then the stack shows it.
+    fn fly_to_stack(&mut self, ctx: &egui::Context, p: &Palette, f: &Frame) {
+        const FLY: f64 = 0.4;
+        let Some((t0, from)) = self.fly else {
+            return;
+        };
+        let (Some(to), Some((tex, _, _))) = (self.stack_rect, &f.review) else {
+            self.fly = None;
+            return;
+        };
+        let k = ((f.now - t0) / FLY) as f32;
+        ctx.request_repaint();
+        if k >= 1.0 {
+            self.fly = None;
+            return;
+        }
+        let ease = 1.0 - (1.0 - k).powi(3);
+        let rect = Rect::from_min_max(from.min.lerp(to.min, ease), from.max.lerp(to.max, ease));
+        let painter = ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::unique("vf_reel_fly")));
+        let radius = ctx.global_style().visuals.window_corner_radius;
+        crate::ui::photo_reel::picture(&painter, p, rect, radius, Some(tex));
     }
 
     /// The round shutter: pressed, the focus; released on it, the photo;
@@ -1988,11 +2041,10 @@ fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
     clicked
 }
 
-/// The card of the photo just taken.
-fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut Vec<Out>, bottom: f32) {
-    let Some((texture, label, kind)) = &f.review else {
-        return;
-    };
+/// The card of the photo just taken; where its picture is.
+fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut Vec<Out>, bottom: f32) -> Option<Rect> {
+    let (texture, label, kind) = f.review.as_ref()?;
+    let mut picture = None;
     egui::Area::new(Id::unique("vf_review"))
         .order(Order::Foreground)
         .fade_in(false)
@@ -2004,16 +2056,9 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
                     ui.spacing_mut().item_spacing.x = 12.0;
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
                     // the photo covering the card's picture
-                    let size = texture.size_vec2();
-                    let (r, c) = (size.x / size.y.max(1.0), 1.5);
-                    let uv = if r > c {
-                        let w = c / r;
-                        Rect::from_min_max(Pos2::new(0.5 - w / 2.0, 0.0), Pos2::new(0.5 + w / 2.0, 1.0))
-                    } else {
-                        let h = r / c;
-                        Rect::from_min_max(Pos2::new(0.0, 0.5 - h / 2.0), Pos2::new(1.0, 0.5 + h / 2.0))
-                    };
+                    let uv = crate::ui::photo_reel::cover_uv(texture.size_vec2(), 1.5);
                     ui.painter().image(texture.id(), rect, uv, widgets::PICTURE_TINT);
+                    picture = Some(rect);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 6.0;
                         let title = match kind {
@@ -2050,7 +2095,7 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
                 });
             });
         });
-    let _ = screen;
+    picture
 }
 
 /// The face of a dock button.
