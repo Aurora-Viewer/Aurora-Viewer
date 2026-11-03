@@ -71,6 +71,16 @@ impl Preview {
         self.waiting.clear();
         self.completed = false;
     }
+    /// After a GPU recovery (app/gpu_recovery.rs): the preview's textures
+    /// were slots of the lost renderer, forgotten and never freed (the new
+    /// renderer numbers its own), and its uploads under way were staged in
+    /// the lost pool. The preview is made again.
+    pub fn gpu_reset(&mut self) {
+        self.invalidate();
+        self.retired.clear();
+        self.published.clear();
+    }
+
     pub fn cancel(&mut self, world: &mut World) {
         self.invalidate();
         self.receiver = None;

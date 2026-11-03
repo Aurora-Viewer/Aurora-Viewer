@@ -8758,12 +8758,14 @@ impl Backend {
                 submission_index: Some(index),
                 timeout: Some(timeout),
             };
-            match self.device.poll(wait) {
-                Ok(_) => {}
+            match self.lost.poll_with(&self.device, wait) {
+                Some(Ok(_)) => {}
                 // a GPU that fell behind: no news, the main thread's own
                 // bound lets it go on
-                Err(wgpu::PollError::Timeout) => return,
-                Err(e) => log::debug!("frame pacing: {e:?}"),
+                Some(Err(wgpu::PollError::Timeout)) => return,
+                Some(Err(e)) => log::debug!("frame pacing: {e:?}"),
+                // lost during the wait: nothing more is waited on
+                None => return,
             }
         }
         self.gpu_frames.finished_through(last);

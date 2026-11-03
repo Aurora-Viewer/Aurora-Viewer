@@ -588,6 +588,15 @@ pub struct OutgoingChat {
     pub chat_type: ChatType,
 }
 
+/// Whether a local line left empty by its channel or its gesture is still
+/// said. FSFloaterNearbyChat::sendChat sends the line as typed ("/5" is not
+/// empty) and send_chat_from_viewer then says an empty line on channel 5
+/// ("Don't break null messages", #2095); a line a gesture trigger replaced
+/// with nothing is not sent. The chat inputs never send an empty field.
+pub fn sends_local_line(channel: i32, message: &str) -> bool {
+    channel != 0 || !message.is_empty()
+}
+
 /// Parse "/5 text" channel prefixes.
 /// FSNearbyChat::stripChannelNumber (fsnearbychathub.cpp): a slash, an
 /// optional minus sign, then the digits; the text after them, with or
@@ -4774,6 +4783,34 @@ mod tests {
         assert_eq!(parse_channel("/5-3"), (5, "-3".into()), "the sign only before the digits");
         assert_eq!(parse_channel("/-"), (0, "/-".into()));
         assert_eq!(parse_channel("/--5 x"), (0, "/--5 x".into()));
+    }
+
+    /// A line that is only a channel says an empty line on it, as the Legacy
+    /// Viewer's chat bar does (#2095); a gesture trigger whose replacement is
+    /// empty sends nothing.
+    #[test]
+    fn a_bare_channel_says_an_empty_line_on_it() {
+        for line in ["/5", "/-1234", "/5 "] {
+            let (channel, message) = parse_channel(line);
+            assert!(message.is_empty() && sends_local_line(channel, &message), "{line}");
+        }
+        assert!(sends_local_line(0, "hello"));
+        let mut manager = crate::gestures::Manager::default();
+        let id = uuid::Uuid::from_u128(7);
+        manager.entries.insert(
+            id,
+            crate::gestures::Entry {
+                asset: uuid::Uuid::nil(),
+                definition: aurora_assets::gesture::Gesture {
+                    trigger: "/wave".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        manager.active.insert(id);
+        let (channel, message, gesture) = prepare_local_line(&mut manager, "/wave", false);
+        assert_eq!((channel, message.as_str(), gesture), (0, "", Some(id)));
+        assert!(!sends_local_line(channel, &message));
     }
 
     /// A gesture's replacement may itself open with a channel: the Legacy

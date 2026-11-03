@@ -385,8 +385,11 @@ const DISC: f32 = 22.0;
 fn balance_galley(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> Option<std::sync::Arc<egui::Galley>> {
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     st.balance.filter(|_| st.show_balance).map(|b| {
-        ui.painter()
-            .layout_no_wrap(format!("{} L$", aurora_i18n::integer(i64::from(b))), font, p.ink)
+        ui.painter().layout_no_wrap(
+            format!("{} {}", aurora_i18n::integer(i64::from(b)), aurora_i18n::currency()),
+            font,
+            p.ink,
+        )
     })
 }
 
