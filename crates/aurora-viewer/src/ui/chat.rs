@@ -185,9 +185,10 @@ pub struct ChatUi {
     pub mic: Option<bool>,
     /// Residents' voice volumes, for the call's participants.
     pub volumes: std::collections::BTreeMap<uuid::Uuid, f32>,
-    /// The times of the lines are shown (Preferences › Chat), given every
-    /// frame by the app.
-    pub timestamps: bool,
+    /// The times of the lines are shown (Preferences › Chat), in the nearby
+    /// chat and in the conversations apart, given every frame by the app.
+    pub timestamps_nearby: bool,
+    pub timestamps_im: bool,
     /// Objects' lines take one small row (Preferences › Chat, #475, off),
     /// given every frame by the app.
     pub compact_automated: bool,
