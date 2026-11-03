@@ -3567,7 +3567,8 @@ writes the same `native.txt` from a handler of the fatal signals (SIGSEGV,
 SIGBUS, SIGILL, SIGFPE, SIGABRT) on the thread's alternate signal stack:
 the libgcc unwinder's frames through the signal frame, then each frame as
 `module+0xoffset` (the ELF virtual address) with the module's build ID,
-from the loader's list read last under an alarm; it then hands the signal
+the unwinder and the loader's list under an alarm (another thread that
+crashes meanwhile waits for the file); it then hands the signal
 to the standard library's overflow handler or the default action, so the
 process ends as before. Panics and failed allocations get the same stacks. `threads.rs` names the
 long-lived background threads the session cannot do without (network

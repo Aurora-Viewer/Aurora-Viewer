@@ -11,8 +11,9 @@
 //! standard library gives one to each of its threads), so a stack overflow
 //! is written too. It does not allocate, take application locks or log:
 //! only `write`, `fsync`, the unwinder primed at install, and the loader's
-//! module list read last, under an alarm that ends the process should the
-//! crash have happened inside the loader.
+//! module list, both under an alarm that ends the process should the crash
+//! have happened while the loader was busy. Another thread crashing
+//! meanwhile waits for the first one's file.
 //!
 //! Legacy Viewer reference: setupBreakpad (indra/newview/llappviewerlinux.cpp),
 //! which writes a minidump on the same signals through Breakpad's
@@ -23,16 +24,23 @@ use std::ffi::{CStr, c_int, c_void};
 use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 const FRAMES: usize = 64;
 /// The signals that end the process with a crash.
 const SIGNALS: [c_int; 5] = [libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE, libc::SIGABRT];
-/// Seconds the loader's module list may take inside the handler.
-const MODULES_ALARM: u32 = 5;
+/// Seconds the unwinder and the loader's module list may take inside the
+/// handler.
+const WRITE_ALARM: u32 = 5;
+/// How long another thread that crashes meanwhile waits for the first one's
+/// file, in 10 ms naps: longer than [`WRITE_ALARM`].
+const OTHER_WAIT_NAPS: u32 = 800;
 
 static TRACE: OnceLock<std::fs::File> = OnceLock::new();
-static WRITING: AtomicBool = AtomicBool::new(false);
+/// The thread writing `native.txt`, 0 before the first fatal signal.
+static WRITER: AtomicI32 = AtomicI32::new(0);
+/// `native.txt` is complete.
+static WRITTEN_TRACE: AtomicBool = AtomicBool::new(false);
 static OOM: OnceLock<std::fs::File> = OnceLock::new();
 static OOM_WRITING: AtomicBool = AtomicBool::new(false);
 /// The handlers found at install, one per [`SIGNALS`], handed the signal on.
@@ -76,11 +84,36 @@ pub fn install(dir: &Path) -> anyhow::Result<()> {
 }
 
 extern "C" fn on_fatal(signal: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
-    if !WRITING.swap(true, Ordering::Relaxed)
-        && let Some(file) = TRACE.get()
-    {
-        // SAFETY: the kernel's records for this handler, handed on unchanged.
-        unsafe { write_signal(file, signal, info, context) };
+    // SAFETY: no argument; async-signal-safe.
+    let me = unsafe { libc::gettid() };
+    match WRITER.compare_exchange(0, me, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => {
+            if let Some(file) = TRACE.get() {
+                // SAFETY: the kernel's records for this handler, handed on unchanged.
+                unsafe { write_signal(file, signal, info, context) };
+            }
+            WRITTEN_TRACE.store(true, Ordering::Release);
+        }
+        // Another thread crashing meanwhile (a corrupted heap often takes
+        // several down) waits for the first one's file: handed on now, its
+        // signal would end the process in the middle of it. The first
+        // one's own end, or the alarm, ends this one too.
+        Err(writer) if writer != me => {
+            let nap = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 10_000_000,
+            };
+            for _ in 0..OTHER_WAIT_NAPS {
+                if WRITTEN_TRACE.load(Ordering::Acquire) {
+                    break;
+                }
+                // SAFETY: nanosleep is async-signal-safe; the timespec is ours.
+                unsafe { libc::nanosleep(&nap, std::ptr::null_mut()) };
+            }
+        }
+        // The writing thread itself again: the standard library's overflow
+        // handler, handed the signal, aborts.
+        Err(_) => {}
     }
     // SAFETY: the arguments are the ones the kernel gave this handler.
     unsafe { hand_on(signal, info, context) };
@@ -99,20 +132,29 @@ unsafe fn write_signal(mut file: &std::fs::File, signal: c_int, info: *const lib
     let (code, address, pc) = unsafe { fault(info, context) };
     let _ = writeln!(
         file,
-        "Native signal {signal} ({})\nSignal code: {code}\nFault address: {address:#x}\nNative stack (addresses):",
+        "Native signal {signal} ({})\nSignal code: {code}",
         signal_name(signal).unwrap_or("?")
     );
+    // Only a fault raised by the processor has an address; a sent signal
+    // (abort, kill) carries the sender there.
+    if code > 0 {
+        let _ = writeln!(file, "Fault address: {address:#x}");
+    }
+    let _ = writeln!(file, "Native stack (addresses):");
+    let _ = file.sync_all();
+    // The unwinder and the module list both go through the loader's list,
+    // under its lock: should the crash have happened while another thread
+    // held it (loading a library), the alarm's default action ends the
+    // process instead of a hang.
+    // SAFETY: alarm is async-signal-safe.
+    unsafe { libc::alarm(WRITE_ALARM) };
     let mut frames = [0usize; FRAMES];
     let count = capture(&mut frames);
     for (index, address) in frames[..count].iter().enumerate() {
         let _ = writeln!(file, "{index:02}: {address:#x}");
     }
+    // The module headers are read once the raw stack is on disk.
     let _ = file.sync_all();
-    // The loader's list is read once the raw stack is on disk; should the
-    // crash have happened while the loader held its lock, the alarm's
-    // default action ends the process instead of a hang.
-    // SAFETY: alarm is async-signal-safe.
-    unsafe { libc::alarm(MODULES_ALARM) };
     write_modules(&mut file, &frames[..count], pc);
     let _ = file.sync_all();
     // SAFETY: as above.
@@ -224,7 +266,9 @@ pub fn write_stack(out: &mut impl Write) {
 /// The calling thread's return addresses, through the unwinder the
 /// standard library links (libgcc_s), into a fixed array. From a signal
 /// handler it walks through the kernel's signal frame into the interrupted
-/// code; the frame that faulted is its exact instruction.
+/// code; the frame that faulted is its exact instruction. Never inlined:
+/// its own frame is the first one, dropped.
+#[inline(never)]
 fn capture(frames: &mut [usize; FRAMES]) -> usize {
     struct Walk<'a> {
         frames: &'a mut [usize; FRAMES],
