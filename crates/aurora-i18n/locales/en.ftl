@@ -10394,6 +10394,7 @@ currency-contacting-lindex = Contacting LindeX…
 currency-cannot-buy = Unable to buy
 currency-more-information = More information
 currency-helper-unreachable = The L$ purchase service is not responding. Please try again later.
+currency-password-needs-https = Your password was not sent: this purchase service does not use a secure (https) connection.
 currency-checking-account = Checking your account…
 currency-unavailable-on-this-grid = Buying L$ from the viewer is not available on this grid.
 currency-add-payment-method = Add a payment method to buy Lindens and get the most out of Second Life.
