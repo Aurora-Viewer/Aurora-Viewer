@@ -642,6 +642,13 @@ follows the complete animated eye midpoint in every posture, including rendered
 hover; it moves only the camera position, preserving mouse-controlled world-space
 aim.
 
+`world/parcel_env.rs` follows the agent's parcel for the environments saved per
+parcel: it names the parcel by its UUID (RemoteParcelRequest, only once something
+is saved) and tells `EnvSelector` to set the local environment aside and bring it
+back (`hold_parcel`, `settle_parcel`). The session's `local_environment_data.bin`
+keeps the set-aside environment, never a parcel's. `demo_parcel_env.rs` is its
+demo.
+
 `world/parcel_visibility.rs` owns saved parcel-isolation modes, region UUID/local
 parcel identities and exact bitmap membership. Independent same-owner and
 same-group options walk adjoining cells, including connected region borders.
