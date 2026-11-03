@@ -9891,7 +9891,7 @@ impl App {
         let mut fp = FrameParams {
             // (a window behind past the driver's budget pauses its 3D
             // drawing: its 3D targets shrink, texture_budget::Background)
-            rlva_resolution_divisor: if self.scene.textures.drawing_paused() {
+            rlva_resolution_divisor: if self.scene_paused() {
                 PAUSED_RESOLUTION_DIVISOR
             } else {
                 self.world.rlva.resolution_divisor.unwrap_or(1)
@@ -10718,7 +10718,7 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         // (nothing of the scene while the 3D drawing is paused behind,
         // texture_budget::Background)
-        let lists = if self.in_world() && !self.scene.textures.drawing_paused() {
+        let lists = if self.in_world() && !self.scene_paused() {
             &self.scene.lists
         } else {
             &self.empty_lists
