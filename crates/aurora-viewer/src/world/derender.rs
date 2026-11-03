@@ -130,6 +130,11 @@ pub struct Derender {
     friends_only: bool,
     /// The avatars it hid (their attachments hang from them in `hidden`).
     friends_only_hid: HashSet<Uuid>,
+    /// The avatars kept out of the world whose own snapshot is held in
+    /// `hidden` (by either policy): the scene keeps their loading and rez
+    /// history while they are away. A kill or a region leaving ends it, so
+    /// an avatar sent again is a first arrival.
+    kept: HashSet<Uuid>,
     /// RequestMultipleObjects waiting for the app.
     requests: Vec<(RegionHandle, Vec<u32>)>,
     /// Bumped on every change of the list (the window's rows).
@@ -412,9 +417,14 @@ impl Derender {
         };
         let Some(by) = by else {
             // it was hidden with a parent it has left (unlinked, detached)
-            self.hidden.remove(&key);
+            if let Some(h) = self.hidden.remove(&key) {
+                self.unkeep(&h);
+            }
             return None;
         };
+        if u.is_avatar() && by == u.full_id {
+            self.kept.insert(by);
+        }
         let update = Some(u.clone());
         let newly = self.hidden.insert(key, Hidden { by, update }).is_none();
         Some(Dropped { key, by, newly })
@@ -423,7 +433,51 @@ impl Derender {
     /// Objects taken out of the world by `by`, with what they looked like.
     pub fn hide(&mut self, by: Uuid, objects: Vec<(ObjKey, ObjectUpdate)>) {
         for (key, update) in objects {
+            if update.is_avatar() && update.full_id == by {
+                self.kept.insert(by);
+            }
             self.hidden.insert(key, Hidden { by, update: Some(update) });
+        }
+    }
+
+    /// An avatar's own snapshot leaves `hidden`: its history goes with it.
+    fn unkeep(&mut self, h: &Hidden) {
+        if let Some(u) = &h.update
+            && u.is_avatar()
+            && u.full_id == h.by
+        {
+            self.kept.remove(&u.full_id);
+        }
+    }
+
+    /// An avatar the simulator killed or whose region left is gone for
+    /// good: "Show Friends Only" has nothing of it to bring back either.
+    fn forget_departed(&mut self, h: &Hidden) {
+        self.unkeep(h);
+        if let Some(u) = &h.update
+            && u.is_avatar()
+        {
+            self.friends_only_hid.remove(&u.full_id);
+        }
+    }
+
+    /// A terse update of an object kept out of the world: its snapshot
+    /// follows, so it comes back where it is now.
+    pub fn apply_terse(&mut self, key: &ObjKey, t: &aurora_net::objects::TerseUpdate) {
+        let Some(Hidden { update: Some(u), .. }) = self.hidden.get_mut(key) else {
+            return;
+        };
+        u.state = t.state;
+        u.position = t.position;
+        u.rotation = t.rotation;
+        u.velocity = t.velocity;
+        u.acceleration = t.acceleration;
+        u.angular_velocity = t.angular_velocity;
+        if t.foot_plane.is_some() {
+            u.foot_plane = t.foot_plane;
+        }
+        if t.texture_entry.is_some() {
+            u.texture_entry = t.texture_entry.clone();
         }
     }
 
@@ -451,15 +505,18 @@ impl Derender {
 
     /// The simulator killed it: its local id may be given to another object.
     pub fn forget_key(&mut self, key: &ObjKey) {
-        if !self.hidden.is_empty() {
-            self.hidden.remove(key);
+        if let Some(h) = self.hidden.remove(key) {
+            self.forget_departed(&h);
         }
     }
 
     /// The region left the world.
     pub fn forget_region(&mut self, region: RegionHandle) {
-        if !self.hidden.is_empty() {
-            self.hidden.retain(|k, _| k.region != region);
+        let gone: Vec<ObjKey> = self.hidden.keys().filter(|k| k.region == region).copied().collect();
+        for key in gone {
+            if let Some(h) = self.hidden.remove(&key) {
+                self.forget_departed(&h);
+            }
         }
     }
 
@@ -523,9 +580,10 @@ impl Derender {
     }
 
     /// The avatar is kept out of the world on purpose (a derender entry or
-    /// "Show Friends Only"), so it is not a new arrival when it comes back.
+    /// "Show Friends Only") and its snapshot is held, so it is not a new
+    /// arrival when it comes back.
     pub fn hides_resident(&self, id: &Uuid) -> bool {
-        self.friends_only_hid.contains(id) || self.contains(id)
+        self.kept.contains(id)
     }
 
     /// "Show Friends Only" is on (FSRenderFriendsOnly).
@@ -581,6 +639,7 @@ impl Derender {
             let Some(h) = self.hidden.remove(&key) else {
                 continue;
             };
+            self.unkeep(&h);
             if let Some(u) = h.update {
                 restore.updates.push((key.region, u));
             }

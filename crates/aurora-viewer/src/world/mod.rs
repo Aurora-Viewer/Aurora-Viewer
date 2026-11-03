@@ -2566,6 +2566,9 @@ impl World {
                                 at,
                             );
                         }
+                    } else {
+                        // kept out of the world: it comes back where it is now
+                        self.derender.apply_terse(&key, &t);
                     }
                 }
                 None

@@ -932,6 +932,37 @@ mod tests {
     }
 
     #[test]
+    fn an_avatar_killed_while_hidden_is_a_first_appearance_when_sent_again() {
+        let (mut world, mut scene, _, _) = cloud_self();
+        let loup = crate::demo::DEMO_LOUP;
+        let handle = world.main_region.expect("region");
+        let idx = world.objects.index_of_uuid(&loup).expect("wolf");
+        let sent = crate::build::replace::demo_update(world.objects.get(idx).expect("wolf"));
+        let t0 = Instant::now();
+        scene.update_loading(&world, t0);
+        scene.update_loading(&world, t0 + secs(5.1));
+        world.set_friends_only(true);
+        scene.update_loading(&world, t0 + secs(6.0));
+        assert!(scene.loading.states.contains_key(&loup), "remembered while it is away");
+        // the simulator kills it: a departure, nothing is kept
+        world.apply(aurora_net::NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![sent.local_id],
+        });
+        scene.update_loading(&world, t0 + secs(7.0));
+        assert!(!scene.loading.states.contains_key(&loup));
+        // sent again while filtered, then switched off
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![sent],
+        });
+        world.set_friends_only(false);
+        scene.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
+        scene.update_loading(&world, t0 + secs(8.0));
+        assert!(scene.loading_avatars().contains_key(&loup), "a first appearance again");
+    }
+
+    #[test]
     fn a_shown_avatar_is_not_a_cloud_again_when_a_part_goes_missing() {
         let (world, mut scene, own, _) = cloud_self();
         let id = world.agent_id;

@@ -75,6 +75,14 @@ impl World {
         self.friends_only.seen = self.friends_signature();
     }
 
+    /// Objects restored without passing the update filter (a region back
+    /// from parking): the non-friends among them leave again.
+    pub(super) fn friends_only_filter_present(&mut self) {
+        if self.derender.friends_only() {
+            self.take_out_non_friends();
+        }
+    }
+
     /// Avatars present that are neither us nor friends leave the world.
     fn take_out_non_friends(&mut self) {
         let me = self.agent_id;
@@ -185,6 +193,62 @@ mod tests {
         assert!(world.visual_params(&wolf).is_some(), "kept while it is hidden");
         world.set_friends_only(false);
         assert_eq!(seen(&world), before, "the same look at once, nothing to wait for");
+    }
+
+    #[test]
+    fn a_hidden_avatar_comes_back_where_it_is_now() {
+        use aurora_net::objects::TerseUpdate;
+        let (mut world, handle) = demo_world();
+        let wolf = crate::demo::DEMO_LOUP;
+        let key = world
+            .objects
+            .get(world.objects.index_of_uuid(&wolf).expect("wolf"))
+            .expect("wolf")
+            .key;
+        world.set_friends_only(true);
+        let there = glam::Vec3::new(40.0, 50.0, 30.0);
+        let _ = world.apply(NetEvent::TerseUpdates {
+            handle,
+            updates: vec![TerseUpdate {
+                local_id: key.local_id,
+                state: 0,
+                is_avatar: true,
+                foot_plane: None,
+                position: there,
+                velocity: glam::Vec3::X,
+                acceleration: glam::Vec3::ZERO,
+                rotation: glam::Quat::IDENTITY,
+                angular_velocity: glam::Vec3::ZERO,
+                texture_entry: None,
+            }],
+        });
+        world.set_friends_only(false);
+        let o = world.objects.get(world.objects.index_of_uuid(&wolf).expect("back")).expect("back");
+        assert_eq!((o.position, o.velocity), (there, glam::Vec3::X));
+    }
+
+    #[test]
+    fn a_killed_avatar_is_forgotten_and_its_history_ends() {
+        let (mut world, handle) = demo_world();
+        let wolf = crate::demo::DEMO_LOUP;
+        let key = world
+            .objects
+            .get(world.objects.index_of_uuid(&wolf).expect("wolf"))
+            .expect("wolf")
+            .key;
+        world.set_friends_only(true);
+        assert!(world.derender.hides_resident(&wolf), "kept while it is away");
+        let _ = world.apply(NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![key.local_id],
+        });
+        assert!(!world.derender.hides_resident(&wolf), "a departure ends it");
+        // the region leaving does the same
+        let (mut world, handle) = demo_world();
+        world.set_friends_only(true);
+        assert!(world.derender.hides_resident(&wolf));
+        let _ = world.apply(NetEvent::RegionRemoved { handle });
+        assert!(!world.derender.hides_resident(&wolf));
     }
 
     #[test]
