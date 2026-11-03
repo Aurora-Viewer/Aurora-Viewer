@@ -134,8 +134,8 @@ pub struct BuildSettings {
     pub grid_mode: u8,
     /// SnapEnabled.
     pub snap: bool,
-    /// Aurora: the move handles snap the selection's box against the boxes
-    /// of nearby prims, and stop it at their faces (`object_snap`). Never
+    /// Aurora: the move handles snap the selection against nearby prims, and
+    /// stop it at their faces (`object_snap`). Never
     /// with `snap` (`snap_mode`); off by default, so moving behaves as the
     /// Legacy Viewer's until it is chosen.
     pub object_snap: bool,
@@ -1103,6 +1103,7 @@ impl BuildTool {
         self.cancel_color_picker(world);
         self.commit_color_edit();
         self.open = false;
+        self.place.stop();
         self.manip.cancel();
         self.land.cancel();
         self.grab_up();
@@ -1870,14 +1871,15 @@ impl BuildTool {
         self.advance_bulk_permissions(world, now);
         self.advance_link(world, now);
         self.update_material_preview(world, s);
+        // "Place on surface" lives in the Edit tool of the open tools
+        if !self.open || self.replacement_active() || self.tool != Tool::Edit {
+            self.place.stop();
+        }
         if !self.open || self.replacement_active() {
             self.sync_hud_zoom(world);
             return;
         }
         self.prune(world, s, now);
-        if self.tool != Tool::Edit {
-            self.place.active = false;
-        }
         self.pick_up_created(world, s);
         self.sync_hud_zoom(world);
         self.refresh_costs(world);

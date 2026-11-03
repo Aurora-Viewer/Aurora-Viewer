@@ -1675,8 +1675,8 @@ fn drag_update(
 
 /// Snap to objects (`SnapMode::Objects`, an Aurora addition): where the
 /// selection goes for the move `want` within `c`, from `prev`, last frame's.
-/// It snaps against a nearby prim's box within `object_snap::SNAP_PX`, and
-/// stops at the first face it would enter. None when it does neither, in
+/// It snaps against a nearby prim (its box, or its visible surface) within
+/// `object_snap::SNAP_PX`, and stops at the first face it would enter. None when it does neither, in
 /// another snap mode or in the HUD: the move is the Legacy Viewer's.
 #[allow(clippy::too_many_arguments)]
 fn snap_to_objects(

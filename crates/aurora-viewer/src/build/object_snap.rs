@@ -1,6 +1,7 @@
 //! "Snap to objects": while a move arrow or plane handle is dragged, the
-//! selection's box snaps flush against the boxes of nearby prims, with
-//! guides on what it snapped to, like the smart guides of design tools.
+//! selection snaps flush against nearby prims (their box, or what a mesh
+//! shows, below), with guides on what it snapped to, like the smart guides
+//! of design tools.
 //!
 //! An Aurora feature, with no Legacy Viewer equivalent; the move still goes
 //! out as any other (`TransformUpdate` on release), so it needs only the

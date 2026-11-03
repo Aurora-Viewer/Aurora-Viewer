@@ -208,6 +208,13 @@ fn ground_normal(world: &World, p: Vec3) -> Vec3 {
 }
 
 impl Place {
+    /// Off, its preview gone (the tools closed, another tool).
+    pub fn stop(&mut self) {
+        self.active = false;
+        self.preview = None;
+        self.moving.clear();
+    }
+
     /// The truth of `selection`, its box now at `now`: read now the first
     /// time, and again when something else turned it.
     fn truth(&mut self, selection: &[ObjKey], now: Quat, camera_at: Vec3) -> Truth {
@@ -349,8 +356,7 @@ impl BuildTool {
         if let Some(t) = self.place.truths.get_mut(&self.selection) {
             t.last = (l.turn * t.last).normalize();
         }
-        self.place.active = false;
-        self.place.moving.clear();
+        self.place.stop();
     }
 
     /// The preview's pad on the surface, in the accent; the selection itself
@@ -500,6 +506,32 @@ mod tests {
         let up = landing(&sel, Vec3::new(0.0, 0.0, 4.0), -Vec3::Z, t, 0.0);
         assert!((up.to.rotation * Vec3::Z).abs_diff_eq(Vec3::Z, 1e-5));
         assert!((up.to.center.z - 3.6).abs() < 1e-5);
+    }
+
+    #[test]
+    fn closing_the_tools_or_changing_tool_ends_the_preview() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut s = BuildSettings::default();
+        let sel = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY);
+        let preview = || Some(landing(&sel, Vec3::Z, Vec3::Z, Quat::IDENTITY, 0.0));
+        let mut tool = BuildTool {
+            open: true,
+            ..Default::default()
+        };
+        tool.place.active = true;
+        tool.place.preview = preview();
+        tool.close(&mut world, &mut s);
+        assert!(!tool.place.active && tool.place.preview.is_none(), "closed");
+        // another tool of the open window
+        let mut tool = BuildTool {
+            open: true,
+            tool: Tool::Create,
+            ..Default::default()
+        };
+        tool.place.active = true;
+        tool.place.preview = preview();
+        tool.update(&mut world, &s, None, (0.0, 0.0), false, Default::default());
+        assert!(!tool.place.active && tool.place.preview.is_none(), "the Create tool");
     }
 
     #[test]
