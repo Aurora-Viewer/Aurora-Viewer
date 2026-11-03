@@ -24,7 +24,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
                     "×",
                 );
-                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps));
+                // FSShowTimestampsNearbyChat (on): the lines and the cards
+                // over the world
+                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_nearby));
                 // FSShowChatChannel: the "/0" chip of the field (off, as in
                 // the Legacy Viewer)
                 cx.toggle(
@@ -122,6 +124,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
             script_errors(cx);
             cx.group(tr!("ui-options-conversations"), |cx| {
+                // FSShowTimestampsIM (on): private and group conversations
+                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_im));
                 cx.toggle(
                     tr!("ui-options-show-contacts-tab"),
                     tr!("ui-options-show-contacts-tab-hint"),

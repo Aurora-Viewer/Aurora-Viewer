@@ -679,7 +679,15 @@ pub struct Settings {
     /// the chat fields. A multiplier in the limits of the interface's text
     /// size rather than the Legacy Viewer's four steps.
     pub chat_font_scale: f32,
-    pub chat_timestamps: bool,
+    /// The times of the nearby chat's lines and of its cards over the world
+    /// (FSShowTimestampsNearbyChat, on; Preferences › Chat › Nearby chat).
+    pub chat_timestamps_nearby: bool,
+    /// The times of the conversations' lines, private and group
+    /// (FSShowTimestampsIM, on; Preferences › Chat › Conversations).
+    pub chat_timestamps_im: bool,
+    /// The former single switch, read once: its choice goes to both.
+    #[serde(rename = "chat_timestamps", skip_serializing)]
+    pub(crate) former_chat_timestamps: Option<bool>,
     /// The channel selector of the nearby chat's field (FSShowChatChannel,
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
@@ -1801,7 +1809,9 @@ impl Default for Settings {
             font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
             chat_font_scale: 1.0,
-            chat_timestamps: true,
+            chat_timestamps_nearby: true,
+            chat_timestamps_im: true,
+            former_chat_timestamps: None,
             show_chat_channel: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
@@ -2308,6 +2318,10 @@ impl Settings {
             profile.locked = true;
         }
         self.grids.retain_mut(|grid| grid.validate().is_ok());
+        if let Some(on) = self.former_chat_timestamps.take() {
+            self.chat_timestamps_nearby = on;
+            self.chat_timestamps_im = on;
+        }
         if std::mem::take(&mut self.former_hide_own_group_title) {
             self.group_titles = crate::world::names::GroupTitles::AllExceptMine;
         }
@@ -3097,6 +3111,33 @@ mod tests {
                 assert_eq!(reloaded.sanitized().group_titles, expected);
             }
         }
+    }
+
+    #[test]
+    fn the_former_show_time_switch_goes_to_both_and_is_not_saved_again() {
+        let fresh: super::Settings = serde_json::from_str("{}").expect("fresh settings");
+        let fresh = fresh.sanitized();
+        assert!(
+            fresh.chat_timestamps_nearby && fresh.chat_timestamps_im,
+            "on by default, as in the Legacy Viewer"
+        );
+        for on in [false, true] {
+            let old: super::Settings = serde_json::from_value(serde_json::json!({ "chat_timestamps": on })).expect("former show time");
+            let migrated = old.sanitized();
+            assert_eq!((migrated.chat_timestamps_nearby, migrated.chat_timestamps_im), (on, on));
+            let saved = serde_json::to_value(&migrated).expect("save show time");
+            assert!(saved.get("chat_timestamps").is_none(), "only the two switches are saved");
+            let reloaded: super::Settings = serde_json::from_value(saved).expect("reload show time");
+            assert_eq!((reloaded.chat_timestamps_nearby, reloaded.chat_timestamps_im), (on, on));
+        }
+        // the two switches apart survive a reload
+        let apart: super::Settings = serde_json::from_value(serde_json::json!({
+            "chat_timestamps_nearby": false,
+            "chat_timestamps_im": true,
+        }))
+        .expect("separate switches");
+        let apart = apart.sanitized();
+        assert_eq!((apart.chat_timestamps_nearby, apart.chat_timestamps_im), (false, true));
     }
 
     #[test]
