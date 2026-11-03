@@ -4730,6 +4730,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SIM_VERSION=1\|on` | The region's simulator version changes during the run: no notice by default, one with `on` |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_ABOUT=info\|licences[:end]` | Help › About Aurora Viewer opens on its Info or Licences tab |
+| `AURORA_DEMO_VOICE_CONTROLS=1` | The toolbar's Voice controls window opens (frame 600) on the nearby channel with three demo residents; with `AURORA_DEMO_CALL=conference` on the call's channel |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
@@ -5713,6 +5714,20 @@ failure. Grid validation and any paid upload are performed by the human.
   "Reading…" line for a moment), and "Copy to clipboard"; Licences lists
   NOTICE.md, a card per heading. Capture at frame 700 with
   `AURORA_FPS_LIMIT=60`, in `--language en` and `fr`.
+- **`AURORA_DEMO_VOICE_CONTROLS=1`**: the Voice controls window
+  (`ui/voice_controls.rs`, the toolbar's `voice` command) opens at frame
+  600. Nearby channel: Nova talks in bursts, Tess is in voice and silent,
+  Loup talks in turn with Nova, leaves the channel at 20 s (listed "Left"
+  and dimmed, removed 10 s later) and comes back at 40 s; the title says
+  "Nearby voice", there is no "Leave call" button, and our own row (top)
+  follows the microphone. Right-click a row for the sort (by name, the
+  default, or by recent speakers, which puts whoever spoke last on top) and
+  the avatar menu. With `AURORA_DEMO_CALL=conference` (or `group`, `p2p`)
+  the window follows the call: its title ("Conference call", "Group call
+  with …", "Call with …"), the call's participants (Tess muted by the
+  moderator) and "Leave call", which hangs up and brings the title back to
+  nearby voice. Capture at frame 700 for the nearby list, after frame 1800
+  to see Loup leave.
 - **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
   sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
   pushes & hits" window opens at frame 600, a resident bumps the agent at

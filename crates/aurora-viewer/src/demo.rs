@@ -263,6 +263,10 @@ pub mod toasts;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;
+/// The Voice controls window with residents in the nearby channel
+/// (AURORA_DEMO_VOICE_CONTROLS).
+#[path = "demo_voice_controls.rs"]
+pub mod voice_controls;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;

@@ -81,7 +81,7 @@ pub const COMMANDS: &[Command] = commands![
     "primfeed", "rss", "toolbar-command-primfeed", false;
     "RFO", "user-check", "toolbar-command-friends-only", false;
     "gridstatus", "building-broadcast-tower-filled", "toolbar-command-grid-status", true;
-    "voice", "Command_Voice_Icon", "toolbar-command-voice", false;
+    "voice", "Command_Voice_Icon", "toolbar-command-voice", true;
     "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", false;
     "webbrowser", "world-filled", "toolbar-command-web-browser", false;
     "defaultchatbar", "message-filled", "toolbar-command-chat-bar", true;
