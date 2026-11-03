@@ -67,8 +67,10 @@ pub enum Action {
 }
 
 /// What a move or an edit of the listings asks first (notifications.xml).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Prompt {
+/// Each one can be turned off ("Do not show again", or Preferences ›
+/// Confirmations), like the "ignore" box of its okcancelignore template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Prompt {
     /// ConfirmMerchantMoveInventory: moved there, not copied.
     MoveInventory,
     /// ConfirmMerchantActiveChange: the content of a listed listing changes.
@@ -77,15 +79,26 @@ enum Prompt {
     ClearVersion,
     /// ConfirmListingCutOrDelete: SLM archives the listing.
     ListingCutOrDelete,
+    /// ConfirmMerchantUnlist: associating a listed listing.
+    Unlist,
 }
 
 impl Prompt {
+    pub const ALL: [Self; 5] = [
+        Self::MoveInventory,
+        Self::ActiveChange,
+        Self::ClearVersion,
+        Self::ListingCutOrDelete,
+        Self::Unlist,
+    ];
+
     fn text(self) -> &'static str {
         match self {
             Self::MoveInventory => aurora_i18n::tr!("marketplace-confirm-move"),
             Self::ActiveChange => aurora_i18n::tr!("marketplace-confirm-active-change"),
             Self::ClearVersion => aurora_i18n::tr!("marketplace-confirm-clear-version"),
             Self::ListingCutOrDelete => aurora_i18n::tr!("marketplace-confirm-listing-cut-or-delete"),
+            Self::Unlist => aurora_i18n::tr!("marketplace-confirm-unlist"),
         }
     }
 }
@@ -113,8 +126,17 @@ enum Confirm {
         to: Uuid,
         ids: Vec<Uuid>,
         copy: bool,
-        active: bool,
+        prompt: Prompt,
     },
+}
+
+impl Confirm {
+    fn prompt(&self) -> Prompt {
+        match self {
+            Self::Drop { prompt, .. } | Self::Inventory { prompt, .. } | Self::Paste { prompt, .. } => *prompt,
+            Self::Associate { .. } => Prompt::Unlist,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -130,12 +152,25 @@ pub struct ListingsUi {
     /// LLFloaterAssociateListing: the folder and the id typed.
     associate: Option<(Uuid, String)>,
     confirm: Option<Confirm>,
+    /// The "Do not show again" box of the open question.
+    dont_ask: bool,
+    /// The questions turned off, from the settings every frame.
+    pub silenced: HashSet<Prompt>,
+    /// A question just turned off, for the application to save.
+    pub silence: Option<Prompt>,
     /// Why the last drop or action was refused.
     pub message: String,
     root_requested: bool,
     reconciled: u64,
     demo_audited: bool,
     demo_menu: Option<Uuid>,
+}
+
+impl ListingsUi {
+    /// Whether `prompt` is still asked; a silenced one answers OK.
+    fn asks(&self, prompt: Prompt) -> bool {
+        !self.silenced.contains(&prompt)
+    }
 }
 
 /// The inventory a drag holds over `r`: an item, a folder or a selection.
@@ -799,7 +834,7 @@ impl ListingsUi {
             return;
         }
         match plan {
-            Ok(_) => match self.drop_prompt(inv, root, &ids, dest) {
+            Ok(_) => match self.drop_prompt(inv, root, &ids, dest).filter(|prompt| self.asks(*prompt)) {
                 Some(prompt) => self.confirm = Some(Confirm::Drop { dest, ids, prompt }),
                 None => self.apply_drop(inv, worn, root, dest, &ids, actions),
             },
@@ -857,13 +892,9 @@ impl ListingsUi {
             return;
         };
         if let Some(confirm) = self.confirm.clone() {
-            let text = match &confirm {
-                Confirm::Drop { prompt, .. } | Confirm::Inventory { prompt, .. } => prompt.text(),
-                Confirm::Paste { active: true, .. } => aurora_i18n::tr!("marketplace-confirm-active-change"),
-                Confirm::Paste { .. } => aurora_i18n::tr!("marketplace-confirm-move"),
-                Confirm::Associate { .. } => aurora_i18n::tr!("marketplace-confirm-unlist"),
-            };
+            let text = confirm.prompt().text();
             let mut answer = None;
+            let mut dont_ask = self.dont_ask;
             Modal::new(egui::Id::unique("marketplace_listings_confirm")).show(ctx, |ui| {
                 ui.set_max_width(380.0);
                 ui.label(
@@ -874,7 +905,16 @@ impl ListingsUi {
                 );
                 ui.add_space(8.0);
                 ui.label(RichText::new(text).color(p.ink));
-                ui.add_space(12.0);
+                ui.add_space(8.0);
+                widgets::checkbox(
+                    ui,
+                    p,
+                    &mut dont_ask,
+                    RichText::new(aurora_i18n::tr!("ui-context-do-not-show-again"))
+                        .size(12.5)
+                        .color(p.muted),
+                );
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if widgets::action_button(
                         ui,
@@ -902,9 +942,18 @@ impl ListingsUi {
                     }
                 });
             });
+            self.dont_ask = dont_ask;
             if let Some(yes) = answer {
                 self.confirm = None;
+                self.dont_ask = false;
                 if yes {
+                    // the box counts with OK, like Aurora's other questions;
+                    // silenced, the question answers OK from then on
+                    // (IGNORE_WITH_DEFAULT_RESPONSE, llnotifications.cpp)
+                    if dont_ask {
+                        self.silenced.insert(confirm.prompt());
+                        self.silence = Some(confirm.prompt());
+                    }
                     match confirm {
                         Confirm::Drop { dest, ids, .. } => self.apply_drop(inv, worn, root, dest, &ids, actions),
                         Confirm::Associate { folder, id } => {
@@ -973,7 +1022,11 @@ impl ListingsUi {
                 // LLFloaterAssociateListing::apply
                 Some(id) => {
                     let source = self.data.listing_folder(id);
-                    if !source.is_nil() && self.data.activation_state(source) && mp::subfolders(inv, folder).len() != 1 {
+                    if !source.is_nil()
+                        && self.data.activation_state(source)
+                        && mp::subfolders(inv, folder).len() != 1
+                        && self.asks(Prompt::Unlist)
+                    {
                         self.confirm = Some(Confirm::Associate { folder, id });
                     } else {
                         self.data.associate_listing(inv, folder, source, id);
@@ -1164,7 +1217,7 @@ mod tests {
         // doToSelected asks before "rename" and "properties" too
         let change =
             crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
-        assert!(ui.guard_inventory_change(&inv, change, false).is_none());
+        assert!(ui.guard_inventory_change(&inv, change, false, false).is_none());
         assert!(matches!(
             ui.confirm,
             Some(Confirm::Inventory {
@@ -1175,7 +1228,7 @@ mod tests {
         assert!(ui.open);
         ui.confirm = None;
         let change = crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move");
-        assert!(ui.guard_inventory_change(&inv, change, false).is_none());
+        assert!(ui.guard_inventory_change(&inv, change, false, false).is_none());
         assert!(matches!(
             ui.confirm,
             Some(Confirm::Inventory {
@@ -1187,7 +1240,7 @@ mod tests {
         let idle = Uuid::from_u128(8_400_101);
         let change =
             crate::world::inventory::actions::patch(&inv, idle, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
-        assert!(ui.guard_inventory_change(&inv, change, false).is_some());
+        assert!(ui.guard_inventory_change(&inv, change, false, false).is_some());
     }
 
     #[test]
@@ -1218,13 +1271,26 @@ mod tests {
     }
 
     #[test]
-    fn moving_a_version_or_listing_folder_asks_like_the_legacy_viewer() {
+    fn moves_ask_like_the_legacy_viewer_by_how_they_come() {
         let inv = demo_inventory();
         let mut ui = merchant(&inv);
-        let mut ask = |id: Uuid, cut: bool| {
+        let chair = Uuid::from_u128(8_400_110);
+        // how a change arrives: a drag, a paste of a cut, or a menu
+        #[derive(Clone, Copy)]
+        enum Way {
+            Drag,
+            Paste,
+            Menu,
+        }
+        let ask = |ui: &mut ListingsUi, id: Uuid, to: Uuid, way: Way| {
             ui.confirm = None;
-            let change = rules::patch(&inv, id, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move");
-            let passed = ui.guard_inventory_change(&inv, change, cut).is_some();
+            let change = rules::patch(&inv, id, aurora_llsd::llsd_map! { "parent_id" => to }).expect("move");
+            let (cut, drag) = match way {
+                Way::Drag => (false, true),
+                Way::Paste => (true, false),
+                Way::Menu => (false, false),
+            };
+            let passed = ui.guard_inventory_change(&inv, change, cut, drag).is_some();
             match &ui.confirm {
                 Some(Confirm::Inventory { prompt, .. }) => Some(*prompt),
                 _ => {
@@ -1233,12 +1299,20 @@ mod tests {
                 }
             }
         };
-        assert_eq!(ask(demo::POSTER_VERSION, false), Some(Prompt::ClearVersion));
-        // pasteFromClipboard only asks for an active listing
-        assert_eq!(ask(demo::POSTER_VERSION, true), None);
-        assert_eq!(ask(demo::POSTER, false), Some(Prompt::ListingCutOrDelete));
-        assert_eq!(ask(demo::POSTER, true), Some(Prompt::ListingCutOrDelete));
-        assert_eq!(ask(demo::LANTERN, false), None, "a folder with no listing");
+        let home = inv.root;
+        // dragCategoryIntoFolder only: Delete and a paste ask nothing
+        assert_eq!(ask(&mut ui, demo::POSTER_VERSION, home, Way::Drag), Some(Prompt::ClearVersion));
+        assert_eq!(ask(&mut ui, demo::POSTER_VERSION, home, Way::Paste), None);
+        assert_eq!(ask(&mut ui, demo::POSTER_VERSION, home, Way::Menu), None);
+        assert_eq!(ask(&mut ui, demo::POSTER, home, Way::Drag), Some(Prompt::ListingCutOrDelete));
+        assert_eq!(ask(&mut ui, demo::POSTER, home, Way::Paste), Some(Prompt::ListingCutOrDelete));
+        assert_eq!(ask(&mut ui, demo::LANTERN, home, Way::Drag), None, "a folder with no listing");
+        // dragged in from the inventory; "Move to Marketplace Listings" asks nothing
+        assert_eq!(ask(&mut ui, chair, demo::DRAFT_VERSION, Way::Drag), Some(Prompt::MoveInventory));
+        assert_eq!(ask(&mut ui, chair, demo::DRAFT_VERSION, Way::Menu), None);
+        // a silenced question answers OK
+        ui.silenced.insert(Prompt::ListingCutOrDelete);
+        assert_eq!(ask(&mut ui, demo::POSTER, home, Way::Drag), None);
     }
 
     #[test]
@@ -1253,7 +1327,7 @@ mod tests {
         assert!(matches!(
             ui.confirm,
             Some(Confirm::Paste {
-                active: true,
+                prompt: Prompt::ActiveChange,
                 copy: true,
                 ..
             })

@@ -126,6 +126,9 @@ pub enum InvAction {
     CopyLandmarkSlurl(Uuid),
     ShowLandmarkOnMap(Uuid),
     Edit(Mutation),
+    /// The same change from a drag dropped on a folder: the listings ask
+    /// some questions for a drag only (LLFolderBridge::dragCategoryIntoFolder).
+    Drop(Mutation),
     Create {
         parent: Uuid,
         kind: NewItem,
