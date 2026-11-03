@@ -1613,6 +1613,7 @@ pub(crate) struct Backend {
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
     particle_commands: crate::particle_commands::Commands,
+    particle_backoff: crate::gpu_alloc::Backoff,
     timer: Option<GpuTimer>,
     /// Two threads that finish command encoders beside this one.
     finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
@@ -3151,6 +3152,7 @@ impl Backend {
             cull_cpu: Vec::new(),
             particle_buffer,
             particle_commands: crate::particle_commands::Commands::default(),
+            particle_backoff: crate::gpu_alloc::Backoff::default(),
             timer,
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
@@ -6330,31 +6332,35 @@ impl Backend {
             self.queue.write_buffer(&self.ssao.buffer, 0, bytemuck::bytes_of(&u));
         }
 
-        // ---- particles: retain logical batch boundaries before any clipping.
+        // ---- particles
+        let n_particles = if !lists.particles.is_empty() {
+            let bytes = std::mem::size_of_val(lists.particles.as_slice()) as u64;
+            crate::gpu_alloc::grow_upload_buffer(
+                &self.device,
+                &mut self.particle_buffer,
+                &mut self.particle_backoff,
+                "particles",
+                bytes,
+            );
+            let count = lists
+                .particles
+                .len()
+                .min((self.particle_buffer.size() / std::mem::size_of::<ParticleInstance>() as u64) as usize)
+                .min(u32::MAX as usize);
+            self.queue
+                .write_buffer(&self.particle_buffer, 0, bytemuck::cast_slice(&lists.particles[..count]));
+            count as u32
+        } else {
+            0
+        };
+
+        // Failed growth retains a smaller buffer: ordered draws must use only
+        // the uploaded prefix, before any visibility clipping or glow batching.
         self.particle_commands.plan.prepare(
-            &lists.particles,
+            &lists.particles[..n_particles as usize],
             glow_on,
             &crate::particles::Frustum::new(Mat4::from_cols_array_2d(&main.view_proj)),
         );
-        let n_particles = lists.particles.len() as u32;
-        if n_particles > 0 {
-            let bytes = std::mem::size_of_val(lists.particles.as_slice()) as u64;
-            if bytes > self.particle_buffer.size() {
-                let mut size = self.particle_buffer.size();
-                while size < bytes {
-                    size *= 2;
-                }
-                self.particle_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("particles"),
-                    size,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-            }
-            self.queue
-                .write_buffer(&self.particle_buffer, 0, bytemuck::cast_slice(&lists.particles));
-        }
-
         stats.particle_work = self.particle_commands.prepare(
             &self.device,
             &[&self.groups.b, &self.records_bind_group, &scene.textures],
