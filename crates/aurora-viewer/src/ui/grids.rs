@@ -73,6 +73,7 @@ impl Manager {
             <welcome>https://grid.example/welcome</welcome><register>https://grid.example/register</register>
             <password>https://grid.example/password</password><help>https://grid.example/help</help>
             <about>https://grid.example/</about><search>https://grid.example/search?q=[QUERY]</search>
+            <economy>https://grid.example/helper/</economy>
             </gridinfo>"#,
         );
         if let Ok(grid) = grid {
@@ -278,6 +279,7 @@ impl Manager {
                                 ui.add_enabled_ui(editable, |ui| {
                                     edit(ui, p, aurora_i18n::tr!("grids-search"), &mut self.draft.search);
                                     edit(ui, p, aurora_i18n::tr!("grids-profile"), &mut self.draft.profile);
+                                    edit(ui, p, aurora_i18n::tr!("grids-helper"), &mut self.draft.helper);
                                 });
                             }
                         });

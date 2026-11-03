@@ -1806,6 +1806,7 @@ grids-help = Aide
 grids-about = Site web
 grids-search = URL de recherche ([QUERY], [LANGUAGE], [MATURITY])
 grids-profile = URL des profils web
+grids-helper = URL du service monétaire (achat de L$)
 grids-fetch = Récupérer les informations de la grille
 grids-fetching = Récupération des informations de la grille…
 grids-error-address = Saisissez une adresse HTTP ou HTTPS valide, sans identifiants.
@@ -10323,6 +10324,8 @@ group-ability-experience-contributor-help = Les membres dotés d’un rôle avec
 
 ## Achat de L$
 currency-title = Acheter des L$
+currency-region-helper = Cette région utilise son propre service monétaire, sur { $host }. Un achat fait ici se passe entre vous et ce service, qui reçoit aussi votre session (et votre mot de passe s'il le demande) : n'achetez que si vous lui faites confiance.
+currency-service = Service monétaire : { $host }
 currency-menu = Acheter des L$…
 money-tracker-title = Suivi des L$
 money-tracker-legacy-title = Suivi des transactions
