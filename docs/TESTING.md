@@ -9207,9 +9207,9 @@ What the inventory must show with these scenarios:
   in the `GPU adapter <n>:` lines of the log, or a part of its name in any
   case (`nvidia`, `intel`); `auto` or empty for the automatic choice
   (discrete before integrated, then the most video memory, among the
-  adapters that can present to the window). A name that matches several
-  adapters (the same card shown by two Vulkan drivers) takes the first
-  that can present. An adapter that is missing or cannot present gives a
+  adapters that can present to the window). A whole name matches only
+  the adapters with exactly that name; a name that matches several (the
+  same card shown by two Vulkan drivers) takes the first that can present. An adapter that is missing or cannot present gives a
   warning that says which of the two, and the automatic choice; one that
   fails to open hands over to the next. The log lists every adapter Vulkan
   shows, with its type, memory and whether it can present, then

@@ -90,7 +90,12 @@ impl Wanted {
             Wanted::Auto => None,
             Wanted::Index(i) => (*i < candidates.len()).then_some(*i),
             Wanted::Name(n) => {
-                let matches = |c: &Candidate| c.name.to_lowercase().contains(n.as_str());
+                // Preferences saves the whole name: when one adapter has it
+                // exactly, a longer name that contains it ("… RX 5700 XT")
+                // must not take its place
+                let exact = |c: &Candidate| c.name.to_lowercase() == *n;
+                let part = |c: &Candidate| c.name.to_lowercase().contains(n.as_str());
+                let matches: &dyn Fn(&Candidate) -> bool = if candidates.iter().any(exact) { &exact } else { &part };
                 candidates
                     .iter()
                     .position(|c| matches(c) && c.surface)
@@ -281,6 +286,20 @@ mod tests {
         // an index names one adapter: it is not swapped for its twin
         let p = plan(&list, &Wanted::parse("0"));
         assert_eq!((p.order, p.reason), (vec![1, 2], Reason::WantedCannotPresent));
+    }
+
+    #[test]
+    fn an_exact_name_is_not_swapped_for_a_longer_one_that_contains_it() {
+        let list = [
+            c("AMD Radeon RX 5700", Kind::Discrete, Some(8176), false),
+            c("AMD Radeon RX 5700 XT", Kind::Discrete, Some(8176), true),
+        ];
+        // the saved card cannot present: automatic, not its namesake
+        let p = plan(&list, &Wanted::parse("AMD Radeon RX 5700"));
+        assert_eq!((p.order, p.reason), (vec![1], Reason::WantedCannotPresent));
+        // a part of the name still reaches the one that can present
+        let p = plan(&list, &Wanted::parse("rx 5700"));
+        assert_eq!((p.order, p.reason), (vec![1], Reason::Wanted));
     }
 
     #[test]
