@@ -98,6 +98,56 @@ pub fn page(cx: &mut Cx) {
         cx.borrow(Page::Sound, 2, &["audio.voice_visualizer"]);
         cx.borrow(Page::Chat, 0, &["link_previews.subtitles"]);
     });
+    cx.group(tr!("ui-options-pointer"), |cx| {
+        cx.row(
+            tr!("ui-options-pointer-size"),
+            tr!("ui-options-pointer-size-help"),
+            &field!(pointer.size),
+            |ui, settings| {
+                ui.add(egui::Slider::new(&mut settings.pointer.size, 16..=64).suffix(" px"))
+                    .changed()
+            },
+        );
+        cx.combo(
+            tr!("ui-options-pointer-look"),
+            tr!("ui-options-pointer-look-help"),
+            &field!(pointer.look),
+            &[
+                (crate::cursors::PointerLook::Original, tr!("ui-options-pointer-original")),
+                (crate::cursors::PointerLook::Arrow, tr!("ui-options-pointer-arrow")),
+                (crate::cursors::PointerLook::Crosshair, tr!("ui-options-pointer-crosshair")),
+                (crate::cursors::PointerLook::Ring, tr!("ui-options-pointer-ring")),
+                (crate::cursors::PointerLook::Heart, tr!("ui-options-pointer-heart")),
+                (crate::cursors::PointerLook::Sparkle, tr!("ui-options-pointer-sparkle")),
+                (crate::cursors::PointerLook::Bow, tr!("ui-options-pointer-bow")),
+                (crate::cursors::PointerLook::System, tr!("ui-options-pointer-system")),
+            ],
+        );
+    });
+    cx.group(tr!("ui-options-touch-cursor"), |cx| {
+        cx.row(
+            tr!("ui-options-touch-size"),
+            tr!("ui-options-touch-size-help"),
+            &field!(pointer.touch_size),
+            |ui, settings| {
+                ui.add(egui::Slider::new(&mut settings.pointer.touch_size, 16..=64).suffix(" px"))
+                    .changed()
+            },
+        );
+        cx.combo(
+            tr!("ui-options-touch-look"),
+            tr!("ui-options-touch-look-help"),
+            &field!(pointer.touch_look),
+            &[
+                (crate::cursors::TouchLook::Finger, tr!("ui-options-touch-finger")),
+                (crate::cursors::TouchLook::Click, tr!("ui-options-touch-click")),
+                (crate::cursors::TouchLook::Move, tr!("ui-options-touch-move")),
+                (crate::cursors::TouchLook::Heart, tr!("ui-options-touch-heart")),
+                (crate::cursors::TouchLook::Sparkle, tr!("ui-options-touch-sparkle")),
+                (crate::cursors::TouchLook::NormalPointer, tr!("ui-options-touch-pointer")),
+            ],
+        );
+    });
 }
 
 /// The four status dots as the lists draw them, each with its name.
