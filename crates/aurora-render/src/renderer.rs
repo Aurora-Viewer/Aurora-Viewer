@@ -1646,16 +1646,29 @@ pub(crate) struct Backend {
 }
 
 impl Drop for Backend {
-    /// After a device loss the swapchain image of the last frame never comes
-    /// back: the work that holds it never finishes, and destroying the
-    /// surface panics in wgpu (`release_resources`: "SwapchainAcquireSemaphore
-    /// still in use by a SurfaceTexture", wgpu-hal 30). The session closing
-    /// properly after a "GPU device lost" then ended with a Rust panic
-    /// (#1650). A lost device only closes the viewer, so the surface is left
-    /// to the process, which releases it with the driver's objects.
+    /// After a device loss the swapchain image of the last frame never came
+    /// back in stock wgpu 30: destroying the surface panicked
+    /// (`release_resources`: "SwapchainAcquireSemaphore still in use by a
+    /// SurfaceTexture", #1650). With the wgpu fix the workspace patches in,
+    /// the image is released and so is the surface, and a GPU recovery keeps
+    /// the window. A release that still fails leaves the surface to the
+    /// process, and the recovery opens a new window.
     fn drop(&mut self) {
         if self.lost.get() {
-            log::warn!("GPU device lost: the window surface is left to the process");
+            // SAFETY: taken once, here, and never used again: the backend is
+            // being dropped.
+            let surface = unsafe { std::mem::ManuallyDrop::take(&mut self.surface) };
+            match crate::device_lost::release_lost_surface(surface) {
+                Some(true) => {
+                    self.lost.set_surface_released();
+                    log::info!("GPU device lost: the window surface released");
+                }
+                Some(false) => {
+                    self.lost.set_surface_release_failed();
+                    log::warn!("GPU device lost: the window surface could not be released, left to the process");
+                }
+                None => {}
+            }
             return;
         }
         // SAFETY: dropped once, here, and never used again: the backend is

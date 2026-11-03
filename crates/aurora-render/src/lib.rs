@@ -17,7 +17,7 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
-pub use device_lost::{in_guarded_poll, is_loss_panic};
+pub use device_lost::{SurfaceRelease, in_guarded_poll, in_lost_surface_release, is_loss_panic, is_release_panic};
 mod dof;
 mod drawn_pick;
 mod exposure;

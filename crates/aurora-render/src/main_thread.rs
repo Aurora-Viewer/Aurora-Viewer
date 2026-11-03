@@ -34,7 +34,7 @@
 //! flight.
 
 use crate::arena::{GeometryArena, MeshAlloc, RecordStore};
-use crate::device_lost::DeviceLost;
+use crate::device_lost::{DeviceLost, SurfaceRelease};
 use crate::gpu_cull::{CullTables, GpuCull};
 use crate::packet::{FramePacket, FrameResult, SceneGpu, Spent, SurfaceState, capture_for};
 use crate::render_thread::{Done, Host, Job, thread_wanted};
@@ -263,6 +263,23 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Drops a renderer whose device is lost and says what its window can
+    /// do next ([`SurfaceRelease`]): take the new renderer in the same
+    /// window, or wait for a new one — the release caught wgpu-hal's panic,
+    /// the surface was left to the process, or the render thread stayed in
+    /// the driver with it.
+    pub fn drop_after_loss(self) -> SurfaceRelease {
+        let lost = self.lost.clone();
+        drop(self);
+        if lost.surface_released() {
+            SurfaceRelease::SameWindow
+        } else if lost.surface_release_failed() {
+            SurfaceRelease::ReleaseFailed
+        } else {
+            SurfaceRelease::NewWindow
+        }
+    }
+
     /// Create the renderer on the native graphics backend for the given window, on
     /// the GPU `gpu` asks for (`adapter_choice::Wanted`: empty for the
     /// automatic choice).

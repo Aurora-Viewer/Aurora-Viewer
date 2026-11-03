@@ -19,6 +19,51 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 thread_local! {
     static GUARDED: Cell<bool> = const { Cell::new(false) };
+    static RELEASING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// True while [`release_lost_surface`] drops a lost device's surface on this
+/// thread: a panic now is that release failing, taken there.
+pub fn in_lost_surface_release() -> bool {
+    RELEASING.with(Cell::get)
+}
+
+/// Drops the surface of a lost device. With the wgpu fix the workspace
+/// patches in (Cargo.toml: the acquired texture is released on a lost
+/// device), its swapchain goes and the window can take a new one. Without
+/// it, or with a driver that still holds the image, wgpu-hal panics
+/// ("SwapchainAcquireSemaphore still in use", #1650): false, the surface
+/// is left to the process as before. `None` for a handle that is not the
+/// last (a VR backend's): its drop destroys nothing.
+pub(crate) fn release_lost_surface(surface: Arc<wgpu::Surface<'static>>) -> Option<bool> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            RELEASING.with(|r| r.set(false));
+        }
+    }
+    if Arc::strong_count(&surface) > 1 {
+        return None;
+    }
+    RELEASING.with(|r| r.set(true));
+    let _reset = Reset;
+    Some(std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(surface))).is_ok())
+}
+
+/// What dropping a renderer whose device is lost did to its window's
+/// surface (`main_thread::Renderer::drop_after_loss`): the GPU recovery of
+/// app/gpu_recovery.rs keeps the window or opens a new one, and counts the
+/// failures it caught in the crash session (crash/mod.rs).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceRelease {
+    /// The surface released: the window can take the new renderer.
+    SameWindow,
+    /// wgpu-hal's panic ([`is_release_panic`]) took the release down: the
+    /// surface is left to the process.
+    ReleaseFailed,
+    /// Still held by another handle, or the render thread stayed in the
+    /// driver with it.
+    NewWindow,
 }
 
 /// True while [`poll_guarded`] waits on this thread: a panic now whose
@@ -34,6 +79,15 @@ pub fn in_guarded_poll() -> bool {
 pub fn is_loss_panic(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("device is lost") || message.contains("device lost")
+}
+
+/// The wgpu-hal panic when the surface of a lost device is destroyed while
+/// its last frame is still acquired (`release_resources`:
+/// "SwapchainAcquireSemaphore still in use by a SurfaceTexture", #1650):
+/// the one [`release_lost_surface`] catches and takes as a failed release.
+/// Any other panic during the release is a bug, reported as one.
+pub fn is_release_panic(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("swapchainacquiresemaphore still in use")
 }
 
 /// `device.poll`, `None` when wgpu found the device lost during it
@@ -78,15 +132,42 @@ fn guarded<T>(wait: impl FnOnce() -> T) -> Option<T> {
 /// Shared between the device-lost callback, the main thread and the render
 /// thread.
 #[derive(Clone, Debug, Default)]
-pub struct DeviceLost(Arc<AtomicBool>);
+pub struct DeviceLost(Arc<LostState>);
+
+#[derive(Debug, Default)]
+struct LostState {
+    lost: AtomicBool,
+    /// The window's surface was released after the loss
+    /// ([`release_lost_surface`]): the window can take a new one.
+    surface_released: AtomicBool,
+    /// The release caught wgpu-hal's panic ([`is_release_panic`]): the
+    /// surface is left to the process.
+    surface_release_failed: AtomicBool,
+}
 
 impl DeviceLost {
     pub fn set(&self) {
-        self.0.store(true, Ordering::Release);
+        self.0.lost.store(true, Ordering::Release);
     }
 
     pub fn get(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.lost.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set_surface_released(&self) {
+        self.0.surface_released.store(true, Ordering::Release);
+    }
+
+    pub fn surface_released(&self) -> bool {
+        self.0.surface_released.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set_surface_release_failed(&self) {
+        self.0.surface_release_failed.store(true, Ordering::Release);
+    }
+
+    pub fn surface_release_failed(&self) -> bool {
+        self.0.surface_release_failed.load(Ordering::Acquire)
     }
 
     /// Waits for the GPU to finish the work submitted (read-backs: photos,
@@ -246,6 +327,28 @@ mod tests {
         std::panic::set_hook(before);
         assert!(bug.is_err());
         assert!(!in_guarded_poll());
+    }
+
+    #[test]
+    fn the_release_filter_takes_only_the_known_panic() {
+        // wgpu-hal's message (#1650), alone or inside its usual context
+        assert!(is_release_panic("SwapchainAcquireSemaphore still in use by a SurfaceTexture"));
+        assert!(is_release_panic("DX12: SwapchainAcquireSemaphore still in use by a SurfaceTexture"));
+        assert!(!is_release_panic("Device::poll: Validation Error: Parent device is lost"));
+        assert!(!is_release_panic("index out of bounds"));
+        // and the two filters stay apart
+        assert!(!is_loss_panic("SwapchainAcquireSemaphore still in use by a SurfaceTexture"));
+    }
+
+    /// The recovery reads what the drop did to the window through the
+    /// flags: one of released, failed, neither.
+    #[test]
+    fn the_release_outcome_travels_across_the_threads() {
+        let lost = DeviceLost::default();
+        let recovery = lost.clone();
+        assert!(!lost.surface_released() && !lost.surface_release_failed());
+        lost.set_surface_release_failed();
+        assert!(recovery.surface_release_failed() && !recovery.surface_released());
     }
 
     #[test]

@@ -322,6 +322,21 @@ pub fn gpu_lost() {
 /// line each in `gpu-recoveries.txt`, which the session's report counts if
 /// it ends badly later. The session goes on: nothing marks it failed.
 pub fn gpu_recovered(ms: u128, safe: bool) {
+    record_recovery(if safe { "safe" } else { "same" }, ms);
+}
+
+/// The release of a lost device's surface caught wgpu-hal's panic instead
+/// of dropping it (aurora-render `release_lost_surface`, #1650): the surface
+/// stayed with the process and the recovery opens a new window. Counted on
+/// `gpu-recoveries.txt` under its own word, so the reports show how often
+/// the window could not be kept — and whether wgpu 31 makes the panic go
+/// away with it.
+pub fn gpu_surface_release_failed(ms: u128) {
+    record_recovery("release", ms);
+}
+
+/// One line of `gpu-recoveries.txt`: `<unix> <ms> <word>`.
+fn record_recovery(word: &str, ms: u128) {
     use std::io::Write;
     let Some(session) = SESSION.get() else {
         return;
@@ -334,7 +349,7 @@ pub fn gpu_recovered(ms: u128, safe: bool) {
         .append(true)
         .open(session.dir.join("gpu-recoveries.txt"));
     if let Ok(mut file) = file {
-        let _ = writeln!(file, "{unix} {ms} {}", if safe { "safe" } else { "same" });
+        let _ = writeln!(file, "{unix} {ms} {word}");
     }
 }
 

@@ -165,10 +165,12 @@ impl App {
         self.blender_live.gpu_reset(self.scene.textures.staging.as_deref());
     }
 
-    /// After a GPU device loss: a new window and renderer, the session and
-    /// the world kept, the scene reloaded on the new device. The old window
-    /// stays on screen until the new one has presented (`retired_window`).
-    /// False when no new renderer could be made: the caller closes as before.
+    /// After a GPU device loss: a new renderer, the session and the world
+    /// kept, the scene reloaded on the new device. In the same window when
+    /// the lost surface was released (the wgpu fix of Cargo.toml's patch);
+    /// else on a new window, the old one on screen until the new one has
+    /// presented (`retired_window`). False when no new renderer could be
+    /// made: the caller closes as before.
     pub(super) fn recover_from_gpu_loss(&mut self, event_loop: &ActiveEventLoop, safe: bool) -> bool {
         let Some(old) = self.gfx.take() else {
             return false;
@@ -181,20 +183,35 @@ impl App {
             fullscreen: old.window.fullscreen(),
         };
         let maximized = old.window.is_maximized();
-        let Gfx { mut renderer, window, .. } = old;
+        let Gfx {
+            mut renderer,
+            window,
+            shown,
+            ..
+        } = old;
         self.forget_gpu_scene(&mut renderer);
         // the lost renderer first: its surface is made from this window's
-        // handles (Renderer::new's contract)
-        drop(renderer);
-        self.retired_window = Some(window);
+        // handles
+        let surface = renderer.drop_after_loss();
+        if surface == aurora_render::SurfaceRelease::ReleaseFailed {
+            // wgpu-hal's panic caught instead of the release (device_lost.rs):
+            // counted, so the reports watch it until wgpu 31
+            crate::crash::gpu_surface_release_failed(started.elapsed().as_millis());
+        }
+        let same_window = surface == aurora_render::SurfaceRelease::SameWindow;
         if safe {
             self.safe_graphics_after_losses();
         }
-        let window = match self.open_window(event_loop, &plan) {
-            Ok(w) => w,
-            Err(e) => {
-                log::error!("GPU recovery: cannot create a window: {e}");
-                return false;
+        let (window, shown) = if same_window {
+            (window, shown)
+        } else {
+            self.retired_window = Some(window);
+            match self.open_window(event_loop, &plan) {
+                Ok(w) => (w, false),
+                Err(e) => {
+                    log::error!("GPU recovery: cannot create a window: {e}");
+                    return false;
+                }
             }
         };
         let mut renderer = match self.open_renderer(&window) {
@@ -213,7 +230,7 @@ impl App {
             renderer,
             egui_state,
             window,
-            shown: false,
+            shown,
             maximize_on_show: maximized,
         });
         self.gpu_stall = Default::default();
@@ -225,7 +242,8 @@ impl App {
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;
         log::warn!(
-            "GPU recovery: new window and renderer in {} ms{}",
+            "GPU recovery: new renderer {} in {} ms{}",
+            if same_window { "in the same window" } else { "on a new window" },
             started.elapsed().as_millis(),
             if safe { ", with the safe graphics level" } else { "" }
         );
