@@ -432,7 +432,7 @@ pub struct Settings {
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
     pub language_is_public: bool,
-    /// Firestorm FSBrowserHomePage: the page the built-in web browser (toolbar
+    /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
     /// button) opens on (Preferences › Network and cache).
     pub browser_home_page: String,
     /// Alpha feedback shortcut; Help and login remain available.
