@@ -3292,14 +3292,89 @@ The upper-left controls and help in `ui/viewfinder.rs` document the shortcut.
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam
 pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
-HID reports through hidapi on one worker; the frame copies a bounded latest
+HID reports through hidapi on one worker; automatic gamepad mode starts only
+gilrs-core and skips SpaceMouse HID enumeration. It runs by default, hotplugs
+controllers while the viewer is open, and uses the gamepad axis preset without
+requiring the separate joystick-input switch. The frame copies a bounded latest
 snapshot without waiting. `Controller` applies mapping, dead zones, gain,
 button edges, focus/stale-input gating and re-centring after changes.
 Relative channels re-arm independently; absolute zoom needs no centre.
 Mode switches retain button edges while clearing held movement, so an
 off-centre axis cannot block the flycam toggle or the other controls.
 `app/joystick.rs` joins avatar input to the existing simulator controls and
-running state; the independent flycam pose is shown by `camera::Camera`,
+running state. Stick magnitude selects walk or run at the saved threshold;
+the simulator protocol carries directional movement as held flags, so it has
+no continuous speed value. Turning and camera axes retain their analogue
+values. Gamepads use a console-style camera: the right stick orbits the idle
+third-person view around the avatar, while movement folds that orbit behind
+the avatar and routes right-stick yaw to avatar steering. The gamepad backend
+resolves the standardized right-stick X/Y axes from gilrs-core's native axis
+codes, so driver-specific trigger ordering cannot swap orbit and elevation.
+It also identifies standardized buttons and triggers, detects Xbox and
+PlayStation styles from device metadata when possible, and retains a Generic
+fallback. Preferences › Controls › Gamepad (a dedicated page immediately below
+Mouse and keyboard in the Controls sidebar section) configures plug-and-play
+detection, camera sensitivity and independent horizontal and vertical inversion.
+Its Settings and Map controls tabs keep configuration together. Map controls has
+separate Avatar Mode, First person and Flycam sections: each mode can choose its movement and
+camera sticks, while buttons and analog triggers are selected from the connected
+controller's available inputs. Older joystick profiles can retain inherited avatar up/down bindings until
+the user assigns a flycam-specific input. Gamepad defaults resolve A/B and bumpers through native control metadata rather
+than fixed button indices. Avatar fly-up/down default to RB/R1 and LB/L1; flycam uses D-pad up
+for up and D-pad down for down. Avatar and Flycam camera gains default to 4.0, first
+person to 1.875. Camera/travel trigger bindings relinquish an old raw trigger
+lift axis on detection, preventing trigger zoom/speed from moving the avatar
+or camera vertically. Gamepad Settings also exposes the
+shared flycam travel-speed multiplier and the existing Keep the flycam level
+setting used by the Joystick page. The enabled switch holds a strict horizon. With it disabled, the existing
+feathered leveling calculation allows gentle banking and returns roll toward
+center after rotation input is released.
+The Flycam mappings include pressure-sensitive slowdown and speedup triggers,
+with separate minimum and maximum speed multipliers that blend linearly from
+the default speed according to trigger pressure. The first trigger pressed
+owns speed adjustment until it is released, and the configured default speed
+resumes after release.
+`joystick/bindings.rs` resolves the same per-mode stick assignments for the
+input sampler and both preference pages. Explicit raw-axis captures replace
+conflicting gamepad actions, and stick choices relinquish raw roll/zoom or
+button-axis bindings using those inputs. Custom or partially unbound layouts
+remain visible in both pages and survive reloads. Camera gain and inversion
+controls edit the existing Avatar/Camera tuning directly. The legacy enable switch
+shows effective automatic gamepad input without opting into raw HID scanning.
+Avatar-mode camera bindings expose pressure-sensitive trigger zoom, D-pad
+vertical pan, and nearest/previous avatar cycling. Cycling calls
+`ui::people::nearby` for its existing nearest-first ordering and dispatches the
+same `CtxAction::ZoomAvatar` used by People. The player is a stop between the
+nearest and furthest ends of that list in both directions. The selected avatar starts at the
+posed head from `Scene::head_world`, then uses the camera's existing object
+tracking and orbit/pan paths. Movement returns to the player through
+`Camera::reset_view`. Vertical pan uses the existing unlocked camera focus and
+is temporary for every avatar: movement or Reset camera restores the player's
+configured camera preset offsets. On the player, panning unlocks around the
+avatar's horizontal center, not the preset's forward aim offset, preserving the
+eye and focus height. Entering that pivot retains the existing focus animation
+with `CameraSettings::zoom_time`; continued pan updates its destination without
+restarting it. That temporary own-avatar focus reuses object-relative
+tracking with the normal camera's `AvatarFrame` position, so passive movement
+and seated motion keep the pan even before the own object is available.
+Returning to the normal player view clears this temporary tracking. Controller zoom never enters mouselook and retains a
+nonzero minimum orbit radius even with mouse constraints disabled; mouse-wheel
+mode switching remains unchanged. No extra player height is serialized.
+Digital D-pads and native hat axes share semantic bindings; the backend
+normalizes their platform-specific vertical sign.
+The gamepad view button cycles Avatar → First person → Flycam → Avatar through
+existing mouselook, flycam and reset transitions. Disabled modes are skipped.
+`joystick.first_person` contains independent stick/button bindings and signed
+axis gains; look input feeds the existing `AgentState` yaw/pitch path.
+First-person trigger zoom uses a transient lens in `camera/mouselook_zoom.rs`: pressure
+integrates a log-space target, eased over 80 ms. It survives release and yaw/pitch
+changes and passive avatar movement. Explicit player movement input (before
+crouch latching), leaving mouselook or changing the normal
+FOV resets it. The existing mouse-button zoom remains independent and takes precedence. Avatar and raw joystick/flycam tuning remain shared
+with the legacy preferences; first-person tuning is independent.
+Travel scaling is applied during flycam position integration, after device
+axis safety clamps, so the configured 20×–50× speed endpoints are effective.
+The independent flycam pose is shown by `camera::Camera`,
 including roll, zoom and region-origin shifts. It is cleared by reset,
 mouselook, teleport and photo free-camera entry. Preferences › Mouse and
 keyboard › Joystick and 3D mouse (`ui/options/pages/joystick.rs`) shares the

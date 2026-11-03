@@ -8011,6 +8011,16 @@ impl App {
         let joystick_up = self.camera.free().is_none()
             && self.settings.joystick.avatar_enabled
             && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
+        let player_movement_input = i.forward
+            || i.back
+            || i.strafe_left
+            || i.strafe_right
+            || i.turn_left
+            || i.turn_right
+            || i.up
+            || i.down
+            || self.joystick.motion.player_movement_input()
+            || (self.mouse_mode == MouseMode::Steer && self.right_drag);
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
             self.world.agent.flying,
@@ -8019,6 +8029,7 @@ impl App {
             i.up || joystick_up,
         );
         self.joystick_avatar(&mut i);
+        let gamepad = self.joystick_gamepad_selected();
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start).
@@ -8092,14 +8103,33 @@ impl App {
         // moving brings the camera back to the avatar (LLAgent::moveAt & co ->
         // resetView, FSResetCameraOnMovement): after an orbit the agent turns
         // to where the camera looks, the camera stays put
-        let moving = i.resets_camera(self.crouch_toggle.latched());
+        let moving = if gamepad {
+            // Right-stick yaw/pitch orbit the idle camera, so they do not
+            // count as locomotion when selecting the console camera mode.
+            i.forward
+                || i.back
+                || i.turn_left
+                || i.turn_right
+                || i.strafe_left
+                || i.strafe_right
+                || i.up
+                || (i.down && !self.crouch_toggle.latched())
+        } else {
+            i.resets_camera(self.crouch_toggle.latched())
+        };
         if moving && self.mouse_mode != MouseMode::FocusOrbit {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
-            let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0;
+            let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0 || gamepad;
             let roll = self.camera.roll;
-            self.camera
-                .reset_view(&mut self.world.agent, &self.settings.camera, true, false, true, steering);
+            self.camera.reset_view(
+                &mut self.world.agent,
+                &self.settings.camera,
+                true,
+                false,
+                !gamepad && self.camera.gamepad_avatar_target().is_none(),
+                steering,
+            );
             // walking with the photo viewfinder open keeps its tilt: the shot
             // being framed is the viewfinder's, levelled only when it closes
             if self.viewfinder_on() {
@@ -8107,6 +8137,7 @@ impl App {
             }
         }
         self.input = i;
+        self.joystick_avatar_camera(moving, player_movement_input, dt);
         // camera keys (Alt + arrows...), ramping up like get_orbit_rate
         use crate::keybinds::Action as A;
         const CAMERA_KEYS: [A; 10] = [
@@ -8151,6 +8182,10 @@ impl App {
         };
         self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
         self.camera.joystick_pitch(i.joystick_pitch, dt);
+        if gamepad && !moving && self.mouse_mode != MouseMode::FocusOrbit {
+            self.camera
+                .joystick_orbit_yaw(self.joystick.motion.axes[5], dt, &mut self.world.agent);
+        }
     }
 
     // ------------------------------------------------------------------ frame

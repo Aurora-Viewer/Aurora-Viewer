@@ -403,9 +403,40 @@ fn a_setting_has_one_page() {
         if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
         }
+        // Gamepad is another view of these existing joystick settings.
+        // Keep the exception confined to the two controller preference pages.
+        let shared_controller = |path: &str| {
+            [
+                "joystick.automatic_gamepad",
+                "joystick.avatar",
+                "joystick.flycam",
+                "joystick.gamepad_move_stick",
+                "joystick.gamepad_camera_stick",
+                "joystick.gamepad_flycam_move_stick",
+                "joystick.gamepad_flycam_camera_stick",
+                "joystick.jump_button",
+                "joystick.rise_button",
+                "joystick.fall_button",
+                "joystick.flycam_button",
+                "joystick.flycam_rise_button",
+                "joystick.flycam_fall_button",
+                "joystick.zoom_in_button",
+                "joystick.zoom_out_button",
+                "joystick.zoom_hold_button",
+                "joystick.flycam_speed",
+                "joystick.auto_level",
+            ]
+            .iter()
+            .any(|shared| path == *shared || path.starts_with(&format!("{shared}.")))
+        };
         let elsewhere: Vec<_> = paths
             .iter()
-            .filter(|(other, p)| other != page && (p == path || p.starts_with(&format!("{path}.")) || path.starts_with(&format!("{p}."))))
+            .filter(|(other, p)| {
+                let controller_pair = matches!((page, other), (Page::Controls, Page::Gamepad) | (Page::Gamepad, Page::Controls));
+                other != page
+                    && (p == path || p.starts_with(&format!("{path}.")) || path.starts_with(&format!("{p}.")))
+                    && !(controller_pair && shared_controller(path) && shared_controller(p))
+            })
             .collect();
         assert!(elsewhere.is_empty(), "`{path}` of {page:?} is also on {elsewhere:?}");
     }

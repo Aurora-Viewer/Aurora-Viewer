@@ -11,7 +11,7 @@
 //! mice reset (disconnect / reconnect) when repeated, so the scans only
 //! ever read the strings of 3D mice.
 
-use super::{AXES, Device, Snapshot};
+use super::{AXES, Device, GamepadButton, GamepadStyle, Snapshot};
 use parking_lot::Mutex;
 use std::sync::{
     Arc,
@@ -24,11 +24,13 @@ use std::time::{Duration, Instant};
 #[repr(u8)]
 pub enum Use {
     /// No controller library, no scan, no open device.
-    Off,
+    Off = 0,
     /// The preferences list the devices; 3D mice stay closed.
-    List,
+    List = 1,
     /// The input is enabled.
-    On,
+    On = 2,
+    /// Monitor standard gamepads only; never enumerate SpaceMouse HID.
+    Gamepad = 3,
 }
 
 pub struct Backend {
@@ -48,6 +50,7 @@ impl Default for Backend {
                 let mode = match wanted.load(Ordering::Relaxed) {
                     2 => Use::On,
                     1 => Use::List,
+                    3 => Use::Gamepad,
                     _ => Use::Off,
                 };
                 let snapshot = worker.poll(mode);
@@ -96,6 +99,58 @@ struct Worker {
 }
 
 impl Worker {
+    fn controller_style(name: &str, vendor: Option<u16>) -> GamepadStyle {
+        let name = name.to_ascii_lowercase();
+        if vendor == Some(0x054c) || name.contains("playstation") || name.contains("dualsense") || name.contains("dualshock") {
+            GamepadStyle::Playstation
+        } else if vendor == Some(0x045e) || name.contains("xbox") || name.contains("x-box") {
+            GamepadStyle::Xbox
+        } else {
+            GamepadStyle::Generic
+        }
+    }
+
+    fn button_kind(code: gilrs_core::EvCode) -> GamepadButton {
+        use gilrs_core::native_ev_codes as b;
+        if code == b::BTN_SOUTH {
+            GamepadButton::South
+        } else if code == b::BTN_EAST {
+            GamepadButton::East
+        } else if code == b::BTN_NORTH {
+            GamepadButton::North
+        } else if code == b::BTN_WEST {
+            GamepadButton::West
+        } else if code == b::BTN_SELECT {
+            GamepadButton::Select
+        } else if code == b::BTN_START {
+            GamepadButton::Start
+        } else if code == b::BTN_MODE {
+            GamepadButton::Mode
+        } else if code == b::BTN_LTHUMB {
+            GamepadButton::LeftStick
+        } else if code == b::BTN_RTHUMB {
+            GamepadButton::RightStick
+        } else if code == b::BTN_LT {
+            GamepadButton::LeftBumper
+        } else if code == b::BTN_RT {
+            GamepadButton::RightBumper
+        } else if code == b::BTN_LT2 {
+            GamepadButton::LeftTrigger
+        } else if code == b::BTN_RT2 {
+            GamepadButton::RightTrigger
+        } else if code == b::BTN_DPAD_UP {
+            GamepadButton::DpadUp
+        } else if code == b::BTN_DPAD_DOWN {
+            GamepadButton::DpadDown
+        } else if code == b::BTN_DPAD_LEFT {
+            GamepadButton::DpadLeft
+        } else if code == b::BTN_DPAD_RIGHT {
+            GamepadButton::DpadRight
+        } else {
+            GamepadButton::Other
+        }
+    }
+
     fn start(&mut self) {
         self.started = true;
         match gilrs_core::Gilrs::new() {
@@ -192,11 +247,47 @@ impl Worker {
                     && !pad.vendor_id().zip(pad.product_id()).is_some_and(|(v, p)| space_mouse(v, p))
                 {
                     self.pads.entry(id).or_insert_with(|| {
-                        Device::new(
+                        let axis_index = |axis| pad.axes().iter().position(|code| *code == axis);
+                        let sticks = [
+                            [
+                                axis_index(gilrs_core::native_ev_codes::AXIS_LSTICKX),
+                                axis_index(gilrs_core::native_ev_codes::AXIS_LSTICKY),
+                            ],
+                            [
+                                axis_index(gilrs_core::native_ev_codes::AXIS_RSTICKX),
+                                axis_index(gilrs_core::native_ev_codes::AXIS_RSTICKY),
+                            ],
+                        ];
+                        let trigger_index = |codes: &[gilrs_core::EvCode]| {
+                            codes
+                                .iter()
+                                .find_map(|code| pad.axes().iter().position(|candidate| candidate == code))
+                        };
+                        let mut device = Device::gamepad(
                             format!("joystick:{}:{id}", uuid::Uuid::from_bytes(pad.uuid())),
                             pad.name().to_owned(),
                             pad.axes().len(),
-                        )
+                            sticks,
+                            [
+                                trigger_index(&[
+                                    gilrs_core::native_ev_codes::AXIS_LT2,
+                                    gilrs_core::native_ev_codes::AXIS_LT,
+                                    gilrs_core::native_ev_codes::AXIS_LEFTZ,
+                                ]),
+                                trigger_index(&[
+                                    gilrs_core::native_ev_codes::AXIS_RT2,
+                                    gilrs_core::native_ev_codes::AXIS_RT,
+                                    gilrs_core::native_ev_codes::AXIS_RIGHTZ,
+                                ]),
+                            ],
+                            Self::controller_style(pad.name(), pad.vendor_id()),
+                            pad.buttons().iter().copied().map(Self::button_kind).collect(),
+                        );
+                        device.gamepad_dpad = [
+                            axis_index(gilrs_core::native_ev_codes::AXIS_DPADX),
+                            axis_index(gilrs_core::native_ev_codes::AXIS_DPADY),
+                        ];
+                        device
                     });
                 }
             }
@@ -229,7 +320,7 @@ impl Worker {
                 }
             }
         }
-        let scanning = self.scan_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(1));
+        let scanning = mode != Use::Gamepad && self.scan_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(1));
         if scanning {
             self.scan_at = Some(Instant::now());
             self.scan();
@@ -386,15 +477,21 @@ fn path_ids(path: &str) -> Option<(u16, u16)> {
 }
 
 fn normalize_axis(value: i32, min: i32, max: i32, code: gilrs_core::EvCode) -> f32 {
-    use gilrs_core::native_ev_codes::{AXIS_LT2, AXIS_RT2};
-    // Windows gamepad triggers report pressure, with zero at release
-    // (gilrs-core's windows_wgi/gamepad.rs::axis_info). Treating that
-    // range as a centred stick made release -1, so relative zoom could not
-    // arm and would keep zooming after the trigger was released.
-    if cfg!(windows) && min >= 0 && max > min && matches!(code, AXIS_LT2 | AXIS_RT2) {
+    use gilrs_core::native_ev_codes::{AXIS_LEFTZ, AXIS_LT, AXIS_LT2, AXIS_RIGHTZ, AXIS_RT, AXIS_RT2};
+    // Trigger axes are pressure controls on every backend. Normalizing their
+    // native min/max as a centred stick made released triggers read -1, hiding
+    // them from mapping and preventing the speed controls from arming.
+    if max > min && matches!(code, AXIS_LT | AXIS_RT | AXIS_LT2 | AXIS_RT2 | AXIS_LEFTZ | AXIS_RIGHTZ) {
         return ((f64::from(value) - f64::from(min)) / (f64::from(max) - f64::from(min))).clamp(0.0, 1.0) as f32;
     }
-    normalize(value, min, max)
+    let value = normalize(value, min, max);
+    // gilrs-core WGI direction_from_switch reports up positive; Linux/macOS
+    // hats report up negative. Keep the semantic D-pad bindings portable.
+    if cfg!(windows) && code == gilrs_core::native_ev_codes::AXIS_DPADY {
+        -value
+    } else {
+        value
+    }
 }
 
 fn normalize(value: i32, min: i32, max: i32) -> f32 {
