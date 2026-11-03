@@ -3635,7 +3635,13 @@ Windows considers the window hung (`IsHungAppWindow`, the test behind "Not
 responding"), it suspends the main and render threads one after the other,
 unwinds their stacks from their registers into a fixed array
 (`native::write_thread_stack`) and writes them to `freeze.txt`, again every
-15 seconds; the file goes away when the window answers again. A session
+15 seconds; the file goes away when the window answers again. Linux has
+no such system test: the main loop marks each of its passes
+(`crash::pumped`, from `about_to_wait`, which runs at every pass as the
+loop polls) and 5 seconds without one count as a frozen window; each
+thread is then sent a real-time signal (tgkill) whose handler unwinds its
+own stack into a fixed array (`linux::Thread::write_stack`), the threads
+being named from `/proc/self/task/<id>/comm`. A session
 that ends with it is reported as a freeze with those stacks; a session
 whose watcher died with it (process tree ended, Windows gone) gets its
 duration from `alive.txt`. The app saves the render thread's stack in
