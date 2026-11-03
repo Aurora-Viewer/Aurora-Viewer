@@ -995,8 +995,6 @@ pub struct TextureStreamer {
     card_sharing: bool,
     relief: texture_budget::Relief,
     target_ramp: texture_budget::TargetRamp,
-    /// The driver's budget under the viewer's usage (texture_budget::Crowding).
-    crowding: texture_budget::Crowding,
     last_budget: Instant,
     /// Passes of `recompute_wants` since the step last changed.
     passes_at_step: u32,
@@ -1295,7 +1293,6 @@ impl TextureStreamer {
             card_sharing: false,
             relief: Default::default(),
             target_ramp: Default::default(),
-            crowding: Default::default(),
             last_budget: Instant::now(),
             passes_at_step: 0,
             reductions: Vec::new(),
@@ -3170,24 +3167,12 @@ impl TextureStreamer {
     /// Memory budget, a few times a second: what the textures may hold now
     /// and the pressure step for what they hold (texture_budget.rs).
     fn press(&mut self, renderer: &mut Renderer, now: Instant, setting: u64) {
-        // (a copy of the sampling thread's last figures: the pass runs at
-        // the sample that finds the budget under the usage, not at its
-        // next turn, texture_budget::Crowding)
-        let video = renderer.video_memory.read(&renderer.device);
-        let short = self.crowding.update(video);
-        if short.is_none() && now.duration_since(self.last_budget) < BUDGET_EVERY {
+        if now.duration_since(self.last_budget) < BUDGET_EVERY {
             return;
         }
         self.last_budget = now;
-        if let (Some(short), Some(v)) = (short, video) {
-            log::warn!(
-                "texture memory: the video memory budget fell under what the viewer holds ({} MB short: {} MB taken from the driver for a budget of {} MB); textures come down at once",
-                short >> 20,
-                v.usage >> 20,
-                v.budget >> 20
-            );
-        }
         let (used, live) = (renderer.textures.page_bytes(), renderer.textures.bytes());
+        let video = renderer.video_memory.read(&renderer.device);
         self.video_usage = video.map_or(0, |v| v.usage);
         if self.card_sharing && !self.card_asked {
             self.card_asked = true;
@@ -3221,7 +3206,7 @@ impl TextureStreamer {
         // textures back, at once while the memory is short, and takes up
         // again once in front (LLViewerTexture::updateClass,
         // texture_budget::Background)
-        let crowded = self.crowding.crowded();
+        let crowded = video.is_some_and(|v| v.usage > v.budget);
         let away = self.background.update(now, self.in_front, self.minimized, crowded);
         if away && !self.pressure.held() {
             self.pressure.hold_max(now);
@@ -3255,7 +3240,6 @@ impl TextureStreamer {
                 target,
                 settled: self.passes_at_step >= 2 && self.reductions.is_empty() && !renderer.textures.settling(),
                 below,
-                crowded,
             },
         );
         // (behind: everything the highest step allows, not only what brings
@@ -4287,7 +4271,6 @@ mod tests {
                     target: 1,
                     settled: true,
                     below: 2,
-                    crowded: false,
                 },
             );
         }
