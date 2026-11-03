@@ -1,5 +1,32 @@
 # Aurora Viewer architecture
 
+`aurora-render/src/vram.rs` samples the driver's memory budget on the
+`aurora-vram` worker every 250 ms. Frame, photo and diagnostic paths only
+copy the last complete reading; neither reads nor shutdown wait for a stuck
+driver query. The one-minute budget floor remains on the sampling worker.
+GPU-culling growth validates all replacement buffers before installing them,
+respects the complete storage binding and dispatch limits, and retains its
+working allocation with backoff after failure. Scenes beyond those limits
+select the existing CPU draw lists before list construction.
+Reflection-probe capture mips use separate compute passes before the final
+radiance/irradiance pass. This avoids invalid Vulkan image layouts in wgpu
+30 when a mip written by one dispatch is sampled by later dispatches.
+Particle uploads grow through `gpu_alloc::grow_upload_buffer`: replacement
+allocations are checked and bounded by device limits, and failures retain
+the working buffer with backoff. Uploads and draw counts use its actual
+capacity while excess particles wait for a successful growth.
+World-label vertex and index uploads use the same helper. A failed growth
+omits that frame's labels while retaining valid buffers; a later frame that
+fits can draw immediately, including during the retry delay.
+Mirrored culling tables use the same whole-binding limit. Draw records and
+previous models grow as a validated pair, capped to their storage binding
+capacity, with smaller retries and retained buffers on failure. Geometry
+preallocation rounds and caps its wishes before applying the memory
+allowance, so rounding cannot bypass that allowance.
+The existing crashing-layer exclusions also disable Bandicam's implicit
+64-bit Vulkan layer using its manifest's `VK_LAYER_bandicam_helper_DEBUG_1`
+variable (#2080); its 32-bit disabling variable does not affect that DLL.
+
 Avatar gait playback resolves standard walk/run signals to the modern male or
 female assets selected by LLVOAvatar::remapMotionID with its default settings
 (#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the
@@ -2492,6 +2519,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/group_profile.rs`, `ui/group_profile/`, `world/group_data.rs`, `aurora-net/src/groups.rs`, `aurora-net/src/session_groups.rs`, `demo_group.rs` | Group profile: LLGroupMgr's data of a group (members by the GroupMemberData capability or GroupMembersRequest, roles, role / member pairs, titles, notice list; replies and request ids in `aurora-net/src/groups.rs`, pure; sending and receiving in `session_groups.rs`), kept per group with stale replies dropped (`world/group_data.rs`); window in the Aurora look (`group_profile/view.rs` header and tabs, `home.rs`, `members.rs` with `admin_members.rs` and the abilities catalogue `abilities.rs`, `notices.rs`, `invite.rs`, `administration.rs`) or the classic one; "Create a group" (`create.rs`: LLPanelGroupCreate's rules, the profile's header and the identity cards of `administration.rs`, or Firestorm's creation panel; CreateGroupRequest and its name rules in `aurora-net/src/groups.rs`); demo group server (`demo_group.rs`, AURORA_DEMO_GROUP_PROFILE, AURORA_DEMO_GROUP_CREATE) |
 | `ui/group_titles.rs`, `world/region_titles.rs`, `app/group_titles.rs`, `demo_group_region.rs` | Group titles (FSFloaterGroupTitles, FSGroupTitleRegionMgr): the window lists every title of every group (their own GroupTitlesRequest, apart from the profiles' 20-group cache), Activate, the default title, and the regions given a title; `world/region_titles.rs` keeps the rules per account and grid (`region_group_titles-<grid>.json`), matches the region by its sanitized lower-case name, and once per arrival (end of the move, region name and our groups known) sends GroupTitleUpdate and ActivateGroup only when needed, nothing for a group left or under RLVa @setgroup; a typed region is looked up with MapNameRequest (10 s). `app/group_titles.rs` loads the rules at login and sends; `demo_group_region.rs` is AURORA_DEMO_GROUP_REGION |
 | `ui/find_shortcut.rs` | Ctrl+F requested by three features: the single rule (`owner`) that gives it to the window one of whose fields has the keyboard (script editor, conversation), otherwise to the conversation under the pointer, otherwise to the viewer's shortcut ("Search"); the windows with a search bar declare themselves to it every frame (`take`), the application queries it before running its shortcut (`window_takes_it`) |
+| `ui/fly_override.rs` | The fly override's first-use caution (the Legacy Viewer's FirstUseFlyOverride alert): a `widgets::Modal` with one OK, raised once ever by `App::toggle_fly_override` (`Settings::fly_override_warned`); the override itself is `World::fly_override`, never saved, read by `autopilot::land_allows_flight` and `World::land_if_fly_blocked` |
 | `ui/click_away_focus.rs` | egui plugin installed by `Theme::apply`: a click elsewhere takes the focus from a widget at the end of the pass, as egui 0.36 did, instead of before a `TextEdit` handles its events (egui 0.37 then drops its selection before the button clicked, the field menu's Cut or the notecard toolbar's Bold, can use it); a focus requested back during the pass keeps it. To be removed once egui is fixed |
 | `ui/close_key.rs` | Ctrl+W closes the frontmost window, as File › Close Window, and on macOS Command+W does too (both are the keyboard Control mask). Ctrl+Shift+W, and Command+Shift+W on macOS, closes every window, as File › Close All Windows, including the mini-map (`shown_extra`). Taken at the start of the interface's frame, before a text field reads it (`begin`), only when a window is there; every `widgets::Floater` declares itself (`shown`) and closes as its cross when the key is for it (`take`); the Conversations window takes a single close first for its conversation shown, and Close All closes that window |
 | `ui/widgets.rs`, `ui/widgets/resize.rs`, `ui/widgets/cascade.rs`, `ui/widgets/demo.rs`, `ui/widgets/scroll_offset.rs`, `ui/widgets/hero.rs` | Shared widgets and floating windows; the head shared by the Aurora avatar and group profiles, a banner as tall as what it holds with the picture, who it is and the actions centred on one line and the tabs along its bottom, laid out again when its height changes (`hero`); Construction and inventory menu customization share organization typography, headings, close controls and drag previews in `ui/widgets/workspace.rs`; a scroll offset decided after a scroll area is shown (rows above that changed height, automatic scrolling) given back to it at its next show, egui keeping the offset private (`scroll_offset`); the capitals of every text field centred on its face, the field keeping its height (`field_text_margin`, used by `theme.rs` for the theme's fields and by the bare fields laid on their own face); Firestorm inventory preview/editor cascades by type and creation order; collapsing by double-clicking the title or by a button, expanded size kept and collapsed bar movable; offline gestures on the real title; resize handles bounded before the move, opposite edge fixed, limits of the content and of the visible area; position and size kept by egui; names longer than their space cut with "…" with the whole name on hover (`elided_label`, `paint_elided`) for the lists of residents, groups and conversations |

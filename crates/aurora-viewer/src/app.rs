@@ -295,6 +295,8 @@ pub struct App {
     movement_runtime: crate::movement::Runtime,
     movement_probe: (Option<Instant>, bool, Option<Vec3>),
     pass_wall_at: Option<Instant>,
+    /// The fly override's first-use caution is up (ui::fly_override).
+    fly_override_caution: bool,
     scene: Scene,
     probes: crate::scene::probes::ProbeManager,
     /// Throttle of the "sky frame" log line.
@@ -1253,6 +1255,7 @@ impl App {
             movement_runtime: Default::default(),
             movement_probe: (None, false, None),
             pass_wall_at: None,
+            fly_override_caution: false,
             scene,
             probes: Default::default(),
             sky_log: Default::default(),
@@ -4215,6 +4218,7 @@ impl App {
         };
         match action {
             Action::Fly => self.toggle_fly(),
+            Action::FlyOverride => self.toggle_fly_override(),
             Action::Flycam => self.toggle_joystick_flycam(),
             Action::AlwaysRun => self.set_always_run(!self.always_run),
             Action::MoveLock => self.toggle_move_lock(),
@@ -7011,6 +7015,26 @@ impl App {
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
+    }
+
+    /// Me › Fly override / Ctrl+Alt+V (LLAgent::updateFSAlwaysFly,
+    /// indra/newview/llagent.cpp): the switch is never saved, and turning it
+    /// on the first time ever brings the FirstUseFlyOverride caution.
+    fn toggle_fly_override(&mut self) {
+        self.world.fly_override = !self.world.fly_override;
+        log::info!("fly override: {}", self.world.fly_override);
+        self.world.system_message(if self.world.fly_override {
+            aurora_i18n::tr!("ui-bars-fly-override-on")
+        } else {
+            aurora_i18n::tr!("ui-bars-fly-override-off")
+        });
+        if self.world.fly_override && !self.settings.fly_override_warned {
+            self.fly_override_caution = true;
+            self.settings.fly_override_warned = true;
+            if !self.demo {
+                self.settings.save();
+            }
+        }
     }
 
     /// A conversation the user opened (a contact, a name's menu, People)
@@ -12913,6 +12937,7 @@ impl App {
             }
             BarAction::Controls { movement, toggle } => self.request_controls(movement, toggle),
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
+            BarAction::ToggleFlyOverride => self.toggle_fly_override(),
             BarAction::ToggleQuickjump => {
                 self.settings.quickjump = !self.settings.quickjump;
                 self.settings.save();
@@ -14039,6 +14064,22 @@ impl App {
         self.panels.settings = open;
     }
 
+    /// The bars' clock settings, with the demo's (`AURORA_DEMO_BARS`) for
+    /// the run.
+    fn system_island(&self) -> crate::settings::SystemIsland {
+        let s = self.settings.system_island;
+        if !self.demo {
+            return s;
+        }
+        let demo = ui::bars::demo::get();
+        crate::settings::SystemIsland {
+            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
+            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
+            clock_format: demo.clock_format.unwrap_or(s.clock_format),
+            ..s
+        }
+    }
+
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique("vr-active"), renderer.vr_engaged()));
@@ -14059,6 +14100,7 @@ impl App {
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
         ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
+        ui::bars::clock::set_chat_format(self.system_island().clock_format);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
         self.beacon_hit = None;
         let mut t = Instant::now();
@@ -14430,6 +14472,7 @@ impl App {
                     env_keys: self.env_keys(),
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
+                    fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
@@ -14457,17 +14500,7 @@ impl App {
                     own_pic: self.avatar_pics.get(&self.world.agent_id),
                     recent: if classic_bars { Vec::new() } else { self.recent_places() },
                     favorites: &favorites,
-                    system_island: if self.demo {
-                        let (demo, s) = (ui::bars::demo::get(), self.settings.system_island);
-                        crate::settings::SystemIsland {
-                            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
-                            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
-                            clock_format: demo.clock_format.unwrap_or(s.clock_format),
-                            ..s
-                        }
-                    } else {
-                        self.settings.system_island
-                    },
+                    system_island: self.system_island(),
                     net_stats: if self.demo {
                         ui::bars::demo::get().net_stats.unwrap_or(self.settings.show_net_stats)
                     } else {
@@ -15076,6 +15109,9 @@ impl App {
                             a.bar = BarAction::HideInterface;
                         }
                     }
+                }
+                if self.fly_override_caution && ui::fly_override::caution(&ctx, &p) {
+                    self.fly_override_caution = false;
                 }
                 if self.interface.immersive && !self.camera.mouselook() {
                     let huds = self.settings.show_huds.then_some(self.settings.immersive_huds);
