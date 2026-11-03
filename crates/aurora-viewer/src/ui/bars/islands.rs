@@ -105,6 +105,27 @@ pub(super) fn icon_slot(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rec
     resp
 }
 
+/// `icon_slot` whose left click may be greyed (an RLVa restriction) while
+/// its right-click menu stays: the response, and whether it was clicked
+/// while enabled.
+pub(super) fn icon_slot_greyable(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    rect: Rect,
+    id: Id,
+    icon: &str,
+    enabled: bool,
+) -> (egui::Response, bool) {
+    let resp = ui.interact(rect, id, Sense::click());
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    let hot = resp.hovered() || open;
+    slot_face(ui, p, rect, hot, false);
+    paint_icon(ui, icons, icon, rect, ICON, slot_ink(p, hot && enabled, enabled));
+    let clicked = enabled && resp.clicked();
+    (resp, clicked)
+}
+
 /// A text laid out in the font of the islands' readouts.
 fn text(ui: &egui::Ui, s: String, size: f32, color: Color32) -> std::sync::Arc<egui::Galley> {
     ui.painter().layout_no_wrap(s, FontId::proportional(size), color)
@@ -1124,6 +1145,7 @@ mod tests {
             marketplace: false,
             parcel_landmark: None,
             can_set_home: false,
+            can_go_home: true,
             release_notes: false,
             region_console: false,
             motd: false,

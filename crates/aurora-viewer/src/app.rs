@@ -817,6 +817,7 @@ pub struct App {
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    texture_res_demo: Option<crate::demo::texture_res::TextureResDemo>,
     /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
     aa_switch_demo: Vec<(u64, u8)>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
@@ -1099,6 +1100,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_TEXTURE_BUDGET_MB").ok().and_then(|v| v.parse::<u32>().ok()) {
         settings.texture_budget_auto = false;
         settings.texture_budget_mb = v.clamp(256, 32768);
+    }
+    if let Some(v) = std::env::var("AURORA_MAX_TEXTURE_RES").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.max_texture_resolution = crate::settings::max_texture_resolution_choice(v);
     }
     if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
         settings.max_complexity = v;
@@ -1558,6 +1562,7 @@ impl App {
             arrival_demo: None,
             outfit_restore_demo: None,
             tex_refresh_demo: None,
+            texture_res_demo: None,
             aa_switch_demo: if std::env::var_os("AURORA_DEMO").is_some() {
                 crate::demo::aa_switch::from_env()
             } else {
@@ -5070,6 +5075,8 @@ impl App {
         // only people's lines count and alert (#741; AURORA_DEMO_OBJECT_CHAT=…:on
         // for the run)
         w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
+        // FSAnnounceIncomingIM (AURORA_DEMO_IM_ANNOUNCE=1: on for the run)
+        w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
             presence: self.settings.toast_friends_online,
             presence_in_chat: self.settings.friends_online_in_chat,
@@ -8984,6 +8991,7 @@ impl App {
                 pixel_angle: lod_height as f32 / self.camera.fov_y.max(1e-3),
             };
             self.scene.lod_factor = self.settings.lod_factor;
+            self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
             if self.demo {
                 self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
@@ -11082,6 +11090,14 @@ impl App {
                 }
             }
         }
+        if self.demo && crate::demo::im_announce::active() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::im_announce::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
         if self.demo && crate::demo::keywords::active() {
             let agent = self.world.agent_id;
             for event in crate::demo::keywords::events(self.frame_count, agent) {
@@ -11603,6 +11619,16 @@ impl App {
             && let Some(object) = demo.tick(self.frame_count, &mut self.world, self.scene.textures.cache_dir())
         {
             self.refresh_object_textures(object);
+        }
+        // AURORA_DEMO_TEXTURE_RES: boards with 2048 px streamed textures
+        if let (Some(demo), Some(g)) = (&mut self.texture_res_demo, &mut self.gfx) {
+            demo.tick(
+                self.frame_count,
+                &mut self.world,
+                &mut self.scene.textures,
+                &mut g.renderer,
+                &self.scene.jobs,
+            );
         }
         if let Some(demo) = &mut self.sculpt_missing_demo {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
@@ -14062,6 +14088,16 @@ impl App {
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique("vr-active"), renderer.vr_engaged()));
+        // the toolbar's Sit / Stand button, greyed when RLVa would refuse it
+        // (RlvActions::canStand / canGroundSit, the same check as the send)
+        let sit = if self.world.agent.is_sitting() {
+            control::STAND_UP
+        } else {
+            control::SIT_ON_GROUND
+        };
+        let sit_locked = !self.world.rlva_allows_command(&NetCommand::OneShotControl(sit), uuid::Uuid::nil());
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(ui::bars::rlva_sit_locked_id(), sit_locked));
         self.world.refresh_rlva_privacy();
         self.notif_ui.privacy = self.world.rlva_privacy.clone();
         let mut a = UiActions::default();
@@ -14443,6 +14479,7 @@ impl App {
                     quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
+                    can_go_home: self.world.rlva_can_teleport_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
                     motd: !self.world.motd.is_empty(),
@@ -15055,7 +15092,7 @@ impl App {
                         } else {
                             self.settings.chat_toast_seconds
                         },
-                        self.settings.chat_timestamps,
+                        self.settings.chat_timestamps_nearby,
                         !classic_bars,
                         // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
                         // for the session, nothing saved
@@ -15140,7 +15177,8 @@ impl App {
                     self.chat_ui.output_devices.clone_from(&self.options_ui.output_devices);
                     self.chat_ui.output_device.clone_from(&self.settings.audio.output_device);
                 }
-                self.chat_ui.timestamps = self.settings.chat_timestamps;
+                self.chat_ui.timestamps_nearby = self.settings.chat_timestamps_nearby;
+                self.chat_ui.timestamps_im = self.settings.chat_timestamps_im;
                 // AURORA_DEMO_OBJECT_CHAT=…:on: for the run, nothing saved
                 self.chat_ui.compact_automated = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
                 self.chat_ui.compact_im_notices =
@@ -18847,6 +18885,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
             }
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
+            self.texture_res_demo = crate::demo::texture_res::TextureResDemo::from_env();
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();

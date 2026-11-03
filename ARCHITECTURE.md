@@ -2450,6 +2450,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_sculpt.rs` | `AURORA_DEMO_SCULPT_ZERO` scenario: ordinary torus and two sculpts sharing its path/profile, subtype zero and sphere, with a synthetic JPEG2000 map in the demo cache |
 | `demo_sim_version.rs` | `AURORA_DEMO_SIM_VERSION` scenario: the region's simulator version changes during the run (the notice of Preferences › Confirmations, off by default, or on for the run) |
 | `demo_missing_texture.rs` | `AURORA_DEMO_TEXTURE_MISSING` scenario: boxes whose texture the asset server does not have (the Legacy Viewer's grey, not the rez grid) |
+| `demo_texture_res.rs` | `AURORA_DEMO_TEXTURE_RES` scenario: three boards whose 2048 px textures go through the streamer (`DemoSource`), each level tinted by its resolution, to see the maximum texture resolution |
 | `demo_bom_rezzed.rs` | `AURORA_DEMO_BOM_REZZED` scenario: a box of bake-on-mesh placeholders on the ground, with stand-in placeholder textures drawn under their ids, in this scenario only |
 | `demo_social_menu.rs`, `app/social_menu_demo.rs` | `AURORA_DEMO_SOCIAL_MENU` scenario: a resident's "Invite to group" (group picker, then the invitation), "Add to contact set" (a new set), "Block particles" (the fountain they own) and calling cards (given, accepted by the demo server, or offered by the resident) |
 | `demo_notifs.rs` | `AURORA_DEMO_NOTIFS` scenario: the notification center's mockup (an IM, a friend online, a teleport and an inventory offer, a burst of five), in do not disturb, with the list or the history open, or with Firestorm's toasts |
@@ -2457,6 +2458,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_seat_kill.rs` | `AURORA_DEMO_SEAT_KILL` scenario (issue #746): a resident's seat deleted before the simulator stands them up; they stay where they sat, with what they wear |
 | `demo_presence.rs` | `AURORA_DEMO_PRESENCE` scenario: the friends' online / offline toasts at one of their six places, above the nearby chat lines, waiting at the top right under an IM card and the open list (shown, or dropped after 3.5 s) |
 | `demo_attention.rs` | `AURORA_DEMO_ATTENTION` scenario: the window to the taskbar, then an IM, mentions in nearby and group chat, an object's message, a teleport offer and a script dialog |
+| `demo_im_announce.rs` | `AURORA_DEMO_IM_ANNOUNCE` scenario: Nova and Tess in turn start typing IMs to us, then send them; both settings on for the run, or `prefs` |
 | `demo_conv_button.rs` | `AURORA_DEMO_CONV_BUTTON` scenario: the Conversations button flashing for a nearby chat line and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `demo_delivery.rs` | `AURORA_DEMO_DELIVERY` scenario: a Marketplace delivery landing in Received items with no offer, its card under the bell (one or several), "Show in inventory" and its history entry |
 | `demo_toasts.rs` | `AURORA_DEMO_TOASTS` scenario: a friend offline then online, two IMs from one resident, a group IM, then the bell list or a click on the IM card (window closed or minimized) |
@@ -2563,6 +2565,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `window_hold.rs` | Frames while Windows holds the window (mouse button pressed on the title bar, a border or a title bar button, move, resize, system menu): Windows follows those in a message loop of its own, in which winit's loop does not turn and no redraw is asked. The window procedure is hooked to know when a hold begins and ends, and a helper thread then asks for an immediate repaint, which winit delivers as a `RedrawRequested` on the main thread. During a hold the frame limiter does not wait on the main thread (`paces`): the helper waits between two frames, and spaces them out while the cursor moves so that the window keeps following it |
 | `alt_codes.rs` | Windows Alt codes in text fields: left Alt + numpad digits read from the key events while egui has a text field focused (the digits kept from it), the character given at Alt's release in the OEM code page, or the ANSI one after a leading 0 (winit drops the `WM_CHAR` Windows sends after the Alt key-up) |
 | `world/attention.rs`, `app/attention.rs`, `system_notify.rs` | Taskbar flash and system notifications while the window is not in front (LLWindow::flashIcon, the Growl manager): what asks for attention, recorded by the world beside its notifications (`world/attention.rs`); the settings, the focus, do not disturb, the one-second throttle by title, the flash (FlashWindowEx between frames) and the click back to the conversation (`app/attention.rs`); Windows notifications from a worker thread, with the AppUserModelID registered for the current user (`system_notify.rs`) |
+| `world/im_announce.rs` | "Announce incoming IMs as soon as the sender starts typing" (FSAnnounceIncomingIM, LLIMMgr::processIMTypingCore): a resident's typing start with no conversation open opens it with an unread, unlogged, untoasted "Incoming message from <name>" line, and sends the automatic response then; the unread count before the window title (FSShowMessageCountInWindowTitle) is `app/attention.rs::titled` |
 | `mac_quit.rs` | macOS: the Quit item of winit's application menu (Cmd+Q) sent to the window's `performClose:`, so that it shows the exit prompt (`WindowEvent::CloseRequested`) instead of ending the process (handleQuit, llappdelegate-objc.mm) |
 | `window_show.rs` | Showing the startup window once its first frame is drawn: on Windows one `ShowWindow`, already maximized when it has to be, then a foreground and focus request that follows Windows' rules (LLWindowWin32::show), then winit's flags, visible first (winit maximizing a window it thinks hidden showed it, activated it and hid it again, leaving it without the keyboard focus) |
 | `frame_profile.rs` | Frame profile (AURORA_PROFILE): time of each step of the frame, summary line per second in the log (average and maximum of each step, number of slow frames; detail of the streaming on the main thread, `s_*`, of the frame parameters, `p_*`, and of the interface per group of windows, `u_*`; time spent off the CPU per step, `off_cpu:`; meeting of the main thread and the render thread, `thread` segment) |
@@ -3599,7 +3602,15 @@ A vectored handler writes a stack overflow's stack as soon as it is raised
 (the unhandled filter would run on what is left of the overflowed stack),
 and `allocator.rs` hands a failed allocation to `native::out_of_memory`,
 which writes its size and stack to the pre-opened `oom.txt` without
-allocating, before the standard library aborts. `threads.rs` names the
+allocating, before the standard library aborts. On Linux, `linux.rs`
+writes the same `native.txt` from a handler of the fatal signals (SIGSEGV,
+SIGBUS, SIGILL, SIGFPE, SIGABRT) on the thread's alternate signal stack:
+the libgcc unwinder's frames through the signal frame, then each frame as
+`module+0xoffset` (the ELF virtual address) with the module's build ID,
+the unwinder and the loader's list under an alarm (another thread that
+crashes meanwhile waits for the file); it then hands the signal
+to the standard library's overflow handler or the default action, so the
+process ends as before. Panics and failed allocations get the same stacks. `threads.rs` names the
 long-lived background threads the session cannot do without (network
 runtime, texture pages, frees, disk caches, chat history): their panic,
 which used to leave the viewer running without them, ends the session at

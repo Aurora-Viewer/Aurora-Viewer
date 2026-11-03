@@ -91,6 +91,8 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
+| `AURORA_MAX_TEXTURE_RES=512\|1024\|2048` | Overrides "Maximum texture resolution" (Graphics › Distance and detail) |
+| `AURORA_DEMO_TEXTURE_RES=1` | Boards with 2048 px streamed textures, tinted by the resolution shown |
 | `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
@@ -314,6 +316,26 @@ use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
 `AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
 `AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
 frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
+
+`AURORA_MAX_TEXTURE_RES` sets Preferences › Graphics › Maximum texture
+resolution (the Legacy Viewer's RenderMaxTextureResolution), saved with the
+profile like a change in the page; another value takes the choice just below
+it. World textures load no larger than that on their largest side, and those
+loaded larger are lowered on the GPU within a few frames (the log tells each
+change: `textures: maximum resolution 2048 -> 512 px`); our own bakes, HUDs,
+the sky and the texture and profile picture windows keep their full size.
+The demo's own textures are drawn, not streamed, and never pass 512 px:
+`AURORA_DEMO_TEXTURE_RES=1` adds three boards east of the start position
+(8, 4 and 2 m wide), whose 2048 px textures go through the streamer like
+downloaded ones. Each level of their picture is tinted by its resolution:
+2048 green, 1024 amber, 512 red, smaller blue-grey, so the colour is the
+resolution the GPU shows. Walk up to the large board until it fills most of
+the view (or `AURORA_DEMO_POS="146,138"`): green under 2048, amber within a
+second of choosing 1024, red under 512, and green again when 2048 comes
+back. The smaller boards, further away on screen, stay amber or red
+whatever the setting. With the textures of a cache instead,
+`AURORA_DEMO_STREAM=60,60,j2k=<folder>,size=4` (2048 px files) shows the
+same on real pictures, softer under 512.
 
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:
@@ -4708,9 +4730,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
-| `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
+| `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
+| `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices and a delivered purchase |
@@ -5749,7 +5772,7 @@ failure. Grid validation and any paid upload are performed by the human.
   Preferences › Interface › Region restart (alert, shake: the alert / the
   view / none, the channel announcement) and "Reduce animations" change it
   live.
-- **`AURORA_DEMO_TOASTS=1|bell|click|minimized`**: a friend goes offline at
+- **`AURORA_DEMO_TOASTS=1|bell|click|minimized|emote`**: a friend goes offline at
   frame 700 and comes back at 760 (two presence toasts, round picture with
   its status dot), two IMs from the same resident arrive at 820 and 880 (one
   card, "(2)"), a group IM at 940 (group toasts are forced on for the
@@ -5771,7 +5794,9 @@ failure. Grid validation and any paid upload are performed by the human.
   conversation, and its card leaves the list. Capture with
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
-  existing sounds.
+  existing sounds. `emote`: the second IM and the group's are emotes
+  ("/me waves…"); their toasts read "Nova Exemple waves…" and "Tess Touch
+  is setting up…", never "/me". Capture at `900,960`.
 - **`AURORA_DEMO_CONV_BUTTON=1|mute|still|menu`**: the Conversations window
   closed, Tess says something in nearby chat at frame 700 and Nova writes an
   IM at 900. The demo's group chat already lit the chat island's button
@@ -5822,6 +5847,17 @@ failure. Grid validation and any paid upload are performed by the human.
   Chat on the group (it shows the saved settings, not the run's). `prefs`
   keeps the settings of Preferences › Chat › Keyword alerts, to try them by
   hand, and sends the same five lines again every 1200 frames.
+- **`AURORA_DEMO_IM_ANNOUNCE=1|prefs`**: from frame 700, every 600 frames
+  (about ten seconds at 60 fps), Nova then Tess in turn start typing an IM
+  to us (IM_TYPING_START), and send it 300 frames later. `1` turns on
+  Preferences › Chat › "Announce incoming IMs as soon as the sender starts
+  typing" and "Show the number of unread IMs in the window title" for the
+  run (never saved): the conversation opens with "Incoming message from
+  Nova Exemple" before her message, the log says `incoming IM announced`,
+  and the window title (the taskbar's too) reads `(1) Aurora Viewer …`,
+  then `(2)` with her message, until the conversation is read. A
+  conversation closed is announced again at its resident's next turn.
+  `prefs` leaves both switches to Preferences › Chat, to try them by hand.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer
@@ -6504,9 +6540,9 @@ failure. Grid validation and any paid upload are performed by the human.
   colour emojis, same size, in the input field and in the sent line.
   `AURORA_EMOJI_FONT=<file>` compares two fonts.
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery|freeze|oom|overflow|thread`**, only
-  with `AURORA_DEMO`: triggers a Rust panic, a native Windows
-  exception, an abnormal exit without a trace, a normal close or an
-  exit without a watcher. The `recovery` mode makes it possible to check the
+  with `AURORA_DEMO`: triggers a Rust panic, a native exception
+  (SIGSEGV on Linux), an abnormal exit without a trace, a normal close or
+  an exit without a watcher. The `recovery` mode makes it possible to check the
   recovery at the next launch (relaunch with `normal`). Linux has no
   watcher: every mode's window opens at the next launch, as with
   `recovery`, and a session closed normally is removed then, as is one
@@ -6522,7 +6558,14 @@ failure. Grid validation and any paid upload are performed by the human.
   `| Crash | Out of memory (70368744177664 bytes) |` with the allocation's
   stack. `overflow` recurses until the stack overflows (`0xC00000FD`): the
   report is a native exception with its stack, written by the vectored
-  handler. `thread`, once the window shows, makes a thread named
+  handler. On Linux, `native` and `overflow` write `native.txt` from the
+  fatal signal handler, then end with SIGSEGV and SIGABRT (after the
+  standard library's overflow message; SIGSEGV where the processor's
+  signal frames do not fit the alternate stack twice): the report says
+  `| Crash | Native signal SIGSEGV (11) |` with the stack from the fault
+  and each module's build ID; `oom` fails only with
+  `AURORA_ALLOCATOR=system` (the kernel's overcommit grants mimalloc the
+  64 TB) and ends with SIGABRT. `thread`, once the window shows, makes a thread named
   `aurora-net` panic: the viewer ends the session at its next frame, the
   window says "A part of the viewer stopped working" and the report adds
   `| Thread | aurora-net (the session was ended) |` to the panic. The window must keep the language
