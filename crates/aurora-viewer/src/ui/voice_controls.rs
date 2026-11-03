@@ -154,6 +154,9 @@ pub enum Key {
 pub struct Roster {
     key: Option<Key>,
     entries: Vec<Entry>,
+    /// Who left this channel and was removed: an invitation or a session
+    /// that still lists them does not bring them back as invited.
+    gone: std::collections::HashSet<Uuid>,
 }
 
 impl Roster {
@@ -163,6 +166,7 @@ impl Roster {
         if self.key != Some(key) {
             self.key = Some(key);
             self.entries.clear();
+            self.gone.clear();
         }
         for (id, level) in in_voice {
             let at = match self.entries.iter().position(|e| e.id == *id) {
@@ -181,6 +185,7 @@ impl Roster {
             let e = &mut self.entries[at];
             e.state = State::Joined;
             e.left_at = None;
+            self.gone.remove(id);
             e.level = *level;
             if level.speaking {
                 e.last_spoke = Some(now);
@@ -201,7 +206,7 @@ impl Roster {
         // channel, is no participant
         self.entries.retain(|e| e.state != State::Invited || invited.contains(&e.id));
         for id in invited {
-            if !self.entries.iter().any(|e| e.id == *id) {
+            if !self.gone.contains(id) && !self.entries.iter().any(|e| e.id == *id) {
                 self.entries.push(Entry {
                     id: *id,
                     state: State::Invited,
@@ -212,8 +217,14 @@ impl Roster {
             }
         }
         // removeVoiceLeftParticipant, `delay` after they left
-        self.entries
-            .retain(|e| !(e.state == State::Left && e.left_at.is_some_and(|at| now.saturating_duration_since(at) >= delay)));
+        let gone = &mut self.gone;
+        self.entries.retain(|e| {
+            let expired = e.state == State::Left && e.left_at.is_some_and(|at| now.saturating_duration_since(at) >= delay);
+            if expired {
+                gone.insert(e.id);
+            }
+            !expired
+        });
     }
 
     /// The rows in the order chosen. FSParticipantList::sort: by name, or by
@@ -255,6 +266,32 @@ struct Gathered {
     own: Level,
 }
 
+/// Who is in the session of a group or conference and not (yet) in its voice:
+/// the invitations pending and the session's other participants, which
+/// FSParticipantList lists from the speaker manager of the IM session (the
+/// ones not in voice show as invited). The roster leaves out those it knows
+/// left voice.
+fn waiting(world: &World, conversation: Uuid, me: Uuid) -> Vec<Uuid> {
+    let mut ids: Vec<Uuid> = world.calls.invited.get(&conversation).cloned().unwrap_or_default();
+    if let Some(info) = world.groups.sessions.get(&conversation) {
+        ids.extend(info.participants.iter().copied());
+    }
+    ids.retain(|id| *id != me);
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Our indicator: the local level and speaking state (`tag_levels` supplies
+/// them without a server entry), with the moderator mute of the member.
+fn own_level(local: Option<&(f32, bool)>, member: Option<Level>) -> Level {
+    let member = member.unwrap_or_default();
+    match local {
+        Some(&(level, speaking)) => Level { level, speaking, ..member },
+        None => member,
+    }
+}
+
 /// The current voice channel (LLVoiceChannel::getCurrentVoiceChannel): the
 /// call in progress, else the nearby channel whose participants are `levels`
 /// (id → (level, speaking), as the name tags have them).
@@ -273,7 +310,7 @@ fn gather(world: &World, levels: &HashMap<Uuid, (f32, bool)>) -> Gathered {
         };
         let invited = match call.kind {
             CallKind::P2p { other } => vec![other],
-            _ => world.calls.invited.get(&call.conversation()).cloned().unwrap_or_default(),
+            _ => waiting(world, call.conversation(), me),
         };
         return Gathered {
             channel,
@@ -282,14 +319,23 @@ fn gather(world: &World, levels: &HashMap<Uuid, (f32, bool)>) -> Gathered {
             calling: call.p2p() && !call.incoming && call.state == CallState::Ringing,
             in_voice: call.members.iter().filter(|m| m.id != me).map(|m| (m.id, level(m))).collect(),
             invited,
-            own: call.members.iter().find(|m| m.id == me).map(level).unwrap_or_default(),
+            // the local microphone is authoritative even when the server
+            // sends no entry of ours; the moderator mute is the server's
+            own: own_level(levels.get(&me), call.members.iter().find(|m| m.id == me).map(level)),
         };
     }
     let mut in_voice: Vec<(Uuid, Level)> = levels
         .iter()
         .filter(|(id, _)| **id != me)
         .map(|(id, &(level, speaking))| {
-            let muted = world.nearby_voice_moderated(id).unwrap_or(false);
+            // shown to everyone; only the moderation actions are gated
+            let muted = world
+                .calls
+                .nearby_moderated
+                .as_ref()
+                .and_then(|m| m.get(id))
+                .copied()
+                .unwrap_or(false);
             (*id, Level { level, speaking, muted })
         })
         .collect();
@@ -308,6 +354,11 @@ fn gather(world: &World, levels: &HashMap<Uuid, (f32, bool)>) -> Gathered {
         invited: Vec::new(),
         own,
     }
+}
+
+/// The id of a participant's row.
+fn row_id(resident: Uuid) -> egui::Id {
+    egui::Id::unique(("voice_controls_row", resident))
 }
 
 /// What the app gives the window each frame.
@@ -507,7 +558,10 @@ impl VoiceControlsUi {
         self.wanted_pics.insert(id);
         f.world.social.avatar_names.want(&id);
         let name = f.world.social.name_of(&id);
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::hover());
+        // an id of the resident, not of the row's place: the rows reorder, and
+        // the menu opened on one stays theirs
+        let resp = ui.interact(rect, row_id(id), Sense::click());
         if !ui.is_rect_visible(rect) {
             return resp;
         }
@@ -595,6 +649,26 @@ mod tests {
         assert!(Channel::P2p("Nova".into()).title().starts_with("Call with"));
         assert!(Channel::P2p("Nova".into()).title().contains("Nova"));
         assert!(Channel::Group("Dancers".into()).title().contains("Dancers"));
+    }
+
+    #[test]
+    fn a_row_keeps_its_id_when_the_rows_reorder() {
+        assert_eq!(row_id(id(1)), row_id(id(1)));
+        assert_ne!(row_id(id(1)), row_id(id(2)));
+    }
+
+    #[test]
+    fn our_indicator_follows_the_microphone_and_keeps_the_moderator_mute() {
+        let member = Level {
+            level: 0.0,
+            speaking: false,
+            muted: true,
+        };
+        let own = own_level(Some(&(0.6, true)), Some(member));
+        assert!(own.speaking && own.muted && (own.level - 0.6).abs() < 1e-6);
+        let own = own_level(Some(&(0.6, true)), None);
+        assert!(own.speaking && !own.muted);
+        assert_eq!(own_level(None, Some(member)), member);
     }
 
     #[test]
@@ -691,6 +765,22 @@ mod tests {
         r.update(t0, call, &[], &[id(3)], LEFT_REMOVE_DELAY);
         r.update(t0, call, &[], &[], LEFT_REMOVE_DELAY);
         assert_eq!(r.len(), 0);
+        // an invitation that outlives their visit does not bring them back
+        let mut r = Roster::default();
+        r.update(t0, call, &[(id(3), voice(false))], &[id(3)], LEFT_REMOVE_DELAY);
+        r.update(t0 + Duration::from_secs(1), call, &[], &[id(3)], LEFT_REMOVE_DELAY);
+        r.update(t0 + Duration::from_secs(12), call, &[], &[id(3)], LEFT_REMOVE_DELAY);
+        assert_eq!(r.len(), 0, "removed");
+        r.update(t0 + Duration::from_secs(13), call, &[], &[id(3)], LEFT_REMOVE_DELAY);
+        assert_eq!(r.len(), 0, "and not invited again");
+        r.update(
+            t0 + Duration::from_secs(14),
+            call,
+            &[(id(3), voice(false))],
+            &[id(3)],
+            LEFT_REMOVE_DELAY,
+        );
+        assert_eq!(r.len(), 1, "unless they join again");
         // someone who left is not invited back into the list by the invitation
         let mut r = Roster::default();
         r.update(t0, call, &[(id(3), voice(false))], &[id(3)], LEFT_REMOVE_DELAY);
