@@ -99,8 +99,13 @@ pub struct State {
     /// The longest time the render thread was held by the GPU before the
     /// loss (ms, 0 when the GPU never stalled for 2 s).
     pub stall_ms: u64,
-    /// Another Aurora process was running (`yes` / `no`, empty unknown).
-    pub other_instance: &'static str,
+    /// The other Aurora viewers on this card and how many of them are in
+    /// front (instances.rs); None when the registry does not run (demo).
+    pub viewers_on_card: Option<(u32, u32)>,
+    /// The card's memory in use by every program and by the others, in MB
+    /// (gpu_load.rs, Windows only).
+    pub card_used_mb: Option<u64>,
+    pub card_others_mb: Option<u64>,
 }
 
 /// The words of [`State::effects`], before an optional level number.
@@ -186,8 +191,14 @@ impl State {
             let _ = writeln!(out, "loss_seen_by={seen}");
         }
         let _ = writeln!(out, "stall_ms={}", self.stall_ms);
-        if !self.other_instance.is_empty() {
-            let _ = writeln!(out, "other_instance={}", self.other_instance);
+        if let Some((n, front)) = self.viewers_on_card {
+            let _ = writeln!(out, "other_viewers={n}/{front}");
+        }
+        if let Some(mb) = self.card_used_mb {
+            let _ = writeln!(out, "card_used_mb={mb}");
+        }
+        if let Some(mb) = self.card_others_mb {
+            let _ = writeln!(out, "card_others_mb={mb}");
         }
     }
 }

@@ -296,7 +296,9 @@ const STATE_ROWS: &[(&str, &str)] = &[
     ("loss_cause", "GPU loss: what the message is about"),
     ("loss_seen_by", "GPU loss: first seen by"),
     ("stall_ms", "GPU stalled before the loss (ms, 0 = no stall of 2 s)"),
-    ("other_instance", "Another Aurora process running"),
+    ("other_viewers", "Other Aurora viewers on this card (count / in front)"),
+    ("card_used_mb", "Card memory in use by all programs (MB)"),
+    ("card_others_mb", "Card memory in use by other programs (MB)"),
     ("loading", "Still loading (textures in flight / awaiting upload / geometry)"),
 ];
 
@@ -919,7 +921,7 @@ mod tests {
         std::fs::write(dir.join("stopped-unix.txt"), "1100").unwrap();
         std::fs::write(
             dir.join("alive.txt"),
-            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\neffects=shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100,draw192\nwindow_state=background\ngpu_ms=12.5\ngpu_peak_ms=2400.0\ngpu_peak_pass=effects\nuploads=12/34.5\nsession_s=45\nregion_s=20\nloading=12/3/40\nlayers=VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus\nloss_reason=unknown\nloss_cause=device-lost\nloss_seen_by=callback\nstall_ms=2300\nother_instance=yes\nlayers_note=/home/someone\n",
+            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\neffects=shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100,draw192\nwindow_state=background\ngpu_ms=12.5\ngpu_peak_ms=2400.0\ngpu_peak_pass=effects\nuploads=12/34.5\nsession_s=45\nregion_s=20\nloading=12/3/40\nlayers=VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus\nloss_reason=unknown\nloss_cause=device-lost\nloss_seen_by=callback\nstall_ms=2300\nother_viewers=2/1\ncard_used_mb=6100\ncard_others_mb=3200\nlayers_note=/home/someone\n",
         )
         .unwrap();
         let summary = build_at(&record, &dir, Some(10));
@@ -946,7 +948,9 @@ mod tests {
             "| Vulkan layers on offer | VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus |",
             "| GPU loss: first seen by | callback |",
             "| GPU stalled before the loss (ms, 0 = no stall of 2 s) | 2300 |",
-            "| Another Aurora process running | yes |",
+            "| Other Aurora viewers on this card (count / in front) | 2/1 |",
+            "| Card memory in use by all programs (MB) | 6100 |",
+            "| Card memory in use by other programs (MB) | 3200 |",
         ] {
             assert!(body.contains(expected), "missing {expected:?} in\n{body}");
         }

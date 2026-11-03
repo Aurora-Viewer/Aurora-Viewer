@@ -107,8 +107,8 @@ What each part tells the one who fixes it:
   the world and since the region changed, what was still loading, the
   Vulkan layers on offer (`VK_LAYER_*` names), how the loss was seen (the
   reason wgpu gave, the class of its message, the first place that saw it),
-  how long the GPU had held the render thread, and whether another Aurora
-  process was running. Fixed words and numbers only.
+  how long the GPU had held the render thread, the other Aurora viewers on the card (from the viewer registry, not in demo),
+  and the card's memory in use by all programs and by the others (Windows). Fixed words and numbers only.
 - **Recent warnings and errors**: the last 20, as
   `-<seconds before the end> s | level | Rust module | kind`, repeats folded
   (`(x3)`); the messages themselves stay in the local log.

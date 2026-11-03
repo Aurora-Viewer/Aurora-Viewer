@@ -252,10 +252,9 @@ pub(super) fn effects(settings: &crate::settings::Settings, photo: bool, vr: boo
     out
 }
 
-/// What does not change in a session: the Vulkan layers on offer and
-/// whether another Aurora process runs. Looked up once, on a thread of their
-/// own (the process list takes a few ms); empty / unknown until it is done.
-fn session_facts() -> (&'static str, &'static str) {
+/// What does not change in a session: the Vulkan layers on offer. Looked up
+/// once, on a thread of its own; empty until it is done.
+fn session_layers() -> &'static str {
     use std::sync::OnceLock;
     use std::sync::atomic::Ordering;
     static LAYERS: OnceLock<String> = OnceLock::new();
@@ -265,85 +264,28 @@ fn session_facts() -> (&'static str, &'static str) {
             .name("aurora-crash-facts".into())
             .spawn(|| {
                 let _ = LAYERS.set(aurora_render::vulkan_layers::loaded_names().join(","));
-                // another viewer may start later: looked at again, rarely
-                loop {
-                    OTHER.store(other_instance_running(), Ordering::Relaxed);
-                    std::thread::sleep(OTHER_EVERY);
-                }
             })
             .is_err()
     {
         let _ = LAYERS.set(String::new());
     }
-    let other = match OTHER.load(Ordering::Relaxed) {
-        1 => "no",
-        2 => "yes",
-        _ => "",
-    };
-    (LAYERS.get().map_or("", String::as_str), other)
+    LAYERS.get().map_or("", String::as_str)
 }
 
-/// 0 not known yet, 1 no, 2 yes.
-static OTHER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-const OTHER_EVERY: Duration = Duration::from_secs(30);
-
-/// A process of the program's name: its id, its parent's and whether its
-/// command line says it is a crash helper.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Proc {
-    pid: u32,
-    parent: Option<u32>,
-    helper: bool,
+/// The other viewers on this card and how many of them are in front, as
+/// the instances registry (instances.rs) keeps them. None when the registry
+/// is not running (demo and timed runs).
+fn viewers_on_card(running: bool, peers: &crate::instances::Peers) -> Option<(u32, u32)> {
+    running.then(|| {
+        let n = |it: usize| u32::try_from(it).unwrap_or(u32::MAX);
+        (n(peers.list.len()), n(peers.list.iter().filter(|p| p.active).count()))
+    })
 }
 
-/// Viewers other than this one among the processes of the program's name.
-/// The crash watcher and the crash window run the same exe beside every
-/// viewer (`--crash-watch`, `--crash-show`, crash/mod.rs): they are left
-/// out by their command line, and by being this process's descendants (the
-/// viewer starts them), so a missing command line cannot count them.
-fn other_viewers(own: u32, procs: &[Proc]) -> usize {
-    let descends = |mut p: Proc| {
-        // a chain longer than the list is a loop of reused ids
-        for _ in 0..procs.len() {
-            match p.parent {
-                Some(parent) if parent == own => return true,
-                Some(parent) => match procs.iter().find(|q| q.pid == parent) {
-                    Some(q) => p = *q,
-                    None => return false,
-                },
-                None => return false,
-            }
-        }
-        false
-    };
-    procs.iter().filter(|p| p.pid != own && !p.helper && !descends(**p)).count()
-}
-
-/// Another viewer process of the same program name besides this one (a test
-/// window and the human's viewer, a second login). Names and counts only.
-fn other_instance_running() -> u8 {
-    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-    let Some(own) = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_owned())) else {
-        return 0;
-    };
-    let mut system = System::new();
-    // the command line is not read unless asked for
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
-    );
-    let procs: Vec<Proc> = system
-        .processes()
-        .iter()
-        .filter(|(_, p)| p.name().eq_ignore_ascii_case(&own))
-        .map(|(pid, p)| Proc {
-            pid: pid.as_u32(),
-            parent: p.parent().map(|parent| parent.as_u32()),
-            helper: p.cmd().iter().any(|a| matches!(a.to_str(), Some("--crash-watch" | "--crash-show"))),
-        })
-        .collect();
-    if other_viewers(std::process::id(), &procs) > 0 { 2 } else { 1 }
+/// The card's memory in use by every program and by the others (MB), from
+/// the counters of gpu_load.rs (Windows) and this viewer's own use.
+fn card_memory_mb(all: Option<u64>, own: u64) -> (Option<u64>, Option<u64>) {
+    (all.map(|a| a >> 20), all.map(|a| a.saturating_sub(own) >> 20))
 }
 
 /// The state a report shows once the GPU is lost. After the loss the viewer
@@ -495,9 +437,10 @@ impl App {
         state.world_s = Timeline::seconds(self.crash_timeline.world, now);
         state.region_s = Timeline::seconds(self.crash_timeline.region, now);
         let tex = &self.scene.textures.stats;
-        let (layers, other) = session_facts();
-        state.layers = layers.to_owned();
-        state.other_instance = other;
+        state.layers = session_layers().to_owned();
+        let running = !self.demo && self.capture.is_none() && !self.frame_profile.enabled();
+        state.viewers_on_card = viewers_on_card(running, &self.instances.peers());
+        (state.card_used_mb, state.card_others_mb) = card_memory_mb(self.scene.textures.card_used(), self.scene.textures.video_usage());
         state.loading = (tex.fetching + tex.decoding, tex.pending_upload, self.scene.stats.geom_pending);
         state
     }
@@ -692,27 +635,24 @@ mod tests {
     }
 
     #[test]
-    fn only_real_viewers_count_as_instances() {
-        let p = |pid, parent, helper| Proc { pid, parent, helper };
-        // alone: the viewer, its watcher and the window the watcher started,
-        // whatever the command lines say (they can come back empty)
-        let alone = [p(10, Some(1), false), p(11, Some(10), false), p(12, Some(11), false)];
-        assert_eq!(other_viewers(10, &alone), 0);
-        // the helpers are known by their flag too, even when orphaned
-        assert_eq!(other_viewers(10, &[p(10, Some(1), false), p(30, None, true)]), 0);
-        // a second viewer, with its own watcher
-        let two = [
-            p(10, Some(1), false),
-            p(11, Some(10), false),
-            p(20, Some(1), false),
-            p(21, Some(20), true),
-        ];
-        assert_eq!(other_viewers(10, &two), 1);
-        // a loop of reused ids does not hang
-        assert_eq!(
-            other_viewers(10, &[p(10, None, false), p(5, Some(6), false), p(6, Some(5), false)]),
-            2
-        );
+    fn the_other_viewers_and_the_cards_memory_are_counted_from_the_registry() {
+        let peer = |active| crate::instances::Own {
+            usage: 1 << 30,
+            active,
+            luid: 7,
+        };
+        let peers = crate::instances::Peers {
+            list: vec![peer(true), peer(false), peer(false)],
+        };
+        assert_eq!(viewers_on_card(true, &peers), Some((3, 1)));
+        assert_eq!(viewers_on_card(true, &Default::default()), Some((0, 0)));
+        // a demo or a timed run does not run the registry: no row
+        assert_eq!(viewers_on_card(false, &peers), None);
+        // 5 GB in use on the card, 2 GB of it ours
+        assert_eq!(card_memory_mb(Some(5 << 30), 2 << 30), (Some(5120), Some(3072)));
+        assert_eq!(card_memory_mb(None, 2 << 30), (None, None));
+        // what the viewer holds can read past the card's figure for a moment
+        assert_eq!(card_memory_mb(Some(1 << 30), 2 << 30), (Some(1024), Some(0)));
     }
 
     #[test]
