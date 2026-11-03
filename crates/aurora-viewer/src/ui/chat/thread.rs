@@ -670,7 +670,7 @@ mod tests {
         ] {
             let ctx = egui::Context::default();
             crate::ui::fonts::apply(&ctx, font);
-            let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
             for (text, column) in [("00:00", TIME_W), ("12:58 PM", TIME_W_12), ("12:58 午後", TIME_W_12)] {
                 let w = ctx
                     .fonts_mut(|f| f.layout_no_wrap(text.into(), egui::FontId::proportional(10.5), egui::Color32::PLACEHOLDER))
@@ -678,6 +678,10 @@ mod tests {
                     .x;
                 assert!(w <= column, "font={font}: {text} is {w} wide, its column {column}");
             }
+            // the glyphs measured went to egui's atlas: its changes are
+            // handed back before the context goes, as egui's debug
+            // assertions ask (the merge queue's test profile)
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
         }
     }
 
