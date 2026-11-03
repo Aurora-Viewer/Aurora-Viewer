@@ -6478,7 +6478,8 @@ failure. Grid validation and any paid upload are performed by the human.
   report is a native exception with its stack, written by the vectored
   handler. On Linux, `native` and `overflow` write `native.txt` from the
   fatal signal handler, then end with SIGSEGV and SIGABRT (after the
-  standard library's overflow message): the report says
+  standard library's overflow message; SIGSEGV where the processor's
+  signal frames do not fit the alternate stack twice): the report says
   `| Crash | Native signal SIGSEGV (11) |` with the stack from the fault
   and each module's build ID; `oom` fails only with
   `AURORA_ALLOCATOR=system` (the kernel's overcommit grants mimalloc the

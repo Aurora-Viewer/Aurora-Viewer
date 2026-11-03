@@ -407,7 +407,8 @@ fn module(line: &str) -> Option<String> {
         if !matches!(key, "id" | "code") {
             return None;
         }
-        result.push_str(&format!(" {key}={}", hex(value, 48)?));
+        // A GNU build ID can be 32 bytes (crash/linux.rs).
+        result.push_str(&format!(" {key}={}", hex(value, 64)?));
     }
     Some(result)
 }
@@ -690,7 +691,7 @@ mod tests {
 
     /// A Linux `native.txt` (crash/linux.rs): the handler's frames and the
     /// signal trampoline above the fault, build IDs as module identities.
-    const SIGNAL: &str = "Native signal 11 (SIGSEGV)\nSignal code: 1\nFault address: 0x7f0012345000\nNative stack (addresses):\n00: 0x5612aa001000\n01: 0x7f00aa0451d0\n02: 0x5612aa1b2c3d\nFault: aurora-viewer+0x1b2c3d\nNative stack (modules):\n00: aurora-viewer+0x1000\n01: libc.so.6+0x451d0\n02: aurora-viewer+0x1b2c3d\n03: libvulkan_radeon.so+0x9abc\nModules:\naurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314\nlibc.so.6 id=AABBCCDD11223344556677889900AABB0 code=ddccbbaa443322116677889900aabbccddeeff00\nlibvulkan_radeon.so\n";
+    const SIGNAL: &str = "Native signal 11 (SIGSEGV)\nSignal code: 1\nFault address: 0x7f0012345000\nNative stack (addresses):\n00: 0x5612aa001000\n01: 0x7f00aa0451d0\n02: 0x5612aa1b2c3d\nFault: aurora-viewer+0x1b2c3d\nNative stack (modules):\n00: aurora-viewer+0x1000\n01: libc.so.6+0x451d0\n02: aurora-viewer+0x1b2c3d\n03: libvulkan_radeon.so+0x9abc\nModules:\naurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314\nlibc.so.6 id=AABBCCDD11223344556677889900AABB0 code=ddccbbaa443322116677889900aabbccddeeff00\nlibvulkan_radeon.so id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20\n";
 
     #[test]
     fn a_linux_signal_publishes_its_name_and_module_offsets_from_the_fault() {
@@ -706,7 +707,8 @@ mod tests {
             "| Crash | Native signal SIGSEGV (11) |",
             "00 aurora-viewer+0x1b2c3d\n01 libvulkan_radeon.so+0x9abc\n",
             "aurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314",
-            "libvulkan_radeon.so\n",
+            // A 32-byte build ID.
+            "libvulkan_radeon.so id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20\n",
         ] {
             assert!(body.contains(expected), "missing {expected:?} in\n{body}");
         }
