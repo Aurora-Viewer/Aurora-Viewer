@@ -79,7 +79,7 @@ pub const COMMANDS: &[Command] = commands![
     "poser", "wand", "toolbar-command-poser", true;
     "flickr", "brand-flickr", "toolbar-command-flickr", false;
     "primfeed", "rss", "toolbar-command-primfeed", false;
-    "RFO", "user-check", "toolbar-command-friends-only", false;
+    "RFO", "user-check", "toolbar-command-friends-only", true;
     "gridstatus", "building-broadcast-tower-filled", "toolbar-command-grid-status", true;
     "voice", "Command_Voice_Icon", "toolbar-command-voice", false;
     "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", false;

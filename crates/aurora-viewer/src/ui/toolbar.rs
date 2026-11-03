@@ -236,6 +236,8 @@ pub struct ToolbarUi {
     pub picks_active: bool,
     /// The nearby chat bar is shown (MainChatbarVisible).
     pub chat_bar_active: bool,
+    /// "Show Friends Only" is on (FSRenderFriendsOnly).
+    pub friends_only_active: bool,
     pub movelock_status: String,
     /// The violet of the Grid status button's flash (0: none), given by
     /// the app on a new entry of the grid's status feed.

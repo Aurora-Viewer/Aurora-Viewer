@@ -651,6 +651,9 @@ pub struct App {
     /// The session's account whose favourites the login screen gets
     /// (app/login_favorites.rs).
     login_favorites: login_favorites::Session,
+    /// The account whose Show Friends Only choice the world carries
+    /// (app/derender.rs).
+    friends_only_account: uuid::Uuid,
     /// SLURLs from outside and the command line's login (app/external_links.rs).
     external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
@@ -1426,6 +1429,7 @@ impl App {
             attention: Default::default(),
             reconnect_place: None,
             login_favorites: Default::default(),
+            friends_only_account: uuid::Uuid::nil(),
             external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
@@ -8117,6 +8121,7 @@ impl App {
         self.poll_ao();
         self.sync_static_eyes();
         if self.in_world() {
+            self.sync_friends_only();
             self.step_gestures();
         }
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
@@ -11015,6 +11020,7 @@ impl App {
         }
         self.demo_worn_steps();
         self.demo_derender_steps();
+        self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
@@ -12483,6 +12489,10 @@ impl App {
                     .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
             }
             BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
+            BarAction::ToggleFriendsOnly => {
+                let on = !self.world.friends_only();
+                self.world.set_friends_only(on);
+            }
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
@@ -13553,6 +13563,7 @@ impl App {
             second_life,
         });
         self.options_ui.login_favorites = self.login_favorites.key().map(|key| self.login_form.favorites.shown(key));
+        self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
             self.options_ui.anti_spam_version = self.world.anti_spam.version;
@@ -13647,6 +13658,9 @@ impl App {
             if shown {
                 self.keep_login_favorites(true);
             }
+        }
+        if let Some(keep) = res.friends_only_keep {
+            self.world.friends_only.keep_after_teleport = keep;
         }
         if let Some(maturity) = res.maturity {
             self.world.set_maturity_preference(maturity);
@@ -14096,6 +14110,7 @@ impl App {
                     env_keys: self.env_keys(),
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
+                    friends_only: self.world.friends_only(),
                     quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
@@ -15850,6 +15865,7 @@ impl App {
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
+                self.toolbar_ui.friends_only_active = self.world.friends_only();
                 let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
                 self.chat_ui.note_frame(pointer_busy);
                 for pa in acts {

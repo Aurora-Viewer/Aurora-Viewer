@@ -17,12 +17,19 @@
 //! an object again once it leaves the list (a removed object may stay away
 //! until the next teleport). Aurora puts it back at once from the last
 //! update it kept, then asks the simulator for it (RequestMultipleObjects).
+//!
+//! "Show Friends Only" (FSRenderFriendsOnly, `friends_only.rs`) hides the
+//! avatars that are not friends through the same machinery. Port of
+//! LLViewerObjectList::isNonFriendDerendered (indra/newview/llviewerobjectlist.cpp,
+//! originally LGPL 2.1). Same deliberate difference: switched off, they come
+//! back at once instead of at the next teleport, unless a real derender
+//! entry also hides them.
 
 use super::objects::ObjKey;
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
 use aurora_net::objects::ObjectUpdate;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -119,6 +126,10 @@ pub struct Derender {
     other: Vec<(String, Llsd)>,
     hidden: HashMap<ObjKey, Hidden>,
     path: Option<PathBuf>,
+    /// "Show Friends Only" is on: avatars that are not friends are hidden.
+    friends_only: bool,
+    /// The avatars it hid (their attachments hang from them in `hidden`).
+    friends_only_hid: HashSet<Uuid>,
     /// RequestMultipleObjects waiting for the app.
     requests: Vec<(RegionHandle, Vec<u32>)>,
     /// Bumped on every change of the list (the window's rows).
@@ -362,18 +373,30 @@ impl Derender {
     /// LLViewerObjectList::processObjectUpdate / createObject: the update
     /// of a derendered object, or of what hangs from one, is dropped (and
     /// kept, to put the object back without waiting for the simulator).
+    #[cfg(test)]
     pub fn filter(&mut self, region: RegionHandle, u: &ObjectUpdate) -> Option<Dropped> {
-        if self.is_empty() {
+        self.filter_avatar(region, u, false)
+    }
+
+    /// `filter`, and `hide_avatar` when "Show Friends Only" hides this
+    /// update's avatar (isNonFriendDerendered): the caller knows the
+    /// friends.
+    pub fn filter_avatar(&mut self, region: RegionHandle, u: &ObjectUpdate, hide_avatar: bool) -> Option<Dropped> {
+        if self.is_empty() && !hide_avatar {
             return None;
+        }
+        if hide_avatar {
+            self.friends_only_hid.insert(u.full_id);
         }
         let key = ObjKey {
             region,
             local_id: u.local_id,
         };
-        let by = if self
-            .entries
-            .get(&u.full_id)
-            .is_some_and(|e| matches!(e.kind, Kind::Object | Kind::Resident))
+        let by = if hide_avatar
+            || self
+                .entries
+                .get(&u.full_id)
+                .is_some_and(|e| matches!(e.kind, Kind::Object | Kind::Resident))
         {
             Some(u.full_id)
         } else if u.parent_id != 0 && !u.is_avatar() {
@@ -499,8 +522,54 @@ impl Derender {
         self.remove(&temporary)
     }
 
+    /// "Show Friends Only" is on (FSRenderFriendsOnly).
+    pub fn friends_only(&self) -> bool {
+        self.friends_only
+    }
+
+    /// Start hiding the avatars that are not friends; the caller takes out
+    /// those already in the world (`World::set_friends_only`).
+    pub(super) fn begin_friends_only(&mut self) {
+        self.friends_only = true;
+    }
+
+    /// An avatar taken out by "Show Friends Only".
+    pub(super) fn friends_only_hides(&mut self, id: Uuid) {
+        self.friends_only_hid.insert(id);
+    }
+
+    /// The avatars "Show Friends Only" hides.
+    pub(super) fn friends_only_hidden(&self) -> Vec<Uuid> {
+        self.friends_only_hid.iter().copied().collect()
+    }
+
+    /// Switched off: every avatar it hid comes back at once, except those a
+    /// derender entry also hides.
+    pub(super) fn end_friends_only(&mut self) -> Restore {
+        self.friends_only = false;
+        let ids: Vec<Uuid> = std::mem::take(&mut self.friends_only_hid).into_iter().collect();
+        self.release(&ids)
+    }
+
+    /// An avatar is a friend now: it (and what it wears) comes back at once
+    /// unless a derender entry hides it too.
+    pub(super) fn friends_only_spares(&mut self, id: Uuid) -> Restore {
+        if self.friends_only_hid.remove(&id) {
+            self.release(&[id])
+        } else {
+            Restore::default()
+        }
+    }
+
     fn release(&mut self, ids: &[Uuid]) -> Restore {
         let mut restore = Restore::default();
+        // an entry removed from the list does not bring back an avatar
+        // "Show Friends Only" still hides; one that has an entry stays
+        let ids: Vec<Uuid> = ids
+            .iter()
+            .copied()
+            .filter(|id| !self.friends_only_hid.contains(id) && !self.contains(id))
+            .collect();
         let keys: Vec<ObjKey> = self.hidden.iter().filter(|(_, h)| ids.contains(&h.by)).map(|(k, _)| *k).collect();
         for key in keys {
             let Some(h) = self.hidden.remove(&key) else {
@@ -521,6 +590,11 @@ impl Derender {
     /// RequestMultipleObjects for what came back, taken by the app.
     pub fn take_requests(&mut self) -> Vec<(RegionHandle, Vec<u32>)> {
         std::mem::take(&mut self.requests)
+    }
+
+    #[cfg(test)]
+    pub fn hidden_updates(&self) -> Vec<ObjectUpdate> {
+        self.hidden.values().filter_map(|h| h.update.clone()).collect()
     }
 
     #[cfg(test)]
@@ -582,7 +656,7 @@ impl super::World {
     /// Take object `idx` and what hangs from it out of the world, keeping
     /// how they looked to put them back. Avatars sitting on it stay, where
     /// they are drawn (LLViewerObject::markDead: getOffObject).
-    fn take_out(&mut self, idx: usize, by: Uuid) -> bool {
+    pub(super) fn take_out(&mut self, idx: usize, by: Uuid) -> bool {
         let unseated = self.get_off_linkset(idx);
         let tree = self.objects.subtree(idx);
         let mut kept = Vec::with_capacity(tree.len());
@@ -601,7 +675,7 @@ impl super::World {
 
     /// Objects back from the list: their last look at once, then what the
     /// simulator sends for them (the requests the app takes).
-    fn put_back(&mut self, restore: Restore) {
+    pub(super) fn put_back(&mut self, restore: Restore) {
         let mut by_region: HashMap<RegionHandle, Vec<ObjectUpdate>> = HashMap::new();
         for (region, u) in restore.updates {
             by_region.entry(region).or_default().push(u);
@@ -612,6 +686,12 @@ impl super::World {
             }
         }
     }
+}
+
+/// What the tests of `friends_only.rs` share with these.
+#[cfg(test)]
+pub(super) mod tests_support {
+    pub(in crate::world) use super::tests::{demo_world, entry as entry_for_tests};
 }
 
 #[cfg(test)]
@@ -652,7 +732,7 @@ mod tests {
         }
     }
 
-    fn entry(kind: Kind, permanent: bool) -> Entry {
+    pub(in crate::world) fn entry(kind: Kind, permanent: bool) -> Entry {
         Entry {
             name: "Lantern".into(),
             region: "Plaza".into(),
@@ -868,7 +948,7 @@ mod tests {
 
     /// The demo's plaza in a world: Violet Wolf (9001) wears a hat (9100)
     /// and an orb (9101).
-    fn demo_world() -> (super::super::World, RegionHandle) {
+    pub(in crate::world) fn demo_world() -> (super::super::World, RegionHandle) {
         use aurora_net::NetEvent;
         let mut world = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.agent_id = crate::demo::DEMO_AGENT;

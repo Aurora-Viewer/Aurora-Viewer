@@ -394,6 +394,9 @@ pub struct OptionsUi {
     /// The session's "Show my favorite landmarks at login", while logged in
     /// with an account the login screen remembers (set by the app).
     pub login_favorites: Option<bool>,
+    /// The account's "Keep Show Friends Only after teleporting", while
+    /// logged in (set by the app).
+    pub friends_only_keep: Option<bool>,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
@@ -614,6 +617,8 @@ pub struct OptionsResult {
     pub account: Option<crate::world::user_info::Change>,
     /// "Show my favorite landmarks at login" switched (Privacy).
     pub login_favorites: Option<bool>,
+    /// "Keep Show Friends Only after teleporting" switched (Controls).
+    pub friends_only_keep: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
     pub open_dev_toolbox: bool,
     /// Back up the settings to a file the user chooses.
