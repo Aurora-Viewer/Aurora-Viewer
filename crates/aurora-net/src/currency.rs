@@ -62,6 +62,22 @@ impl std::fmt::Debug for Password {
     }
 }
 
+/// The refusal to send a typed password to a helper that is not https.
+/// Aurora addition: the Legacy Viewer posts it whatever the scheme
+/// (LLCurrencyUIManager::Impl::startCurrencyBuy, LLFloaterBuyLandUI::
+/// runWebSitePrep), so anyone on the way reads it over http, and an OpenSim
+/// region may name its own helper (currency-base-uri).
+pub fn password_refused(helper: &str, password: &Password) -> Option<CurrencyError> {
+    let https = helper
+        .trim_start()
+        .get(..8)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"));
+    (!password.0.is_empty() && !https).then(|| CurrencyError {
+        message: aurora_i18n::tr!("currency-password-needs-https").into(),
+        uri: String::new(),
+    })
+}
+
 /// Parameters shared by both calls (updateCurrencyInfo / startCurrencyBuy).
 fn base_params(agent_id: Uuid, secure_session_id: Uuid, amount: i32) -> Map {
     let mut version = aurora_version::login_version().split('.');
@@ -270,6 +286,20 @@ mod tests {
         assert_eq!(p["password"].as_str(), "typed");
         let click = buy_params(AGENT, SESSION, &CurrencyQuote { usd_cents: None, ..quote }, &Password::default());
         assert!(!click.has("password") && !click.has("estimatedCost"));
+    }
+
+    #[test]
+    fn a_password_only_goes_to_an_https_helper() {
+        let typed = Password("typed".into());
+        assert!(password_refused("https://money.example/", &typed).is_none());
+        assert!(password_refused("HTTPS://money.example/", &typed).is_none());
+        for helper in ["http://money.example:8008/", "  http://money.example/", "ftp://x/", ""] {
+            assert!(password_refused(helper, &typed).is_some(), "{helper:?}");
+        }
+        assert!(
+            password_refused("http://money.example/", &Password::default()).is_none(),
+            "no password, nothing to refuse"
+        );
     }
 
     #[test]

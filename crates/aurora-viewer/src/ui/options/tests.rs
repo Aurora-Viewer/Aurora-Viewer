@@ -183,7 +183,8 @@ const BEFORE: &[&str] = &[
     "font",
     "font_scale",
     // Chat
-    "chat_timestamps",
+    "chat_timestamps_nearby",
+    "chat_timestamps_im",
     "show_chat_channel",
     "compact_automated_chat",
     "compact_im_system_lines",
@@ -604,7 +605,7 @@ fn the_modified_settings_are_counted_on_their_pages() {
     let mut s = Settings::default();
     assert_eq!(counts(&mut s, "").total_modified(), 0, "nothing differs from the defaults");
     s.draw_distance = 300.0;
-    s.chat_timestamps = !s.chat_timestamps;
+    s.chat_timestamps_nearby = !s.chat_timestamps_nearby;
     s.water_effects.caustics = false;
     s.anti_spam.enabled = true;
     let c = counts(&mut s, "");
@@ -1232,7 +1233,7 @@ fn the_conversations_choice_switches_the_style() {
 fn the_dot_of_a_modified_row_puts_it_back() {
     let mut frames = Frames::new();
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
-    s.chat_timestamps = !s.chat_timestamps;
+    s.chat_timestamps_nearby = !s.chat_timestamps_nearby;
     let mut texts = Vec::new();
     for _ in 0..3 {
         texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Chat, 0, Vec::new());
@@ -1247,7 +1248,7 @@ fn the_dot_of_a_modified_row_puts_it_back() {
     for events in click(dot) {
         page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Chat, 0, events);
     }
-    assert_eq!(s.chat_timestamps, Settings::default().chat_timestamps);
+    assert_eq!(s.chat_timestamps_nearby, Settings::default().chat_timestamps_nearby);
     assert!(r.changed);
 }
 

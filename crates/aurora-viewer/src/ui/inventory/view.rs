@@ -13,6 +13,57 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[test]
+fn my_suitcase_sorts_with_the_system_folders() {
+    use aurora_net::inventory::InvFolder;
+    let mut inv = Inventory {
+        root: Uuid::from_u128(1),
+        ..Default::default()
+    };
+    let folder = |id: u128, name: &str, type_default: i32| InvFolder {
+        id: Uuid::from_u128(id),
+        parent: Uuid::from_u128(1),
+        name: name.into(),
+        type_default,
+        ..Default::default()
+    };
+    inv.created_folders(vec![InvFolder {
+        id: inv.root,
+        name: "Inventory".into(),
+        type_default: 8,
+        ..Default::default()
+    }]);
+    inv.created_folders(vec![
+        folder(2, "Aardvark", -1),
+        folder(3, "Objects", 6),
+        folder(4, "My Suitcase", 100),
+    ]);
+    let prefs = InventoryPreferences {
+        sort: Sort {
+            system_first: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut view = ViewCache::default();
+    view.search(
+        &inv,
+        inv.root,
+        "",
+        &prefs,
+        &Filters::default(),
+        0,
+        None,
+        &Facts::default(),
+        Uuid::from_u128(9),
+        now(),
+    );
+    let mut tree = TreeState::default();
+    tree.prepare(&view, inv.root, 0, false);
+    let order: Vec<u128> = tree.rows.iter().map(|r| r.id.as_u128()).filter(|id| (2..=4).contains(id)).collect();
+    assert_eq!(order, [4, 3, 2], "My Suitcase and Objects above an ordinary folder");
+}
+
+#[test]
 fn received_filing_view_pins_marketplace_and_scopes_sender_search_without_server_moves() {
     use aurora_net::inventory::{InvFolder, InvItem};
     let agent = Uuid::from_u128(1);
@@ -513,7 +564,10 @@ impl ViewCache {
                 let kind = f.info.type_default;
                 // FT_OUTFIT, merchant folders, obsolete outbox and ensembles are
                 // ordinary editable folders, despite having a nonnegative type.
-                let protected = matches!(kind, 0..=3 | 5..=7 | 8 | 10 | 13 | 15 | 16 | 20 | 21 | 23 | 46 | 48 | 49 | 50 | 52 | 56 | 57);
+                // 100: OpenSim's My Suitcase (FT_MY_SUITCASE, a protected
+                // folder in llfoldertype.cpp), with the other system folders
+                let protected =
+                    matches!(kind, 0..=3 | 5..=7 | 8 | 10 | 13 | 15 | 16 | 20 | 21 | 23 | 46 | 48 | 49 | 50 | 52 | 56 | 57 | 100);
                 let group = if *id == inv.lib_root {
                     4
                 } else if kind == 14 {

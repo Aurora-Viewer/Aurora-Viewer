@@ -248,6 +248,17 @@ pub(super) struct Snapshots {
     pub(super) isolate_hover: Option<Uuid>,
 }
 
+impl Snapshots {
+    /// After a GPU recovery (gpu_recovery.rs): a photo under way is given up,
+    /// its frames asked of the lost renderer never come back.
+    pub(super) fn gpu_lost(&mut self) {
+        if self.job.take().is_some() {
+            log::warn!("photo: given up, the GPU was lost while it was drawn");
+            self.message = Some((aurora_i18n::tr!("photo-draw-failed").to_owned(), true));
+        }
+    }
+}
+
 /// The photo quality's step for the video memory, and when it was read and
 /// changed (`App::photo_quality_fit`).
 struct QualityFit {

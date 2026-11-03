@@ -441,7 +441,7 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
         };
         text_field(ui, p, aurora_i18n::tr!("search-group-enrollment"), enrollment);
         let fee = if g.membership_fee > 0 {
-            format!("L${}", g.membership_fee)
+            format!("{}{}", aurora_i18n::currency(), g.membership_fee)
         } else {
             aurora_i18n::tr!("search-none-fee").to_owned()
         };
@@ -513,7 +513,12 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, row: Option<&Row>, action
         let for_sale = row.is_some_and(|r| r.icon == RowIcon::ForSale);
         if let Some(d) = data.filter(|d| for_sale && d.sale_price > 0) {
             ui.add_space(4.0);
-            text_field(ui, p, aurora_i18n::tr!("search-col-price"), &format!("L${}", d.sale_price));
+            text_field(
+                ui,
+                p,
+                aurora_i18n::tr!("search-col-price"),
+                &format!("{}{}", aurora_i18n::currency(), d.sale_price),
+            );
         }
     });
     match (clicked, global) {
@@ -585,7 +590,12 @@ fn classified(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions:
             aurora_i18n::tr!("ui-profile-creation-date"),
             &profiles::slt_date(info.creation_date),
         );
-        text_field(ui, p, aurora_i18n::tr!("ui-profile-listing-cost"), &format!("L${}", info.price));
+        text_field(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-profile-listing-cost"),
+            &format!("{}{}", aurora_i18n::currency(), info.price),
+        );
         field(ui, p, aurora_i18n::tr!("search-classified-creator"), |ui| {
             agent_link(ui, c, info.creator)
         });
@@ -652,7 +662,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, actions: &mut 
             }
         });
         let fee = match e.cover {
-            Some(amount) => format!("L${amount}"),
+            Some(amount) => format!("{}{amount}", aurora_i18n::currency()),
             None => aurora_i18n::tr!("search-none-fee").to_owned(),
         };
         text_field(ui, p, aurora_i18n::tr!("search-event-fee"), &fee);
