@@ -1820,6 +1820,44 @@ fn font_search(screen_h: f32) {
     assert_eq!(shown(&texts), all, "the list reopens on the whole list");
     assert!((height() - whole).abs() < 0.5);
     assert!(state.font_filter.is_empty());
+    // the keys, from the search field: no system font chosen yet, so Down
+    // starts on the first; Up wraps around; Enter picks and closes
+    let path = |name: &str| format!("system:/nonexistent/{name}.ttf");
+    for k in [
+        egui::Key::ArrowDown,
+        egui::Key::ArrowDown,
+        egui::Key::ArrowUp,
+        egui::Key::ArrowUp,
+        egui::Key::Enter,
+    ] {
+        for events in [vec![key(k)], vec![]] {
+            draw(events, &mut state, &mut settings);
+        }
+    }
+    assert_eq!(settings.font, path("Delta"), "Down, Down, Up, Up (wrapped), Enter");
+    assert!(!egui::Popup::is_any_open(&ctx), "Enter closes the list");
+    // reopened on the chosen font: Down goes to the next one, wrapping
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for k in [egui::Key::ArrowDown, egui::Key::Enter] {
+        for events in [vec![key(k)], vec![]] {
+            draw(events, &mut state, &mut settings);
+        }
+    }
+    assert_eq!(settings.font, path("Alpha"), "from Delta, Down wraps to Alpha");
+    // typing selects the first font found
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in typed() {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in [vec![key(egui::Key::Enter)], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(settings.font, path("Beta"), "Enter picks the first font found");
+    assert!(!egui::Popup::is_any_open(&ctx));
 }
 
 #[test]

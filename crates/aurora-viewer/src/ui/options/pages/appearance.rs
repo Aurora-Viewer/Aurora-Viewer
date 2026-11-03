@@ -194,16 +194,35 @@ fn font(cx: &mut Cx) {
                 }
                 let_font_list_grow(ui.ctx(), popup, opening);
                 system_font_combo(salt, shown).show_ui(ui, |ui| {
+                    let keys_id = popup.with("keys");
+                    let mut keys: FontKeys = ui.ctx().data(|d| d.get_temp(keys_id)).unwrap_or_default();
                     if opening {
                         // each opening starts on the whole list
                         st.font_filter.clear();
+                        keys = FontKeys::default();
                     }
-                    system_font_search(ui, &mut st.font_filter, opening);
+                    let (down, up, enter) = keys.take(ui);
+                    keys.search = Some(system_font_search(ui, &mut st.font_filter, opening).id);
                     let filter = st.font_filter.to_lowercase();
                     let shown: Vec<&fonts::SystemFont> = list
                         .iter()
                         .filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter))
                         .collect();
+                    if opening || keys.filter != st.font_filter {
+                        // the current font on the whole list, else the
+                        // first one found
+                        keys.filter.clone_from(&st.font_filter);
+                        keys.selected = if filter.is_empty() {
+                            shown.iter().position(|f| s.font == format!("system:{}", f.path.display()))
+                        } else {
+                            (!shown.is_empty()).then_some(0)
+                        };
+                    }
+                    let stepped = down || up;
+                    if stepped {
+                        keys.selected = step_font(keys.selected, shown.len(), down);
+                    }
+                    let mut pointed = None;
                     // only the rows on screen are laid out, at one height,
                     // each name drawn in its own face by a thread as it
                     // scrolls into view (`fonts::preview`)
@@ -219,6 +238,8 @@ fn font(cx: &mut Cx) {
                     let list_area = egui::ScrollArea::vertical()
                         .max_height(FONT_LIST_H)
                         .show_rows(ui, row_h, shown.len(), |ui, rows| {
+                            let first = rows.start;
+                            let mut first_top = None;
                             for i in rows {
                                 let f = shown[i];
                                 let key = format!("system:{}", f.path.display());
@@ -232,13 +253,22 @@ fn font(cx: &mut Cx) {
                                     name = name.color(egui::Color32::TRANSPARENT);
                                 }
                                 let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+                                first_top.get_or_insert(rect.top());
                                 let layout = egui::Layout::top_down_justified(egui::Align::Min);
                                 // a child leaves the cursor where the row's own
                                 // allocation put it, clipped to the row whatever
                                 // the face's height
                                 let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
                                 row_ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                                if keys.selected == Some(i) && !sel {
+                                    // the row the arrow keys are on, lit like a hovered one
+                                    let lit = &row_ui.visuals().widgets.hovered;
+                                    row_ui.painter().rect_filled(rect, lit.corner_radius, lit.weak_bg_fill);
+                                }
                                 let row = row_ui.add(egui::Button::selectable(sel, name).truncate().min_size(rect.size()));
+                                if row.hovered() && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
+                                    pointed = Some(i);
+                                }
                                 if let Some(drawn) = drawn {
                                     // the colour the row's text would take
                                     // (hovered, selected), on whole pixels
@@ -263,10 +293,31 @@ fn font(cx: &mut Cx) {
                                     ui.close();
                                 }
                             }
+                            if stepped && let (Some(selected), Some(top)) = (keys.selected, first_top) {
+                                // rows off screen are not laid out: the
+                                // selected one's place from the first drawn
+                                let step = row_h + ui.spacing().item_spacing.y;
+                                let y = top + (selected as f32 - first as f32) * step;
+                                let rect = egui::Rect::from_min_size(egui::pos2(ui.min_rect().left(), y), egui::vec2(width, row_h));
+                                ui.scroll_to_rect(rect, None);
+                            }
                             if st.demo_font_list == Some(true) {
                                 ui.scroll_with_delta(egui::vec2(0.0, -6.0));
                             }
                         });
+                    if pointed.is_some() {
+                        keys.selected = pointed;
+                    }
+                    if enter && let Some(f) = keys.selected.and_then(|i| shown.get(i)) {
+                        let key = format!("system:{}", f.path.display());
+                        if s.font != key {
+                            s.font = key;
+                            r.font_changed = true;
+                            changed = true;
+                        }
+                        ui.close();
+                    }
+                    ui.ctx().data_mut(|d| d.insert_temp(keys_id, keys));
                     // rows cut off by the popup's last size: room next frame
                     if list_area.inner_rect.height() + 0.5 < list_area.content_size.y.min(FONT_LIST_H) {
                         ui.ctx().data_mut(|d| d.insert_temp(popup.with("grow"), true));
@@ -373,6 +424,46 @@ fn colors(cx: &mut Cx) {
             reset
         });
     });
+}
+
+/// The keyboard on the System fonts list, kept between frames: the search
+/// field, the query the selection was set for, and the selected row of
+/// the fonts found. Like the menu's search (`ui/menu.rs`).
+#[derive(Clone, Default)]
+struct FontKeys {
+    search: Option<egui::Id>,
+    filter: String,
+    selected: Option<usize>,
+}
+
+impl FontKeys {
+    /// Down, Up and Enter, taken before the search field sees them, while
+    /// it has the keyboard: a one-line field has no use for the arrows, and
+    /// Enter would only drop its focus. Enter only with a row selected.
+    fn take(&self, ui: &egui::Ui) -> (bool, bool, bool) {
+        if !self.search.is_some_and(|id| ui.memory(|m| m.has_focus(id))) {
+            return (false, false, false);
+        }
+        ui.input_mut(|i| {
+            let none = egui::Modifiers::NONE;
+            let down = i.consume_key(none, egui::Key::ArrowDown);
+            let up = i.consume_key(none, egui::Key::ArrowUp);
+            let enter = self.selected.is_some() && i.consume_key(none, egui::Key::Enter);
+            (down, up, enter)
+        })
+    }
+}
+
+/// The selection after Down (`down`) or Up over `count` fonts, wrapping
+/// around at both ends; from none, Down goes to the first, Up to the last.
+fn step_font(selected: Option<usize>, count: usize, down: bool) -> Option<usize> {
+    let last = count.checked_sub(1)?;
+    Some(match (selected.map(|i| i.min(last)), down) {
+        (None, true) => 0,
+        (None, false) => last,
+        (Some(i), true) => (i + 1) % count,
+        (Some(i), false) => (i + count - 1) % count,
+    })
 }
 
 /// The System fonts list's popup, which the demo keeps open.
