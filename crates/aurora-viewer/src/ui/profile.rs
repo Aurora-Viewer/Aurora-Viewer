@@ -372,6 +372,31 @@ impl ProfileUi {
         }
     }
 
+    /// The toolbar's Profile (Avatar.ToggleMyProfile, llviewermenu.cpp): our
+    /// profile opens; a minimized one expands, and a second press closes it
+    /// (unsaved edits still ask).
+    pub fn toggle_mine(&mut self, ctx: &egui::Context, world: &mut World, classic: bool) {
+        let me = world.agent_id;
+        let win_id = if classic { format!("profile-{me}") } else { aurora::window_id(me) };
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == me && w.open) {
+            if widgets::floater_minimized(ctx, &win_id) {
+                widgets::expand_floater(ctx, &win_id);
+            } else {
+                close_or_confirm(w, false);
+                // unsaved edits: the profile comes forward with its question
+                w.raise |= w.confirm_close;
+            }
+            return;
+        }
+        self.open(world, me);
+    }
+
+    /// Our profile is open (Avatar.IsMyProfileOpen,
+    /// LLAvatarActions::myProfileVisible).
+    pub fn mine_shown(&self, me: Uuid) -> bool {
+        self.windows.iter().any(|w| w.id == me && w.open)
+    }
+
     /// The toolbar's Picks (Avatar.TogglePicks, llviewermenu.cpp): our
     /// profile opens on its Picks tab; a minimized one expands there, and a
     /// second press with Picks shown closes it (unsaved edits still ask).

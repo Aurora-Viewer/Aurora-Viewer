@@ -248,6 +248,9 @@ pub struct Settings {
     /// "Photo quality": the graphics raised while the window is open
     /// (`quality`), the user's settings back once it closes.
     pub quality: bool,
+    /// The warning before the first "Photo quality" was accepted: a modest
+    /// PC may freeze or crash with every graphics setting at its maximum.
+    pub quality_warned: bool,
     /// The viewfinder's display, AF area, peaking and beep.
     pub viewfinder: viewfinder::Prefs,
     /// The photo's looks, the first one drawn first (`looks`); none: the
@@ -283,6 +286,7 @@ impl Default for Settings {
             postcard_size: profile::ProfileSize::S800,
             dof: Default::default(),
             quality: false,
+            quality_warned: false,
             viewfinder: Default::default(),
             looks: Vec::new(),
             look_settings: Default::default(),
