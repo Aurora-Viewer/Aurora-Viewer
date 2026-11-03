@@ -12870,6 +12870,8 @@ inventory-folder-color-title = フォルダの色
 inventory-folder-color-custom = カスタムカラー
 inventory-folder-color-restore = デフォルトに戻す
 inventory-folder-color-private = この色はあなたにだけ表示されます。
+inventory-folder-color-many = { $count }個のフォルダ
+inventory-folder-color-none = 色を付けるフォルダを選択してください。
 
 area-search-group = グループ
 area-search-last-owner = 前のオーナー

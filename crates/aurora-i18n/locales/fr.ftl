@@ -12887,6 +12887,8 @@ inventory-folder-color-title = Couleur du dossier
 inventory-folder-color-custom = Couleur personnalisée
 inventory-folder-color-restore = Rétablir par défaut
 inventory-folder-color-private = Ces couleurs ne sont visibles que par vous.
+inventory-folder-color-many = { $count } dossiers
+inventory-folder-color-none = Sélectionnez un dossier pour le colorer.
 
 area-search-group = Groupe
 area-search-last-owner = Dernier propriétaire

@@ -2020,7 +2020,7 @@ pub fn show(
     st.hover.show(p, inv, prefs, hover_images, &mut st.wanted_hover_images);
     st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
     controls::dialogs(ctx, p, st, prefs);
-    folder_colors::show(ctx, p, st, prefs);
+    folder_colors::show(ctx, p, inv, st, prefs);
     finish_hidden_rename(inv, st, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
@@ -2155,7 +2155,7 @@ pub fn show(
             finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
         }
         controls::dialogs(ctx, p, &mut w.state, prefs);
-        folder_colors::show(ctx, p, &mut w.state, prefs);
+        folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);

@@ -5490,7 +5490,9 @@ failure. Grid validation and any paid upload are performed by the human.
   `aurora-folder-colors-behind` keeps the palette open, widens the inventory at
   frame 640, brings it over the palette at 700 (a click on it) and chooses
   Folder color… again at 760: capture 750 (palette covered) and 820 (palette
-  in front).
+  in front). `aurora-folder-colors-follow`: the palette follows the selection;
+  Clothing selected at 700, an item at 780: capture 750 (Clothing named, its
+  pink outlined) and 830 ("Select a folder to color it.", palette greyed).
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory

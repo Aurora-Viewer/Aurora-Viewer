@@ -18412,6 +18412,7 @@ impl ApplicationHandler for App {
                         | "folder-colors"
                         | "aurora-folder-colors"
                         | "aurora-folder-colors-behind"
+                        | "aurora-folder-colors-follow"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
