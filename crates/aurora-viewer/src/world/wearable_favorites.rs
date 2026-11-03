@@ -9,7 +9,8 @@
 //! - the folder is `#Aurora/Wearable Favorites`, made by the first change
 //!   rather than at login; `#Firestorm/#Wearable Favorites` stays read-only,
 //!   like the AO's source (`ao/inventory.rs`);
-//! - `sync` copies what that folder holds on request, adding only;
+//! - `sync` copies what that folder holds on request, adding only, and the
+//!   most recent sort keeps reading the dates of the links it copied;
 //! - dropping a favorite a folder already holds adds nothing;
 //! - removing from the root view removes every link to the item, so that
 //!   its row does not come straight back from a subfolder.
@@ -21,7 +22,7 @@ use aurora_net::inventory::InvItem;
 use aurora_net::inventory::operations::{Mutation, Operation};
 use aurora_net::outfits::OutfitLink;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const BRAND: &str = "#Aurora";
@@ -48,7 +49,8 @@ pub struct Entry {
     pub asset_type: i32,
     pub inv_type: i32,
     pub flags: u32,
-    /// When it became a favorite: the most recent sort reads the link's date.
+    /// When it became a favorite: the most recent sort reads the link's date,
+    /// or the Legacy link's where that is older (`legacy_dates`).
     pub linked_at: i64,
 }
 
@@ -129,9 +131,23 @@ fn wearable(it: &InvItem) -> bool {
     matches!(it.asset_type, 5 | 6 | 13)
 }
 
+/// When each original became a Legacy favorite. A sync makes its links
+/// together, so their own date cannot order them.
+fn legacy_dates(inv: &Inventory) -> HashMap<Uuid, i64> {
+    let mut dates: HashMap<Uuid, i64> = HashMap::new();
+    let links = legacy_root(inv).map(|legacy| items_under(inv, legacy)).unwrap_or_default();
+    for link in links {
+        if let Some((item, date)) = actions::original(inv, link).zip(inv.items.get(&link).map(|l| l.created_at)) {
+            dates.entry(item).and_modify(|d| *d = date.min(*d)).or_insert(date);
+        }
+    }
+    dates
+}
+
 /// The rows of `folder`: LLFindOutfitItems' types, and at the root one row
 /// per original (updateList's "All Favorites").
 pub fn entries(inv: &Inventory, folder: Uuid, root: Uuid) -> Vec<Entry> {
+    let dates = legacy_dates(inv);
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for link in items_under(inv, folder) {
@@ -149,7 +165,10 @@ pub fn entries(inv: &Inventory, folder: Uuid, root: Uuid) -> Vec<Entry> {
                 asset_type: it.asset_type,
                 inv_type: it.inv_type,
                 flags: it.flags,
-                linked_at: inv.items.get(&link).map_or(0, |l| l.created_at),
+                linked_at: inv
+                    .items
+                    .get(&link)
+                    .map_or(0, |l| dates.get(&it.id).map_or(l.created_at, |d| l.created_at.min(*d))),
             });
         }
     }
@@ -574,6 +593,50 @@ mod tests {
         assert_eq!(order(&rows), ["c shirt", "a shape", "b hair"]);
         sort(&mut rows, Sort::Type);
         assert_eq!(order(&rows), ["a shape", "c shirt", "b hair"]);
+    }
+
+    #[test]
+    fn the_most_recent_sort_keeps_the_legacy_dates_of_a_sync() {
+        let mut inv = inventory();
+        let legacy = with_legacy(&mut inv);
+        let date = |inv: &mut Inventory, id: u128, at: i64| {
+            let mut it = inv.items.get(&Uuid::from_u128(id)).expect("link").clone();
+            it.created_at = at;
+            inv.add_items(vec![it]);
+        };
+        link(&mut inv, 33, legacy, HAIR);
+        date(&mut inv, 30, 100); // Shirt, first Legacy link
+        date(&mut inv, 32, 300); // Shirt again, in a subfolder
+        date(&mut inv, 31, 400); // Hair, first Legacy link
+        date(&mut inv, 33, 200); // Hair, the older
+        apply(&mut inv, |inv| sync(inv).expect("sync").change);
+        let root = root(&inv).expect("made");
+        let links: Vec<_> = inv.folders[&root].items.clone();
+        for link in links {
+            let mut it = inv.items[&link].clone();
+            it.created_at = 900;
+            inv.add_items(vec![it]);
+        }
+        let mut rows = entries(&inv, root, root);
+        sort(&mut rows, Sort::Recent);
+        assert_eq!(
+            rows.iter().map(|e| (e.name.as_str(), e.linked_at)).collect::<Vec<_>>(),
+            [("Hair", 200), ("Shirt", 100)]
+        );
+
+        // a favorite Aurora made itself keeps its own date
+        apply(&mut inv, |inv| add(inv, None, &[SHAPE]).expect("add"));
+        let shape = inv.folders[&root]
+            .items
+            .iter()
+            .copied()
+            .find(|id| !inv.items[id].asset_id.is_nil() && inv.items[id].asset_id == SHAPE);
+        let mut it = inv.items[&shape.expect("link")].clone();
+        it.created_at = 950;
+        inv.add_items(vec![it]);
+        let mut rows = entries(&inv, root, root);
+        sort(&mut rows, Sort::Recent);
+        assert_eq!(rows[0].name, "Shape");
     }
 
     #[test]
