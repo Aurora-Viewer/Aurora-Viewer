@@ -47,6 +47,23 @@ The first time voice chat opens the microphone, macOS asks whether Aurora
 Viewer may use it: allow it to speak in voice chat (you can change it later
 in **System Settings › Privacy & Security › Microphone**).
 
+## Game Mode
+
+Aurora Viewer declares itself as a game to macOS, so macOS turns on its
+Game Mode automatically when the viewer is in native full screen on Apple
+Silicon with macOS 14 Sonoma or later. To enter full screen, move the
+pointer over the green button in the title bar and choose **Enter Full
+Screen**; maximizing the window (double-clicking the title bar, or the
+**Zoom** command) does not enter full screen. The Game Mode notice and the
+game controller icon in the menu bar confirm that it is on; the icon's menu
+also turns it off for the game. Game Mode gives the viewer priority over
+background work and lowers the latency of Bluetooth controllers and
+headphones.
+
+Game Mode belongs to the installed application: running a bare
+`aurora-viewer` executable from a terminal has no application bundle, so
+macOS cannot offer it there.
+
 ## Keyboard
 
 Keyboard shortcuts follow the Legacy Viewer. **Command and Control both
