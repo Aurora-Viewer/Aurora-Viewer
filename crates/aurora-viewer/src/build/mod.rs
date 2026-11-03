@@ -1874,6 +1874,7 @@ impl BuildTool {
                         mods,
                         now,
                         &mut cmds,
+                        scene,
                     );
                     for c in cmds {
                         self.send(c);

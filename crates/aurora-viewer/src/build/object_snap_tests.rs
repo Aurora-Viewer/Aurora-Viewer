@@ -10,7 +10,7 @@ const ORANGE: u32 = FIRST_ID + 2;
 const GREEN: u32 = FIRST_ID + 3;
 const PLANK: u32 = FIRST_ID + 4;
 
-/// The demo world with the snap boxes on open land; `only` keeps just
+/// The demo world with the six snap boxes on open land; `only` keeps just
 /// these of them.
 fn world(only: Option<&[u32]>) -> World {
     let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -20,9 +20,8 @@ fn world(only: Option<&[u32]>) -> World {
     for ev in crate::demo::object_snap::events_at(Vec3::new(80.0, 100.0, 0.0)) {
         let ev = match ev {
             NetEvent::ObjectUpdates { handle, mut objects } => {
-                if let Some(only) = only {
-                    objects.retain(|o| only.contains(&o.local_id));
-                }
+                // the room and the cylinder are surfaces, which need the scene
+                objects.retain(|o| only.map_or(o.local_id < FIRST_ID + 6, |only| only.contains(&o.local_id)));
                 NetEvent::ObjectUpdates { handle, objects }
             }
             ev => ev,
@@ -94,6 +93,7 @@ fn drag(manip: &mut Manip, world: &mut World, s: &BuildSettings, cam: &Cam, sel:
         Mods::default(),
         Instant::now(),
         &mut out,
+        None,
     );
 }
 
@@ -340,7 +340,7 @@ fn the_moved_selection_and_worn_objects_are_never_targets() {
     let now = Instant::now();
     let around = bounds_of(&w, &[sel], false, now).unwrap();
     let moving: HashSet<usize> = [blue].into();
-    let targets = object_snap::collect(&w, &moving, &around, now);
+    let targets = object_snap::collect(&w, None, &moving, &around, now);
     let has = |idx: usize| {
         let p = w.objects.get(idx).unwrap().position;
         targets.boxes.iter().any(|b| b.center == p)

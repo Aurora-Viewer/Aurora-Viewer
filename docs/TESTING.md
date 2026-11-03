@@ -1491,7 +1491,10 @@ included, and a handle can be grabbed anywhere on its larger shape.
 `AURORA_DEMO_OBJECT_SNAP=1` adds six boxes 6 m along the start view (use
 `AURORA_DEMO_POS="80,100"` for open land): a slab, a blue cube floating
 0.3 m over it (`object:87701`), an orange cube 0.8 m to its +X, a green box
-turned 30°, a purple plank tilted 20° and a 2 m pillar. Choose Snap ›
+turned 30°, a purple plank tilted 20° and a 2 m pillar; to the left, a
+hollow room with a yellow cube inside its box (`object:87707`), and a
+cylinder. A shaped prim or a mesh counts as its visible surface: the
+yellow cube stops at the room's inner walls, never at its outer box. Choose Snap ›
 Objects in the construction settings, select the blue cube and drag its
 arrows or plane squares near the others: within 8 pixels it jumps flush
 (rose outline on both faces, a corner square on the plank's slope, amber

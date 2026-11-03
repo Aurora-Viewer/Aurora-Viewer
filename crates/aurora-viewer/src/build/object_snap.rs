@@ -18,10 +18,18 @@
 //! the separating axis test along the move); a plane drag then slides along
 //! that face. A target the selection already overlaps is left out of it, so
 //! a box rezzed inside another can still be moved out.
+//!
+//! Only plain box prims are their box. A mesh or a shaped prim (cut, hollow,
+//! a cylinder…) is its visible surface (`Surface`): the triangles picking
+//! uses, so the floor of a mesh house holds what is put on it, where its
+//! box would only offer the outside of the whole house. On a surface, a
+//! snap is a contact: a sweep within the threshold that meets a triangle.
 
 use super::Bounds;
 use crate::scene::Scene;
 use crate::world::World;
+use aurora_prim::VolumeParams;
+use aurora_prim::params::{LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE};
 use glam::Vec3;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -32,6 +40,8 @@ pub const SNAP_PX: f32 = 8.0;
 pub const RADIUS: f32 = 10.0;
 /// The nearest targets kept.
 pub const MAX_TARGETS: usize = 256;
+/// Triangles of the nearest surfaces kept; a surface past them is left out.
+pub const MAX_TRIANGLES: usize = 200_000;
 /// A face whose normal makes less than this cosine with the arrow (or the
 /// handle's plane) would need a long move for a small snap: left out.
 const MIN_ALONG: f32 = 0.3;
@@ -83,6 +93,8 @@ pub struct Hit {
     pub sel_side: f32,
     /// Both boxes overlap across the face (a real contact).
     pub contact: bool,
+    /// The triangle met on a surface (`target` is then the surface's index).
+    pub tri: Option<[Vec3; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,11 +104,46 @@ pub struct Snap {
     pub hits: Vec<Hit>,
 }
 
+/// The visible surface of a target, in world space.
+#[derive(Debug, Clone, Default)]
+pub struct Surface {
+    pub tris: Vec<[Vec3; 3]>,
+    min: Vec3,
+    max: Vec3,
+}
+
+impl Surface {
+    pub fn new(tris: Vec<[Vec3; 3]>) -> Self {
+        let min = tris.iter().flatten().fold(Vec3::splat(f32::MAX), |m, v| m.min(*v));
+        let max = tris.iter().flatten().fold(Vec3::splat(f32::MIN), |m, v| m.max(*v));
+        Self { tris, min, max }
+    }
+}
+
 /// Targets collected for one drag, with where they were collected.
 #[derive(Debug, Clone, Default)]
 pub struct Targets {
     pub boxes: Vec<Bounds>,
+    pub surfaces: Vec<Surface>,
     pub around: Vec3,
+}
+
+/// A prim that fills its box: the default box shape, unsculpted.
+pub fn is_box(v: &VolumeParams) -> bool {
+    let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    let (pr, pa) = (&v.profile, &v.path);
+    v.sculpt.is_none()
+        && pr.curve_type & 0x0f == LL_PCODE_PROFILE_SQUARE
+        && near(pr.begin, 0.0)
+        && near(pr.end, 1.0)
+        && near(pr.hollow, 0.0)
+        && pa.curve_type == LL_PCODE_PATH_LINE
+        && near(pa.begin, 0.0)
+        && near(pa.end, 1.0)
+        && pa.scale.iter().all(|x| near(*x, 1.0))
+        && pa.shear.iter().chain(&pa.taper).all(|x| near(*x, 0.0))
+        && near(pa.twist_begin, 0.0)
+        && near(pa.twist_end, 0.0)
 }
 
 fn unit(i: usize) -> Vec3 {
@@ -201,6 +248,7 @@ fn candidates(sel: &Bounds, targets: &[Bounds], c: Constraint, px: &dyn Fn(Vec3,
                         side,
                         sel_side,
                         contact: touching,
+                        tri: None,
                     },
                     delta,
                     u,
@@ -214,10 +262,50 @@ fn candidates(sel: &Bounds, targets: &[Bounds], c: Constraint, px: &dyn Fn(Vec3,
     out
 }
 
-/// The snap of the selection `sel` (where the drag puts it) against
-/// `targets`, if one is within `SNAP_PX`.
-pub fn find(sel: &Bounds, targets: &[Bounds], c: Constraint, px: &dyn Fn(Vec3, Vec3) -> f32) -> Option<Snap> {
-    let found = candidates(sel, targets, c, px);
+/// Contacts with the surfaces within `SNAP_PX`: a short sweep each way the
+/// drag may move (along the arrow, or the plane's two axes).
+fn surface_candidates(sel: &Bounds, surfaces: &[Surface], c: Constraint, px: &dyn Fn(Vec3, Vec3) -> f32) -> Vec<Candidate> {
+    let dirs = match c {
+        Constraint::Axis(a) => vec![a, -a],
+        Constraint::Plane(n) => {
+            // the world axis furthest from the normal, in the plane
+            let w = [Vec3::X, Vec3::Y, Vec3::Z]
+                .into_iter()
+                .min_by(|a, b| a.dot(n).abs().total_cmp(&b.dot(n).abs()))
+                .unwrap_or(Vec3::X);
+            let e1 = (w - n * n.dot(w)).normalize_or_zero();
+            let e2 = n.cross(e1);
+            vec![e1, -e1, e2, -e2]
+        }
+    };
+    let mut out = Vec::new();
+    for dir in dirs {
+        let per_m = px(sel.center, dir);
+        if !(per_m.is_finite() && per_m > 0.0) {
+            continue;
+        }
+        let (offset, hit) = stop(sel, dir * (SNAP_PX / per_m), &[], surfaces, Constraint::Axis(dir));
+        if let Some(hit) = hit {
+            out.push(Candidate {
+                hit,
+                delta: offset.dot(dir),
+                u: dir,
+                offset,
+                score: px(sel.center, offset),
+            });
+        }
+    }
+    out
+}
+
+/// The snap of the selection `sel` (where the drag puts it) against the
+/// `boxes` and `surfaces`, if one is within `SNAP_PX`.
+pub fn find(sel: &Bounds, boxes: &[Bounds], surfaces: &[Surface], c: Constraint, px: &dyn Fn(Vec3, Vec3) -> f32) -> Option<Snap> {
+    let mut found = candidates(sel, boxes, c, px);
+    if !surfaces.is_empty() {
+        found.extend(surface_candidates(sel, surfaces, c, px));
+        found.sort_by(|a, b| a.score.total_cmp(&b.score));
+    }
     let first = found.first()?;
     let mut snap = Snap {
         offset: first.offset,
@@ -243,18 +331,53 @@ pub fn find(sel: &Bounds, targets: &[Bounds], c: Constraint, px: &dyn Fn(Vec3, V
     Some(snap)
 }
 
-/// When the selection `sel`, moved by `by`, first enters the target `t`
-/// (fraction of `by`), and the axis it meets, pointing back along the move;
-/// None if it does not, or if it overlaps `t` already.
-fn entry(sel: &Bounds, by: Vec3, t: &Bounds) -> Option<(f32, Vec3)> {
-    let (a, b) = ([0, 1, 2].map(|i| axis_of(sel, i)), [0, 1, 2].map(|i| axis_of(t, i)));
-    let crosses = a.iter().flat_map(|x| b.iter().map(move |y| x.cross(*y)));
+/// What a sweep meets: a target's box, or a triangle of a surface.
+#[derive(Clone, Copy)]
+enum Shape<'a> {
+    Box(&'a Bounds),
+    Tri(&'a [Vec3; 3]),
+}
+
+impl Shape<'_> {
+    fn interval(&self, l: Vec3) -> (f32, f32) {
+        match self {
+            Shape::Box(b) => interval(b, l),
+            Shape::Tri(t) => {
+                let d = t.map(|v| v.dot(l));
+                (d[0].min(d[1]).min(d[2]), d[0].max(d[1]).max(d[2]))
+            }
+        }
+    }
+    /// Its face normals and edge directions, for the separating axes.
+    fn axes(&self) -> ([Vec3; 3], [Vec3; 3]) {
+        match self {
+            Shape::Box(b) => {
+                let a = [0, 1, 2].map(|i| axis_of(b, i));
+                (a, a)
+            }
+            Shape::Tri(t) => {
+                let e = [t[1] - t[0], t[2] - t[1], t[0] - t[2]];
+                let n = e[0].cross(e[1]);
+                ([n, n, n], e)
+            }
+        }
+    }
+}
+
+/// When the selection `sel`, moved by `by`, first enters `shape` (fraction
+/// of `by`), and the axis it meets, pointing back along the move; None if it
+/// does not, or if it overlaps `shape` already. Shapes count `SKIN` smaller
+/// on every side, so resting on a face is not entering it.
+fn entry(sel: &Bounds, by: Vec3, shape: Shape) -> Option<(f32, Vec3)> {
+    let a = [0, 1, 2].map(|i| axis_of(sel, i));
+    let (normals, edges) = shape.axes();
+    let crosses = a.iter().flat_map(|x| edges.iter().map(move |y| x.cross(*y)));
     let (mut enter, mut exit, mut normal) = (f32::NEG_INFINITY, f32::INFINITY, Vec3::ZERO);
-    for axis in a.into_iter().chain(b).chain(crosses) {
+    for axis in a.into_iter().chain(normals).chain(crosses) {
         let Some(l) = axis.try_normalize() else { continue };
         let (s0, s1) = interval(sel, l);
-        let (c0, c1) = interval(t, l);
-        let (c0, c1) = if c1 - c0 > 2.0 * SKIN { (c0 + SKIN, c1 - SKIN) } else { (c0, c1) };
+        let (c0, c1) = shape.interval(l);
+        let (c0, c1) = (c0 + SKIN, c1 - SKIN);
         let v = by.dot(l);
         if v.abs() < 1e-7 {
             if s1 <= c0 || s0 >= c1 {
@@ -276,38 +399,72 @@ fn entry(sel: &Bounds, by: Vec3, t: &Bounds) -> Option<(f32, Vec3)> {
     (0.0..=1.0).contains(&enter).then_some((enter, normal))
 }
 
+/// The first box or triangle the selection meets moving by `by`: fraction,
+/// axis, and its hit (without its side for a box).
+fn first_met(sel: &Bounds, by: Vec3, boxes: &[Bounds], surfaces: &[Surface]) -> Option<(f32, Vec3, Hit)> {
+    let hit = |target, tri| Hit {
+        target,
+        axis: 0,
+        kind: Kind::Touch,
+        side: 0.0,
+        sel_side: 0.0,
+        contact: true,
+        tri,
+    };
+    let mut best: Option<(f32, Vec3, Hit)> = None;
+    let mut keep = |found: Option<(f32, Vec3)>, h: Hit| {
+        if let Some((at, n)) = found
+            && best.as_ref().is_none_or(|b| at < b.0)
+        {
+            best = Some((at, n, h));
+        }
+    };
+    for (i, b) in boxes.iter().enumerate() {
+        keep(entry(sel, by, Shape::Box(b)), hit(i, None));
+    }
+    if !surfaces.is_empty() {
+        // only the triangles near the swept box
+        let reach = Vec3::splat(support(sel, Vec3::X).max(support(sel, Vec3::Y)).max(support(sel, Vec3::Z)) + SKIN);
+        let (lo, hi) = (sel.center.min(sel.center + by) - reach, sel.center.max(sel.center + by) + reach);
+        for (i, s) in surfaces.iter().enumerate() {
+            if s.max.cmplt(lo).any() || s.min.cmpgt(hi).any() {
+                continue;
+            }
+            for t in &s.tris {
+                let (tmin, tmax) = (t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]));
+                if tmax.cmplt(lo).any() || tmin.cmpgt(hi).any() {
+                    continue;
+                }
+                keep(entry(sel, by, Shape::Tri(t)), hit(i, Some(*t)));
+            }
+        }
+    }
+    best
+}
+
 /// How far the selection `sel` may move of `by` within `c` before it meets
-/// a target, sliding along the face it meets in a plane drag; with the
-/// contact met last, for the guides.
-pub fn stop(sel: &Bounds, by: Vec3, targets: &[Bounds], c: Constraint) -> (Vec3, Option<Hit>) {
+/// a box or a surface, sliding along what it meets in a plane drag; with
+/// the contact met last, for the guides.
+pub fn stop(sel: &Bounds, by: Vec3, boxes: &[Bounds], surfaces: &[Surface], c: Constraint) -> (Vec3, Option<Hit>) {
     let (mut moved_by, mut rest, mut hit) = (Vec3::ZERO, by, None);
     for _ in 0..3 {
-        let from = moved(sel, moved_by);
-        let first = targets
-            .iter()
-            .enumerate()
-            .filter_map(|(i, t)| entry(&from, rest, t).map(|(at, n)| (at, n, i)))
-            .min_by(|x, y| x.0.total_cmp(&y.0));
-        let Some((at, n, i)) = first else {
+        let Some((at, n, mut h)) = first_met(&moved(sel, moved_by), rest, boxes, surfaces) else {
             moved_by += rest;
             break;
         };
         // back off the skin: right on the face
         let at = (at - SKIN / rest.dot(n).abs().max(1e-6)).max(0.0);
         moved_by += rest * at;
-        let t = &targets[i];
-        let k = (0..3)
-            .max_by(|x, y| axis_of(t, *x).dot(n).abs().total_cmp(&axis_of(t, *y).dot(n).abs()))
-            .unwrap_or(0);
-        let side = axis_of(t, k).dot(n).signum();
-        hit = Some(Hit {
-            target: i,
-            axis: k,
-            kind: Kind::Touch,
-            side,
-            sel_side: -side,
-            contact: true,
-        });
+        if h.tri.is_none() {
+            let t = &boxes[h.target];
+            let k = (0..3)
+                .max_by(|x, y| axis_of(t, *x).dot(n).abs().total_cmp(&axis_of(t, *y).dot(n).abs()))
+                .unwrap_or(0);
+            h.axis = k;
+            h.side = axis_of(t, k).dot(n).signum();
+            h.sel_side = -h.side;
+        }
+        hit = Some(h);
         let Constraint::Plane(pn) = c else { break };
         // what is left of the move, without its part into the face
         let w = n - pn * pn.dot(n);
@@ -325,10 +482,12 @@ pub fn stop(sel: &Bounds, by: Vec3, targets: &[Bounds], c: Constraint) -> (Vec3,
 
 /// The prims a drag can snap to: shown in the world (not worn, not an
 /// avatar, not a reflection probe's invisible volume), not moved by the
-/// drag (`moving`), nearest first, within `RADIUS` of `around`.
-pub fn collect(world: &World, moving: &HashSet<usize>, around: &Bounds, now: Instant) -> Targets {
+/// drag (`moving`), nearest first, within `RADIUS` of `around`. With the
+/// scene, a prim that is not a plain box is its drawn surface, or nothing
+/// until it is drawn; without it (tests), every prim is its box.
+pub fn collect(world: &World, scene: Option<&Scene>, moving: &HashSet<usize>, around: &Bounds, now: Instant) -> Targets {
     let reach = around.half.length() + RADIUS;
-    let mut near: Vec<(f32, Bounds)> = Vec::new();
+    let mut near: Vec<(f32, usize, Bounds)> = Vec::new();
     for (idx, o) in world.objects.iter() {
         if o.is_avatar() || o.extra.reflection_probe.is_some() || moving.contains(&idx) {
             continue;
@@ -349,6 +508,7 @@ pub fn collect(world: &World, moving: &HashSet<usize>, around: &Bounds, now: Ins
         }
         near.push((
             gap,
+            idx,
             Bounds {
                 center: p,
                 rotation: r,
@@ -358,10 +518,37 @@ pub fn collect(world: &World, moving: &HashSet<usize>, around: &Bounds, now: Ins
     }
     near.sort_by(|a, b| a.0.total_cmp(&b.0));
     near.truncate(MAX_TARGETS);
-    Targets {
-        boxes: near.into_iter().map(|(_, b)| b).collect(),
+    let mut targets = Targets {
         around: around.center,
+        ..Default::default()
+    };
+    let mut triangles = 0;
+    for (_, idx, b) in near {
+        let Some(scene) = scene.filter(|_| world.objects.get(idx).is_some_and(|o| !is_box(&o.volume))) else {
+            targets.boxes.push(b);
+            continue;
+        };
+        let Some((model, geom)) = scene.drawn_geometry(world, idx, now) else {
+            continue;
+        };
+        let mut tris = Vec::new();
+        for face in geom.pick_faces.iter().flatten() {
+            for t in face.indices.chunks_exact(3) {
+                let v = |k: u16| face.positions.get(k as usize).map(|p| model.transform_point3(Vec3::from(*p)));
+                if let (Some(a), Some(b), Some(c)) = (v(t[0]), v(t[1]), v(t[2])) {
+                    tris.push([a, b, c]);
+                }
+            }
+        }
+        triangles += tris.len();
+        if triangles > MAX_TRIANGLES {
+            break;
+        }
+        if !tris.is_empty() {
+            targets.surfaces.push(Surface::new(tris));
+        }
     }
+    targets
 }
 
 /// What the guides show for one hit: the target's face (or centre) and
@@ -386,11 +573,45 @@ fn face(b: &Bounds, k: usize, side: f32) -> [Vec3; 4] {
     [c - a - e, c + a - e, c + a + e, c - a + e]
 }
 
+/// The selection's face (or corner) that faces `toward`.
+fn sel_mark(sel: &Bounds, toward: Vec3) -> Vec<Vec3> {
+    match (0..3).find(|i| axis_of(sel, *i).dot(toward).abs() > 0.999) {
+        Some(i) => face(sel, i, axis_of(sel, i).dot(toward).signum()).to_vec(),
+        None => {
+            // the corner of the selection furthest along `toward`
+            let corner = (0..3).fold(sel.center, |p, i| {
+                let a = axis_of(sel, i);
+                p + a * sel.half[i] * a.dot(toward).signum()
+            });
+            vec![corner]
+        }
+    }
+}
+
+/// The triangle met and the selection's side on it.
+fn surface_guide(sel: &Bounds, tri: &[Vec3; 3]) -> Guide {
+    let n = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalize_or_zero();
+    let mid = (tri[0] + tri[1] + tri[2]) / 3.0;
+    let up = if (sel.center - mid).dot(n) >= 0.0 { n } else { -n };
+    let sel_face = sel_mark(sel, -up);
+    let mark = sel_face.iter().copied().sum::<Vec3>() / sel_face.len() as f32;
+    Guide {
+        kind: Kind::Touch,
+        contact: true,
+        target_face: tri.to_vec(),
+        sel_face,
+        link: (mark, mark - up * (mark - mid).dot(up)),
+    }
+}
+
 /// The guides of a snap, for the selection where the snap put it.
 pub fn guides(sel: &Bounds, targets: &[Bounds], snap: &Snap) -> Vec<Guide> {
     snap.hits
         .iter()
         .filter_map(|h| {
+            if let Some(tri) = h.tri {
+                return Some(surface_guide(sel, &tri));
+            }
             let t = targets.get(h.target)?;
             let u = axis_of(t, h.axis);
             if h.kind == Kind::Center {
@@ -403,19 +624,7 @@ pub fn guides(sel: &Bounds, targets: &[Bounds], snap: &Snap) -> Vec<Guide> {
                 });
             }
             let target_face = face(t, h.axis, h.side).to_vec();
-            let toward = u * h.sel_side;
-            let parallel = (0..3).find(|i| axis_of(sel, *i).dot(toward).abs() > 0.999);
-            let sel_face = match parallel {
-                Some(i) => face(sel, i, axis_of(sel, i).dot(toward).signum()).to_vec(),
-                None => {
-                    // the corner of the selection furthest along `toward`
-                    let corner = (0..3).fold(sel.center, |p, i| {
-                        let a = axis_of(sel, i);
-                        p + a * sel.half[i] * a.dot(toward).signum()
-                    });
-                    vec![corner]
-                }
-            };
+            let sel_face = sel_mark(sel, u * h.sel_side);
             let mark = sel_face.iter().copied().sum::<Vec3>() / sel_face.len() as f32;
             let tc = target_face.iter().copied().sum::<Vec3>() / 4.0;
             // the target's mark: the selection's mark brought onto its face plane
@@ -451,7 +660,7 @@ mod tests {
         for (gap, snaps) in [(0.02, true), (0.079, true), (0.081, false), (0.3, false)] {
             // a neighbour offset in y and z: only its -X face is in reach
             let t = cube(Vec3::new(1.0 + gap, 0.2, 0.3), Vec3::splat(0.5), Quat::IDENTITY);
-            let snap = find(&sel, &[t], Constraint::Axis(Vec3::X), &px);
+            let snap = find(&sel, &[t], &[], Constraint::Axis(Vec3::X), &px);
             assert_eq!(snap.is_some(), snaps, "gap {gap}");
             if let Some(snap) = snap {
                 assert!(snap.offset.abs_diff_eq(Vec3::new(gap, 0.0, 0.0), 1e-5), "{snap:?}");
@@ -476,7 +685,7 @@ mod tests {
             Vec3::new(1.0, 1.0, 0.0).normalize(),
             Vec3::new(0.3, -0.5, 0.8).normalize(),
         ] {
-            if let Some(snap) = find(&sel, &targets, Constraint::Axis(a), &px) {
+            if let Some(snap) = find(&sel, &targets, &[], Constraint::Axis(a), &px) {
                 assert!(snap.offset.cross(a).length() < 1e-6, "{a}: {snap:?}");
                 assert_eq!(snap.hits.len(), 1);
                 assert!(px(sel.center, snap.offset) <= SNAP_PX + 1e-3);
@@ -485,7 +694,7 @@ mod tests {
         // a face too oblique to the arrow is out of its reach
         let side = cube(Vec3::new(1.02, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
         let flat = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY);
-        let snap = find(&flat, &[side], Constraint::Axis(Vec3::Y), &px).expect("its Y faces are flush");
+        let snap = find(&flat, &[side], &[], Constraint::Axis(Vec3::Y), &px).expect("its Y faces are flush");
         assert_eq!(snap.offset, Vec3::ZERO);
         assert!(snap.hits.iter().all(|h| h.axis != 0));
     }
@@ -503,7 +712,7 @@ mod tests {
         let (low, _) = interval(&sel, n);
         // 3 cm above the slope along Z, within the threshold
         let sel = moved(&sel, Vec3::Z * ((top - low) / n.z + 0.03));
-        let snap = find(&sel, &[plank], Constraint::Axis(Vec3::Z), &px).expect("in reach");
+        let snap = find(&sel, &[plank], &[], Constraint::Axis(Vec3::Z), &px).expect("in reach");
         let rest = moved(&sel, snap.offset);
         assert!((interval(&rest, n).0 - top).abs() < 1e-5);
         assert!(snap.offset.cross(Vec3::Z).length() < 1e-6);
@@ -530,7 +739,7 @@ mod tests {
             s
         };
         let sel = sel_at(0.05);
-        let snap = find(&sel, &[t], Constraint::Plane(Vec3::Z), &px).expect("in reach");
+        let snap = find(&sel, &[t], &[], Constraint::Plane(Vec3::Z), &px).expect("in reach");
         let rest = moved(&sel, snap.offset);
         // no face of the cube is parallel to the turned target: only contacts
         assert!(snap.hits.iter().all(|h| h.kind == Kind::Touch && h.contact), "{snap:?}");
@@ -547,17 +756,17 @@ mod tests {
         // beside the plank, its corner 3 cm (along Z) from the slope's plane
         let sel = cube(Vec3::new(0.0, 1.5, 0.9), Vec3::splat(0.3), Quat::IDENTITY);
         let sel = moved(&sel, Vec3::Z * ((top - interval(&sel, n).0) / n.z + 0.03));
-        assert!(find(&sel, &[plank], Constraint::Axis(Vec3::Z), &px).is_none());
+        assert!(find(&sel, &[plank], &[], Constraint::Axis(Vec3::Z), &px).is_none());
         // over it, the same corner rests on it
         let over = moved(&sel, Vec3::new(0.0, -1.5, 0.0));
-        assert!(find(&over, &[plank], Constraint::Axis(Vec3::Z), &px).is_some_and(|s| s.hits[0].contact));
+        assert!(find(&over, &[plank], &[], Constraint::Axis(Vec3::Z), &px).is_some_and(|s| s.hits[0].contact));
     }
 
     #[test]
     fn a_plane_drag_puts_an_edge_on_an_edge() {
         let sel = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY);
         let t = cube(Vec3::new(1.04, 0.03, 0.2), Vec3::splat(0.5), Quat::IDENTITY);
-        let snap = find(&sel, &[t], Constraint::Plane(Vec3::Z), &px).expect("in reach");
+        let snap = find(&sel, &[t], &[], Constraint::Plane(Vec3::Z), &px).expect("in reach");
         assert!(snap.offset.abs_diff_eq(Vec3::new(0.04, 0.03, 0.0), 1e-5), "{snap:?}");
         assert_eq!(snap.hits.len(), 2);
         let kinds: Vec<_> = snap.hits.iter().map(|h| (h.axis, h.kind)).collect();
@@ -571,11 +780,11 @@ mod tests {
         // touching 4 px away, or a far box's -X face plane 3 px away
         let touch = cube(Vec3::new(1.04, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
         let plane = cube(Vec3::new(1.03, 3.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
-        let snap = find(&sel, &[plane, touch], Constraint::Axis(Vec3::X), &px).unwrap();
+        let snap = find(&sel, &[plane, touch], &[], Constraint::Axis(Vec3::X), &px).unwrap();
         assert_eq!(snap.hits[0].target, 1);
         assert!(snap.hits[0].contact);
         // without the contact, the nearer alignment
-        let snap = find(&sel, &[plane], Constraint::Axis(Vec3::X), &px).unwrap();
+        let snap = find(&sel, &[plane], &[], Constraint::Axis(Vec3::X), &px).unwrap();
         assert!(!snap.hits[0].contact);
         assert!(snap.offset.abs_diff_eq(Vec3::new(0.03, 0.0, 0.0), 1e-5));
     }
@@ -584,9 +793,9 @@ mod tests {
     fn nothing_snaps_off_screen_or_without_targets() {
         let sel = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY);
         let t = cube(Vec3::new(1.01, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
-        assert!(find(&sel, &[t], Constraint::Axis(Vec3::X), &|_, _| f32::INFINITY).is_none());
-        assert!(find(&sel, &[t], Constraint::Axis(Vec3::X), &|_, _| f32::NAN).is_none());
-        assert!(find(&sel, &[], Constraint::Plane(Vec3::Z), &px).is_none());
+        assert!(find(&sel, &[t], &[], Constraint::Axis(Vec3::X), &|_, _| f32::INFINITY).is_none());
+        assert!(find(&sel, &[t], &[], Constraint::Axis(Vec3::X), &|_, _| f32::NAN).is_none());
+        assert!(find(&sel, &[], &[], Constraint::Plane(Vec3::Z), &px).is_none());
     }
 
     #[test]
@@ -595,14 +804,14 @@ mod tests {
         let near = cube(Vec3::new(2.0, 0.2, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
         let far = cube(Vec3::new(4.0, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
         for by in [1.5, 3.0, 10.0] {
-            let (moved_by, hit) = stop(&sel, Vec3::X * by, &[far, near], Constraint::Axis(Vec3::X));
+            let (moved_by, hit) = stop(&sel, Vec3::X * by, &[far, near], &[], Constraint::Axis(Vec3::X));
             assert!(moved_by.abs_diff_eq(Vec3::X, 1e-5), "{by}: {moved_by}");
             let hit = hit.expect("a contact");
             assert_eq!((hit.target, hit.axis, hit.side, hit.contact), (1, 0, -1.0, true));
         }
         // short of it, or away from it: the whole move
         for by in [Vec3::X * 0.9, Vec3::X * -3.0, Vec3::Y * 2.0] {
-            assert_eq!(stop(&sel, by, &[near], Constraint::Axis(by.normalize())), (by, None));
+            assert_eq!(stop(&sel, by, &[near], &[], Constraint::Axis(by.normalize())), (by, None));
         }
     }
 
@@ -611,13 +820,13 @@ mod tests {
         // resting on the -X face of a target
         let sel = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY);
         let t = cube(Vec3::new(1.0, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
-        let (pushed, _) = stop(&sel, Vec3::X * 0.3, &[t], Constraint::Axis(Vec3::X));
+        let (pushed, _) = stop(&sel, Vec3::X * 0.3, &[t], &[], Constraint::Axis(Vec3::X));
         assert!(pushed.length() < 1e-5, "{pushed}");
-        let (slid, hit) = stop(&sel, Vec3::new(0.4, 0.7, 0.0), &[t], Constraint::Plane(Vec3::Z));
+        let (slid, hit) = stop(&sel, Vec3::new(0.4, 0.7, 0.0), &[t], &[], Constraint::Plane(Vec3::Z));
         assert!(slid.abs_diff_eq(Vec3::new(0.0, 0.7, 0.0), 1e-5), "{slid}");
         assert!(hit.is_some());
         // along the face, no contact in the way
-        let (along, hit) = stop(&sel, Vec3::Y * 0.7, &[t], Constraint::Plane(Vec3::Z));
+        let (along, hit) = stop(&sel, Vec3::Y * 0.7, &[t], &[], Constraint::Plane(Vec3::Z));
         assert_eq!((along, hit), (Vec3::Y * 0.7, None));
     }
 
@@ -629,12 +838,12 @@ mod tests {
             Quat::from_rotation_z(45f32.to_radians()),
         );
         let sel = cube(Vec3::new(0.0, 0.3, 0.0), Vec3::splat(0.4), Quat::IDENTITY);
-        let (moved_by, hit) = stop(&sel, Vec3::X * 3.0, &[t], Constraint::Axis(Vec3::X));
+        let (moved_by, hit) = stop(&sel, Vec3::X * 3.0, &[t], &[], Constraint::Axis(Vec3::X));
         let rest = moved(&sel, moved_by);
         assert!(hit.is_some() && moved_by.x > 0.5 && moved_by.x < 1.5, "{moved_by}");
         // touching: no further step in, any step back
-        assert!(stop(&rest, Vec3::X * 0.01, &[t], Constraint::Axis(Vec3::X)).0.length() < 1e-4);
-        assert!(entry(&rest, Vec3::X * -0.5, &t).is_none());
+        assert!(stop(&rest, Vec3::X * 0.01, &[t], &[], Constraint::Axis(Vec3::X)).0.length() < 1e-4);
+        assert!(entry(&rest, Vec3::X * -0.5, Shape::Box(&t)).is_none());
     }
 
     #[test]
@@ -642,6 +851,119 @@ mod tests {
         let room = cube(Vec3::ZERO, Vec3::splat(5.0), Quat::IDENTITY);
         let sel = cube(Vec3::new(1.0, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
         let by = Vec3::X * 8.0;
-        assert_eq!(stop(&sel, by, &[room], Constraint::Axis(Vec3::X)), (by, None));
+        assert_eq!(stop(&sel, by, &[room], &[], Constraint::Axis(Vec3::X)), (by, None));
+    }
+
+    /// A horizontal square of side 2 `half` at height `z`, as two triangles.
+    fn floor(half: f32, z: f32) -> [[Vec3; 3]; 2] {
+        let c = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(x, y)| Vec3::new(x * half, y * half, z));
+        [[c[0], c[1], c[2]], [c[0], c[2], c[3]]]
+    }
+
+    /// A closed room: the inside of a 6 m cube standing on z = 0, its box
+    /// all around anything put in it.
+    fn room() -> Surface {
+        let mut tris = Vec::new();
+        for (axis, at) in [(2, 0.0), (2, 6.0), (0, -3.0), (0, 3.0), (1, -3.0), (1, 3.0)] {
+            for t in floor(3.0, 0.0) {
+                tris.push(t.map(|v| {
+                    let mut p = match axis {
+                        0 => Vec3::new(0.0, v.x, v.y + 3.0),
+                        1 => Vec3::new(v.x, 0.0, v.y + 3.0),
+                        _ => v,
+                    };
+                    p[axis] = at;
+                    p
+                }));
+            }
+        }
+        Surface::new(tris)
+    }
+
+    #[test]
+    fn plain_boxes_are_their_box_every_other_shape_its_surface() {
+        use aurora_prim::SculptParams;
+        use aurora_prim::params::{LL_PCODE_PROFILE_CIRCLE, LL_SCULPT_TYPE_MESH};
+        let plain = VolumeParams::default();
+        assert!(is_box(&plain));
+        let mut hollow = plain;
+        hollow.profile.hollow = 0.85;
+        let mut cut = plain;
+        cut.path.end = 0.5;
+        let mut cylinder = plain;
+        cylinder.profile.curve_type = LL_PCODE_PROFILE_CIRCLE;
+        let mut tapered = plain;
+        tapered.path.taper[0] = 0.3;
+        let mut mesh = plain;
+        mesh.sculpt = Some(SculptParams {
+            texture: uuid::Uuid::from_u128(1),
+            sculpt_type: LL_SCULPT_TYPE_MESH,
+        });
+        for (name, v) in [
+            ("hollow", hollow),
+            ("cut", cut),
+            ("cylinder", cylinder),
+            ("tapered", tapered),
+            ("mesh", mesh),
+        ] {
+            assert!(!is_box(&v), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_floor_inside_a_house_holds_what_is_put_on_it() {
+        let house = room();
+        let sel = cube(Vec3::new(0.5, 0.0, 2.0), Vec3::splat(0.5), Quat::IDENTITY);
+        // down onto the floor however far the cursor goes
+        for down in [2.0, 10.0] {
+            let (moved_by, hit) = stop(&sel, -Vec3::Z * down, &[], std::slice::from_ref(&house), Constraint::Axis(Vec3::Z));
+            assert!((moved_by.z + 1.5).abs() < 1e-4, "{down}: {moved_by}");
+            assert!(hit.is_some_and(|h| h.contact && h.tri.is_some()));
+        }
+        // against an inner wall, then sliding along it in a plane drag
+        let (moved_by, _) = stop(&sel, Vec3::X * 5.0, &[], std::slice::from_ref(&house), Constraint::Axis(Vec3::X));
+        assert!((moved_by.x - 2.0).abs() < 1e-4, "{moved_by}");
+        let (slid, _) = stop(
+            &sel,
+            Vec3::new(5.0, 1.0, 0.0),
+            &[],
+            std::slice::from_ref(&house),
+            Constraint::Plane(Vec3::Z),
+        );
+        assert!(slid.abs_diff_eq(Vec3::new(2.0, 1.0, 0.0), 1e-4), "{slid}");
+    }
+
+    #[test]
+    fn a_surface_snaps_within_the_threshold_with_its_triangle_as_guide() {
+        let ground = Surface::new(floor(5.0, 0.0).to_vec());
+        for (above, snaps) in [(0.03, true), (0.079, true), (0.1, false)] {
+            let sel = cube(Vec3::new(0.2, 0.3, 0.5 + above), Vec3::splat(0.5), Quat::IDENTITY);
+            let snap = find(&sel, &[], std::slice::from_ref(&ground), Constraint::Axis(Vec3::Z), &px);
+            assert_eq!(snap.is_some(), snaps, "{above} m above");
+            if let Some(snap) = snap {
+                assert!(snap.offset.abs_diff_eq(-Vec3::Z * above, 1e-4), "{snap:?}");
+                let guide = &guides(&moved(&sel, snap.offset), &[], &snap)[0];
+                assert_eq!(guide.target_face.len(), 3);
+                assert_eq!(guide.sel_face.len(), 4, "the cube's bottom face");
+                assert!(guide.sel_face.iter().all(|v| v.z.abs() < 1e-4));
+            }
+        }
+        // a plane drag reaches it along the plane's axes only
+        let sel = cube(Vec3::new(0.0, 0.0, 0.53), Vec3::splat(0.5), Quat::IDENTITY);
+        assert!(find(&sel, &[], std::slice::from_ref(&ground), Constraint::Plane(Vec3::Z), &px).is_none());
+        let snap = find(&sel, &[], std::slice::from_ref(&ground), Constraint::Plane(Vec3::Y), &px).expect("down in XZ");
+        assert!(snap.offset.abs_diff_eq(-Vec3::Z * 0.03, 1e-4), "{snap:?}");
+    }
+
+    #[test]
+    fn a_triangle_already_through_the_selection_does_not_hold_it() {
+        // a rug's edge crossing the box when the drag begins
+        let rug = Surface::new(floor(1.0, 0.0).to_vec());
+        let sel = cube(Vec3::new(0.0, 0.0, 0.2), Vec3::splat(0.5), Quat::IDENTITY);
+        let by = Vec3::X * 3.0;
+        assert_eq!(
+            stop(&sel, by, &[], std::slice::from_ref(&rug), Constraint::Axis(Vec3::X)),
+            (by, None)
+        );
     }
 }

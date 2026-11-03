@@ -360,6 +360,7 @@ impl Manip {
         mods: Mods,
         now: Instant,
         out: &mut Vec<BuildCmd>,
+        scene: Option<&Scene>,
     ) {
         if let Some(mut d) = self.drag.take() {
             if !d.movers.iter().all(|m| super::can_transform(world, m.idx, d.linked, d.mode)) {
@@ -373,7 +374,7 @@ impl Manip {
             } else {
                 *cam
             };
-            drag_update(&mut d, world, s, &drag_cam, cursor, mods, now, out);
+            drag_update(&mut d, world, scene, s, &drag_cam, cursor, mods, now, out);
             self.animate(Some(d.part));
             self.drag = Some(d);
             return;
@@ -1450,6 +1451,7 @@ fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
 fn drag_update(
     d: &mut Drag,
     world: &mut World,
+    scene: Option<&Scene>,
     s: &BuildSettings,
     cam: &Cam,
     cursor: (f32, f32),
@@ -1511,7 +1513,7 @@ fn drag_update(
             let mut mag = rel.dot(d.axis);
             d.in_snap = false;
             let prev = d.delta;
-            if let Some(delta) = snap_to_objects(d, world, s, cam, Constraint::Axis(d.axis), prev, d.axis * mag, now) {
+            if let Some(delta) = snap_to_objects(d, world, scene, s, cam, Constraint::Axis(d.axis), prev, d.axis * mag, now) {
                 mag = delta.dot(d.axis);
             } else if s.snap {
                 let plane_n = d.snap_axis.cross(d.axis);
@@ -1537,7 +1539,7 @@ fn drag_update(
             d.edge_pan_blocked = false;
             d.in_snap = false;
             let prev = d.delta;
-            if let Some(delta) = snap_to_objects(d, world, s, cam, Constraint::Plane(d.normal), prev, rel, now) {
+            if let Some(delta) = snap_to_objects(d, world, scene, s, cam, Constraint::Plane(d.normal), prev, rel, now) {
                 rel = delta;
             } else if s.snap {
                 let gi = d.grid.rotation.inverse();
@@ -1653,6 +1655,7 @@ fn drag_update(
 fn snap_to_objects(
     d: &mut Drag,
     world: &World,
+    scene: Option<&Scene>,
     s: &BuildSettings,
     cam: &Cam,
     c: Constraint,
@@ -1671,17 +1674,23 @@ fn snap_to_objects(
         t.around.distance(sel.center) > object_snap::RADIUS * 0.5 || now.duration_since(*at) > Duration::from_millis(500)
     });
     if stale {
-        d.snap_targets = Some((object_snap::collect(world, &d.moving, &sel, now), now));
+        d.snap_targets = Some((object_snap::collect(world, scene, &d.moving, &sel, now), now));
     }
-    let targets = &d.snap_targets.as_ref()?.0.boxes;
+    let targets = &d.snap_targets.as_ref()?.0;
     let px = |from: Vec3, by: Vec3| {
         cam.project(from)
             .zip(cam.project(from + by))
             .map_or(f32::INFINITY, |(a, b)| a.distance(b))
     };
-    let snap = object_snap::find(&sel, targets, c, &px);
+    let snap = object_snap::find(&sel, &targets.boxes, &targets.surfaces, c, &px);
     let goal = want + snap.as_ref().map_or(Vec3::ZERO, |snap| snap.offset);
-    let (allowed, blocked) = object_snap::stop(&object_snap::moved(&d.bounds, prev), goal - prev, targets, c);
+    let (allowed, blocked) = object_snap::stop(
+        &object_snap::moved(&d.bounds, prev),
+        goal - prev,
+        &targets.boxes,
+        &targets.surfaces,
+        c,
+    );
     if snap.is_none() && blocked.is_none() {
         return None;
     }
@@ -1690,13 +1699,13 @@ fn snap_to_objects(
     d.snap_guides = match (blocked, snap) {
         (Some(hit), _) => object_snap::guides(
             &at,
-            targets,
+            &targets.boxes,
             &object_snap::Snap {
                 offset: Vec3::ZERO,
                 hits: vec![hit],
             },
         ),
-        (None, Some(snap)) => object_snap::guides(&at, targets, &snap),
+        (None, Some(snap)) => object_snap::guides(&at, &targets.boxes, &snap),
         (None, None) => Vec::new(),
     };
     Some(delta)
@@ -2072,6 +2081,7 @@ mod tests {
                     shift,
                     now,
                     &mut out,
+                    None,
                 );
                 assert!(out.is_empty(), "a press within the drag slop must not copy");
                 manip.update(
@@ -2086,6 +2096,7 @@ mod tests {
                     shift,
                     now,
                     &mut out,
+                    None,
                 );
                 assert!(
                     matches!(&out[..], [BuildCmd::Duplicate { handle, local_ids, offset, flags, group_id }]
@@ -2106,6 +2117,7 @@ mod tests {
                     shift,
                     now,
                     &mut out,
+                    None,
                 );
                 manip.release(&mut world, &settings, false, &mut out);
                 assert_eq!(out.iter().filter(|cmd| matches!(cmd, BuildCmd::Duplicate { .. })).count(), 1);
@@ -2278,6 +2290,7 @@ mod tests {
                 Mods::default(),
                 now,
                 &mut out,
+                None,
             );
             assert!(manip.hover.is_none());
             assert!(!manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Move, start, now));
@@ -2302,6 +2315,7 @@ mod tests {
             Mods::default(),
             now,
             &mut out,
+            None,
         );
         manip.release(&mut world, &settings, false, &mut out);
         assert!(manip.drag.is_none());
@@ -2547,6 +2561,7 @@ mod tests {
                 Mods::default(),
                 at,
                 out,
+                None,
             );
         };
         step(&mut world, &mut manip, &cam, now, &mut out);
@@ -2640,6 +2655,7 @@ mod tests {
                         },
                         now,
                         &mut out,
+                        None,
                     );
                     let expected = before - Vec3::Y * (40.0 / (size[1] as f32 * zoom));
                     let moved = world.objects.get(idx).unwrap();
@@ -2694,6 +2710,7 @@ mod tests {
             },
             now,
             &mut out,
+            None,
         );
         // No jump, and a relog (no session offset) shows it at the same place.
         assert_eq!(world.hud_scales.offset(id), Vec3::ZERO);
@@ -2736,6 +2753,7 @@ mod tests {
             Mods::default(),
             now,
             &mut out,
+            None,
         );
         let after = Scene::object_transform(&world, child, now, 0).unwrap().0;
         assert!((after - before).abs_diff_eq(-Vec3::Y * (30.0 / 360.0), 1e-5));
@@ -2790,6 +2808,7 @@ mod tests {
             Mods::default(),
             now,
             &mut out,
+            None,
         );
         assert!(
             Scene::object_transform(&world, child, now, 0)
