@@ -1,5 +1,17 @@
 # Aurora Viewer architecture
 
+Avatar gait playback resolves standard walk/run signals to the modern male or
+female assets selected by LLVOAvatar::remapMotionID with its default settings
+(#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the
+asset lookup in `Controller::sync_avatar`; AO state, network signals, clocks and
+diagnostics keep their original UUIDs. Shape sex comes directly from transmitted
+visual parameter 80, without expanding the full shape every frame. An active
+gait swaps variants after a shape change without restarting; pending variants
+retain the last modern clip. Control-avatar playback uses the requested asset.
+The four unmodified native clips are embedded from `assets/animations/locomotion/`
+and registered at scene startup, following the reference static asset cache;
+they do not depend on asset-server availability or the disposable disk cache.
+
 The mesh Collisions tab keeps its level-of-detail selector and triangle-retention
 slider on one row, without numbered steps. Optional source-file/preset actions
 occupy a following row so they do not displace those primary controls.
@@ -29,6 +41,12 @@ apply during analysis, without a separate post-analysis simplification stage.
 The Analyze button uses the preview queue's pending/debounce state while hull
 preparation is missing; a shared busy action face shows its spinner and status
 without another clickable analysis request. Cached view-only redraws stay idle.
+
+Embedded profile, Search and Marketplace pages share `App::web_has_focus`
+and `focused_web` for native keyboard forwarding and the movement, gesture,
+history and AltGr guards. Native Tab navigation stays with the browser instead
+of focusing an egui widget. Marketplace releases its browser focus when closed
+or minimized, following `LLMediaCtrl` keyboard ownership (#1725, #1968).
 
 `world/inventory/system.rs` indexes system-folder lookups for inventory and
 Appearance by inventory generation and root identity. Root-listed duplicates
@@ -483,6 +501,12 @@ wearables cannot block the edited region. It pins the server bakes for cancellat
 GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
 preview textures never enter the inventory or replace server appearance.
 Local imports share their worker-prepared RGBA images with `PreviewSource`.
+`local_bakes.rs` uses the same compositor for our own bakes on a region that
+does not bake (OpenSim: `UploadBakedTexture` without `UpdateAvatarAppearance`):
+it watches the Current Outfit folder, asks the region for the bakes it keeps
+(AgentCachedTexture), composes and encodes the others on the scene's workers,
+uploads them and sends AgentSetAppearance; `aurora-net/src/local_bakes.rs`
+holds the protocol (cache keys, the message, the two-step upload).
 Closing a wearable's texture picker retains the applied choice in its draft;
 explicit Cancel restores the slot. Closing the editor retains the unsaved
 Save/Discard/Cancel confirmation, including when its picker was still open.

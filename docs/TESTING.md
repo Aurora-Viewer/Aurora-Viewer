@@ -346,7 +346,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
-| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
+| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
@@ -624,19 +624,30 @@ textures are pressed: the MSAA first (8x, 4x, 2x, then the user's own
 anti-aliasing), then the draw distance (384, 256, 128 m, then the
 user's), then the shadows, then everything else, never below the user's
 own settings (`snapshot::quality::plan`), and the textures in view are no
-longer forced to full resolution. The panel shows "Quality reduced: video
-memory almost full" under the Resolution section (the viewfinder says it
-once at the top), and the log gives `photo quality: on (…, lowered for the video
-memory)` then `photo quality: step <k> of <n> for the video memory, about
-<x> MB beyond the user's settings (…)`. What the driver counts grows
-by more than the estimate when the render targets are rebuilt (the free
-room of the allocator's blocks), so the first step often settles one or
-two lower (the default: step 3 of 7, then 5). The window stays open and the
-memory is read again every second: `quality-tight:2000:100` starts with
-the whole boost and lowers it at frame 700 (`photo quality: lowered`),
-`quality-tight:100:3000` starts lowered and climbs back one step every
-five seconds (`photo quality: raised`), the line gone at step 0. With
-enough room (`quality-tight:5000`) nothing changes from `quality`.
+longer forced to full resolution. It never jumps to a step the estimate
+alone says fits: it comes on at the first step that fits with its cost
+doubled (the estimate leaves out the levels of detail, the avatars and the
+full-resolution textures), then climbs a step every two seconds while the
+driver's readings leave room for the next one, what it replaces (the
+render targets of another MSAA, the shadow atlas) and some to spare; the
+whole boost (step 0) counts double. The log gives `photo quality: on (…,
+climbing as the video memory allows)`, `photo quality: step <k> of <n>
+for the video memory, about <x> MB beyond the user's settings (…)`, a
+`raised` line for each step, then `photo quality: climbed to step <k>`
+with the figures it stopped on: the default climbs from the user's own
+settings (step 7 of 7) to 6, `quality-tight:2000` from 3 to 1 (MSAA 2x,
+then 4x). Only then does the panel show "Quality reduced: video memory
+almost full" under the Resolution section (the viewfinder says it once at
+the top). A photo taken while it climbs waits for it (`photo quality:
+waiting for <n> textures, the boost climbing`, at most 20 s): with
+`save-quality:1920x1080`, `AURORA_VRAM_BUDGET_MB=3400` and
+`AURORA_DEMO_SNAPSHOT_FRAME=640`, the photo is taken at MSAA 4x after
+about six seconds. The window stays open and the memory is read again
+every second: `quality-tight:2000:100` lowers it at frame 700 (`photo
+quality: lowered`), `quality-tight:100:3000` starts lowered and climbs back
+one step every five seconds once its first climb is over (`photo quality:
+raised`), the line gone at step 0. With enough room (`quality-tight:5000`)
+the whole boost comes on at once, as with `quality`.
 `light` opens the window with its quick light set: sunset, exposure 1.6,
 the clouds still and the worn lights off (the log gives `photo light:
 PhotoChoice { … time: Some(3) … }`); the saved `time_of_day` and
@@ -717,9 +728,10 @@ Controls window's.
 
 `AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on
 its Camera tab (joysticks, zoom, the four views, object view, mouselook,
-reset, saved positions), `movement` on its Movement tab
+reset, saved positions), `roll` on the same tab with a 15° camera roll
+(the hold-to-roll buttons and the angle button that levels the camera), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
-`compact` the window in its compact view (its joysticks and zoom only),
+`compact` the window in its compact view (its joysticks, zoom and roll controls),
 `compact-move` the same, then at frame 640 the toolbar's Move pressed on it
 (#1815: it expands on its Movement tab; capture at 700),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
@@ -7711,6 +7723,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at start on it, the menu entry shows, and a link to an address under it
   opens in the window instead of the system browser. Without it the demo
   has no Marketplace (the entry is hidden, as on a grid without one).
+  For keyboard regression checks (#1725, #1968), use a local HTML page with
+  an input and a textarea. Click the input, type letters and AltGr characters,
+  edit with arrows/Backspace/Delete, select all, and Tab to the textarea.
+  The page must receive the keys without opening chat, triggering gestures or
+  moving the avatar. Clicking outside, minimizing or closing releases focus;
+  clicking the page again restores it. Repeat text entry in Search's Web tab.
 - **`AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit|menu-listing|menu-version|menu-item`**:
   Me › Marketplace listings open at start, answered by an SLM server
   simulated in the viewer (nothing is sent). `merchant` (any other

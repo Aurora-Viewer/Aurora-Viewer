@@ -80,6 +80,17 @@ const SIM_TIMEOUT: Duration = Duration::from_secs(100);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The largest region side a grid can announce (Constants.MaximumRegionSize,
+/// OpenSim). The viewer sizes the region's land and parcel grids from it: a
+/// broken or hostile simulator must not make it allocate gigabytes.
+pub(crate) const MAX_REGION_SIDE: u32 = 4096;
+
+/// A region side announced by the grid, held to 256..=[`MAX_REGION_SIDE`].
+pub(crate) fn region_side(n: u32) -> u32 {
+    n.clamp(256, MAX_REGION_SIDE)
+}
+
 /// Diagnostic: the RegionHandshake of a region the agent arrived in should
 /// come along with AgentMovementComplete; without it the simulator never
 /// sends terrain or objects (it waits for RegionHandshakeReply).
@@ -230,6 +241,8 @@ struct Session<'a> {
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
     inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
+    /// AgentSetAppearance messages sent this session (their SerialNum).
+    appearance_serial: u32,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
     /// When an AgentUpdate leaves (agent_update.rs).
     agent_update: AgentUpdateRule,
@@ -458,6 +471,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         notecard_copy_tx,
         inventory_move_tx,
         inventory_udp_tx,
+        appearance_serial: 0,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -2842,6 +2856,33 @@ impl Session<'_> {
                     let _ = events.send(NetEvent::OutfitUpdated { request, result });
                 });
             }
+            NetCommand::UploadBake { request, j2c } => {
+                let Some(cap) = self.main_cap("UploadBakedTexture") else {
+                    emit(
+                        self.sh,
+                        NetEvent::BakeUploaded {
+                            request,
+                            result: Err(aurora_i18n::tr!("local-bakes-the-bake-could-not-be-uploaded").into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let result = crate::local_bakes::upload(&http, &cap, j2c).await;
+                    if let Err(e) = &result {
+                        log::warn!("local bake: {e}");
+                    }
+                    let _ = events.send(NetEvent::BakeUploaded { request, result });
+                });
+            }
+            NetCommand::SetAppearance(appearance) => {
+                // pre-incremented: the first is 1 (LLAgent::sendAgentSetAppearance)
+                self.appearance_serial = self.appearance_serial.wrapping_add(1);
+                let m = crate::local_bakes::agent_set_appearance(self.agent_id(), self.session_id(), self.appearance_serial, &appearance);
+                self.send_main(&m, true);
+            }
             NetCommand::RequestServerAppearance { cof_version } => self.request_server_appearance(cof_version),
             NetCommand::IncrementCofVersion => self.increment_cof_version(),
             NetCommand::AvatarTexturesRequest(id) => self.send_generic("avatartexturesrequest", &[id.to_string()]),
@@ -3648,7 +3689,7 @@ impl Session<'_> {
                         continue;
                     };
                     let port = info["Port"].as_i32() as u16;
-                    let size = (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256));
+                    let size = (region_side(info["RegionSizeX"].as_u32()), region_side(info["RegionSizeY"].as_u32()));
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
                     // process_enable_simulator (llworld.cpp): no circuit to a
                     // neighbour; the simulator keeps its child agent
@@ -3706,7 +3747,7 @@ impl Session<'_> {
                     ip_from_llsd(&info["SimIP"]),
                     info["SimPort"].as_i32() as u16,
                     info["SeedCapability"].as_str().to_owned(),
-                    (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256)),
+                    (region_side(info["RegionSizeX"].as_u32()), region_side(info["RegionSizeY"].as_u32())),
                 );
             }
             "CrossedRegion" => {
@@ -3721,7 +3762,7 @@ impl Session<'_> {
                     ip_from_llsd(&rd["SimIP"]),
                     rd["SimPort"].as_i32() as u16,
                     rd["SeedCapability"].as_str().to_owned(),
-                    (rd["RegionSizeX"].as_u32().max(256), rd["RegionSizeY"].as_u32().max(256)),
+                    (region_side(rd["RegionSizeX"].as_u32()), region_side(rd["RegionSizeY"].as_u32())),
                 );
             }
             "ParcelProperties" => {
@@ -4309,6 +4350,9 @@ impl Session<'_> {
                     rights: m.rights.iter().map(|r| (r.agent_related, r.related_rights)).collect(),
                 },
             );
+        } else if id == RebakeAvatarTextures::ID {
+            let m: RebakeAvatarTextures = pkt.decode()?;
+            emit(self.sh, NetEvent::RebakeRequested(m.texture_data.texture_id));
         } else if id == AvatarPropertiesReply::ID {
             let m: AvatarPropertiesReply = pkt.decode()?;
             let pd = &m.properties_data;
@@ -4526,11 +4570,12 @@ impl Session<'_> {
             }
         } else if id == CoarseLocationUpdate::ID {
             let m: CoarseLocationUpdate = pkt.decode()?;
+            let size = self.sims.get(&from).map_or((256, 256), |sim| sim.size);
             let positions = m
                 .location
                 .iter()
                 .zip(m.agent_data.iter())
-                .map(|(l, a)| (a.agent_id, Vec3::new(l.x as f32, l.y as f32, l.z as f32 * 4.0)))
+                .map(|(l, a)| (a.agent_id, coarse_position(l.x, l.y, l.z, size)))
                 .collect();
             emit(
                 self.sh,
@@ -4620,13 +4665,15 @@ impl Session<'_> {
                 self.remove_sim(from);
             }
         } else if id == ParcelOverlay::ID {
-            // LLViewerParcelMgr::processParcelOverlay: one quarter of the
+            // LLViewerParcelMgr::processParcelOverlay: 1024 cells of the
             // region's 4 m grid per message (property lines, for sale)
             let m: ParcelOverlay = pkt.decode()?;
+            let size = self.sims.get(&from).map_or((256, 256), |sim| sim.size);
             emit(
                 self.sh,
                 NetEvent::ParcelOverlay {
                     handle: self.handle_of(from),
+                    size,
                     sequence: m.parcel_data.sequence_id,
                     data: m.parcel_data.data,
                 },
@@ -5271,6 +5318,43 @@ fn follow_cam_event(pkt: &IncomingPacket, handle: RegionHandle) -> Result<Option
         }))
     } else {
         Ok(None)
+    }
+}
+
+/// A CoarseLocationUpdate position in metres. Its X and Y are bytes, so a
+/// region past 256 m sends them scaled to fit (SceneGraph.cs, OpenSim), and
+/// the viewer scales them back (LLViewerRegion::updateCoarseLocations, there
+/// with the width on both axes). Z is in steps of 4 m.
+fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
+    Vec3::new(
+        f32::from(x) * size.0 as f32 / 256.0,
+        f32::from(y) * size.1 as f32 / 256.0,
+        f32::from(z) * 4.0,
+    )
+}
+
+#[cfg(test)]
+mod coarse_tests {
+    use super::*;
+
+    #[test]
+    fn coarse_positions_scale_back_with_each_axis_of_the_region() {
+        assert_eq!(coarse_position(100, 200, 10, (256, 256)), Vec3::new(100.0, 200.0, 40.0));
+        assert_eq!(coarse_position(100, 200, 10, (1024, 512)), Vec3::new(400.0, 400.0, 40.0));
+    }
+}
+
+#[cfg(test)]
+mod region_side_tests {
+    use super::*;
+
+    #[test]
+    fn announced_region_sides_are_held_to_the_grid_limits() {
+        assert_eq!(region_side(0), 256);
+        assert_eq!(region_side(256), 256);
+        assert_eq!(region_side(1024), 1024);
+        assert_eq!(region_side(MAX_REGION_SIDE), MAX_REGION_SIDE);
+        assert_eq!(region_side(u32::MAX), MAX_REGION_SIDE);
     }
 }
 
@@ -6036,6 +6120,7 @@ mod event_queue_tests {
             notecard_copy_tx,
             inventory_move_tx,
             inventory_udp_tx,
+            appearance_serial: 0,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
@@ -6375,6 +6460,7 @@ mod script_dialog_tests {
             notecard_copy_tx,
             inventory_move_tx,
             inventory_udp_tx,
+            appearance_serial: 0,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
