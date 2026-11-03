@@ -152,6 +152,11 @@ struct SuitcaseAsk {
     grid: String,
     names: Vec<crate::world::suitcase::LeftBehind>,
     dont_ask: bool,
+    /// A step of the navigation history: it keeps its place in the list
+    /// until the question is answered (`App::answer_suitcase`).
+    history: bool,
+    /// A portal crossing: its journey state, for the teleport it starts.
+    portal: Option<portals::Journey>,
 }
 
 struct Gfx {
@@ -5736,10 +5741,10 @@ impl App {
             .as_deref()
             .and_then(crate::grids::link_grid)
             .or_else(|| crate::slurl::parse_hypergrid(typed).and_then(|place| place.grid));
-        log::info!("hypergrid: map teleport to {grid:?} (region {sim:?})");
         let Some(grid) = grid else {
             return false;
         };
+        log::info!("hypergrid: map teleport to {grid} (region {sim:?})");
         let go = SuitcaseGo::Map {
             command: Box::new(command.clone()),
             label: label.to_owned(),
@@ -5783,8 +5788,47 @@ impl App {
             grid: shown,
             names,
             dont_ask: false,
+            history: false,
+            portal: None,
         });
         true
+    }
+
+    /// The question's answer. A held step of the history keeps its place
+    /// until then, and leaves it as a teleport that never started does
+    /// (Cancel, or a refusal of the retry); a held portal crossing gets its
+    /// journey back once its teleport starts.
+    fn answer_suitcase(&mut self, ask: SuitcaseAsk, yes: bool) {
+        if !yes {
+            if ask.history {
+                self.world.tp_history.failed();
+            }
+            return;
+        }
+        if ask.dont_ask {
+            self.settings.warn_hypergrid_suitcase = false;
+            self.settings.save();
+        }
+        log::info!("hypergrid: teleport accepted with worn items left behind");
+        let started = match ask.go {
+            SuitcaseGo::Named { destination, pos, look_at } => {
+                self.suitcase_passed = true;
+                let started = self.teleport_to_location_looking(destination, pos, look_at);
+                // consumed by the question's check, unless the retry
+                // stopped before it (the destination no longer resolves)
+                self.suitcase_passed = false;
+                started
+            }
+            SuitcaseGo::Map { command, label, show } => self.request_user_teleport(*command, label, show),
+        };
+        if ask.history && !started {
+            self.world.tp_history.failed();
+        }
+        if let Some(journey) = ask.portal
+            && self.world.teleporting
+        {
+            self.portal_journey = Some(journey.restarted(Instant::now()));
+        }
     }
 
     /// Demo mode keeps the question to its own scenario.
@@ -5816,10 +5860,6 @@ impl App {
         };
         let here = self.world.region_name();
         let local = region.eq_ignore_ascii_case(&here);
-        // held for its question: not started yet
-        if !local && self.suitcase_held(&asked, &region, pos, look_at) {
-            return false;
-        }
         let command = if local {
             let Some(handle) = self.world.main_region else {
                 return false;
@@ -5838,6 +5878,10 @@ impl App {
             }
         };
         if !self.user_teleport_allowed(&command) {
+            return false;
+        }
+        // asked once RLVa allows it: held for its question, not started yet
+        if !local && self.suitcase_held(&asked, &region, pos, look_at) {
             return false;
         }
         self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z), !local);
@@ -6807,8 +6851,13 @@ impl App {
             if let Some(grid) = e.grid.as_deref()
                 && let Some(started) = self.teleport_other_grid(grid, &e.region, e.position)
             {
-                if !started {
-                    self.world.tp_history.failed();
+                if started {
+                    return;
+                }
+                match self.suitcase_ask.as_mut() {
+                    // held for the question: the place stays pending
+                    Some(ask) => ask.history = true,
+                    None => self.world.tp_history.failed(),
                 }
                 return;
             }
@@ -7987,6 +8036,8 @@ impl App {
                     && let Some(avatar) = flight_target
                 {
                     self.request_friend_join_teleport(c, avatar, self.world.agent.flying, false)
+                } else if !self.user_teleport_allowed(&c) {
+                    false
                 } else if self.suitcase_held_map(&c, &dest, show) {
                     // held for its question (worn items left behind)
                     false
@@ -15632,19 +15683,19 @@ impl App {
                 if self.demo && self.frame_count == 300 && std::env::var_os("AURORA_DEMO_SUITCASE").is_some() {
                     self.suitcase_ask = Some(SuitcaseAsk {
                         go: SuitcaseGo::Named {
-                            destination: "hop://hg.osgrid.org:80/Wright%20Plaza/128/128/25".into(),
+                            destination: "hop://hg.example-grid.org:80/Harbor%20Plaza/128/128/25".into(),
                             pos: Vec3::new(128.0, 128.0, 25.0),
                             look_at: Vec3::X,
                         },
-                        grid: "hg.osgrid.org:80".into(),
+                        grid: "hg.example-grid.org:80".into(),
                         names: [
-                            ("Ash Hair", 6, 17, 0),
-                            ("Fluff - Ebody", 6, 17, 0),
-                            ("Haru Head - Short F neck", 6, 17, 0),
+                            ("Short Hair", 6, 17, 0),
+                            ("Fur Trim - Mesh Body", 6, 17, 0),
+                            ("Mesh Head - Short Neck", 6, 17, 0),
                             ("Leather Jacket", 5, 18, 5),
-                            ("REBORN eBODY v1.69.4", 6, 17, 0),
+                            ("Mesh Body v1.2", 6, 17, 0),
                             ("Shape", 13, 18, 0),
-                            ("Tail (Haru)", 6, 17, 0),
+                            ("Fluffy Tail", 6, 17, 0),
                         ]
                         .map(|(name, asset_type, inv_type, flags)| crate::world::suitcase::LeftBehind {
                             name: name.into(),
@@ -15654,27 +15705,15 @@ impl App {
                         })
                         .to_vec(),
                         dont_ask: false,
+                        history: false,
+                        portal: None,
                     });
                 }
                 if let Some(ask) = self.suitcase_ask.as_mut()
                     && let Some(yes) = ui::context::suitcase_confirm(&ctx, &p, &ask.grid, &ask.names, &mut ask.dont_ask)
                     && let Some(ask) = self.suitcase_ask.take()
-                    && yes
                 {
-                    if ask.dont_ask {
-                        self.settings.warn_hypergrid_suitcase = false;
-                        self.settings.save();
-                    }
-                    log::info!("hypergrid: teleport accepted with worn items left behind");
-                    match ask.go {
-                        SuitcaseGo::Named { destination, pos, look_at } => {
-                            self.suitcase_passed = true;
-                            self.teleport_to_location_looking(destination, pos, look_at);
-                        }
-                        SuitcaseGo::Map { command, label, show } => {
-                            self.request_user_teleport(*command, label, show);
-                        }
-                    }
+                    self.answer_suitcase(ask, yes);
                 }
                 if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)

@@ -4932,7 +4932,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   and `--language en`.
 - **`AURORA_DEMO_SUITCASE=1`**: at frame 300, the question a Hypergrid
   teleport from the home grid asks when worn items are not in My Suitcase:
-  five invented items, OSgrid as the destination. "Teleport anyway" goes
+  seven invented items, an invented grid as the destination. "Teleport anyway" goes
   on to a demo teleport, Cancel and a click outside close it, "Do not show
   again" turns Preferences › Confirmations' switch off. Outside this mode
   the demo never asks.

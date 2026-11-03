@@ -441,16 +441,19 @@ mod tests {
     #[test]
     fn a_hypergrid_link_region_names_its_grid() {
         assert_eq!(
-            link_grid("http://hg.osgrid.org:80/ wright plaza").as_deref(),
+            link_grid("http://hg.example-grid.org:80/ harbor plaza").as_deref(),
             // port 80 is http's own: the address has none
-            Some("hg.osgrid.org")
+            Some("hg.example-grid.org")
         );
         assert_eq!(
-            link_grid("grid.wolfterritories.org:8002:Sandbox").as_deref(),
-            Some("grid.wolfterritories.org:8002")
+            link_grid("grid.other.example:8002:Sandbox").as_deref(),
+            Some("grid.other.example:8002")
         );
-        assert_eq!(link_grid("hg.osgrid.org:Wright Plaza").as_deref(), Some("hg.osgrid.org"));
-        for here in ["Wright Plaza", "THE FLEABAGS DEN", "  ", "Sandbox:"] {
+        assert_eq!(
+            link_grid("hg.example-grid.org:Harbor Plaza").as_deref(),
+            Some("hg.example-grid.org")
+        );
+        for here in ["Harbor Plaza", "THE QUIET DEN", "  ", "Sandbox:"] {
             assert_eq!(link_grid(here), None, "{here}");
         }
     }
