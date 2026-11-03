@@ -11,8 +11,14 @@ use aurora_net::currency::{CurrencyError, CurrencyQuote};
 const DEMO_HELPER: &str = "demo://currency/";
 
 /// A region's currency-base-uri as a helper page, checked as the grid's
-/// is (`Grid::helper_page`: http(s), a host, no credentials).
-fn region_page(region: Option<&str>) -> Option<String> {
+/// is (`Grid::helper_page`: http(s), a host, no credentials). OpenSim
+/// only: LFSimFeatureHandler::setSupportedFeatures clears mHelperUriOverride
+/// for a region without OpenSimExtras, which Second Life never sends; Aurora
+/// ignores the value on Second Life outright.
+fn region_page(region: Option<&str>, settings: &crate::settings::Settings) -> Option<String> {
+    if settings.grid != GridChoice::Custom {
+        return None;
+    }
     let helper = region?.trim().to_owned();
     crate::grids::Grid {
         helper,
@@ -34,7 +40,7 @@ pub(super) fn grid_currency(login: &aurora_llsd::Llsd, opensim: bool) -> String 
 /// LLGridManager::getHelperURI: the region's currency-base-uri first
 /// (LFSimFeatureHandler::helperUriOverride), then the grid's helper.
 fn helper_page(region: Option<&str>, settings: &crate::settings::Settings) -> Option<String> {
-    if let Some(page) = region_page(region) {
+    if let Some(page) = region_page(region, settings) {
         return Some(page);
     }
     if settings.grid != GridChoice::Custom {
@@ -90,7 +96,7 @@ impl App {
     /// may ask for to that server, so the resident is told each time the
     /// region's value changes (LFSimFeatureHandler::setSupportedFeatures).
     pub(super) fn notice_region_helper(&mut self) {
-        let page = region_page(self.world.currency_base_uri());
+        let page = region_page(self.world.currency_base_uri(), &self.settings);
         if page == self.region_helper_seen {
             return;
         }
@@ -226,12 +232,13 @@ mod tests {
 
     #[test]
     fn a_region_page_is_checked_as_the_grid_s_and_shown_by_its_host() {
+        let settings = opensim("");
         assert_eq!(
-            region_page(Some("http://money.example:8008")).as_deref(),
+            region_page(Some("http://money.example:8008"), &settings).as_deref(),
             Some("http://money.example:8008/")
         );
         for bad in ["javascript:alert(1)", "http://user:secret@money.example/", "http://", "  "] {
-            assert_eq!(region_page(Some(bad)), None, "{bad}");
+            assert_eq!(region_page(Some(bad), &settings), None, "{bad}");
         }
         assert_eq!(ui::buy_currency::helper_host("https://money.example/helper/"), "money.example");
         assert_eq!(ui::buy_currency::helper_host("http://money.example:8008/"), "money.example:8008");
@@ -266,5 +273,11 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(helper_page(None, &settings).as_deref(), Some("https://secondlife.com/helpers/"));
+        assert_eq!(
+            helper_page(Some("https://region.example/"), &settings).as_deref(),
+            Some("https://secondlife.com/helpers/"),
+            "a region never names another helper on Second Life"
+        );
+        assert_eq!(region_page(Some("https://region.example/"), &settings), None, "nor a notice");
     }
 }

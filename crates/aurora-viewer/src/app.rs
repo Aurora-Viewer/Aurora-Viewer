@@ -12222,7 +12222,7 @@ impl App {
                 self.gesture_play(id, None);
             }
         }
-        if c.message.is_empty() || (c.channel == 0 && self.chat_command(&c.message)) {
+        if !ui::chat::sends_local_line(c.channel, &c.message) || (c.channel == 0 && self.chat_command(&c.message)) {
             return;
         }
         // :shortcode: emoji

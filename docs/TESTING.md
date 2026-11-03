@@ -8131,11 +8131,12 @@ trigger` lines of the log (each F7 press starts the clap over; Ctrl+Z
 plays its gesture while the build tools are closed; Ctrl+B is kept by
 them). Capture frame 620 for the editor's warning.
 `channel` adds an active `/hudping` gesture whose chat steps command worn
-scripts: `/-4242 ping`, `/5 test` and `/5test`, and sends `/hudping` from the
-chat bar at frame 650. Script-channel chat is never echoed as local chat:
-the demo's worn listener answers each line ("Heard on channel -4242: ping"),
-and the log has one `demo channel chat: channel=…` line per step. Capture
-frame 800 (`AURORA_FPS_LIMIT=60`) to see the three answers. On the grid, a
+scripts: `/-4242 ping`, `/5 test`, `/5test` and a bare `/-4242` (an empty
+line, #2095), and sends `/hudping` from the chat bar at frame 650.
+Script-channel chat is never echoed as local chat: the demo's worn listener
+answers each line ("Heard on channel -4242: ping"), and the log has one
+`demo channel chat: channel=…` line per step. Capture frame 800
+(`AURORA_FPS_LIMIT=60`) to see the four answers. On the grid, a
 negative channel goes as a `ScriptDialogReply`, as in the Legacy Viewer.
 `channel-replace` adds an active `/hudreplace` gesture whose replacement is
 `/5capture` and sends its trigger from the chat bar at frame 650: the

@@ -29,6 +29,9 @@ pub fn caret(ui: &mut egui::Ui, p: &Palette, open: bool) -> egui::Response {
 pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
     match type_default {
         14 => "Inv_TrashClosed",
+        // FT_MY_SUITCASE (llviewerfoldertype.cpp: Inv_SuitcaseOpen / Closed)
+        100 if open => "Inv_SuitcaseOpen",
+        100 => "Inv_SuitcaseClosed",
         _ if open => "Inv_FolderOpen",
         _ => "Inv_FolderClosed",
     }
