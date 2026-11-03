@@ -2406,18 +2406,28 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
         return;
     }
     if line.kind == ChatKind::System {
-        chat_text_marked(
-            ui,
-            p,
-            env.emoji,
-            world,
-            env.want_names,
-            &line.text,
-            super::fonts::chat_size(ui.ctx(), 12.5),
-            tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
-            true,
-            mark,
-        );
+        // its time first, as the header strips show theirs
+        // (FSChatHistory::appendMessage stamps the system's lines too, #1999)
+        ui.horizontal_top(|ui| {
+            let time = hhmm(line.time);
+            if !time.is_empty() {
+                ui.label(header_time(ui, p, time));
+            }
+            ui.vertical(|ui| {
+                chat_text_marked(
+                    ui,
+                    p,
+                    env.emoji,
+                    world,
+                    env.want_names,
+                    &line.text,
+                    super::fonts::chat_size(ui.ctx(), 12.5),
+                    tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
+                    true,
+                    mark,
+                );
+            });
+        });
         return;
     }
     let own = line.kind.is_own();

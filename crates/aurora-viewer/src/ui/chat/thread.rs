@@ -490,13 +490,26 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
     let tone = history_tone(p, line.origin).unwrap_or(p.muted);
     ui.add_space(4.0);
     let top = ui.cursor().top();
+    // its time like any line's (FSChatHistory::appendMessage stamps the
+    // system's lines too, #1999): in the compact column, else before its
+    // text, as a group's head shows it after the name
+    let time = if th.times { hhmm(line.time) } else { String::new() };
     let row = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let lead = if th.compact {
-            4.0 + if th.times { TIME_W + 6.0 } else { 0.0 }
-        } else {
-            GUTTER
-        };
+        if th.compact && !time.is_empty() {
+            ui.add_space(4.0);
+            // the column grows with the chat's text size, as the lines'
+            let k = chat_size(ui.ctx(), 1.0);
+            let (r, _) = ui.allocate_exact_size(egui::vec2(TIME_W * k, 18.0), egui::Sense::hover());
+            ui.painter().text(
+                egui::pos2(r.right(), r.top() + 9.0),
+                egui::Align2::RIGHT_CENTER,
+                &time,
+                egui::FontId::proportional(10.5 * k),
+                p.muted_dim,
+            );
+        }
+        let lead = if th.compact { 4.0 + 14.0 } else { GUTTER };
         let (r, _) = ui.allocate_exact_size(egui::vec2(lead, 18.0), egui::Sense::hover());
         let icon = if th.compact {
             egui::Rect::from_min_size(egui::pos2(r.right() - 14.0, r.top() + 2.0), egui::Vec2::splat(14.0))
@@ -510,6 +523,9 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
             "info-circle-filled"
         };
         paint_icon(ui.painter(), name, icon, p.muted_dim);
+        if !th.compact && !time.is_empty() {
+            ui.label(RichText::new(&time).size(chat_size(ui.ctx(), 11.0)).color(p.muted_dim));
+        }
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
