@@ -24,6 +24,11 @@ pub struct TpEntry {
     pub parcel: String,
     /// Arrival, in seconds since the epoch (UTC).
     pub at: i64,
+    /// On an OpenSim grid, the grid of the place as a Hypergrid address
+    /// (`grids::here`), once its region's SimulatorFeatures told it; None
+    /// on Second Life or until then. Back / Forward to a place of another
+    /// grid go through that grid's gatekeeper (LLTeleportHistory::goToItem).
+    pub grid: Option<String>,
 }
 
 impl TpEntry {
@@ -99,6 +104,17 @@ impl TeleportHistory {
     pub fn name_parcel(&mut self, parcel: &str) {
         if let Some(e) = self.items.get_mut(self.current) {
             e.parcel = parcel.trim().to_owned();
+        }
+    }
+
+    /// The current place's grid, once its region's SimulatorFeatures came
+    /// (they follow the arrival).
+    pub fn set_grid(&mut self, handle: RegionHandle, grid: Option<String>) {
+        if let Some(e) = self.items.get_mut(self.current)
+            && e.handle == handle
+            && e.grid.is_none()
+        {
+            e.grid = grid;
         }
     }
 
@@ -240,12 +256,14 @@ impl HistoryStorage {
     /// LLTeleportHistoryStorage::addItem: the same title within 5 m replaces
     /// the older entry and keeps its position (teleports through the history
     /// would otherwise creep up a meter each time).
-    pub fn add(&mut self, title: &str, global: DVec3, date: f64) {
+    /// `slurl`: on an OpenSim grid the place's `hop://` SLURL, which names
+    /// its grid (empty on Second Life, or until the grid is known).
+    pub fn add(&mut self, title: &str, global: DVec3, date: f64, slurl: String) {
         let mut item = HistoryItem {
             title: title.to_owned(),
             global,
             date,
-            slurl: String::new(),
+            slurl,
         };
         if let Some(i) = self
             .items
@@ -261,6 +279,20 @@ impl HistoryStorage {
             self.items.sort_by(|a, b| a.date.total_cmp(&b.date));
         }
         self.save();
+    }
+
+    /// The newest place at `global` gets the SLURL that names its grid,
+    /// when that came after it was saved.
+    pub fn set_slurl(&mut self, global: DVec3, slurl: String) {
+        if let Some(item) = self
+            .items
+            .iter_mut()
+            .rev()
+            .find(|x| x.slurl.is_empty() && (x.global - global).length() < MAX_GLOBAL_POS_OFFSET)
+        {
+            item.slurl = slurl;
+            self.save();
+        }
     }
 
     /// "Remove from history" (removeItem + save).
@@ -366,7 +398,61 @@ mod tests {
             position: Vec3::ZERO,
             parcel: String::new(),
             at: 0,
+            grid: None,
         }
+    }
+
+    #[test]
+    fn a_back_that_never_left_keeps_the_history_as_it_was() {
+        let mut h = TeleportHistory::default();
+        for place in ["Home", "Plaza", "Store"] {
+            h.arrived(e(place));
+        }
+        let mut away = e("Wright Plaza");
+        away.grid = Some("hg.osgrid.org:80".into());
+        h.arrived(away);
+        assert_eq!(h.go_back().map(|t| t.region), Some("Store".into()));
+        // refused (RLVa, a region not found): the app says so
+        h.failed();
+        // the next arrival, a lure for instance, comes after where we are:
+        // Store is not overwritten
+        h.arrived(e("Beach"));
+        let regions: Vec<_> = h.items.iter().map(|t| t.region.as_str()).collect();
+        assert_eq!(regions, ["Home", "Plaza", "Store", "Wright Plaza", "Beach"]);
+    }
+
+    #[test]
+    fn a_place_learns_its_grid_once_and_for_its_own_region() {
+        let mut h = TeleportHistory::default();
+        h.arrived(e("Wright Plaza"));
+        // another region's features: not ours
+        h.set_grid(aurora_net::origin_to_handle(512, 512), Some("other.example".into()));
+        assert_eq!(h.session().items[0].grid, None);
+        h.set_grid(e("x").handle, Some("hg.osgrid.org".into()));
+        assert_eq!(h.session().items[0].grid.as_deref(), Some("hg.osgrid.org"));
+        // known once: a later answer does not move it
+        h.set_grid(e("x").handle, Some("elsewhere.example".into()));
+        assert_eq!(h.session().items[0].grid.as_deref(), Some("hg.osgrid.org"));
+    }
+
+    #[test]
+    fn a_saved_place_gets_its_slurl_when_the_grid_comes_later() {
+        let mut s = HistoryStorage::in_memory(Vec::new());
+        let here = DVec3::new(256_140.0, 256_120.0, 25.0);
+        s.add(
+            "Plaza, Wright Plaza",
+            DVec3::new(1.0, 1.0, 1.0),
+            1.0,
+            "hop://a.example/A/1/1/1".into(),
+        );
+        s.add("Plaza, Wright Plaza", here, 2.0, String::new());
+        s.set_slurl(
+            here + DVec3::new(0.0, 0.0, 1.0),
+            "hop://hg.osgrid.org/Wright%20Plaza/140/120/25".into(),
+        );
+        assert_eq!(s.items[1].slurl, "hop://hg.osgrid.org/Wright%20Plaza/140/120/25");
+        // a place that already names its grid keeps it
+        assert_eq!(s.items[0].slurl, "hop://a.example/A/1/1/1");
     }
 
     #[test]
@@ -457,16 +543,31 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let mut s = HistoryStorage::load(path.clone());
         assert!(s.items.is_empty());
-        s.add("Place d'Aurora, Aurora Démo", DVec3::new(256_140.0, 256_120.0, 25.0), 1000.0);
-        s.add("Lagune, Lagune Boréale", DVec3::new(256_316.0, 256_200.0, 22.0), 2000.0);
+        s.add(
+            "Place d'Aurora, Aurora Démo",
+            DVec3::new(256_140.0, 256_120.0, 25.0),
+            1000.0,
+            String::new(),
+        );
+        s.add(
+            "Lagune, Lagune Boréale",
+            DVec3::new(256_316.0, 256_200.0, 22.0),
+            2000.0,
+            String::new(),
+        );
         // back to the first place, a meter higher: same entry, original position
-        s.add("Place d'Aurora, Aurora Démo", DVec3::new(256_140.0, 256_120.0, 26.0), 3000.0);
+        s.add(
+            "Place d'Aurora, Aurora Démo",
+            DVec3::new(256_140.0, 256_120.0, 26.0),
+            3000.0,
+            String::new(),
+        );
         assert_eq!(s.items.len(), 2);
         assert_eq!(s.items[1].title, "Place d'Aurora, Aurora Démo");
         assert_eq!(s.items[1].global.z, 25.0);
         assert_eq!(s.items[1].date, 3000.0);
         // an older date is sorted in
-        s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 1500.0);
+        s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 1500.0, String::new());
         assert_eq!(s.items[0].title, "Nordheim");
         let again = HistoryStorage::load(path.clone());
         assert_eq!(again.items, s.items);

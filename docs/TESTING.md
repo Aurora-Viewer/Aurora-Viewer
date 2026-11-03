@@ -91,6 +91,8 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
+| `AURORA_MAX_TEXTURE_RES=512\|1024\|2048` | Overrides "Maximum texture resolution" (Graphics › Distance and detail) |
+| `AURORA_DEMO_TEXTURE_RES=1` | Boards with 2048 px streamed textures, tinted by the resolution shown |
 | `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
@@ -314,6 +316,26 @@ use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
 `AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
 `AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
 frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
+
+`AURORA_MAX_TEXTURE_RES` sets Preferences › Graphics › Maximum texture
+resolution (the Legacy Viewer's RenderMaxTextureResolution), saved with the
+profile like a change in the page; another value takes the choice just below
+it. World textures load no larger than that on their largest side, and those
+loaded larger are lowered on the GPU within a few frames (the log tells each
+change: `textures: maximum resolution 2048 -> 512 px`); our own bakes, HUDs,
+the sky and the texture and profile picture windows keep their full size.
+The demo's own textures are drawn, not streamed, and never pass 512 px:
+`AURORA_DEMO_TEXTURE_RES=1` adds three boards east of the start position
+(8, 4 and 2 m wide), whose 2048 px textures go through the streamer like
+downloaded ones. Each level of their picture is tinted by its resolution:
+2048 green, 1024 amber, 512 red, smaller blue-grey, so the colour is the
+resolution the GPU shows. Walk up to the large board until it fills most of
+the view (or `AURORA_DEMO_POS="146,138"`): green under 2048, amber within a
+second of choosing 1024, red under 512, and green again when 2048 comes
+back. The smaller boards, further away on screen, stay amber or red
+whatever the setting. With the textures of a cache instead,
+`AURORA_DEMO_STREAM=60,60,j2k=<folder>,size=4` (2048 px files) shows the
+same on real pictures, softer under 512.
 
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:
@@ -2857,6 +2879,7 @@ To check with these scenarios:
 | `AURORA_DEMO_EMOTE=<expression>[,<hand pose>][,signal][,self]` | A facial expression and a hand pose from an animation (system body) |
 | `AURORA_DEMO_PHYSICS=1\|still\|off\|classic` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
 | `AURORA_DEMO_DERENDER=menu\|inspect\|avatar\|hat` | A resident's Inspect, Derender and the Asset blacklist window |
+| `AURORA_DEMO_FRIENDS_ONLY=1\|friend` | Show Friends Only: the other avatar leaves at frame 700 and comes back at 900 |
 | `AURORA_DEMO_SEAT_KILL=1` | A seat deleted under the resident sitting on it |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
@@ -3608,6 +3631,15 @@ tests do not establish that this report uses an invalid joint or index.
   away until removed in World › Asset blacklist. Screenshots with
   `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_CAMERA=close,830,330,40` (on the
   avatar) and `AURORA_CAPTURE_FRAMES=720,780,830,950`.
+- **`AURORA_DEMO_FRIENDS_ONLY`**: Show Friends Only (toolbar `RFO`, World
+  menu), switched on by the scenario at frame 700: Violet Wolf, who is not a
+  friend, vanishes with its hat, orb and name plate while our avatar stays;
+  at frame 900 it is switched off and they all come back at once.
+  `friend` makes the wolf a friend at frame 650: it stays when the mode
+  comes on at 700, vanishes at 800 when the friendship ends, and returns at
+  900. The state is kept per account in the settings, and a teleport
+  switches it off unless Preferences › Controls keeps it. Screenshots with
+  `AURORA_CAPTURE_FRAMES=680,760,950`.
 - **`AURORA_DEMO_SEAT_KILL=1`** (issue #746): Violet Wolf, with its hat and
   orb, sits on a violet cushion at frame 700. The cushion is deleted at
   frame 800, before the simulator stands Wolf up at 900, as a carry or pose
@@ -4284,13 +4316,24 @@ both open states and the selection count. Capture at frame 620.
   megabytes or more made through `aurora-render/src/gpu_alloc.rs` fails as
   if video memory were full (`0`: all of them): the geometry arena, the
   draw records, the culling tables, the joint palettes and skin bindings,
-  the texture pages. With `AURORA_DEMO_GEOMETRY=700,60` and a value of 64,
+  particle and world-label upload buffers, and the texture pages. With
+  `AURORA_DEMO_GEOMETRY=700,60` and a value of 64,
   the vertex arena grows by smaller steps up to 63 MB, then the log says
   once `vertex arena could not grow past 63 MB (out of video memory
   (AURORA_GPU_OOM))` and the meshes left over are not drawn; the view keeps
   drawing and the log holds no `wgpu error` line. Without the variable, a
   buffer the driver could not make used to be installed anyway, invalid,
   and every write into it was an error, every frame.
+  World labels that cannot fit are omitted for that frame; a smaller frame
+  resumes from the retained valid buffers. Excess particles wait while the
+  portion that fits is uploaded and drawn. Hardware-limit regressions use
+  real Vulkan devices with reduced declared limits, without exhausting the
+  physical card: `cargo test --workspace --locked whole_storage_binding_limit
+  -- --ignored --nocapture` covers the mirrored tables and draw records.
+  Run `refused_upload_buffer_growth`, `refused_label_upload_growth` and
+  `gpu_cull_growth_keeps_working_buffers_after_oom` as separate filtered
+  workspace test processes with `AURORA_GPU_OOM=0`; unset it before the
+  normal growth tests.
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
   turn at that rate (180 if the value is not a number) for the first
@@ -4660,7 +4703,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > RLVa |
-| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, reset, or a graphics profile dialog/list |
+| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
@@ -4668,7 +4711,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
+| `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
+| `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
@@ -4688,6 +4733,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
+| `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
+| `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new window and device instead of closing (work in progress) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
@@ -4699,9 +4746,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
-| `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
+| `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
+| `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices and a delivered purchase |
@@ -4712,6 +4760,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SIM_VERSION=1\|on` | The region's simulator version changes during the run: no notice by default, one with `on` |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_ABOUT=info\|licences[:end]` | Help › About Aurora Viewer opens on its Info or Licences tab |
+| `AURORA_DEMO_VOICE_CONTROLS=1` | The toolbar's Voice controls window opens (frame 600) on the nearby channel with three demo residents; with `AURORA_DEMO_CALL=conference` on the call's channel |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
@@ -4949,6 +4998,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
   friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
   and `--language en`.
+- **`AURORA_DEMO_SUITCASE=1`**: at frame 300, the question a Hypergrid
+  teleport from the home grid asks when worn items are not in My Suitcase:
+  seven invented items, an invented grid as the destination. "Teleport anyway" goes
+  on to a demo teleport, Cancel and a click outside close it, "Do not show
+  again" turns Preferences › Confirmations' switch off. Outside this mode
+  the demo never asks.
 - **`AURORA_DEMO_BUY_CURRENCY=<mode>`**: gives a balance of L$ 479 and opens
   "Buy L$". The purchase service is simulated (made-up rate): no real L$,
   no request sent. `click` opens nothing: click the balance in the top
@@ -4964,6 +5019,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   then OK: the
   window closes, the balance goes up and the bell receives the
   notification.
+- **`AURORA_DEMO_CURRENCY=<symbol>`**: the symbol an OpenSim grid names
+  in its login answer (`currency`), shown wherever L$ is: the balance, Buy
+  L$, Pay, Buy Land, prices. Combine with `AURORA_DEMO_BUY_CURRENCY` or
+  `AURORA_DEMO_PAY` to see the windows.
 - **`AURORA_DEMO_BUY_LAND=<mode>[:confirm]`**: the plaza parcel (16384 m²) is for sale
   by a demo resident for L$ 4,500, with its objects, and "Buy Land" opens on it.
   The land service is simulated: nothing is sent, the purchase only moves
@@ -5454,6 +5513,17 @@ failure. Grid validation and any paid upload are performed by the human.
   rows, no-copy/transfer rules and fixed environment-copy controls. Import rows
   edit the same saved values as the unchanged Permissions tab in import windows.
   New demo inventory items use their category's selected permissions.
+- **`AURORA_DEMO_INVENTORY=folder-colors|aurora-folder-colors`**: turns
+  folder colors on, colors five demo folders and opens the palette window on
+  "A personal folder", over the Legacy or Aurora inventory. Check the tinted
+  icons in the tree (and Aurora's sidebar), the outlined current swatch, the
+  custom swatch's picker and Restore default.
+  `aurora-folder-colors-behind` keeps the palette open, widens the inventory at
+  frame 640, brings it over the palette at 700 (a click on it) and chooses
+  Folder color… again at 760: capture 750 (palette covered) and 820 (palette
+  in front). `aurora-folder-colors-follow`: the palette follows the selection;
+  Clothing selected at 700, an item at 780: capture 750 (Clothing named, its
+  pink outlined) and 830 ("Select a folder to color it.", palette greyed).
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory
@@ -5685,6 +5755,20 @@ failure. Grid validation and any paid upload are performed by the human.
   "Reading…" line for a moment), and "Copy to clipboard"; Licences lists
   NOTICE.md, a card per heading. Capture at frame 700 with
   `AURORA_FPS_LIMIT=60`, in `--language en` and `fr`.
+- **`AURORA_DEMO_VOICE_CONTROLS=1`**: the Voice controls window
+  (`ui/voice_controls.rs`, the toolbar's `voice` command) opens at frame
+  600. Nearby channel: Nova talks in bursts, Tess is in voice and silent,
+  Loup talks in turn with Nova, leaves the channel at 20 s (listed "Left"
+  and dimmed, removed 10 s later) and comes back at 40 s; the title says
+  "Nearby voice", there is no "Leave call" button, and our own row (top)
+  follows the microphone. Right-click a row for the sort (by name, the
+  default, or by recent speakers, which puts whoever spoke last on top) and
+  the avatar menu. With `AURORA_DEMO_CALL=conference` (or `group`, `p2p`)
+  the window follows the call: its title ("Conference call", "Group call
+  with …", "Call with …"), the call's participants (Tess muted by the
+  moderator) and "Leave call", which hangs up and brings the title back to
+  nearby voice. Capture at frame 700 for the nearby list, after frame 1800
+  to see Loup leave.
 - **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
   sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
   pushes & hits" window opens at frame 600, a resident bumps the agent at
@@ -5730,7 +5814,7 @@ failure. Grid validation and any paid upload are performed by the human.
   Preferences › Interface › Region restart (alert, shake: the alert / the
   view / none, the channel announcement) and "Reduce animations" change it
   live.
-- **`AURORA_DEMO_TOASTS=1|bell|click|minimized`**: a friend goes offline at
+- **`AURORA_DEMO_TOASTS=1|bell|click|minimized|emote`**: a friend goes offline at
   frame 700 and comes back at 760 (two presence toasts, round picture with
   its status dot), two IMs from the same resident arrive at 820 and 880 (one
   card, "(2)"), a group IM at 940 (group toasts are forced on for the
@@ -5752,7 +5836,9 @@ failure. Grid validation and any paid upload are performed by the human.
   conversation, and its card leaves the list. Capture with
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
-  existing sounds.
+  existing sounds. `emote`: the second IM and the group's are emotes
+  ("/me waves…"); their toasts read "Nova Exemple waves…" and "Tess Touch
+  is setting up…", never "/me". Capture at `900,960`.
 - **`AURORA_DEMO_CONV_BUTTON=1|mute|still|menu`**: the Conversations window
   closed, Tess says something in nearby chat at frame 700 and Nova writes an
   IM at 900. The demo's group chat already lit the chat island's button
@@ -5803,6 +5889,17 @@ failure. Grid validation and any paid upload are performed by the human.
   Chat on the group (it shows the saved settings, not the run's). `prefs`
   keeps the settings of Preferences › Chat › Keyword alerts, to try them by
   hand, and sends the same five lines again every 1200 frames.
+- **`AURORA_DEMO_IM_ANNOUNCE=1|prefs`**: from frame 700, every 600 frames
+  (about ten seconds at 60 fps), Nova then Tess in turn start typing an IM
+  to us (IM_TYPING_START), and send it 300 frames later. `1` turns on
+  Preferences › Chat › "Announce incoming IMs as soon as the sender starts
+  typing" and "Show the number of unread IMs in the window title" for the
+  run (never saved): the conversation opens with "Incoming message from
+  Nova Exemple" before her message, the log says `incoming IM announced`,
+  and the window title (the taskbar's too) reads `(1) Aurora Viewer …`,
+  then `(2)` with her message, until the conversation is read. A
+  conversation closed is announced again at its resident's next turn.
+  `prefs` leaves both switches to Preferences › Chat, to try them by hand.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer
@@ -5886,6 +5983,13 @@ failure. Grid validation and any paid upload are performed by the human.
   - `cogs`: every cog open (the rows behind the cog of a row: the twelve
     effects of Aurora's water, the eight of the depth of field…), for
     captures; each opened block has its own darker face.
+  - `appearance:system-fonts`: the System fonts list kept open, each
+    family's name in its own face once its picture is drawn (a few frames
+    after its row comes on screen, the interface font until then); a name
+    its font cannot draw (symbol fonts, another script) stays in the
+    interface font. `appearance:system-fonts-scroll` also scrolls it, 6
+    points a frame, to check with `AURORA_PROFILE=1` that scrolling keeps
+    every frame short.
   - `reset`: the page reset at once, with its Undo at the bottom; the chat
     says it was reset once the Undo is gone (8 s) or the window closed.
   - `restore` (with `system`): the confirmation of a settings restore, for
@@ -6478,9 +6582,9 @@ failure. Grid validation and any paid upload are performed by the human.
   colour emojis, same size, in the input field and in the sent line.
   `AURORA_EMOJI_FONT=<file>` compares two fonts.
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery|freeze|oom|overflow|thread`**, only
-  with `AURORA_DEMO`: triggers a Rust panic, a native Windows
-  exception, an abnormal exit without a trace, a normal close or an
-  exit without a watcher. The `recovery` mode makes it possible to check the
+  with `AURORA_DEMO`: triggers a Rust panic, a native exception
+  (SIGSEGV on Linux), an abnormal exit without a trace, a normal close or
+  an exit without a watcher. The `recovery` mode makes it possible to check the
   recovery at the next launch (relaunch with `normal`). Linux has no
   watcher: every mode's window opens at the next launch, as with
   `recovery`, and a session closed normally is removed then, as is one
@@ -6490,13 +6594,22 @@ failure. Grid validation and any paid upload are performed by the human.
   later the process ends itself with exit code 1, as Task Manager's End task
   would. The window then says "Frozen, then ended" and `public-report.md`
   holds `| Crash | Freeze |`, `| Window | not answering for the last … s |`,
-  the main and render threads' stacks and the "Last state" table. `oom`
+  the main and render threads' stacks and the "Last state" table (on Linux
+  too: there the window is taken for frozen when the main loop makes no
+  pass for 5 s). `oom`
   asks for 64 TB at start: the allocator's failure path writes `oom.txt`
   and the process fails fast (`0xC0000409`); the report says
   `| Crash | Out of memory (70368744177664 bytes) |` with the allocation's
   stack. `overflow` recurses until the stack overflows (`0xC00000FD`): the
   report is a native exception with its stack, written by the vectored
-  handler. `thread`, once the window shows, makes a thread named
+  handler. On Linux, `native` and `overflow` write `native.txt` from the
+  fatal signal handler, then end with SIGSEGV and SIGABRT (after the
+  standard library's overflow message; SIGSEGV where the processor's
+  signal frames do not fit the alternate stack twice): the report says
+  `| Crash | Native signal SIGSEGV (11) |` with the stack from the fault
+  and each module's build ID; `oom` fails only with
+  `AURORA_ALLOCATOR=system` (the kernel's overcommit grants mimalloc the
+  64 TB) and ends with SIGABRT. `thread`, once the window shows, makes a thread named
   `aurora-net` panic: the viewer ends the session at its next frame, the
   window says "A part of the viewer stopped working" and the report adds
   `| Thread | aurora-net (the session was ended) |` to the panic. The window must keep the language
@@ -6618,9 +6731,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   stays as it was). After 6 s the native box "the graphics card is not
   responding" shows; Yes keeps waiting (shown again a minute later if still
   stuck), No closes the viewer in at most a few seconds, logged out, and the
-  crash session holds `gpu-stall.txt` (on Windows with the render thread's
-  stack, and the report says `| Crash | GPU not responding |`; elsewhere
-  the stall's length alone), and the next start offers the safe graphics.
+  crash session holds `gpu-stall.txt` (on Windows and Linux with the render
+  thread's stack, and the report says `| Crash | GPU not responding |`;
+  elsewhere the stall's length alone), and the next start offers the safe
+  graphics.
   When the frame ends the box goes away by itself and drawing resumes
   (`the graphics card answered again`).
   With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.
@@ -6637,7 +6751,33 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `| Crash | GPU device lost |` and `| GPU device lost | yes … |`, and the
   next start offers the safe graphics. The window's close button closes at
   once too. A real loss cannot be caused here: the flag is set as the
-  callback would set it, wgpu's own device stays alive.
+  callback would set it, wgpu's own device stays alive. A list
+  (`600,600,600`) gives one frame to each renderer of the run, the start's
+  then each recovery's (a recovery's counts its frames from 0 again): with
+  `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
+  with the safe graphics level, then close.
+- **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
+  at that frame, for testing the recovery on a real driver reset. One
+  compute dispatch whose loop runs about 12 s on a recent card (the log says
+  `AURORA_DEMO_GPU_HANG: submitting a GPU hang`): the driver's watchdog
+  resets the GPU first (a Windows TDR after 2 s; on Linux amdgpu resets its
+  graphics ring, `ring gfx_0.0.0 timeout` in the kernel log), and wgpu's
+  device-lost callback follows (`GPU device lost (Unknown): Device is lost`).
+  The reset is shared: other programs drawing with the GPU at that moment
+  (a GPU-drawn terminal, a browser, another viewer) may lose their work or
+  close. Without `AURORA_GPU_RECOVERY=1` the viewer then closes as after
+  any loss. Once a run.
+- **`AURORA_GPU_RECOVERY=1`** (work in progress, off by default): a GPU
+  device loss no longer ends the session. The window, the renderer and
+  egui's input state are made again the way the start makes them
+  (`app/gpu_recovery.rs`); the old window stays until the new one has
+  presented, the network session and the world are kept, the scene reloads
+  from memory and the disk cache (no download) and egui's textures come back
+  from their CPU copy (`app/egui_shadow.rs`). The log says `GPU recovery: new
+  window and renderer in … ms` and `egui's textures sent again (… KB)`. With
+  `AURORA_DEMO_GPU_LOST=600` (simulated) or `AURORA_DEMO_GPU_HANG=900` (a real
+  reset): the plaza, its particles, the avatars and the interface are back
+  within a second.
 - **`AURORA_DEMO_OVERLAY_HOOK=<file>`**, with `AURORA_DEMO=1` (Windows): the
   overlay hook watch (`overlay_hooks.rs`) counts that module file name as
   loaded, for example `DiscordHook64.dll`, `GameOverlayRenderer64.dll`,
@@ -7974,7 +8114,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
 — opens Appearance with four synthetic outfits:
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
@@ -8085,6 +8225,14 @@ gallery's double-click continues to open the outfit's contents.
   Lipstick under Star from frame 701 and drops it at frame 760 (the list
   then reads Freckles, Star, Lipstick); `layers-hold` holds it over its
   landing place, for a capture of the marker.
+- `json-import`: the Import from JSON confirmation with the synthetic
+  current outfit and an editable name. `json-partial` adds one unavailable
+  attachment: check its missing count and name, Import partial outfit, and
+  Cancel. The Appearance gear menu places Export to JSON and Import from
+  JSON below Restore saved outfit. Export backs up the selected saved outfit
+  in the gallery/list, otherwise the current outfit, including unsaved
+  changes. JSON restores inventory references, not assets: the same
+  inventory items must still be available to the account.
 
 `wearables`, `wearables-outfits` and `wearables-edit` show all 17 system
 wearable types in Worn, My Outfits and the editor respectively. Each type
@@ -8146,11 +8294,12 @@ trigger` lines of the log (each F7 press starts the clap over; Ctrl+Z
 plays its gesture while the build tools are closed; Ctrl+B is kept by
 them). Capture frame 620 for the editor's warning.
 `channel` adds an active `/hudping` gesture whose chat steps command worn
-scripts: `/-4242 ping`, `/5 test` and `/5test`, and sends `/hudping` from the
-chat bar at frame 650. Script-channel chat is never echoed as local chat:
-the demo's worn listener answers each line ("Heard on channel -4242: ping"),
-and the log has one `demo channel chat: channel=…` line per step. Capture
-frame 800 (`AURORA_FPS_LIMIT=60`) to see the three answers. On the grid, a
+scripts: `/-4242 ping`, `/5 test`, `/5test` and a bare `/-4242` (an empty
+line, #2095), and sends `/hudping` from the chat bar at frame 650.
+Script-channel chat is never echoed as local chat: the demo's worn listener
+answers each line ("Heard on channel -4242: ping"), and the log has one
+`demo channel chat: channel=…` line per step. Capture frame 800
+(`AURORA_FPS_LIMIT=60`) to see the four answers. On the grid, a
 negative channel goes as a `ScriptDialogReply`, as in the Legacy Viewer.
 `channel-replace` adds an active `/hudreplace` gesture whose replacement is
 `/5capture` and sends its trigger from the chat bar at frame 650: the
@@ -9225,19 +9374,22 @@ What the inventory must show with these scenarios:
   the environment as it is. To see which drivers the loader loads:
   `VK_LOADER_DEBUG=driver` in a console.
 - **`AURORA_GPU=<number>|<name>|auto`**: the adapter the renderer opens,
-  over Preferences › Graphics › Fluidity › Graphics card (#894): its number
+  over Preferences › Graphics › Smoothness › Graphics card (#894): its number
   in the `GPU adapter <n>:` lines of the log, or a part of its name in any
   case (`nvidia`, `intel`); `auto` or empty for the automatic choice
   (discrete before integrated, then the most video memory, among the
-  adapters that can present to the window). An adapter that is missing or
-  cannot present gives a warning and the automatic choice; one that fails
-  to open hands over to the next. The log lists every adapter Vulkan
+  adapters that can present to the window). An adapter with exactly the name
+  asked for comes before those whose name only contains it; a name that
+  matches several (the same card shown by two Vulkan drivers) takes the
+  first that can present. An adapter that is missing or cannot present gives
+  a warning that says which of the two, and the automatic choice; one that
+  fails to open hands over to the next. The log lists every adapter Vulkan
   shows, with its type, memory and whether it can present, then
   `GPU adapter <n> chosen:` and why. When only an integrated GPU is listed
   on a PC that has a dedicated one, the NVIDIA Control Panel's "Preferred
   graphics processor" for `aurora-viewer.exe` hides it from Vulkan
   (`VK_LAYER_NV_optimus`): the log says so, and Preferences › Graphics ›
-  Fluidity › Graphics card shows a note under its title (the same for a
+  Smoothness › Graphics card shows a note under its title (the same for a
   dedicated card that cannot present). The list of that choice comes from
   the renderer's own list as soon as it is created, so the login screen has
   it too.

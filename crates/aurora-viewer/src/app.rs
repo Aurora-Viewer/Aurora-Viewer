@@ -65,6 +65,7 @@ mod contents_folder_drag_demo;
 mod dof;
 mod double_click;
 mod driver_check;
+mod egui_shadow;
 mod env_apply;
 mod env_day_editor;
 mod env_editor;
@@ -72,6 +73,7 @@ mod external_links;
 mod follow;
 mod gestures;
 mod give_demo;
+mod gpu_recovery;
 mod gpu_stall;
 mod graphics_start;
 mod grid_status;
@@ -134,13 +136,41 @@ enum Screen {
     World,
 }
 
+/// What a held Hypergrid teleport does once accepted.
+enum SuitcaseGo {
+    /// A named destination (navigation bar, links, history), resolved again.
+    Named { destination: String, pos: Vec3, look_at: Vec3 },
+    /// The world map's teleport to its tracked spot, sent as it was.
+    Map {
+        command: Box<NetCommand>,
+        label: String,
+        show: bool,
+    },
+}
+
+/// A Hypergrid teleport waiting for its question (`App::suitcase_held`).
+struct SuitcaseAsk {
+    go: SuitcaseGo,
+    grid: String,
+    names: Vec<crate::world::suitcase::LeftBehind>,
+    dont_ask: bool,
+    /// A step of the navigation history: it keeps its place in the list
+    /// until the question is answered (`App::answer_suitcase`).
+    history: bool,
+    /// A portal crossing: its journey state, for the teleport it starts.
+    portal: Option<portals::Journey>,
+}
+
 struct Gfx {
+    /// Before the window: the renderer's surface, made from the window's
+    /// raw handles, goes first (the renderer also keeps the window until
+    /// then, `Renderer::new`).
+    renderer: Renderer,
+    egui_state: egui_winit::State,
     window: Arc<Window>,
     /// Revealed only once the renderer has presented its first image.
     shown: bool,
     maximize_on_show: bool,
-    renderer: Renderer,
-    egui_state: egui_winit::State,
 }
 
 /// Teleport screen state (also the login loading screen fading out).
@@ -242,9 +272,16 @@ pub struct App {
     palette: Palette,
     net: NetClient,
     gfx: Option<Gfx>,
+    /// The window of a lost GPU device, kept on screen until the new one has
+    /// presented its first image (gpu_recovery.rs).
+    retired_window: Option<Arc<Window>>,
+    /// When the GPU device was lost lately (gpu_recovery.rs `loss_step`).
+    gpu_losses: std::collections::VecDeque<Instant>,
     egui_ctx: egui::Context,
     logo: Option<egui::TextureHandle>,
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
+    /// The window's icon, kept for a window a GPU recovery opens.
+    window_icon: Option<winit::window::Icon>,
     world: World,
     bridge_runtime: crate::world::bridge::Bridge,
     native_anchor: crate::movement::movelock::Controller,
@@ -258,6 +295,8 @@ pub struct App {
     movement_runtime: crate::movement::Runtime,
     movement_probe: (Option<Instant>, bool, Option<Vec3>),
     pass_wall_at: Option<Instant>,
+    /// The fly override's first-use caution is up (ui::fly_override).
+    fly_override_caution: bool,
     scene: Scene,
     probes: crate::scene::probes::ProbeManager,
     /// Throttle of the "sky frame" log line.
@@ -348,6 +387,10 @@ pub struct App {
     /// The interface's shapes leave for the render thread, which
     /// tessellates them (aurora-render, ui_frame.rs).
     egui_hand_over: EguiHandOver,
+    /// egui's textures kept on the CPU, for the renderer of a GPU recovery
+    /// (egui_shadow.rs), and whether the next frame hands them all over.
+    egui_shadow: egui_shadow::EguiShadow,
+    egui_replay: bool,
     last_frame: Instant,
     /// Duration of the frame before the last one (s).
     prev_dt: f32,
@@ -506,6 +549,12 @@ pub struct App {
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
     /// with the state of its "Do not show again" box.
     place_confirm: Option<(String, Vec3, bool)>,
+    /// A Hypergrid teleport held back by its question (`world::suitcase`):
+    /// the destination as asked, position, look at, the grid, the worn items
+    /// left behind and the "Do not show again" box.
+    suitcase_ask: Option<SuitcaseAsk>,
+    /// The question was answered: the next teleport goes without it.
+    suitcase_passed: bool,
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>)>,
@@ -606,6 +655,8 @@ pub struct App {
     group_titles_ui: ui::group_titles::GroupTitlesUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
+    /// The toolbar's Voice controls window (`ui/voice_controls.rs`).
+    voice_controls_ui: ui::voice_controls::VoiceControlsUi,
     /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
     /// its button stands on a toolbar, and whether the window was open
     /// last frame.
@@ -657,6 +708,9 @@ pub struct App {
     /// The session's account whose favourites the login screen gets
     /// (app/login_favorites.rs).
     login_favorites: login_favorites::Session,
+    /// The account whose Show Friends Only choice the world carries
+    /// (app/derender.rs).
+    friends_only_account: uuid::Uuid,
     /// SLURLs from outside and the command line's login (app/external_links.rs).
     external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
@@ -691,6 +745,8 @@ pub struct App {
     crash_kept: crash_state::KeptState,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
+    /// The other viewers on this PC (instances.rs).
+    instances: crate::instances::Instances,
     /// The Down key's latch (FSCrouchToggle).
     crouch_toggle: crate::movement::crouch_toggle::CrouchToggle,
     music_parcel_url: String,
@@ -770,6 +826,7 @@ pub struct App {
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    texture_res_demo: Option<crate::demo::texture_res::TextureResDemo>,
     /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
     aa_switch_demo: Vec<(u64, u8)>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
@@ -1053,6 +1110,9 @@ fn apply_test_overrides(settings: &mut Settings) {
         settings.texture_budget_auto = false;
         settings.texture_budget_mb = v.clamp(256, 32768);
     }
+    if let Some(v) = std::env::var("AURORA_MAX_TEXTURE_RES").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.max_texture_resolution = crate::settings::max_texture_resolution_choice(v);
+    }
     if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
         settings.max_complexity = v;
     }
@@ -1180,9 +1240,12 @@ impl App {
             palette,
             net,
             gfx: None,
+            retired_window: None,
+            gpu_losses: Default::default(),
             egui_ctx,
             logo: None,
             logo_rx: Some(rx),
+            window_icon: None,
             world: {
                 let mut w = World::new(lib);
                 w.cache_dir = Some(cache_root);
@@ -1199,6 +1262,7 @@ impl App {
             movement_runtime: Default::default(),
             movement_probe: (None, false, None),
             pass_wall_at: None,
+            fly_override_caution: false,
             scene,
             probes: Default::default(),
             sky_log: Default::default(),
@@ -1247,6 +1311,8 @@ impl App {
             demo_people_states: false,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
+            egui_shadow: Default::default(),
+            egui_replay: false,
             last_frame: Instant::now(),
             prev_dt: 0.0,
             start: Instant::now(),
@@ -1330,6 +1396,8 @@ impl App {
             moderation_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
+            suitcase_ask: None,
+            suitcase_passed: false,
             url_confirm: None,
             media_filter_prompt: Default::default(),
             script_dialogs_were: 0,
@@ -1404,6 +1472,7 @@ impl App {
             blacklist_ui: Default::default(),
             group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
+            voice_controls_ui: Default::default(),
             grid_status: Default::default(),
             grid_status_listed: false,
             grid_status_was_open: false,
@@ -1434,6 +1503,7 @@ impl App {
             attention: Default::default(),
             reconnect_place: None,
             login_favorites: Default::default(),
+            friends_only_account: uuid::Uuid::nil(),
             external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
@@ -1459,6 +1529,7 @@ impl App {
             crash_swapchain: Default::default(),
             crash_kept: Default::default(),
             gpu_stall: Default::default(),
+            instances: crate::instances::Instances::new(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
             music_override: None,
@@ -1504,6 +1575,7 @@ impl App {
             arrival_demo: None,
             outfit_restore_demo: None,
             tex_refresh_demo: None,
+            texture_res_demo: None,
             aa_switch_demo: if std::env::var_os("AURORA_DEMO").is_some() {
                 crate::demo::aa_switch::from_env()
             } else {
@@ -2644,6 +2716,8 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        // the login screen and Preferences say "L$" again, not the last grid's money
+        aurora_i18n::set_currency("");
         // Capture the layout before replacing account-specific UI state.
         self.chat_ui.remember_layout(&mut self.settings);
         self.settings.show_camera_controls = self.panels.camera_controls;
@@ -2711,6 +2785,10 @@ impl App {
         // that ends here
         self.search_ui = Default::default();
         self.panels.search = false;
+        // Voice controls: closed, and its list (the last session's nearby
+        // participants) forgotten
+        self.voice_controls_ui = Default::default();
+        self.panels.voice_controls = false;
         self.save_local_environment();
         self.env_ui = Default::default();
         self.env_scan = false;
@@ -3370,6 +3448,7 @@ impl App {
             NetEvent::LoggedIn(l) => {
                 self.session_started(l.session_id);
                 self.refresh_grid_helper();
+                self.world.grid_currency = buy_currency::grid_currency(&l.raw, self.settings.grid == crate::settings::GridChoice::Custom);
                 self.named_teleport = Default::default();
                 if !self.demo {
                     let root = self.world.inventory.root;
@@ -4153,6 +4232,7 @@ impl App {
         };
         match action {
             Action::Fly => self.toggle_fly(),
+            Action::FlyOverride => self.toggle_fly_override(),
             Action::Flycam => self.toggle_joystick_flycam(),
             Action::AlwaysRun => self.set_always_run(!self.always_run),
             Action::MoveLock => self.toggle_move_lock(),
@@ -5013,6 +5093,8 @@ impl App {
         // only people's lines count and alert (#741; AURORA_DEMO_OBJECT_CHAT=…:on
         // for the run)
         w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
+        // FSAnnounceIncomingIM (AURORA_DEMO_IM_ANNOUNCE=1: on for the run)
+        w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
             presence: self.settings.toast_friends_online,
             presence_in_chat: self.settings.friends_online_in_chat,
@@ -5529,6 +5611,7 @@ impl App {
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        self.instances.leave();
         // closed while the graphics card still holds a frame, from its
         // notice or not: reported, and the next start offers the safe
         // graphics (app/gpu_stall.rs)
@@ -5672,6 +5755,137 @@ impl App {
         self.settings.save();
     }
 
+    /// A Hypergrid teleport from the home grid (a `gatekeeper:region` name)
+    /// while worn items are outside My Suitcase: held for the question,
+    /// once per teleport.
+    fn suitcase_held(&mut self, asked: &str, resolved: &str, pos: Vec3, look_at: Vec3) -> bool {
+        if std::mem::take(&mut self.suitcase_passed) {
+            return false;
+        }
+        let Some((grid, _)) = resolved.rsplit_once(':') else {
+            return false;
+        };
+        let go = SuitcaseGo::Named {
+            destination: asked.to_owned(),
+            pos,
+            look_at,
+        };
+        self.suitcase_ask_for(grid, go)
+    }
+
+    /// The world map's teleport to a spot it tracks under a `hop://` label
+    /// (an address typed in its search): another grid's region, reached by
+    /// handle, so the grid comes from that label.
+    fn suitcase_held_map(&mut self, command: &NetCommand, label: &str, show: bool) -> bool {
+        let sim = match command {
+            NetCommand::TeleportTo { handle, .. } => {
+                let (x, y) = aurora_net::handle_to_origin(*handle);
+                self.world.map.sim_at(x / 256, y / 256).map(|(_, s)| s.name.clone())
+            }
+            _ => None,
+        };
+        // the link region's map name, else the label without the
+        // " (x, y, z)" the map adds
+        let typed = label.rsplit_once(" (").map_or(label, |(text, _)| text);
+        let grid = sim
+            .as_deref()
+            .and_then(crate::grids::link_grid)
+            .or_else(|| crate::slurl::parse_hypergrid(typed).and_then(|place| place.grid));
+        let Some(grid) = grid else {
+            return false;
+        };
+        log::info!("hypergrid: map teleport to {grid} (region {sim:?})");
+        let go = SuitcaseGo::Map {
+            command: Box::new(command.clone()),
+            label: label.to_owned(),
+            show,
+        };
+        self.suitcase_ask_for(&grid, go)
+    }
+
+    /// The question for a teleport to `grid`, when it leaves worn items
+    /// behind; true when the teleport is held for it.
+    fn suitcase_ask_for(&mut self, grid: &str, go: SuitcaseGo) -> bool {
+        if !self.settings.warn_hypergrid_suitcase || self.demo_suitcase_off() {
+            return false;
+        }
+        let extras = self.world.opensim_extras();
+        let at_home = crate::grids::current(&self.settings, extras)
+            .zip(crate::grids::home(&self.settings))
+            .is_some_and(|(here, home)| crate::grids::same_grid(&self.settings, &here, &home));
+        let going_home = crate::grids::same_grid(&self.settings, grid, &crate::grids::home(&self.settings).unwrap_or_default());
+        let names = if at_home && !going_home {
+            crate::world::suitcase::left_behind(&self.world.inventory)
+        } else {
+            Vec::new()
+        };
+        log::info!(
+            "hypergrid: to {grid}, from the home grid {at_home}, going home {going_home}, suitcase {}, {} worn items outside it",
+            crate::world::suitcase::folder(&self.world.inventory).is_some(),
+            names.len()
+        );
+        if names.is_empty() {
+            return false;
+        }
+        log::info!(
+            "hypergrid: {} worn items not in My Suitcase, asking before the teleport",
+            names.len()
+        );
+        // the grid by its saved name when it has one
+        let shown = crate::grids::known(&self.settings, grid).map_or_else(|| grid.to_owned(), |g| g.name.clone());
+        self.suitcase_ask = Some(SuitcaseAsk {
+            go,
+            grid: shown,
+            names,
+            dont_ask: false,
+            history: false,
+            portal: None,
+        });
+        true
+    }
+
+    /// The question's answer. A held step of the history keeps its place
+    /// until then, and leaves it as a teleport that never started does
+    /// (Cancel, or a refusal of the retry); a held portal crossing gets its
+    /// journey back once its teleport starts.
+    fn answer_suitcase(&mut self, ask: SuitcaseAsk, yes: bool) {
+        if !yes {
+            if ask.history {
+                self.world.tp_history.failed();
+            }
+            return;
+        }
+        if ask.dont_ask {
+            self.settings.warn_hypergrid_suitcase = false;
+            self.settings.save();
+        }
+        log::info!("hypergrid: teleport accepted with worn items left behind");
+        let started = match ask.go {
+            SuitcaseGo::Named { destination, pos, look_at } => {
+                self.suitcase_passed = true;
+                let started = self.teleport_to_location_looking(destination, pos, look_at);
+                // consumed by the question's check, unless the retry
+                // stopped before it (the destination no longer resolves)
+                self.suitcase_passed = false;
+                started
+            }
+            SuitcaseGo::Map { command, label, show } => self.request_user_teleport(*command, label, show),
+        };
+        if ask.history && !started {
+            self.world.tp_history.failed();
+        }
+        if let Some(journey) = ask.portal
+            && self.world.teleporting
+        {
+            self.portal_journey = Some(journey.restarted(Instant::now()));
+        }
+    }
+
+    /// Demo mode keeps the question to its own scenario.
+    fn demo_suitcase_off(&self) -> bool {
+        self.demo && std::env::var_os("AURORA_DEMO_SUITCASE").is_none()
+    }
+
     /// Teleport to a position of a region given by name: the current region
     /// directly, others through a map lookup by name.
     fn grid_region(&mut self, region: &str) -> Option<String> {
@@ -5684,19 +5898,21 @@ impl App {
         }
     }
 
-    fn teleport_to_location(&mut self, region: String, pos: Vec3) {
-        self.teleport_to_location_looking(region, pos, Vec3::X);
+    /// Whether the teleport started (false: refused or not found).
+    fn teleport_to_location(&mut self, region: String, pos: Vec3) -> bool {
+        self.teleport_to_location_looking(region, pos, Vec3::X)
     }
 
-    fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) {
+    fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) -> bool {
+        let asked = region.clone();
         let Some(region) = self.grid_region(&region) else {
-            return;
+            return false;
         };
         let here = self.world.region_name();
         let local = region.eq_ignore_ascii_case(&here);
         let command = if local {
             let Some(handle) = self.world.main_region else {
-                return;
+                return false;
             };
             NetCommand::TeleportTo {
                 handle,
@@ -5712,7 +5928,11 @@ impl App {
             }
         };
         if !self.user_teleport_allowed(&command) {
-            return;
+            return false;
+        }
+        // asked once RLVa allows it: held for its question, not started yet
+        if !local && self.suitcase_held(&asked, &region, pos, look_at) {
+            return false;
         }
         self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z), !local);
         if local {
@@ -5729,6 +5949,7 @@ impl App {
         } else {
             self.send(command);
         }
+        true
     }
 
     /// Radar of the People window: one sweep a second (also with the
@@ -6674,6 +6895,22 @@ impl App {
                 aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()),
                 crate::world::notice_topics::Topic::Teleport,
             );
+            // a place of another grid: its handle means nothing here; a
+            // teleport that never left (RLVa, an unknown region) leaves the
+            // history where it was, as the same-grid path does below
+            if let Some(grid) = e.grid.as_deref()
+                && let Some(started) = self.teleport_other_grid(grid, &e.region, e.position)
+            {
+                if started {
+                    return;
+                }
+                match self.suitcase_ask.as_mut() {
+                    // held for the question: the place stays pending
+                    Some(ask) => ask.history = true,
+                    None => self.world.tp_history.failed(),
+                }
+                return;
+            }
             if !self.request_user_teleport(
                 NetCommand::TeleportTo {
                     handle: e.handle,
@@ -6685,6 +6922,48 @@ impl App {
             ) {
                 self.world.tp_history.failed();
             }
+        }
+    }
+
+    /// A place of another OpenSim grid than the one we are on (after a
+    /// Hypergrid teleport): its region through that grid's gatekeeper, as
+    /// LLTeleportHistory::goToItem / LLTeleportHistoryStorage::goToItem do
+    /// (sendNamedRegionRequest of "gatekeeper:region", then the teleport).
+    /// None when the place is on this grid: the caller teleports as usual;
+    /// else whether the teleport started.
+    fn teleport_other_grid(&mut self, grid: &str, region: &str, pos: Vec3) -> Option<bool> {
+        let here = crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras());
+        if here
+            .as_deref()
+            .is_none_or(|here| crate::grids::same_grid(&self.settings, here, grid))
+        {
+            return None;
+        }
+        Some(self.teleport_to_location(crate::grids::target(grid, region), pos))
+    }
+
+    /// A saved place of the Places window or the map's history, by its
+    /// global position: on another grid through its SLURL, else by its
+    /// position on this grid (LLTeleportHistoryStorage::goToItem).
+    fn teleport_saved_place(&mut self, global: glam::DVec3) {
+        let saved = self.world.tp_storage.items.iter().rev().find(|item| item.global == global).cloned();
+        let other = saved
+            .as_ref()
+            .filter(|item| !item.slurl.is_empty())
+            .and_then(|item| crate::slurl::parse_hypergrid(&item.slurl));
+        if let Some(place) = other
+            && let Some(grid) = place.grid.as_deref()
+            && self.teleport_other_grid(grid, &place.region, place.pos).is_some()
+        {
+            // its global position is another grid's: nothing to track here
+            self.world.map.track = None;
+            return;
+        }
+        self.world.map.track_location(global.x, global.y, global.z as f32, true);
+        if let Some(item) = saved
+            && let Some(track) = self.world.map.track.as_mut()
+        {
+            track.label = item.title;
         }
     }
 
@@ -6751,6 +7030,26 @@ impl App {
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
+    }
+
+    /// Me › Fly override / Ctrl+Alt+V (LLAgent::updateFSAlwaysFly,
+    /// indra/newview/llagent.cpp): the switch is never saved, and turning it
+    /// on the first time ever brings the FirstUseFlyOverride caution.
+    fn toggle_fly_override(&mut self) {
+        self.world.fly_override = !self.world.fly_override;
+        log::info!("fly override: {}", self.world.fly_override);
+        self.world.system_message(if self.world.fly_override {
+            aurora_i18n::tr!("ui-bars-fly-override-on")
+        } else {
+            aurora_i18n::tr!("ui-bars-fly-override-off")
+        });
+        if self.world.fly_override && !self.settings.fly_override_warned {
+            self.fly_override_caution = true;
+            self.settings.fly_override_warned = true;
+            if !self.demo {
+                self.settings.save();
+            }
+        }
     }
 
     /// A conversation the user opened (a contact, a name's menu, People)
@@ -7289,6 +7588,7 @@ impl App {
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.voice_controls_ui.wanted_pics.drain());
         wanted.extend(self.contacts_people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
@@ -7666,6 +7966,16 @@ impl App {
     /// Map server tiles, connected regions known to the world map, map
     /// requests and teleports queued by the maps, tracking arrival.
     fn update_maps(&mut self) {
+        // the OpenSim grids the SLURLs and saved places name: the login one,
+        // and the one we are on (None on Second Life and in the demo)
+        let home = if self.demo { None } else { crate::grids::home(&self.settings) };
+        if self.world.home_grid != home {
+            self.world.home_grid = home;
+        }
+        crate::slurl::set_grid(crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras()));
+        // the region's chat ranges, for every range the interface draws or
+        // counts (OpenSim regions may set their own)
+        crate::world::radar::set_chat_ranges(crate::world::radar::ChatRanges::from_extras(self.world.opensim_extras()));
         if !self.demo
             && let Some(l) = &self.world.login
         {
@@ -7800,6 +8110,11 @@ impl App {
                     && let Some(avatar) = flight_target
                 {
                     self.request_friend_join_teleport(c, avatar, self.world.agent.flying, false)
+                } else if !self.user_teleport_allowed(&c) {
+                    false
+                } else if self.suitcase_held_map(&c, &dest, show) {
+                    // held for its question (worn items left behind)
+                    false
                 } else {
                     self.request_user_teleport(c, dest, show)
                 };
@@ -7845,6 +8160,18 @@ impl App {
         // a window behind gives its textures back (texture_budget::Background)
         let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized()).unwrap_or(false);
         self.scene.textures.set_window_state(self.focused, minimized);
+        // (a demo or a timed run neither publishes nor reads, instances.rs)
+        let timed = self.capture.is_some() || self.frame_profile.enabled();
+        self.instances.tick(
+            !self.demo && !timed,
+            crate::instances::Own {
+                usage: self.scene.textures.video_usage(),
+                active: self.focused && !minimized,
+                luid: self.scene.textures.card_luid(),
+            },
+        );
+        self.scene.textures.set_card_sharing(!self.demo && !timed);
+        self.scene.textures.set_peers(&self.instances.peers());
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
         self.update_rlva();
@@ -8017,10 +8344,13 @@ impl App {
             && let Ok(l) = rx.try_recv()
         {
             self.logo = Some(self.egui_ctx.load_texture("logo", l.ui, egui::TextureOptions::LINEAR));
-            if let (Some(g), Some((rgba, w, h))) = (&self.gfx, l.icon)
+            if let Some((rgba, w, h)) = l.icon
                 && let Ok(icon) = winit::window::Icon::from_rgba(rgba, w, h)
             {
-                g.window.set_window_icon(Some(icon));
+                if let Some(g) = &self.gfx {
+                    g.window.set_window_icon(Some(icon.clone()));
+                }
+                self.window_icon = Some(icon);
             }
             self.logo_rx = None;
         }
@@ -8122,6 +8452,7 @@ impl App {
         self.poll_ao();
         self.sync_static_eyes();
         if self.in_world() {
+            self.sync_friends_only();
             self.step_gestures();
         }
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
@@ -8713,6 +9044,7 @@ impl App {
                 pixel_angle: lod_height as f32 / self.camera.fov_y.max(1e-3),
             };
             self.scene.lod_factor = self.settings.lod_factor;
+            self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
             if self.demo {
                 self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
@@ -9657,6 +9989,7 @@ impl App {
         if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
+        ui::fonts::preview::release_unused(&self.egui_ctx);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
@@ -9862,6 +10195,7 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            ui::inventory::folder_colors_demo_frame(&ctx, &mut self.inventory_ui, &self.settings.inventory, self.frame_count);
             ui::inventory::bulk_permissions_demo(self.frame_count, &mut self.inventory_ui);
             if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
                 match self.frame_count {
@@ -10172,12 +10506,17 @@ impl App {
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
-        let egui_frame = self.egui_hand_over.frame(
-            &ctx,
-            std::mem::take(&mut full.shapes),
-            std::mem::take(&mut full.textures_delta),
-            full.pixels_per_point,
-        );
+        let mut textures = std::mem::take(&mut full.textures_delta);
+        if gpu_recovery::enabled() {
+            self.egui_shadow.note(&textures);
+        }
+        if std::mem::take(&mut self.egui_replay) {
+            log::info!("GPU recovery: egui's textures sent again ({} KB)", self.egui_shadow.bytes() >> 10);
+            textures = self.egui_shadow.replay(textures);
+        }
+        let egui_frame = self
+            .egui_hand_over
+            .frame(&ctx, std::mem::take(&mut full.shapes), textures, full.pixels_per_point);
 
         // apply UI actions
         if actions.font_changed {
@@ -10371,6 +10710,12 @@ impl App {
             // shown once, with the focus (window_show.rs)
             crate::window_show::show(&gfx.window, gfx.maximize_on_show);
             log::info!("startup window shown after the first presented frame");
+            // a recovery's old window goes once its successor is on screen;
+            // hidden first, as a render thread left behind in the driver
+            // keeps it (`Renderer::new`)
+            if let Some(old) = self.retired_window.take() {
+                old.set_visible(false);
+            }
             crate::crash::watch_window(&gfx.window);
             crate::crash::demo_freeze();
             crate::crash::demo_thread_death();
@@ -10412,6 +10757,14 @@ impl App {
             monitor_hz,
             timed,
             crate::cli::get().fps_limit,
+        );
+        // another viewer in front on this card: a window behind draws slowly
+        // (instances.rs)
+        let cap = crate::instances::throttle(
+            cap,
+            self.focused,
+            self.instances.peers().in_front(),
+            timed || !self.settings.background_fps_cap,
         );
         let paced_by_vsync = gfx.renderer.vsync() && cap >= monitor_hz - 0.5;
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
@@ -10740,6 +11093,9 @@ impl App {
                 }
             }
         }
+        if self.demo && crate::demo::voice_controls::enabled() && self.frame_count == crate::demo::voice_controls::OPEN {
+            ui::widgets::open_floater(&self.egui_ctx, ui::voice_controls::WINDOW, &mut self.panels.voice_controls);
+        }
         if self.demo && crate::demo::collisions::mode().is_some() {
             for event in crate::demo::collisions::events(self.frame_count) {
                 self.world.apply(event);
@@ -10785,6 +11141,14 @@ impl App {
                     self.frame_count,
                     self.window_behind()
                 );
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo && crate::demo::im_announce::active() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::im_announce::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -10955,6 +11319,13 @@ impl App {
         self.crash_state(&gfx.renderer, &gfx.window);
         self.gpu_stall_frame(&gfx.renderer);
         self.gfx = Some(gfx);
+        if let Some(safe) = self.gpu_stall.recover.take() {
+            if !self.recover_from_gpu_loss(event_loop, safe) {
+                crate::crash::gpu_lost();
+                self.close_while_gpu_stalled(event_loop);
+            }
+            return;
+        }
         if std::mem::take(&mut self.gpu_stall.close) {
             self.close_while_gpu_stalled(event_loop);
             return;
@@ -11029,6 +11400,7 @@ impl App {
         }
         self.demo_worn_steps();
         self.demo_derender_steps();
+        self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
@@ -11304,6 +11676,16 @@ impl App {
             && let Some(object) = demo.tick(self.frame_count, &mut self.world, self.scene.textures.cache_dir())
         {
             self.refresh_object_textures(object);
+        }
+        // AURORA_DEMO_TEXTURE_RES: boards with 2048 px streamed textures
+        if let (Some(demo), Some(g)) = (&mut self.texture_res_demo, &mut self.gfx) {
+            demo.tick(
+                self.frame_count,
+                &mut self.world,
+                &mut self.scene.textures,
+                &mut g.renderer,
+                &self.scene.jobs,
+            );
         }
         if let Some(demo) = &mut self.sculpt_missing_demo {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
@@ -12166,7 +12548,7 @@ impl App {
                 self.gesture_play(id, None);
             }
         }
-        if c.message.is_empty() || (c.channel == 0 && self.chat_command(&c.message)) {
+        if !ui::chat::sends_local_line(c.channel, &c.message) || (c.channel == 0 && self.chat_command(&c.message)) {
             return;
         }
         // :shortcode: emoji
@@ -12373,6 +12755,12 @@ impl App {
             }
         }
         self.poll_stream_list();
+        for command in self.appearance_ui.json.poll(&self.egui_ctx, &mut self.world) {
+            self.send(command);
+        }
+        if self.appearance_ui.json.has_confirmation() {
+            self.panels.appearance = true;
+        }
         match a.bar {
             BarAction::ImportStreamList => self.import_stream_list(),
             BarAction::ExportStreamList => self.export_stream_list(),
@@ -12497,6 +12885,10 @@ impl App {
                     .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
             }
             BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
+            BarAction::ToggleFriendsOnly => {
+                let on = !self.world.friends_only();
+                self.world.set_friends_only(on);
+            }
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
@@ -12606,6 +12998,7 @@ impl App {
             }
             BarAction::Controls { movement, toggle } => self.request_controls(movement, toggle),
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
+            BarAction::ToggleFlyOverride => self.toggle_fly_override(),
             BarAction::ToggleQuickjump => {
                 self.settings.quickjump = !self.settings.quickjump;
                 self.settings.save();
@@ -13570,6 +13963,7 @@ impl App {
             second_life,
         });
         self.options_ui.login_favorites = self.login_favorites.key().map(|key| self.login_form.favorites.shown(key));
+        self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
             self.options_ui.anti_spam_version = self.world.anti_spam.version;
@@ -13665,6 +14059,9 @@ impl App {
                 self.keep_login_favorites(true);
             }
         }
+        if let Some(keep) = res.friends_only_keep {
+            self.world.friends_only.keep_after_teleport = keep;
+        }
         if let Some(maturity) = res.maturity {
             self.world.set_maturity_preference(maturity);
         }
@@ -13732,9 +14129,35 @@ impl App {
         self.panels.settings = open;
     }
 
+    /// The bars' clock settings, with the demo's (`AURORA_DEMO_BARS`) for
+    /// the run.
+    fn system_island(&self) -> crate::settings::SystemIsland {
+        let s = self.settings.system_island;
+        if !self.demo {
+            return s;
+        }
+        let demo = ui::bars::demo::get();
+        crate::settings::SystemIsland {
+            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
+            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
+            clock_format: demo.clock_format.unwrap_or(s.clock_format),
+            ..s
+        }
+    }
+
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique("vr-active"), renderer.vr_engaged()));
+        // the toolbar's Sit / Stand button, greyed when RLVa would refuse it
+        // (RlvActions::canStand / canGroundSit, the same check as the send)
+        let sit = if self.world.agent.is_sitting() {
+            control::STAND_UP
+        } else {
+            control::SIT_ON_GROUND
+        };
+        let sit_locked = !self.world.rlva_allows_command(&NetCommand::OneShotControl(sit), uuid::Uuid::nil());
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(ui::bars::rlva_sit_locked_id(), sit_locked));
         self.world.refresh_rlva_privacy();
         self.notif_ui.privacy = self.world.rlva_privacy.clone();
         let mut a = UiActions::default();
@@ -13742,6 +14165,7 @@ impl App {
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
         ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
+        ui::bars::clock::set_chat_format(self.system_island().clock_format);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
         self.beacon_hit = None;
         let mut t = Instant::now();
@@ -13912,6 +14336,7 @@ impl App {
                     );
                     crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
                     crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::voice_controls::voice(&mut levels, ctx.input(|i| i.time));
                     levels
                 } else {
                     self.voice.levels(self.world.agent_id)
@@ -14113,9 +14538,12 @@ impl App {
                     env_keys: self.env_keys(),
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
+                    friends_only: self.world.friends_only(),
+                    fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
+                    can_go_home: self.world.rlva_can_teleport_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
                     motd: !self.world.motd.is_empty(),
@@ -14139,17 +14567,7 @@ impl App {
                     own_pic: self.avatar_pics.get(&self.world.agent_id),
                     recent: if classic_bars { Vec::new() } else { self.recent_places() },
                     favorites: &favorites,
-                    system_island: if self.demo {
-                        let (demo, s) = (ui::bars::demo::get(), self.settings.system_island);
-                        crate::settings::SystemIsland {
-                            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
-                            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
-                            clock_format: demo.clock_format.unwrap_or(s.clock_format),
-                            ..s
-                        }
-                    } else {
-                        self.settings.system_island
-                    },
+                    system_island: self.system_island(),
                     net_stats: if self.demo {
                         ui::bars::demo::get().net_stats.unwrap_or(self.settings.show_net_stats)
                     } else {
@@ -14728,7 +15146,7 @@ impl App {
                         } else {
                             self.settings.chat_toast_seconds
                         },
-                        self.settings.chat_timestamps,
+                        self.settings.chat_timestamps_nearby,
                         !classic_bars,
                         // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
                         // for the session, nothing saved
@@ -14758,6 +15176,9 @@ impl App {
                             a.bar = BarAction::HideInterface;
                         }
                     }
+                }
+                if self.fly_override_caution && ui::fly_override::caution(&ctx, &p) {
+                    self.fly_override_caution = false;
                 }
                 if self.interface.immersive && !self.camera.mouselook() {
                     let huds = self.settings.show_huds.then_some(self.settings.immersive_huds);
@@ -14813,7 +15234,8 @@ impl App {
                     self.chat_ui.output_devices.clone_from(&self.options_ui.output_devices);
                     self.chat_ui.output_device.clone_from(&self.settings.audio.output_device);
                 }
-                self.chat_ui.timestamps = self.settings.chat_timestamps;
+                self.chat_ui.timestamps_nearby = self.settings.chat_timestamps_nearby;
+                self.chat_ui.timestamps_im = self.settings.chat_timestamps_im;
                 // AURORA_DEMO_OBJECT_CHAT=…:on: for the run, nothing saved
                 self.chat_ui.compact_automated = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
                 self.chat_ui.compact_im_notices =
@@ -14873,8 +15295,9 @@ impl App {
                 // never one whose chat is blocked, #1395)
                 self.chat_ui.nearby_count = 0;
                 self.chat_ui.nearby_typing.clear();
+                let say = crate::world::radar::chat_ranges().say;
                 for e in self.radar.entries() {
-                    if !e.left_behind && e.range.is_some_and(|d| d <= crate::world::radar::CHAT_RANGE) {
+                    if !e.left_behind && e.range.is_some_and(|d| d <= say) {
                         self.chat_ui.nearby_count += 1;
                         if e.typing && !self.world.nearby_typing_hidden(&e.id) {
                             self.chat_ui.nearby_typing.push(e.id);
@@ -15446,6 +15869,43 @@ impl App {
                     }
                     ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
                 }
+                // AURORA_DEMO_SUITCASE: the question, as a Hypergrid teleport
+                // from the plaza would ask it (docs/TESTING.md)
+                if self.demo && self.frame_count == 300 && std::env::var_os("AURORA_DEMO_SUITCASE").is_some() {
+                    self.suitcase_ask = Some(SuitcaseAsk {
+                        go: SuitcaseGo::Named {
+                            destination: "hop://hg.example-grid.org:80/Harbor%20Plaza/128/128/25".into(),
+                            pos: Vec3::new(128.0, 128.0, 25.0),
+                            look_at: Vec3::X,
+                        },
+                        grid: "hg.example-grid.org:80".into(),
+                        names: [
+                            ("Short Hair", 6, 17, 0),
+                            ("Fur Trim - Mesh Body", 6, 17, 0),
+                            ("Mesh Head - Short Neck", 6, 17, 0),
+                            ("Leather Jacket", 5, 18, 5),
+                            ("Mesh Body v1.2", 6, 17, 0),
+                            ("Shape", 13, 18, 0),
+                            ("Fluffy Tail", 6, 17, 0),
+                        ]
+                        .map(|(name, asset_type, inv_type, flags)| crate::world::suitcase::LeftBehind {
+                            name: name.into(),
+                            asset_type,
+                            inv_type,
+                            flags,
+                        })
+                        .to_vec(),
+                        dont_ask: false,
+                        history: false,
+                        portal: None,
+                    });
+                }
+                if let Some(ask) = self.suitcase_ask.as_mut()
+                    && let Some(yes) = ui::context::suitcase_confirm(&ctx, &p, &ask.grid, &ask.names, &mut ask.dont_ask)
+                    && let Some(ask) = self.suitcase_ask.take()
+                {
+                    self.answer_suitcase(ask, yes);
+                }
                 if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {
@@ -15794,6 +16254,18 @@ impl App {
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
+                if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
+                    &ctx,
+                    &p,
+                    &ui::voice_controls::Inputs {
+                        world: &self.world,
+                        levels: &voice_levels,
+                        pics: &self.avatar_pics,
+                    },
+                    &mut self.panels.voice_controls,
+                ) {
+                    self.world.end_call();
+                }
                 let shown = self.stream_title_ui.show(
                     &ctx,
                     &p,
@@ -15811,6 +16283,7 @@ impl App {
                 }
                 self.poll_grid_helper();
                 self.notice_region_helper();
+                self.follow_currency_symbol();
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
@@ -15869,6 +16342,7 @@ impl App {
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
+                self.toolbar_ui.friends_only_active = self.world.friends_only();
                 let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
                 self.chat_ui.note_frame(pointer_busy);
                 for pa in acts {
@@ -15964,7 +16438,7 @@ impl App {
                 for pa in places_acts {
                     use ui::places::PlacesAction;
                     match pa {
-                        PlacesAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
+                        PlacesAction::Teleport(g) => self.teleport_saved_place(g),
                         PlacesAction::TeleportLandmark(asset) => a.landmark = Some(asset),
                         PlacesAction::CreateLandmark(dest) => self.open_create_landmark(dest),
                         PlacesAction::ShowOnMap(g) => {
@@ -16107,6 +16581,7 @@ impl App {
                             self.panels.world_map = false;
                         }
                         ui::worldmap::WorldMapAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        ui::worldmap::WorldMapAction::TeleportHistory(global) => self.teleport_saved_place(global),
                         ui::worldmap::WorldMapAction::OpenPlace(source) => self.show_place_profile(source),
                     }
                 }
@@ -16417,20 +16892,15 @@ impl ApplicationHandler for App {
                 ));
             }
         }
-        let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
-            .with_title(crate::cli::window_title())
-            // Metal needs a visible layer to present its first drawable.
-            // Other platforms keep the unpainted client area hidden.
-            .with_visible(cfg!(target_os = "macos"))
+        let plan = gpu_recovery::WindowPlan {
+            size: winit::dpi::LogicalSize::new(w, h).into(),
+            position: pos.map(|(x, y)| winit::dpi::PhysicalPosition::new(x, y)),
             // Automated captures must not steal the user's keyboard focus.
-            .with_active(!capture)
-            .with_inner_size(winit::dpi::LogicalSize::new(w, h))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(800, 560));
-        if let Some((x, y)) = pos {
-            attrs = attrs.with_position(winit::dpi::PhysicalPosition::new(x, y));
-        }
-        let window = match event_loop.create_window(attrs) {
-            Ok(w) => Arc::new(w),
+            active: !capture,
+            fullscreen: None,
+        };
+        let window = match self.open_window(event_loop, &plan) {
+            Ok(w) => w,
             Err(e) => {
                 log::error!("cannot create window: {e}");
                 graphics_start::report(&e.to_string(), capture);
@@ -16438,28 +16908,10 @@ impl ApplicationHandler for App {
                 return;
             }
         };
-        crate::window_hold::install(&window);
         // Cmd+Q asks like the close button (mac_quit.rs). Cmd+H stays Hide.
         #[cfg(target_os = "macos")]
         crate::mac_quit::route_quit_to_close();
-        let size = window.inner_size();
-        if std::env::var_os("AURORA_NOVSYNC").is_some() {
-            self.settings.vsync = false;
-        }
-        // the GPU of Preferences › Graphics; AURORA_GPU=<number|name|auto>
-        // overrides it for this launch (adapter_choice.rs)
-        let gpu = std::env::var("AURORA_GPU").unwrap_or_else(|_| self.settings.gpu_adapter.clone());
-        // the pipelines the driver compiled at the earlier starts, kept in
-        // the cache folder (aurora-render's pipeline_cache.rs)
-        aurora_render::pipeline_cache::configure(crate::settings::cache_dir().join("pipelines"), aurora_version::version());
-        // AURORA_GPU_START_FAIL=1: as if no card could draw, to see the
-        // message the user gets then (graphics_start.rs); `lost` is read by
-        // the renderer, which gets as far as a real device loss does
-        let created = if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
-            Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()))
-        } else {
-            Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)
-        };
+        let created = self.open_renderer(&window);
         let renderer = match created {
             Ok(r) => r,
             Err(e) => {
@@ -16482,14 +16934,6 @@ impl ApplicationHandler for App {
                 return;
             }
         };
-        log::info!(
-            "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
-            renderer.info.name,
-            renderer.info.backend,
-            renderer.textures.capacity(),
-            renderer.info.max_textures,
-            renderer.info.timestamps
-        );
         let mut renderer = renderer;
         if std::mem::take(&mut self.settings.new_profile) {
             // a first launch: the graphics level from the card, like
@@ -16511,25 +16955,11 @@ impl ApplicationHandler for App {
             self.settings.save();
         }
         renderer.apply_settings(self.settings.render_settings());
-        // what Preferences › Graphics shows of the GPUs, from the renderer's
-        // own list: here, not with the world's frames, so the login screen
-        // has it too (#894: only "Automatic" was offered before login)
-        self.options_ui.vram = (renderer.info.vram_mb, renderer.info.integrated);
-        self.options_ui.gpus = renderer.info.adapters.clone();
-        self.options_ui.gpu_in_use = renderer.info.name.clone();
-        self.options_ui.gpu_notice = renderer.info.notice;
+        self.note_gpus(&renderer);
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
         self.screen_rate.poll(&window, Instant::now());
-        let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
-        let egui_state = egui_winit::State::new(
-            self.egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            Some(max_tex),
-        );
+        let egui_state = self.egui_state_for(&window, &renderer);
         self.gfx = Some(Gfx {
             window,
             shown: false,
@@ -17933,6 +18363,10 @@ impl ApplicationHandler for App {
                 if view == "save" {
                     self.appearance_ui.begin_save_as(&self.world.inventory);
                 }
+                if matches!(view.as_str(), "json-import" | "json-partial") {
+                    self.appearance_ui.open(2, false);
+                    ui::appearance::json::demo(&self.world, &mut self.appearance_ui, view == "json-partial");
+                }
                 if matches!(view.as_str(), "multi-gallery" | "multi-outfits") {
                     self.appearance_ui.demo_multiselection();
                 }
@@ -18068,6 +18502,10 @@ impl ApplicationHandler for App {
                         | "smart"
                         | "aurora-smart"
                         | "aurora-smart-wide"
+                        | "folder-colors"
+                        | "aurora-folder-colors"
+                        | "aurora-folder-colors-behind"
+                        | "aurora-folder-colors-follow"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -18083,6 +18521,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui
                             .show_original(&self.world.inventory, crate::world::inventory::demo::LOST_FOLDER);
                         self.inventory_ui.expand_all = Some(true);
+                    }
+                    if view.contains("folder-colors") {
+                        ui::inventory::folder_colors_demo(&mut self.inventory_ui, &mut self.settings.inventory);
                     }
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
@@ -18523,6 +18964,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
             }
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
+            self.texture_res_demo = crate::demo::texture_res::TextureResDemo::from_env();
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
@@ -18937,7 +19379,12 @@ impl ApplicationHandler for App {
         self.gfx = None;
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // the window of a lost device, on screen until its successor has
+        // presented: its redraws and sizes are not the new renderer's
+        if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
+            return;
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
@@ -19435,6 +19882,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        crate::crash::pumped();
         self.sync_minimized_mute();
         self.record_window_geometry();
         self.attention_window();

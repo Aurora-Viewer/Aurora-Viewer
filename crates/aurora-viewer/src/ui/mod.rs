@@ -15,6 +15,7 @@ pub mod bidi;
 pub mod blacklist;
 pub mod bumps;
 pub mod sound_explorer;
+pub mod voice_controls;
 // Bug report form (disabled, see main.rs):
 // pub mod bug_report;
 pub mod beacons;
@@ -42,6 +43,7 @@ pub mod exit;
 pub mod experience_profile;
 pub mod experiences;
 pub mod find_shortcut;
+pub mod fly_override;
 pub mod follow;
 pub mod fonts;
 pub mod friend_prompt;
@@ -192,6 +194,8 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
+    pub voice_controls: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -252,6 +256,7 @@ impl Panels {
             experiences: false,
             bumps: false,
             grid_status: false,
+            voice_controls: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,

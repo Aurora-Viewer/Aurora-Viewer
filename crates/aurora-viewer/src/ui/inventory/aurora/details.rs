@@ -150,6 +150,7 @@ fn picture(
     rect: Rect,
     images: &HashMap<Uuid, egui::TextureHandle>,
     wanted: &mut HashSet<Uuid>,
+    prefs: &InventoryPreferences,
 ) -> egui::Response {
     let thumbnail = thumbnail::image(inv, id);
     if !thumbnail.is_nil() {
@@ -161,7 +162,10 @@ fn picture(
     let (icon, tint) = inv.items.get(&id).map_or_else(
         || {
             let kind = inv.folders.get(&id).map_or(-1, |f| f.info.type_default);
-            (tree::folder_icon(kind, false), p.muted_dim)
+            (
+                tree::folder_icon(kind, false),
+                folder_colors::tint(prefs, id).unwrap_or(p.muted_dim),
+            )
         },
         |it| inventory_item_icon(inv, it, p),
     );
@@ -295,7 +299,7 @@ pub(super) fn strip(
         });
         return;
     };
-    let clicked = picture(ui, p, icons, inv, id, picture_rect, images, &mut st.wanted_images);
+    let clicked = picture(ui, p, icons, inv, id, picture_rect, images, &mut st.wanted_images, prefs);
     if clicked.double_clicked() {
         context::double_click(inv, id, st, prefs, facts, actions);
     }
@@ -363,7 +367,8 @@ pub(super) fn strip(
         if let Some(main) = Main::of(inv, id, facts) {
             let (icon, label) = main.label();
             let enabled = st.pending.is_none()
-                && !(matches!(main, Main::Wear | Main::TakeOff) && (facts.appearance_busy || !facts.rlva_allows(inv, id, false)));
+                && !(matches!(main, Main::Wear | Main::TakeOff) && (facts.appearance_busy || !facts.rlva_allows(inv, id, false)))
+                && !(main == Main::Teleport && facts.landmark_blocked);
             if widgets::action_button_if(ui, p, icon, label, widgets::ActionKind::Primary, Vec2::new(0.0, BUTTON), enabled).clicked() {
                 main.run(inv, id, st, prefs, facts, actions);
             }
@@ -508,7 +513,7 @@ pub(super) fn pane(
     let (picture_rect, _) = ui.allocate_exact_size(Vec2::new(width, 176.0), Sense::hover());
     let writable =
         st.pending.is_none() && rules::mutable(inv, id) && !inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25));
-    let response = picture(ui, p, icons, inv, id, picture_rect, images, &mut st.wanted_images);
+    let response = picture(ui, p, icons, inv, id, picture_rect, images, &mut st.wanted_images, prefs);
     if writable {
         let response = response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -579,7 +584,9 @@ pub(super) fn pane(
         ui.spacing_mut().item_spacing.x = 6.0;
         if let Some(main) = Main::of(inv, id, facts) {
             let (icon, label) = main.label();
-            let enabled = st.pending.is_none() && !(matches!(main, Main::Wear | Main::TakeOff) && facts.appearance_busy);
+            let enabled = st.pending.is_none()
+                && !(matches!(main, Main::Wear | Main::TakeOff) && facts.appearance_busy)
+                && !(main == Main::Teleport && facts.landmark_blocked);
             let width = (ui.available_width() - 2.0 * (28.0 + 6.0) - if can_add(inv, id, facts, st) { 80.0 } else { 0.0 }).max(90.0);
             if widgets::action_button_if(ui, p, icon, label, widgets::ActionKind::Primary, Vec2::new(width, 28.0), enabled).clicked() {
                 main.run(inv, id, st, prefs, facts, actions);

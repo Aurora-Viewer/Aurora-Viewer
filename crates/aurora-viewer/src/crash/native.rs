@@ -819,13 +819,26 @@ mod ending {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod platform {
+    pub use super::super::linux::{Thread, demo_exception, named_threads, out_of_memory, write_stack};
+    use std::path::Path;
+    pub fn install(dir: &Path) -> anyhow::Result<()> {
+        super::ending::install(dir)?;
+        super::super::linux::install(dir)
+    }
+    pub fn boot_unix() -> Option<u64> {
+        None
+    }
+    pub fn watch(_dir: &Path, _record: &super::super::Record) -> anyhow::Result<()> {
+        anyhow::bail!("automatic crash monitoring currently requires Windows")
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     use std::path::Path;
     pub fn install(dir: &Path) -> anyhow::Result<()> {
-        #[cfg(target_os = "linux")]
-        super::ending::install(dir)?;
-        #[cfg(not(target_os = "linux"))]
         let _ = dir;
         Ok(())
     }

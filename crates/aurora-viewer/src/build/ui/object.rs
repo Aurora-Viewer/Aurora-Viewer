@@ -5,7 +5,7 @@
 
 use super::common::{Edit, check, combo, label, row, spin};
 use super::{Env, Request, ShapeClip};
-use crate::build::{BuildSettings, BuildTool, EditMode, MAX_PRIM_SCALE, MIN_PRIM_SCALE};
+use crate::build::{BuildSettings, BuildTool, EditMode};
 use crate::scene::Scene;
 use crate::theme::Palette;
 use crate::ui::menu;
@@ -602,6 +602,7 @@ pub fn show_transform(
         tool.set_transform(world, s, Some(Vec3::from_array(pos)), None, None, e.commit);
     }
     let mut size = scale.to_array();
+    let limits = world.prim_limits();
     let (e, paste, copy) = vec_block(
         ui,
         p,
@@ -610,11 +611,7 @@ pub fn show_transform(
         aurora_i18n::tr!("build-compact-size"),
         &mut size,
         0.01,
-        [
-            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-        ],
+        [limits.min..=limits.max, limits.min..=limits.max, limits.min..=limits.max],
         decimals,
         can_scale,
         mixed[1],

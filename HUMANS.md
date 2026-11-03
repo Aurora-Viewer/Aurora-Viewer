@@ -381,10 +381,13 @@ cargo run -p aurora-viewer
 
 ### Disk space
 
-Builds take space: count 3 to 4 GB per `target` folder (the repository, each
-task in progress, `RELEASE`). It is only cache, which can always be deleted:
-it will be rebuilt when needed. A new task frees by itself the `target` of
-the tasks that are merged or inactive for 7 days.
+Builds take space: count 5 to 20 GB per `target` folder (the repository, each
+task in progress, `RELEASE`), three quarters of it the `incremental` cache
+that only speeds up the next small rebuild of that task. It is only cache,
+which can always be deleted: it will be rebuilt when needed. A new task
+frees by itself the incremental cache of the tasks with no build for 24
+hours, and the whole `target` of the tasks that are merged or inactive for
+2 days.
 
 The **Disk** choice of the tools does the same as:
 
@@ -392,6 +395,7 @@ The **Disk** choice of the tools does the same as:
 ./scripts/clean.ps1                 # shows the space taken, deletes nothing
 ./scripts/clean.ps1 -Apply          # frees the builds of the repository (keeps target\release)
 ./scripts/clean.ps1 -Tasks -Apply   # also frees those of the tasks in progress
+./scripts/clean.ps1 -Incremental -Apply   # frees only the incremental caches of the tasks
 ```
 
 The script only deletes Cargo build folders, and refuses to work during a

@@ -23,6 +23,12 @@ impl Journey {
             && !world.tp_failed
     }
 
+    /// Its time counted from `now`: the crossing waited for a question.
+    pub(super) fn restarted(mut self, now: Instant) -> Self {
+        self.started = now;
+        self
+    }
+
     fn new(world: &World, creator: uuid::Uuid, source: &Portal, now: Instant) -> Self {
         let normal = Vec3::new(source.yaw.cos(), source.yaw.sin(), 0.0);
         Self {
@@ -128,6 +134,9 @@ impl App {
             self.teleport_to_location_looking(portal.destination, Vec3::from(portal.position), look_at);
             if self.world.teleporting {
                 self.portal_journey = Some(journey);
+            } else if let Some(ask) = self.suitcase_ask.as_mut() {
+                // held for the Hypergrid question: the journey goes with it
+                ask.portal = Some(journey);
             }
         }
         self.update_place_portal();
