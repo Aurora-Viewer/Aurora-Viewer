@@ -1062,15 +1062,8 @@ fn selection_filters_persist_and_sit_under_the_reflection_probes() {
     let probes = panel.iter().position(|item| *item == Item::Probes).unwrap();
     assert_eq!(panel[probes + 1..probes + 3], [Item::OwnedOnly, Item::MovableOnly]);
     assert_eq!(
-        Layout::default().in_panel(Panel::Settings)[..6],
-        [
-            Item::Snap,
-            Item::ObjectSnap,
-            Item::Highlight,
-            Item::Probes,
-            Item::OwnedOnly,
-            Item::MovableOnly
-        ]
+        Layout::default().in_panel(Panel::Settings)[..5],
+        [Item::Snap, Item::Highlight, Item::Probes, Item::OwnedOnly, Item::MovableOnly]
     );
     // notecards exported before them still load, with the filters off
     let (_, tool, _) = fixture();

@@ -1491,12 +1491,13 @@ included, and a handle can be grabbed anywhere on its larger shape.
 `AURORA_DEMO_OBJECT_SNAP=1` adds six boxes 6 m along the start view (use
 `AURORA_DEMO_POS="80,100"` for open land): a slab, a blue cube floating
 0.3 m over it (`object:87701`), an orange cube 0.8 m to its +X, a green box
-turned 30°, a purple plank tilted 20° and a 2 m pillar. Tick "Snap to
-objects" in the construction settings, select the blue cube and drag its
+turned 30°, a purple plank tilted 20° and a 2 m pillar. Choose Snap ›
+Objects in the construction settings, select the blue cube and drag its
 arrows or plane squares near the others: within 8 pixels it jumps flush
 (rose outline on both faces, a corner square on the plank's slope, amber
-for centres), and moves freely again past them. `on` also ticks the
-setting for a build script, for example
+for centres), and it stops at any face it would enter, however far the
+cursor goes past (a plane square slides along that face). `on` also chooses
+Objects for a build script, for example
 `AURORA_DEMO_BUILD=move,object:87701,z,0,40`.
 
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,

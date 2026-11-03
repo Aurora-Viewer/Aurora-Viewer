@@ -133,9 +133,10 @@ pub struct BuildSettings {
     pub grid_mode: u8,
     /// SnapEnabled.
     pub snap: bool,
-    /// Aurora: the move handles snap the selection's box flush against the
-    /// boxes of nearby prims (`object_snap`); off by default, so moving
-    /// behaves as the Legacy Viewer's until it is turned on.
+    /// Aurora: the move handles snap the selection's box against the boxes
+    /// of nearby prims, and stop it at their faces (`object_snap`). Never
+    /// with `snap` (`snap_mode`); off by default, so moving behaves as the
+    /// Legacy Viewer's until it is chosen.
     pub object_snap: bool,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
@@ -214,7 +215,31 @@ pub struct BuildSettings {
     pub gizmo_scale: f32,
 }
 
+/// What the move handles snap to: one at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapMode {
+    Off,
+    /// The Legacy Viewer's grid (SnapEnabled).
+    Grid,
+    /// Nearby prims (`object_snap`).
+    Objects,
+}
+
 impl BuildSettings {
+    /// The snap in use; the grid when a settings file has both on.
+    pub fn snap_mode(&self) -> SnapMode {
+        if self.snap {
+            SnapMode::Grid
+        } else if self.object_snap {
+            SnapMode::Objects
+        } else {
+            SnapMode::Off
+        }
+    }
+    pub fn set_snap_mode(&mut self, mode: SnapMode) {
+        self.snap = mode == SnapMode::Grid;
+        self.object_snap = mode == SnapMode::Objects;
+    }
     /// `gizmo_scale` within the slider's range; an edited settings file
     /// falls back to the Legacy Viewer's size.
     pub fn gizmo_scale(&self) -> f32 {

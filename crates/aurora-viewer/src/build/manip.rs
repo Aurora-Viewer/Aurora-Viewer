@@ -1510,9 +1510,9 @@ fn drag_update(
             d.edge_pan_blocked = false;
             let mut mag = rel.dot(d.axis);
             d.in_snap = false;
-            // a nearby object wins over the grid
-            if let Some(offset) = snap_to_objects(d, world, s, cam, Constraint::Axis(d.axis), d.axis * mag, now) {
-                mag += offset.dot(d.axis);
+            let prev = d.delta;
+            if let Some(delta) = snap_to_objects(d, world, s, cam, Constraint::Axis(d.axis), prev, d.axis * mag, now) {
+                mag = delta.dot(d.axis);
             } else if s.snap {
                 let plane_n = d.snap_axis.cross(d.axis);
                 if let Some(p) = ray_plane(o, dir, d.pivot, plane_n) {
@@ -1536,8 +1536,9 @@ fn drag_update(
             }
             d.edge_pan_blocked = false;
             d.in_snap = false;
-            if let Some(offset) = snap_to_objects(d, world, s, cam, Constraint::Plane(d.normal), rel, now) {
-                rel += offset;
+            let prev = d.delta;
+            if let Some(delta) = snap_to_objects(d, world, s, cam, Constraint::Plane(d.normal), prev, rel, now) {
+                rel = delta;
             } else if s.snap {
                 let gi = d.grid.rotation.inverse();
                 let mut local = gi * (d.pivot + rel - d.grid.origin);
@@ -1643,16 +1644,27 @@ fn drag_update(
     }
 }
 
-/// Snap to objects (`BuildSettings::object_snap`, an Aurora addition): the
-/// extra move, within `c`, that puts the selection's box (moved by `delta`)
-/// against a nearby prim's, if one is within `object_snap::SNAP_PX`.
-/// Off, or in the HUD, nothing changes and the grid snaps as before.
-fn snap_to_objects(d: &mut Drag, world: &World, s: &BuildSettings, cam: &Cam, c: Constraint, delta: Vec3, now: Instant) -> Option<Vec3> {
+/// Snap to objects (`SnapMode::Objects`, an Aurora addition): where the
+/// selection goes for the move `want` within `c`, from `prev`, last frame's.
+/// It snaps against a nearby prim's box within `object_snap::SNAP_PX`, and
+/// stops at the first face it would enter. None when it does neither, in
+/// another snap mode or in the HUD: the move is the Legacy Viewer's.
+#[allow(clippy::too_many_arguments)]
+fn snap_to_objects(
+    d: &mut Drag,
+    world: &World,
+    s: &BuildSettings,
+    cam: &Cam,
+    c: Constraint,
+    prev: Vec3,
+    want: Vec3,
+    now: Instant,
+) -> Option<Vec3> {
     d.snap_guides.clear();
-    if !s.object_snap || cam.hud.is_some() {
+    if s.snap_mode() != super::SnapMode::Objects || cam.hud.is_some() {
         return None;
     }
-    let sel = object_snap::moved(&d.bounds, delta);
+    let sel = object_snap::moved(&d.bounds, want);
     // collected again as the selection travels, and now and then for the
     // prims rezzed meanwhile (a Shift-drag's copy)
     let stale = d.snap_targets.as_ref().is_none_or(|(t, at)| {
@@ -1667,9 +1679,27 @@ fn snap_to_objects(d: &mut Drag, world: &World, s: &BuildSettings, cam: &Cam, c:
             .zip(cam.project(from + by))
             .map_or(f32::INFINITY, |(a, b)| a.distance(b))
     };
-    let snap = object_snap::find(&sel, targets, c, &px)?;
-    d.snap_guides = object_snap::guides(&object_snap::moved(&sel, snap.offset), targets, &snap);
-    Some(snap.offset)
+    let snap = object_snap::find(&sel, targets, c, &px);
+    let goal = want + snap.as_ref().map_or(Vec3::ZERO, |snap| snap.offset);
+    let (allowed, blocked) = object_snap::stop(&object_snap::moved(&d.bounds, prev), goal - prev, targets, c);
+    if snap.is_none() && blocked.is_none() {
+        return None;
+    }
+    let delta = prev + allowed;
+    let at = object_snap::moved(&d.bounds, delta);
+    d.snap_guides = match (blocked, snap) {
+        (Some(hit), _) => object_snap::guides(
+            &at,
+            targets,
+            &object_snap::Snap {
+                offset: Vec3::ZERO,
+                hits: vec![hit],
+            },
+        ),
+        (None, Some(snap)) => object_snap::guides(&at, targets, &snap),
+        (None, None) => Vec::new(),
+    };
+    Some(delta)
 }
 
 /// Guides of the object snap: the target's face and the selection's

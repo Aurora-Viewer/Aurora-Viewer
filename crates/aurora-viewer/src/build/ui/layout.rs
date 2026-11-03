@@ -29,8 +29,7 @@ pub(super) fn title(item: Item) -> &'static str {
         Item::Linked => aurora_i18n::tr!("build-compact-linked"),
         Item::ScaleBoth => aurora_i18n::tr!("build-compact-both-sides"),
         Item::RootAxis => aurora_i18n::tr!("build-compact-root-axis"),
-        Item::Snap => aurora_i18n::tr!("build-compact-snap"),
-        Item::ObjectSnap => aurora_i18n::tr!("build-compact-object-snap"),
+        Item::Snap => aurora_i18n::tr!("build-snap"),
         Item::Highlight => aurora_i18n::tr!("build-compact-highlight"),
         Item::Probes => aurora_i18n::tr!("build-compact-probes"),
         Item::OwnedOnly => aurora_i18n::tr!("build-compact-owned-only"),
@@ -212,6 +211,30 @@ pub(super) fn row(
     }
 }
 
+/// "Snap": off, to the grid or to objects, one at a time
+/// (`BuildSettings::snap_mode`).
+fn snap_mode(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+    use crate::build::SnapMode;
+    const MODES: [SnapMode; 3] = [SnapMode::Off, SnapMode::Grid, SnapMode::Objects];
+    let options = [
+        (aurora_i18n::tr!("build-snap-off"), true),
+        (aurora_i18n::tr!("build-snap-grid"), true),
+        (aurora_i18n::tr!("build-snap-objects"), true),
+    ];
+    let mut selected = MODES.iter().position(|m| *m == s.snap_mode()).unwrap_or(0);
+    ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), 22.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label(RichText::new(title(Item::Snap)).size(common::BODY));
+            ui.add_space((ui.available_width() - widgets::segmented_size(ui, &options).x).max(4.0));
+            if widgets::segmented(ui, p, &mut selected, &options) {
+                s.set_snap_mode(MODES[selected]);
+            }
+        },
+    );
+}
+
 pub(super) fn control(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -229,14 +252,16 @@ pub(super) fn control(
         compact::action_row(ui, p, tool, world, s);
         return;
     }
+    if item == Item::Snap {
+        snap_mode(ui, p, s);
+        return;
+    }
     let mut value = match item {
         Item::Face => tool.edit_mode == EditMode::Face,
         Item::Linked => s.edit_linked,
         Item::StretchTextures => s.scale_stretch_textures,
         Item::ScaleBoth => s.scale_uniform,
         Item::RootAxis => s.actual_root,
-        Item::Snap => s.snap,
-        Item::ObjectSnap => s.object_snap,
         Item::Highlight => s.show_highlight,
         Item::Probes => s.select_probes,
         Item::OwnedOnly => s.select_owned_only,
@@ -260,8 +285,6 @@ pub(super) fn control(
                 Item::StretchTextures => s.scale_stretch_textures = value,
                 Item::ScaleBoth => s.scale_uniform = value,
                 Item::RootAxis => s.actual_root = value,
-                Item::Snap => s.snap = value,
-                Item::ObjectSnap => s.object_snap = value,
                 Item::Highlight => s.show_highlight = value,
                 Item::Probes => s.select_probes = value,
                 Item::OwnedOnly => s.select_owned_only = value,
@@ -393,7 +416,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                     }
                     if s.legacy_window {
                         for item in [
-                            Item::ObjectSnap,
+                            Item::Snap,
                             Item::OwnedOnly,
                             Item::MovableOnly,
                             Item::Surrounding,

@@ -9,7 +9,7 @@
 //!   20° about Y (`object:87704`, the cube's corner rests on its slope) and
 //!   a 2 m pillar (`object:87705`, flush tops and sides).
 //!
-//! `1` adds the boxes; `on` also turns the setting on when
+//! `1` adds the boxes; `on` also chooses Snap › Objects when
 //! AURORA_DEMO_BUILD opens the tools (`build::demo::apply_object_snap`).
 //! From the start position, or AURORA_DEMO_POS="x,y" (open land: "80,100").
 

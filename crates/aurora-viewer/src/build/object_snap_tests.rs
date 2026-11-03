@@ -147,10 +147,11 @@ fn the_z_arrow_sits_the_cube_on_the_slab_within_a_few_pixels_only() {
 }
 
 #[test]
-fn the_x_arrow_touches_the_neighbour_with_or_without_grid_snap() {
-    for grid in [false, true] {
+fn the_x_arrow_touches_the_neighbour_and_stops_there() {
+    // short of it, then far past it
+    for (past, pixels) in [(false, 4.0), (true, 0.0)] {
         let mut w = world(None);
-        let s = BuildSettings { snap: grid, ..snapping() };
+        let s = snapping();
         let (blue, sel) = key(&w, BLUE);
         let (orange, _) = key(&w, ORANGE);
         let start = w.objects.get(blue).unwrap().position;
@@ -159,19 +160,30 @@ fn the_x_arrow_touches_the_neighbour_with_or_without_grid_snap() {
         let mut manip = Manip::default();
         grab(&mut manip, &mut w, &s, &cam, sel, Part::Arrow(0)).expect("handle in view");
         let gap = face - (start.x + 0.5);
-        let cursor = along(&cam, &manip, Vec3::X * (gap - cam.meters_for_pixels(start, 4.0)));
+        let by = if past {
+            gap + 3.0
+        } else {
+            gap - cam.meters_for_pixels(start, pixels)
+        };
+        let cursor = along(&cam, &manip, Vec3::X * by);
         drag(&mut manip, &mut w, &s, &cam, sel, cursor);
         let now = w.objects.get(blue).unwrap().position;
-        assert!((now.x + 0.5 - face).abs() < 1e-4, "grid {grid}: touching, {now}");
+        assert!((now.x + 0.5 - face).abs() < 1e-4, "past {past}: touching, {now}");
         assert_eq!((now.y, now.z), (start.y, start.z));
+        assert!(manip.drag.as_ref().unwrap().snap_guides.iter().any(|g| g.contact));
+        // back out again
+        let cursor = along(&cam, &manip, Vec3::X * -0.5);
+        drag(&mut manip, &mut w, &s, &cam, sel, cursor);
+        let back = w.objects.get(blue).unwrap().position;
+        assert!((back.x - (start.x - 0.5)).abs() < 2e-3, "past {past}: free again, {back}");
     }
 }
 
 #[test]
-fn a_plane_handle_puts_the_cube_edge_to_edge_and_wins_over_the_grid() {
-    for grid in [false, true] {
+fn a_plane_handle_puts_the_cube_edge_to_edge() {
+    {
         let mut w = world(Some(&[SLAB, BLUE, ORANGE]));
-        let s = BuildSettings { snap: grid, ..snapping() };
+        let s = snapping();
         let (blue, sel) = key(&w, BLUE);
         let (orange, _) = key(&w, ORANGE);
         let o = w.objects.get(orange).unwrap().position;
@@ -185,13 +197,60 @@ fn a_plane_handle_puts_the_cube_edge_to_edge_and_wins_over_the_grid() {
         let cursor = along(&cam, &manip, by);
         drag(&mut manip, &mut w, &s, &cam, sel, cursor);
         let now = w.objects.get(blue).unwrap().position;
-        assert!((now.x - (o.x - 1.0)).abs() < 1e-4, "grid {grid}: touching, {now}");
-        assert!((now.y - o.y).abs() < 1e-4, "grid {grid}: flush sides, {now}");
+        assert!((now.x - (o.x - 1.0)).abs() < 1e-4, "touching, {now}");
+        assert!((now.y - o.y).abs() < 1e-4, "flush sides, {now}");
         assert_eq!(now.z, start.z, "in the handle's plane");
         let d = manip.drag.as_ref().unwrap();
         assert_eq!(d.snap_guides.len(), 2);
         assert!(!d.in_snap, "the object snap, not the grid");
     }
+}
+
+#[test]
+fn the_z_arrow_never_pushes_the_cube_through_the_slab() {
+    let mut w = world(None);
+    let s = snapping();
+    let (blue, sel) = key(&w, BLUE);
+    let (slab, _) = key(&w, SLAB);
+    let top = w.objects.get(slab).unwrap().position.z + 0.1;
+    let start = w.objects.get(blue).unwrap().position;
+    let cam = camera(start);
+    let mut manip = Manip::default();
+    grab(&mut manip, &mut w, &s, &cam, sel, Part::Arrow(2)).expect("handle in view");
+    // well into the slab, then right through and under it
+    for down in [0.6, 1.5, 4.0] {
+        let cursor = along(&cam, &manip, -Vec3::Z * down);
+        drag(&mut manip, &mut w, &s, &cam, sel, cursor);
+        let now = w.objects.get(blue).unwrap().position;
+        assert!((now.z - 0.5 - top).abs() < 1e-4, "{down} m down: on the slab, {now}");
+    }
+    // Grid or no snap: the Legacy Viewer's move goes through
+    for mode in [super::super::SnapMode::Grid, super::super::SnapMode::Off] {
+        let mut s = s.clone();
+        s.set_snap_mode(mode);
+        w.objects.get_mut(blue).unwrap().position = start;
+        let mut manip = Manip::default();
+        grab(&mut manip, &mut w, &s, &cam, sel, Part::Arrow(2)).expect("handle in view");
+        let cursor = along(&cam, &manip, -Vec3::Z * 1.5);
+        drag(&mut manip, &mut w, &s, &cam, sel, cursor);
+        assert!(w.objects.get(blue).unwrap().position.z < top, "{mode:?}: through the slab");
+    }
+}
+
+#[test]
+fn grid_and_object_snap_are_one_choice() {
+    use super::super::SnapMode;
+    let mut s = BuildSettings::default();
+    assert_eq!(s.snap_mode(), SnapMode::Grid, "the Legacy Viewer's default");
+    for mode in [SnapMode::Objects, SnapMode::Off, SnapMode::Grid, SnapMode::Objects] {
+        s.set_snap_mode(mode);
+        assert_eq!(s.snap_mode(), mode);
+        assert!(!(s.snap && s.object_snap));
+    }
+    // a settings file with both on snaps to the grid, never to both
+    s.snap = true;
+    s.object_snap = true;
+    assert_eq!(s.snap_mode(), SnapMode::Grid);
 }
 
 /// Setting off, nothing in reach, or the HUD: every handle, grid mode and

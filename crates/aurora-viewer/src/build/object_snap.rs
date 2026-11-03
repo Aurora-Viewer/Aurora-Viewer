@@ -12,6 +12,12 @@
 //! (touching), lies in the same plane (flush) or shares its centre. An
 //! arrow only takes the snaps it can reach along its axis; a plane handle
 //! combines two of them, which puts an edge on an edge.
+//!
+//! The selection never passes through a target either: each step of the
+//! drag is swept against their boxes and stops at the first face met (`stop`,
+//! the separating axis test along the move); a plane drag then slides along
+//! that face. A target the selection already overlaps is left out of it, so
+//! a box rezzed inside another can still be moved out.
 
 use super::Bounds;
 use crate::scene::Scene;
@@ -36,6 +42,9 @@ const MIN_CROSS: f32 = 0.5;
 const PRIORITY_PX: f32 = 2.0;
 /// Overlap tolerance of a contact (m).
 const CONTACT_EPS: f32 = 0.001;
+/// Faces count this much smaller in the sweep (m): a selection resting on a
+/// face slides along it, and stops exactly on it.
+const SKIN: f32 = 0.0005;
 /// A selection face this parallel to a target face (cosine) can be flush
 /// with it or line up with its centre; otherwise only a contact snaps (a
 /// corner resting on a slope), not the endless plane of a tilted face.
@@ -232,6 +241,86 @@ pub fn find(sel: &Bounds, targets: &[Bounds], c: Constraint, px: &dyn Fn(Vec3, V
         }
     }
     Some(snap)
+}
+
+/// When the selection `sel`, moved by `by`, first enters the target `t`
+/// (fraction of `by`), and the axis it meets, pointing back along the move;
+/// None if it does not, or if it overlaps `t` already.
+fn entry(sel: &Bounds, by: Vec3, t: &Bounds) -> Option<(f32, Vec3)> {
+    let (a, b) = ([0, 1, 2].map(|i| axis_of(sel, i)), [0, 1, 2].map(|i| axis_of(t, i)));
+    let crosses = a.iter().flat_map(|x| b.iter().map(move |y| x.cross(*y)));
+    let (mut enter, mut exit, mut normal) = (f32::NEG_INFINITY, f32::INFINITY, Vec3::ZERO);
+    for axis in a.into_iter().chain(b).chain(crosses) {
+        let Some(l) = axis.try_normalize() else { continue };
+        let (s0, s1) = interval(sel, l);
+        let (c0, c1) = interval(t, l);
+        let (c0, c1) = if c1 - c0 > 2.0 * SKIN { (c0 + SKIN, c1 - SKIN) } else { (c0, c1) };
+        let v = by.dot(l);
+        if v.abs() < 1e-7 {
+            if s1 <= c0 || s0 >= c1 {
+                return None;
+            }
+            continue;
+        }
+        let (ta, tb) = ((c0 - s1) / v, (c1 - s0) / v);
+        let (t0, t1) = (ta.min(tb), ta.max(tb));
+        if t0 > enter {
+            enter = t0;
+            normal = l * -v.signum();
+        }
+        exit = exit.min(t1);
+        if enter >= exit {
+            return None;
+        }
+    }
+    (0.0..=1.0).contains(&enter).then_some((enter, normal))
+}
+
+/// How far the selection `sel` may move of `by` within `c` before it meets
+/// a target, sliding along the face it meets in a plane drag; with the
+/// contact met last, for the guides.
+pub fn stop(sel: &Bounds, by: Vec3, targets: &[Bounds], c: Constraint) -> (Vec3, Option<Hit>) {
+    let (mut moved_by, mut rest, mut hit) = (Vec3::ZERO, by, None);
+    for _ in 0..3 {
+        let from = moved(sel, moved_by);
+        let first = targets
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| entry(&from, rest, t).map(|(at, n)| (at, n, i)))
+            .min_by(|x, y| x.0.total_cmp(&y.0));
+        let Some((at, n, i)) = first else {
+            moved_by += rest;
+            break;
+        };
+        // back off the skin: right on the face
+        let at = (at - SKIN / rest.dot(n).abs().max(1e-6)).max(0.0);
+        moved_by += rest * at;
+        let t = &targets[i];
+        let k = (0..3)
+            .max_by(|x, y| axis_of(t, *x).dot(n).abs().total_cmp(&axis_of(t, *y).dot(n).abs()))
+            .unwrap_or(0);
+        let side = axis_of(t, k).dot(n).signum();
+        hit = Some(Hit {
+            target: i,
+            axis: k,
+            kind: Kind::Touch,
+            side,
+            sel_side: -side,
+            contact: true,
+        });
+        let Constraint::Plane(pn) = c else { break };
+        // what is left of the move, without its part into the face
+        let w = n - pn * pn.dot(n);
+        if w.length_squared() < 1e-6 {
+            break;
+        }
+        let left = rest * (1.0 - at);
+        rest = left - w * (left.dot(w) / w.length_squared()).min(0.0);
+        if rest.length_squared() < 1e-12 {
+            break;
+        }
+    }
+    (moved_by, hit)
 }
 
 /// The prims a drag can snap to: shown in the world (not worn, not an
@@ -498,5 +587,61 @@ mod tests {
         assert!(find(&sel, &[t], Constraint::Axis(Vec3::X), &|_, _| f32::INFINITY).is_none());
         assert!(find(&sel, &[t], Constraint::Axis(Vec3::X), &|_, _| f32::NAN).is_none());
         assert!(find(&sel, &[], Constraint::Plane(Vec3::Z), &px).is_none());
+    }
+
+    #[test]
+    fn a_move_stops_at_the_first_face_even_far_past_it() {
+        let sel = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY);
+        let near = cube(Vec3::new(2.0, 0.2, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
+        let far = cube(Vec3::new(4.0, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
+        for by in [1.5, 3.0, 10.0] {
+            let (moved_by, hit) = stop(&sel, Vec3::X * by, &[far, near], Constraint::Axis(Vec3::X));
+            assert!(moved_by.abs_diff_eq(Vec3::X, 1e-5), "{by}: {moved_by}");
+            let hit = hit.expect("a contact");
+            assert_eq!((hit.target, hit.axis, hit.side, hit.contact), (1, 0, -1.0, true));
+        }
+        // short of it, or away from it: the whole move
+        for by in [Vec3::X * 0.9, Vec3::X * -3.0, Vec3::Y * 2.0] {
+            assert_eq!(stop(&sel, by, &[near], Constraint::Axis(by.normalize())), (by, None));
+        }
+    }
+
+    #[test]
+    fn a_resting_box_stays_on_the_face_and_slides_along_it() {
+        // resting on the -X face of a target
+        let sel = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::IDENTITY);
+        let t = cube(Vec3::new(1.0, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
+        let (pushed, _) = stop(&sel, Vec3::X * 0.3, &[t], Constraint::Axis(Vec3::X));
+        assert!(pushed.length() < 1e-5, "{pushed}");
+        let (slid, hit) = stop(&sel, Vec3::new(0.4, 0.7, 0.0), &[t], Constraint::Plane(Vec3::Z));
+        assert!(slid.abs_diff_eq(Vec3::new(0.0, 0.7, 0.0), 1e-5), "{slid}");
+        assert!(hit.is_some());
+        // along the face, no contact in the way
+        let (along, hit) = stop(&sel, Vec3::Y * 0.7, &[t], Constraint::Plane(Vec3::Z));
+        assert_eq!((along, hit), (Vec3::Y * 0.7, None));
+    }
+
+    #[test]
+    fn a_turned_box_is_met_on_its_slanted_side() {
+        let t = cube(
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::splat(0.5),
+            Quat::from_rotation_z(45f32.to_radians()),
+        );
+        let sel = cube(Vec3::new(0.0, 0.3, 0.0), Vec3::splat(0.4), Quat::IDENTITY);
+        let (moved_by, hit) = stop(&sel, Vec3::X * 3.0, &[t], Constraint::Axis(Vec3::X));
+        let rest = moved(&sel, moved_by);
+        assert!(hit.is_some() && moved_by.x > 0.5 && moved_by.x < 1.5, "{moved_by}");
+        // touching: no further step in, any step back
+        assert!(stop(&rest, Vec3::X * 0.01, &[t], Constraint::Axis(Vec3::X)).0.length() < 1e-4);
+        assert!(entry(&rest, Vec3::X * -0.5, &t).is_none());
+    }
+
+    #[test]
+    fn a_box_already_inside_moves_out_freely() {
+        let room = cube(Vec3::ZERO, Vec3::splat(5.0), Quat::IDENTITY);
+        let sel = cube(Vec3::new(1.0, 0.0, 0.0), Vec3::splat(0.5), Quat::IDENTITY);
+        let by = Vec3::X * 8.0;
+        assert_eq!(stop(&sel, by, &[room], Constraint::Axis(Vec3::X)), (by, None));
     }
 }

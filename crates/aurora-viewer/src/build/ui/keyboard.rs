@@ -145,7 +145,11 @@ impl Shortcut {
                 let on = !settings.edit_linked;
                 tool.set_edit_linked(world, settings, on);
             }
-            Self::Snap => settings.snap = !settings.snap,
+            Self::Snap => settings.set_snap_mode(if settings.snap {
+                crate::build::SnapMode::Off
+            } else {
+                crate::build::SnapMode::Grid
+            }),
             Self::SelectionGrid => tool.use_selection_for_grid(world, settings),
             Self::SnapXy => tool.snap_xy_to_grid(world, settings),
             Self::SelectPart { next, include } => tool.select_next_part(world, settings, next, include),
