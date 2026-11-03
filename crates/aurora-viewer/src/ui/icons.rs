@@ -540,6 +540,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_LinkItem", "link-filled"),
     ("Inv_LinkFolder", "link-filled"),
     ("Inv_TrashClosed", "trash-filled"),
+    ("Inv_SuitcaseClosed", "briefcase-filled"),
+    ("Inv_SuitcaseOpen", "briefcase-filled"),
     ("Inv_SysClosed", "folder-filled"),
     ("Inv_Invalid", "help-circle-filled"),
 ];

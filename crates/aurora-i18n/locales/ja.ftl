@@ -1678,6 +1678,9 @@ app-gpu-stall =
     ・次回の起動時に、Auroraが提案する安全なグラフィックを選ぶ。
 
     待ち続けますか？「はい」で待ち続け、「いいえ」でAuroraを閉じます（正しくログアウトされます）。
+app-gpu-recovered-title = グラフィックカードがリセットされました
+app-gpu-recovered = グラフィックカードのドライバーがリセットされました（画像の描画に時間がかかりすぎた、ビデオメモリがいっぱいになった、または他のプログラムがグラフィックカードを使用した可能性があります）。Auroraはグラフィックカードでウィンドウを開き直しました。ログインしたままで、ワールドはまもなく再読み込みされます。
+app-gpu-recovered-safe = 数分のうちに、グラフィックカードのドライバーが再びリセットされました。再発を防ぐため、Auroraは安全なグラフィック設定（Potatoレベル）でウィンドウを開き直しました。ログインしたままです。グラフィック設定は保存されており、ログイン画面で元に戻すことができます。
 app-gpu-lost-title = Auroraビューア：グラフィックカードが失われました
 app-gpu-lost =
     Auroraでグラフィックカードが動作しなくなりました。ドライバーがリセットされた（画像の描画に時間がかかりすぎた、またはビデオメモリがいっぱいになった）、あるいはグラフィックカードが取り外されたか、他のプログラムによって使用された可能性があります。これ以上何も描画できません。ＯＫをクリックするとAuroraが終了します（正常にログアウトされます）。
@@ -10386,6 +10389,7 @@ currency-contacting-lindex = LindeXに接続しています…
 currency-cannot-buy = 購入できません
 currency-more-information = 詳細情報
 currency-helper-unreachable = L$購入サービスが応答していません。後でもう一度お試しください。
+currency-password-needs-https = パスワードは送信されませんでした。この購入サービスは安全な接続（https）を使用していません。
 currency-checking-account = アカウントを確認しています…
 currency-unavailable-on-this-grid = このグリッドではビューアからL$を購入できません。
 currency-add-payment-method = リンデンドルを購入してSecond Lifeを最大限に楽しむには、支払い方法を追加してください。

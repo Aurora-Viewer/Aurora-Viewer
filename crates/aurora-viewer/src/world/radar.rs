@@ -16,6 +16,58 @@ pub const WHISPER_RANGE: f32 = 10.0;
 pub const CHAT_RANGE: f32 = 20.0;
 /// Range of a shout (CHAT_SHOUT_RADIUS).
 pub const SHOUT_RANGE: f32 = 100.0;
+
+/// How far chat carries on the agent's region: OpenSim regions may say
+/// otherwise in their OpenSimExtras (LFSimFeatureHandler::whisperRange,
+/// sayRange, shoutRange), else the usual 10, 20 and 100 m.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChatRanges {
+    pub whisper: f32,
+    pub say: f32,
+    pub shout: f32,
+}
+
+impl Default for ChatRanges {
+    fn default() -> Self {
+        ChatRanges {
+            whisper: WHISPER_RANGE,
+            say: CHAT_RANGE,
+            shout: SHOUT_RANGE,
+        }
+    }
+}
+
+impl ChatRanges {
+    pub fn from_extras(extras: Option<&aurora_net::OpenSimExtras>) -> Self {
+        let usual = Self::default();
+        let Some(e) = extras else { return usual };
+        ChatRanges {
+            whisper: e.whisper_range.unwrap_or(usual.whisper),
+            say: e.say_range.unwrap_or(usual.say),
+            shout: e.shout_range.unwrap_or(usual.shout),
+        }
+    }
+}
+
+/// The agent's region's ranges, set by the app as it changes: one value for
+/// the whole interface, as the Legacy Viewer's LFSimFeatureHandler.
+static RANGES: std::sync::RwLock<ChatRanges> = std::sync::RwLock::new(ChatRanges {
+    whisper: WHISPER_RANGE,
+    say: CHAT_RANGE,
+    shout: SHOUT_RANGE,
+});
+
+pub fn chat_ranges() -> ChatRanges {
+    RANGES.read().map(|r| *r).unwrap_or_default()
+}
+
+pub fn set_chat_ranges(ranges: ChatRanges) {
+    if let Ok(mut current) = RANGES.write()
+        && *current != ranges
+    {
+        *current = ranges;
+    }
+}
 /// FS_RADAR_LIST_UPDATE_INTERVAL.
 const SWEEP_INTERVAL: f64 = 1.0;
 /// Seconds the avatars of a region left behind by a teleport stay in the
@@ -190,6 +242,7 @@ impl Radar {
         now: f64,
     ) -> Vec<Event> {
         self.last_sweep = Some(now);
+        let say = chat_ranges().say;
         self.leave_regions(my_region, gaps, draw_distance, now);
         self.arrived.clear();
         self.departed.clear();
@@ -205,18 +258,18 @@ impl Radar {
             let same_region = Some(s.region) == my_region;
             let old = self.entries.get(&s.id);
             let (was_chat, was_draw) = match old {
-                Some(e) => (within(e.range, CHAT_RANGE), within(e.range, draw_distance)),
+                Some(e) => (within(e.range, say), within(e.range, draw_distance)),
                 None => (false, false),
             };
             if let Some(d) = range {
-                if d <= CHAT_RANGE && !was_chat {
+                if d <= say && !was_chat {
                     events.push(Event::ChatEnter(s.id, d));
                 }
                 if d <= draw_distance && !was_draw {
                     events.push(Event::DrawEnter(s.id, d));
                 }
             }
-            if was_chat && !within(range, CHAT_RANGE) {
+            if was_chat && !within(range, say) {
                 events.push(Event::ChatLeave(s.id));
             }
             if was_draw && !within(range, draw_distance) {
@@ -264,7 +317,7 @@ impl Radar {
             if present.contains(id) {
                 return true;
             }
-            if within(e.range, CHAT_RANGE) {
+            if within(e.range, say) {
                 events.push(Event::ChatLeave(*id));
             }
             if within(e.range, draw_distance) {
@@ -466,6 +519,18 @@ pub fn sightings(world: &World) -> Vec<Sighting> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opensim_regions_set_their_own_chat_ranges() {
+        assert_eq!(ChatRanges::from_extras(None), ChatRanges::default());
+        let extras = aurora_net::OpenSimExtras {
+            say_range: Some(30.0),
+            shout_range: Some(256.0),
+            ..Default::default()
+        };
+        let r = ChatRanges::from_extras(Some(&extras));
+        assert_eq!((r.whisper, r.say, r.shout), (WHISPER_RANGE, 30.0, 256.0));
+    }
 
     const HERE: RegionHandle = 1;
     const THERE: RegionHandle = 2;
