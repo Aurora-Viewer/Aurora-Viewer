@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub mod fallback;
+pub mod preview;
 
 pub const INTER: &str = "Inter";
 pub const NOTO: &str = "Noto Sans";
@@ -222,6 +223,13 @@ pub fn set_scale(ctx: &egui::Context, scale: f32) {
         data.insert_temp(egui::Id::unique(SCALE_ID), scale);
         data.get_temp::<Arc<egui::FontDefinitions>>(egui::Id::unique(DEFINITIONS_ID))
     });
+    install(ctx, definitions.as_deref().cloned().unwrap_or_default());
+}
+
+/// Install the interface fonts again as last set, without the faces added
+/// to them since (the previews of the system font list).
+fn reinstall(ctx: &egui::Context) {
+    let definitions = ctx.data(|data| data.get_temp::<Arc<egui::FontDefinitions>>(egui::Id::unique(DEFINITIONS_ID)));
     install(ctx, definitions.as_deref().cloned().unwrap_or_default());
 }
 

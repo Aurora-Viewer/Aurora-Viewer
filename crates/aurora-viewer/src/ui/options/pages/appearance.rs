@@ -180,7 +180,11 @@ fn font(cx: &mut Cx) {
                     .find(|f| s.font == format!("system:{}", f.path.display()))
                     .map_or_else(|| tr!("ui-options-no-system-font").to_owned(), |f| f.name.clone());
                 let mut changed = false;
-                egui::ComboBox::from_id_salt(ui.scope_id().with("system-font"))
+                let salt = ui.scope_id().with("system-font");
+                if st.demo_font_list.is_some() {
+                    egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
+                }
+                egui::ComboBox::from_id_salt(salt)
                     .width(COMBO_W)
                     .selected_text(shown)
                     .truncate()
@@ -192,14 +196,32 @@ fn font(cx: &mut Cx) {
                                 .desired_width(ui.available_width()),
                         );
                         let filter = st.font_filter.to_lowercase();
-                        for f in list.iter().filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter)) {
+                        let shown: Vec<&fonts::SystemFont> = list
+                            .iter()
+                            .filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter))
+                            .collect();
+                        // each name in its own face, loaded as it scrolls into view
+                        let mut previews = fonts::preview::Previews::begin(ui.ctx());
+                        for (i, f) in shown.iter().enumerate() {
                             let key = format!("system:{}", f.path.display());
                             let sel = s.font == key;
-                            if ui.selectable_label(sel, &f.name).clicked() && !sel {
+                            let mut name = RichText::new(&f.name);
+                            if let Some(family) = previews.family(f) {
+                                name = name.family(family);
+                            }
+                            let row = ui.selectable_label(sel, name);
+                            if ui.is_rect_visible(row.rect) {
+                                previews.visible(i);
+                            }
+                            if row.clicked() && !sel {
                                 s.font = key;
                                 r.font_changed = true;
                                 changed = true;
                             }
+                        }
+                        previews.finish(ui.ctx(), &shown);
+                        if st.demo_font_list == Some(true) {
+                            ui.scroll_with_delta(egui::vec2(0.0, -6.0));
                         }
                     });
                 changed
