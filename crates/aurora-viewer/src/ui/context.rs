@@ -1331,6 +1331,55 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
     answer
 }
 
+/// A link opened from outside the viewer names another grid than the login
+/// screen's: switch to `address` (`name`: the grid manager's name for it)?
+/// Some(true) on "Switch grid", Some(false) on "Cancel" or a click outside.
+pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: Option<&str>) -> Option<bool> {
+    use egui::RichText;
+    let mut answer = None;
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("grid_link_confirm")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+            if let Some(t) = super::icons::global("alert-triangle-filled") {
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                ui.painter().image(t.id(), rect, uv, p.amber);
+            }
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-login-grid-link-title"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+        });
+        ui.add_space(6.0);
+        ui.label(RichText::new(aurora_i18n::tr!("ui-login-grid-link-text")).size(12.5).color(p.muted));
+        ui.add_space(6.0);
+        if let Some(name) = name {
+            ui.label(RichText::new(name).size(12.5).strong().color(p.ink));
+        }
+        ui.add(
+            egui::Label::new(RichText::new(address).size(12.0).monospace().color(p.ink))
+                .wrap()
+                .selectable(true),
+        );
+        ui.add_space(8.0);
+        // the action, then "Cancel", like the other confirmations
+        ui.horizontal(|ui| {
+            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-login-grid-link-switch")).clicked() {
+                answer = Some(true);
+            }
+            if super::widgets::default_button(super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel"))).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    answer
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

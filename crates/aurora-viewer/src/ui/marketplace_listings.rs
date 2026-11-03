@@ -7,7 +7,7 @@
 //! LLFloaterMarketplaceValidation, originally LGPL 2.1.
 
 use super::icons::Icons;
-use super::inventory::{FolderDrag, InvDrag, listings::Panel, tree};
+use super::inventory::{listings::Panel, tree};
 use super::widgets::{self, ActionKind, Floater, Modal};
 use crate::theme::Palette;
 use crate::world::inventory::actions::{request_tree, under};
@@ -66,14 +66,38 @@ pub enum Action {
     },
 }
 
+/// What a move or an edit of the listings asks first (notifications.xml).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Prompt {
+    /// ConfirmMerchantMoveInventory: moved there, not copied.
+    MoveInventory,
+    /// ConfirmMerchantActiveChange: the content of a listed listing changes.
+    ActiveChange,
+    /// ConfirmMerchantClearVersion: a version folder leaves its place.
+    ClearVersion,
+    /// ConfirmListingCutOrDelete: SLM archives the listing.
+    ListingCutOrDelete,
+}
+
+impl Prompt {
+    fn text(self) -> &'static str {
+        match self {
+            Self::MoveInventory => aurora_i18n::tr!("marketplace-confirm-move"),
+            Self::ActiveChange => aurora_i18n::tr!("marketplace-confirm-active-change"),
+            Self::ClearVersion => aurora_i18n::tr!("marketplace-confirm-clear-version"),
+            Self::ListingCutOrDelete => aurora_i18n::tr!("marketplace-confirm-listing-cut-or-delete"),
+        }
+    }
+}
+
 /// A choice the merchant confirms first.
 #[derive(Debug, Clone)]
 enum Confirm {
-    /// ConfirmMerchantMoveInventory or ConfirmMerchantActiveChange.
+    /// A drop on a row of the window.
     Drop {
         dest: Uuid,
         ids: Vec<Uuid>,
-        active: bool,
+        prompt: Prompt,
     },
     /// ConfirmMerchantUnlist: associating a listed listing.
     Associate {
@@ -83,6 +107,7 @@ enum Confirm {
     Inventory {
         change: Mutation,
         cut: bool,
+        prompt: Prompt,
     },
     Paste {
         to: Uuid,
@@ -111,6 +136,22 @@ pub struct ListingsUi {
     reconciled: u64,
     demo_audited: bool,
     demo_menu: Option<Uuid>,
+}
+
+/// The inventory a drag holds over `r`: an item, a folder or a selection.
+fn carried(r: &egui::Response) -> Option<Vec<Uuid>> {
+    r.contains_pointer().then(|| super::inventory::drag::carried_ids(&r.ctx)).flatten()
+}
+
+/// The inventory cargo let go over `r` this frame, its payload cleared.
+/// Not `dnd_release_payload`: egui takes the payload before checking its
+/// type, so asking for an item first threw a dragged folder away.
+fn released(r: &egui::Response) -> bool {
+    let released = r.contains_pointer() && r.ctx.input(|i| i.pointer.any_released());
+    if released {
+        egui::DragAndDrop::clear_payload(&r.ctx);
+    }
+    released
 }
 
 /// isInActiveFolder: an object inside the version folder of a listed listing.
@@ -455,9 +496,7 @@ impl ListingsUi {
         panel.shortcuts(ui, inv, root);
         if root_drop {
             self.drop_target(ui, p, &zone.response, inv, worn, root, root, actions);
-        } else if zone.response.contains_pointer()
-            && (zone.response.dnd_release_payload::<InvDrag>().is_some() || zone.response.dnd_release_payload::<FolderDrag>().is_some())
-        {
+        } else if zone.response.contains_pointer() && carried(&zone.response).is_some() && released(&zone.response) {
             // TooltipOutboxCannotDropOnRoot
             self.message = aurora_i18n::tr!("marketplace-reason-cannot-drop-on-root").into();
         }
@@ -571,7 +610,7 @@ impl ListingsUi {
             })
             .inner;
         if !renaming {
-            response.dnd_set_drag_payload(FolderDrag(id));
+            panel.drag_source(ui, id, true, &response);
             panel.interact(ui, inv, id, &response);
             if response.double_clicked() {
                 self.toggle(id);
@@ -632,7 +671,7 @@ impl ListingsUi {
                 if renaming {
                     continue;
                 }
-                response.dnd_set_drag_payload(InvDrag(item));
+                panel.drag_source(ui, item, false, &response);
                 panel.interact(ui, inv, item, &response);
                 super::menu::context_menu(&response, p, |ui| {
                     panel
@@ -741,12 +780,14 @@ impl ListingsUi {
         dest: Uuid,
         actions: &mut Vec<Action>,
     ) {
-        let cargo = r
-            .dnd_hover_payload::<InvDrag>()
-            .map(|d| d.0)
-            .or_else(|| r.dnd_hover_payload::<FolderDrag>().map(|d| d.0));
-        let Some(id) = cargo else { return };
-        let plan = validate::drop_plan(inv, root, dest, &[id], worn);
+        // an item, a folder or a selection, like an inventory window
+        let Some(ids) = carried(r) else { return };
+        let plan = if ids.iter().any(|id| self.data.activation_state(*id)) {
+            // TooltipOutboxDragActive: a listed listing or its version folder
+            Err(aurora_i18n::tr!("marketplace-reason-drag-active").to_owned())
+        } else {
+            validate::drop_plan(inv, root, dest, &ids, worn)
+        };
         // the inventory's drop feedback: outline and cursor
         tree::drop_outline(ui, p, r.rect, plan.is_ok());
         ui.ctx().set_cursor_icon(if plan.is_ok() {
@@ -754,29 +795,37 @@ impl ListingsUi {
         } else {
             egui::CursorIcon::NotAllowed
         });
-        let released = r.dnd_release_payload::<InvDrag>().is_some() || r.dnd_release_payload::<FolderDrag>().is_some();
-        if !released {
+        if !released(r) {
             return;
         }
         match plan {
-            Ok(_) => {
-                let from_listings = mp::depth(inv, root, id) >= 0;
-                let active =
-                    in_active_folder(&self.data, inv, root, dest) || (from_listings && in_active_folder(&self.data, inv, root, id));
-                if active || !from_listings {
-                    self.confirm = Some(Confirm::Drop {
-                        dest,
-                        ids: vec![id],
-                        active,
-                    });
-                } else {
-                    self.apply_drop(inv, worn, root, dest, &[id], actions);
-                }
-            }
+            Ok(_) => match self.drop_prompt(inv, root, &ids, dest) {
+                Some(prompt) => self.confirm = Some(Confirm::Drop { dest, ids, prompt }),
+                None => self.apply_drop(inv, worn, root, dest, &ids, actions),
+            },
             Err(reason) => {
                 self.message.clone_from(&reason);
                 actions.push(notify(&aurora_i18n::tr!("marketplace-alert-paste-failed", error = reason)));
             }
+        }
+    }
+
+    /// The question of a drop, in the order of
+    /// LLFolderBridge::dragCategoryIntoFolder and dragItemIntoFolder; one
+    /// question for the whole cargo.
+    fn drop_prompt(&self, inv: &Inventory, root: Uuid, ids: &[Uuid], dest: Uuid) -> Option<Prompt> {
+        let from_listings = |id: &&Uuid| mp::depth(inv, root, **id) >= 0;
+        let mut moved = ids.iter().filter(from_listings);
+        if moved.clone().any(|id| in_active_folder(&self.data, inv, root, *id)) || in_active_folder(&self.data, inv, root, dest) {
+            Some(Prompt::ActiveChange)
+        } else if moved.clone().any(|id| self.data.is_version_folder(*id)) {
+            Some(Prompt::ClearVersion)
+        } else if moved.any(|id| self.data.is_listed(*id)) {
+            Some(Prompt::ListingCutOrDelete)
+        } else if !ids.iter().all(|id| from_listings(&id)) {
+            Some(Prompt::MoveInventory)
+        } else {
+            None
         }
     }
 
@@ -809,10 +858,9 @@ impl ListingsUi {
         };
         if let Some(confirm) = self.confirm.clone() {
             let text = match &confirm {
-                Confirm::Drop { active: true, .. } | Confirm::Paste { active: true, .. } | Confirm::Inventory { .. } => {
-                    aurora_i18n::tr!("marketplace-confirm-active-change")
-                }
-                Confirm::Drop { .. } | Confirm::Paste { .. } => aurora_i18n::tr!("marketplace-confirm-move"),
+                Confirm::Drop { prompt, .. } | Confirm::Inventory { prompt, .. } => prompt.text(),
+                Confirm::Paste { active: true, .. } => aurora_i18n::tr!("marketplace-confirm-active-change"),
+                Confirm::Paste { .. } => aurora_i18n::tr!("marketplace-confirm-move"),
                 Confirm::Associate { .. } => aurora_i18n::tr!("marketplace-confirm-unlist"),
             };
             let mut answer = None;
@@ -863,7 +911,7 @@ impl ListingsUi {
                             let source = self.data.listing_folder(id);
                             self.data.associate_listing(inv, folder, source, id);
                         }
-                        Confirm::Inventory { change, cut } => actions.push(Action::Paste { change, cut }),
+                        Confirm::Inventory { change, cut, .. } => actions.push(Action::Paste { change, cut }),
                         Confirm::Paste { to, ids, copy, .. } => self.paste_inventory(inv, worn, protected, to, &ids, copy, true, actions),
                     }
                 }
@@ -1020,6 +1068,7 @@ fn placeholder(ui: &mut egui::Ui, p: &Palette, title: &str, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::inventory::actions as rules;
     use crate::world::marketplace::demo;
     use std::time::Instant;
 
@@ -1104,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn item_rows_only_edit_the_listing_and_active_structural_changes_ask_first() {
+    fn item_rows_only_edit_the_listing_and_active_changes_ask_first() {
         let inv = demo_inventory();
         let mut ui = merchant(&inv);
         let root = mp::root(&inv).expect("listings root");
@@ -1112,13 +1161,84 @@ mod tests {
         let commands = ui.inventory_commands(&inv, root, item);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command, Command::Edit);
+        // doToSelected asks before "rename" and "properties" too
         let change =
             crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
-        assert!(ui.guard_inventory_change(&inv, change, false).is_some());
+        assert!(ui.guard_inventory_change(&inv, change, false).is_none());
+        assert!(matches!(
+            ui.confirm,
+            Some(Confirm::Inventory {
+                prompt: Prompt::ActiveChange,
+                ..
+            })
+        ));
+        assert!(ui.open);
+        ui.confirm = None;
         let change = crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move");
         assert!(ui.guard_inventory_change(&inv, change, false).is_none());
-        assert!(matches!(ui.confirm, Some(Confirm::Inventory { .. })));
-        assert!(ui.open);
+        assert!(matches!(
+            ui.confirm,
+            Some(Confirm::Inventory {
+                prompt: Prompt::ActiveChange,
+                ..
+            })
+        ));
+        // the same edits outside an active listing go through
+        let idle = Uuid::from_u128(8_400_101);
+        let change =
+            crate::world::inventory::actions::patch(&inv, idle, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
+        assert!(ui.guard_inventory_change(&inv, change, false).is_some());
+    }
+
+    #[test]
+    fn a_listed_listing_and_its_version_folder_stay_in_place_like_the_legacy_viewer() {
+        let mut inv = demo_inventory();
+        let none = HashSet::new();
+        let item = Uuid::from_u128(8_400_102);
+        // before the SLM data loads, no listing folder moves or goes to the Trash
+        inv.listing_holds = ListingsUi::default().data.holds();
+        for id in [demo::HOODIE, demo::HOODIE_V1, demo::POSTER, demo::LANTERN] {
+            assert!(!rules::movable(&inv, id, &none) && !rules::removable(&inv, id, &none), "{id}");
+        }
+        assert!(rules::removable(&inv, item, &none), "items are not held");
+        let ui = merchant(&inv);
+        inv.listing_holds = ui.data.holds();
+        for id in [demo::HOODIE, demo::HOODIE_V2] {
+            assert!(!rules::movable(&inv, id, &none) && !rules::removable(&inv, id, &none), "{id}");
+        }
+        for id in [demo::HOODIE_V1, demo::POSTER, demo::POSTER_VERSION, demo::LANTERN, item] {
+            assert!(rules::movable(&inv, id, &none) && rules::removable(&inv, id, &none), "{id}");
+        }
+        assert_eq!(
+            rules::move_selection(&inv, &[demo::HOODIE_V2], inv.root, &none, &none)
+                .err()
+                .as_deref(),
+            Some(aurora_i18n::tr!("marketplace-reason-drag-active"))
+        );
+    }
+
+    #[test]
+    fn moving_a_version_or_listing_folder_asks_like_the_legacy_viewer() {
+        let inv = demo_inventory();
+        let mut ui = merchant(&inv);
+        let mut ask = |id: Uuid, cut: bool| {
+            ui.confirm = None;
+            let change = rules::patch(&inv, id, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move");
+            let passed = ui.guard_inventory_change(&inv, change, cut).is_some();
+            match &ui.confirm {
+                Some(Confirm::Inventory { prompt, .. }) => Some(*prompt),
+                _ => {
+                    assert!(passed);
+                    None
+                }
+            }
+        };
+        assert_eq!(ask(demo::POSTER_VERSION, false), Some(Prompt::ClearVersion));
+        // pasteFromClipboard only asks for an active listing
+        assert_eq!(ask(demo::POSTER_VERSION, true), None);
+        assert_eq!(ask(demo::POSTER, false), Some(Prompt::ListingCutOrDelete));
+        assert_eq!(ask(demo::POSTER, true), Some(Prompt::ListingCutOrDelete));
+        assert_eq!(ask(demo::LANTERN, false), None, "a folder with no listing");
     }
 
     #[test]
@@ -1192,6 +1312,70 @@ mod tests {
         assert!(actions.iter().any(|a| matches!(a, Action::Edit(_))), "{actions:?}");
         let requests = ui.data.take_requests(std::time::Instant::now());
         assert!(matches!(requests[..], [aurora_net::slm::SlmRequest::Create { folder, .. }] if folder == demo::LANTERN));
+    }
+
+    #[test]
+    fn a_folder_let_go_over_a_row_is_released() {
+        let ctx = egui::Context::default();
+        let folder = demo::LANTERN;
+        let at = egui::pos2(50.0, 20.0);
+        let frame = |events: Vec<egui::Event>| {
+            let mut seen = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(200.0, 100.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let r = ui.allocate_response(Vec2::new(200.0, 40.0), egui::Sense::hover());
+                    let cargo = carried(&r);
+                    seen = cargo.map(|id| (id, released(&r)));
+                },
+            );
+            // no renderer applies the font texture here
+            output.textures_delta.clear();
+            seen
+        };
+        frame(vec![egui::Event::PointerMoved(at)]);
+        egui::DragAndDrop::set_payload(&ctx, crate::ui::inventory::FolderDrag(folder));
+        assert_eq!(frame(vec![egui::Event::PointerMoved(at)]), Some((vec![folder], false)));
+        let up = egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        };
+        assert_eq!(frame(vec![up]), Some((vec![folder], true)), "the folder reaches the drop");
+        assert!(!egui::DragAndDrop::has_any_payload(&ctx), "and the release clears it");
+    }
+
+    #[test]
+    fn a_selection_drops_into_a_listing_like_the_legacy_viewer() {
+        let inv = demo_inventory();
+        let ui = merchant(&inv);
+        let root = mp::root(&inv).unwrap();
+        let worn = HashSet::new();
+        let (chair, vase, texture) = (Uuid::from_u128(8_400_110), Uuid::from_u128(8_400_111), Uuid::from_u128(8_400_112));
+        let folders = |change: &Mutation| change.operations.iter().filter(|op| matches!(op, Operation::Folder { .. })).count();
+        // move_item_to_marketplacelistings: copyable items go straight into
+        // a version folder, a no-copy one into a stock folder of its own
+        let change = validate::drop_plan(&inv, root, demo::DRAFT_VERSION, &[chair, texture], &worn).expect("two items");
+        assert_eq!(folders(&change), 0);
+        let change = validate::drop_plan(&inv, root, demo::DRAFT_VERSION, &[vase], &worn).expect("no-copy item");
+        assert_eq!(folders(&change), 1);
+        // on a listing folder, an item gets a version folder
+        let change = validate::drop_plan(&inv, root, demo::DRAFT, &[chair], &worn).expect("item on a listing");
+        assert_eq!(folders(&change), 1);
+        assert_eq!(
+            ui.drop_prompt(&inv, root, &[chair, texture], demo::DRAFT_VERSION),
+            Some(Prompt::MoveInventory)
+        );
+        assert_eq!(
+            ui.drop_prompt(&inv, root, &[chair, Uuid::from_u128(8_400_102)], demo::DRAFT_VERSION),
+            Some(Prompt::ActiveChange),
+            "one question for the whole cargo, the strongest"
+        );
     }
 
     #[test]

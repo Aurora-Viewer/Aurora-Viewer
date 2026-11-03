@@ -398,7 +398,6 @@ struct ObjMedia {
     /// Worn by us (an attachment or a HUD), its avatar already known: false
     /// while a parent has not arrived.
     on_own_avatar: bool,
-    owner: Uuid,
     /// Agent of the last media change ("x-mv:<version>/<agent>").
     changed_by: Uuid,
 }

@@ -20,7 +20,6 @@ struct Row {
 #[derive(Default)]
 pub(in crate::imports) struct Picker {
     order: Option<Arc<view::PickerOrder>>,
-    protected: HashSet<Uuid>,
     rows: Vec<Row>,
     expanded: HashSet<Uuid>,
     query: String,
@@ -38,16 +37,15 @@ impl Picker {
         }
     }
 
-    fn refresh(&mut self, ctx: &egui::Context, inventory: &Inventory, protected: &HashSet<Uuid>) {
+    fn refresh(&mut self, ctx: &egui::Context, inventory: &Inventory) {
         let order = view::picker_order(ctx, inventory);
-        if self.order.as_ref().is_some_and(|old| Arc::ptr_eq(old, &order)) && self.protected == *protected {
+        if self.order.as_ref().is_some_and(|old| Arc::ptr_eq(old, &order)) {
             return;
         }
         let root_changed = self.rows.first().is_none_or(|row| row.id != inventory.root);
         let excluded: HashSet<_> = [14, 46, 48, 50, 53]
             .into_iter()
             .filter_map(|kind| rules::system(inventory, kind))
-            .chain(protected.iter().copied())
             .collect();
         self.rows.clear();
         let mut seen = HashSet::new();
@@ -84,7 +82,6 @@ impl Picker {
             self.expanded.insert(inventory.root);
         }
         self.order = Some(order);
-        self.protected.clone_from(protected);
         self.filter = None;
     }
 
@@ -132,7 +129,7 @@ impl Picker {
         self.filter = Some(query);
     }
 
-    pub(super) fn show(&mut self, ui: &mut egui::Ui, p: &Palette, inventory: &Inventory, protected: &HashSet<Uuid>, selected: &mut Uuid) {
+    pub(super) fn show(&mut self, ui: &mut egui::Ui, p: &Palette, inventory: &Inventory, selected: &mut Uuid) {
         let current = if inventory.folders.contains_key(selected) {
             inventory_ui::folder_name(inventory, *selected)
         } else {
@@ -144,7 +141,7 @@ impl Picker {
             .height(320.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
-                self.refresh(ui.ctx(), inventory, protected);
+                self.refresh(ui.ctx(), inventory);
                 let opening = !self.opened;
                 if opening {
                     self.reveal(*selected);

@@ -113,6 +113,10 @@ pub fn slot_capacity(forced: Option<&str>) -> u32 {
 fn page_capacity(bindable: u32, partial: bool) -> u32 {
     if partial { bindable } else { bindable.min(UNPARTIAL_PAGES) }.clamp(1, MAX_PAGES)
 }
+/// Descriptors of the "textures" layout besides its pages: the sampler and
+/// the storage buffer (`TextureTable::new`). A set of the layout holds the
+/// pages plus these.
+pub(crate) const OTHER_DESCRIPTORS: u32 = 2;
 /// Without partially bound arrays every element of the page array is bound
 /// in every pass (holes repeat page 0), so the array is kept shorter.
 const UNPARTIAL_PAGES: u32 = 2048;
@@ -1230,6 +1234,7 @@ impl TextureTable {
                     },
                     count: NonZeroU32::new(page_capacity),
                 },
+                // the entries after the pages: `OTHER_DESCRIPTORS`
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,

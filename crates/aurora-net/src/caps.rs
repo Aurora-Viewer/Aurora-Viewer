@@ -13,6 +13,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // these (session_offline.rs)
     "AcceptFriendship",
     "AcceptGroupInvite",
+    "AgentExperiences",
     "AgentPreferences",
     "AgentProfile",
     // the scripts of my attachments (Script info)
@@ -22,6 +23,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ChatSessionRequest",
     "CharacterProperties",
     "CopyInventoryFromNotecard",
+    // a new folder on a grid without AIS (LLInventoryModel::createNewCategory)
+    "CreateInventoryCategory",
     "DeclineFriendship",
     "DeclineGroupInvite",
     // the Region / Estate window (llviewerregion.cpp buildCapabilityNames):
@@ -41,7 +44,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "FetchLibDescendents2",
     // the experience picker of About Land (LLExperienceCache::findExperienceByName)
     "FindExperienceByName",
+    // the Experiences window's lists (LLFloaterExperiences::refreshContents)
+    "GetAdminExperiences",
     "GetCreatorExperiences",
+    "GetExperiences",
     "GetDisplayNames",
     "GetExperienceInfo",
     "GetMesh",
@@ -129,6 +135,12 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // Preferences › Privacy: online visibility, offline IMs by e-mail
     // (LLAgent::sendAgentUserInfoRequest / sendAgentUpdateUserInfo)
     "UserInfo",
+    // OpenSim's flag for PBR terrain, not a capability: only a viewer that
+    // asks for it gets the region's terrain materials (TerrainPBR1-4) in
+    // RegionHandshake's TerrainDetail0-3, the others get the legacy terrain
+    // textures. The Legacy Viewer asks for it everywhere
+    // (LLViewerRegionImpl::buildCapabilityNames); other grids ignore it.
+    "VETPBR",
     "ViewerAsset",
     "ViewerStats",
     "VoiceSignalingRequest",
@@ -224,6 +236,12 @@ mod language_tests {
     }
 
     #[test]
+    fn opensim_pbr_terrain_is_asked_for() {
+        // OpenSim sends PBR terrain materials only to viewers asking for it
+        assert!(REQUESTED_CAPS.contains(&"VETPBR"));
+    }
+
+    #[test]
     fn the_group_profile_capabilities_are_requested() {
         for cap in ["GroupAPIv1", "GroupExperiences", "GroupMemberData"] {
             assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
@@ -295,7 +313,7 @@ async fn send_llsd(req: reqwest::RequestBuilder, kind: HttpKind) -> Result<Llsd,
         Ok(resp) => resp,
         Err(e) => {
             finish(timed, 0, 0, false);
-            return Err(CapsError::Http(e.to_string()));
+            return Err(CapsError::Http(e.without_url().to_string()));
         }
     };
     let status = resp.status();
@@ -307,7 +325,7 @@ async fn send_llsd(req: reqwest::RequestBuilder, kind: HttpKind) -> Result<Llsd,
         Ok(bytes) => bytes,
         Err(e) => {
             finish(timed, 0, 0, false);
-            return Err(CapsError::Http(e.to_string()));
+            return Err(CapsError::Http(e.without_url().to_string()));
         }
     };
     finish(timed, status.as_u16(), bytes.len(), true);

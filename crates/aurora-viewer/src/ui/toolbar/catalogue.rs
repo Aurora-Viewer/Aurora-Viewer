@@ -67,13 +67,15 @@ pub const COMMANDS: &[Command] = commands![
     "block_list", "ban", "toolbar-command-block-list", true;
     "contact_sets", "users-group", "toolbar-command-contact-sets", true;
     "stop_animations", "player-stop-filled", "ui-context-stop-animations", true;
+    "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", true;
+    "beacons", "bulb-filled", "toolbar-command-beacons", true;
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", false;
     "destinations", "map-2", "toolbar-command-destinations", false;
     "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
-    "picks", "heart-filled", "toolbar-command-picks", false;
+    "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
     "flickr", "brand-flickr", "toolbar-command-flickr", false;
     "primfeed", "rss", "toolbar-command-primfeed", false;
@@ -82,24 +84,22 @@ pub const COMMANDS: &[Command] = commands![
     "voice", "Command_Voice_Icon", "toolbar-command-voice", false;
     "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", false;
     "webbrowser", "world-filled", "toolbar-command-web-browser", false;
-    "defaultchatbar", "message-filled", "toolbar-command-chat-bar", false;
+    "defaultchatbar", "message-filled", "toolbar-command-chat-bar", true;
     "areasearch", "zoom-scan-filled", "toolbar-command-area-search", true;
     "settings_debug", "terminal-2", "toolbar-command-debug-settings", false;
-    "statistics", "statistics", "toolbar-command-statistics", false;
+    "statistics", "statistics", "toolbar-command-statistics", true;
     "soundexplorer", "music", "toolbar-command-sound-explorer", true;
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
     "phototools", "camera-cog", "toolbar-command-phototools", false;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
     "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
-    "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", false;
     "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
-    "group_titles", "tags-filled", "toolbar-command-group-titles", false;
+    "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
-    "beacons", "bulb-filled", "toolbar-command-beacons", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
     "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
     "omnifilter", "filter-filled", "toolbar-command-omnifilter", false;

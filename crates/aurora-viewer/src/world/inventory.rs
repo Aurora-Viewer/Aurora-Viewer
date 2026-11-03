@@ -2,7 +2,6 @@
 
 use aurora_llsd::Llsd;
 use aurora_net::inventory::{FolderContents, InvFolder, InvItem, parse_skeleton};
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 #[cfg(test)]
@@ -11,9 +10,11 @@ mod action_tests;
 pub mod actions;
 pub mod background;
 pub mod demo;
+pub mod items;
 mod lost;
 mod parents;
 pub mod preview;
+mod system;
 pub mod wearable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,8 @@ pub struct Folder {
 
 #[derive(Default)]
 pub struct Inventory {
+    /// Root/system lookups retained until the inventory changes.
+    pub(crate) system_folders: system::Cache,
     /// Session-only RLVa preview restrictions, shared by every inventory floater.
     pub rlva_preview_mask: u8,
     pub owner: Uuid,
@@ -42,7 +45,7 @@ pub struct Inventory {
     pub lib_root: Uuid,
     pub lib_owner: Uuid,
     pub folders: HashMap<Uuid, Folder>,
-    pub items: HashMap<Uuid, InvItem>,
+    pub items: items::Items,
     /// Folders waiting to be fetched (id, library).
     pub queue: Vec<(Uuid, bool)>,
     /// Folders asked for while the cache file is being read (`hold_requests`).
@@ -57,6 +60,9 @@ pub struct Inventory {
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
     pub item_retries: HashSet<Uuid>,
+    /// The listing folders the Marketplace data holds in place, set by the
+    /// listings every frame (`marketplace::Holds`).
+    pub listing_holds: super::marketplace::Holds,
     pub(crate) repaired_parents: HashMap<Uuid, Uuid>,
     pub(crate) pending_parent_repairs: HashSet<Uuid>,
     pub(crate) deferred_parents: HashMap<Uuid, parents::ItemSource>,
@@ -293,9 +299,15 @@ impl Inventory {
             // index items by parent, so forgotten links stay visible (#1515).
             // Reconcile once per batch, including links already absent from
             // the child lists; originals and other folders remain untouched.
-            self.items.retain(|id, item| {
-                !matches!(item.asset_type, 24 | 25) || refreshed.get(&item.parent).is_none_or(|listed| listed.contains(id))
-            });
+            // The links come from the parent index, not a scan of every
+            // record: ~6 ms per readback with 220,000 items (#1963).
+            for (folder, listed) in &refreshed {
+                for id in self.items.links_in(*folder) {
+                    if !listed.contains(&id) {
+                        self.items.remove(&id);
+                    }
+                }
+            }
             for id in refreshed.keys() {
                 if let Some(folder) = self.folders.get_mut(id) {
                     folder.items.retain(|item| self.items.contains_key(item));
@@ -335,6 +347,7 @@ impl Inventory {
         self.generation += 1;
         for mut it in items {
             self.preserve_favorite(&mut it);
+            calling_card_target(&mut it);
             if !it.parent.is_nil() && self.repaired_parents.get(&it.id).is_some_and(|parent| *parent != it.parent) {
                 self.repaired_parents.remove(&it.id);
                 self.pending_parent_repairs.remove(&it.id);
@@ -367,6 +380,9 @@ impl Inventory {
         items.retain(|item| !item.id.is_nil());
         for item in &mut items {
             self.preserve_favorite(item);
+            // before the comparison below: a card's record is otherwise
+            // always "changed"
+            calling_card_target(item);
         }
         let mut changed = HashSet::new();
         // Folders whose subfolders changed, sorted again below; moved items
@@ -635,10 +651,12 @@ impl Inventory {
             cur.info.thumbnail = c.thumbnail;
             cur.state = FetchState::Fetched;
             let mut listed = Vec::with_capacity(c.items.len());
-            for it in c.items {
-                if let Entry::Vacant(slot) = self.items.entry(it.id) {
+            for mut it in c.items {
+                // caches written before the cards' target was read
+                calling_card_target(&mut it);
+                if !self.items.contains_key(&it.id) {
                     listed.push(it.id);
-                    slot.insert(it);
+                    self.items.insert(it.id, it);
                 }
             }
             if let Some(cur) = self.folders.get_mut(&c.id) {
@@ -662,6 +680,22 @@ impl Inventory {
         for id in self.held.take().unwrap_or_default() {
             self.request(id);
         }
+    }
+}
+
+/// LLInventoryModel::updateItem (indra/newview/llinventorymodel.cpp): a
+/// calling card made by a viewer (create_inventory_callingcard, a resident
+/// dragged into the inventory) is created by its owner and names its resident
+/// by key in its description. That key becomes the card's creator, which
+/// every calling card action reads: without it, opening the card showed our
+/// own profile. The friendship cards made by the server have no key there.
+fn calling_card_target(item: &mut InvItem) {
+    // LLUUID::set accepts the 36-character hyphenated form
+    if item.asset_type == 2
+        && item.desc.len() == 36
+        && let Ok(id) = Uuid::try_parse(&item.desc)
+    {
+        item.creator = id;
     }
 }
 

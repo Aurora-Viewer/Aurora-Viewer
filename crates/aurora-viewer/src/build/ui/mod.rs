@@ -27,7 +27,7 @@ mod mesh;
 mod object;
 pub(crate) mod particles;
 mod replace;
-mod texture;
+pub(in crate::build) mod texture;
 mod texture_preview;
 mod tools;
 mod workspace;

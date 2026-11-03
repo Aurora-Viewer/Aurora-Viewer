@@ -108,6 +108,10 @@ struct GtaoParams {
     // where the point moved on its own: the current frame's least weight,
     // the clip's half width in standard deviations
     own: vec4<f32>,
+    // a tile of a photo: its part of the photo (left, top, width, height),
+    // and `context.x` 1 when the samples past it read `photo_context`
+    photo: vec4<f32>,
+    context: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: GtaoParams;
@@ -137,6 +141,9 @@ struct GtaoParams {
 // The results at the scene's size, from the half-resolution ones (`upsample`).
 @group(0) @binding(19) var up_out: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(20) var up_il_out: texture_storage_2d<rgba16float, write>;
+// A tiled photo's view depth and its levels, of the whole photo drawn small
+// before the tiles (`PhotoContext` in types.rs).
+@group(0) @binding(21) var photo_context: texture_2d<f32>;
 
 const PI: f32 = 3.1415926535897932;
 const PI_HALF: f32 = 1.5707963267948966;
@@ -222,11 +229,40 @@ fn prefilter_depth(@builtin(global_invocation_id) id: vec3<u32>) {
 // The view depth at `uv` from the level a sample `mip` levels coarse reads
 // (XeGTAO samples the level with a point sampler: the nearest level, the
 // texel under the point).
-fn depth_at(uv: vec2<f32>, mip: f32) -> f32 {
+fn depth_at(uv_in: vec2<f32>, mip: f32) -> f32 {
+    var uv = uv_in;
+    if (g.context.x > 0.5 && outside(uv)) {
+        // past the photo's own edges its edge, as in one pass: the tile's
+        // when that edge is the tile's
+        let photo_uv = clamp(g.photo.xy + uv * g.photo.zw, vec2<f32>(0.0), vec2<f32>(1.0));
+        uv = (photo_uv - g.photo.xy) / g.photo.zw;
+        if (outside(uv)) {
+            return context_depth(photo_uv, mip);
+        }
+    }
     let lvl = i32(clamp(floor(mip + 0.5), 0.0, MIP_LEVELS - 1.0));
     let size = vec2<i32>(textureDimensions(depth_mips, lvl));
     let c = clamp(vec2<i32>(floor(uv * vec2<f32>(size))), vec2<i32>(0), size - vec2<i32>(1));
     return textureLoad(depth_mips, c, lvl).x;
+}
+
+fn outside(uv: vec2<f32>) -> bool {
+    return any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0));
+}
+
+// A sample past a photo tile: the whole photo's depth at `photo_uv`, from
+// the level as coarse in the photo as the tile's level `mip`. A texel of
+// the tile's first level is `photo.z / its width` of the photo wide, one of
+// the context's `1 / its width`: the context's level is `mip` plus the log
+// of their ratio (below its first level, its first: it is drawn smaller).
+fn context_depth(photo_uv: vec2<f32>, mip: f32) -> f32 {
+    let tile = f32(textureDimensions(depth_mips, 0).x);
+    let whole = f32(textureDimensions(photo_context, 0).x);
+    let levels = f32(textureNumLevels(photo_context));
+    let lvl = i32(clamp(floor(mip + log2(g.photo.z * whole / tile) + 0.5), 0.0, levels - 1.0));
+    let size = vec2<i32>(textureDimensions(photo_context, lvl));
+    let c = clamp(vec2<i32>(floor(photo_uv * vec2<f32>(size))), vec2<i32>(0), size - vec2<i32>(1));
+    return textureLoad(photo_context, c, lvl).x;
 }
 
 fn depth0(px: vec2<i32>) -> f32 {
@@ -265,7 +301,11 @@ fn hilbert_index(px: u32, py: u32) -> u32 {
 // low-discrepancy pattern the blur takes out), and the frame index `t`
 // moves it along by XeGTAO's 288 per frame, over 64 frames, for the
 // accumulation to gather different samples (0: the same every frame).
-fn pixel_noise(px: vec2<u32>, t: u32) -> vec2<f32> {
+// Counted from the whole photo's corner in a tile, whose origin is not on
+// the pattern's 64 pixels at half resolution: each tile had its own grain,
+// a block along its border.
+fn pixel_noise(px_in: vec2<u32>, t: u32) -> vec2<f32> {
+    let px = px_in + vec2<u32>(round(g.photo.xy / g.photo.zw * target_size()));
     let index = hilbert_index(px.x % HILBERT_WIDTH, px.y % HILBERT_WIDTH) + 288u * (t % 64u);
     return fract(vec2<f32>(0.5) + f32(index) * vec2<f32>(0.75487766624669276005, 0.5698402909980532659114));
 }

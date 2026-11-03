@@ -544,6 +544,46 @@ fn parse_speed(text: &str) -> Option<f64> {
 }
 
 /// A flag just raised opens the window on its tab; otherwise it stays.
+/// The camera (`movement` false) or movement controls asked for by a
+/// toolbar button or a shortcut (`toggle`, LLFloaterReg::toggleInstance) or
+/// a menu item (LLFloaterReg::showInstance). A minimized window expands on
+/// the tab asked for (minimized, Aurora's window only shows the camera's
+/// joysticks: #1815); the other tab shown switches to it; the tab shown
+/// closes with `toggle`. `classic`: Legacy's two windows, each its own.
+pub fn request(ctx: &egui::Context, camera: &mut bool, movement: &mut bool, classic: bool, want_movement: bool, toggle: bool) {
+    if classic {
+        let (id, open) = if want_movement {
+            (CLASSIC_MOVEMENT, movement)
+        } else {
+            (CLASSIC_CAMERA, camera)
+        };
+        if toggle {
+            widgets::toggle_floater(ctx, id, open);
+        } else {
+            widgets::open_floater(ctx, id, open);
+        }
+        return;
+    }
+    let other = if want_movement { *camera } else { *movement };
+    let open = if want_movement { movement } else { camera };
+    let minimized = widgets::floater_minimized(ctx, WINDOW);
+    if *open {
+        if minimized {
+            widgets::expand_floater(ctx, WINDOW);
+        } else if toggle {
+            *open = false;
+        }
+    } else if other {
+        // (`ControlsUi::show` turns to the tab just asked for)
+        *open = true;
+        if minimized {
+            widgets::expand_floater(ctx, WINDOW);
+        }
+    } else {
+        widgets::open_floater(ctx, WINDOW, open);
+    }
+}
+
 fn sync_tab(ui: &mut ControlsUi, camera: &mut bool, movement: &mut bool) {
     if *movement && !ui.was.1 {
         ui.tab = Tab::Movement;
@@ -1392,6 +1432,35 @@ fn key_rows(ui: &mut egui::Ui, p: &Palette, rows: &[(Vec<KeyPart>, &str)], gap: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1815: Move on a minimized window opened its camera joysticks.
+    #[test]
+    fn a_request_expands_a_minimized_window_on_the_tab_asked_for() {
+        let ctx = egui::Context::default();
+        let (mut camera, mut movement) = (true, false);
+        widgets::minimize_floater(&ctx, WINDOW);
+        assert!(widgets::floater_minimized(&ctx, WINDOW));
+        request(&ctx, &mut camera, &mut movement, false, true, true);
+        assert!(movement, "the movement tab asked for");
+        let expand = ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(WINDOW).with(widgets::EXPAND)));
+        assert_eq!(expand, Some(true), "the window expands");
+        // shown on that tab, the button closes it; again, it opens
+        let ctx = egui::Context::default();
+        let (mut camera, mut movement) = (false, true);
+        request(&ctx, &mut camera, &mut movement, false, true, true);
+        assert!(!movement && !camera);
+        request(&ctx, &mut camera, &mut movement, false, true, true);
+        assert!(movement && !camera);
+        // a menu item only opens
+        request(&ctx, &mut camera, &mut movement, false, true, false);
+        assert!(movement);
+        // Legacy's two windows: each toggles on its own
+        let (mut camera, mut movement) = (true, false);
+        request(&ctx, &mut camera, &mut movement, true, true, true);
+        assert!(camera && movement);
+        request(&ctx, &mut camera, &mut movement, true, false, true);
+        assert!(!camera && movement);
+    }
 
     #[test]
     fn the_joysticks_hold_firestorms_keys() {

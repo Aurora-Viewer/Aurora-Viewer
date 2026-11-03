@@ -9,6 +9,13 @@ name: macOS
 # crashed on a shader that Vulkan accepted (object.wgsl, shade_material)
 # and can do so again after any shader change.
 #
+# The macOS runners were the merge queue's bottleneck (an hour and more on
+# busy days), so a pull request and a queue entry take them only when the
+# change can matter on macOS (the platform-needed action: macOS code, the
+# renderer, a shader, a dependency…), decided on Linux first. A push to
+# main runs everything, tests and demo frame included: the net for what
+# that guess misses. A red macOS run on main is fixed before anything else.
+#
 # In the queue the tests run on two runners, as on Windows (see ci.yml):
 # the interface tests of the viewer (`ui::`, about three quarters of the
 # run) on one, everything else and the demo frame on the other. Two and not
@@ -33,50 +40,65 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  scope:
+    name: macOS needed?
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.scope.outputs.needed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - id: scope
+        uses: ./.github/actions/platform-needed
+        with:
+          platform: macos
+
   macos:
     name: clippy, tests, demo (macOS, rest)
+    needs: scope
+    if: needs.scope.outputs.needed == 'true'
     # Apple Silicon (arm64), the only Macs Aurora supports
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
-      - name: Code changed?
-        id: changes
-        uses: ./.github/actions/code-changed
       - name: Rust stable
-        if: steps.changes.outputs.code == 'true'
         run: |
           rustup update stable --no-self-update
           rustup component add clippy
-      # caches are written from main only (see ci.yml); one key for the two
-      # macOS jobs, written by this one. Its name is not the job's: the key
-      # would otherwise be the one of the old cache (clippy's output only),
-      # and main, finding it, would never build the tests into it
-      - uses: Swatinem/rust-cache@v2
+      # caches are written from main only (see ci.yml); one cache for the
+      # two macOS jobs, written by this one
+      - uses: ./.github/actions/rust-cache
         id: cache
-        if: steps.changes.outputs.code == 'true'
         with:
-          shared-key: macos-tests
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          name: macos-tests
       # dead code is the Windows job's: Windows-only helpers build here
       # without their callers, as on Linux. Not in the queue: the pull
       # request ran it, and the tests below build the combined code anyway
       - name: Clippy (warnings are errors)
-        if: steps.changes.outputs.code == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'))
+        if: github.event_name != 'merge_group'
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
-      # main: build the tests and the viewer without running them, for the
-      # cache only, so that the queue compiles the workspace and not its
-      # dependencies (about 8 minutes saved, then 3 for the demo)
+      # main: build the tests and the viewer and save the cache before the
+      # tests, so that the queue compiles the workspace and not its
+      # dependencies (about 8 minutes saved, then 3 for the demo) even when
+      # a test fails
       - name: Build the tests and the viewer (cache)
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
         run: |
           cargo test --profile ci --workspace --locked --no-run
           cargo build --profile ci --locked -p aurora-viewer
+      - name: Save the Rust cache
+        if: github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/rust-cache/save
+        with:
+          key: ${{ steps.cache.outputs.key }}
       - name: Tests (rest)
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        if: github.event_name != 'pull_request'
         # every failure of the run at once: the Apple GPU is reached here only
         run: |
           cargo test --profile ci --workspace --locked --no-fail-fast -- --skip ui::
@@ -89,7 +111,7 @@ jobs:
       # shows, and the frames must go on behind it (on macOS it froze the
       # main thread until a click, which no runner gives)
       - name: A demo frame on Metal
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        if: github.event_name != 'pull_request'
         timeout-minutes: 15
         env:
           AURORA_DEMO: '1'
@@ -106,8 +128,8 @@ jobs:
             exit 1
           fi
       - name: Demo image and log
-        if: always() && steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
-        uses: actions/upload-artifact@v7
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-demo
           path: |
@@ -116,45 +138,50 @@ jobs:
           if-no-files-found: warn
 
   macos-interface:
-    # Queue only: no runner is taken on a pull request or on main. A libtest
-    # filter and its `--skip` are exact complements, so every test runs in
-    # one job and only one.
+    # The queue and main only: no runner is taken on a pull request. A
+    # libtest filter and its `--skip` are exact complements, so every test
+    # runs in one job and only one.
     name: tests (macOS, interface)
-    if: github.event_name == 'merge_group'
+    needs: scope
+    if: github.event_name != 'pull_request' && needs.scope.outputs.needed == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
-      - name: Code changed?
-        id: changes
-        uses: ./.github/actions/code-changed
       - name: Rust stable
-        if: steps.changes.outputs.code == 'true'
         run: rustup update stable --no-self-update
-      - uses: Swatinem/rust-cache@v2
-        if: steps.changes.outputs.code == 'true'
+      - uses: ./.github/actions/rust-cache
         with:
-          shared-key: macos-tests
-          save-if: false
+          name: macos-tests
       - name: Tests (interface)
-        if: steps.changes.outputs.code == 'true'
         run: |
           cargo test --profile ci --workspace --locked --no-fail-fast -- ui::
 
   macos-result:
     # The check that main requires (its name is the one of the single job
-    # it replaced): green when both jobs passed (or the interface one was
-    # skipped, outside the queue), red otherwise.
+    # it replaced): green when the scope was decided and every job that had
+    # to run passed (both are skipped when the change does not need macOS,
+    # the interface one on a pull request), red otherwise.
     name: clippy, tests, demo (macOS)
     if: always()
-    needs: [macos, macos-interface]
+    needs: [scope, macos, macos-interface]
     runs-on: ubuntu-latest
     steps:
-      - name: Both jobs
+      - name: Every job
+        env:
+          SCOPE: ${{ needs.scope.result }}
+          NEEDED: ${{ needs.scope.outputs.needed }}
+          REST: ${{ needs.macos.result }}
+          INTERFACE: ${{ needs.macos-interface.result }}
         run: |
-          echo "rest: ${{ needs.macos.result }}, interface: ${{ needs.macos-interface.result }}"
-          case "${{ needs.macos.result }}" in success) ;; *) exit 1 ;; esac
-          case "${{ needs.macos-interface.result }}" in success|skipped) ;; *) exit 1 ;; esac
+          echo "scope: $SCOPE (needed: $NEEDED), rest: $REST, interface: $INTERFACE"
+          [ "$SCOPE" = success ] || exit 1
+          if [ "$NEEDED" != true ]; then
+            echo "macOS not needed by this change"
+            exit 0
+          fi
+          [ "$REST" = success ] || exit 1
+          case "$INTERFACE" in success|skipped) ;; *) exit 1 ;; esac
