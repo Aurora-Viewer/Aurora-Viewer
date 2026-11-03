@@ -31,7 +31,7 @@ use crate::pipeline_cache::CachedPipelines;
 use crate::types::*;
 use crate::ui_frame::EguiFrame;
 use crate::upload::FrameUploads;
-use crate::writes::QueueSink;
+use crate::writes::TrackedSink;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
@@ -5389,7 +5389,8 @@ impl Backend {
         spent: Spent,
     ) -> FrameResult {
         if upload_cmds.is_some() {
-            self.queue.submit(upload_cmds);
+            // (noted for the line of a device loss, device_lost.rs)
+            crate::device_lost::submit_tracked(&self.lost, &self.queue, index, upload_cmds);
         }
         uploads.after_submit();
         // (nothing was drawn for the pixel this frame began to answer)
@@ -5693,7 +5694,11 @@ impl Backend {
         // cannot be drawn.
         let t_writes = Instant::now();
         let (recorded, counts) = (writes.bytes(), writes.counts());
-        writes.replay(&mut QueueSink(&self.queue));
+        writes.replay(&mut TrackedSink {
+            queue: &self.queue,
+            lost: &self.lost,
+            frame: index,
+        });
         let replay_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
         let upload_cmds = frame_uploads.take_commands();
         let writes_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
@@ -8577,9 +8582,13 @@ impl Backend {
             );
             encoder.finish()
         });
-        let submission = self
-            .queue
-            .submit(upload_cmds.into_iter().chain(extra_cmds).chain(output_transition));
+        // (noted for the line of a device loss, device_lost.rs)
+        let submission = crate::device_lost::submit_tracked(
+            &self.lost,
+            &self.queue,
+            index,
+            upload_cmds.into_iter().chain(extra_cmds).chain(output_transition),
+        );
         self.gpu_frames.submitted(index, submission);
         if self.gpu_frames.enabled {
             // the news as soon as a poll sees the frame done (the start of

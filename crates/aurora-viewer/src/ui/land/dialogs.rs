@@ -423,9 +423,12 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                     super::super::widgets::radio_value(ui, p, &mut temporary, true, aurora_i18n::tr!("common-temporary"));
                     ui.add_enabled(
                         temporary,
-                        egui::DragValue::new(&mut hours)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .range(1..=8766),
+                        crate::ui::widgets::restricted_number(
+                            egui::DragValue::new(&mut hours)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .range(1..=8766),
+                            crate::ui::widgets::TextPolicy::Digits,
+                        ),
                     );
                     dim(ui, p, "heures");
                 });
@@ -578,8 +581,9 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
             .color(p.ink),
     );
     ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(&mut f.price).desired_width(90.0));
-        f.price.retain(|c| c.is_ascii_digit());
+        crate::ui::widgets::restricted_text_field(ui, true, &mut f.price, crate::ui::widgets::TextPolicy::Digits, |b, _| {
+            egui::TextEdit::singleline(b).desired_width(90.0)
+        });
         dim(ui, p, aurora_i18n::currency());
         if price >= 0 && parcel.area > 0 {
             dim(

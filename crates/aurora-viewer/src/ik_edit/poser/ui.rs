@@ -335,12 +335,12 @@ impl Editor {
     /// the upload.
     fn pose_footer_ui(&mut self, ui: &mut egui::Ui, p: &Palette, rig: &Rig, frame: &Frame) {
         ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.poser.name)
+            widgets::restricted_text_field(ui, true, &mut self.poser.name, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                egui::TextEdit::singleline(b)
                     .char_limit(100)
                     .desired_width(220.0)
-                    .hint_text(aurora_i18n::tr!("poser-name")),
-            );
+                    .hint_text(aurora_i18n::tr!("poser-name"))
+            });
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 1.0;
                 if widgets::action_button_if(

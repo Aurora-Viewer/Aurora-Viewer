@@ -38,6 +38,20 @@ The existing crashing-layer exclusions also disable Bandicam's implicit
 64-bit Vulkan layer using its manifest's `VK_LAYER_bandicam_helper_DEBUG_1`
 variable (#2080); its 32-bit disabling variable does not affect that DLL.
 
+`aurora-net::text_validation` defines the character policies ported from
+`LLTextValidate` (indra/llui/lltextvalidate.cpp). Viewer mutation guards share
+those policies through `text_validation.rs`. `ui/widgets/restricted_text.rs`
+rejects unsupported insertions atomically, including paste and committed IME
+input, preserves selected text and provides immediate localized feedback.
+Restricted numeric widgets filter input only while their own editor has focus;
+expression-enabled construction controls keep their input language. Existing
+grid text remains readable; unrestricted prose and local paths keep Unicode.
+Mutation guards allow retained server characters while checking newly added
+input. Generated upload/destination labels are cleaned separately from local
+paths; the shared structural inventory-name helper also serves RLVa paths and
+does not impose an ASCII policy. Rollback text is copied lazily on mutation;
+undo history is copied only for input needing rollback in the owning field.
+
 Avatar gait playback resolves standard walk/run signals to the modern male or
 female assets selected by LLVOAvatar::remapMotionID with its default settings
 (#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the
