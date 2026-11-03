@@ -9444,8 +9444,13 @@ impl App {
             },
             self.settings.night_sky_gain,
             env.sky.sun_dir,
-            crate::demo::night_sky::instant().unwrap_or_else(crate::world::night_sky::unix_days_now),
-            self.start.elapsed().as_secs_f64(),
+            // the sky's moment: a photo's held instant for all its parts
+            // (snapshot::Hold, Freeze World), the demo's fixed one in the
+            // demo only
+            self.demo.then(crate::demo::night_sky::instant).flatten().unwrap_or_else(|| {
+                crate::world::night_sky::unix_days_now() - hold.map_or(0.0, |h| h.at.elapsed().as_secs_f64() / 86_400.0)
+            }),
+            f64::from(world_clock()),
         );
         t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
         let mirror = if in_world && self.settings.mirrors > 0 {

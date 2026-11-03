@@ -3928,7 +3928,7 @@ both open states and the selection count. Capture at frame 620.
   (they belong to the sky, not the screen), zooming in separates them
   without making them brighter, and a wide view or the water's
   reflection shows their mean light. With `AURORA_PROFILE=1`,
-  `g_terrain_sky` is lower than with the former noise (0.131 against
+  `g_terrain_sky` is lower than with the former noise (0.158 against
   0.173 ms at 1600 × 900 on an RTX 5070 Ti).
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `alpha_rigged`, `wire`, `complexity`,

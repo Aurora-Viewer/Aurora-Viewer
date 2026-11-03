@@ -205,10 +205,14 @@ fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32
     }
     let inv = mat2x2<f32>(vec2<f32>(j[1].y, -j[0].y), vec2<f32>(-j[1].x, j[0].x)) * (1.0 / det);
     let c = uv * 2.0 + 0.5; // cell coordinates
-    let base = vec2<i32>(floor(c - 0.5));
+    // the pixel's cell and its eight neighbours: a point of any other cell
+    // is at least a cell away, where each point has faded to nothing
+    // (`reach`), so none is cut off as the sky turns
+    let base = vec2<i32>(floor(c)) - 1;
+    let reach = cell * max(cos(b), 0.1) / max(pixel, 1e-9);
     var field = vec3<f32>(0.0);
-    for (var k = 0; k < 4; k++) {
-        let ci = base + vec2<i32>(k & 1, k >> 1);
+    for (var k = 0; k < 9; k++) {
+        let ci = base + vec2<i32>(k % 3, k / 3);
         let h = pcg3(vec3<u32>(u32((ci.x + i32(MW_WIDTH * 2u)) % i32(MW_WIDTH * 2u)), u32(ci.y + 4), 0x5717u));
         let r = vec3<f32>(h & vec3<u32>(0xffffu)) / 65535.0;
         if (r.z >= p) {
@@ -217,21 +221,24 @@ fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32
         let d = (vec2<f32>(ci) + r.xy - c) * vec2<f32>(cell * cos(b), cell);
         let px = inv * d;
         let r2 = dot(px, px) / (MW_GRAIN_SIGMA * MW_GRAIN_SIGMA);
-        if (r2 < 9.0) {
+        let fade = 1.0 - smoothstep(0.5 * reach, reach, sqrt(dot(px, px)));
+        if (r2 < 9.0 && fade > 0.0) {
             // brightness: the faint ones the more numerous (star counts
             // grow about 2.5 times a magnitude over three magnitudes), mean 1
             let u = mix(0.0316, 1.0, f32(h.z >> 16u) / 65535.0);
             let w = 0.518 * pow(u, -0.6);
             // a little colour of its own, bluer or redder than the band
             let hue = f32((h.x >> 16u) & 255u) / 255.0 - 0.5;
-            field += w * exp(-0.5 * r2) * (vec3<f32>(1.0) + vec3<f32>(0.12, 0.0, -0.12) * hue);
+            field += w * fade * exp(-0.5 * r2) * (vec3<f32>(1.0) + vec3<f32>(0.12, 0.0, -0.12) * hue);
         }
     }
     // the field's mean over a pixel: occupied cells per pixel times a
-    // point's area; not below a floor, so that zooming in shows separate
-    // points rather than ever brighter ones
+    // point's area (within its fade, about), not below a floor, so that
+    // zooming in shows separate points rather than ever brighter ones
     let cells = pixel * pixel / (cell * cell * max(cos(b), 0.1));
-    let mean = max(p * 6.2831853 * MW_GRAIN_SIGMA * MW_GRAIN_SIGMA * cells, MW_POINT_MEAN_MIN);
+    let kept = 0.75 * reach / MW_GRAIN_SIGMA;
+    let area = 6.2831853 * MW_GRAIN_SIGMA * MW_GRAIN_SIGMA * (1.0 - exp(-0.5 * kept * kept));
+    let mean = max(p * area * cells, MW_POINT_MEAN_MIN);
     let points = mix(vec3<f32>(1.0), field / mean, sparkle);
     return light * (MW_HAZE + (1.0 - MW_HAZE) * points);
 }
