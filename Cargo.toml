@@ -65,12 +65,14 @@ unsafe_op_in_unsafe_fn = "warn"
 too_many_arguments = "allow"
 type_complexity = "allow"
 
-# wgpu 30.0.1 with one fix (gfx-rs/wgpu#10821): Surface::present
+# Temporary: wgpu 30.0.1 with one fix (gfx-rs/wgpu#10821): Surface::present
 # and Surface::discard release the acquired texture when the device is lost,
 # so the window's surface can be dropped and a new one made after a GPU
-# device loss (the recovery in the same window, app/gpu_recovery.rs). Every
-# crate of the wgpu workspace comes from the same commit: wgpu-core's own
-# dependencies are path dependencies there. Remove once a wgpu release has it.
+# device loss (the recovery in the same window, app/gpu_recovery.rs). wgpu's
+# trunk already does it another way (gfx-rs/wgpu#10296, not in a release yet):
+# remove this block for the official release that brings it (wgpu 31, or a
+# 30.0.x backport). Every crate of the wgpu workspace comes from the same
+# commit: wgpu-core's own dependencies are path dependencies there.
 [patch.crates-io]
 naga = { git = "https://github.com/KanikaBreed/wgpu", rev = "9beec42b26ab1c9d567168831f8b3974d503c281" }
 naga-types = { git = "https://github.com/KanikaBreed/wgpu", rev = "9beec42b26ab1c9d567168831f8b3974d503c281" }
