@@ -41,10 +41,10 @@ pub enum GamepadStyle {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GamepadStick {
-    #[default]
     Left,
     Right,
     None,
+    #[default]
     Custom,
 }
 
@@ -256,8 +256,8 @@ impl Default for FirstPerson {
                 dead_zone: [0.15; CHANNELS],
                 feather: 6.0,
             },
-            move_stick: GamepadStick::Left,
-            camera_stick: GamepadStick::Right,
+            move_stick: GamepadStick::Custom,
+            camera_stick: GamepadStick::Custom,
             jump_button: AUTO_EAST,
             rise_button: AUTO_LEFT_BUMPER,
             fall_button: AUTO_RIGHT_BUMPER,
@@ -273,7 +273,6 @@ impl Default for FirstPerson {
 pub struct Settings {
     pub enabled: bool,
     /// Gamepads are monitored independently of the opt-in raw joystick/HID input.
-    pub automatic_gamepad: bool,
     pub gamepad_style: GamepadStyle,
     pub first_person: FirstPerson,
     pub gamepad_flycam_view_button: i8,
@@ -325,16 +324,15 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let mut settings = Self {
+        Self {
             enabled: false,
-            automatic_gamepad: true,
             gamepad_style: GamepadStyle::Auto,
             first_person: FirstPerson::default(),
             gamepad_flycam_view_button: INHERIT_BUTTON,
-            gamepad_move_stick: GamepadStick::Left,
-            gamepad_camera_stick: GamepadStick::Right,
-            gamepad_flycam_move_stick: GamepadStick::Left,
-            gamepad_flycam_camera_stick: GamepadStick::Right,
+            gamepad_move_stick: GamepadStick::Custom,
+            gamepad_camera_stick: GamepadStick::Custom,
+            gamepad_flycam_move_stick: GamepadStick::Custom,
+            gamepad_flycam_camera_stick: GamepadStick::Custom,
             flycam_speed: 2.5,
             gamepad_flycam_slowdown_speed: 0.1,
             gamepad_flycam_speedup_speed: 20.0,
@@ -357,53 +355,25 @@ impl Default for Settings {
             zoom_speed: 1.0,
             mouselook_yaw: false,
             run_threshold: 0.7,
-            flycam_button: AUTO_SOUTH,
-            jump_button: AUTO_EAST,
+            flycam_button: 0,
+            jump_button: 1,
             rise_button: -1,
             fall_button: -1,
             flycam_rise_button: INHERIT_BUTTON,
             flycam_fall_button: INHERIT_BUTTON,
-            gamepad_flycam_slowdown_button: AUTO_LEFT_TRIGGER,
-            gamepad_flycam_speedup_button: AUTO_RIGHT_TRIGGER,
-            gamepad_avatar_zoom_in_button: AUTO_RIGHT_TRIGGER,
-            gamepad_avatar_zoom_out_button: AUTO_LEFT_TRIGGER,
-            gamepad_avatar_pan_up_button: AUTO_DPAD_UP,
-            gamepad_avatar_pan_down_button: AUTO_DPAD_DOWN,
-            gamepad_avatar_next_button: AUTO_DPAD_RIGHT,
-            gamepad_avatar_previous_button: AUTO_DPAD_LEFT,
-        };
-        settings.gamepad();
-        settings
+            gamepad_flycam_slowdown_button: -1,
+            gamepad_flycam_speedup_button: -1,
+            gamepad_avatar_zoom_in_button: -1,
+            gamepad_avatar_zoom_out_button: -1,
+            gamepad_avatar_pan_up_button: -1,
+            gamepad_avatar_pan_down_button: -1,
+            gamepad_avatar_next_button: -1,
+            gamepad_avatar_previous_button: -1,
+        }
     }
 }
 
 impl Settings {
-    pub fn untouched_raw_layout(&self) -> bool {
-        self.mapping == [1, 0, 2, 4, 3, 5, -1]
-            && self.avatar.gain == [1.0, 1.0, 1.0, 0.0, 0.1, 0.1, 0.0]
-            && self.avatar.dead_zone == [0.1, 0.1, 0.1, 1.0, 0.02, 0.01, 1.0]
-            && self.avatar.feather == 6.0
-            && self.flycam == Tuning::default()
-    }
-
-    pub fn spacemouse(&mut self) {
-        self.gamepad_move_stick = GamepadStick::Custom;
-        self.gamepad_camera_stick = GamepadStick::Custom;
-        self.gamepad_flycam_move_stick = GamepadStick::Custom;
-        self.gamepad_flycam_camera_stick = GamepadStick::Custom;
-        self.flycam_rise_button = INHERIT_BUTTON;
-        self.flycam_fall_button = INHERIT_BUTTON;
-        self.mapping = [1, 0, 2, 4, 3, 5, -1];
-        self.avatar = Tuning {
-            gain: [1.0, 1.0, 1.0, 0.0, 0.1, 0.1, 0.0],
-            dead_zone: [0.1, 0.1, 0.1, 1.0, 0.02, 0.01, 1.0],
-            feather: 6.0,
-        };
-        self.flycam = Tuning::default();
-        self.rise_button = -1;
-        self.fall_button = -1;
-    }
-
     /// Reuse signed gains in saved profiles for one common axis direction.
     /// Roll and zoom have no Avatar input, so only their Camera sign matters.
     pub fn axis_inverted(&self, channel: usize) -> bool {
@@ -421,7 +391,47 @@ impl Settings {
         self.direct_zoom
     }
 
-    pub fn gamepad(&mut self) {
+    pub fn raw_gamepad_preset(&mut self) {
+        self.mapping = [1, 0, -1, -1, 3, 2, -1];
+        // WGI places right-stick Y after the two triggers. Generic
+        // joysticks can override this starting point using Live input.
+        if cfg!(windows) {
+            self.mapping[4] = 5;
+        }
+        self.rise_button = 4;
+        self.fall_button = 5;
+        self.avatar = Tuning {
+            gain: [1.0, 1.0, 0.0, 0.0, 1.5, 1.5, 0.0],
+            dead_zone: [0.15; CHANNELS],
+            feather: 6.0,
+        };
+        self.flycam = Tuning {
+            gain: [2.1, 2.0, 0.0, 0.0, 1.5, 1.5, 0.0],
+            dead_zone: [0.15; CHANNELS],
+            feather: 5.0,
+        };
+    }
+
+    pub fn gamepad_defaults() -> Self {
+        let mut settings = Self::default();
+        settings.gamepad();
+        settings.zoom_mode = ZoomMode::Buttons;
+        settings
+    }
+
+    fn gamepad(&mut self) {
+        self.first_person.move_stick = GamepadStick::Left;
+        self.first_person.camera_stick = GamepadStick::Right;
+        self.jump_button = AUTO_EAST;
+        self.flycam_button = AUTO_SOUTH;
+        self.gamepad_flycam_slowdown_button = AUTO_LEFT_TRIGGER;
+        self.gamepad_flycam_speedup_button = AUTO_RIGHT_TRIGGER;
+        self.gamepad_avatar_zoom_in_button = AUTO_RIGHT_TRIGGER;
+        self.gamepad_avatar_zoom_out_button = AUTO_LEFT_TRIGGER;
+        self.gamepad_avatar_pan_up_button = AUTO_DPAD_UP;
+        self.gamepad_avatar_pan_down_button = AUTO_DPAD_DOWN;
+        self.gamepad_avatar_next_button = AUTO_DPAD_RIGHT;
+        self.gamepad_avatar_previous_button = AUTO_DPAD_LEFT;
         self.gamepad_move_stick = GamepadStick::Left;
         self.gamepad_camera_stick = GamepadStick::Right;
         self.gamepad_flycam_move_stick = GamepadStick::Left;
@@ -530,23 +540,23 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    pub fn input_enabled(&self, settings: &Settings) -> bool {
-        settings.enabled || (settings.automatic_gamepad && self.selected_gamepad(settings).is_some())
+    fn select(&self, s: &Settings, matches: impl Fn(&Device) -> bool) -> Option<&Device> {
+        self.devices
+            .iter()
+            .find(|device| matches(device) && (s.device.is_empty() || device.id == s.device))
     }
 
-    pub fn selected(&self, s: &Settings) -> Option<&Device> {
-        if s.device.is_empty() {
-            self.devices.iter().find(|d| d.is_gamepad).or_else(|| self.devices.first())
-        } else {
-            self.devices.iter().find(|d| d.id == s.device)
-        }
+    pub fn selected_joystick(&self, s: &Settings) -> Option<&Device> {
+        self.select(s, |device| !device.is_gamepad)
     }
 
     pub fn selected_gamepad(&self, s: &Settings) -> Option<&Device> {
-        self.devices
-            .iter()
-            .find(|d| d.is_gamepad && d.id == s.device)
-            .or_else(|| self.devices.iter().find(|d| d.is_gamepad))
+        self.select(s, |device| device.is_gamepad)
+    }
+
+    #[cfg(test)]
+    pub fn selected(&self, s: &Settings) -> Option<&Device> {
+        self.select(s, |_| true)
     }
 }
 
@@ -559,6 +569,7 @@ pub struct Motion {
     pub jump_pressed: bool,
     pub rise: bool,
     pub fall: bool,
+    pub gamepad: bool,
     pub flycam_speed: Option<f32>,
     pub avatar_zoom: f32,
     pub avatar_pan: f32,
@@ -677,15 +688,14 @@ impl Controller {
         self.sample_view(snapshot, s, active, flycam, false, dt)
     }
 
+    #[cfg(test)]
     pub fn sample_view(&mut self, snapshot: &Snapshot, s: &Settings, active: bool, flycam: bool, first_person: bool, dt: f32) -> Motion {
-        let source = if s.enabled {
-            snapshot.selected(s)
-        } else if s.automatic_gamepad {
-            snapshot.selected_gamepad(s)
-        } else {
-            None
-        };
-        let Some(d) = source.filter(|_| active && snapshot.updated.is_some_and(|at| at.elapsed().as_millis() < 250)) else {
+        let active = active && snapshot.updated.is_some_and(|at| at.elapsed().as_millis() < 250);
+        self.sample_device(snapshot.selected(s).filter(|_| active), s, flycam, first_person, dt)
+    }
+
+    pub fn sample_device(&mut self, device: Option<&Device>, s: &Settings, flycam: bool, first_person: bool, dt: f32) -> Motion {
+        let Some(d) = device.filter(|_| s.enabled) else {
             self.reset();
             return Motion::default();
         };
@@ -694,7 +704,8 @@ impl Controller {
             self.settings = Some(s.clone());
             self.reset();
         }
-        let first_person = first_person && !flycam && d.is_gamepad;
+        // Legacy profiles have no separate mouselook configuration.
+        let first_person = first_person && !flycam && d.is_gamepad && s.first_person != FirstPerson::default();
         if self.flycam != flycam || self.first_person != first_person {
             self.flycam = flycam;
             self.first_person = first_person;
@@ -814,9 +825,9 @@ impl Controller {
                 *value = 0.0;
             }
         }
-        let mut flycam_speed = 1.0;
+        let mut flycam_speed = finite(s.flycam_speed, 2.5).clamp(0.1, 5.0);
         if flycam && d.is_gamepad {
-            let default_speed = finite(s.flycam_speed, 2.5).clamp(0.1, 5.0);
+            let default_speed = flycam_speed;
             if self.flycam_speed_owner.is_some_and(|owner| flycam_speed_pressure[owner] <= 0.005) {
                 self.flycam_speed_owner = None;
             }
@@ -832,13 +843,13 @@ impl Controller {
             flycam_speed = match self.flycam_speed_owner {
                 Some(0) => {
                     let minimum = finite(s.gamepad_flycam_slowdown_speed, 0.1).clamp(0.05, default_speed);
-                    (default_speed + (minimum - default_speed) * flycam_speed_pressure[0]) / default_speed
+                    default_speed + (minimum - default_speed) * flycam_speed_pressure[0]
                 }
                 Some(1) => {
                     let maximum = finite(s.gamepad_flycam_speedup_speed, 20.0).clamp(default_speed, 50.0);
-                    (default_speed + (maximum - default_speed) * flycam_speed_pressure[1]) / default_speed
+                    default_speed + (maximum - default_speed) * flycam_speed_pressure[1]
                 }
-                _ => 1.0,
+                _ => default_speed,
             };
         } else {
             self.flycam_speed_owner = None;
@@ -953,6 +964,7 @@ impl Controller {
             self.filtered = [0.0; CHANNELS];
             return Motion {
                 toggle_flycam,
+                gamepad: d.is_gamepad,
                 ..Default::default()
             };
         }
@@ -995,6 +1007,7 @@ impl Controller {
                     s.fall_button
                 },
             )),
+            gamepad: d.is_gamepad,
             flycam_speed: (flycam && d.is_gamepad).then_some(flycam_speed),
             avatar_zoom: avatar_camera_pressure[0] - avatar_camera_pressure[1],
             avatar_pan: avatar_camera_pressure[2] - avatar_camera_pressure[3],
@@ -1018,11 +1031,10 @@ mod tests {
             updated: Some(Instant::now()),
             ..Default::default()
         };
-        let mut settings = Settings {
+        let settings = Settings {
             enabled: true,
             ..Default::default()
         };
-        settings.spacemouse();
         (snapshot, settings, Controller::default())
     }
 
