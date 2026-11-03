@@ -236,6 +236,7 @@ pub fn save_gpu_stall(dir: &Path, seconds: u64) {
 #[cfg(target_os = "linux")]
 pub fn save_gpu_stall(dir: &Path, seconds: u64) {
     let header = format!("GPU stall: no frame for {seconds} s");
+    let answers = GPU_ANSWERS.load(Ordering::SeqCst);
     let pending = dir.join("gpu-stall.pending");
     if std::fs::write(&pending, format!("{header}\n")).is_err() || std::fs::rename(&pending, dir.join("gpu-stall.txt")).is_err() {
         return;
@@ -243,10 +244,27 @@ pub fn save_gpu_stall(dir: &Path, seconds: u64) {
     let dir = dir.to_owned();
     let _ = std::thread::Builder::new().name("aurora-crash-stall".into()).spawn(move || {
         let out = stacks(&header, None);
-        if dir.join("gpu-stall.txt").exists() {
+        if GPU_ANSWERS.load(Ordering::SeqCst) == answers && dir.join("gpu-stall.txt").exists() {
             write_stacks(&dir, "gpu-stall", out);
+            // an answer between the test and the rename may have removed
+            // the header before the stacks took its place
+            if GPU_ANSWERS.load(Ordering::SeqCst) != answers {
+                let _ = std::fs::remove_file(dir.join("gpu-stall.txt"));
+            }
         }
     });
+}
+
+/// How many times the GPU answered again after a stall
+/// ([`gpu_answered`]): a stall's stacks, read by a thread of their own,
+/// are dropped when it changed meanwhile.
+#[cfg(target_os = "linux")]
+static GPU_ANSWERS: AtomicU64 = AtomicU64::new(0);
+
+/// Called by `crash::gpu_answered` before it removes `gpu-stall.txt`.
+#[cfg(target_os = "linux")]
+pub fn gpu_answered() {
+    GPU_ANSWERS.fetch_add(1, Ordering::SeqCst);
 }
 
 /// Elsewhere no other thread's stack can be read: the header alone, which

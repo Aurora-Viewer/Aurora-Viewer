@@ -359,6 +359,10 @@ pub fn gpu_closed() {
 }
 
 pub fn gpu_answered() {
+    // first, so that a stall's stacks still being read do not bring the
+    // file back once it is removed
+    #[cfg(target_os = "linux")]
+    watchdog::gpu_answered();
     if let Some(session) = SESSION.get() {
         let _ = std::fs::remove_file(session.dir.join("gpu-stall.txt"));
     }

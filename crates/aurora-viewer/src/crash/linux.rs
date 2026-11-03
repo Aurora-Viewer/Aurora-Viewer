@@ -544,7 +544,22 @@ mod snapshot {
         libc::SIGRTMAX() - 2
     }
 
-    pub(super) extern "C" fn on_snapshot(_signal: c_int, _info: *mut libc::siginfo_t, context: *mut c_void) {
+    /// [`on_snapshot`] as `sigaction` holds it.
+    pub(super) fn handler() -> libc::sighandler_t {
+        on_snapshot as extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void) as libc::sighandler_t
+    }
+
+    /// The thread goes on once the handler returns: its `errno` is kept.
+    extern "C" fn on_snapshot(_signal: c_int, _info: *mut libc::siginfo_t, context: *mut c_void) {
+        // SAFETY: the calling thread's errno, which a signal handler may
+        // read and write (async-signal-safe).
+        let errno = unsafe { *libc::__errno_location() };
+        answer(context);
+        // SAFETY: as above.
+        unsafe { *libc::__errno_location() = errno };
+    }
+
+    fn answer(context: *mut c_void) {
         let asked = ASKED.load(Ordering::Acquire);
         // SAFETY: gettid has no argument and is async-signal-safe.
         if asked == 0 || asked & CLAIMED != 0 || asked as u32 as i32 != unsafe { libc::gettid() } {
@@ -575,6 +590,16 @@ mod snapshot {
             return None;
         }
         let mut number = ONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // A library loaded since the start (a driver) may have taken the
+        // signal: then sending it would run their handler, not ours.
+        // SAFETY: reads the action into a zeroed struct we own.
+        let ours = unsafe {
+            let mut current: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(signal(), std::ptr::null(), &mut current) == 0 && current.sa_sigaction == handler()
+        };
+        if !ours {
+            return None;
+        }
         *number = (*number + 1) & 0x7FFF_FFFF;
         let asked = (*number << 32) | u64::from(tid as u32);
         WRITTEN.store(0, Ordering::Relaxed);
@@ -633,7 +658,7 @@ fn install_snapshot() -> anyhow::Result<()> {
             return Ok(());
         }
         let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = snapshot::on_snapshot as extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void) as libc::sighandler_t;
+        action.sa_sigaction = snapshot::handler();
         action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_RESTART;
         libc::sigemptyset(&mut action.sa_mask);
         anyhow::ensure!(
