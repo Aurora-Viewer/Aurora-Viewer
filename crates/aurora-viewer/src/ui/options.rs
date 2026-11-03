@@ -878,11 +878,7 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     let mut selected = current.and_then(|c| Preset::ALL.iter().position(|l| *l == c)).unwrap_or(usize::MAX);
     let changed = super::widgets::segmented(ui, p, &mut selected, &options);
     if current.is_none() && !changed {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ui-options-preset-custom"))
-                .size(12.0)
-                .color(p.violet_pale),
-        );
+        ui.label(RichText::new(preset_label(s)).size(12.0).color(p.violet_pale));
     }
     match Preset::ALL.get(selected) {
         Some(level) if changed => {
@@ -891,6 +887,22 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
         }
         _ => false,
     }
+}
+
+/// The line under the level row when no level matches: the Mac's own
+/// default on macOS, "Custom" elsewhere.
+#[cfg(target_os = "macos")]
+fn preset_label(s: &Settings) -> &'static str {
+    if crate::graphics_presets::macos::matches(s) {
+        aurora_i18n::tr!("ui-options-preset-apple-silicon")
+    } else {
+        aurora_i18n::tr!("ui-options-preset-custom")
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn preset_label(_: &Settings) -> &'static str {
+    aurora_i18n::tr!("ui-options-preset-custom")
 }
 
 /// Device combo: "" = system default. Returns (a device was chosen, the
