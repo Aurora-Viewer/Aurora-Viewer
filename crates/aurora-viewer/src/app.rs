@@ -104,6 +104,7 @@ mod photo_isolate;
 mod physics_editor;
 mod plate_click;
 mod pointing;
+mod quick_prefs;
 mod region_restart;
 mod region_window;
 mod relogin;
@@ -115,6 +116,7 @@ mod script_clicks;
 mod scripts;
 mod settings_backup;
 mod shape_editor;
+mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
 mod stream_list;
@@ -637,6 +639,9 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Quick preferences (the toolbar's `quickprefs`).
+    quick_prefs_ui: ui::quick_prefs::QuickPrefsUi,
+    quick_prefs_demo_done: bool,
     /// Report Abuse (LLFloaterReporter).
     report_abuse: ui::report_abuse::ReportAbuseUi,
     /// The depth of field's focus distance and its transition.
@@ -655,6 +660,8 @@ pub struct App {
     group_titles_ui: ui::group_titles::GroupTitlesUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
+    /// The toolbar's Voice controls window (`ui/voice_controls.rs`).
+    voice_controls_ui: ui::voice_controls::VoiceControlsUi,
     /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
     /// its button stands on a toolbar, and whether the window was open
     /// last frame.
@@ -682,6 +689,7 @@ pub struct App {
     buy_land_source: buy_land::BuyLandSource,
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
+    web_browser_ui: ui::web_browser::WebBrowserUi,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
     listings_ui: ui::marketplace_listings::ListingsUi,
     /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
@@ -706,6 +714,9 @@ pub struct App {
     /// The session's account whose favourites the login screen gets
     /// (app/login_favorites.rs).
     login_favorites: login_favorites::Session,
+    /// The account whose Show Friends Only choice the world carries
+    /// (app/derender.rs).
+    friends_only_account: uuid::Uuid,
     /// SLURLs from outside and the command line's login (app/external_links.rs).
     external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
@@ -961,19 +972,18 @@ fn ui_font(settings: &Settings) -> String {
         .unwrap_or_else(|| settings.font.clone())
 }
 
-/// The login screen keeps one shortcut of the viewer: the preferences
-/// (Ctrl+P unless rebound), as the Legacy Viewer's login menu does
-/// (menu_login.xml, "Preferences..." on control|P).
+/// The shortcuts of the login screen's menu (menu_login.xml): Preferences
+/// (Ctrl+P) and Exit (Ctrl+Q).
 fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
-    matches!(screen, Screen::Login) && action == Some(Action::Preferences)
+    matches!(screen, Screen::Login) && matches!(action, Some(Action::Preferences | Action::Quit))
 }
 
 /// A Ctrl / Alt shortcut of the viewer still works while a text field has
 /// the focus, as the Legacy Viewer's menu accelerators go before the focused
 /// field (LLViewerWindow::handleKey). The field keeps the exact editing
 /// chords (Select All is Ctrl/Cmd+A; People is Ctrl/Cmd+Shift+A).
-fn shortcut_while_typing(typing: bool, mods: Mods, code: KeyCode, bound: bool) -> bool {
-    typing && (mods.ctrl || mods.alt) && bound && !crate::keybinds::text_field_keeps(code, mods)
+fn shortcut_while_typing(typing: bool, mods: Mods, code: KeyCode, logical: Option<&winit::keyboard::Key>, bound: bool) -> bool {
+    typing && (mods.ctrl || mods.alt) && bound && !crate::keybinds::text_field_keeps_key(code, logical, mods)
 }
 
 /// The shortcut wins over the focused widget, so egui must not also treat
@@ -988,20 +998,30 @@ fn shortcut_claims_focus(
     alt: bool,
     bound: bool,
 ) -> bool {
-    if !shortcut_while_typing(true, mods, code, bound) {
+    if !shortcut_while_typing(true, mods, code, Some(logical), bound) {
         return false;
     }
     let letter = |ch: &str| matches!(logical, winit::keyboard::Key::Character(s) if s.eq_ignore_ascii_case(ch));
-    if mods.ctrl && letter("f") && ui::find_shortcut::window_takes_it(ctx) {
+    if mods.ctrl && !shift && !alt && letter("f") && ui::find_shortcut::window_takes_it(ctx) {
         return false;
     }
-    if mods.ctrl && (letter("k") || (letter("s") && !shift && !alt)) && ui::scripts::editor_focused(ctx) {
+    if mods.ctrl && script_editor_keeps(logical, shift, alt) && ui::scripts::editor_focused(ctx) {
         return false;
     }
     if mods.ctrl && !shift && !alt && letter("s") && ui::inventory::document_save_focused(ctx) {
         return false;
     }
     true
+}
+
+/// The Ctrl chords a focused script editor keeps over the viewer's
+/// shortcuts: the comment toggles on Ctrl+K and Ctrl+Shift+K
+/// (ui/scripts/editing.rs), and its Save, Goto and Open on plain
+/// Ctrl+S, Ctrl+G and Ctrl+O (ui/scripts/view.rs), before Gestures (Ctrl+G)
+/// and Appearance (Ctrl+O). The letter is the one egui reads.
+fn script_editor_keeps(logical: &winit::keyboard::Key, shift: bool, alt: bool) -> bool {
+    matches!(logical, winit::keyboard::Key::Character(c)
+        if c.eq_ignore_ascii_case("k") || (["s", "g", "o"].iter().any(|l| c.eq_ignore_ascii_case(l)) && !shift && !alt))
 }
 
 /// The interface scale, or AURORA_UI_SCALE for this launch (brought into
@@ -1447,6 +1467,8 @@ impl App {
             create_landmark_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            quick_prefs_ui: Default::default(),
+            quick_prefs_demo_done: false,
             follow_ui: Default::default(),
             portal_ui: Default::default(),
             particle_editor: Default::default(),
@@ -1467,6 +1489,7 @@ impl App {
             blacklist_ui: Default::default(),
             group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
+            voice_controls_ui: Default::default(),
             grid_status: Default::default(),
             grid_status_listed: false,
             grid_status_was_open: false,
@@ -1482,6 +1505,7 @@ impl App {
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
+            web_browser_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
             people_map_ui: Default::default(),
@@ -1497,6 +1521,7 @@ impl App {
             attention: Default::default(),
             reconnect_place: None,
             login_favorites: Default::default(),
+            friends_only_account: uuid::Uuid::nil(),
             external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
@@ -2765,6 +2790,9 @@ impl App {
         self.money_tracker_ui = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
+        self.web_browser_ui = Default::default();
+        // closed, or the next session would open the home page by itself
+        self.panels.web_browser = false;
         // the listings belong to the account (LLMarketplaceData)
         self.listings_ui = Default::default();
         self.demo_slm = None;
@@ -2778,6 +2806,10 @@ impl App {
         // that ends here
         self.search_ui = Default::default();
         self.panels.search = false;
+        // Voice controls: closed, and its list (the last session's nearby
+        // participants) forgotten
+        self.voice_controls_ui = Default::default();
+        self.panels.voice_controls = false;
         self.save_local_environment();
         self.env_ui = Default::default();
         self.env_scan = false;
@@ -4196,7 +4228,11 @@ impl App {
             self.walk_tap(group, pressed && action.is_none());
         }
         if pressed && login_shortcut(&self.screen, action) {
-            ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            if action == Some(Action::Quit) {
+                self.request_exit();
+            } else {
+                ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            }
             return;
         }
         if !pressed || !self.in_world() {
@@ -4253,6 +4289,9 @@ impl App {
                     self.reset_camera_view();
                 }
             }
+            Action::ResetCameraAngles => self.reset_camera_angles(),
+            Action::FocusSelection => self.look_at_selection(false),
+            Action::ZoomSelection => self.look_at_selection(true),
             Action::Chat => self.chat_ui.focus_request = true,
             Action::ToggleMic => self.toggle_mic(),
             // the shortcuts of the windows, like their toolbar buttons: a
@@ -4263,7 +4302,13 @@ impl App {
                 ui::widgets::toggle_floater(&self.egui_ctx, "people", &mut self.panels.people);
                 self.panels.people_tab = 0;
             }
+            Action::Friends => self.people_tab_shortcut(ui::people::TAB_FRIENDS),
+            Action::Groups => self.people_tab_shortcut(ui::people::TAB_GROUPS),
+            Action::ContactSets => self.people_tab_shortcut(ui::people::TAB_SETS),
             Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
+            Action::NewInventoryWindow => self.inventory_ui.open_additional_window(&self.egui_ctx),
+            Action::Appearance => ui::widgets::toggle_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance),
+            Action::Quit => self.request_exit(),
             Action::TextureLibrary => ui::widgets::toggle_floater(
                 &self.egui_ctx,
                 self.settings.texture_library.presentation.window(),
@@ -4312,6 +4357,9 @@ impl App {
                     aurora_i18n::tr!("app-show-transparency-disabled")
                 });
             }
+            Action::SelectionOutlines => self.toggle_selection_outlines(),
+            Action::MuteAll => self.toggle_master_mute(),
+            Action::DoubleClickTeleport => self.toggle_double_click_teleport(),
             Action::Rebake => self.rebake(),
             Action::StopAnimations => self.stop_animations(false),
             Action::ResyncAnimations => self.scene.resync_animations(Instant::now()),
@@ -7577,6 +7625,7 @@ impl App {
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.voice_controls_ui.wanted_pics.drain());
         wanted.extend(self.contacts_people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
@@ -8440,6 +8489,7 @@ impl App {
         self.poll_ao();
         self.sync_static_eyes();
         if self.in_world() {
+            self.sync_friends_only();
             self.step_gestures();
         }
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
@@ -10193,6 +10243,7 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            ui::inventory::folder_colors_demo_frame(&ctx, &mut self.inventory_ui, &self.settings.inventory, self.frame_count);
             ui::inventory::bulk_permissions_demo(self.frame_count, &mut self.inventory_ui);
             if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
                 match self.frame_count {
@@ -11090,6 +11141,9 @@ impl App {
                 }
             }
         }
+        if self.demo && crate::demo::voice_controls::enabled() && self.frame_count == crate::demo::voice_controls::OPEN {
+            ui::widgets::open_floater(&self.egui_ctx, ui::voice_controls::WINDOW, &mut self.panels.voice_controls);
+        }
         if self.demo && crate::demo::collisions::mode().is_some() {
             for event in crate::demo::collisions::events(self.frame_count) {
                 self.world.apply(event);
@@ -11394,6 +11448,7 @@ impl App {
         }
         self.demo_worn_steps();
         self.demo_derender_steps();
+        self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
@@ -12758,6 +12813,12 @@ impl App {
             }
         }
         self.poll_stream_list();
+        for command in self.appearance_ui.json.poll(&self.egui_ctx, &mut self.world) {
+            self.send(command);
+        }
+        if self.appearance_ui.json.has_confirmation() {
+            self.panels.appearance = true;
+        }
         match a.bar {
             BarAction::ImportStreamList => self.import_stream_list(),
             BarAction::ExportStreamList => self.export_stream_list(),
@@ -12882,6 +12943,10 @@ impl App {
                     .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
             }
             BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
+            BarAction::ToggleFriendsOnly => {
+                let on = !self.world.friends_only();
+                self.world.set_friends_only(on);
+            }
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
@@ -12895,12 +12960,7 @@ impl App {
             }
             BarAction::ToggleFly => self.toggle_fly(),
             BarAction::SetDoubleClick(choice) => {
-                // like the "Double-click teleport enabled / disabled" line
-                // Firestorm writes to the nearby chat
-                self.settings.double_click = choice;
-                self.settings.save();
-                self.world
-                    .system_message(aurora_i18n::tr!("app-double-click-ground-set", action = choice.label().to_string()));
+                self.set_double_click(choice);
             }
             BarAction::ToggleMouselook => self.toggle_mouselook(),
             BarAction::SitGround => self.toggle_ground_sit(),
@@ -13525,7 +13585,10 @@ impl App {
 
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
-        self.profile_ui.web_has_focus() || self.search_ui.web_has_focus() || self.marketplace_ui.web_has_focus()
+        self.profile_ui.web_has_focus()
+            || self.search_ui.web_has_focus()
+            || self.marketplace_ui.web_has_focus()
+            || self.web_browser_ui.web_has_focus(self.panels.web_browser)
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -13535,6 +13598,7 @@ impl App {
             .focused_web()
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
+            .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -13956,6 +14020,7 @@ impl App {
             second_life,
         });
         self.options_ui.login_favorites = self.login_favorites.key().map(|key| self.login_form.favorites.shown(key));
+        self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
             self.options_ui.anti_spam_version = self.world.anti_spam.version;
@@ -14050,6 +14115,9 @@ impl App {
             if shown {
                 self.keep_login_favorites(true);
             }
+        }
+        if let Some(keep) = res.friends_only_keep {
+            self.world.friends_only.keep_after_teleport = keep;
         }
         if let Some(maturity) = res.maturity {
             self.world.set_maturity_preference(maturity);
@@ -14325,6 +14393,7 @@ impl App {
                     );
                     crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
                     crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::voice_controls::voice(&mut levels, ctx.input(|i| i.time));
                     levels
                 } else {
                     self.voice.levels(self.world.agent_id)
@@ -14526,6 +14595,7 @@ impl App {
                     env_keys: self.env_keys(),
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
+                    friends_only: self.world.friends_only(),
                     fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,
@@ -16241,6 +16311,18 @@ impl App {
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
+                if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
+                    &ctx,
+                    &p,
+                    &ui::voice_controls::Inputs {
+                        world: &self.world,
+                        levels: &voice_levels,
+                        pics: &self.avatar_pics,
+                    },
+                    &mut self.panels.voice_controls,
+                ) {
+                    self.world.end_call();
+                }
                 let shown = self.stream_title_ui.show(
                     &ctx,
                     &p,
@@ -16295,6 +16377,18 @@ impl App {
                         home: marketplace_home.as_deref(),
                     },
                 );
+                // the toolbar's web browser: the same plugins and browser
+                // settings, the shared profile, no OpenID cookie
+                self.web_browser_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.web_browser,
+                    &ui::web_browser::BrowserWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        home: &self.settings.browser_home_page,
+                    },
+                );
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -16317,6 +16411,7 @@ impl App {
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
+                self.toolbar_ui.friends_only_active = self.world.friends_only();
                 let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
                 self.chat_ui.note_frame(pointer_busy);
                 for pa in acts {
@@ -16595,7 +16690,7 @@ impl App {
                 );
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
-                if self.panels.environment {
+                if self.panels.environment || self.panels.quick_prefs {
                     if !self.env_scan {
                         self.env_scan = true;
                         self.env_ui.scan_left = usize::MAX;
@@ -16614,8 +16709,11 @@ impl App {
                     &mut lighting,
                 );
                 self.panels.environment = open;
+                // Quick preferences' environment block shares the window's
+                // lists and "Personal lighting"
+                let quick_actions = self.quick_prefs_window(&ctx, &p, &mut lighting);
                 let reset = self.personal_lighting(&ctx, &p, lighting);
-                self.env_actions(env_actions.into_iter().chain(reset));
+                self.env_actions(env_actions.into_iter().chain(quick_actions).chain(reset));
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
@@ -17494,6 +17592,15 @@ impl ApplicationHandler for App {
                 self.marketplace_ui.open(None);
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_WEB_BROWSER=<page>: the toolbar's web browser on
+            // that page, open at start
+            if let Ok(page) = std::env::var("AURORA_DEMO_WEB_BROWSER")
+                && !page.trim().is_empty()
+            {
+                self.web_browser_ui.go_to(&page);
+                self.panels.web_browser = true;
+                self.panels.perf = false;
+            }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
             // Me › Marketplace listings open on the demo SLM server
             if crate::world::marketplace::demo::Mode::from_env().is_some() {
@@ -18327,6 +18434,10 @@ impl ApplicationHandler for App {
                 if view == "save" {
                     self.appearance_ui.begin_save_as(&self.world.inventory);
                 }
+                if matches!(view.as_str(), "json-import" | "json-partial") {
+                    self.appearance_ui.open(2, false);
+                    ui::appearance::json::demo(&self.world, &mut self.appearance_ui, view == "json-partial");
+                }
                 if matches!(view.as_str(), "multi-gallery" | "multi-outfits") {
                     self.appearance_ui.demo_multiselection();
                 }
@@ -18462,6 +18573,10 @@ impl ApplicationHandler for App {
                         | "smart"
                         | "aurora-smart"
                         | "aurora-smart-wide"
+                        | "folder-colors"
+                        | "aurora-folder-colors"
+                        | "aurora-folder-colors-behind"
+                        | "aurora-folder-colors-follow"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -18477,6 +18592,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui
                             .show_original(&self.world.inventory, crate::world::inventory::demo::LOST_FOLDER);
                         self.inventory_ui.expand_all = Some(true);
+                    }
+                    if view.contains("folder-colors") {
+                        ui::inventory::folder_colors_demo(&mut self.inventory_ui, &mut self.settings.inventory);
                     }
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
@@ -19387,7 +19505,7 @@ impl ApplicationHandler for App {
             if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
                 Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
                 && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
-                    || shortcut_while_typing(true, key_mods, code, true)))
+                    || shortcut_while_typing(true, key_mods, code, None, true)))
             && self.in_world()
             && self.options_ui.capture.is_none()
             && !self.exit_prompt.open
@@ -19705,8 +19823,14 @@ impl ApplicationHandler for App {
                     }
                     // Ctrl / Alt shortcuts of the viewer still work while a text
                     // field has the focus (chat bar, login fields...)
-                    let shortcut =
-                        pressed && shortcut_while_typing(typing, mods, code, self.settings.keybinds.triggered(&input, mods).is_some());
+                    let shortcut = pressed
+                        && shortcut_while_typing(
+                            typing,
+                            mods,
+                            code,
+                            Some(&ke.logical_key),
+                            self.settings.keybinds.triggered(&input, mods).is_some(),
+                        );
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the
                     // pointer over a conversation with the keyboard nowhere:
@@ -19714,11 +19838,11 @@ impl ApplicationHandler for App {
                     // only runs otherwise. The rule: ui::find_shortcut::owner.
                     // The key is the one egui reads, which the window takes.
                     let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));
-                    let find_taken = pressed && mods.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
+                    let find_taken =
+                        pressed && mods.ctrl && !self.shift && !self.alt && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
                     let script_command = pressed
                         && mods.ctrl
-                        && matches!(&ke.logical_key, winit::keyboard::Key::Character(c)
-                            if c.eq_ignore_ascii_case("k") || (c.eq_ignore_ascii_case("s") && !self.shift && !self.alt))
+                        && script_editor_keeps(&ke.logical_key, self.shift, self.alt)
                         && ui::scripts::editor_focused(&self.egui_ctx);
                     let document_save = pressed
                         && mods.ctrl
@@ -19993,26 +20117,29 @@ mod tests {
         assert_eq!(action, Some(Action::Preferences), "Ctrl+P is the preferences' shortcut");
         assert_eq!(bindings.triggered(&Input::key(KeyCode::KeyP), Mods::default()), None);
         // a field focused: the key still reaches the viewer's shortcuts
-        assert!(shortcut_while_typing(true, ctrl, KeyCode::KeyP, action.is_some()));
+        assert!(shortcut_while_typing(true, ctrl, KeyCode::KeyP, None, action.is_some()));
         // the fields keep their own editing shortcuts (Ctrl+C, Ctrl+V…)
-        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyV, true));
+        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyV, None, true));
+        // Exit (Ctrl+Q) reaches the viewer from a field on a QWERTY keyboard
+        let q = winit::keyboard::Key::Character("q".into());
+        assert!(shortcut_while_typing(true, ctrl, KeyCode::KeyQ, Some(&q), true));
         // Select All stays in the field; People (Ctrl+Shift+A) does not
-        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyA, true));
+        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyA, None, true));
         let people = Mods {
             ctrl: true,
             shift: true,
             alt: false,
         };
-        assert!(shortcut_while_typing(true, people, KeyCode::KeyA, true));
+        assert!(shortcut_while_typing(true, people, KeyCode::KeyA, None, true));
         // Alt+arrows are camera chords, and Option+arrows move by word:
         // both stay in the field
         let alt = Mods {
             alt: true,
             ..Default::default()
         };
-        assert!(!shortcut_while_typing(true, alt, KeyCode::ArrowLeft, true));
+        assert!(!shortcut_while_typing(true, alt, KeyCode::ArrowLeft, None, true));
         // a plain P while typing is the field's
-        assert!(!shortcut_while_typing(true, Mods::default(), KeyCode::KeyP, false));
+        assert!(!shortcut_while_typing(true, Mods::default(), KeyCode::KeyP, None, false));
         assert!(login_shortcut(&Screen::Login, action));
         // the other shortcuts wait for the world
         assert!(!login_shortcut(&Screen::Login, Some(Action::Fly)));
@@ -20022,6 +20149,31 @@ mod tests {
                 since: std::time::Instant::now()
             },
             action
+        ));
+    }
+
+    /// Ctrl+O (Appearance) and Ctrl+G (Gestures) open the focused script
+    /// editor's Open and Goto, as Ctrl+S is its Save; with Shift (People on
+    /// Groups is Ctrl+Shift+G) the viewer's shortcut runs.
+    #[test]
+    fn the_script_editor_keeps_its_own_ctrl_letters() {
+        use super::script_editor_keeps;
+        let key = |s: &str| winit::keyboard::Key::Character(s.into());
+        for letter in ["s", "g", "o", "O", "k"] {
+            assert!(script_editor_keeps(&key(letter), false, false), "Ctrl+{letter}");
+        }
+        assert!(script_editor_keeps(&key("k"), true, false), "Ctrl+Shift+K comments a block");
+        for letter in ["s", "g", "o"] {
+            assert!(!script_editor_keeps(&key(letter), true, false), "Ctrl+Shift+{letter}");
+            assert!(!script_editor_keeps(&key(letter), false, true), "Ctrl+Alt+{letter}");
+        }
+        for letter in ["p", "q", "i"] {
+            assert!(!script_editor_keeps(&key(letter), false, false), "Ctrl+{letter} is the viewer's");
+        }
+        assert!(!script_editor_keeps(
+            &winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape),
+            false,
+            false
         ));
     }
 
