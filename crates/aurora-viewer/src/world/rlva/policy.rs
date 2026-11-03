@@ -114,6 +114,10 @@ impl World {
         true
     }
 
+    /// RlvActions::isLocalTp, canTeleportToLocal and canTeleportToLocation:
+    /// within a region's width (flat) a teleport is local, limited by @sittp
+    /// and @tplocal measured in 3D so that going straight up does not get
+    /// around them; a bare @tplocal allows 1.5 m. Farther, only @tploc.
     fn rlva_teleport_delta_allowed(&self, delta: Vec3, actor: Uuid) -> bool {
         let r = &self.rlva;
         if self.agent.is_sitting() && r.has_except("unsit", actor) {
@@ -121,11 +125,31 @@ impl World {
         }
         if delta.truncate().length_squared() < 256.0 * 256.0 {
             delta.length() < r.distance_limit("sittp", 1.5, actor)
-                && (!r.has_except("tplocal", actor) || delta.truncate().length() < r.distance_limit("tplocal", 256.0, actor).min(256.0))
+                && (!r.has_except("tplocal", actor) || delta.length() < r.distance_limit("tplocal", 1.5, actor).min(256.0))
         } else {
             !r.has_except("tploc", actor)
         }
     }
+    /// What the interface greys: the same rules as the send boundary, so a
+    /// greyed entry and a refused click never disagree.
+    pub fn rlva_can_teleport_home(&self) -> bool {
+        self.rlva_allows_command(&NetCommand::TeleportHome, Uuid::nil())
+    }
+
+    pub fn rlva_can_teleport_landmark(&self) -> bool {
+        self.rlva_allows_command(&NetCommand::TeleportLandmark(Uuid::nil()), Uuid::nil())
+    }
+
+    /// A teleport to a global position (LLAgent::teleportViaLocation), local
+    /// or not; unknown where we stand, it counts as a distant one.
+    pub fn rlva_can_teleport_global(&self, global: glam::DVec3) -> bool {
+        if !self.rlva.enabled() {
+            return true;
+        }
+        let delta = self.agent_global().map_or(Vec3::X * 1.0e6, |here| (global - here).as_vec3());
+        self.rlva_teleport_delta_allowed(delta, Uuid::nil())
+    }
+
     pub fn rlva_allows_command(&self, command: &NetCommand, actor: Uuid) -> bool {
         let r = &self.rlva;
         if !r.enabled() {
@@ -181,9 +205,10 @@ impl World {
                 !blocked("setgroup") || (actor == super::groups::ACTOR && r.has("setgroup") && r.groups.restore_allowed(*group))
             }
             NetCommand::GroupTitleUpdate { .. } => !blocked("setgroup"),
-            NetCommand::TeleportHome | NetCommand::TeleportLandmark(_) => {
-                !blocked("tplm") && !(self.agent.is_sitting() && blocked("unsit"))
-            }
+            // LLAgent::teleportViaLandmark: home stays allowed unless both
+            // @tplm and @tploc restrict it
+            NetCommand::TeleportHome => !(blocked("tplm") && blocked("tploc")) && !(self.agent.is_sitting() && blocked("unsit")),
+            NetCommand::TeleportLandmark(_) => !blocked("tplm") && !(self.agent.is_sitting() && blocked("unsit")),
             NetCommand::TeleportTo { handle, position, .. } => {
                 if r.stand_return == Some((*handle, *position)) {
                     return true;
@@ -414,7 +439,14 @@ impl World {
                 if !self.rlva_inventory_force(source, &c) {
                     self.rlva.pending.push((source, c));
                 }
-                if !self.rlva.pending.is_empty() || !self.rlva.appearance.is_empty() {
+                // The next force command of the same object joins this one's
+                // COF update (RlvForceWear::done runs once per batch); any
+                // other command waits for the update, as before.
+                let joins = pending
+                    .as_slice()
+                    .first()
+                    .is_some_and(|(next, c)| *next == source && super::inventory::force_kind(&c.behaviour).is_some());
+                if !self.rlva.pending.is_empty() || (!self.rlva.appearance.is_empty() && !joins) {
                     self.rlva.pending.extend(pending);
                     break;
                 }

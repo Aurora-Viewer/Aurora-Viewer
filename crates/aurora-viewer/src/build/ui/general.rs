@@ -55,6 +55,97 @@ fn perm_state(list: &[&ObjectProps], mask: impl Fn(&ObjectProps) -> u32) -> (u32
     (on, off)
 }
 
+/// can_set_export (llpanelpermissions.cpp, FS:CR): base and own must have
+/// Export, next owner must be unrestricted.
+fn can_set_export(base: u32, own: u32, next: u32) -> bool {
+    base & perm::EXPORT != 0 && own & perm::EXPORT != 0 && next & perm::UNRESTRICTED == perm::UNRESTRICTED
+}
+
+/// perms_allow_export.
+fn allows_export(base: u32, everyone: u32) -> bool {
+    base & perm::EXPORT != 0 && everyone & perm::EXPORT != 0
+}
+
+/// The standard textures every viewer has (plywood, blank, transparent):
+/// nobody's work, so they never hold an export back.
+fn standard_texture(id: Uuid) -> bool {
+    use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
+    id.is_nil() || [DEFAULT_TEXTURE, BLANK_TEXTURE, TRANSPARENT_TEXTURE].contains(&id)
+}
+
+/// An inventory item that lets its texture be exported: one that allows it
+/// to everyone (perms_allow_export), or the agent's own upload, Export in
+/// its base and own masks. Deliberate difference: the Legacy Viewer counts
+/// the first alone, and as no viewer gives an upload Everyone's Export, the
+/// box could almost never be ticked; another creator's texture still holds
+/// the export back.
+fn item_lets_export(item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
+    allows_export(item.base_mask, item.everyone_mask)
+        || (item.creator == agent && item.base_mask & perm::EXPORT != 0 && item.owner_mask & perm::EXPORT != 0)
+}
+
+/// Whether the agent may tick Export (LLPanelPermissions::refresh, FS:CR):
+/// its own objects, which it created, with Export in base and own and an
+/// unrestricted next owner; their contents read so far allow export, and
+/// each face's texture is a standard one or has an item of the agent that
+/// lets it be exported (`item_lets_export`). Every prim of the linksets is
+/// looked at, not only the root as in the Legacy Viewer.
+fn export_settable(tool: &mut BuildTool, world: &World, props: &[ObjectProps]) -> bool {
+    let own_work = !props.is_empty()
+        && props.iter().all(|x| {
+            x.owner_id == world.agent_id && x.creator_id == x.owner_id && can_set_export(x.base_mask, x.owner_mask, x.next_owner_mask)
+        });
+    if !own_work {
+        return false;
+    }
+    let contents = props.iter().all(|x| {
+        tool.contents
+            .objects
+            .get(&x.object_id)
+            .is_none_or(|inv| inv.items.iter().all(|i| allows_export(i.base_mask, i.everyone_mask)))
+    });
+    if !contents {
+        return false;
+    }
+    // is_asset_exportable: a null texture needs no check
+    let textures: std::collections::HashSet<Uuid> = tool
+        .linkset_prims(world)
+        .into_iter()
+        .filter_map(|i| world.objects.get(i).and_then(|o| o.te.clone()))
+        .flat_map(|te| te.faces.iter().map(|f| f.texture).collect::<Vec<_>>())
+        .filter(|id| !standard_texture(*id))
+        .collect();
+    if textures.is_empty() {
+        return true;
+    }
+    let exportable = exportable_assets(tool, world);
+    textures.iter().all(|id| exportable.contains(id))
+}
+
+/// The asset ids an item of ours lets be exported (`item_lets_export`),
+/// read again only when the inventory or the agent changed.
+fn exportable_assets<'a>(tool: &'a mut BuildTool, world: &World) -> &'a std::collections::HashSet<Uuid> {
+    let generation = world.inventory.generation;
+    let stale = tool
+        .export_assets
+        .as_ref()
+        .is_none_or(|(g, agent, _)| *g != generation || *agent != world.agent_id);
+    if stale {
+        let set = world
+            .inventory
+            .items
+            .values()
+            .filter(|item| item_lets_export(item, world.agent_id))
+            .map(|item| item.asset_id)
+            .collect();
+        tool.export_assets = Some((generation, world.agent_id, set));
+    }
+    &tool
+        .export_assets
+        .get_or_insert_with(|| (generation, world.agent_id, Default::default()))
+        .2
+}
+
 /// (value, tentative) of one bit.
 fn bit(state: (u32, u32), b: u32) -> (bool, bool) {
     if state.0 & b == b {
@@ -453,7 +544,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                     }
                 });
                 ui.horizontal(|ui| {
-                    label(ui, p, "L$");
+                    label(ui, p, aurora_i18n::currency());
                     ui.add_enabled_ui(sale_ok && can_transfer && for_sale && !sale_mixed, |ui| {
                         let e = spin_i(ui, &mut price, 0..=999_999_999, 100.0);
                         if e.changed {
@@ -601,6 +692,14 @@ fn ownership_permissions(
         ) {
             tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
         }
+        // OpenSim's export permission, only where the region honours it
+        if world.export_supported() {
+            let (v, t) = bit(everyone, perm::EXPORT);
+            let settable = can_manipulate && export_settable(tool, world, props);
+            if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("build-ui-general-export"), settable) {
+                tool.set_perm(world, perm_field::EVERYONE, n, perm::EXPORT);
+            }
+        }
     });
     label(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"));
     ui.horizontal(|ui| {
@@ -640,6 +739,77 @@ fn ownership_permissions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_needs_export_in_base_and_own_and_an_unrestricted_next_owner() {
+        let full = perm::UNRESTRICTED | perm::MOVE | perm::EXPORT;
+        assert!(can_set_export(full, full, perm::UNRESTRICTED));
+        assert!(!can_set_export(full & !perm::EXPORT, full, perm::UNRESTRICTED));
+        assert!(!can_set_export(full, full & !perm::EXPORT, perm::UNRESTRICTED));
+        assert!(!can_set_export(full, full, perm::COPY | perm::TRANSFER), "no-modify next owner");
+        assert!(allows_export(full, perm::EXPORT));
+        assert!(!allows_export(full, perm::COPY), "Everyone's bit decides");
+        assert!(!allows_export(perm::UNRESTRICTED, perm::EXPORT), "base without Export");
+    }
+
+    #[test]
+    fn the_exportable_assets_are_read_once_per_inventory_change() {
+        use aurora_net::inventory::InvItem;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let full = perm::UNRESTRICTED | perm::MOVE | perm::EXPORT;
+        let upload = |id: u128, asset: u128| InvItem {
+            id: Uuid::from_u128(id),
+            asset_id: Uuid::from_u128(asset),
+            creator: Uuid::from_u128(1),
+            base_mask: full,
+            owner_mask: full,
+            ..Default::default()
+        };
+        world.inventory.add_items(vec![upload(10, 100)]);
+        let mut tool = BuildTool::default();
+        assert!(exportable_assets(&mut tool, &world).contains(&Uuid::from_u128(100)));
+        // the same generation: the set is not read again
+        world.inventory.items.insert(Uuid::from_u128(11), upload(11, 101));
+        assert!(!exportable_assets(&mut tool, &world).contains(&Uuid::from_u128(101)));
+        // a change of the inventory: read again
+        world.inventory.add_items(vec![upload(12, 102)]);
+        let set = exportable_assets(&mut tool, &world);
+        assert!(set.contains(&Uuid::from_u128(101)) && set.contains(&Uuid::from_u128(102)));
+    }
+
+    #[test]
+    fn own_uploads_and_standard_textures_let_an_export_through() {
+        use aurora_net::inventory::InvItem;
+        let me = Uuid::from_u128(1);
+        let full = perm::UNRESTRICTED | perm::MOVE | perm::EXPORT;
+        assert!(standard_texture(aurora_prim::te::DEFAULT_TEXTURE), "a new box's plywood");
+        assert!(standard_texture(aurora_prim::te::BLANK_TEXTURE));
+        assert!(!standard_texture(Uuid::from_u128(77)));
+        let upload = InvItem {
+            creator: me,
+            base_mask: full,
+            owner_mask: full,
+            everyone_mask: 0,
+            ..Default::default()
+        };
+        assert!(item_lets_export(&upload, me), "our own upload, Everyone without Export");
+        let bought = InvItem {
+            creator: Uuid::from_u128(2),
+            ..upload.clone()
+        };
+        assert!(!item_lets_export(&bought, me), "another creator's texture holds it back");
+        let shared = InvItem {
+            everyone_mask: perm::EXPORT,
+            ..bought.clone()
+        };
+        assert!(item_lets_export(&shared, me), "unless its creator allows export to everyone");
+        let no_base = InvItem {
+            base_mask: perm::UNRESTRICTED,
+            ..upload
+        };
+        assert!(!item_lets_export(&no_base, me), "our own, but its base has no Export");
+    }
 
     #[test]
     fn perm_bits_mixed() {

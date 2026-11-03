@@ -5,8 +5,8 @@
 use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentResource};
 use std::collections::HashMap;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{LazyLock, OnceLock, RwLock};
 
 pub use fluent_bundle::FluentValue;
 include!(concat!(env!("OUT_DIR"), "/locales.rs"));
@@ -22,6 +22,18 @@ struct Catalog {
 static CATALOGS: OnceLock<Vec<Catalog>> = OnceLock::new();
 static CURRENT: AtomicUsize = AtomicUsize::new(usize::MAX);
 static SYSTEM: OnceLock<String> = OnceLock::new();
+
+/// The money symbol messages show for "L$" (Tea::sActiveCurrency): an
+/// OpenSim grid's or region's own, "L$" on Second Life.
+const LINDEN: &str = "L$";
+static CURRENCY: RwLock<&'static str> = RwLock::new(LINDEN);
+/// Another symbol than "L$" is in use: only then are messages rewritten.
+static CUSTOM: AtomicBool = AtomicBool::new(false);
+/// Plain messages with the symbol swapped (Tea::wrapCurrency), by message
+/// and symbol: a symbol changes at login or on entering a region, so these
+/// few strings live for the process like the catalogs.
+static WRAPPED: LazyLock<RwLock<HashMap<(usize, &'static str), &'static str>>> = LazyLock::new(Default::default);
+static SYMBOLS: RwLock<Vec<&'static str>> = RwLock::new(Vec::new());
 
 /// Cache composite label tables independently for every bundled locale.
 /// Switching languages selects another table without allocating per frame.
@@ -159,7 +171,63 @@ pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str
 }
 
 pub fn text(key: &'static str) -> &'static str {
-    plain(current(), key)
+    wrap(plain(current(), key))
+}
+
+/// Tea::setCurrency / setRegionCurrency: the symbol shown in place of "L$"
+/// from now on; empty for "L$".
+pub fn set_currency(symbol: &str) {
+    let symbol = symbol.trim();
+    let symbol = if symbol.is_empty() { LINDEN } else { symbol };
+    if *CURRENCY.read().unwrap_or_else(|e| e.into_inner()) == symbol {
+        return;
+    }
+    let interned = {
+        let mut symbols = SYMBOLS.write().unwrap_or_else(|e| e.into_inner());
+        match symbols.iter().find(|known| **known == symbol) {
+            Some(known) => *known,
+            None => {
+                let leaked: &'static str = Box::leak(symbol.to_owned().into_boxed_str());
+                symbols.push(leaked);
+                leaked
+            }
+        }
+    };
+    *CURRENCY.write().unwrap_or_else(|e| e.into_inner()) = interned;
+    CUSTOM.store(interned != LINDEN, Ordering::Release);
+}
+
+/// Tea::getCurrency: the symbol in use, "L$" unless a grid names its own.
+pub fn currency() -> &'static str {
+    if CUSTOM.load(Ordering::Acquire) {
+        *CURRENCY.read().unwrap_or_else(|e| e.into_inner())
+    } else {
+        LINDEN
+    }
+}
+
+/// Tea::wrapCurrency for a catalog's plain message.
+fn wrap(text: &'static str) -> &'static str {
+    if !CUSTOM.load(Ordering::Acquire) || !text.contains(LINDEN) {
+        return text;
+    }
+    let symbol = currency();
+    let key = (text.as_ptr() as usize, symbol);
+    if let Some(wrapped) = WRAPPED.read().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return wrapped;
+    }
+    let wrapped: &'static str = Box::leak(text.replace(LINDEN, symbol).into_boxed_str());
+    WRAPPED.write().unwrap_or_else(|e| e.into_inner()).insert(key, wrapped);
+    wrapped
+}
+
+/// Tea::wrapCurrency for a formatted message.
+fn wrap_owned(text: String) -> String {
+    if CUSTOM.load(Ordering::Acquire) && text.contains(LINDEN) {
+        text.replace(LINDEN, currency())
+    } else {
+        text
+    }
 }
 
 fn plain(catalog: &'static Catalog, key: &'static str) -> &'static str {
@@ -172,7 +240,7 @@ fn plain(catalog: &'static Catalog, key: &'static str) -> &'static str {
 
 /// Resolve a message in an explicit locale, useful for deterministic tests.
 pub fn text_in(language: &str, key: &'static str) -> &'static str {
-    plain(&catalogs()[index(language).unwrap_or_else(english)], key)
+    wrap(plain(&catalogs()[index(language).unwrap_or_else(english)], key))
 }
 
 fn render(catalog: &Catalog, key: &str, args: &FluentArgs<'_>) -> Option<String> {
@@ -183,11 +251,11 @@ fn render(catalog: &Catalog, key: &str, args: &FluentArgs<'_>) -> Option<String>
 }
 
 pub fn format(key: &'static str, args: &FluentArgs<'_>) -> String {
-    format_catalog(current(), key, args)
+    wrap_owned(format_catalog(current(), key, args))
 }
 
 pub fn format_in(language: &str, key: &'static str, args: &FluentArgs<'_>) -> String {
-    format_catalog(&catalogs()[index(language).unwrap_or_else(english)], key, args)
+    wrap_owned(format_catalog(&catalogs()[index(language).unwrap_or_else(english)], key, args))
 }
 
 fn format_catalog(catalog: &Catalog, key: &'static str, args: &FluentArgs<'_>) -> String {
@@ -278,6 +346,27 @@ mod tests {
             bundle,
             plain: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn an_opensim_grid_s_currency_symbol_replaces_l_dollars_in_messages() {
+        // the only test that changes the symbol: put back before the end
+        assert_eq!(currency(), "L$");
+        assert_eq!(text_in("en", "currency-title"), "Buy L$");
+        set_currency("KC");
+        assert_eq!(currency(), "KC");
+        assert_eq!(text_in("en", "currency-title"), "Buy KC");
+        assert_eq!(text_in("fr", "currency-title").matches("KC").count(), 1);
+        assert!(
+            std::ptr::eq(text_in("en", "currency-title"), text_in("en", "currency-title")),
+            "cached"
+        );
+        assert_eq!(text_in("en", "currency-you-have"), "You now have", "without L$: untouched");
+        set_currency("OS$");
+        assert_eq!(text_in("en", "currency-title"), "Buy OS$");
+        set_currency(" ");
+        assert_eq!(currency(), "L$", "empty: back to L$");
+        assert_eq!(text_in("en", "currency-title"), "Buy L$");
     }
 
     #[test]

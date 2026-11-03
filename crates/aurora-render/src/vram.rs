@@ -39,6 +39,9 @@
 
 #[cfg(not(target_os = "macos"))]
 use ash::vk;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 /// Bytes of the device-local heap, see the module: `budget` is what the
 /// system lets this process use at the moment, `usage` what the driver
@@ -91,15 +94,63 @@ impl BudgetFloor {
     }
 }
 
-/// Reads [`VideoMemory`] from the adapter. A physical device query: it takes
-/// no lock of the device and may run while the render thread draws.
+/// The driver can block even a physical-device memory query (#1992: the
+/// main thread in NVIDIA's driver, the render thread idle). Keep that call
+/// off every frame/UI path; readers only copy the last complete sample.
 pub struct VideoMemoryProbe {
-    adapter: wgpu::Adapter,
-    /// Index of the largest device-local heap, when the driver reports
-    /// budgets.
-    heap: Option<usize>,
-    /// The budget given out, and the last one logged.
-    floor: parking_lot::Mutex<(BudgetFloor, u64)>,
+    sampler: BudgetSampler,
+}
+
+const PROBE_INTERVAL: Duration = Duration::from_millis(250);
+
+/// The query runs without the cache lock. A stuck driver leaves the last
+/// budget available and cannot hold up a frame or the viewer's shutdown.
+struct BudgetSampler {
+    latest: Arc<parking_lot::Mutex<Option<(u64, u64)>>>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl BudgetSampler {
+    fn new(mut query: impl FnMut() -> Option<(u64, u64)> + Send + 'static, interval: Duration) -> Self {
+        let latest = Arc::new(parking_lot::Mutex::new(None));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let (output, stop) = (latest.clone(), stopped.clone());
+        let spawned = std::thread::Builder::new().name("aurora-vram".into()).spawn(move || {
+            let mut floor = BudgetFloor::default();
+            let mut logged = None::<u64>;
+            while !stop.load(Ordering::Acquire) {
+                if let Some((raw, usage)) = query() {
+                    let budget = floor.update(raw, std::time::Instant::now());
+                    *output.lock() = Some((budget, usage));
+                    if logged.is_none_or(|last| budget.abs_diff(last) >= BUDGET_LOG_STEP) {
+                        logged = Some(budget);
+                        log::info!(
+                            "GPU memory budget: {} MB given out, the lowest of the last {} s ({} MB reported now, {} MB used, {SOURCE})",
+                            budget >> 20,
+                            BUDGET_WINDOW.as_secs(),
+                            raw >> 20,
+                            usage >> 20
+                        );
+                    }
+                }
+                std::thread::sleep(interval);
+            }
+        });
+        if let Err(e) = spawned {
+            log::warn!("GPU memory budget: sampling thread not started ({e}); texture memory follows its setting only");
+        }
+        Self { latest, stopped }
+    }
+
+    fn read(&self) -> Option<(u64, u64)> {
+        *self.latest.lock()
+    }
+}
+
+impl Drop for BudgetSampler {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+    }
 }
 
 /// A change of the budget given out worth a log line.
@@ -113,41 +164,19 @@ const SOURCE: &str = "MTLDevice working set";
 
 impl VideoMemoryProbe {
     pub fn new(adapter: wgpu::Adapter) -> Self {
-        let heap = Self::budget_heap(&adapter);
-        match heap.and_then(|h| Self::query(&adapter, h)) {
-            Some((budget, usage)) => log::info!(
-                "GPU memory budget: {} MB for this process, {} MB used ({SOURCE})",
-                budget >> 20,
-                usage >> 20
-            ),
-            None => log::info!("GPU memory budget: not reported by the driver (texture memory follows its setting only)"),
-        }
-        VideoMemoryProbe {
-            adapter,
-            heap,
-            floor: parking_lot::Mutex::new((BudgetFloor::default(), 0)),
-        }
+        let heap = std::sync::OnceLock::new();
+        let sampler = BudgetSampler::new(
+            move || Self::query(&adapter, (*heap.get_or_init(|| Self::budget_heap(&adapter)))?),
+            PROBE_INTERVAL,
+        );
+        VideoMemoryProbe { sampler }
     }
 
-    /// The figures of the moment, the budget the lowest of the last minute
-    /// (module); None when the driver does not report them.
+    /// The most recent complete sample, at most one driver query per
+    /// quarter second. A blocked query keeps the previous conservative
+    /// budget; None until the first reading or when none is available.
     pub fn read(&self, device: &wgpu::Device) -> Option<VideoMemory> {
-        let (raw, usage) = Self::query(&self.adapter, self.heap?)?;
-        let budget = {
-            let mut floor = self.floor.lock();
-            let budget = floor.0.update(raw, std::time::Instant::now());
-            if budget.abs_diff(floor.1) >= BUDGET_LOG_STEP {
-                floor.1 = budget;
-                log::info!(
-                    "GPU memory budget: {} MB given out, the lowest of the last {} s ({} MB reported now, {} MB used)",
-                    budget >> 20,
-                    BUDGET_WINDOW.as_secs(),
-                    raw >> 20,
-                    usage >> 20
-                );
-            }
-            budget
-        };
+        let (budget, usage) = self.sampler.read()?;
         let budget = forced_budget().unwrap_or(budget);
         // (wgpu's counters: a few atomics, no lock; every buffer counts,
         // those in system memory too, a few hundred MB at most)
@@ -279,6 +308,38 @@ mod tests {
     use std::time::{Duration, Instant};
 
     const MB: u64 = 1 << 20;
+
+    #[test]
+    fn a_blocked_driver_query_cannot_block_cached_reads_or_shutdown() {
+        for initial in [None, Some((8_000 * MB, 4_000 * MB))] {
+            let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let mut first = true;
+            let sampler = BudgetSampler::new(
+                move || {
+                    if std::mem::take(&mut first) {
+                        return initial;
+                    }
+                    let _ = entered_tx.send(());
+                    let _ = release_rx.recv();
+                    Some((7_000 * MB, 3_000 * MB))
+                },
+                Duration::from_millis(1),
+            );
+            entered_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("query entered after publishing the first sample");
+            let start = Instant::now();
+            assert_eq!(sampler.read(), initial);
+            drop(sampler);
+            assert!(
+                start.elapsed() < Duration::from_millis(250),
+                "cache reads and shutdown waited for the blocked query"
+            );
+            // The query is still blocked until after both operations.
+            release_tx.send(()).expect("release the sampling thread");
+        }
+    }
 
     #[test]
     fn a_drop_counts_at_once_and_a_rise_once_it_has_held_a_minute() {

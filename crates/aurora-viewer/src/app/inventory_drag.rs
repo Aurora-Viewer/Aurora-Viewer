@@ -860,6 +860,10 @@ mod tests {
                 materials_limits: Default::default(),
                 max_tasks: 0,
                 grid_status: Default::default(),
+                currency_base_uri: String::new(),
+                opensim: Default::default(),
+                currency_symbol: String::new(),
+                export_supported: false,
             },
         );
         let r = rez(prepare(
