@@ -157,6 +157,25 @@ pub fn agent_set_appearance(agent: Uuid, session: Uuid, serial: u32, a: &Appeara
     msg
 }
 
+/// Ask the region for the bakes it keeps (LLAgentWearables::queryWearableCache):
+/// each bake's cache key and face. The answer, AgentCachedTextureResponse,
+/// names the texture of each key it knows and a nil id for the others.
+pub fn agent_cached_texture(agent: Uuid, session: Uuid, serial: i32, keys: &[(Uuid, u8)]) -> aurora_msg::msgs::AgentCachedTexture {
+    use aurora_msg::msgs::agent_cached_texture as m;
+    let mut msg = aurora_msg::msgs::AgentCachedTexture::default();
+    msg.agent_data.agent_id = agent;
+    msg.agent_data.session_id = session;
+    msg.agent_data.serial_num = serial;
+    msg.wearable_data = keys
+        .iter()
+        .map(|(id, te)| m::WearableData {
+            id: *id,
+            texture_index: *te,
+        })
+        .collect();
+    msg
+}
+
 /// Largest bake OpenSim takes (UploadBakedTextureModule.cs).
 const MAX_UPLOAD: usize = 6_000_000;
 
@@ -242,6 +261,21 @@ mod tests {
         );
         assert_eq!(msg.object_data.texture_entry, vec![1, 2, 3]);
         assert_eq!(msg.visual_param.iter().map(|p| p.param_value).collect::<Vec<_>>(), [10, 20, 30]);
+    }
+
+    #[test]
+    fn the_cache_query_carries_each_key_with_its_face() {
+        let msg = agent_cached_texture(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            5,
+            &[(Uuid::from_u128(7), 8), (Uuid::from_u128(9), 20)],
+        );
+        assert_eq!(msg.agent_data.serial_num, 5);
+        assert_eq!(
+            msg.wearable_data.iter().map(|w| (w.id, w.texture_index)).collect::<Vec<_>>(),
+            [(Uuid::from_u128(7), 8), (Uuid::from_u128(9), 20)]
+        );
     }
 
     #[tokio::test]

@@ -1616,7 +1616,7 @@ impl App {
         if let NetCommand::RequestServerAppearance { cof_version } = cmd
             && self.world.bakes_locally()
         {
-            self.local_bakes.rebake(Instant::now());
+            self.local_bakes.refresh();
             self.world.apply(NetEvent::AppearanceRequestResult {
                 cof_version,
                 success: true,
@@ -3065,6 +3065,10 @@ impl App {
         }
         if let NetEvent::BakeUploaded { request, result } = &ev {
             self.local_bakes.uploaded(*request, result);
+            return;
+        }
+        if let NetEvent::CachedBakes { serial, faces } = &ev {
+            self.local_bakes.cached_answer(*serial, faces);
             return;
         }
         if let NetEvent::RebakeRequested(texture) = &ev {
@@ -12911,8 +12915,8 @@ impl App {
                 loaded
             });
             let slurl = global.zip(sim.as_ref()).map(|(g, (region, _))| {
-                let pos = glam::Vec3::new(g.x.rem_euclid(256.0) as f32, g.y.rem_euclid(256.0) as f32, g.z as f32);
-                crate::slurl::make(region, pos)
+                let (x, y) = self.world.map.local_xy(g.x, g.y);
+                crate::slurl::make(region, glam::Vec3::new(x as f32, y as f32, g.z as f32))
             });
             list.push(ui::bars::favorites::Favorite {
                 item: id,

@@ -207,7 +207,7 @@ fn a_locked_folder_in_received_items_stays_closed_to_moves_in() {
     for locked in [id(20), id(21)] {
         prefs.protected = HashSet::from([locked]);
         for to in [id(10), id(20), id(21)] {
-            assert!(!rules::move_destination(&inv, to), "{locked} locked, to {to}");
+            assert!(!rules::destination(&inv, to), "{locked} locked, to {to}");
             assert!(
                 rules::move_selection(&inv, &[id(50)], to, &prefs.protected, &facts.worn).is_err(),
                 "{locked} locked, to {to}"
