@@ -149,11 +149,28 @@ def _matrix_property(value):
     return matrix
 
 
-def _stored_bind(bone, bone_transform):
+def bind_shift(armature, bone_transform):
+    """Offset shared by every bind origin and its bone head, in SL axes.
+
+    Moving the whole rig after binding (a few millimetres in some kits, #2022)
+    shifts every head alike without changing the bind pose; only a bone that
+    moved against the others makes its bind data stale.
+    """
+    offsets = []
+    for bone in armature.data.bones:
+        bind = _matrix_property(bone["bind_mat"]) if "bind_mat" in bone.keys() else None
+        if bind is not None:
+            offsets.append(bind.translation - bone_transform @ bone.head_local)
+    if len(offsets) < 3:
+        return Vector()  # Too few to tell a rig move from an edited bone.
+    return Vector([sorted(offset[axis] for offset in offsets)[len(offsets) // 2] for axis in range(3)])
+
+
+def _stored_bind(bone, bone_transform, shift):
     bind = _matrix_property(bone["bind_mat"])
     if bind is None or abs(bind.to_3x3().determinant()) < 1e-8:
         return None
-    if (bind.translation - bone_transform @ bone.head_local).length > 0.001:
+    if (bind.translation - shift - bone_transform @ bone.head_local).length > 0.001:
         return None
     return bind.to_3x3().to_4x4()
 
@@ -164,7 +181,7 @@ def _uses_default_rest(armature):
                 and not any("bind_mat" in bone.keys() for bone in armature.data.bones))
 
 
-def inverse_bind_linear(armature, bone, bone_transform, axes):
+def inverse_bind_linear(armature, bone, bone_transform, axes, shift=Vector()):
     """Rotation and scale of the joint's inverse bind in SL axes.
 
     Rigs can bind meshes in a rest pose that is not SL's T-pose (body dev kits
@@ -175,11 +192,11 @@ def inverse_bind_linear(armature, bone, bone_transform, axes):
     `has_bind_data` or not ("no add-on" kits are not, #2022), so LiveMesh does
     too, in place of the joint's default `axes` (#1455). A bone without one
     keeps its default axes and its nearest ancestor's rotation. Bind data
-    whose origin is no longer the bone head (rest pose edited since, other
-    coordinate convention) is ignored. An Avastar rig without bind data that
-    binds in its current rest pose (`rig_use_bind_pose`) rotates each bone
-    from its default rest matrix `mat0`, as Avastar's export does
-    (rig.calculate_bind_matrix and pose_mat).
+    whose origin no longer follows the bone head (bone moved since, other
+    coordinate convention) is ignored; `shift` is the whole rig's move. An
+    Avastar rig without bind data that binds in its current rest pose
+    (`rig_use_bind_pose`) rotates each bone from its default rest matrix
+    `mat0`, as Avastar's export does (rig.calculate_bind_matrix, pose_mat).
     """
     if _uses_default_rest(armature):
         while bone.parent and bone.name.isupper():
@@ -193,7 +210,7 @@ def inverse_bind_linear(armature, bone, bone_transform, axes):
     own = True
     while bone is not None and "bind_mat" not in bone.keys():
         bone, own = bone.parent, False
-    bind = _stored_bind(bone, bone_transform) if bone is not None else None
+    bind = _stored_bind(bone, bone_transform, shift) if bone is not None else None
     if bind is None:
         return axes
     if own:
@@ -336,6 +353,7 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False, p
                 raise ValueError("Multiple weighted bones map to the same avatar joint: " + name)
             heads[name] = bone_transform @ armature.data.bones[source_name].head_local
         inverse_bind = []
+        shift = bind_shift(armature, bone_transform) if armature else Vector()
         for name in names:
             values = rest_axes.get(name)
             axes = Matrix([values[i:i+4] for i in range(0,16,4)]).transposed() if values else Matrix.Identity(4)
@@ -352,7 +370,7 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False, p
                 # Aurora applies the wearer's current shape and animation.
                 inverse_bind.append(_column_major(shaped @ Matrix.Translation(Vector(reference) - heads[name])))
             else:
-                linear = inverse_bind_linear(armature, source_bone, bone_transform, axes)
+                linear = inverse_bind_linear(armature, source_bone, bone_transform, axes, shift)
                 inverse_bind.append(_column_major(linear @ Matrix.Translation(-heads[name])))
         positions = np.empty(len(captured.vertices) * 3, dtype=np.float32)
         captured.vertices.foreach_get("co", positions)

@@ -496,6 +496,48 @@ class ExporterTests(unittest.TestCase):
         pelvis["bind_mat"] = [stale[row][column] for column in range(4) for row in range(4)]
         assert_matrix(inverses()["mPelvis"], Matrix.Translation((0, 0, -1)))
 
+    def test_bind_pose_survives_moving_the_whole_rig(self):
+        # A kit whose rig was nudged a few millimetres after binding (#2022):
+        # every origin is off by the same amount, so the bind pose still holds,
+        # while a bone moved against the others is still stale.
+        from mathutils import Matrix
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        bones = self.rig.data.edit_bones
+        bones["mChest"].parent = bones["mPelvis"]
+        neck = bones.new("mNeck")
+        neck.head, neck.tail = (0.2, 0, 1.4), (0.2, 0, 1.5)
+        neck.parent = bones["mChest"]
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.new(name="mChest").add([1], 1.0, "REPLACE")
+        self.mesh.vertex_groups["mPelvis"].remove([1])
+        rotation = Matrix.Rotation(0.5, 4, "X")
+        shift = Matrix.Translation((-0.003, 0, 0.003))
+        for name, head in (("mPelvis", (0, 0, 1)), ("mChest", (0.2, 0, 1)), ("mNeck", (0.2, 0, 1.4))):
+            bind = shift @ Matrix.Translation(head) @ rotation
+            self.rig.data.bones[name]["bind_mat"] = [bind[row][column] for column in range(4) for row in range(4)]
+
+        def chest():
+            value = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1)["meshes"][0]
+            m = value["inverse_bind"][value["joints"].index("mChest")]
+            return Matrix([m[i:i + 4] for i in range(0, 16, 4)]).transposed()
+
+        def assert_matrix(actual, expected):
+            for row in range(4):
+                for column in range(4):
+                    self.assertAlmostEqual(actual[row][column], expected[row][column], places=5)
+
+        assert_matrix(chest(), rotation.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        moved = Matrix.Translation((0.2, 0, 1.1)) @ rotation
+        self.rig.data.bones["mChest"]["bind_mat"] = [moved[row][column] for column in range(4) for row in range(4)]
+        # mChest no longer follows its head: its bind data is stale.
+        assert_matrix(chest(), Matrix.Translation((-0.2, 0, -1)))
+        # Two shifted bones cannot tell a rig move from edited bones.
+        del self.rig.data.bones["mPelvis"]["bind_mat"]
+        bind = shift @ Matrix.Translation((0.2, 0, 1)) @ rotation
+        self.rig.data.bones["mChest"]["bind_mat"] = [bind[row][column] for column in range(4) for row in range(4)]
+        assert_matrix(chest(), Matrix.Translation((-0.2, 0, -1)))
+
     def test_collision_volume_bind_mat_is_not_stacked_on_its_default_axes(self):
         # A volume's bind_mat already holds its SL rotation and small scale; the
         # viewer's rest axes for it hold the same, so only one may apply (#2022).
