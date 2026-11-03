@@ -6595,6 +6595,42 @@ mod script_dialog_tests {
         }
     }
 
+    #[tokio::test]
+    async fn abuse_report_udp_uses_the_complaint_database_type() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let main_addr = main.local_addr().expect("simulator address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let mut session = test_session(&sh, sock.clone(), [(main_addr, Sim::new(main_addr, 10))].into(), main_addr);
+        sock.writable().await.expect("socket ready");
+        let report = crate::abuse_report::AbuseReport {
+            category: 45,
+            abuser_id: Uuid::from_u128(42),
+            summary: "Spam".into(),
+            details: "Repeated adverts".into(),
+            ..Default::default()
+        };
+        session.on_command(NetCommand::SendAbuseReport(Box::new(report.clone())));
+        let mut bytes = [0; 1500];
+        let (size, _) = tokio::time::timeout(Duration::from_secs(2), main.recv_from(&mut bytes))
+            .await
+            .expect("report reaches simulator")
+            .expect("datagram");
+        let packet = parse_packet(&bytes[..size]).expect("packet");
+        assert!(packet.reliable());
+        let message: msgs::UserReport = packet.decode().expect("UserReport");
+        // EReportType values are fixed in the server database, not ordinal.
+        assert_eq!(message.report_data.report_type, 3);
+        assert_eq!(message.agent_data.agent_id, Uuid::from_u128(1));
+        assert_eq!(message.agent_data.session_id, Uuid::from_u128(2));
+        assert_eq!(message.report_data.category, 45);
+        assert_eq!(message.report_data.abuser_id, report.abuser_id);
+        assert_eq!(message.report_data.summary, str_field(&report.summary));
+        assert_eq!(message.report_data.details, str_field(&report.details));
+        assert!(received.try_iter().any(|(_, e)| matches!(e, NetEvent::AbuseReportSent(Ok(())))));
+    }
+
     /// The next LogoutRequest the simulator receives, past the other packets
     /// a tick sends (pings, agent updates).
     async fn logout_request_from(sim: &UdpSocket) -> LogoutRequest {
