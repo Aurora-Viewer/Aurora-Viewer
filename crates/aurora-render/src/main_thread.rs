@@ -340,11 +340,8 @@ impl Renderer {
         }
         let wanted = crate::adapter_choice::Wanted::parse(gpu);
         let plan = crate::adapter_choice::plan(&candidates, &wanted);
-        if plan.reason == crate::adapter_choice::Reason::WantedMissing {
-            log::warn!(
-                "GPU: \"{}\" asked for, not found among the adapters that can present: automatic choice",
-                gpu.trim()
-            );
+        if let Some(w) = plan.reason.warning(gpu.trim()) {
+            log::warn!("{w}");
         }
         let mut opened = None;
         let mut failure = RenderError::NoAdapter("no native GPU adapter can present to the window".into());
