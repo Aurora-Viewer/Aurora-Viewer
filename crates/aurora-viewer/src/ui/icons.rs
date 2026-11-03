@@ -257,6 +257,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "caret-left",
     "caret-right",
     "caret-up",
+    "carousel-horizontal",
     "chart-area-line",
     "chart-candle",
     "chart-dots",

@@ -61,6 +61,9 @@ pub(super) struct ReelState {
     pub pending: Option<(u64, Pixels)>,
     /// The photo the e-mail form of the quick view is for.
     pub mail: Option<u64>,
+    /// The quick view was opened in photo mode (it closes with it), not
+    /// from the toolbar's Photo roll without it.
+    pub in_photo_mode: bool,
     /// The photo the last photo's card shows.
     pub card: Option<u64>,
     /// AURORA_DEMO_PHOTO_ROLL (`demo`).
@@ -86,6 +89,7 @@ impl Default for ReelState {
             holding: None,
             pending: None,
             mail: None,
+            in_photo_mode: false,
             card: None,
             demo: None,
         }
@@ -379,11 +383,29 @@ impl App {
         self.photo_reel_mail_form(ctx, p, window);
     }
 
+    /// The toolbar's Photo roll: the quick view on the newest photo shown
+    /// (not one still on its way), in photo mode or without it; closed
+    /// when open, like the toolbar's windows.
+    pub(super) fn photo_reel_show_newest(&mut self) {
+        let r = &mut self.snapshots.reel;
+        if r.quick.is_open() {
+            r.quick.close();
+            r.mail = None;
+            return;
+        }
+        let Some(id) = r.view(&[], &|_| String::new()).photos.first().map(|p| p.id) else {
+            return;
+        };
+        r.quick.open = Some(id);
+        r.in_photo_mode = self.panels.snapshot;
+    }
+
     /// What the reel's stack or quick view asks.
     pub(super) fn photo_reel_action(&mut self, a: ReelAction, renderer: &Renderer) {
         match a {
             ReelAction::Show(id) => {
                 self.snapshots.reel.quick.open = Some(id);
+                self.snapshots.reel.in_photo_mode = self.panels.snapshot;
             }
             ReelAction::Close => {
                 self.snapshots.reel.quick.close();

@@ -12599,6 +12599,7 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
+            BarAction::PhotoRoll => self.photo_reel_show_newest(),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
             BarAction::PlaceBar { stretch, rights_text } => {
                 self.settings.place_bar_stretch = stretch;
@@ -15928,6 +15929,8 @@ impl App {
                     self.settings.profile_rights,
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
+                self.toolbar_ui.photo_roll_empty = self.snapshots.reel.reel.is_empty();
+                self.toolbar_ui.photo_roll_active = self.snapshots.reel.quick.is_open();
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
                 let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
                 self.chat_ui.note_frame(pointer_busy);

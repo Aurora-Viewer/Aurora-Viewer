@@ -456,7 +456,13 @@ impl QuickView {
                 ui.painter().rect_filled(rect, 0.0, shade);
                 resp
             });
-        ctx.move_to_top(back.response.layer_id);
+        // on top of photo mode, not over a dialog of its own (the deletion,
+        // the price, the e-mail): egui keeps the order of layers raised in
+        // the same frame, an older dialog would stay under it
+        let layer = back.response.layer_id;
+        if self.confirm.is_none() && !self.blocked {
+            ctx.move_to_top(layer);
+        }
 
         // the photo in its frame, as large as the room between the bars
         // allows
@@ -518,7 +524,9 @@ impl QuickView {
                         });
                     });
             });
-        ctx.move_to_top(top.response.layer_id);
+        // the bars and the buttons right above the backdrop, always (a
+        // click on the backdrop raises it alone)
+        ctx.set_sublayer(layer, top.response.layer_id);
         over_bars |= top.response.hovered();
         if self.open.is_none() {
             return;
@@ -546,7 +554,7 @@ impl QuickView {
                     vf_icon(ui.painter(), icon, Rect::from_center_size(rect.center(), Vec2::splat(20.0)), p.ink);
                     resp.on_hover_text(tip).clicked()
                 });
-            ctx.move_to_top(arrow.response.layer_id);
+            ctx.set_sublayer(layer, arrow.response.layer_id);
             over_bars |= arrow.response.hovered();
             if arrow.inner {
                 self.go(view, view.photos[to].id, now, out);
@@ -568,7 +576,7 @@ impl QuickView {
             .fixed_pos(Pos2::new(screen.center().x, strip.response.rect.top() - 16.0))
             .show(ctx, |ui| self.actions(ui, p, view, photo, out));
         for area in [&strip, &buttons] {
-            ctx.move_to_top(area.response.layer_id);
+            ctx.set_sublayer(layer, area.response.layer_id);
             over_bars |= area.response.hovered();
         }
 
@@ -617,7 +625,7 @@ impl QuickView {
             tile_button(ui, p, icon, label, matches!(kind, ActionKind::FlatDanger), enabled)
         };
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.spacing_mut().item_spacing.x = 12.0;
             for d in destinations(photo) {
                 let (icon, label) = send_button(d);
                 let enabled = ready && view.can_send.contains(&d);
@@ -631,7 +639,6 @@ impl QuickView {
                     out.push(ReelAction::Send(photo.id, d));
                 }
             }
-            ui.add_space(14.0);
             if photo.on_disk().is_some()
                 && button(
                     ui,
@@ -661,7 +668,6 @@ impl QuickView {
             {
                 out.push(ReelAction::ShowProfile);
             }
-            ui.add_space(14.0);
             if button(ui, "trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::FlatDanger, true).clicked() {
                 self.confirm = Some(photo.id);
             }

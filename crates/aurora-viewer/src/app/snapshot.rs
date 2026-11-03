@@ -2206,10 +2206,14 @@ LUT_3D_SIZE {n}
         for a in actions {
             self.photo_action(a, renderer);
         }
-        if self.panels.snapshot {
+        // the quick view: photo mode's, closed with it; or the toolbar's
+        // Photo roll's, opened without it
+        if self.panels.snapshot || !self.snapshots.reel.in_photo_mode {
             self.photo_reel_quick(ctx, p, renderer);
         } else {
             self.snapshots.reel.quick.close();
+        }
+        if !self.panels.snapshot {
             self.snapshots.ui.full_frame = false;
             if self.snapshots.held.take().is_some() {
                 self.snapshots.ui.freeze = false;

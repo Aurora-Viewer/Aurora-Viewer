@@ -1,11 +1,13 @@
-//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:mail][:post][:moved]: the reel filled with
+//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:mail][:post][:moved][:toolbar]: the reel filled with
 //! `n` real photos of the plaza, saved to a folder of the cache (never the
 //! Pictures folder), the focal length changed between them so that they
 //! differ. `quick` then opens the quick view on the newest, `delete` asks
 //! to delete it, `send` sends it again to the inventory (its price asked over
 //! the quick view), `mail` opens the e-mail's form over it, `post` posts it to
 //! the demo's web profile. `moved` puts the tray at the middle
-//! of the screen: the photos fly to it there. From AURORA_DEMO_SNAPSHOT_FRAME
+//! of the screen: the photos fly to it there. `toolbar` puts the Photo roll
+//! button on the right toolbar (dimmed until the first photo), then closes
+//! photo mode and opens the quick view with it. From AURORA_DEMO_SNAPSHOT_FRAME
 //! (700 by default); the photo mode's look follows AURORA_DEMO_SNAPSHOT.
 
 use super::super::App;
@@ -27,6 +29,8 @@ pub(in crate::app) struct Demo {
     post: bool,
     /// The tray moved to the middle of the screen, the flights following it.
     moved: bool,
+    /// The toolbar's Photo roll: shown, then the quick view opened with it.
+    toolbar: bool,
     start: u64,
     taken: usize,
     /// The frame of the last step.
@@ -54,6 +58,7 @@ impl Demo {
             mail: words.contains(&"mail"),
             post: words.contains(&"post"),
             moved: words.contains(&"moved"),
+            toolbar: words.contains(&"toolbar"),
             start,
             ..Demo::default()
         })
@@ -73,6 +78,16 @@ impl App {
             log::info!("photo reel demo: {} photos from frame {}", demo.count, demo.start);
             if demo.moved {
                 self.settings.snapshot.viewfinder.reel_at = Some([0.55, 0.3]);
+            }
+            if demo.toolbar {
+                let bars = self.settings.toolbar.get_or_insert_with(Default::default);
+                if !bars.right.iter().any(|b| b.command == "photo_roll") {
+                    bars.right.push(crate::ui::skin::ToolButton {
+                        command: "photo_roll".into(),
+                        icon: "carousel-horizontal-filled".into(),
+                        tooltip: String::new(),
+                    });
+                }
             }
             self.snapshots.reel.demo = Some(demo);
         }
@@ -103,6 +118,7 @@ impl App {
         }
         // the photos all saved: the view given back, then the quick view
         d.done = true;
+        let toolbar = d.toolbar;
         let (quick, delete, send, mail, post, fov) = (d.quick, d.delete, d.send, d.mail, d.post, d.fov.take());
         if let Some(fov) = fov {
             self.settings.camera.fov = fov;
@@ -112,6 +128,13 @@ impl App {
             return;
         };
         log::info!("photo reel demo: {} photos in the reel", self.snapshots.reel.reel.len());
+        if toolbar {
+            // photo mode closed, the quick view opened from the toolbar
+            self.panels.snapshot = false;
+            self.photo_reel_show_newest();
+            log::info!("photo reel demo: quick view opened from the toolbar");
+            return;
+        }
         if quick {
             self.photo_reel_action(ReelAction::Show(newest), renderer);
         }
