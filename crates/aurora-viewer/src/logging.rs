@@ -292,6 +292,12 @@ pub fn init() {
     .target(env_logger::Target::Pipe(Box::new(Tee { file, session_file })))
     .init();
     std::panic::set_hook(Box::new(|info| {
+        // wgpu's panic for a device lost during a wait, caught by the
+        // renderer and taken as the loss (aurora-render device_lost.rs)
+        if aurora_render::in_guarded_poll() {
+            log::warn!("wgpu: {info}");
+            return;
+        }
         let bt = std::backtrace::Backtrace::force_capture();
         crate::crash::panic(info, &bt);
         log::error!("panic: {info}\n{bt}");
