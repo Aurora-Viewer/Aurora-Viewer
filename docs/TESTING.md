@@ -1004,6 +1004,10 @@ when unfocused") is ignored during a screenshot.
   trigger plain G (snap / guide). Releasing a key first pressed without
   AltGr must always release it, even if AltGr was held in the meantime.
 
+- **`AURORA_DEMO_SNAPSHOT=viewfinder-hidden-sharp-frozen-hold`**: with `AURORA_DEMO_CAMERA=shadow-zoom` and `AURORA_DEMO_SNAPSHOT_FRAME=1300`, freeze the world, capture an 8K Freeze Frame at frame 1300, then release Freeze Frame at 1420 while the world stays frozen. Capture at 1200/1360/1500 to compare live/held/live at the same camera and pose. `hold` can also be combined with the other viewfinder words.
+
+- **`AURORA_DEMO_CAMERA=shadow-zoom|shadow-reference`**: freeze the local avatar in a neutral T-pose and aim horizontally at its chest. Camera distances are 2.4 m at frames 300–799, 1.2 m at 800–1099 and 0.6 m from 1100; capture at 700/1000/1300 with `AURORA_DEMO_BARS=hidden`. `shadow-reference` also exports the posed and morphed opaque head/upper/lower body geometry beside `AURORA_CAPTURE` at those frames, with camera and light data. The reference excludes alpha hair, accessories and world occluders. Use a direct contact-mask diagnostic when diagnosing missing shadows: final-colour changes also depend on lighting.
+
 - **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
@@ -8941,7 +8945,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
 | `AURORA_BLEND_SHADOWS=0` | Alpha-blended faces that are not rigged cast no shadow, as before |
-| `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
+| `AURORA_DEBUG_SHADOWS=1|contact` | Shadow cascades and their shadow, or the contact mask alone |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_FOOT_IK_SCOPE=<mode>` | Offline foot-placement benchmark override (all or visible10) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
@@ -8983,8 +8987,8 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
-| `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
-| `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
+| `AURORA_CONTACT_SOFT=0|1|legacy` | Unfiltered, resolution-aware softening (default), or the former fixed 5 × 5 filter |
+| `AURORA_CONTACT_VARIANT=stream`, `full-ray`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -9341,14 +9345,31 @@ What the inventory must show with these scenarios:
   as a shell of 0.5 % of its distance (Bend's window, before issue 988)
   instead of a body as deep as the ray went under it (up to 5 cm, with
   the sun ahead of the camera): a ray that goes under a thick caster is
-  stopped only where it grazes its edges. **`AURORA_CONTACT_SOFT=0`**:
-  the mask reaches the shading as the pass wrote it, without the 5 × 5
-  softening over each surface (`contact_shadows_filter.wgsl`): hard steps
-  of whole pixels on curved bodies (the sides of our avatar with
-  `AURORA_DEMO_SUN=0,12`) and a dotted line under the hovering shoe of
-  `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
-  frame 690). Softened, neither shows and no shadow spreads from the
-  ground onto a caster nor the reverse.
+  stopped only where it grazes its edges.
+  **`AURORA_CONTACT_SOFT=0|1|legacy`**: `0` shows the unfiltered mask;
+  `legacy` keeps the former fixed 5 × 5 surface-aware tent for A/B comparisons;
+  `1` (also the default) uses horizontal and vertical depth-aware tents at
+  full resolution. The support is 3.5 pixels at 1080 render lines and grows
+  with the actual render height (render scale included): 7 taps per axis at
+  1080p, 9 at 1440p, 13 at 4K and 27 at 8K 16:9. A wider photo's cropped
+  camera field is included so its footprint matches the viewfinder. Each
+  photo tile uses the whole rendered photo height, including supersampling;
+  the tile guard includes the filter radius. The two passes share depth/mask
+  tiles and keep depth unchanged, rejecting samples across surface breaks;
+  one extra RGBA8 mask is kept only while the new filter is selected (four
+  bytes per render pixel, included in the photo memory planner). Uniform
+  regions retain their density; a one-pixel shadow keeps its integrated
+  weight rather than being discarded. Support is capped at 64 pixels per
+  axis (8.4 KB of workgroup storage, within the portable 16 KB minimum).
+  The live and last photo kernels are cached across Freeze Frame/release.
+  Compare fixed `shadow-zoom` captures and actual 8K PNGs, inspecting thin
+  jewellery/straps and depth silhouettes for halos. This is image-space
+  softening; PCSS remains a separate follow-up.
+
+  **`AURORA_DEBUG_SHADOWS=contact`** displays only contact visibility on rendered surfaces (white lit, black shadowed), independent of sun response and regular shadow maps; combine with `AURORA_CONTACT_SOFT=0` to inspect the unfiltered mask. Use this diagnostic for zoom comparisons rather than inferring missing shadows from final colour.
+
+  **`AURORA_CONTACT_VARIANT=stream|full-ray`**: close-up investigation candidates, explicitly enabled for this launch; the normal default remains unchanged pending human validation. `stream` visits the visible ray in shared 64-sample tiles, with conservative 16-sample depth bounds and saturation exits; it neither skips sample positions nor fades close-up shadows out. `full-ray` is the independent scalar oracle, without bounds or saturation exits, intentionally slow. The GPU regression `streaming_matches_the_scalar_full_ray_and_keeps_a_one_pixel_caster` compares the raw masks byte-for-byte at singly written pixels for lights in front/behind the camera and a one-pixel caster over 480 pixels away. Screen-space limits remain: hidden/off-screen casters are absent. The streaming variant stays active for enlarged photos and Freeze Frame, rather than selecting the old bounded photo shader. The scale-transition GPU regression visits 1×, 2×, 4×, 8× and back to 1× on the same shader instance. Tiled photos retain their existing depth guard bands; arbitrary rays beyond those bands remain a limitation. This candidate is not yet approved as the normal default.
+
   **`AURORA_CONTACT_VARIANT=no-early-out|no-shared|short|skip`**: a
   diagnostic of the GPU hangs (device lost, Windows TDR) some AMD RX 9070 XT
   cards had as soon as the pass ran, each value without one construct of

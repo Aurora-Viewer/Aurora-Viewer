@@ -1298,6 +1298,11 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
     if (view == 0u) {
         return col;
     }
+    // Direct contact visibility: independent of normal, sun response and
+    // shadow maps, so a lighting change cannot masquerade as a lost mask.
+    if (view == 3u) {
+        return vec3<f32>(contact_shadow(frag) / max(frame.params.x, 1e-3));
+    }
     if (view == 2u) {
         let ao = screen_ao(frag);
         return vec3<f32>(ao * ao * ao * 0.8 / max(frame.params.x, 1e-3));

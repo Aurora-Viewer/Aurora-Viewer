@@ -4099,3 +4099,7 @@ array atlas from one to four 64-tile pages (32 to 128 MiB), preserving existing
 pictures by GPU copy. The two-capture frame budget and full-avatar limit remain
 independent. Pending or over-budget avatars draw neutral silhouette cards rather
 than disappearing; cards have a dynamically sized instance buffer.
+
+Close-up contact-shadow candidate: `aurora-render/src/shaders/contact_shadows_stream.wgsl` shares 64-sample ray tiles within a Bend wavefront and conservatively rejects 16-sample spans using depth bounds. `contact_shadows::variant_source` appends the existing sample-reconstruction helper and selects the independent scalar reference with a compile-time flag. Both are explicit diagnostic variants pending human validation. The interactive default remains unchanged; streaming variants retain their selected pipeline at every photo scale, including Freeze Frame.
+
+Contact-mask filtering (`contact_shadows_filter.wgsl`) uses separable depth-aware tents whose footprint follows the active render height and full-photo crop/height. The working RGBA8 mask is allocated only for that mode and counted in photo memory planning; tile guards include the radius. A two-entry kernel cache retains live/photo variants. `contact_shadows_filter_legacy.wgsl` is the fixed 5 × 5 A/B control (`AURORA_CONTACT_SOFT=legacy`).

@@ -85,8 +85,27 @@ pub(crate) fn shader_source(count: i32, hard: i32) -> String {
 /// contact shadows are off (`on`, the setting; `AURORA_CONTACT_SHADOWS`
 /// included).
 pub fn tile_reach(on: bool, scale: f32) -> u32 {
+    tile_reach_for_height(on, scale, 1080)
+}
+
+/// The guard for the full rendered photo height, not an individual tile.
+pub fn tile_reach_for_height(on: bool, scale: f32, height: u32) -> u32 {
     if Override::from_env().needed(on) {
-        samples(scale).0 as u32 + 1 + 2
+        let radius = match FilterMode::from_env() {
+            FilterMode::Copy => 0,
+            FilterMode::Legacy => 2,
+            FilterMode::Separable => FilterFootprint::for_height(height).radius,
+        };
+        samples(scale).0 as u32 + 1 + radius
+    } else {
+        0
+    }
+}
+
+/// Additional bytes per pixel for the separable filter's working mask.
+pub fn filter_extra_bytes(on: bool) -> u64 {
+    if Override::from_env().needed(on) && FilterMode::from_env() == FilterMode::Separable {
+        4
     } else {
         0
     }
@@ -347,6 +366,10 @@ impl Override {
 /// the one the driver does not take. The photo's pipelines stay Bend's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Variant {
+    /// Shared full-visible-ray search, without the close-range fade.
+    Stream,
+    /// Scalar full-visible-ray correctness oracle.
+    StreamReference,
     /// The shader as it is.
     Bend,
     /// No early exit of an all-sky wavefront through `workgroupUniformLoad`:
@@ -366,6 +389,8 @@ pub(crate) enum Variant {
 impl Variant {
     pub(crate) fn parse(v: Option<&str>) -> Self {
         match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("stream") => Variant::Stream,
+            Some("full-ray") => Variant::StreamReference,
             Some("no-early-out") => Variant::NoEarlyOut,
             Some("no-shared") => Variant::NoShared,
             Some("short") => Variant::Short,
@@ -402,6 +427,15 @@ pub(crate) fn variant_source(variant: Variant) -> String {
         src.replace_range(start..start + len, with);
     };
     match variant {
+        Variant::Stream | Variant::StreamReference => {
+            let source = include_str!("shaders/contact_shadows_stream.wgsl").replace("\r\n", "\n");
+            let source = if variant == Variant::StreamReference {
+                source.replace("const STREAM_REFERENCE: bool = false;", "const STREAM_REFERENCE: bool = true;")
+            } else {
+                source
+            };
+            format!("{source}\n{}", include_str!("shaders/contact_shadows_no_shared.wgsl"))
+        }
         Variant::Bend | Variant::Skip => bend.to_owned(),
         Variant::Short => shader_source(16, 1),
         Variant::NoEarlyOut => {
@@ -490,10 +524,66 @@ pub(crate) struct ContactShadows {
     variant: Variant,
 }
 
+/// A normalized footprint: 3.5 pixels of tent support at 1080 render lines.
+/// The radius is capped at 63 (8.4 KB of shared depth/mask memory per pass).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FilterFootprint {
+    radius: u32,
+    support_bits: u32,
+}
+
+impl FilterFootprint {
+    fn for_height(height: u32) -> Self {
+        let support = (3.5 * height.max(1) as f32 / 1080.0).clamp(1.01, 64.0);
+        Self {
+            radius: support.ceil() as u32 - 1,
+            support_bits: support.to_bits(),
+        }
+    }
+
+    fn support(self) -> f32 {
+        f32::from_bits(self.support_bits)
+    }
+}
+
+pub(crate) fn filter_source(height: u32) -> String {
+    let f = FilterFootprint::for_height(height);
+    include_str!("shaders/contact_shadows_filter.wgsl")
+        .replace("const RADIUS: i32 = 3;", &format!("const RADIUS: i32 = {};", f.radius))
+        .replace("const SUPPORT: f32 = 3.5;", &format!("const SUPPORT: f32 = {:.9};", f.support()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FilterMode {
+    Copy,
+    Legacy,
+    Separable,
+}
+
+impl FilterMode {
+    fn parse(v: Option<&str>) -> Self {
+        match v.map(str::trim) {
+            Some("0") => Self::Copy,
+            Some("legacy") => Self::Legacy,
+            _ => Self::Separable,
+        }
+    }
+    fn from_env() -> Self {
+        static MODE: std::sync::OnceLock<FilterMode> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| Self::parse(std::env::var("AURORA_CONTACT_SOFT").ok().as_deref()))
+    }
+}
+
 /// The softening of the mask before the shading reads it
 /// (shaders/contact_shadows_filter.wgsl).
 struct Filter {
-    soft: wgpu::ComputePipeline,
+    soft: [wgpu::ComputePipeline; 2],
+    legacy: wgpu::ComputePipeline,
+    pipeline_layout: wgpu::PipelineLayout,
+    footprint: FilterFootprint,
+    cached: Vec<(FilterFootprint, [wgpu::ComputePipeline; 2])>,
+    #[cfg(test)]
+    builds: u32,
     copy: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
 }
@@ -546,19 +636,69 @@ impl Filter {
                 cache: None,
             })
         };
+        let legacy_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("contact shadows filter (legacy)"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/contact_shadows_filter_legacy.wgsl").into()),
+        });
+        let legacy = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: Some("contact shadows filter (legacy)"),
+            layout: Some(&pl),
+            module: &legacy_module,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         Filter {
-            soft: make("main"),
+            soft: [make("horizontal"), make("vertical")],
+            legacy,
             copy: make("copy"),
             layout,
+            pipeline_layout: pl,
+            footprint: FilterFootprint::for_height(1080),
+            cached: Vec::new(),
+            #[cfg(test)]
+            builds: 0,
         }
     }
-}
+    fn prepare(&mut self, device: &wgpu::Device, height: u32) {
+        self.footprint = FilterFootprint::for_height(height);
+        if FilterMode::from_env() != FilterMode::Separable || self.footprint == FilterFootprint::for_height(1080) {
+            return;
+        }
+        if let Some(at) = self.cached.iter().position(|(f, _)| *f == self.footprint) {
+            let entry = self.cached.remove(at);
+            self.cached.insert(0, entry);
+            return;
+        }
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("contact shadows filter (resolution)"),
+            source: wgpu::ShaderSource::Wgsl(filter_source(height).into()),
+        });
+        let make = |entry| {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                label: Some("contact shadows filter (resolution)"),
+                layout: Some(&self.pipeline_layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        self.cached.insert(0, (self.footprint, [make("horizontal"), make("vertical")]));
+        // Keep the live view and last photo hot across Freeze Frame / release.
+        self.cached.truncate(2);
+        #[cfg(test)]
+        {
+            self.builds += 1;
+        }
+    }
 
-/// `AURORA_CONTACT_SOFT=0`: the mask reaches the shading as the pass wrote
-/// it, hard pixel steps, for a comparison.
-fn soft_from_env() -> bool {
-    static SOFT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SOFT.get_or_init(|| std::env::var("AURORA_CONTACT_SOFT").map_or(true, |v| v.trim() != "0"))
+    fn pipelines(&self) -> &[wgpu::ComputePipeline; 2] {
+        self.cached
+            .iter()
+            .find(|(f, _)| *f == self.footprint)
+            .map_or(&self.soft, |(_, pair)| pair)
+    }
 }
 
 /// The mask of one window size, the depth it may read instead of the
@@ -572,6 +712,7 @@ pub(crate) struct Targets {
     /// The filter's, reading the same depths and the pass's mask.
     filter_group: wgpu::BindGroup,
     filter_group_more: wgpu::BindGroup,
+    filter_passes: Option<[[wgpu::BindGroup; 2]; 2]>,
     depth_texture: wgpu::Texture,
     depth: wgpu::TextureView,
     /// The shadow in `.r`, 0 lit, 1 in contact shadow, softened; read by the
@@ -686,6 +827,11 @@ impl ContactShadows {
     /// on the photo's first frame, never in the window's).
     fn prepare(&mut self, device: &wgpu::Device, scale: f32) {
         self.samples = samples(scale);
+        // Full-visible-ray shaders already adapt to the target dimensions.
+        // Freeze Frame and enlarged photos must not select bounded Bend.
+        if matches!(self.variant, Variant::Stream | Variant::StreamReference) {
+            return;
+        }
         if self.samples == samples(1.0) || self.photo.as_ref().is_some_and(|(s, _)| *s == self.samples) {
             return;
         }
@@ -777,7 +923,7 @@ impl ContactShadows {
                 ],
             })
         };
-        let filter_group = |depth: &wgpu::TextureView| {
+        let filter_group = |depth: &wgpu::TextureView, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("contact shadows filter"),
                 layout: &self.filter.layout,
@@ -788,21 +934,29 @@ impl ContactShadows {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&raw),
+                        resource: wgpu::BindingResource::TextureView(input),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&result),
+                        resource: wgpu::BindingResource::TextureView(output),
                     },
                 ],
             })
         };
+        let filter_passes = (FilterMode::from_env() == FilterMode::Separable).then(|| {
+            let work = mask("contact shadows filter work");
+            [
+                [filter_group(depth, &raw, &work), filter_group(depth, &work, &result)],
+                [filter_group(&own_depth, &raw, &work), filter_group(&own_depth, &work, &result)],
+            ]
+        });
         Targets {
             size,
             group: group(depth),
             group_more: group(&own_depth),
-            filter_group: filter_group(depth),
-            filter_group_more: filter_group(&own_depth),
+            filter_group: filter_group(depth, &raw, &result),
+            filter_group_more: filter_group(&own_depth, &raw, &result),
+            filter_passes,
             depth_texture,
             depth: own_depth,
             result,
@@ -825,7 +979,9 @@ impl ContactShadows {
         near: f32,
         proj_y: f32,
         scale: f32,
+        filter_height: u32,
     ) {
+        self.filter.prepare(device, filter_height);
         self.prepare(device, scale);
         let (w, h) = (t.size.0 as i32, t.size.1 as i32);
         self.list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
@@ -880,15 +1036,129 @@ impl ContactShadows {
             pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
             pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
         }
-        pass.set_pipeline(if soft_from_env() { &self.filter.soft } else { &self.filter.copy });
-        pass.set_bind_group(0, filter_group, &[]);
-        pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        if let Some(groups) = &t.filter_passes {
+            let groups = &groups[usize::from(more)];
+            for (pipeline, group) in self.filter.pipelines().iter().zip(groups) {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, group, &[]);
+                pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+            }
+        } else {
+            pass.set_pipeline(if FilterMode::from_env() == FilterMode::Legacy {
+                &self.filter.legacy
+            } else {
+                &self.filter.copy
+            });
+            pass.set_bind_group(0, filter_group, &[]);
+            pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Scalar, independently scheduled reference for the two filter passes.
+    fn reference_filter(depth: &[f32], mask: &[u8], width: usize, height: usize, render_height: u32) -> Vec<u8> {
+        let footprint = FilterFootprint::for_height(render_height);
+        let radius = footprint.radius as isize;
+        let mut input = mask.to_vec();
+        for horizontal in [true, false] {
+            let mut output = vec![0u8; input.len()];
+            for y in 0..height {
+                for x in 0..width {
+                    let index = y * width + x;
+                    let d = depth[index];
+                    if d <= 0.0 {
+                        continue;
+                    }
+                    let before = if horizontal {
+                        y * width + x.saturating_sub(1)
+                    } else {
+                        y.saturating_sub(1) * width + x
+                    };
+                    let after = if horizontal {
+                        y * width + (x + 1).min(width - 1)
+                    } else {
+                        (y + 1).min(height - 1) * width + x
+                    };
+                    let a = d - depth[before];
+                    let b = depth[after] - d;
+                    let gradient = if a.abs() < b.abs() { a } else { b };
+                    let mut sum = 0.0;
+                    let mut weight = 0.0;
+                    for k in -radius..=radius {
+                        let xx = x as isize + if horizontal { k } else { 0 };
+                        let yy = y as isize + if horizontal { 0 } else { k };
+                        if xx < 0 || yy < 0 || xx >= width as isize || yy >= height as isize {
+                            continue;
+                        }
+                        let sample = yy as usize * width + xx as usize;
+                        let plane = d + gradient * k as f32;
+                        let tent = (footprint.support() - (k as f32).abs()).max(0.0);
+                        let w = tent * (1.0 - (depth[sample] - plane).abs() / (0.01 * d)).clamp(0.0, 1.0);
+                        sum += w * (input[sample] as f32 / 255.0);
+                        weight += w;
+                    }
+                    output[index] = (255.0 * sum / weight).round() as u8;
+                }
+            }
+            input = output;
+        }
+        input
+    }
+
+    #[test]
+    fn filter_footprint_tracks_render_height_and_stays_within_shared_memory_limits() {
+        for (height, radius) in [(1080, 3), (1440, 4), (2160, 6), (4320, 13), (7680, 24)] {
+            assert_eq!(FilterFootprint::for_height(height).radius, radius);
+        }
+        assert_eq!(FilterFootprint::for_height(0).radius, 1);
+        assert_eq!(FilterFootprint::for_height(u32::MAX).radius, 63);
+        let shared_bytes = 8 * (8 + 2 * FilterFootprint::for_height(u32::MAX).radius) * 8;
+        assert!(shared_bytes <= 16 * 1024);
+        let moment = |height| {
+            let f = FilterFootprint::for_height(height);
+            let mut weight = 0.0;
+            let mut moment = 0.0;
+            for k in -(f.radius as i32)..=f.radius as i32 {
+                let w = (f.support() - (k as f32).abs()).max(0.0);
+                weight += w;
+                moment += w * (k * k) as f32;
+            }
+            moment / weight / (height as f32 * height as f32)
+        };
+        for height in [1440, 2160, 4320, 7680] {
+            assert!(
+                (moment(height) / moment(1080) - 1.0).abs() < 0.05,
+                "normalized footprint at {height}"
+            );
+        }
+        assert_eq!(FilterMode::parse(None), FilterMode::Separable);
+        assert_eq!(FilterMode::parse(Some("0")), FilterMode::Copy);
+        assert_eq!(FilterMode::parse(Some(" legacy ")), FilterMode::Legacy);
+    }
+
+    #[test]
+    fn softening_preserves_constant_regions_silhouettes_and_thin_shadow_energy() {
+        let (w, h) = (64, 16);
+        let flat = vec![0.5; w * h];
+        for value in [0, 73, 255] {
+            let mask = vec![value; w * h];
+            assert_eq!(reference_filter(&flat, &mask, w, h, 1080), mask);
+        }
+        let depth: Vec<_> = (0..w * h).map(|i| if i % w < 32 { 0.5 } else { 0.2 }).collect();
+        let mask: Vec<_> = (0..w * h).map(|i| if i % w < 32 { 255 } else { 0 }).collect();
+        assert_eq!(reference_filter(&depth, &mask, w, h, 4320), mask, "no halo across a depth boundary");
+        let impulse: Vec<_> = (0..w * h).map(|i| if i % w == 32 { 255 } else { 0 }).collect();
+        let result = reference_filter(&flat, &impulse, w, h, 1080);
+        let row = &result[8 * w..9 * w];
+        assert!(row.iter().map(|&v| v as i32).sum::<i32>().abs_diff(255) <= 4);
+        assert!(row[32] >= 64, "a one-pixel shadow remains visible");
+        let sky = vec![0.0; w * h];
+        assert!(reference_filter(&sky, &vec![255; w * h], w, h, 4320).iter().all(|&v| v == 0));
+    }
 
     /// The pixel each thread of each wavefront writes, as the shader finds
     /// it (`ComputeWavefrontExtents`, contact_shadows.wgsl): a CPU copy of
@@ -1059,7 +1329,8 @@ mod tests {
         assert_eq!(samples(8.0), (480, 32));
         assert_eq!(samples(20.0), (MAX_SAMPLE_COUNT, 32));
         // the tiles' guard band covers the samples and the filter
-        assert_eq!(tile_reach(true, 4.0), 243);
+        assert_eq!(tile_reach(true, 4.0), 244);
+        assert_eq!(tile_reach_for_height(true, 4.0, 4320), 254);
     }
 
     #[test]
@@ -1210,7 +1481,7 @@ mod tests {
         let mask = |variant: Variant| -> Vec<u8> {
             let mut cs = ContactShadows::with_variant(&device, variant);
             let t = cs.targets(&device, &depth_view, format, w, h);
-            cs.write(&device, &queue, &t, light, 0.1, 0.0, 1.0);
+            cs.write(&device, &queue, &t, light, 0.1, 0.0, 1.0, 1080);
             let mut encoder = device.create_command_encoder(&Default::default());
             cs.encode(&mut encoder, &t, false);
             let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -1278,5 +1549,267 @@ mod tests {
             assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
         }
         assert!(mask(Variant::Skip).iter().all(|&v| v == 0), "skip: nothing");
+    }
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn streaming_matches_the_scalar_full_ray_and_keeps_a_one_pixel_caster() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("device");
+        let (w, h) = (960u32, 192u32);
+        let format = wgpu::TextureFormat::Depth32Float;
+        let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("test depth"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        // reversed depth drawn by a full-screen triangle (a depth texture
+        // takes no copy): a ground rising towards the camera, a box nearer,
+        // sky along the top
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("test depth"),
+            source: wgpu::ShaderSource::Wgsl(
+                "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+                    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+                    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+                }
+                @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @builtin(frag_depth) f32 {
+                    let ground = 0.0005 * (pos.y + 96.0);
+                    let box = pos.x >= 120.0 && pos.x < 170.0 && pos.y >= 90.0 && pos.y < 130.0;
+                    let wire = pos.x >= 230.0 && pos.x < 231.0 && pos.y >= 50.0 && pos.y < 150.0;
+                    let in_box = box || wire;
+                    let raised = select(ground * 1.02, ground * 1.005, wire);
+                    return select(select(ground, raised, in_box), 0.0, pos.y < 20.0);
+                }"
+                .into(),
+            ),
+        });
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+            label: Some("test depth"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("test depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit([encoder.finish()]);
+        // the sun ahead and high, its point on screen above the image
+        for (light, near) in [
+            ([0.2, 1.6, 0.0, 0.8], 0.1),
+            ([0.2, 1.6, 0.0, 0.8], 0.0001),
+            ([0.6, 0.2, 0.0, -0.6], 0.0001),
+            ([-1.6, 0.0001, 0.0, -0.0001], 0.1),
+        ] {
+            let mut cached: Option<(Variant, ContactShadows)> = None;
+            let mut mask = |variant: Variant, scale: f32| -> Vec<u8> {
+                if cached.as_ref().is_none_or(|(v, _)| *v != variant) {
+                    cached = Some((variant, ContactShadows::with_variant(&device, variant)));
+                }
+                let cs = &mut cached.as_mut().expect("test shader installed").1;
+                let t = cs.targets(&device, &depth_view, format, w, h);
+                let footprint = FilterFootprint::for_height((1080.0 * scale) as u32);
+                let hot = footprint == FilterFootprint::for_height(1080) || cs.filter.cached.iter().any(|(f, _)| *f == footprint);
+                let builds = cs.filter.builds;
+                cs.write(&device, &queue, &t, light, near, 0.0, scale, (1080.0 * scale) as u32);
+                if hot {
+                    assert_eq!(cs.filter.builds, builds, "a hot viewport/photo must not rebuild its filter");
+                }
+                assert!(cs.filter.cached.len() <= 2);
+                if matches!(variant, Variant::Stream | Variant::StreamReference) {
+                    assert!(cs.photo.is_none(), "full-ray photo must keep its selected shader");
+                }
+                let mut encoder = device.create_command_encoder(&Default::default());
+                cs.encode(&mut encoder, &t, false);
+                let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+                let check_filter = variant == Variant::Stream
+                    && near == 0.1
+                    && light[3] > 0.0
+                    && matches!(scale, 1.0 | 4.0)
+                    && FilterMode::from_env() == FilterMode::Separable;
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None,
+                    size: u64::from(row * h) * if check_filter { 2 } else { 1 },
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                encoder.copy_texture_to_buffer(
+                    t.raw.texture().as_image_copy(),
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &buffer,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(row),
+                            rows_per_image: Some(h),
+                        },
+                    },
+                    wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                if check_filter {
+                    encoder.copy_texture_to_buffer(
+                        t.result.texture().as_image_copy(),
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: &buffer,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: u64::from(row * h),
+                                bytes_per_row: Some(row),
+                                rows_per_image: Some(h),
+                            },
+                        },
+                        wgpu::Extent3d {
+                            width: w,
+                            height: h,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+                queue.submit([encoder.finish()]);
+                buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+                device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+                let data = buffer.slice(..).get_mapped_range().expect("mapped");
+                let raw: Vec<u8> = data[..(row * h) as usize]
+                    .chunks(row as usize)
+                    .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
+                    .collect();
+                if check_filter {
+                    let filtered: Vec<u8> = data[(row * h) as usize..]
+                        .chunks(row as usize)
+                        .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
+                        .collect();
+                    let depth: Vec<f32> = (0..h)
+                        .flat_map(|y| {
+                            (0..w).map(move |x| {
+                                let px = x as f32 + 0.5;
+                                let py = y as f32 + 0.5;
+                                let ground = 0.0005 * (py + 96.0);
+                                if py < 20.0 {
+                                    0.0
+                                } else if (230.0..231.0).contains(&px) && (50.0..150.0).contains(&py) {
+                                    ground * 1.005
+                                } else if (120.0..170.0).contains(&px) && (90.0..130.0).contains(&py) {
+                                    ground * 1.02
+                                } else {
+                                    ground
+                                }
+                            })
+                        })
+                        .collect();
+                    let expected = reference_filter(&depth, &raw, w as usize, h as usize, (1080.0 * scale) as u32);
+                    let wrong = expected.iter().zip(&filtered).filter(|(a, b)| a.abs_diff(**b) > 1).count();
+                    assert_eq!(wrong, 0, "filter differs from scalar reference at scale {scale}");
+                }
+                raw
+            };
+            let bend = mask(Variant::StreamReference, 1.0);
+            let shadowed = bend.iter().filter(|&&v| v > 128).count();
+            if near == 0.1 {
+                assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
+            }
+            // the pixels two wavefronts write (where Bend's dispatches meet) take
+            // whichever lands last: only the others are compared
+            let mut writes = vec![0u8; (w * h) as usize];
+            let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
+            written_pixels(&list, WAVE_SIZE, |x, y| {
+                if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
+                    writes[(y * w as i32 + x) as usize] += 1;
+                }
+            });
+            let once = writes.iter().filter(|&&n| n == 1).count();
+            // A light behind the camera has slightly wider dispatch overlaps.
+            let percent = if light[3] > 0.0 { 75 } else { 70 };
+            assert!(once > writes.len() * percent / 100, "{once} pixels written once");
+            let differ = |other: &[u8]| -> Vec<(usize, u8, u8)> {
+                bend.iter()
+                    .zip(other)
+                    .enumerate()
+                    .filter(|(i, (a, b))| a != b && writes[*i] == 1)
+                    .map(|(i, (a, b))| (i, *a, *b))
+                    .collect()
+            };
+            let again = differ(&mask(Variant::StreamReference, 1.0));
+            assert!(
+                again.is_empty(),
+                "Scalar reference twice: {} pixels differ, {:?}",
+                again.len(),
+                &again[..again.len().min(8)]
+            );
+            {
+                let variant = Variant::Stream;
+                let d = differ(&mask(variant, 1.0));
+                assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
+            }
+            for scale in [1.25, 4.0, 1.25, 2.0, 4.0, 8.0, 1.0] {
+                let d = differ(&mask(Variant::Stream, scale));
+                assert!(d.is_empty(), "stream photo scale {scale}: {} pixels differ", d.len());
+            }
+            if light[0] < -1.0 {
+                let bounded = mask(Variant::Short, 1.0);
+                // A one-pixel wire can darken only one of the four soft
+                // groups (at most 25%); require visible shadow, not full shade.
+                let recovered = (70..130)
+                    .flat_map(|y| (750..900).map(move |x| (y * w + x) as usize))
+                    .filter(|&i| bend[i] > 16 && bounded[i] == 0)
+                    .count();
+                assert!(
+                    recovered > 100,
+                    "full-view search must recover the wire beyond 480 pixels: {recovered}"
+                );
+            }
+            assert!(mask(Variant::Skip, 1.0).iter().all(|&v| v == 0), "skip: nothing");
+        }
     }
 }

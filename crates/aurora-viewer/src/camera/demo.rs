@@ -19,6 +19,7 @@
 //! - `zoom-resident`: the People list's Zoom on the nearest standing resident
 //!   at frame 600, who then walks south from 660 to 760 and west until 860:
 //!   the camera keeps facing them all along
+//! - `shadow-zoom`: neutral T-pose from frame 300; fixed front/chest view at 2.4 m, 1.2 m from 800, 0.6 m from 1100.
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
@@ -83,6 +84,8 @@ pub enum Step {
     FollowEvents,
     /// People › Near you double click on the demo resident (Avatar.ZoomIn).
     ZoomResident,
+    /// Neutral T-pose, front-facing chest target, and only the distance changes.
+    ShadowZoom(f32),
     /// Slide the demo resident by (x, y) metres, as if it walked.
     MoveResident(f32, f32),
     Log,
@@ -98,6 +101,14 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
     let num = |i: usize| parts.get(i).and_then(|v| v.parse::<f32>().ok());
     let mut out = Vec::new();
     match parts.first().copied().unwrap_or("") {
+        "shadow-zoom" | "shadow-reference" if frame >= 300 => {
+            let distance = match frame {
+                300..800 => 2.4,
+                800..1100 => 1.2,
+                _ => 0.6,
+            };
+            out.push(Step::ShadowZoom(distance));
+        }
         mode @ ("right-click" | "right-jitter" | "right-drag" | "right-slow") => {
             let (Some(x), Some(y)) = (num(1), num(2)) else {
                 return out;

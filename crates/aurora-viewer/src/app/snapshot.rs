@@ -273,6 +273,8 @@ struct DemoTight {
 }
 
 struct DemoPhoto {
+    /// Capture and release a held photo, independently of Freeze World.
+    hold: bool,
     frame: u64,
     /// None: only the window.
     save: Option<((u32, u32), snapshot::FileFormat, Option<PathBuf>)>,
@@ -1039,7 +1041,8 @@ impl App {
             .photo_dof_max_coc(size.1, renderer.size().1)
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
-        let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
+        let filter_height = (renderer.size().1 as f32 * snapshot::viewfinder_scale(size, renderer.size(), 100)).round() as u32;
+        let contact = aurora_render::contact_tile_reach_for_height(self.settings.contact_shadows, scale, filter_height);
         let guard = snapshot::TILE_GUARD
             .max(aurora_render::bloom_tile_reach(bloom))
             .max(dof)
@@ -1078,7 +1081,9 @@ impl App {
         } else {
             snapshot::PASS_GPU_MS
         };
-        let per_pixel = TARGET_BYTES_PER_PIXEL + TARGET_BYTES_PER_SAMPLE * u64::from(self.msaa_samples(renderer));
+        let per_pixel = TARGET_BYTES_PER_PIXEL
+            + TARGET_BYTES_PER_SAMPLE * u64::from(self.msaa_samples(renderer))
+            + aurora_render::contact_filter_extra_bytes(self.settings.contact_shadows);
         let free = renderer
             .video_memory
             .read(&renderer.device)
@@ -2610,6 +2615,7 @@ LUT_3D_SIZE {n}
                 Some(crate::settings::PhotoWindowStyle::Panel)
             };
             self.snapshots.demo = Some(DemoPhoto {
+                hold: words.contains(&"hold"),
                 frame,
                 save,
                 full_frame: kind.starts_with("full"),
@@ -2745,6 +2751,21 @@ LUT_3D_SIZE {n}
             if self.frame_count == demo.frame {
                 self.snapshots.quiet = false;
                 self.photo_to_profile(renderer);
+            }
+            return;
+        }
+        if demo.hold {
+            if self.frame_count == demo.frame {
+                let size = renderer.size();
+                self.settings.snapshot.resolution = snapshot::Resolution::Custom;
+                self.settings.snapshot.keep_ratio = false;
+                let scale = snapshot::MAX_SIDE as f32 / size.0.max(size.1).max(1) as f32;
+                self.settings.snapshot.custom = [(size.0 as f32 * scale).round() as u32, (size.1 as f32 * scale).round() as u32];
+                self.snapshots.ui.freeze = true;
+                self.photo_action(Action::Freeze(true), renderer);
+            } else if self.frame_count == demo.frame + 120 {
+                self.snapshots.ui.freeze = false;
+                self.photo_action(Action::Freeze(false), renderer);
             }
             return;
         }

@@ -2437,6 +2437,14 @@ fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
     }
 }
 
+/// Effective full render height for a filter matched to the camera field.
+fn contact_render_height(scene_height: u32, photo_tile: Mat4, proj: Mat4, fov_y: f32) -> u32 {
+    // A wider photo keeps the camera's horizontal field, narrowing its
+    // vertical field. Include that crop so its softness matches the viewfinder.
+    let crop = whole_proj(proj, photo_tile).y_axis.y.abs() * (fov_y * 0.5).tan().abs();
+    (scene_height as f32 * photo_tile.y_axis.y.abs() * crop).round().max(1.0) as u32
+}
+
 /// The part of the whole image a frame draws with `photo_tile` (see
 /// [`whole_proj`]), in fractions of it: left, top, width, height (0, 0, 1,
 /// 1 outside a tiled photo). The glow keeps the whole photo's 512 x 512
@@ -5911,7 +5919,10 @@ impl Backend {
         // too), or the ambient occlusion
         static SHADOW_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let cascades_asked = *SHADOW_VIEW.get_or_init(|| std::env::var_os("AURORA_DEBUG_SHADOWS").is_some());
+        static CONTACT_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let contact_asked = *CONTACT_VIEW.get_or_init(|| std::env::var("AURORA_DEBUG_SHADOWS").as_deref() == Ok("contact"));
         main.light_sets.mode[2] = match (cascades_asked || f.debug.shadows, f.debug.ambient_occlusion) {
+            (true, _) if contact_asked => 3,
             (true, _) => 1,
             (false, true) => 2,
             (false, false) => 0,
@@ -6246,6 +6257,7 @@ impl Backend {
                 fu.proj.w_axis.z,
                 fu.proj.y_axis.y,
                 f.photo_scale,
+                contact_render_height(world_size.1, f.photo_tile, f.proj, f.fov_y),
             );
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
@@ -8734,6 +8746,21 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contact_filter_uses_actual_render_height_and_whole_photo_height() {
+        let fov = 60f32.to_radians();
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 16.0 / 9.0, 0.1);
+        assert_eq!(contact_render_height(1080, Mat4::IDENTITY, proj, fov), 1080);
+        assert_eq!(contact_render_height(2160, Mat4::IDENTITY, proj, fov), 2160);
+        assert_eq!(contact_render_height(540, Mat4::IDENTITY, proj, fov), 540);
+        let a = Mat4::from_scale(Vec3::new(2.0, 2.0, 1.0));
+        let b = Mat4::from_scale(Vec3::new(4.0, 4.0, 1.0));
+        assert_eq!(contact_render_height(2700, a, a * proj, fov), 5400);
+        assert_eq!(contact_render_height(1350, b, b * proj, fov), 5400);
+        let wide = Mat4::from_scale(Vec3::new(1.0, 1.25, 1.0)) * proj;
+        assert_eq!(contact_render_height(2160, Mat4::IDENTITY, wide, fov), 2700);
+    }
 
     #[test]
     fn blend_runs_preserve_order_and_subranges_and_keep_single_sided_faces_culled() {
