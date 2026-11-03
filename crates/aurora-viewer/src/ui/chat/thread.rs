@@ -34,13 +34,15 @@ const AVATAR: f32 = 36.0;
 const TIME_W: f32 = 40.0;
 const TIME_W_12: f32 = 62.0;
 
-/// The width of the compact rows' time column, as the chat writes its times.
-fn time_w() -> f32 {
-    if crate::ui::bars::clock::chat_twelve_hours() {
+/// The width of the compact rows' time column, as the chat writes its times;
+/// it grows with the chat's text size, like the time it holds.
+fn time_w(ctx: &egui::Context) -> f32 {
+    let w = if crate::ui::bars::clock::chat_twelve_hours() {
         TIME_W_12
     } else {
         TIME_W
-    }
+    };
+    w * chat_size(ctx, 1.0)
 }
 const TEXT: f32 = 13.5;
 /// Room kept at the right of a row.
@@ -87,7 +89,7 @@ pub(super) fn draw(
     if look.new {
         new_separator(ui, p);
     }
-    let indent = if th.compact { time_w() + 8.0 } else { GUTTER };
+    let indent = if th.compact { time_w(ui.ctx()) + 8.0 } else { GUTTER };
     if let ChatKind::Invite(invite) = line.kind {
         super::invite_card::draw_card(ui, env, line, invite, indent);
         return;
@@ -111,7 +113,7 @@ pub(super) fn draw(
             super::object_row::Place {
                 icon_center: 0.0,
                 text_left: 0.0,
-                time_column: th.times.then(time_w),
+                time_column: th.times.then(|| time_w(ui.ctx())),
             }
         } else {
             super::object_row::Place {
@@ -167,11 +169,20 @@ pub(super) fn draw(
         // the time of a following line, in the gutter
         let t = hhmm(line.time);
         if th.times && !t.is_empty() {
+            // smaller when it would reach the text (a 12-hour time at a
+            // large chat size)
+            let size = chat_size(ui.ctx(), 10.0);
+            let w = ui
+                .painter()
+                .layout_no_wrap(t.clone(), egui::FontId::proportional(size), p.muted_dim)
+                .size()
+                .x;
+            let size = if w > GUTTER - 2.0 { size * (GUTTER - 2.0) / w } else { size };
             ui.painter().text(
                 egui::pos2(left + GUTTER * 0.5, rect.top() + 11.0),
                 egui::Align2::CENTER_CENTER,
                 t,
-                egui::FontId::proportional(chat_size(ui.ctx(), 10.0)),
+                egui::FontId::proportional(size),
                 p.muted_dim,
             );
         }
@@ -404,7 +415,7 @@ fn compact_row(
         if th.times {
             // the column grows with the chat's text size
             let k = chat_size(ui.ctx(), 1.0);
-            let (r, _) = ui.allocate_exact_size(egui::vec2(time_w() * k, 20.0 * k), egui::Sense::hover());
+            let (r, _) = ui.allocate_exact_size(egui::vec2(time_w(ui.ctx()), 20.0 * k), egui::Sense::hover());
             ui.painter().text(
                 egui::pos2(r.right(), r.top() + 10.5 * k),
                 egui::Align2::RIGHT_CENTER,
@@ -504,7 +515,7 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
     let row = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let lead = if th.compact {
-            4.0 + if th.times { time_w() + 6.0 } else { 0.0 }
+            4.0 + if th.times { time_w(ui.ctx()) + 6.0 } else { 0.0 }
         } else {
             GUTTER
         };
