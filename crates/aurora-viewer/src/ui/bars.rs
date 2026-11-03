@@ -730,10 +730,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::TeleportHome;
         }
         menu::separator(ui, p);
-        if menu::item(ui, p, "armchair", aurora_i18n::tr!("ui-bars-sit-on-ground")) {
+        // enable_sitdown_self / enable_standup_self: greyed when RLVa would
+        // refuse the one that applies (@sit standing, @unsit seated)
+        let locked = ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false);
+        if menu::item_if(ui, p, "armchair", aurora_i18n::tr!("ui-bars-sit-on-ground"), st.seated || !locked) {
             *action = BarAction::SitGround;
         }
-        if menu::item(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up")) {
+        if menu::item_if(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up"), !st.seated || !locked) {
             *action = BarAction::StandUp;
         }
         let fly = if st.flying {
@@ -2190,6 +2193,12 @@ pub(crate) fn tool_button_id(command: &str) -> egui::Id {
     egui::Id::unique(("toolbar_button", command))
 }
 
+/// Set by the app every frame: RLVa would refuse the Sit / Stand button's
+/// action (@sit standing, @unsit seated), so it is greyed.
+pub(crate) fn rlva_sit_locked_id() -> egui::Id {
+    egui::Id::unique("rlva-sit-locked")
+}
+
 /// The size of a toolbar button and of its icon: Firestorm's full-width bar
 /// (22 high, the icon follows the width) or the dock of the islands (fixed
 /// buttons, 18 px icons, `bars/dock.rs`); its icon, label or both
@@ -2289,6 +2298,7 @@ fn tool_button(
     look: ButtonLook,
     unread: usize,
     flash: f32,
+    locked: bool,
 ) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(look.size, egui::Sense::hover());
     let resp = ui.interact(rect, tool_button_id(command), egui::Sense::click_and_drag());
@@ -2298,7 +2308,8 @@ fn tool_button(
     // a saved Firestorm command Aurora does not run yet: very dimmed, with
     // neither face nor pill under the pointer, as in the window
     let ready = super::toolbar::ready(command);
-    let hovered = ready && resp.hovered();
+    // `locked`: RLVa would refuse its action, greyed without a hover face
+    let hovered = ready && !locked && resp.hovered();
     if let Some(fill) = tool_fill(p, ready && active, hovered).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
         painter.rect_filled(rect, radius, fill);
     }
@@ -2309,6 +2320,8 @@ fn tool_button(
     }
     let tint = if !ready {
         p.muted_dim.gamma_multiply(0.55)
+    } else if locked {
+        p.muted_dim
     } else if active || hovered {
         p.ink
     } else {
@@ -2895,6 +2908,7 @@ pub(crate) fn toolbar_row(
         // the Favorites button: its grid of favourites opens upwards
         let grid_id = egui::Id::unique("bars_favorites_grid_open");
         let active = active || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false));
+        let rlva_locked = b.command == "sit" && ui.ctx().data(|d| d.get_temp::<bool>(rlva_sit_locked_id())).unwrap_or(false);
         let response = tool_button(
             ui,
             p,
@@ -2913,6 +2927,7 @@ pub(crate) fn toolbar_row(
                 "gridstatus" => toolbar.grid_status_flash,
                 _ => 0.0,
             },
+            rlva_locked,
         );
         rects.push(response.rect);
         toolbar.button(&response, row.bar, row.style, b, p, row.locked);
@@ -2940,7 +2955,7 @@ pub(crate) fn toolbar_row(
             toolbar.ao_quick.anchor(&response, look(b).opens);
             continue;
         }
-        if response.clicked() {
+        if response.clicked() && !rlva_locked {
             let a = run_command(ui.ctx(), &b.command, panels);
             if !matches!(a, BarAction::None) {
                 *action = a;
