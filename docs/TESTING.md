@@ -1497,13 +1497,14 @@ cylinder. A shaped prim or a mesh counts as its visible surface: the
 yellow cube stops at the room's inner walls, never at its outer box. Choose Snap ›
 Objects in the construction settings, select the blue cube and drag its
 arrows or plane squares near the others: within 8 pixels it jumps flush
-(rose outline on both faces, a corner square on the plank's slope, amber
+(purple outline on both faces, a corner square on the plank's slope, amber
 for centres), and it stops at any face it would enter, however far the
 cursor goes past (a plane square slides along that face). `AURORA_DEMO_BUILD=place,object:87701,87702` turns "Place on
 surface" (P) on with the blue cube selected and holds the cursor over the
-orange cube's top: a purple pad there and the blue cube's box resting on
-it; `place,object:87701,87702,click` clicks, and the blue cube sits on the
-orange one. `on` also chooses
+orange cube's top: a pad in the accent there and a hologram of the blue
+cube resting on it; `place,object:87701,87702,click` clicks, and the blue
+cube sits on the orange one. `,rotate:<side>` chooses Auto rotate with that
+side (`place,object:87704,87702,rotate:bottom`: the tilted plank lands flat). `on` also chooses
 Objects for a build script, for example
 `AURORA_DEMO_BUILD=move,object:87701,z,0,40`.
 

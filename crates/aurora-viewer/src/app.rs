@@ -9468,6 +9468,11 @@ impl App {
             };
             self.scene.creation_preview.update(&mut gfx.renderer, preview);
             self.scene.creation_preview.append(&mut self.scene.lists);
+            // the hologram of Place on surface (build/place.rs)
+            let landing = self.build.place.active.then_some(self.build.place.preview).flatten();
+            self.scene
+                .update_place_preview(&mut gfx.renderer, &self.build.place.moving, landing.as_ref());
+            self.scene.place_preview.append(&mut self.scene.lists);
             let physics = crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build);
             self.scene
                 .physics_shapes
@@ -12188,6 +12193,10 @@ impl App {
                             self.panels.inventory = false;
                             self.panels.chat = false;
                         }
+                    }
+                    crate::build::demo::Step::PlaceRotate(side) => {
+                        self.settings.build.place_rotate = true;
+                        self.settings.build.place_side = side;
                     }
                     crate::build::demo::Step::Place(on) => {
                         if self.build.place.active != on {

@@ -230,7 +230,8 @@ fn candidates(sel: &Bounds, targets: &[Bounds], c: Constraint, px: &dyn Fn(Vec3,
             ] {
                 let Some(offset) = reach(c, u, delta) else { continue };
                 let pixels = px(sel.center, offset);
-                if !(pixels <= SNAP_PX) {
+                // (a NaN is out too)
+                if pixels.is_nan() || pixels > SNAP_PX {
                     continue;
                 }
                 let touching = kind == Kind::Touch && contact(&moved(sel, offset), t, k);

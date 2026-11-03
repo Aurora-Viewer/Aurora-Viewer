@@ -1,12 +1,17 @@
 //! "Place on surface": with the button (or P) on, the surface under the
-//! cursor shows where the selection would go, and a click puts it there, a
-//! chosen side against the surface, centred on the point clicked; the tool
-//! then turns off.
+//! cursor shows where the selection would go, a hologram of it there, and a
+//! click puts it there, centred on the point clicked; the tool then turns
+//! off. "Keep rotation" only moves it, the side facing the surface on it;
+//! "Auto rotate" turns a chosen side flat against the surface.
 //!
 //! Creators turn their root prims any way, so a side is not one of the
-//! object's own axes: it is read from how the selection sits when the tool
-//! turns on (`Reference`). Bottom is the side pointing down then, Front the
-//! side facing the camera, and they stay those sides while it turns.
+//! object's own axes: it is read from how the selection sat the first time
+//! the tool was turned on for it (`Truth`), Bottom the side pointing down
+//! then, Front the side facing the camera. That rotation is the ground
+//! truth: every placement turns the selection from it, not from where the
+//! last placement left it, so Bottom on a floor always stands it back the
+//! way it was. A turn by anything else (the rotate handles, a script) makes
+//! the rotation it then has the new truth.
 //!
 //! An Aurora feature, beside its snap to objects (`object_snap.rs`); no
 //! Legacy Viewer has it. The surfaces are those the snap uses: what objects
@@ -25,14 +30,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-/// The side of the selection put against the surface, as it sat when the
-/// tool turned on.
+/// A rotation further than this from the one the tool left (radians) was
+/// made by something else: the network's rounding of a placement stays
+/// well under it.
+const TURNED: f32 = 0.02;
+/// A turn smaller than this (radians) is f32 noise.
+const NOISE: f32 = 1e-3;
+/// Selections whose truth is kept, for the session.
+const MAX_TRUTHS: usize = 64;
+
+/// The side of the selection put against the surface, as it sat the first
+/// time the tool turned on for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
-    /// As it is: nothing turns, the side facing the surface meets it.
+    /// (`auto`: the "As it is" of the first test builds, now Keep rotation)
     #[default]
-    Auto,
+    #[serde(alias = "auto")]
     Bottom,
     Back,
     Top,
@@ -42,34 +56,24 @@ pub enum Side {
 }
 
 impl Side {
-    pub const ALL: [Side; 7] = [
-        Side::Auto,
-        Side::Bottom,
-        Side::Back,
-        Side::Top,
-        Side::Front,
-        Side::Left,
-        Side::Right,
-    ];
+    pub const ALL: [Side; 6] = [Side::Bottom, Side::Back, Side::Top, Side::Front, Side::Left, Side::Right];
 
     /// Where it pointed when it was read: `forward` is the camera's view
     /// along the ground.
-    fn seen(self, forward: Vec3) -> Option<Vec3> {
+    fn seen(self, forward: Vec3) -> Vec3 {
         let left = Vec3::Z.cross(forward);
-        Some(match self {
-            Side::Auto => return None,
+        match self {
             Side::Bottom => -Vec3::Z,
             Side::Top => Vec3::Z,
             Side::Front => -forward,
             Side::Back => forward,
             Side::Left => left,
             Side::Right => -left,
-        })
+        }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Side::Auto => aurora_i18n::tr!("build-place-side-auto"),
             Side::Bottom => aurora_i18n::tr!("build-place-side-bottom"),
             Side::Back => aurora_i18n::tr!("build-place-side-back"),
             Side::Top => aurora_i18n::tr!("build-place-side-top"),
@@ -80,22 +84,61 @@ impl Side {
     }
 }
 
-/// How the selection sat when the tool turned on: its box axis for `side`
-/// (in the box's frame), the one that pointed most that way.
-pub fn side_axis(box_rotation: Quat, camera_at: Vec3, side: Side) -> Option<Vec3> {
-    let forward = Vec3::new(camera_at.x, camera_at.y, 0.0).normalize_or(Vec3::X);
-    let want = side.seen(forward)?;
+/// The camera's view along the ground.
+fn flat_forward(camera_at: Vec3) -> Vec3 {
+    Vec3::new(camera_at.x, camera_at.y, 0.0).normalize_or(Vec3::X)
+}
+
+/// How the selection sat when it was read: its box axis for `side` (in the
+/// box's frame), the one that pointed most that way.
+pub fn side_axis(box_rotation: Quat, camera_at: Vec3, side: Side) -> Vec3 {
+    let want = side.seen(flat_forward(camera_at));
     (0..3)
         .flat_map(|i| [1.0, -1.0].map(|s| unit(i) * s))
         .max_by(|a, b| (box_rotation * *a).dot(want).total_cmp(&(box_rotation * *b).dot(want)))
+        .unwrap_or(-Vec3::Z)
 }
 
-/// The selection and the view the sides were read with.
-#[derive(Debug, Clone)]
-struct Reference {
-    selection: Vec<ObjKey>,
+/// The turn, from the box's rotation `now`, that puts `side` of the box as
+/// it sat (`truth`, read with the camera at `camera_at`) flat against a
+/// surface facing `normal`: the shortest turn from the truth, so a side
+/// already flat on it leaves the truth exactly. Turned right over (a top
+/// onto a floor), it rolls about the camera's view, so its front stays in
+/// front.
+pub fn turn_to(truth: Quat, camera_at: Vec3, now: Quat, side: Side, normal: Vec3) -> Quat {
+    let n = normal.normalize_or(Vec3::Z);
+    let from = truth * side_axis(truth, camera_at, side);
+    let to = -n;
+    let arc = if from.dot(to) < -0.9999 {
+        let forward = flat_forward(camera_at);
+        let axis = (forward - from * forward.dot(from))
+            .try_normalize()
+            .unwrap_or_else(|| from.any_orthonormal_vector());
+        Quat::from_axis_angle(axis, std::f32::consts::PI)
+    } else {
+        Quat::from_rotation_arc(from, to)
+    };
+    // (under a twentieth of a degree is float noise: the truth exactly)
+    let arc = if arc.angle_between(Quat::IDENTITY) < NOISE {
+        Quat::IDENTITY
+    } else {
+        arc
+    };
+    let turn = (arc * truth * now.inverse()).normalize();
+    if turn.angle_between(Quat::IDENTITY) < NOISE {
+        Quat::IDENTITY
+    } else {
+        turn
+    }
+}
+
+/// How the selection sat the first time the tool turned on for it.
+#[derive(Debug, Clone, Copy)]
+struct Truth {
     rotation: Quat,
     camera_at: Vec3,
+    /// The rotation the tool last saw or left it at.
+    last: Quat,
 }
 
 /// Where a click would put the selection.
@@ -111,21 +154,27 @@ pub struct Landing {
     pub turn: Quat,
 }
 
+impl Landing {
+    /// Where a point of the selection goes.
+    pub fn apply(&self, p: Vec3) -> Vec3 {
+        self.to.center + self.turn * (p - self.from.center)
+    }
+}
+
 /// The button's state, for the session.
 #[derive(Debug, Default)]
 pub struct Place {
     pub active: bool,
     pub preview: Option<Landing>,
-    reference: Option<Reference>,
+    /// The prims of the preview, for its hologram.
+    pub moving: Vec<usize>,
+    truths: HashMap<Vec<ObjKey>, Truth>,
 }
 
-/// Where the selection's box `sel` goes on the surface at `point`: the side
-/// `against` (an axis of the box's frame) turned flat against it, or, with
-/// None, as it is, the side facing the surface on it; resting on the plane,
-/// its centre over the point.
-pub fn landing(sel: &Bounds, point: Vec3, normal: Vec3, against: Option<Vec3>) -> Landing {
+/// Where the selection's box `sel` goes on the surface at `point`, turned by
+/// `turn` about its centre: resting on the plane, its centre over the point.
+pub fn landing(sel: &Bounds, point: Vec3, normal: Vec3, turn: Quat) -> Landing {
     let n = normal.normalize_or(Vec3::Z);
-    let turn = against.map_or(Quat::IDENTITY, |a| Quat::from_rotation_arc(sel.rotation * a, -n));
     let mut to = Bounds {
         center: point,
         rotation: (turn * sel.rotation).normalize(),
@@ -141,14 +190,6 @@ pub fn landing(sel: &Bounds, point: Vec3, normal: Vec3, against: Option<Vec3>) -
     }
 }
 
-/// The box axis nearest `v` (a turned axis, read back in the box's frame).
-fn snap_axis(v: Vec3) -> Vec3 {
-    (0..3)
-        .flat_map(|i| [1.0, -1.0].map(|s| unit(i) * s))
-        .max_by(|a, b| a.dot(v).total_cmp(&b.dot(v)))
-        .unwrap_or(-Vec3::Z)
-}
-
 fn unit(i: usize) -> Vec3 {
     let mut v = Vec3::ZERO;
     v[i] = 1.0;
@@ -162,6 +203,27 @@ fn ground_normal(world: &World, p: Vec3) -> Vec3 {
     Vec3::new(h(-e, 0.0) - h(e, 0.0), h(0.0, -e) - h(0.0, e), 2.0 * e).normalize_or(Vec3::Z)
 }
 
+impl Place {
+    /// The truth of `selection`, its box now at `now`: read now the first
+    /// time, and again when something else turned it.
+    fn truth(&mut self, selection: &[ObjKey], now: Quat, camera_at: Vec3) -> Truth {
+        if self.truths.len() >= MAX_TRUTHS && !self.truths.contains_key(selection) {
+            self.truths.clear();
+        }
+        let fresh = Truth {
+            rotation: now,
+            camera_at,
+            last: now,
+        };
+        let t = self.truths.entry(selection.to_vec()).or_insert(fresh);
+        if t.last.angle_between(now) > TURNED {
+            *t = fresh;
+        }
+        t.last = now;
+        *t
+    }
+}
+
 impl BuildTool {
     /// Whether the selection can be placed: whole objects in the world that
     /// may all be moved, with the Edit tool.
@@ -173,11 +235,10 @@ impl BuildTool {
             && super::manip::can_transform_selection(world, &self.selection, false, EditMode::Move)
     }
 
-    /// The button and P: on (the sides read again), or off.
+    /// The button and P: on, or off.
     pub fn toggle_place(&mut self, world: &World) {
         self.place.active = !self.place.active && self.can_place(world);
         self.place.preview = None;
-        self.place.reference = None;
     }
 
     /// The landing under the cursor, every frame while the button is on.
@@ -187,13 +248,15 @@ impl BuildTool {
             self.place.active = false;
             return;
         }
-        if over_ui {
-            return;
-        }
         let now = Instant::now();
+        // (`edit_box` turns with the first prim selected)
         let Some(edit_box) = super::bounds_of(world, &self.selection, false, now) else {
             return;
         };
+        let truth = self.place.truth(&self.selection, edit_box.rotation, self.cam.at);
+        if over_ui {
+            return;
+        }
         let moving: HashSet<usize> = super::highlighted_of(world, &self.selection, false)
             .into_iter()
             .map(|(i, _)| i)
@@ -201,14 +264,6 @@ impl BuildTool {
         let sel = scene
             .and_then(|scene| object_snap::shown_bounds(world, scene, &moving, &edit_box, now))
             .unwrap_or(edit_box);
-        // the sides as the selection sits now, kept while it stays selected
-        if self.place.reference.as_ref().is_none_or(|r| r.selection != self.selection) {
-            self.place.reference = Some(Reference {
-                selection: self.selection.clone(),
-                rotation: edit_box.rotation,
-                camera_at: self.cam.at,
-            });
-        }
         let ray = self.cam.ray(cursor.0, cursor.1);
         // the first object surface along the ray, past the selection
         let object = scene.and_then(|scene| {
@@ -230,13 +285,13 @@ impl BuildTool {
         let Some((point, normal)) = nearest else { return };
         // the side the camera sees
         let normal = if normal.dot(ray.1) > 0.0 { -normal } else { normal };
-        // the side read then, in the box's frame now: the box turns with the
-        // selection, so it is the same side after a turn
-        let against = self.place.reference.as_ref().and_then(|r| {
-            let axis = side_axis(r.rotation, r.camera_at, s.place_side)?;
-            Some(sel.rotation.inverse() * (r.rotation * axis))
-        });
-        self.place.preview = Some(landing(&sel, point, normal, against.map(|a| snap_axis(a))));
+        let turn = if s.place_rotate {
+            turn_to(truth.rotation, truth.camera_at, edit_box.rotation, s.place_side, normal)
+        } else {
+            Quat::IDENTITY
+        };
+        self.place.preview = Some(landing(&sel, point, normal, turn));
+        self.place.moving = moving.into_iter().collect();
     }
 
     /// A click while the button is on: put the selection where the preview
@@ -250,7 +305,7 @@ impl BuildTool {
             let Some((at, _, _)) = Scene::object_transform(world, root, now, 0) else {
                 continue;
             };
-            let delta = l.to.center + l.turn * (at - l.from.center) - at;
+            let delta = l.apply(at) - at;
             let Some(o) = world.objects.get_mut(root) else { continue };
             o.position += delta;
             let turned = l.turn != Quat::IDENTITY;
@@ -271,11 +326,16 @@ impl BuildTool {
         for (handle, updates) in by_region {
             self.send(BuildCmd::Transform { handle, updates });
         }
+        // its own turn keeps the truth
+        if let Some(t) = self.place.truths.get_mut(&self.selection) {
+            t.last = (l.turn * t.last).normalize();
+        }
         self.place.active = false;
+        self.place.moving.clear();
     }
 
-    /// The preview: a pad on the surface under the landing, and the
-    /// selection's box where it would go.
+    /// The preview's pad on the surface, in the accent; the selection itself
+    /// shows there as a hologram (`scene/place_preview.rs`).
     pub(super) fn place_draw(&self, p: &mut Painter3d) {
         let Some(l) = self.place.preview else { return };
         let pal = p.pal;
@@ -291,50 +351,40 @@ impl BuildTool {
         p.tri_plain(pad[0], pad[2], pad[3], fade(pal.violet, 0.25));
         p.flush();
         for k in 0..4 {
-            p.line_cased(pad[k], pad[(k + 1) % 4], pal.violet_light, 2.0);
+            p.line_cased(pad[k], pad[(k + 1) % 4], pal.violet, 2.0);
         }
-        // the ghost of the selection, edge by edge
-        let corner = |m: u8| {
-            let s = Vec3::new(
-                if m & 1 != 0 { 1.0 } else { -1.0 },
-                if m & 2 != 0 { 1.0 } else { -1.0 },
-                if m & 4 != 0 { 1.0 } else { -1.0 },
-            );
-            to.center + to.rotation * (to.half * s)
-        };
-        for m in 0u8..8 {
-            for bit in [1u8, 2, 4] {
-                if m & bit == 0 {
-                    p.line(corner(m), corner(m | bit), fade(pal.violet_light, 0.85), 1.5);
-                }
-            }
-        }
-        p.square(l.point, 6.0, pal.violet_light, egui::Stroke::new(1.0, fade(pal.navy, 0.5)));
+        p.square(l.point, 6.0, pal.violet, egui::Stroke::new(1.0, fade(pal.navy, 0.5)));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::EulerRot;
 
     fn cube(center: Vec3, half: Vec3, rotation: Quat) -> Bounds {
         Bounds { center, rotation, half }
     }
 
+    /// The build floater's rotation (degrees, X then Y then Z).
+    fn euler(x: f32, y: f32, z: f32) -> Quat {
+        Quat::from_euler(EulerRot::ZYX, z.to_radians(), y.to_radians(), x.to_radians())
+    }
+
     #[test]
-    fn as_it_is_puts_the_side_facing_the_surface_on_it_without_turning() {
+    fn keep_rotation_puts_the_side_facing_the_surface_on_it_without_turning() {
         let sel = cube(Vec3::new(5.0, 5.0, 9.0), Vec3::new(0.5, 0.3, 0.2), Quat::from_rotation_z(0.4));
         // on a floor: its bottom, centred over the point
-        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::Z, None);
+        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::Z, Quat::IDENTITY);
         assert_eq!(l.turn, Quat::IDENTITY);
         assert!(l.to.center.abs_diff_eq(Vec3::new(1.0, 2.0, 3.2), 1e-5), "{:?}", l.to);
         // on a wall facing +X: its side toward the wall
-        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::X, None);
+        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::X, Quat::IDENTITY);
         assert!((l.to.center.x - (1.0 + support(&sel, Vec3::X))).abs() < 1e-5);
         assert_eq!((l.to.center.y, l.to.center.z), (2.0, 3.0));
         // a tilted one rests on its corner
         let tilted = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::from_rotation_x(0.3));
-        let l = landing(&tilted, Vec3::ZERO, Vec3::Z, None);
+        let l = landing(&tilted, Vec3::ZERO, Vec3::Z, Quat::IDENTITY);
         assert_eq!(l.to.rotation, tilted.rotation);
         assert!(l.to.center.z > 0.5);
     }
@@ -345,43 +395,96 @@ mod tests {
         let rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
         assert!((rot * Vec3::Y).abs_diff_eq(Vec3::Z, 1e-5));
         let at = Vec3::new(0.0, 1.0, -0.3); // the camera looks along +Y, a little down
-        let axis = |side| side_axis(rot, at, side).unwrap();
+        let axis = |side| side_axis(rot, at, side);
         assert!((rot * axis(Side::Bottom)).abs_diff_eq(-Vec3::Z, 1e-5));
         assert!((rot * axis(Side::Top)).abs_diff_eq(Vec3::Z, 1e-5));
         assert!((rot * axis(Side::Back)).abs_diff_eq(Vec3::Y, 1e-5), "away from the camera");
         assert!((rot * axis(Side::Front)).abs_diff_eq(-Vec3::Y, 1e-5), "toward it");
         assert!((rot * axis(Side::Left)).abs_diff_eq(-Vec3::X, 1e-5), "on the camera's left");
-        assert_eq!(side_axis(rot, at, Side::Auto), None);
+    }
+
+    #[test]
+    fn bottom_on_a_floor_leaves_a_creator_rotated_object_exactly_as_it_was() {
+        // the object of the report: 90, 0, 180 in the build floater
+        let truth = euler(90.0, 0.0, 180.0);
+        for at in [Vec3::X, Vec3::new(0.3, -1.0, -0.2), -Vec3::Y] {
+            assert_eq!(turn_to(truth, at, truth, Side::Bottom, Vec3::Z), Quat::IDENTITY, "camera {at}");
+            // on a slight slope, only the slope's tilt
+            let slope = Quat::from_rotation_x(0.1) * Vec3::Z;
+            let t = turn_to(truth, at, truth, Side::Bottom, slope);
+            assert!(t.angle_between(Quat::IDENTITY) < 0.1 + NOISE);
+        }
+    }
+
+    #[test]
+    fn every_placement_turns_from_the_truth_not_from_the_last_one() {
+        let truth = euler(90.0, 0.0, 180.0);
+        let at = Vec3::Y;
+        // its back against a wall on its left, facing +X: a quarter turn
+        let t1 = turn_to(truth, at, truth, Side::Back, Vec3::X);
+        let on_wall = t1 * truth;
+        assert!(
+            (on_wall * side_axis(truth, at, Side::Back)).abs_diff_eq(-Vec3::X, 1e-5),
+            "its back on the wall"
+        );
+        assert!(
+            (on_wall * side_axis(truth, at, Side::Top)).abs_diff_eq(Vec3::Z, 1e-5),
+            "still upright"
+        );
+        // then its bottom on the floor: it stands as it first did, not
+        // turned as the wall left it
+        let t2 = turn_to(truth, at, on_wall, Side::Bottom, Vec3::Z);
+        assert!((t2 * on_wall).angle_between(truth) < NOISE);
+        // the top onto the floor rolls about the view: its front stays in front
+        let flipped = turn_to(truth, at, truth, Side::Top, Vec3::Z) * truth;
+        assert!((flipped * side_axis(truth, at, Side::Top)).abs_diff_eq(-Vec3::Z, 1e-5));
+        assert!((flipped * side_axis(truth, at, Side::Front)).abs_diff_eq(-Vec3::Y, 1e-5));
+    }
+
+    #[test]
+    fn the_truth_is_kept_through_its_own_turns_and_read_again_after_others() {
+        let mut place = Place::default();
+        let sel = vec![ObjKey {
+            region: Default::default(),
+            local_id: 7,
+        }];
+        let first = euler(90.0, 0.0, 180.0);
+        assert_eq!(place.truth(&sel, first, Vec3::X).rotation, first);
+        // the tool turned it (and the network rounded it a little)
+        let placed = Quat::from_rotation_z(1.0) * first;
+        place.truths.get_mut(&sel).unwrap().last = placed;
+        let echoed = (Quat::from_rotation_x(0.001) * placed).normalize();
+        assert_eq!(place.truth(&sel, echoed, Vec3::Y).rotation, first);
+        // the rotate handles turned it: that is the new truth, with the view then
+        let by_hand = Quat::from_rotation_y(0.5) * echoed;
+        let t = place.truth(&sel, by_hand, Vec3::Y);
+        assert_eq!((t.rotation, t.camera_at), (by_hand, Vec3::Y));
     }
 
     #[test]
     fn a_chosen_side_turns_flat_against_the_surface() {
         let sel = cube(Vec3::ZERO, Vec3::new(0.1, 0.6, 0.4), Quat::IDENTITY);
-        // a picture: its back (-X here) against a wall facing -Y, slanted 10°
-        let wall = (Quat::from_rotation_x(0.17) * -Vec3::Y).normalize();
-        let l = landing(&sel, Vec3::new(3.0, 8.0, 2.0), wall, Some(-Vec3::X));
-        assert!((l.to.rotation * -Vec3::X).abs_diff_eq(-wall, 1e-5), "its back on the wall");
+        // a picture: its back (+X, away from a camera looking along +X)
+        // against a wall facing -X, slanted 10°
+        let wall = (Quat::from_rotation_y(0.17) * -Vec3::X).normalize();
+        let t = turn_to(Quat::IDENTITY, Vec3::X, Quat::IDENTITY, Side::Back, wall);
+        let l = landing(&sel, Vec3::new(3.0, 8.0, 2.0), wall, t);
+        assert!((l.to.rotation * Vec3::X).abs_diff_eq(-wall, 1e-5), "its back on the wall");
         assert!((l.to.center - Vec3::new(3.0, 8.0, 2.0)).abs_diff_eq(wall * 0.1, 1e-5));
         // its top against a ceiling facing down
-        let up = landing(&sel, Vec3::new(0.0, 0.0, 4.0), -Vec3::Z, Some(Vec3::Z));
+        let t = turn_to(Quat::IDENTITY, Vec3::X, Quat::IDENTITY, Side::Top, -Vec3::Z);
+        let up = landing(&sel, Vec3::new(0.0, 0.0, 4.0), -Vec3::Z, t);
         assert!((up.to.rotation * Vec3::Z).abs_diff_eq(Vec3::Z, 1e-5));
         assert!((up.to.center.z - 3.6).abs() < 1e-5);
-    }
-
-    #[test]
-    fn the_side_read_stays_that_side_after_the_object_turns() {
-        let first = Quat::from_rotation_y(0.7);
-        let bottom = side_axis(first, Vec3::X, Side::Bottom).unwrap();
-        // placed on a wall, turned a quarter: the same box axis is its bottom
-        let turned = Quat::from_rotation_z(1.2) * first;
-        let again = snap_axis(turned.inverse() * (first * bottom));
-        assert!((turned.inverse() * (turned * again)).abs_diff_eq(bottom, 1e-5));
     }
 
     #[test]
     fn sides_keep_their_names() {
         assert_eq!(serde_json::to_string(&Side::Bottom).unwrap(), "\"bottom\"");
         let s: BuildSettings = serde_json::from_str("{}").unwrap();
-        assert_eq!(s.place_side, Side::Auto);
+        assert_eq!((s.place_rotate, s.place_side), (false, Side::Bottom));
+        // the first test builds' "As it is"
+        let s: BuildSettings = serde_json::from_str(r#"{"place_side":"auto"}"#).unwrap();
+        assert_eq!(s.place_side, Side::Bottom);
     }
 }

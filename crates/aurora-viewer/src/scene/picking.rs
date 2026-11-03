@@ -701,7 +701,7 @@ impl Scene {
             let Some(f) = f.as_ref().filter(|_| !Self::face_undrawn(g, face)) else {
                 continue;
             };
-            for t in f.indices.chunks_exact(3) {
+            for t in f.indices.as_chunks::<3>().0 {
                 let v = |k: u16| f.positions.get(k as usize).map(|p| model.transform_point3(Vec3::from(*p)));
                 if let (Some(a), Some(b), Some(c)) = (v(t[0]), v(t[1]), v(t[2])) {
                     out.push([a, b, c]);

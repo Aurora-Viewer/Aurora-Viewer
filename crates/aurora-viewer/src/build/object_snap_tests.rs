@@ -293,13 +293,15 @@ fn without_a_target_in_reach_every_move_is_unchanged() {
                             let (idx, sel) = key(w, selected);
                             let start = w.objects.get(idx).unwrap().position;
                             let cam = camera(start);
-                            let mut manip = Manip::default();
-                            // "Reference": the grid of a box turned like the green one
-                            manip.grid_ref = (grid_mode == 2).then_some(Bounds {
-                                center: start + Vec3::new(3.0, 1.0, 0.5),
-                                rotation: Quat::from_rotation_z(0.5),
-                                half: Vec3::splat(0.5),
-                            });
+                            let mut manip = Manip {
+                                // "Reference": the grid of a box turned like the green one
+                                grid_ref: (grid_mode == 2).then_some(Bounds {
+                                    center: start + Vec3::new(3.0, 1.0, 0.5),
+                                    rotation: Quat::from_rotation_z(0.5),
+                                    half: Vec3::splat(0.5),
+                                }),
+                                ..Default::default()
+                            };
                             let Some(at) = grab(&mut manip, w, &s, &cam, sel, part) else {
                                 continue;
                             };

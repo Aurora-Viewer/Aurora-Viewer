@@ -22,8 +22,9 @@
 //!   contents-move-many: drop every item into inventory at once (two no-copy
 //!   items share one move warning).
 //!   shared | shared-denied: another resident's object with granted / denied editing.
-//!   place: `place,object:<id>,<target id>[,click]` turns "Place on surface"
-//!   on and holds the cursor over the target's top (`click` clicks there).
+//!   place: `place,object:<id>,<target id>[,click][,rotate:<side>]` turns
+//!   "Place on surface" on and holds the cursor over the target's top
+//!   (`click` clicks there; `rotate:back` chooses Auto rotate and that side).
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -86,6 +87,8 @@ pub enum Step {
     ReplaceApply,
     /// "Place on surface" on or off.
     Place(bool),
+    /// Its Auto rotate, with that side.
+    PlaceRotate(super::place::Side),
 }
 
 fn part_of(s: &str) -> Option<Part> {
@@ -379,8 +382,9 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             _ => Vec::new(),
         };
     }
-    // place,object:<id>,<target id>[,click]: Place on surface, the cursor on
-    // the top of the target object, clicked with `click`
+    // place,object:<id>,<target id>[,click][,rotate:<side>]: Place on
+    // surface, the cursor on the top of the target object, clicked with
+    // `click`, Auto rotate onto the side with `rotate:`
     if parts[0] == "place" {
         let target = parts
             .get(2)
@@ -390,10 +394,17 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             let (at, _, _) = crate::scene::Scene::object_transform(world, i, Instant::now(), 0)?;
             Some(at + Vec3::Z * world.visual_scale(i).z * 0.5)
         });
-        let click = parts.get(3) == Some(&"click");
+        let click = parts[3.min(parts.len())..].contains(&"click");
+        let rotate = parts[3.min(parts.len())..].iter().find_map(|p| {
+            let name = p.strip_prefix("rotate:")?;
+            super::place::Side::ALL
+                .into_iter()
+                .find(|s| format!("{s:?}").eq_ignore_ascii_case(name))
+        });
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
             220 => object.into_iter().map(Step::Select).collect(),
+            245 => rotate.map(Step::PlaceRotate).into_iter().collect(),
             250 => vec![Step::Place(true)],
             280 if click => vec![Step::Press],
             282 if click => vec![Step::Release],

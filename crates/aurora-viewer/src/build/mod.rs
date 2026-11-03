@@ -139,8 +139,10 @@ pub struct BuildSettings {
     /// with `snap` (`snap_mode`); off by default, so moving behaves as the
     /// Legacy Viewer's until it is chosen.
     pub object_snap: bool,
-    /// "Place on surface": the selection's side put against the surface
-    /// (`place.rs`; Aurora's own).
+    /// "Place on surface" (`place.rs`; Aurora's own): whether it turns the
+    /// selection ("Auto rotate") or keeps its rotation, and the side it then
+    /// puts against the surface.
+    pub place_rotate: bool,
     pub place_side: place::Side,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
@@ -559,7 +561,8 @@ impl Default for BuildSettings {
             grid_mode: 0,
             snap: true,
             object_snap: false,
-            place_side: place::Side::Auto,
+            place_rotate: false,
+            place_side: place::Side::Bottom,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,

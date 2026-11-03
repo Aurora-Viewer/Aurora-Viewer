@@ -2870,6 +2870,12 @@ its mesh and record allocations. Selected invisible meshes temporarily
 retain draw records for their wireframe; manipulation keeps the selection
 outlines visible.
 
+`scene/place_preview.rs` draws the hologram of the build tools' "Place on
+surface" (`build/place.rs`) through that same list: the selection's own
+faces, with copies of their draw records placed where a click would put
+it, in the same HOLOGRAM mode. No geometry is uploaded; rigged and worn
+faces (placed by the GPU) are left out.
+
 In the photo viewfinder, `app/viewfinder.rs::viewfinder_click` consumes Ctrl
 alone before dispatching an ordinary world press. The asynchronous pick keeps
 the consumed modifier state, while keyboard Ctrl is restored immediately.

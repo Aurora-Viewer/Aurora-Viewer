@@ -213,13 +213,14 @@ pub(super) fn row(
     }
 }
 
-/// The Snap item's two lines in Objects mode, Place on surface under the
-/// choice (`snap_mode`).
-const SNAP_ROWS_HEIGHT: f32 = 50.0;
+/// The Snap item's three lines in Objects mode, Place on surface and its
+/// rotation under the choice (`snap_mode`).
+const SNAP_ROWS_HEIGHT: f32 = 76.0;
 
 /// "Snap": off, to the grid or to objects, one at a time
 /// (`BuildSettings::snap_mode`); under it in Objects mode, "Place on
-/// surface" with the side put against the surface (`build/place.rs`).
+/// surface", then Keep rotation or Auto rotate with the side put against
+/// the surface (`build/place.rs`).
 fn snap_mode(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
@@ -275,11 +276,30 @@ fn snap_rows(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
             {
                 tool.toggle_place(world);
             }
+        },
+    );
+    // Keep rotation, or Auto rotate onto a chosen side
+    ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), 24.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let options = [
+                (aurora_i18n::tr!("build-place-keep"), true),
+                (aurora_i18n::tr!("build-place-rotate"), true),
+            ];
+            let mut selected = usize::from(s.place_rotate);
+            ui.scope(|ui| {
+                if widgets::segmented(ui, p, &mut selected, &options) {
+                    s.place_rotate = selected == 1;
+                }
+            })
+            .response
+            .on_hover_text(aurora_i18n::tr!("build-place-rotate-tip"));
             let sides: Vec<(&str, crate::build::place::Side)> =
                 crate::build::place::Side::ALL.iter().map(|side| (side.label(), *side)).collect();
-            ui.add_space((ui.available_width() - 126.0).max(4.0));
+            ui.add_space((ui.available_width() - 96.0).max(4.0));
             ui.scope(|ui| {
-                if let Some(side) = common::combo(ui, "place-side", Some(s.place_side), &sides, 120.0, true) {
+                if let Some(side) = common::combo(ui, "place-side", Some(s.place_side), &sides, 90.0, s.place_rotate) {
                     s.place_side = side;
                 }
             })
