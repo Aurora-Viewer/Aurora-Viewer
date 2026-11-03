@@ -27,6 +27,7 @@ pub mod layout;
 pub mod manip;
 mod material_preview;
 pub mod materials;
+mod object_snap;
 pub mod particle_editor;
 mod property_query;
 pub mod replace;
@@ -132,6 +133,10 @@ pub struct BuildSettings {
     pub grid_mode: u8,
     /// SnapEnabled.
     pub snap: bool,
+    /// Aurora: the move handles snap the selection's box flush against the
+    /// boxes of nearby prims (`object_snap`); off by default, so moving
+    /// behaves as the Legacy Viewer's until it is turned on.
+    pub object_snap: bool,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
     /// EditLinkedParts.
@@ -524,6 +529,7 @@ impl Default for BuildSettings {
             grid_opacity: 0.7,
             grid_mode: 0,
             snap: true,
+            object_snap: false,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,

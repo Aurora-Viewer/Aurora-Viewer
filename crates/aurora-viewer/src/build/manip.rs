@@ -11,6 +11,7 @@
 
 use super::draw::{Painter3d, axis_color, fade};
 use super::geom::{Cam, nearest_on_line, ray_plane, round_to, seg_distance, subdivision_level};
+use super::object_snap::{self, Constraint};
 use super::{Bounds, BuildSettings, EditMode, Grid, Mods, PrimLimits, bounds_of, highlighted_of};
 use crate::scene::Scene;
 use crate::world::World;
@@ -19,8 +20,8 @@ use aurora_net::RegionHandle;
 use aurora_net::build::{BuildCmd, TransformUpdate};
 use egui::{Pos2, Stroke};
 use glam::{EulerRot, Quat, Vec3};
-use std::collections::HashMap;
-use std::time::Instant;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 /// LLManipTranslate constants.
 const ARROW_PX: f32 = 50.0;
@@ -157,6 +158,12 @@ pub struct Drag {
     snap_offset: f32,
     pub in_snap: bool,
     pub delta: Vec3,
+    /// Prims the drag moves: never snap targets.
+    moving: HashSet<usize>,
+    /// Snap targets and when they were collected (`object_snap`).
+    snap_targets: Option<(object_snap::Targets, Instant)>,
+    /// Guides of the object snap applied this frame.
+    snap_guides: Vec<object_snap::Guide>,
     // rotate
     radius: f32,
     down_vec: Vec3,
@@ -433,6 +440,9 @@ impl Manip {
             snap_offset: 0.0,
             in_snap: false,
             delta: Vec3::ZERO,
+            moving: super::highlighted_of(world, sel, linked).into_iter().map(|(i, _)| i).collect(),
+            snap_targets: None,
+            snap_guides: Vec::new(),
             radius: 1.0,
             down_vec: Vec3::X,
             edge_on: false,
@@ -618,6 +628,7 @@ impl Manip {
                 Part::Plane(i) => draw_plane_grid(p, s, f, d, i),
                 _ => {}
             }
+            draw_object_snap(p, &d.snap_guides);
         }
         // plane handles
         let at_g = g.inverse() * cam.at;
@@ -1499,7 +1510,10 @@ fn drag_update(
             d.edge_pan_blocked = false;
             let mut mag = rel.dot(d.axis);
             d.in_snap = false;
-            if s.snap {
+            // a nearby object wins over the grid
+            if let Some(offset) = snap_to_objects(d, world, s, cam, Constraint::Axis(d.axis), d.axis * mag, now) {
+                mag += offset.dot(d.axis);
+            } else if s.snap {
                 let plane_n = d.snap_axis.cross(d.axis);
                 if let Some(p) = ray_plane(o, dir, d.pivot, plane_n) {
                     let off = (p - d.pivot).dot(d.snap_axis).abs();
@@ -1522,7 +1536,9 @@ fn drag_update(
             }
             d.edge_pan_blocked = false;
             d.in_snap = false;
-            if s.snap {
+            if let Some(offset) = snap_to_objects(d, world, s, cam, Constraint::Plane(d.normal), rel, now) {
+                rel += offset;
+            } else if s.snap {
                 let gi = d.grid.rotation.inverse();
                 let mut local = gi * (d.pivot + rel - d.grid.origin);
                 for k in 0..3 {
@@ -1624,6 +1640,65 @@ fn drag_update(
         send_updates(world, d, d.linked, out);
         // the textures follow locally (adjustTexturesByScale(false) in
         // handleHover); the simulator gets them once, on release
+    }
+}
+
+/// Snap to objects (`BuildSettings::object_snap`, an Aurora addition): the
+/// extra move, within `c`, that puts the selection's box (moved by `delta`)
+/// against a nearby prim's, if one is within `object_snap::SNAP_PX`.
+/// Off, or in the HUD, nothing changes and the grid snaps as before.
+fn snap_to_objects(d: &mut Drag, world: &World, s: &BuildSettings, cam: &Cam, c: Constraint, delta: Vec3, now: Instant) -> Option<Vec3> {
+    d.snap_guides.clear();
+    if !s.object_snap || cam.hud.is_some() {
+        return None;
+    }
+    let sel = object_snap::moved(&d.bounds, delta);
+    // collected again as the selection travels, and now and then for the
+    // prims rezzed meanwhile (a Shift-drag's copy)
+    let stale = d.snap_targets.as_ref().is_none_or(|(t, at)| {
+        t.around.distance(sel.center) > object_snap::RADIUS * 0.5 || now.duration_since(*at) > Duration::from_millis(500)
+    });
+    if stale {
+        d.snap_targets = Some((object_snap::collect(world, &d.moving, &sel, now), now));
+    }
+    let targets = &d.snap_targets.as_ref()?.0.boxes;
+    let px = |from: Vec3, by: Vec3| {
+        cam.project(from)
+            .zip(cam.project(from + by))
+            .map_or(f32::INFINITY, |(a, b)| a.distance(b))
+    };
+    let snap = object_snap::find(&sel, targets, c, &px)?;
+    d.snap_guides = object_snap::guides(&object_snap::moved(&sel, snap.offset), targets, &snap);
+    Some(snap.offset)
+}
+
+/// Guides of the object snap: the target's face and the selection's
+/// matching face (or corner), joined by a line; solid for a contact.
+fn draw_object_snap(p: &mut Painter3d, guides: &[object_snap::Guide]) {
+    let pal = p.pal;
+    for g in guides {
+        let (color, opacity) = match g.kind {
+            object_snap::Kind::Center => (pal.amber, 0.9),
+            _ if g.contact => (pal.rose, 1.0),
+            _ => (pal.rose, 0.7),
+        };
+        let outline = |p: &Painter3d, pts: &[Vec3], width: f32| {
+            for k in 0..pts.len() {
+                p.line_cased(pts[k], pts[(k + 1) % pts.len()], fade(color, opacity), width);
+            }
+        };
+        if g.target_face.len() > 1 {
+            outline(p, &g.target_face, 2.0);
+        }
+        if g.sel_face.len() > 1 {
+            outline(p, &g.sel_face, 1.5);
+        } else if let Some(corner) = g.sel_face.first() {
+            p.square(*corner, 7.0, fade(color, opacity), Stroke::new(1.0, fade(pal.navy, 0.5)));
+        }
+        p.guide_line(g.link.0, g.link.1, color, opacity);
+        for end in [g.link.0, g.link.1] {
+            p.square(end, 5.0, fade(color, opacity), Stroke::new(1.0, fade(pal.navy, 0.5)));
+        }
     }
 }
 
@@ -1875,6 +1950,10 @@ fn draw_scale_ruler(p: &mut Painter3d, s: &BuildSettings, start: Vec3, dir: Vec3
         }
     }
 }
+
+#[cfg(test)]
+#[path = "object_snap_tests.rs"]
+mod object_snap_tests;
 
 #[cfg(test)]
 mod tests {

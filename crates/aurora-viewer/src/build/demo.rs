@@ -167,6 +167,13 @@ pub fn apply_handle_size(s: &mut BuildSettings) {
     }
 }
 
+/// AURORA_DEMO_OBJECT_SNAP=on: "Snap to objects" on for the build script.
+pub fn apply_object_snap(s: &mut BuildSettings) {
+    if std::env::var("AURORA_DEMO_OBJECT_SNAP").is_ok_and(|v| v.trim() == "on") {
+        s.object_snap = true;
+    }
+}
+
 /// AURORA_DEMO_BUILD_TAB: the floater tab (and texture sub-tab) to show.
 pub fn apply_tab(tool: &mut BuildTool) {
     let Ok(v) = std::env::var("AURORA_DEMO_BUILD_TAB") else { return };

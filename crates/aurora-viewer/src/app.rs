@@ -11955,6 +11955,7 @@ impl App {
                         self.build.edit_mode = m;
                         crate::build::demo::apply_tab(&mut self.build);
                         crate::build::demo::apply_handle_size(&mut self.settings.build);
+                        crate::build::demo::apply_object_snap(&mut self.settings.build);
                         self.settings.build.land_action = land;
                     }
                     crate::build::demo::Step::Cursor(x, y) => self.cursor_pos = (x, y),

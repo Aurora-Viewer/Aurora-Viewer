@@ -20,6 +20,8 @@ pub enum Item {
     RootAxis,
     #[serde(rename = "snap")]
     Snap,
+    #[serde(rename = "objectSnap")]
+    ObjectSnap,
     #[serde(rename = "highlight")]
     Highlight,
     #[serde(rename = "probes")]
@@ -58,7 +60,7 @@ pub enum Item {
     Land,
 }
 
-pub const ITEMS: [Item; 25] = [
+pub const ITEMS: [Item; 26] = [
     Item::Manipulators,
     Item::Face,
     Item::StretchTextures,
@@ -66,6 +68,7 @@ pub const ITEMS: [Item; 25] = [
     Item::ScaleBoth,
     Item::RootAxis,
     Item::Snap,
+    Item::ObjectSnap,
     Item::Highlight,
     Item::Probes,
     Item::OwnedOnly,
@@ -113,6 +116,7 @@ impl Item {
         } else if matches!(
             self,
             Self::Snap
+                | Self::ObjectSnap
                 | Self::Highlight
                 | Self::Probes
                 | Self::OwnedOnly
@@ -201,6 +205,9 @@ pub struct Options {
     pub scale_both: bool,
     pub root_axis: bool,
     pub snap: bool,
+    /// Absent from notecards exported before it existed: off.
+    #[serde(default)]
+    pub object_snap: bool,
     pub highlight: bool,
     pub probes: bool,
     /// Absent from notecards exported before these options existed.
@@ -253,6 +260,7 @@ impl Profile {
                 scale_both: s.scale_uniform,
                 root_axis: s.actual_root,
                 snap: s.snap,
+                object_snap: s.object_snap,
                 highlight: s.show_highlight,
                 probes: s.select_probes,
                 owned_only: s.select_owned_only,
@@ -323,6 +331,7 @@ impl Profile {
         s.scale_uniform = self.options.scale_both;
         s.actual_root = self.options.root_axis;
         s.snap = self.options.snap;
+        s.object_snap = self.options.object_snap;
         s.show_highlight = self.options.highlight;
         s.select_probes = self.options.probes;
         s.select_owned_only = self.options.owned_only;

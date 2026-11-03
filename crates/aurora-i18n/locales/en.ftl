@@ -8432,6 +8432,7 @@ build-compact-reference = Reference
 build-compact-grid-options = Grid options (Ctrl+Shift+B)
 build-compact-linked = Edit linked parts
 build-compact-snap = Snap to grid
+build-compact-object-snap = Snap to objects
 build-compact-previous = Previous part / face (Ctrl+,)
 build-compact-next = Next part / face (Ctrl+.)
 build-compact-options = Manipulation options

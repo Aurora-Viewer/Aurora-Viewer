@@ -8426,6 +8426,7 @@ build-compact-reference = リファレンス
 build-compact-grid-options = グリッドのオプション（Ctrl＋Shift＋B）
 build-compact-linked = リンクされた部分を編集
 build-compact-snap = グリッド吸着
+build-compact-object-snap = オブジェクト吸着
 build-compact-previous = 前のパーツ／面（Ctrl＋,）
 build-compact-next = 次のパーツ／面（Ctrl＋.）
 build-compact-options = 操作のオプション

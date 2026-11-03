@@ -162,6 +162,9 @@ pub mod object_im;
 /// The object menu scenario's objects (AURORA_DEMO_OBJECT_MENU).
 #[path = "demo_object_menu.rs"]
 pub mod object_menu;
+/// Boxes for the build tools' snap to objects (AURORA_DEMO_OBJECT_SNAP).
+#[path = "demo_object_snap.rs"]
+pub mod object_snap;
 /// AURORA_DEMO_OUTFIT_RESTORE: the login restore of the outfit against a
 /// region that puts part of it back by itself.
 #[path = "demo_outfit_restore.rs"]
@@ -5754,6 +5757,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(blend_shadows::events());
     ev.extend(bom_rezzed::events());
     ev.extend(land_beside_events());
+    ev.extend(object_snap::events());
     ev
 }
 

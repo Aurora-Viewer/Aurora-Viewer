@@ -1438,6 +1438,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
 | `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
+| `AURORA_DEMO_OBJECT_SNAP=1\|on` | Boxes to snap together with "Snap to objects" |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
@@ -1486,6 +1487,17 @@ example `AURORA_DEMO_BUILD=move,object:151` with `150`. Compare the arrows,
 plane squares, rotation rings (`rotate`) and stretch handles (`stretch`)
 with a 100 % capture: everything grows by the same factor, strokes
 included, and a handle can be grabbed anywhere on its larger shape.
+
+`AURORA_DEMO_OBJECT_SNAP=1` adds six boxes 6 m along the start view (use
+`AURORA_DEMO_POS="80,100"` for open land): a slab, a blue cube floating
+0.3 m over it (`object:87701`), an orange cube 0.8 m to its +X, a green box
+turned 30°, a purple plank tilted 20° and a 2 m pillar. Tick "Snap to
+objects" in the construction settings, select the blue cube and drag its
+arrows or plane squares near the others: within 8 pixels it jumps flush
+(rose outline on both faces, a corner square on the plank's slope, amber
+for centres), and moves freely again past them. `on` also ticks the
+setting for a build script, for example
+`AURORA_DEMO_BUILD=move,object:87701,z,0,40`.
 
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`

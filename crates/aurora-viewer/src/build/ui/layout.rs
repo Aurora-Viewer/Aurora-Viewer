@@ -30,6 +30,7 @@ pub(super) fn title(item: Item) -> &'static str {
         Item::ScaleBoth => aurora_i18n::tr!("build-compact-both-sides"),
         Item::RootAxis => aurora_i18n::tr!("build-compact-root-axis"),
         Item::Snap => aurora_i18n::tr!("build-compact-snap"),
+        Item::ObjectSnap => aurora_i18n::tr!("build-compact-object-snap"),
         Item::Highlight => aurora_i18n::tr!("build-compact-highlight"),
         Item::Probes => aurora_i18n::tr!("build-compact-probes"),
         Item::OwnedOnly => aurora_i18n::tr!("build-compact-owned-only"),
@@ -235,6 +236,7 @@ pub(super) fn control(
         Item::ScaleBoth => s.scale_uniform,
         Item::RootAxis => s.actual_root,
         Item::Snap => s.snap,
+        Item::ObjectSnap => s.object_snap,
         Item::Highlight => s.show_highlight,
         Item::Probes => s.select_probes,
         Item::OwnedOnly => s.select_owned_only,
@@ -259,6 +261,7 @@ pub(super) fn control(
                 Item::ScaleBoth => s.scale_uniform = value,
                 Item::RootAxis => s.actual_root = value,
                 Item::Snap => s.snap = value,
+                Item::ObjectSnap => s.object_snap = value,
                 Item::Highlight => s.show_highlight = value,
                 Item::Probes => s.select_probes = value,
                 Item::OwnedOnly => s.select_owned_only = value,
@@ -390,6 +393,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                     }
                     if s.legacy_window {
                         for item in [
+                            Item::ObjectSnap,
                             Item::OwnedOnly,
                             Item::MovableOnly,
                             Item::Surrounding,
