@@ -685,7 +685,8 @@ sends the newest again to the inventory at once: the price's confirmation
 shows over the quick view (its price from the photo's own size), and Upload
 sends it, the view neither frozen nor left; `mail` opens the e-mail's form
 over the quick view (Send waits for a valid recipient); `post` posts it to
-the demo's web profile at once. `toolbar` puts the Photo roll button on
+the demo's web profile at once, then photo mode closes and our profile opens
+on its Web tab (the feed; "No web profile on this grid" in the demo). `toolbar` puts the Photo roll button on
 the right toolbar (dimmed, "No photos this session yet", until the first
 photo), then closes photo mode and opens the quick view with it (the button
 lit). The log gives `photo reel demo: <n> photos in the reel`.

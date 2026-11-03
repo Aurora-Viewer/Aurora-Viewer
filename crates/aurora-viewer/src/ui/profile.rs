@@ -395,6 +395,17 @@ impl ProfileUi {
         }
     }
 
+    /// Our profile on its Feed tab, raised: where a photo just posted to the
+    /// profile feed shows.
+    pub fn open_feed(&mut self, world: &mut World) {
+        let me = world.agent_id;
+        self.open(world, me);
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == me) {
+            w.tab = TAB_FEED;
+            w.raise = true;
+        }
+    }
+
     /// Our profile is open on its Picks tab (Avatar.IsPicksTabOpen,
     /// LLAvatarActions::myPicksTabVisible).
     pub fn picks_shown(&self, me: Uuid) -> bool {

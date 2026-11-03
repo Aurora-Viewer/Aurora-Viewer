@@ -1416,6 +1416,11 @@ impl App {
                 s.message = Some((aurora_i18n::tr!("photo-profile-posted").to_owned(), false));
                 s.message_profile = true;
                 self.photo_review_show();
+                // a photo of the reel posted from its quick view: the post
+                // shown at once, our profile on its feed
+                if self.snapshots.reel.sent_again {
+                    self.photo_reel_action_show_profile();
+                }
             }
             Err(e) => {
                 log::warn!("photo: not posted to the profile feed: {e}");

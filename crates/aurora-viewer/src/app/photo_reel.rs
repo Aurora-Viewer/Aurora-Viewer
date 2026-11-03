@@ -400,6 +400,18 @@ impl App {
         r.in_photo_mode = self.panels.snapshot;
     }
 
+    /// Our profile on its feed, where the photos posted show; the quick
+    /// view closed (it covers the windows), and the viewfinder left (it
+    /// hides them; its Exit, the reel kept).
+    pub(super) fn photo_reel_action_show_profile(&mut self) {
+        self.snapshots.reel.quick.close();
+        self.snapshots.reel.mail = None;
+        if self.viewfinder_on() {
+            self.panels.snapshot = false;
+        }
+        self.profile_ui.open_feed(&mut self.world);
+    }
+
     /// What the reel's stack or quick view asks.
     pub(super) fn photo_reel_action(&mut self, a: ReelAction, renderer: &Renderer) {
         match a {
@@ -427,11 +439,7 @@ impl App {
                     self.inventory_ui.show_original(&self.world.inventory, item);
                 }
             }
-            ReelAction::ShowProfile => {
-                self.snapshots.reel.quick.close();
-                let me = self.world.agent_id;
-                self.profile_ui.open(&mut self.world, me);
-            }
+            ReelAction::ShowProfile => self.photo_reel_action_show_profile(),
             ReelAction::Delete(id) => self.photo_reel_delete(id),
             // the photo window's button: the folder, the last photo saved
             // selected in it
