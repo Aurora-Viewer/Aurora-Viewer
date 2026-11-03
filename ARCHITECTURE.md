@@ -30,6 +30,12 @@ The Analyze button uses the preview queue's pending/debounce state while hull
 preparation is missing; a shared busy action face shows its spinner and status
 without another clickable analysis request. Cached view-only redraws stay idle.
 
+Embedded profile, Search and Marketplace pages share `App::web_has_focus`
+and `focused_web` for native keyboard forwarding and the movement, gesture,
+history and AltGr guards. Native Tab navigation stays with the browser instead
+of focusing an egui widget. Marketplace releases its browser focus when closed
+or minimized, following `LLMediaCtrl` keyboard ownership (#1725, #1968).
+
 `world/inventory/system.rs` indexes system-folder lookups for inventory and
 Appearance by inventory generation and root identity. Root-listed duplicates
 retain their smallest UUID; incomplete listings retain the previous fallback.

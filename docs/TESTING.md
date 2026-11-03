@@ -7711,6 +7711,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at start on it, the menu entry shows, and a link to an address under it
   opens in the window instead of the system browser. Without it the demo
   has no Marketplace (the entry is hidden, as on a grid without one).
+  For keyboard regression checks (#1725, #1968), use a local HTML page with
+  an input and a textarea. Click the input, type letters and AltGr characters,
+  edit with arrows/Backspace/Delete, select all, and Tab to the textarea.
+  The page must receive the keys without opening chat, triggering gestures or
+  moving the avatar. Clicking outside, minimizing or closing releases focus;
+  clicking the page again restores it. Repeat text entry in Search's Web tab.
 - **`AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit|menu-listing|menu-version|menu-item`**:
   Me › Marketplace listings open at start, answered by an SLM server
   simulated in the viewer (nothing is sent). `merchant` (any other
