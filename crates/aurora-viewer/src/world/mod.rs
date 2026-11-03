@@ -4835,10 +4835,15 @@ impl World {
         };
         let (from, text) = (line.source, line.text.clone());
         let group = m.kind != ImKind::Private;
+        // an emote reads "Jane waves", as LLToastIMPanel writes it
+        let emote = attention::emote_line(&line.from, &text);
         let (title, body) = if group {
-            (self.session_title(&m.session), format!("{}: {text}", line.from))
+            (
+                self.session_title(&m.session),
+                emote.unwrap_or_else(|| format!("{}: {text}", line.from)),
+            )
         } else {
-            (line.from.clone(), text)
+            (line.from.clone(), emote.unwrap_or(text))
         };
         let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
         self.notifications
