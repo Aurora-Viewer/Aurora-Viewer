@@ -488,7 +488,7 @@ class ExporterTests(unittest.TestCase):
         assert_matrix(binds["mPelvis"], scale.inverted() @ rotation.transposed() @ Matrix.Translation((0, 0, -1)))
         # A child inherits the rotation only: the scale belongs to its parent.
         assert_matrix(binds["mChest"], rotation.transposed() @ Matrix.Translation((-0.2, 0, -1)))
-        # Nested 4x4 rows, as Blender stores a Matrix custom property, read the same.
+        # Nested 4x4 rows (Blender itself stores a Matrix property flat, column-major) read the same.
         pelvis["bind_mat"] = [list(row) for row in scaled]
         assert_matrix(inverses()["mPelvis"], binds["mPelvis"])
         # Stale bind data (rest pose edited since) is ignored.

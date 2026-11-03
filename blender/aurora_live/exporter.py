@@ -140,6 +140,8 @@ def _column_major(matrix):
 def _matrix_property(value):
     """A 4x4 custom property: nested rows, or 16 floats in column-major order."""
     try:
+        if len(value) not in (4, 16):
+            return None
         rows = [[float(v) for v in row] for row in value] if len(value) == 4 else None
         matrix = Matrix(rows) if rows else Matrix([[float(value[column * 4 + row]) for column in range(4)] for row in range(4)])
     except (TypeError, ValueError, IndexError):
@@ -181,7 +183,7 @@ def _uses_default_rest(armature):
                 and not any("bind_mat" in bone.keys() for bone in armature.data.bones))
 
 
-def inverse_bind_linear(armature, bone, bone_transform, axes, shift=Vector()):
+def inverse_bind_linear(armature, bone, bone_transform, axes, shift=Vector(), default_rest=None):
     """Rotation and scale of the joint's inverse bind in SL axes.
 
     Rigs can bind meshes in a rest pose that is not SL's T-pose (body dev kits
@@ -197,8 +199,11 @@ def inverse_bind_linear(armature, bone, bone_transform, axes, shift=Vector()):
     Avastar rig without bind data that binds in its current rest pose
     (`rig_use_bind_pose`) rotates each bone from its default rest matrix
     `mat0`, as Avastar's export does (rig.calculate_bind_matrix, pose_mat).
+    `default_rest` is that test once for the whole mesh (it reads every bone).
     """
-    if _uses_default_rest(armature):
+    if default_rest is None:
+        default_rest = _uses_default_rest(armature)
+    if default_rest:
         while bone.parent and bone.name.isupper():
             bone = bone.parent  # Collision volumes follow their bone.
         rest = _matrix_property(bone["mat0"]) if "mat0" in bone.keys() and bone.parent else None
@@ -354,6 +359,7 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False, p
             heads[name] = bone_transform @ armature.data.bones[source_name].head_local
         inverse_bind = []
         shift = bind_shift(armature, bone_transform) if armature else Vector()
+        default_rest = bool(armature) and _uses_default_rest(armature)
         for name in names:
             values = rest_axes.get(name)
             axes = Matrix([values[i:i+4] for i in range(0,16,4)]).transposed() if values else Matrix.Identity(4)
@@ -370,7 +376,7 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False, p
                 # Aurora applies the wearer's current shape and animation.
                 inverse_bind.append(_column_major(shaped @ Matrix.Translation(Vector(reference) - heads[name])))
             else:
-                linear = inverse_bind_linear(armature, source_bone, bone_transform, axes, shift)
+                linear = inverse_bind_linear(armature, source_bone, bone_transform, axes, shift, default_rest)
                 inverse_bind.append(_column_major(linear @ Matrix.Translation(-heads[name])))
         positions = np.empty(len(captured.vertices) * 3, dtype=np.float32)
         captured.vertices.foreach_get("co", positions)
