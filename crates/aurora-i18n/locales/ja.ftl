@@ -9235,6 +9235,7 @@ ui-options-warn-hypergrid-suitcase-help = ハイパーグリッドでテレポ�
 ui-hypergrid-suitcase-title = 着用中のものの一部はここに残ります
 ui-hypergrid-suitcase-text = My Suitcaseに入っていない着用アイテムが{ $count }個あるため、{ $grid }では読み込めません:
 ui-hypergrid-suitcase-go = それでもテレポート
+ui-hypergrid-suitcase-hint = 持って行くには、My Suitcase（またはその中のフォルダー）に入れてください。
 ui-options-confirm-no-transfer-settings = 譲渡不可の設定を確認
 ui-options-confirm-no-transfer-settings-help = デイサイクルに読み込んだ譲渡不可の空、水面、トラックによってデイサイクルが譲渡不可になる前に確認します
 ui-options-objects = オブジェクト

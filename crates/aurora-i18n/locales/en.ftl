@@ -9247,6 +9247,7 @@ ui-hypergrid-suitcase-text = { $count ->
    *[other] { $count } worn items are not in My Suitcase, so { $grid } cannot load them:
 }
 ui-hypergrid-suitcase-go = Teleport anyway
+ui-hypergrid-suitcase-hint = Put them in My Suitcase (or a folder inside it) to take them with you.
 ui-options-confirm-no-transfer-settings = Confirm no-transfer settings
 ui-options-confirm-no-transfer-settings-help = Ask before a no-transfer sky, water or track loaded into a day cycle makes it no-transfer
 ui-options-objects = Objects

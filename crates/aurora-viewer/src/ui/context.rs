@@ -1256,17 +1256,19 @@ pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, 
 /// the grid it goes to and what will be missing there. Some(true) teleports
 /// anyway, Some(false) cancels; `dont_ask` is the "Do not show again" box,
 /// which the caller saves once the teleport is accepted.
-pub fn suitcase_confirm(ctx: &egui::Context, p: &Palette, grid: &str, names: &[String], dont_ask: &mut bool) -> Option<bool> {
+pub fn suitcase_confirm(
+    ctx: &egui::Context,
+    p: &Palette,
+    grid: &str,
+    items: &[crate::world::suitcase::LeftBehind],
+    dont_ask: &mut bool,
+) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
     let modal = crate::ui::widgets::Modal::new(egui::Id::unique("hypergrid_suitcase_confirm")).show(ctx, |ui| {
-        ui.set_width(380.0);
+        ui.set_width(400.0);
         ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-            if let Some(t) = super::icons::global("alert-triangle-filled") {
-                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                ui.painter().image(t.id(), rect, uv, p.amber);
-            }
+            super::widgets::glyph(ui, "alert-triangle-filled", p.amber, 20.0);
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-hypergrid-suitcase-title"))
                     .size(15.0)
@@ -1279,7 +1281,7 @@ pub fn suitcase_confirm(ctx: &egui::Context, p: &Palette, grid: &str, names: &[S
             egui::Label::new(
                 RichText::new(aurora_i18n::tr!(
                     "ui-hypergrid-suitcase-text",
-                    count = names.len() as i64,
+                    count = items.len() as i64,
                     grid = grid.to_owned()
                 ))
                 .size(12.5)
@@ -1287,12 +1289,33 @@ pub fn suitcase_confirm(ctx: &egui::Context, p: &Palette, grid: &str, names: &[S
             )
             .wrap(),
         );
-        ui.add_space(6.0);
-        egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-            for name in names {
-                ui.label(RichText::new(name).size(12.5).color(p.ink));
-            }
+        ui.add_space(8.0);
+        // the items as the inventory shows them, in a card of their own
+        super::widgets::surface(ui, p, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(176.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    for item in items {
+                        ui.horizontal(|ui| {
+                            let icon = super::inventory::item_icon(item.asset_type, item.inv_type, item.flags);
+                            let tint = super::inventory::item_icon_color(item.asset_type, item.inv_type, p);
+                            super::widgets::glyph(ui, icon, tint, 16.0);
+                            ui.add(egui::Label::new(RichText::new(&item.name).size(12.5).color(p.ink)).truncate());
+                        });
+                    }
+                });
         });
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(aurora_i18n::tr!("ui-hypergrid-suitcase-hint"))
+                    .size(11.5)
+                    .color(p.muted),
+            )
+            .wrap(),
+        );
         ui.add_space(8.0);
         super::widgets::checkbox(
             ui,
@@ -1302,7 +1325,8 @@ pub fn suitcase_confirm(ctx: &egui::Context, p: &Palette, grid: &str, names: &[S
                 .size(12.5)
                 .color(p.muted),
         );
-        ui.add_space(8.0);
+        ui.add_space(10.0);
+        // the action, then Cancel (the default), like the other confirmations
         ui.horizontal(|ui| {
             if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-hypergrid-suitcase-go")).clicked() {
                 answer = Some(true);

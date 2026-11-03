@@ -150,7 +150,7 @@ enum SuitcaseGo {
 struct SuitcaseAsk {
     go: SuitcaseGo,
     grid: String,
-    names: Vec<String>,
+    names: Vec<crate::world::suitcase::LeftBehind>,
     dont_ask: bool,
 }
 
@@ -5776,9 +5776,11 @@ impl App {
             "hypergrid: {} worn items not in My Suitcase, asking before the teleport",
             names.len()
         );
+        // the grid by its saved name when it has one
+        let shown = crate::grids::known(&self.settings, grid).map_or_else(|| grid.to_owned(), |g| g.name.clone());
         self.suitcase_ask = Some(SuitcaseAsk {
             go,
-            grid: grid.to_owned(),
+            grid: shown,
             names,
             dont_ask: false,
         });
@@ -15636,13 +15638,20 @@ impl App {
                         },
                         grid: "hg.osgrid.org:80".into(),
                         names: [
-                            "Ash Hair",
-                            "Fluff - Ebody",
-                            "Haru Head - Short F neck",
-                            "REBORN eBODY v1.69.4",
-                            "Tail (Haru)",
+                            ("Ash Hair", 6, 17, 0),
+                            ("Fluff - Ebody", 6, 17, 0),
+                            ("Haru Head - Short F neck", 6, 17, 0),
+                            ("Leather Jacket", 5, 18, 5),
+                            ("REBORN eBODY v1.69.4", 6, 17, 0),
+                            ("Shape", 13, 18, 0),
+                            ("Tail (Haru)", 6, 17, 0),
                         ]
-                        .map(str::to_owned)
+                        .map(|(name, asset_type, inv_type, flags)| crate::world::suitcase::LeftBehind {
+                            name: name.into(),
+                            asset_type,
+                            inv_type,
+                            flags,
+                        })
                         .to_vec(),
                         dont_ask: false,
                     });

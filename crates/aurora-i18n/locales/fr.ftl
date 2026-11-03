@@ -9240,6 +9240,7 @@ ui-hypergrid-suitcase-text = { $count ->
    *[other] { $count } objets portés ne sont pas dans My Suitcase : { $grid } ne pourra pas les charger :
 }
 ui-hypergrid-suitcase-go = Se téléporter quand même
+ui-hypergrid-suitcase-hint = Placez-les dans My Suitcase (ou un dossier à l'intérieur) pour les emporter.
 ui-options-confirm-no-transfer-settings = Confirmer les réglages non transférables
 ui-options-confirm-no-transfer-settings-help = Demander avant qu'un ciel, une eau ou une piste non transférable chargé dans un cycle du jour le rende non transférable
 ui-options-objects = Objets

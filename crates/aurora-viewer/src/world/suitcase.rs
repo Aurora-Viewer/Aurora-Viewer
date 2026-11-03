@@ -36,24 +36,39 @@ fn inside(inv: &Inventory, suitcase: Uuid, mut folder: Uuid) -> bool {
     false
 }
 
-/// The names of the worn attachments and wearables (the Current Outfit
-/// folder's links) whose items are not in My Suitcase, sorted; empty when
-/// everything worn travels, or on a grid without the suitcase.
-pub fn left_behind(inv: &Inventory) -> Vec<String> {
+/// A worn item that stays behind: its name and what kind it is (for its
+/// inventory icon).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeftBehind {
+    pub name: String,
+    pub asset_type: i32,
+    pub inv_type: i32,
+    pub flags: u32,
+}
+
+/// The worn attachments and wearables (the Current Outfit folder's links)
+/// whose items are not in My Suitcase, by name; empty when everything worn
+/// travels, or on a grid without the suitcase.
+pub fn left_behind(inv: &Inventory) -> Vec<LeftBehind> {
     let (Some(suitcase), Some(cof)) = (folder(inv), super::appearance::cof(inv)) else {
         return Vec::new();
     };
-    let mut names: Vec<String> = super::appearance::folder_links(inv, cof)
+    let mut items: Vec<LeftBehind> = super::appearance::folder_links(inv, cof)
         .into_iter()
         .filter(|link| !link.folder)
         .filter_map(|link| inv.items.get(&link.target))
         .filter(|item| matches!(item.asset_type, 5 | 6 | 13))
         .filter(|item| !inside(inv, suitcase, item.parent))
-        .map(|item| item.name.clone())
+        .map(|item| LeftBehind {
+            name: item.name.clone(),
+            asset_type: item.asset_type,
+            inv_type: item.inv_type,
+            flags: item.flags,
+        })
         .collect();
-    names.sort_by_key(|name| name.to_lowercase());
-    names.dedup();
-    names
+    items.sort_by_key(|item| item.name.to_lowercase());
+    items.dedup();
+    items
 }
 
 #[cfg(test)]
@@ -121,7 +136,8 @@ mod tests {
     fn worn_items_outside_the_suitcase_are_named() {
         let inv = inventory(true, &[(10, 4, "Tail"), (11, 2, "Ears"), (12, 3, "Head"), (13, 4, "body")]);
         assert_eq!(folder(&inv), Some(id(2)));
-        assert_eq!(left_behind(&inv), ["body", "Tail"], "in My Suitcase or below it: they travel");
+        let names: Vec<String> = left_behind(&inv).into_iter().map(|item| item.name).collect();
+        assert_eq!(names, ["body", "Tail"], "in My Suitcase or below it: they travel");
     }
 
     #[test]
