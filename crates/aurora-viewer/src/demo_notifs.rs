@@ -7,6 +7,8 @@
 //! History tab after answering a few cards. `group-notice` (and
 //! `legacy-group-notice`) sends two group notices, one with its group's
 //! insignia and an attachment; `group-notice-saved` saves that attachment.
+//! `purchase` delivers a Marketplace purchase: the grid's notice in the
+//! nearby chat; `purchase-open` then clicks its Received Items link.
 
 use aurora_net::NetEvent;
 use uuid::Uuid;
@@ -23,6 +25,8 @@ pub const DND_AT: u64 = 640;
 pub const LIST_AT: u64 = 2700;
 /// Frame at which a few cards are answered (`history`): they leave "To do".
 pub const ANSWER_AT: u64 = 2650;
+/// Frame at which the purchase is delivered (`purchase`, `purchase-open`).
+pub const PURCHASE_AT: u64 = 700;
 
 /// The friend who comes online (Orion in the demo).
 fn friend() -> Uuid {
@@ -132,6 +136,16 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
                     Some((aurora_i18n::tr!("demo-group-notice-workshop-kit"), 6)),
                 ),
             ]
+        } else {
+            Vec::new()
+        };
+    }
+    // a Marketplace purchase delivered, in the grid's words, from nobody
+    // (#1604)
+    if mode().is_some_and(|m| m.starts_with("purchase")) {
+        return if frame == PURCHASE_AT {
+            let text = crate::world::system_messages::purchase_message(aurora_i18n::tr!("demo-notifs-lantern"));
+            vec![im(agent, Uuid::nil(), "", 0, Uuid::nil(), &text, b"")]
         } else {
             Vec::new()
         };

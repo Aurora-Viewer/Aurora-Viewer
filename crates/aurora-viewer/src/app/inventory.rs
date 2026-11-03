@@ -48,12 +48,7 @@ impl App {
             };
             request.item = item.clone();
         }
-        if !task_inventory::destination(
-            &self.world.inventory,
-            request.folder,
-            &request.item,
-            &self.settings.inventory.protected,
-        ) {
+        if !task_inventory::destination(&self.world.inventory, request.folder, &request.item) {
             self.inventory_ui.message = aurora_i18n::tr!("task-transfer-destination").into();
             return;
         }
@@ -296,7 +291,7 @@ impl App {
                 }
             }
             InvAction::Create { parent, kind, name } => {
-                if rules::destination(&self.world.inventory, parent, &self.settings.inventory.protected) {
+                if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
                         match crate::world::inventory::wearable::create_with_permissions(
                             kind,
@@ -526,7 +521,7 @@ impl App {
                 }
                 let worn = crate::ui::inventory::Facts::from_world(&self.world, false).worn;
                 for id in rules::roots(&self.world.inventory, &items) {
-                    match rules::offer(&self.world.inventory, id, &self.settings.inventory.protected, &worn) {
+                    match rules::offer(&self.world.inventory, id, &worn) {
                         Ok(bucket) => {
                             // LLGiveInventory removes copy-protected originals
                             // locally after the reliable offer, including folder contents.
@@ -889,6 +884,7 @@ impl App {
                 self.appearance_ui.pending = Some((request, sync));
                 self.appearance_ui.pending_actor = actor;
                 self.appearance_ui.attachments = attachments;
+                self.appearance_ui.worn_before = self.world.outfit_attachment_items();
                 self.appearance_ui.message.clear();
                 let mut command = NetCommand::UpdateOutfit { request, change };
                 // An attachment the outfit write left out must not reach the
@@ -898,6 +894,14 @@ impl App {
                 if !self.world.rlva_allows_command(&command, actor) {
                     self.appearance_ui.pending = None;
                     self.appearance_ui.attachments.clear();
+                } else if let NetCommand::UpdateOutfit { change, .. } = &mut command {
+                    crate::world::appearance::defer_attachment_links(
+                        &self.world.inventory,
+                        change,
+                        &self.appearance_ui.worn_before,
+                        &mut self.appearance_ui.attachments,
+                        self.world.agent_id,
+                    );
                 }
                 self.send_from(command, actor);
             }

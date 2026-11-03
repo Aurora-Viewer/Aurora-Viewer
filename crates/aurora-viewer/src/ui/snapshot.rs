@@ -41,10 +41,9 @@ pub struct SnapshotUi {
     pub caption: String,
     /// The e-mail of a postcard (not kept either).
     pub postcard: PostcardForm,
-    /// The quick light, for the photo only (never saved).
+    /// The quick light, for the photo only (never saved), set in the
+    /// viewfinder's light panel (`light_only`).
     pub light: crate::snapshot::light::PhotoLight,
-    /// Scroll the panel to the Light section on the next frame (demo).
-    pub reveal_light: bool,
     /// The free camera's switch and flight (never saved).
     pub free: crate::camera::free::FreeSettings,
     /// The looks editor's state (`ui::looks_editor`).
@@ -105,7 +104,8 @@ pub struct EnvView<'a> {
     pub catalog: &'a crate::world::env_select::SettingsCatalog,
     /// What the user's own environment shows in each list.
     pub own: crate::world::eep_env::LocalView,
-    /// The sun shown: azimuth and elevation (degrees).
+    /// The sun of the sky shown before the photo turns it: azimuth and
+    /// elevation (degrees), what the sun sliders show and restore.
     pub sun: (f32, f32),
     /// RLVa holds the environment (@setenv): nothing to change.
     pub locked: bool,
@@ -264,7 +264,6 @@ impl SnapshotUi {
         }
 
         let before = s.clone();
-        let light_before = self.light;
         // the settings scroll between the preview and the shutter, which
         // stay in sight on a short screen
         let room = (ui.ctx().content_rect().height() - 470.0).max(150.0);
@@ -276,9 +275,6 @@ impl SnapshotUi {
         self.actions(ui, p, view, out);
 
         changed(s, &before, out);
-        if self.light != light_before && !out.contains(&Action::Changed) {
-            out.push(Action::Changed);
-        }
     }
 
     /// The viewfinder's drawer: every setting of the panel, its shutter,
@@ -298,7 +294,6 @@ impl SnapshotUi {
     ) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = s.clone();
-        let light_before = self.light;
         let freeze = self.freeze;
         egui::ScrollArea::vertical()
             .id_salt("photo_drawer")
@@ -306,13 +301,13 @@ impl SnapshotUi {
             .show(ui, |ui| self.settings(ui, p, s, fov, default_fov, view, out));
         self.actions(ui, p, view, out);
         changed(s, &before, out);
-        if (self.light != light_before || self.freeze != freeze) && !out.contains(&Action::Changed) {
+        if self.freeze != freeze && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
         }
     }
 
-    /// The viewfinder's light panel: the Light section alone, the dock's
-    /// shortcut to the drawer's section of the same name.
+    /// The viewfinder's light panel, opened by the dock's sun button: the
+    /// only place of the photo's light.
     pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = self.light;
@@ -725,13 +720,7 @@ impl SnapshotUi {
 
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
         dof_rows(ui, p, &mut s.dof);
-
-        let light = ui.cursor();
-        section(ui, p, "sun-filled", aurora_i18n::tr!("photo-section-light"));
-        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
-        if std::mem::take(&mut self.reveal_light) {
-            ui.scroll_to_rect(light.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
-        }
+        // (the photo's light: the viewfinder dock's sun button, `light_only`)
 
         let filter = ui.cursor();
         section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
@@ -1039,10 +1028,10 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
-/// The window's quick light (Phototools' Quick Environments, the sky, water
+/// The photo's quick light (Phototools' Quick Environments, the sky, water
 /// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
-/// Exposure, and the sun of "Personal lighting"), for the photo only: the
-/// window gives the user's own back when it closes, unless "Keep this
+/// Exposure, and the sun of "Personal lighting"), for the photo only: closing
+/// the photo mode gives the user's own back, unless "Keep this
 /// light".
 fn light_rows(
     ui: &mut egui::Ui,
@@ -1194,14 +1183,30 @@ fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Phot
             }
         });
     }
-    // the sun: LLFloaterEnvironmentAdjust's azimuth and elevation, over any sky
-    let (mut az, mut el) = l.env.sun.map_or(env.sun, super::environment::azimuth_elevation);
-    let mut moved = false;
-    for (label, value, range) in [
-        (aurora_i18n::tr!("photo-light-sun-azimuth"), &mut az, 0.0..=359.99),
-        (aurora_i18n::tr!("photo-light-sun-elevation"), &mut el, -90.0..=90.0),
+    // the sun: LLFloaterEnvironmentAdjust's azimuth and elevation, over any
+    // sky; each row's restore button gives back the sky's own value of its
+    // slider and keeps the other's
+    let own = env.sun;
+    let (mut az, mut el) = l.env.sun.map_or(own, super::environment::azimuth_elevation);
+    let (mut moved, mut restored) = (false, false);
+    for (label, tip, value, range, own_value, wraps) in [
+        (
+            aurora_i18n::tr!("photo-light-sun-azimuth"),
+            aurora_i18n::tr!("photo-light-sun-azimuth-reset"),
+            &mut az,
+            0.0..=359.99,
+            own.0,
+            true,
+        ),
+        (
+            aurora_i18n::tr!("photo-light-sun-elevation"),
+            aurora_i18n::tr!("photo-light-sun-elevation-reset"),
+            &mut el,
+            -90.0..=90.0,
+            own.1,
+            false,
+        ),
     ] {
-        let reset = range.start() < &0.0;
         row(ui, p, label, None, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().slider_width = (ui.available_width() - 100.0).max(40.0);
@@ -1212,16 +1217,31 @@ fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Phot
                     .clamping(egui::SliderClamping::Edits)
                     .custom_parser(aurora_i18n::parse_number);
                 moved |= ui.add(slider).changed();
-                // one restore button for the sun, on its second row
-                if reset && widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("photo-light-sun-reset"), l.env.sun.is_some()) {
-                    l.env.sun = None;
+                let off = l.env.sun.is_some() && sun_differs(*value, own_value, wraps);
+                if widgets::icon_button(ui, p, "restore", tip, off) {
+                    *value = own_value;
+                    restored = true;
                 }
             });
         });
     }
-    if moved {
+    if restored {
+        // both back: the sky's own sun again, moving with its day
+        let fixed = sun_differs(az, own.0, true) || sun_differs(el, own.1, false);
+        l.env.sun = fixed.then(|| super::environment::rotation_from(az, el));
+    } else if moved {
         l.env.sun = Some(super::environment::rotation_from(az, el));
     }
+}
+
+/// A sun slider's value is off the sky's own (degrees; an azimuth wraps
+/// at 360°), past what its whole-degree display shows.
+fn sun_differs(value: f32, own: f32, wraps: bool) -> bool {
+    let mut d = (value - own).abs();
+    if wraps {
+        d = d.min(360.0 - d);
+    }
+    d >= 0.5
 }
 
 /// The full-frame strip's depth of field: its switch and the aperture.
@@ -1634,6 +1654,15 @@ fn shutter(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sun_value_differs_past_its_shown_degree_and_azimuths_wrap() {
+        assert!(!sun_differs(120.3, 120.0, true));
+        assert!(sun_differs(121.0, 120.0, true));
+        assert!(!sun_differs(359.8, 0.1, true), "across north");
+        assert!(sun_differs(359.8, 0.1, false));
+        assert!(sun_differs(-10.0, 10.0, false));
+    }
 
     #[test]
     fn the_photo_fits_the_screen_and_the_rest_is_masked() {

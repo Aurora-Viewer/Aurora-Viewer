@@ -547,13 +547,14 @@ dependencies = [
  "crossbeam-channel",
  "log",
  "parking_lot 0.13.0",
+ "rcgen",
  "rtrb",
  "rustls",
+ "rustls-platform-verifier",
  "sonora",
  "symphonia",
  "thiserror 2.0.21",
  "url",
- "webpki-root-certs",
 ]
 
 [[package]]
@@ -586,6 +587,7 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "pulseaudio",
  "windows-sys 0.61.2",
 ]
 
@@ -615,7 +617,10 @@ dependencies = [
  "log",
  "md5",
  "parking_lot 0.13.0",
+ "rcgen",
  "reqwest",
+ "rustls",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "socket2",

@@ -5113,7 +5113,8 @@ impl Scene {
                 } else {
                     world.animations_of(&owner)
                 };
-                let stopped = motions.sync(signals, pose_now, |id| anims.get(id));
+                let male = self.avatar_lib.shape_params.is_male(world.visual_params(&owner).unwrap_or(&[]));
+                let stopped = motions.sync_avatar(signals, male, pose_now, |id| anims.get(id));
                 if owner == world.agent_id {
                     completed.extend(stopped);
                 }

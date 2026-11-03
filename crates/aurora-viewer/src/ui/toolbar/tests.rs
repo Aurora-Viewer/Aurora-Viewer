@@ -355,6 +355,35 @@ impl Bench {
                     None,
                     &bars::favorites::View::default(),
                 );
+                let favorites = bars::favorites::View::default();
+                let row = bars::Row {
+                    unread: 0,
+                    latest_unread: None,
+                    flash: 0.0,
+                    flying: false,
+                    seated: false,
+                    mouselook: false,
+                    ao_active: false,
+                    locked: self.settings.locked,
+                    favorites: &favorites,
+                    bar: Bar::Bottom,
+                    style: Style::default(),
+                    editing: false,
+                };
+                bars::side::bars(
+                    ui,
+                    &p,
+                    &Icons::default(),
+                    &layout,
+                    &mut self.state,
+                    &self.settings,
+                    &mut self.panels,
+                    &mut bars::MicButton::default(),
+                    &row,
+                    Rect::from_min_max(egui::pos2(0.0, 20.0), egui::pos2(900.0, 600.0)),
+                    self.islands,
+                    [true, true],
+                );
                 self.state.show(ui.ctx(), &p, &layout, &self.settings);
                 if self.state.commit(&layout, &mut self.settings) {
                     self.saves += 1;
@@ -425,6 +454,49 @@ impl Bench {
 fn toolbar_real_right_click_removes_one_button_without_opening_its_window() {
     for islands in [false, true] {
         toolbar_real_right_click_removes_one_button_without_opening_its_window_in(islands);
+    }
+}
+
+#[test]
+fn favorites_left_grid_and_right_toolbar_menu_stay_separate_on_every_bar() {
+    for islands in [false, true] {
+        for bar in Bar::ALL {
+            let mut bench = Bench {
+                islands,
+                ..Bench::default()
+            };
+            bench.settings.buttons = Some(Vec::new());
+            match bar {
+                Bar::Bottom => bench.settings.buttons = Some(vec![button("favorites")]),
+                Bar::Left => bench.settings.left = vec![button("favorites")],
+                Bar::Right => bench.settings.right = vec![button("favorites")],
+            }
+            bench.frame(vec![]);
+            bench.frame(vec![]);
+            let pos = bench.pos("favorites");
+            bench.pointer(pos, true, false);
+            bench.pointer(pos, false, false);
+            bench.frame(vec![]);
+            assert!(
+                bars::favorites::take_shown(&bench.ctx),
+                "left click opens Favorites: {bar:?}, islands={islands}"
+            );
+            bench.pointer(pos, true, true);
+            bench.pointer(pos, false, true);
+            bars::favorites::take_shown(&bench.ctx);
+            let remove = bench.text(aurora_i18n::tr!("toolbar-remove"));
+            assert!(
+                !bars::favorites::take_shown(&bench.ctx),
+                "right click only opens the toolbar menu: {bar:?}, islands={islands}"
+            );
+            bench.pointer(remove, true, false);
+            bench.pointer(remove, false, false);
+            assert!(
+                bench.settings.bar(bar, &layout()).is_empty(),
+                "Remove stays usable: {bar:?}, islands={islands}"
+            );
+            assert_eq!(bench.saves, 1);
+        }
     }
 }
 
@@ -502,13 +574,15 @@ fn toolbar_catalogue_click_and_real_drop_into_empty_bar_add_single_buttons_in(is
     bench.frame(vec![]);
     bench.frame(vec![]);
     let source = bench.tile("friends");
+    bench.pointer(source, true, false);
+    bench.frame(vec![egui::Event::PointerMoved(source + Vec2::new(0.0, 30.0))]);
+    bench.frame(vec![]);
     let target = bench
         .ctx
         .read_response(egui::Id::unique("toolbar_background"))
         .expect("empty bar")
         .rect
         .center();
-    bench.pointer(source, true, false);
     bench.frame(vec![egui::Event::PointerMoved(target)]);
     bench.frame(vec![egui::Event::PointerMoved(target)]);
     bench.pointer(target, false, false);
@@ -531,23 +605,90 @@ fn toolbar_catalogue_click_and_real_drop_into_empty_bar_add_single_buttons_in(is
 
 /// Firestorm's bar and the dock of the islands.
 #[test]
-fn toolbar_empty_background_opens_editor_and_locked_buttons_stay_in_place() {
+fn toolbar_background_opens_editor_and_locked_buttons_stay_in_place() {
     for islands in [false, true] {
-        toolbar_empty_background_opens_editor_and_locked_buttons_stay_in_place_in(islands);
+        toolbar_background_opens_editor_and_locked_buttons_stay_in_place_in(islands);
     }
 }
 
-fn toolbar_empty_background_opens_editor_and_locked_buttons_stay_in_place_in(islands: bool) {
+#[test]
+fn toolbar_empty_dock_hides_after_last_button_moves_to_either_side_and_accepts_it_back() {
+    for bar in [Bar::Left, Bar::Right] {
+        let mut bench = Bench {
+            islands: true,
+            settings: ToolbarSettings {
+                buttons: Some(vec![button("inventory")]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let background = egui::Id::unique("toolbar_background");
+        bench.frame(vec![]);
+        let from = bench.pos("inventory");
+        bench.pointer(from, true, false);
+        bench.frame(vec![egui::Event::PointerMoved(from - Vec2::new(0.0, 40.0))]);
+        bench.frame(vec![]);
+        let side = if bar == Bar::Left { "toolbar_left" } else { "toolbar_right" };
+        let target = bench
+            .ctx
+            .read_response(egui::Id::unique(("toolbar_background", side)))
+            .expect("empty side drop zone during a toolbar drag")
+            .rect
+            .center();
+        bench.frame(vec![egui::Event::PointerMoved(target)]);
+        bench.pointer(target, false, false);
+        assert!(bench.settings.buttons(&layout()).is_empty());
+        assert_eq!(commands(bench.settings.bar(bar, &layout())), ["inventory"]);
+        for _ in 0..3 {
+            bench.frame(vec![]);
+        }
+        assert!(bench.ctx.read_response(background).is_none(), "empty dock disappears after release");
+        assert!(
+            bench.ctx.read_response(crate::ui::chat::bar_input_id()).is_some(),
+            "nearby chat stays available"
+        );
+        bench.state.open = true;
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(
+            bench.ctx.read_response(background).is_none(),
+            "opening the editor does not show an empty dock"
+        );
+        bench.state.open = false;
+        let from = bench.pos("inventory");
+        bench.pointer(from, true, false);
+        bench.frame(vec![egui::Event::PointerMoved(from + Vec2::new(0.0, 40.0))]);
+        bench.frame(vec![]);
+        let target = bench
+            .ctx
+            .read_response(background)
+            .expect("empty dock returns during a toolbar drag")
+            .rect
+            .center();
+        bench.frame(vec![egui::Event::PointerMoved(target)]);
+        bench.pointer(target, false, false);
+        assert_eq!(commands(bench.settings.buttons(&layout())), ["inventory"]);
+        assert!(bench.settings.bar(bar, &layout()).is_empty());
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(bench.ctx.read_response(background).is_some(), "populated dock stays visible");
+        assert_eq!(bench.saves, 2);
+    }
+}
+
+fn toolbar_background_opens_editor_and_locked_buttons_stay_in_place_in(islands: bool) {
     let mut bench = Bench {
         islands,
         ..Bench::default()
     };
-    bench.settings.buttons = Some(vec![]);
+    if !islands {
+        bench.settings.buttons = Some(vec![]);
+    }
     bench.frame(vec![]);
     let background = bench
         .ctx
         .read_response(egui::Id::unique("toolbar_background"))
-        .expect("empty background")
+        .expect("toolbar background")
         .rect
         .center();
     bench.pointer(background, true, true);

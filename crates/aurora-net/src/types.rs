@@ -798,10 +798,17 @@ pub enum NetEvent {
         experience: Uuid,
         message: aurora_llsd::Llsd,
     },
+    /// Any ExperienceEvent (LLExperienceLogDispatchHandler), for the log.
+    ExperienceLog(ExperienceLogEvent),
     /// GroupExperiences: the experiences a group owns (empty on a failure).
     GroupExperiences {
         group: Uuid,
         ids: Vec<Uuid>,
+    },
+    /// One list of the "My Experiences" window (None when it could not be read).
+    ExperienceList {
+        kind: crate::experience::ExperienceListKind,
+        ids: Option<Vec<Uuid>>,
     },
     /// ExperiencePreferences: the agent's permission for an experience after
     /// reading or changing it.
@@ -1628,6 +1635,9 @@ pub enum NetCommand {
     /// The experiences a group owns (GroupExperiences capability), answered
     /// by NetEvent::GroupExperiences.
     GroupExperiences(Uuid),
+    /// The lists of the "My Experiences" window, each answered by
+    /// NetEvent::ExperienceList.
+    MyExperiences,
     /// ExperiencePreferences: read, allow, block or forget an experience.
     ExperiencePermission {
         experience: Uuid,
@@ -2280,4 +2290,16 @@ impl Default for AgentControls {
             alt_or_ctrl: false,
         }
     }
+}
+
+/// One ExperienceEvent: an object used a permission the agent gave an
+/// experience.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExperienceLogEvent {
+    pub experience: Uuid,
+    pub permission: i32,
+    pub owner: Uuid,
+    pub object_name: String,
+    pub parcel_name: String,
+    pub attachment: bool,
 }

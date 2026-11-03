@@ -80,6 +80,17 @@ const SIM_TIMEOUT: Duration = Duration::from_secs(100);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The largest region side a grid can announce (Constants.MaximumRegionSize,
+/// OpenSim). The viewer sizes the region's land and parcel grids from it: a
+/// broken or hostile simulator must not make it allocate gigabytes.
+pub(crate) const MAX_REGION_SIDE: u32 = 4096;
+
+/// A region side announced by the grid, held to 256..=[`MAX_REGION_SIDE`].
+pub(crate) fn region_side(n: u32) -> u32 {
+    n.clamp(256, MAX_REGION_SIDE)
+}
+
 /// Diagnostic: the RegionHandshake of a region the agent arrived in should
 /// come along with AgentMovementComplete; without it the simulator never
 /// sends terrain or objects (it waits for RegionHandshakeReply).
@@ -296,6 +307,16 @@ fn packets_counted(stats: &NetStats) -> throttle::Counted {
 
 fn emit(sh: &Shared, ev: NetEvent) {
     let _ = sh.events.send(ev);
+}
+
+/// A folder made without AIS, known to the viewer before anything goes in
+/// it (createNewCategoryCoro's updateCategory): the server's own updates
+/// for the items then find their folder instead of Lost And Found.
+fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFolder) {
+    let _ = events.send(NetEvent::InventoryUpdated {
+        folders: vec![folder],
+        items: Vec::new(),
+    });
 }
 
 /// Items read, items the server says do not exist, and failed reads.
@@ -990,7 +1011,7 @@ impl Session<'_> {
                     }
                 }
                 Ok(resp) => log::info!("ExtEnvironment: HTTP {}", resp.status()),
-                Err(e) => log::info!("ExtEnvironment failed: {e}"),
+                Err(e) => log::info!("ExtEnvironment failed: {}", e.without_url()),
             }
         });
     }
@@ -1750,6 +1771,7 @@ impl Session<'_> {
             }
             NetCommand::ExperienceInfo(ids) => self.request_experiences(ids),
             NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
+            NetCommand::MyExperiences => self.request_my_experiences(),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
@@ -1898,7 +1920,7 @@ impl Session<'_> {
                                     }
                                 }
                                 Ok(resp) => log::debug!("AgentProfile {id}: HTTP {}", resp.status()),
-                                Err(e) => log::debug!("AgentProfile {id}: {e}"),
+                                Err(e) => log::debug!("AgentProfile {id}: {}", e.without_url()),
                             }
                         });
                     }
@@ -2268,9 +2290,11 @@ impl Session<'_> {
                     let owner = self.agent_id();
                     let moves = self.inventory_move_tx.clone();
                     let edits = self.inventory_udp_tx.clone();
+                    let create_cap = self.main_cap("CreateInventoryCategory");
                     tokio::spawn(async move {
                         let result = crate::inventory::operations::mutate_udp(
                             &http,
+                            create_cap.as_deref(),
                             &fetch_cap,
                             owner,
                             change,
@@ -2279,6 +2303,7 @@ impl Session<'_> {
                             |progress| {
                                 let _ = events.send(NetEvent::InventoryProgress { request, progress });
                             },
+                            &|folder| announce_folder(&events, folder),
                         )
                         .await;
                         let _ = events.send(NetEvent::InventoryEdited { request, result });
@@ -2437,7 +2462,7 @@ impl Session<'_> {
                                 let reason = r.status().canonical_reason().unwrap_or("").to_owned();
                                 crate::slm::merchant_status(r.status().as_u16(), &reason)
                             }
-                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.to_string()),
+                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.without_url().to_string()),
                         },
                     };
                     let _ = events.send(NetEvent::MerchantStatus(status));
@@ -2796,10 +2821,18 @@ impl Session<'_> {
                     let events = self.sh.events.clone();
                     let owner = self.agent_id();
                     let edits = self.inventory_udp_tx.clone();
+                    let create_cap = self.main_cap("CreateInventoryCategory");
                     tokio::spawn(async move {
-                        let result =
-                            crate::outfits::mutate_udp(&http, &fetch_cap, owner, change, |edit| inventory_udp::submit(edits.clone(), edit))
-                                .await;
+                        let result = crate::outfits::mutate_udp(
+                            &http,
+                            create_cap.as_deref(),
+                            &fetch_cap,
+                            owner,
+                            change,
+                            |edit| inventory_udp::submit(edits.clone(), edit),
+                            &|folder| announce_folder(&events, folder),
+                        )
+                        .await;
                         let _ = events.send(NetEvent::OutfitUpdated { request, result });
                     });
                     return;
@@ -3000,7 +3033,7 @@ impl Session<'_> {
                         NetEvent::DisplayNamesFailed(ids)
                     }
                     Err(e) => {
-                        log::warn!("GetDisplayNames: {e}");
+                        log::warn!("GetDisplayNames: {}", e.without_url());
                         NetEvent::DisplayNamesFailed(ids)
                     }
                 };
@@ -3046,7 +3079,7 @@ impl Session<'_> {
             let failed = match resp {
                 Ok(r) if r.status().is_success() => None,
                 Ok(r) => Some((r.status().as_u16() as i32, r.status().to_string())),
-                Err(e) => Some((0, e.to_string())),
+                Err(e) => Some((0, e.without_url().to_string())),
             };
             if let Some((status, reason)) = failed {
                 log::warn!("SetDisplayName failed: {reason}");
@@ -3100,7 +3133,7 @@ impl Session<'_> {
             let reason = match resp {
                 Ok(r) if r.status().is_success() => return,
                 Ok(r) => format!("HTTP {}", r.status().as_u16()),
-                Err(e) => e.to_string(),
+                Err(e) => e.without_url().to_string(),
             };
             log::warn!("AgentProfile PUT {target}: {reason}");
             let _ = events.send(NetEvent::ProfileSaveFailed { target, reason });
@@ -3336,6 +3369,29 @@ impl Session<'_> {
         });
     }
 
+    /// LLFloaterExperiences::refreshContents: the lists of every tab, each
+    /// on its own task so that one slow capability does not hold the others.
+    fn request_my_experiences(&self) {
+        use crate::experience::{ExperienceListKind as K, fetch_lists};
+        for caps in [
+            (&[K::Allowed, K::Blocked][..], "GetExperiences"),
+            (&[K::Admin][..], "GetAdminExperiences"),
+            (&[K::Contributor][..], "GetCreatorExperiences"),
+            (&[K::Owned][..], "AgentExperiences"),
+        ] {
+            let (kinds, name) = caps;
+            let cap = self.main_cap(name);
+            let http = self.sh.caps_http.clone();
+            let events = self.sh.events.clone();
+            let kinds = kinds.to_vec();
+            tokio::spawn(async move {
+                for (kind, ids) in fetch_lists(&http, cap.as_deref(), &kinds).await {
+                    let _ = events.send(NetEvent::ExperienceList { kind, ids });
+                }
+            });
+        }
+    }
+
     /// LLExperienceCache::get / set / forgetExperiencePermission.
     fn experience_permission(&self, experience: Uuid, change: crate::experience::ExperiencePermissionChange) {
         let cap = self.main_cap("ExperiencePreferences");
@@ -3496,7 +3552,7 @@ impl Session<'_> {
                     }
                 }
                 Err(e) => {
-                    log::warn!("appearance request failed: {e}");
+                    log::warn!("appearance request failed: {}", e.without_url());
                     (false, None)
                 }
             };
@@ -3539,7 +3595,7 @@ impl Session<'_> {
                         }
                     }
                     Ok(resp) => Err(format!("HTTP {}", resp.status().as_u16())),
-                    Err(e) => Err(e.to_string()),
+                    Err(e) => Err(e.without_url().to_string()),
                 };
                 match reply {
                     Ok(v) => {
@@ -3637,7 +3693,7 @@ impl Session<'_> {
                         continue;
                     };
                     let port = info["Port"].as_i32() as u16;
-                    let size = (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256));
+                    let size = (region_side(info["RegionSizeX"].as_u32()), region_side(info["RegionSizeY"].as_u32()));
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
                     // process_enable_simulator (llworld.cpp): no circuit to a
                     // neighbour; the simulator keeps its child agent
@@ -3695,7 +3751,7 @@ impl Session<'_> {
                     ip_from_llsd(&info["SimIP"]),
                     info["SimPort"].as_i32() as u16,
                     info["SeedCapability"].as_str().to_owned(),
-                    (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256)),
+                    (region_side(info["RegionSizeX"].as_u32()), region_side(info["RegionSizeY"].as_u32())),
                 );
             }
             "CrossedRegion" => {
@@ -3710,7 +3766,7 @@ impl Session<'_> {
                     ip_from_llsd(&rd["SimIP"]),
                     rd["SimPort"].as_i32() as u16,
                     rd["SeedCapability"].as_str().to_owned(),
-                    (rd["RegionSizeX"].as_u32().max(256), rd["RegionSizeY"].as_u32().max(256)),
+                    (region_side(rd["RegionSizeX"].as_u32()), region_side(rd["RegionSizeY"].as_u32())),
                 );
             }
             "ParcelProperties" => {
@@ -5298,6 +5354,20 @@ mod coarse_tests {
     fn coarse_positions_scale_back_with_each_axis_of_the_region() {
         assert_eq!(coarse_position(100, 200, 10, (256, 256)), Vec3::new(100.0, 200.0, 40.0));
         assert_eq!(coarse_position(100, 200, 10, (1024, 512)), Vec3::new(400.0, 400.0, 40.0));
+    }
+}
+
+#[cfg(test)]
+mod region_side_tests {
+    use super::*;
+
+    #[test]
+    fn announced_region_sides_are_held_to_the_grid_limits() {
+        assert_eq!(region_side(0), 256);
+        assert_eq!(region_side(256), 256);
+        assert_eq!(region_side(1024), 1024);
+        assert_eq!(region_side(MAX_REGION_SIDE), MAX_REGION_SIDE);
+        assert_eq!(region_side(u32::MAX), MAX_REGION_SIDE);
     }
 }
 

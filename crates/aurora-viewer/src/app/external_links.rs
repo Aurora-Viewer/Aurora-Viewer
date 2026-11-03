@@ -28,6 +28,58 @@ pub(super) struct ExternalLinks {
     /// Requests waiting for the world.
     waiting: Vec<Request>,
     throttle: Throttle,
+    /// A place link naming another grid than the login screen's, until the
+    /// resident answers the question (`grid_link_question`).
+    grid_ask: Option<GridAsk>,
+}
+
+/// The question a place link from outside raises before it may change the
+/// login grid.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct GridAsk {
+    location: crate::slurl::Location,
+    /// The login address the link leads to.
+    login: String,
+    /// The grid manager's name for it, when the grid is a saved one.
+    name: Option<String>,
+}
+
+/// What a place link from outside does to the login screen's grid.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum GridSwitch {
+    /// It names no grid, or the one already chosen: only the start location
+    /// changes.
+    Same,
+    /// Another grid: the resident is asked first, since the password goes
+    /// to the grid one logs in to.
+    Ask { login: String, name: Option<String> },
+}
+
+/// Where `authority` (the `host:port` of a `hop://` or
+/// `x-grid-location-info://` link) would take the login screen. A saved
+/// grid keeps its own login address; an unknown one is reached over
+/// https only, never plain http. Deliberate difference: the Legacy Viewer
+/// switches the login grid of a hypergrid link without asking
+/// (LLSLURL / LLGridManager); here a link from outside never changes it on
+/// its own.
+pub(super) fn grid_switch(settings: &Settings, authority: Option<&str>) -> GridSwitch {
+    let Some(authority) = authority.map(str::trim).filter(|a| !a.is_empty()) else {
+        return GridSwitch::Same;
+    };
+    let same = |uri: &str| crate::grids::authority(uri).is_some_and(|a| a.eq_ignore_ascii_case(authority));
+    let saved = settings
+        .grids
+        .iter()
+        .find(|grid| same(&grid.service) || same(&grid.login) || same(&grid.gatekeeper));
+    let login = saved.map_or_else(|| format!("https://{authority}/"), |grid| grid.login.clone());
+    let current = settings.login_uri();
+    if same(&current) || current.trim_end_matches('/').eq_ignore_ascii_case(login.trim_end_matches('/')) {
+        return GridSwitch::Same;
+    }
+    GridSwitch::Ask {
+        login,
+        name: saved.map(|grid| grid.name.clone()),
+    }
 }
 
 impl ExternalLinks {
@@ -99,19 +151,16 @@ impl App {
         }
         match request {
             Request::Place(location) if matches!(self.screen, Screen::Login) && !self.login_form.busy => {
-                log::info!("startup links: login start location set");
-                if let Some(authority) = &location.grid {
-                    let grid = self.settings.grids.iter().find(|grid| {
-                        crate::grids::authority(&grid.service).as_ref() == Some(authority)
-                            || crate::grids::authority(&grid.login).as_ref() == Some(authority)
-                            || crate::grids::authority(&grid.gatekeeper).as_ref() == Some(authority)
-                    });
-                    self.settings.custom_login_uri = grid
-                        .map(|grid| grid.login.clone())
-                        .unwrap_or_else(|| format!("http://{authority}/"));
-                    self.settings.grid = crate::settings::GridChoice::Custom;
+                match grid_switch(&self.settings, location.grid.as_deref()) {
+                    GridSwitch::Same => {
+                        log::info!("startup links: login start location set");
+                        self.login_form.start_slurl = Some(location);
+                    }
+                    GridSwitch::Ask { login, name } => {
+                        log::info!("startup links: the link names another grid, asking before switching");
+                        self.external.grid_ask = Some(GridAsk { location, login, name });
+                    }
                 }
-                self.login_form.start_slurl = Some(location);
             }
             request if matches!(self.screen, Screen::World) => self.run_external(request),
             request => {
@@ -153,6 +202,35 @@ impl App {
         }
     }
 
+    /// The login screen's question when a place link from outside names
+    /// another grid: the grid and the start location change only on
+    /// "Switch grid". Changing the grid empties the typed password, and a
+    /// remembered one belongs to its own grid (`sync_remembered_password`).
+    pub(super) fn grid_link_question(&mut self, ctx: &egui::Context, p: &Palette) {
+        let Some(ask) = &self.external.grid_ask else {
+            return;
+        };
+        if self.login_form.busy {
+            // a login started meanwhile: the link no longer applies
+            self.external.grid_ask = None;
+            return;
+        }
+        let Some(yes) = ui::context::grid_link_confirm(ctx, p, &ask.login, ask.name.as_deref()) else {
+            return;
+        };
+        let Some(ask) = self.external.grid_ask.take() else {
+            return;
+        };
+        if yes {
+            log::info!("startup links: grid switched at the resident's request");
+            self.settings.custom_login_uri = ask.login;
+            self.settings.grid = crate::settings::GridChoice::Custom;
+            self.login_form.start_slurl = Some(ask.location);
+        } else {
+            log::info!("startup links: grid switch declined");
+        }
+    }
+
     /// `--login <first> <last> <password>`: logs in as soon as the login
     /// screen allows it, on the `--grid` (AutoLogin with the command line's
     /// credential; the password follows the usual remember choice).
@@ -179,5 +257,64 @@ impl App {
         self.login_form.password = login.password;
         self.sync_remembered_password();
         self.start_login();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings_on(grid: crate::settings::GridChoice, custom: &str, saved: &[&str]) -> Settings {
+        Settings {
+            grid,
+            custom_login_uri: custom.to_owned(),
+            grids: saved
+                .iter()
+                .map(|address| crate::grids::Grid::manual(address).expect("valid test grid"))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_link_without_a_grid_changes_only_the_start_location() {
+        let settings = settings_on(crate::settings::GridChoice::SecondLife, "", &[]);
+        assert_eq!(grid_switch(&settings, None), GridSwitch::Same);
+        assert_eq!(grid_switch(&settings, Some("  ")), GridSwitch::Same);
+    }
+
+    #[test]
+    fn an_unknown_grid_is_asked_for_and_reached_over_https_only() {
+        let settings = settings_on(crate::settings::GridChoice::SecondLife, "", &[]);
+        assert_eq!(
+            grid_switch(&settings, Some("grid.example:8002")),
+            GridSwitch::Ask {
+                login: "https://grid.example:8002/".into(),
+                name: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_saved_grid_keeps_its_login_address_and_is_still_asked_for() {
+        let settings = settings_on(crate::settings::GridChoice::SecondLife, "", &["http://grid.example:8002"]);
+        let GridSwitch::Ask { login, name } = grid_switch(&settings, Some("GRID.example:8002")) else {
+            panic!("switching from Second Life to a saved grid must ask");
+        };
+        assert_eq!(login, settings.grids[0].login);
+        assert_eq!(name.as_deref(), Some(settings.grids[0].name.as_str()));
+    }
+
+    #[test]
+    fn the_grid_already_chosen_is_not_asked_for_again() {
+        let settings = settings_on(
+            crate::settings::GridChoice::Custom,
+            "http://grid.example:8002/",
+            &["http://grid.example:8002"],
+        );
+        assert_eq!(grid_switch(&settings, Some("grid.example:8002")), GridSwitch::Same);
+        // the same grid typed by hand, not saved
+        let settings = settings_on(crate::settings::GridChoice::Custom, "https://other.example/", &[]);
+        assert_eq!(grid_switch(&settings, Some("other.example")), GridSwitch::Same);
     }
 }

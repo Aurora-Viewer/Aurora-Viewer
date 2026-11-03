@@ -61,6 +61,8 @@ pub struct SessionInfo {
 pub struct GroupChats {
     pub groups: Vec<GroupMembership>,
     pub sessions: HashMap<Uuid, SessionInfo>,
+    /// Named login conversations shown before the mute reply; not joined yet.
+    pub(super) restoring: HashSet<Uuid>,
     /// Group chats that arrived before the mute list (restored once it is
     /// loaded, exoGroupMuteList::addDeferredGroupChat).
     deferred: Vec<Uuid>,
@@ -80,6 +82,10 @@ pub struct GroupChats {
     /// Our active group (AgentDataUpdate; nil = none) and its title.
     pub active: Uuid,
     pub active_title: String,
+    /// The group list (AgentGroupDataUpdate) and the active group
+    /// (AgentDataUpdate) arrived this session.
+    pub list_received: bool,
+    pub active_received: bool,
     /// Pinned groups, listed first (FSFavoriteGroups).
     pub favorites: HashSet<Uuid>,
     favorites_path: Option<PathBuf>,
@@ -312,6 +318,8 @@ impl World {
         if !self.rlva_start_ims(&[group]) {
             return;
         }
+        self.groups.restoring.remove(&group);
+        self.cancel_saved_im(group);
         if self.mutes.group_chat_muted(&group) {
             // opening it means receiving it again (exoGroupMuteList::remove)
             self.set_group_chat_blocked(group, false);
@@ -332,6 +340,14 @@ impl World {
 
     /// Send text to a group / conference session (IM_SESSION_SEND).
     pub fn send_session_im(&mut self, session: Uuid, text: &str) {
+        // Sending is an explicit request to open the displayed conversation,
+        // just like its call button; do not send into an unjoined preview.
+        if self.groups.restoring.contains(&session) {
+            self.start_group_chat(session);
+            if self.groups.restoring.contains(&session) {
+                return;
+            }
+        }
         let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
         let me = self.own_name();
         // longer than one IM: several in a row (aurora_net::message_split)
@@ -354,6 +370,9 @@ impl World {
     /// (LLIMModel::sendLeaveSession), a 1:1 conversation only leaves the list
     /// (nothing is sent; the next message from that resident opens it again).
     pub fn leave_session(&mut self, session: Uuid) {
+        self.cancel_saved_im(session);
+        self.groups.restoring.remove(&session);
+        self.groups.deferred.retain(|id| *id != session);
         if self.groups.sessions.remove(&session).is_some() {
             self.groups.im(session, dialog::SESSION_LEAVE, session, String::new());
         }
@@ -372,6 +391,9 @@ impl World {
         if !self.groups.sessions.get(&group).is_some_and(|s| s.group) {
             return false;
         }
+        self.cancel_saved_im(group);
+        self.groups.restoring.remove(&group);
+        self.groups.deferred.retain(|id| *id != group);
         self.groups.sessions.remove(&group);
         self.social.ims.retain(|s| s.other != group);
         self.groups.snooze(group, Instant::now() + Duration::from_secs(seconds.into()));
@@ -411,6 +433,47 @@ impl World {
             return false;
         };
         self.mutes.group_chat_muted(session) || self.groups.mute_all_groups || (self.groups.mute_when_notices_off && !g.accept_notices)
+    }
+
+    /// Show known membership names immediately. No join, history request or
+    /// incoming traffic is allowed until the mute reply validates the chat.
+    pub(super) fn prepare_saved_group_chat(&mut self, group: Uuid) {
+        if self.groups.sessions.contains_key(&group) && !self.groups.restoring.contains(&group) {
+            return;
+        }
+        if self.group_chat_unwanted(&group) || !self.rlva_allows_im("startim", group) {
+            self.discard_restoring_group(group);
+            return;
+        }
+        self.info_mut(group, "");
+        self.session_lines(group);
+        self.groups.restoring.insert(group);
+    }
+
+    pub(super) fn discard_restoring_group(&mut self, group: Uuid) {
+        if self.groups.restoring.remove(&group) {
+            self.groups.sessions.remove(&group);
+            self.social.ims.retain(|s| s.other != group);
+        }
+    }
+
+    /// Login restoration joins quietly and never unmutes a group or steals focus.
+    pub(super) fn restore_saved_group_chat(&mut self, group: Uuid) {
+        let restoring = self.groups.restoring.contains(&group);
+        if self.groups.sessions.contains_key(&group) && !restoring {
+            return;
+        }
+        if self.group_chat_unwanted(&group) || !self.rlva_allows_im("startim", group) {
+            self.discard_restoring_group(group);
+            // Retire a resident placeholder from an old untyped save too.
+            self.social.ims.retain(|s| s.other != group);
+            return;
+        }
+        self.groups.restoring.remove(&group);
+        self.reopen_group_chat(group, "");
+        if let Some(info) = self.groups.sessions.get_mut(&group) {
+            info.started_by_us = true;
+        }
     }
 
     /// Ask for the group list once we are in world (STATE_INVENTORY_SEND).
@@ -470,6 +533,11 @@ impl World {
         match ev {
             NetEvent::Groups(list) => {
                 for g in list {
+                    // A legacy saved id can have been opened before a later
+                    // membership packet identifies it as a group (#1683).
+                    if self.social.has_session(&g.id) && !self.groups.sessions.contains_key(&g.id) {
+                        self.reopen_ims.push(super::open_ims::Conversation::Group(g.id));
+                    }
                     if let Some(s) = self.groups.sessions.get_mut(&g.id) {
                         s.group = true;
                         s.name = g.name.clone();
@@ -479,14 +547,18 @@ impl World {
                         None => self.groups.groups.push(g),
                     }
                 }
+                self.groups.list_received = true;
                 log::info!("groups: {}", self.groups.groups.len());
             }
             NetEvent::ActiveGroup { id, name, title } => {
                 log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
                 self.groups.active = id;
                 self.groups.active_title = title;
+                self.groups.active_received = true;
             }
             NetEvent::GroupDropped(id) => {
+                self.cancel_saved_im(id);
+                self.discard_restoring_group(id);
                 self.groups.groups.retain(|g| g.id != id);
                 if self.groups.sessions.contains_key(&id) {
                     self.session_system(id, aurora_i18n::tr!("world-groups-you-no-longer-belong-to-this-group"));
@@ -517,6 +589,7 @@ impl World {
                     if let Some(s) = self.groups.sessions.get_mut(&id) {
                         s.closed = true;
                     }
+                    self.groups.restoring.remove(&id);
                     return None;
                 }
                 if temp_session != session && !temp_session.is_nil() {
@@ -528,6 +601,7 @@ impl World {
                         s.other = session;
                     }
                 }
+                self.groups.restoring.remove(&session);
                 let info = self.info_mut(session, "");
                 info.active = true;
                 info.closed = false;
@@ -573,6 +647,8 @@ impl World {
                 self.session_system(session, format!("{what}{}", reason(&error)));
             }
             NetEvent::SessionClosed { session, reason: r } => {
+                self.cancel_saved_im(session);
+                self.groups.restoring.remove(&session);
                 // LLIMMgr::showSessionForceClose
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
                     s.closed = true;
@@ -642,7 +718,7 @@ impl World {
         if !in_group && self.friends_only_drops(&inv.from, &inv.from_name) {
             return;
         }
-        if !self.groups.sessions.contains_key(&session) {
+        if !self.groups.sessions.contains_key(&session) || self.groups.restoring.contains(&session) {
             if in_group && !self.mutes.is_loaded() {
                 // FS: wait for the mute list before deciding
                 if !self.groups.deferred.contains(&session) {
@@ -652,6 +728,7 @@ impl World {
             }
             if self.group_chat_unwanted(&session) {
                 log::info!("group chat blocked: {}", self.session_title(&session));
+                self.discard_restoring_group(session);
                 self.groups.im(inv.from, dialog::SESSION_LEAVE, session, String::new());
                 return;
             }
@@ -690,6 +767,7 @@ impl World {
             let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
             self.session_push(session, l, true);
         }
+        self.groups.restoring.remove(&session);
         self.groups.out.push(NetCommand::ChatSession {
             method: SessionMethod::AcceptInvitation,
             session,
@@ -714,6 +792,12 @@ impl World {
         }
         let session = im.session_id;
         let mut reopened = false;
+        if self.groups.restoring.contains(&session) {
+            if !self.mutes.is_loaded() {
+                return true;
+            }
+            self.restore_saved_group_chat(session);
+        }
         if !self.groups.sessions.contains_key(&session) {
             // only shown once a session is open (after its invitation)
             if self.groups.deferred.contains(&session) && self.mutes.is_loaded() {
