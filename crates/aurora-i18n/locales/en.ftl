@@ -1776,6 +1776,8 @@ ui-login-other-grid = Other grid…
 ui-login-grid-link-title = Change the login grid?
 ui-login-grid-link-text = A link opened from outside Aurora asks to log in to another grid. Your password goes to the grid you log in to: only switch if you trust this one.
 ui-login-grid-link-switch = Switch grid
+ui-login-grid-link-add = Add in the grid manager…
+ui-login-grid-link-add-hint = A grid that only answers over http is not reached from a link: add it once in the grid manager, then open the link again.
 
 grids-manage = Manage grids
 grids-remove-question = Remove { $name } from the grid list?

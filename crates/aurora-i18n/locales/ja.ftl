@@ -1773,6 +1773,8 @@ ui-login-other-grid = その他のグリッド…
 ui-login-grid-link-title = ログインするグリッドを変更しますか？
 ui-login-grid-link-text = Aurora の外から開いたリンクが、別のグリッドへのログインを求めています。パスワードはログイン先のグリッドに送られます。信頼できるグリッドの場合のみ変更してください。
 ui-login-grid-link-switch = グリッドを変更
+ui-login-grid-link-add = グリッド管理に追加…
+ui-login-grid-link-add-hint = httpでしか応答しないグリッドにはリンクから接続できません。グリッド管理で一度追加してから、もう一度リンクを開いてください。
 
 grids-manage = グリッドの管理
 grids-remove-question = { $name }をグリッドのリストから削除してもよろしいですか？

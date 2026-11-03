@@ -1779,6 +1779,8 @@ ui-login-other-grid = Autre grille…
 ui-login-grid-link-title = Changer de grille de connexion ?
 ui-login-grid-link-text = Un lien ouvert depuis l'extérieur d'Aurora demande de se connecter à une autre grille. Votre mot de passe est envoyé à la grille où vous vous connectez : ne changez que si vous lui faites confiance.
 ui-login-grid-link-switch = Changer de grille
+ui-login-grid-link-add = Ajouter dans le gestionnaire de grilles…
+ui-login-grid-link-add-hint = Une grille qui ne répond qu'en http n'est pas jointe depuis un lien : ajoutez-la une fois dans le gestionnaire de grilles, puis ouvrez à nouveau le lien.
 
 grids-manage = Gérer les grilles
 grids-remove-question = Supprimer { $name } de la liste des grilles ?
