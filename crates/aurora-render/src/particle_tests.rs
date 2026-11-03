@@ -15,7 +15,10 @@ fn particle_gpu_blends_glow_and_optional_intersection_fade_match_reference_equat
         return;
     };
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("particle GPU device");
-    let shader = particle_shader();
+    let shader = format!(
+        "{}\n@fragment fn fs_particle_uv(in: PartOut) -> @location(0) vec4<f32> {{ return vec4<f32>(in.uv, 0.0, 1.0); }}",
+        particle_shader()
+    );
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("production particle blending and glow"),
         source: wgpu::ShaderSource::Wgsl(shader.into()),
@@ -65,9 +68,10 @@ fn particle_gpu_blends_glow_and_optional_intersection_fade_match_reference_equat
         "fs_particle_glow",
         wgpu::ColorWrites::ALPHA,
     );
+    let uv_pipeline = make_pipeline(wgpu::BlendState::REPLACE, "fs_particle_uv", wgpu::ColorWrites::ALL);
     const WIRES: [u8; 8] = [0, 1, 2, 3, 4, 5, 7, 9];
     const WIDTH: u32 = 64 * 9;
-    const HEIGHT: u32 = 5 * 9;
+    const HEIGHT: u32 = 6 * 9;
     const STRIDE: u32 = WIDTH * 4;
     let (target, view) = crate::renderer::make_view(
         &device,
@@ -85,7 +89,7 @@ fn particle_gpu_blends_glow_and_optional_intersection_fade_match_reference_equat
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    for row in 0..5 {
+    for row in 0..6 {
         let mut frame = [0.0_f32; 36];
         frame[..16].copy_from_slice(&glam::Mat4::IDENTITY.to_cols_array());
         frame[16] = 1.0;
@@ -124,6 +128,18 @@ fn particle_gpu_blends_glow_and_optional_intersection_fade_match_reference_equat
                 });
             }
         }
+        if row == 5 {
+            for (column, particle) in data.iter_mut().enumerate() {
+                if column % 2 == 0 {
+                    particle.flags |= particle_flags::AXIS;
+                    particle.pos[1] = -1.0;
+                    particle.end_pos = [0.0, 1.0, 0.5];
+                    particle.axis = [1.0, 0.0, 0.0];
+                    particle.end_axis = particle.axis;
+                    particle.end_width = 2.0;
+                }
+            }
+        }
         let instances = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: bytemuck::cast_slice(&data),
@@ -152,7 +168,11 @@ fn particle_gpu_blends_glow_and_optional_intersection_fade_match_reference_equat
         });
         pass.set_vertex_buffer(0, instances.slice(..));
         for (column, (src, dst)) in WIRES.into_iter().flat_map(|s| WIRES.map(move |d| (s, d))).enumerate() {
-            let pipeline = &pipelines[particles::blend_index(src, dst) as usize];
+            let pipeline = if row == 5 {
+                &uv_pipeline
+            } else {
+                &pipelines[particles::blend_index(src, dst) as usize]
+            };
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &pipeline.get_bind_group_layout(0),
@@ -236,6 +256,24 @@ fn particle_gpu_blends_glow_and_optional_intersection_fade_match_reference_equat
                 assert!(
                     (actual - expected.clamp(0.0, 1.0)).abs() < 2.1 / 255.0,
                     "row {row}, factors {src}/{dst}, channel {channel}: {actual} vs {expected}"
+                );
+            }
+        }
+    }
+    // LLVOPartGroup's parent corners have u=0 and child corners u=1;
+    // v spans their width. Probe both axes away from the centre so a
+    // rotated or mirrored ribbon texture cannot pass as an ordinary sprite.
+    for column in 0..64 {
+        for (x, y) in [(2, 4), (6, 4), (4, 2), (4, 6)] {
+            let pixel = [(x as f32 + 0.5) / 9.0, (y as f32 + 0.5) / 9.0];
+            let expected = if column % 2 == 0 { [pixel[1], 1.0 - pixel[0]] } else { pixel };
+            let offset = (5 * 9 + y) * STRIDE as usize + (column * 9 + x) * 4;
+            for channel in 0..2 {
+                let actual = f32::from(pixels[offset + channel]) / 255.0;
+                assert!(
+                    (actual - expected[channel]).abs() < 1.1 / 255.0,
+                    "column {column}, pixel {x}/{y}, UV {channel}: {actual} vs {}",
+                    expected[channel]
                 );
             }
         }
