@@ -4959,7 +4959,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   with a password (OK greyed out as long as it is empty). `direct`: purchase
   without confirmation. `error`: refusal by the service shown in the
   window, with its link. `nopayment`: account without a payment method.
-  `grid`: grid with no known purchase service. After Buy then OK: the
+  `grid`: grid with no known purchase service. `opensim`: an OpenSim grid,
+  the form at once with 1000 entered (no payment method check). After Buy
+  then OK: the
   window closes, the balance goes up and the bell receives the
   notification.
 - **`AURORA_DEMO_BUY_LAND=<mode>[:confirm]`**: the plaza parcel (16384 m²) is for sale

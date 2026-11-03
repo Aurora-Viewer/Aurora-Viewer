@@ -73,6 +73,7 @@ impl Manager {
             <welcome>https://grid.example/welcome</welcome><register>https://grid.example/register</register>
             <password>https://grid.example/password</password><help>https://grid.example/help</help>
             <about>https://grid.example/</about><search>https://grid.example/search?q=[QUERY]</search>
+            <economy>https://grid.example/helper/</economy>
             </gridinfo>"#,
         );
         if let Ok(grid) = grid {
@@ -81,6 +82,18 @@ impl Manager {
             let _ = grids::store(settings, grid, None);
         }
         self.tab = usize::from(std::env::var("AURORA_DEMO_GRIDS").is_ok_and(|mode| mode == "pages"));
+        self.open = true;
+    }
+
+    /// "Add a grid", its address typed (a place link to an unknown grid).
+    pub fn open_new(&mut self, address: &str) {
+        self.draft = Grid {
+            service: address.to_owned(),
+            ..Grid::default()
+        };
+        self.previous = None;
+        self.error = None;
+        self.tab = 0;
         self.open = true;
     }
 
@@ -109,7 +122,14 @@ impl Manager {
                     self.result = None;
                     match result {
                         Ok(grid) => {
-                            self.draft = grid;
+                            // the fields typed by hand are kept only for the same grid:
+                            // another address typed over a saved grid starts afresh
+                            let other = self.previous.as_deref().is_some_and(|previous| previous != grid.service);
+                            self.draft = if other {
+                                grid
+                            } else {
+                                std::mem::take(&mut self.draft).refreshed(grid)
+                            };
                             self.error = None;
                         }
                         Err(error) => self.error = Some(error),
@@ -266,6 +286,7 @@ impl Manager {
                                 ui.add_enabled_ui(editable, |ui| {
                                     edit(ui, p, aurora_i18n::tr!("grids-search"), &mut self.draft.search);
                                     edit(ui, p, aurora_i18n::tr!("grids-profile"), &mut self.draft.profile);
+                                    edit(ui, p, aurora_i18n::tr!("grids-helper"), &mut self.draft.helper);
                                 });
                             }
                         });
@@ -408,4 +429,30 @@ fn web_edit(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut String, edi
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_grid_from_a_link_opens_as_a_new_grid_with_its_address() {
+        let mut manager = Manager {
+            previous: Some("https://saved.example".into()),
+            tab: 1,
+            ..Default::default()
+        };
+        manager.open_new("grid.example.org:8002");
+        assert!(manager.open);
+        assert_eq!(
+            manager.draft.service, "grid.example.org:8002",
+            "no scheme: Retrieve tries plain http"
+        );
+        assert!(manager.previous.is_none(), "a new grid, not an edit of the one shown before");
+        assert_eq!(manager.tab, 0, "the Connection tab, with Retrieve");
+        assert_eq!(
+            grids::service(&manager.draft.service).as_deref(),
+            Ok("http://grid.example.org:8002")
+        );
+    }
 }

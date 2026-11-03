@@ -1331,10 +1331,21 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
     answer
 }
 
+/// The answer to a place link naming another grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridLinkAnswer {
+    Switch,
+    /// An unknown grid, added by hand in the grid manager: the link itself
+    /// reaches it over https only, a grid on plain http is added there.
+    Add,
+    Cancel,
+}
+
 /// A link opened from outside the viewer names another grid than the login
 /// screen's: switch to `address` (`name`: the grid manager's name for it)?
-/// Some(true) on "Switch grid", Some(false) on "Cancel" or a click outside.
-pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: Option<&str>) -> Option<bool> {
+/// `Switch` on "Switch grid", `Add` on "Add in the grid manager…" (an
+/// unknown grid only), `Cancel` on "Cancel" or a click outside.
+pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: Option<&str>) -> Option<GridLinkAnswer> {
     use egui::RichText;
     let mut answer = None;
     let modal = crate::ui::widgets::Modal::new(egui::Id::unique("grid_link_confirm")).show(ctx, |ui| {
@@ -1367,15 +1378,29 @@ pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: 
         // the action, then "Cancel", like the other confirmations
         ui.horizontal(|ui| {
             if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-login-grid-link-switch")).clicked() {
-                answer = Some(true);
+                answer = Some(GridLinkAnswer::Switch);
+            }
+            if name.is_none() && super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-login-grid-link-add")).clicked() {
+                answer = Some(GridLinkAnswer::Add);
             }
             if super::widgets::default_button(super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel"))).clicked() {
-                answer = Some(false);
+                answer = Some(GridLinkAnswer::Cancel);
             }
         });
+        if name.is_none() {
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("ui-login-grid-link-add-hint"))
+                        .size(11.5)
+                        .color(p.muted),
+                )
+                .wrap(),
+            );
+        }
     });
     if modal.should_close() && answer.is_none() {
-        answer = Some(false);
+        answer = Some(GridLinkAnswer::Cancel);
     }
     answer
 }
