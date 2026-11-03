@@ -422,9 +422,24 @@ mod tests {
         .collect()
     }
 
+    /// One frame; the textures it uploads are dropped (the tests have no
+    /// painter), as egui's debug assertions ask.
+    fn run(ctx: &egui::Context, ui: impl FnMut(&mut egui::Ui)) {
+        ctx.run_ui(egui::RawInput::default(), ui).textures_delta.clear();
+    }
+
+    /// The list closed: its textures are freed within the frames, before
+    /// the context goes (egui asserts that no texture change is left).
+    fn close(ctx: &egui::Context) {
+        for _ in 0..2 {
+            run(ctx, |ui| release_unused(ui.ctx()));
+        }
+        assert!(state(ctx).lock().entries.is_empty());
+    }
+
     /// One frame of the open list showing `shown`, all visible.
     fn frame(ctx: &egui::Context, shown: &[&SystemFont]) {
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        run(ctx, |ui| {
             let mut previews = Previews::begin(ui.ctx(), 13.0, 300.0);
             for i in 0..shown.len() {
                 previews.visible(i);
@@ -458,12 +473,13 @@ mod tests {
         super::super::install(&ctx, super::super::definitions_for(super::super::DEFAULT, &[]));
         let families = |ctx: &egui::Context| ctx.fonts(|f| f.definitions().families.len());
         // egui has fonts once a frame ran
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        run(&ctx, |_| {});
         let before = families(&ctx);
         assert!(until_drawn(&ctx, &shown), "the three names were drawn");
         // egui's fonts are those of the interface alone: no rebuild, no
         // window's text shaped again
         assert_eq!(families(&ctx), before);
+        close(&ctx);
     }
 
     #[test]
@@ -472,10 +488,7 @@ mod tests {
         let shown: Vec<&SystemFont> = fonts.iter().collect();
         let ctx = egui::Context::default();
         assert!(until_drawn(&ctx, &shown));
-        for _ in 0..2 {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| release_unused(ui.ctx()));
-        }
-        assert!(state(&ctx).lock().entries.is_empty());
+        close(&ctx);
     }
 
     #[test]
