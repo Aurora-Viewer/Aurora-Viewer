@@ -172,15 +172,16 @@ pub struct Place {
 }
 
 /// Where the selection's box `sel` goes on the surface at `point`, turned by
-/// `turn` about its centre: resting on the plane, its centre over the point.
-pub fn landing(sel: &Bounds, point: Vec3, normal: Vec3, turn: Quat) -> Landing {
+/// `turn` about its centre: resting on the plane, `offset` off it (metres
+/// along its normal; below it when negative), its centre over the point.
+pub fn landing(sel: &Bounds, point: Vec3, normal: Vec3, turn: Quat, offset: f32) -> Landing {
     let n = normal.normalize_or(Vec3::Z);
     let mut to = Bounds {
         center: point,
         rotation: (turn * sel.rotation).normalize(),
         half: sel.half,
     };
-    to.center = point + n * support(&to, n);
+    to.center = point + n * (support(&to, n) + offset);
     Landing {
         point,
         normal: n,
@@ -290,8 +291,11 @@ impl BuildTool {
         } else {
             Quat::IDENTITY
         };
-        self.place.preview = Some(landing(&sel, point, normal, turn));
+        self.place.preview = Some(landing(&sel, point, normal, turn, s.place_offset));
+        // (in a steady order: the hologram's faces are drawn in it, and a
+        // set's order changes from one frame to the next)
         self.place.moving = moving.into_iter().collect();
+        self.place.moving.sort_unstable();
     }
 
     /// A click while the button is on: put the selection where the preview
@@ -375,16 +379,21 @@ mod tests {
     fn keep_rotation_puts_the_side_facing_the_surface_on_it_without_turning() {
         let sel = cube(Vec3::new(5.0, 5.0, 9.0), Vec3::new(0.5, 0.3, 0.2), Quat::from_rotation_z(0.4));
         // on a floor: its bottom, centred over the point
-        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::Z, Quat::IDENTITY);
+        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::Z, Quat::IDENTITY, 0.0);
         assert_eq!(l.turn, Quat::IDENTITY);
         assert!(l.to.center.abs_diff_eq(Vec3::new(1.0, 2.0, 3.2), 1e-5), "{:?}", l.to);
+        // an offset lifts it off the surface, or sinks it in
+        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::Z, Quat::IDENTITY, 0.25);
+        assert!(l.to.center.abs_diff_eq(Vec3::new(1.0, 2.0, 3.45), 1e-5));
+        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), -Vec3::X, Quat::IDENTITY, -0.1);
+        assert!((l.to.center.x - (1.0 - support(&sel, Vec3::X) + 0.1)).abs() < 1e-5);
         // on a wall facing +X: its side toward the wall
-        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::X, Quat::IDENTITY);
+        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::X, Quat::IDENTITY, 0.0);
         assert!((l.to.center.x - (1.0 + support(&sel, Vec3::X))).abs() < 1e-5);
         assert_eq!((l.to.center.y, l.to.center.z), (2.0, 3.0));
         // a tilted one rests on its corner
         let tilted = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::from_rotation_x(0.3));
-        let l = landing(&tilted, Vec3::ZERO, Vec3::Z, Quat::IDENTITY);
+        let l = landing(&tilted, Vec3::ZERO, Vec3::Z, Quat::IDENTITY, 0.0);
         assert_eq!(l.to.rotation, tilted.rotation);
         assert!(l.to.center.z > 0.5);
     }
@@ -468,12 +477,12 @@ mod tests {
         // against a wall facing -X, slanted 10°
         let wall = (Quat::from_rotation_y(0.17) * -Vec3::X).normalize();
         let t = turn_to(Quat::IDENTITY, Vec3::X, Quat::IDENTITY, Side::Back, wall);
-        let l = landing(&sel, Vec3::new(3.0, 8.0, 2.0), wall, t);
+        let l = landing(&sel, Vec3::new(3.0, 8.0, 2.0), wall, t, 0.0);
         assert!((l.to.rotation * Vec3::X).abs_diff_eq(-wall, 1e-5), "its back on the wall");
         assert!((l.to.center - Vec3::new(3.0, 8.0, 2.0)).abs_diff_eq(wall * 0.1, 1e-5));
         // its top against a ceiling facing down
         let t = turn_to(Quat::IDENTITY, Vec3::X, Quat::IDENTITY, Side::Top, -Vec3::Z);
-        let up = landing(&sel, Vec3::new(0.0, 0.0, 4.0), -Vec3::Z, t);
+        let up = landing(&sel, Vec3::new(0.0, 0.0, 4.0), -Vec3::Z, t, 0.0);
         assert!((up.to.rotation * Vec3::Z).abs_diff_eq(Vec3::Z, 1e-5));
         assert!((up.to.center.z - 3.6).abs() < 1e-5);
     }
@@ -482,7 +491,7 @@ mod tests {
     fn sides_keep_their_names() {
         assert_eq!(serde_json::to_string(&Side::Bottom).unwrap(), "\"bottom\"");
         let s: BuildSettings = serde_json::from_str("{}").unwrap();
-        assert_eq!((s.place_rotate, s.place_side), (false, Side::Bottom));
+        assert_eq!((s.place_rotate, s.place_side, s.place_offset), (false, Side::Bottom, 0.0));
         // the first test builds' "As it is"
         let s: BuildSettings = serde_json::from_str(r#"{"place_side":"auto"}"#).unwrap();
         assert_eq!(s.place_side, Side::Bottom);

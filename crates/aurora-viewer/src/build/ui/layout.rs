@@ -276,6 +276,12 @@ fn snap_rows(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
             {
                 tool.toggle_place(world);
             }
+            // its distance off the surface
+            ui.add_space((ui.available_width() - 136.0).max(4.0));
+            ui.label(RichText::new(aurora_i18n::tr!("build-place-offset")).size(common::BODY))
+                .on_hover_text(aurora_i18n::tr!("build-place-offset-tip"));
+            ui.add_space((ui.available_width() - 70.0).max(4.0));
+            common::spin(ui, &mut s.place_offset, 0.01, -10.0..=10.0, 3, 64.0, false);
         },
     );
     // Keep rotation, or Auto rotate onto a chosen side

@@ -118,7 +118,7 @@ mod tests {
             half: Vec3::new(0.5, 0.2, 0.3),
         };
         let turn = Quat::from_rotation_z(1.0);
-        let l = crate::build::place::landing(&from, Vec3::new(3.0, 4.0, 20.0), Vec3::Z, turn);
+        let l = crate::build::place::landing(&from, Vec3::new(3.0, 4.0, 20.0), Vec3::Z, turn, 0.0);
         let m = placement(&l);
         // the box's centre and a corner go where the landing puts them
         assert!(m.transform_point3(from.center).abs_diff_eq(l.to.center, 1e-5));

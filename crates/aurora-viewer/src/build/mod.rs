@@ -144,6 +144,8 @@ pub struct BuildSettings {
     /// puts against the surface.
     pub place_rotate: bool,
     pub place_side: place::Side,
+    /// Its distance off the surface (metres, into it when negative).
+    pub place_offset: f32,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
     /// EditLinkedParts.
@@ -563,6 +565,7 @@ impl Default for BuildSettings {
             object_snap: false,
             place_rotate: false,
             place_side: place::Side::Bottom,
+            place_offset: 0.0,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,
