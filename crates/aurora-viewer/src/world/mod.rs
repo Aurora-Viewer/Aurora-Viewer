@@ -4910,6 +4910,12 @@ impl World {
         self.main().map(|r| (r.grid_status.0.as_str(), r.grid_status.1.as_str()))
     }
 
+    /// The sizes a prim may take on the agent's region (its OpenSimExtras,
+    /// else Second Life's limits).
+    pub fn prim_limits(&self) -> crate::build::PrimLimits {
+        crate::build::PrimLimits::from_extras(self.opensim_extras())
+    }
+
     /// The agent's region's own word on its OpenSim grid (GridURL, search
     /// and map servers), None before the first region; empty fields until
     /// its SimulatorFeatures came.
