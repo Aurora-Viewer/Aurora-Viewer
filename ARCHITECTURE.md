@@ -3457,7 +3457,11 @@ groups whose preceding group emits no glow. The main view's exact GPU projection
 includes temporal jitter and photo tiles; ribbon bounds cover both endpoint axes.
 `particle_commands.rs` prepares large ordered direct-draw chunks on two dedicated
 workers and reuses unchanged commands. Ordinary short lists keep direct drawing;
-resource, pipeline and sample-count changes invalidate chunks. No extra GPU
+resource, pipeline and sample-count changes invalidate chunks. `renderer.rs::ParticlePipelines`
+builds ordinary alpha at startup and after MSAA/SSR changes; other blend pairs are
+compiled once on first visible use in command preparation, before either direct
+draws or worker recording. Adding a pair preserves cached chunks for existing
+pairs; changing the shader/layout/sample generation invalidates them. No extra GPU
 features or device-generated commands are required. The particle-only glow gate
 includes particle emitters even when no glowing object is visible. `RenderStats`
 and `AURORA_PROFILE` expose separate particle batch/draw, instance and command

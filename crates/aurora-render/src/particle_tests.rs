@@ -344,7 +344,7 @@ fn ordered_particle_commands_match_reference_pixels_after_data_and_binding_chang
     });
     let mut commands = crate::particle_commands::Commands::default();
     let mut previous_pixels = Vec::new();
-    for samples in [1, 4] {
+    for samples in [1, 4, 4] {
         let make = |blend, fragment, glow_pass: bool| {
             device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some("particle commands"),
@@ -388,9 +388,12 @@ fn ordered_particle_commands_match_reference_pixels_after_data_and_binding_chang
         let alpha = make(particles::blend_state(0), "fs_particle", false);
         let replace_index = particles::blend_index(0, 1) as usize;
         let replace = make(particles::blend_state(replace_index), "fs_particle", false);
-        let pipelines: Vec<_> = (0..particles::BLEND_COUNT)
+        let reference_pipelines: Vec<_> = (0..particles::BLEND_COUNT)
             .map(|i| if i == replace_index { replace.clone() } else { alpha.clone() })
             .collect();
+        let pipelines =
+            crate::renderer::ParticlePipelines::new(&device, &module, &pipeline_layout, samples, wgpu::TextureFormat::Rgba8Unorm, None);
+        assert_eq!(pipelines.compiled_count(), 1, "a new generation builds only ordinary alpha");
         let glow_state = wgpu::BlendState {
             color: wgpu::BlendComponent::REPLACE,
             alpha: wgpu::BlendComponent {
@@ -495,8 +498,39 @@ fn ordered_particle_commands_match_reference_pixels_after_data_and_binding_chang
             })
         };
         let mut group = bind();
+        let prepare = |commands: &mut crate::particle_commands::Commands, data: &[ParticleInstance]| {
+            commands.plan.prepare(data, true, &particles::Frustum::new(glam::Mat4::IDENTITY));
+            commands.prepare(
+                &device,
+                &[&group],
+                &vertices,
+                &pipelines,
+                &glow,
+                wgpu::TextureFormat::Rgba8Unorm,
+                None,
+                samples,
+            )
+        };
+        prepare(&mut commands, &[]);
+        prepare(&mut commands, &data[..2]);
+        assert_eq!(
+            pipelines.compiled_count(),
+            1,
+            "empty lists and culled pairs do not compile variants"
+        );
+        let stats = prepare(&mut commands, &data[..5]);
+        assert_eq!(stats.bundles, 0, "short lists prepare variants even without command bundles");
+        assert_eq!(
+            pipelines.compiled_count(),
+            2,
+            "the first visible replacement draw compiles its pair"
+        );
+        let replacement = pipelines[replace_index].clone();
         for step in 0..3 {
             if step == 1 {
+                // Adding an unused pair must not invalidate commands for the
+                // generation's existing pairs (nor recompile those pairs).
+                pipelines.ensure(&device, particles::blend_index(7, 0) as usize);
                 data[0].color = [50, 255, 180, 160];
                 data[0].glow = 0.3;
                 queue.write_buffer(&vertices, 0, bytemuck::cast_slice(&data));
@@ -523,6 +557,8 @@ fn ordered_particle_commands_match_reference_pixels_after_data_and_binding_chang
                 None,
                 samples,
             );
+            assert_eq!(pipelines.compiled_count(), if step == 0 { 2 } else { 3 });
+            assert_eq!(pipelines[replace_index], replacement, "repeated prepares reuse the pipeline");
             assert!(stats.culled >= 1);
             if step == 1 {
                 assert_eq!(stats.bundle_builds, 0, "data updates reuse exact command ranges");
@@ -558,7 +594,7 @@ fn ordered_particle_commands_match_reference_pixels_after_data_and_binding_chang
                 pass.set_bind_group(0, &group, &[]);
                 pass.set_vertex_buffer(0, vertices.slice(..));
                 for batch in particles::batches(&data, true) {
-                    pass.set_pipeline(&pipelines[batch.blend]);
+                    pass.set_pipeline(&reference_pipelines[batch.blend]);
                     pass.draw(0..6, batch.instances.clone());
                     if batch.glow {
                         pass.set_pipeline(&reference_glow);

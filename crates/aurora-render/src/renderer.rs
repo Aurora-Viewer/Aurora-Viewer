@@ -856,7 +856,7 @@ struct Pipelines {
     /// and their depth into the single-sampled scene depth.
     blend_under: SidedPipelines,
     blend_under_depth_ss: SidedPipelines,
-    particles: [wgpu::RenderPipeline; crate::particles::BLEND_COUNT],
+    particles: ParticlePipelines,
     particle_glow: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
@@ -1824,6 +1824,85 @@ struct PipeDesc<'a> {
     polygon_line: bool,
     /// Preserve water geometry in front of the near plane.
     unclipped_depth: bool,
+}
+
+/// A pipeline generation retains its shader/layout for first-use blend creation.
+/// Only ordinary alpha is compiled at startup or an MSAA/SSR rebuild. Slots are
+/// filled before command recording, so no draw substitutes a different blend.
+pub(crate) struct ParticlePipelines {
+    variants: [std::sync::OnceLock<wgpu::RenderPipeline>; crate::particles::BLEND_COUNT],
+    module: wgpu::ShaderModule,
+    layout: wgpu::PipelineLayout,
+    samples: u32,
+    format: wgpu::TextureFormat,
+    depth: Option<wgpu::TextureFormat>,
+}
+
+impl ParticlePipelines {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        module: &wgpu::ShaderModule,
+        layout: &wgpu::PipelineLayout,
+        samples: u32,
+        format: wgpu::TextureFormat,
+        depth: Option<wgpu::TextureFormat>,
+    ) -> Self {
+        let pipelines = Self {
+            variants: [const { std::sync::OnceLock::new() }; crate::particles::BLEND_COUNT],
+            module: module.clone(),
+            layout: layout.clone(),
+            samples,
+            format,
+            depth,
+        };
+        pipelines.ensure(device, 0);
+        pipelines
+    }
+
+    pub(crate) fn ensure(&self, device: &wgpu::Device, index: usize) {
+        self.variants[index].get_or_init(|| {
+            make_pipeline(
+                device,
+                &self.module,
+                &self.layout,
+                PipeDesc {
+                    label: "particles",
+                    vs: "vs_particle",
+                    fs: Some("fs_particle"),
+                    vb: Vb::Particle,
+                    cull: None,
+                    blend: Some(crate::particles::blend_state(index)),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    a2c: false,
+                    samples: self.samples,
+                    format: Some(self.format),
+                    gbuf: false,
+                    depth_format: self.depth,
+                    depth_bias: Default::default(),
+                    constants: &[],
+                    polygon_line: false,
+                    unclipped_depth: false,
+                },
+            )
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compiled_count(&self) -> usize {
+        self.variants.iter().filter(|slot| slot.get().is_some()).count()
+    }
+}
+
+impl std::ops::Index<usize> for ParticlePipelines {
+    type Output = wgpu::RenderPipeline;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        // Internal invariant: pair 0 is eager; Commands::prepare ensures every
+        // bounded blend index in the uploaded draw plan before either draw path.
+        self.variants[index].get().expect("particle blend prepared before recording")
+    }
 }
 
 /// Draws of `list` whose bounding sphere touches the view of `view_proj`
@@ -3503,17 +3582,7 @@ impl Backend {
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
             ..base("blend rigged fringe depth", "vs_main", "fs_blend")
         });
-        let particles = std::array::from_fn(|index| {
-            pipe(PipeDesc {
-                vb: Vb::Particle,
-                cull: None,
-                blend: Some(crate::particles::blend_state(index)),
-                write_mask: wgpu::ColorWrites::ALL,
-                depth_write: false,
-                depth_compare: wgpu::CompareFunction::Greater,
-                ..base("particles", "vs_particle", "fs_particle")
-            })
-        });
+        let particles = ParticlePipelines::new(device, &module, &scene_layout, samples, HDR_FORMAT, Some(DEPTH_FORMAT));
         // LLDrawPoolAlpha::renderEmissives: colour untouched, texture alpha
         // times per-vertex glow accumulated in the scene alpha for bloom.
         let particle_glow = pipe(PipeDesc {

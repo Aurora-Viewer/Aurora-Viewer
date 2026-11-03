@@ -5,6 +5,7 @@
 
 use crate::ParticleDrawStats;
 use crate::particles::{Draw, Plan};
+use crate::renderer::ParticlePipelines;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -54,15 +55,20 @@ impl Commands {
         device: &wgpu::Device,
         groups: &[&wgpu::BindGroup],
         vertices: &wgpu::Buffer,
-        pipelines: &[wgpu::RenderPipeline],
+        pipelines: &ParticlePipelines,
         glow: &wgpu::RenderPipeline,
         format: wgpu::TextureFormat,
         depth: Option<wgpu::TextureFormat>,
         samples: u32,
     ) -> ParticleDrawStats {
+        // Do this before the short-list/direct early return and before bundle
+        // workers run. New slots do not invalidate chunks of existing pairs.
+        for draw in &self.plan.draws {
+            pipelines.ensure(device, draw.blend);
+        }
         let changed = self.context.as_ref().is_none_or(|c| {
             c.vertices != *vertices
-                // The renderer replaces all blend variants together.
+                // Pair 0 identifies the whole shader/layout/sample generation.
                 || c.color != pipelines[0]
                 || c.glow != *glow
                 || c.format != format
@@ -158,7 +164,7 @@ impl Commands {
         self.plan.stats
     }
 
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, pipelines: &[wgpu::RenderPipeline], glow: &wgpu::RenderPipeline) {
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, pipelines: &ParticlePipelines, glow: &wgpu::RenderPipeline) {
         let Some(context) = &self.context else { return };
         if !self.chunks.is_empty() {
             pass.execute_bundles(self.chunks.iter().filter_map(|chunk| chunk.as_ref().map(|chunk| &chunk.bundle)));
