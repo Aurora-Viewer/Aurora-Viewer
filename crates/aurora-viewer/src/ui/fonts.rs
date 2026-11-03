@@ -125,14 +125,17 @@ fn font_dirs() -> Vec<PathBuf> {
             std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
             std::env::var_os("XDG_DATA_DIRS"),
         );
-        // fontconfig's own directories first: `system_fonts` takes the
-        // directories from the end and the fallback index keeps the first
-        // copy of a file, so either way they come after the usual ones and
-        // a large tree of theirs (TeX Live's) cannot use up the budget
-        let extra: Vec<PathBuf> = fontconfig_dirs().into_iter().filter(|d| !dirs.contains(d)).collect();
-        dirs.splice(0..0, extra);
     }
     dirs
+}
+
+/// fontconfig's own directories that `usual` (from `font_dirs`) does not
+/// list already. Each scan reads them after the usual ones, so a large
+/// tree of theirs (TeX Live's) cannot use up its budget nor replace a
+/// system copy of a file: `system_fonts` takes its directories from the
+/// end (they go first), the fallback index from the start (they go last).
+fn extra_font_dirs(usual: &[PathBuf]) -> Vec<PathBuf> {
+    fontconfig_dirs().into_iter().filter(|d| !usual.contains(d)).collect()
 }
 
 /// The `<dir>`s of fontconfig's configuration file and of what it
@@ -220,7 +223,9 @@ fn xdg_font_dirs(home: Option<PathBuf>, data_home: Option<PathBuf>, data_dirs: O
 /// Regular-weight TrueType/OpenType fonts installed on the system, by family name.
 pub fn system_fonts() -> Vec<SystemFont> {
     let mut out: Vec<SystemFont> = Vec::new();
-    let mut stack = font_dirs();
+    let usual = font_dirs();
+    let mut stack = extra_font_dirs(&usual);
+    stack.extend(usual);
     let mut visited = 0;
     while let Some(d) = stack.pop() {
         // only directories that exist count: most XDG data directories have no fonts

@@ -196,7 +196,10 @@ fn scan() -> Vec<SystemFace> {
         return Vec::new();
     }
     let start = std::time::Instant::now();
-    let files = index_files(&super::font_dirs());
+    let mut dirs = super::font_dirs();
+    let extra = super::extra_font_dirs(&dirs);
+    dirs.extend(extra);
+    let files = index_files(&dirs);
     let mut maps: HashMap<&'static str, memmap2::Mmap> = HashMap::new();
     let chosen = select(CANDIDATES, |spec, probe| {
         let (file, face) = face_spec(spec);
