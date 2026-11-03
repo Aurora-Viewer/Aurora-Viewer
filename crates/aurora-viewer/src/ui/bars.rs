@@ -2034,6 +2034,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
+        // Floater.Toggle fs_voice_controls
+        "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
@@ -2125,6 +2127,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
         "gridstatus" => panels.grid_status,
+        "voice" => panels.voice_controls,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
@@ -3538,6 +3541,7 @@ mod tests {
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("statistics", "perf", |p| p.perf),
+            ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {
@@ -3589,6 +3593,20 @@ mod tests {
         assert!(command_active("performance", &panels, false, false, false));
         assert!(matches!(run_command(&ctx, "picks", &mut panels), BarAction::MyPicks));
         assert!(matches!(run_command(&ctx, "defaultchatbar", &mut panels), BarAction::ToggleChatBar));
+    }
+
+    #[test]
+    fn voice_toolbar_command_toggles_the_voice_controls() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("voice"));
+        assert!(!panels.voice_controls);
+        assert!(!command_active("voice", &panels, false, false, false));
+        assert!(matches!(run_command(&ctx, "voice", &mut panels), BarAction::None));
+        assert!(panels.voice_controls);
+        assert!(command_active("voice", &panels, false, false, false));
+        run_command(&ctx, "voice", &mut panels);
+        assert!(!panels.voice_controls);
     }
 
     #[test]
