@@ -365,10 +365,21 @@ pub(super) fn current() -> &'static KeyboardLayout {
 /// window learns it (Wayland). `None` elsewhere: the layout read at start
 /// stays.
 pub struct Watch {
-    #[cfg(target_os = "linux")]
-    inner: linux::GroupWatch,
-    #[cfg(not(target_os = "linux"))]
-    never: std::convert::Infallible,
+    inner: GroupWatch,
+}
+
+#[cfg(target_os = "linux")]
+use linux::GroupWatch;
+
+/// No layout to hear elsewhere: a watch never exists.
+#[cfg(not(target_os = "linux"))]
+struct GroupWatch(std::convert::Infallible);
+
+#[cfg(not(target_os = "linux"))]
+impl GroupWatch {
+    fn poll(&mut self) -> Option<u32> {
+        match self.0 {}
+    }
 }
 
 impl Watch {
@@ -379,7 +390,7 @@ impl Watch {
             if layouts().all.len() < 2 {
                 return None;
             }
-            linux::GroupWatch::new(window).map(|inner| Self { inner })
+            GroupWatch::new(window).map(|inner| Self { inner })
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -390,10 +401,7 @@ impl Watch {
 
     /// The change of layout reported since the last call, if any.
     pub fn poll(&mut self) -> Option<LayoutChange<'static>> {
-        #[cfg(target_os = "linux")]
         let group = self.inner.poll()?;
-        #[cfg(not(target_os = "linux"))]
-        let group = match self.never {};
         let change = layouts().activate(group)?;
         log::info!("keyboard layout: layout {} reported active", group + 1);
         Some(change)
