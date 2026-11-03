@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Mask fragment shaders (`aurora-render/src/shaders/object.wgsl`) evaluate
+material derivatives and alpha coverage before derivative-free lighting,
+discarding rejected pixels and zero MSAA coverage without changing cutoff
+or coverage values. `alpha_mask_tests.rs` compares production Mask functions
+with the former order on the GPU, including colour, gbuffer and per-sample
+depth coverage. `aurora-viewer/src/demo_alpha_mask_ab.rs` supplies static
+layered Mask/Blend prims and procedural textures for offline comparisons.
+
 `world/outfit_backup.rs` defines versioned, pretty-printed JSON outfit recipes:
 inventory item UUIDs, clothing link descriptions (layer order), item types and
 attachment points, without assets or permissions. `ui/appearance/json.rs` shares

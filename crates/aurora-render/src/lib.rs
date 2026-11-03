@@ -6,6 +6,8 @@
 //! of `render_thread`); see main_thread.rs for who owns what.
 
 pub mod adapter_choice;
+#[cfg(test)]
+mod alpha_mask_tests;
 pub mod arena;
 pub mod bc7;
 #[cfg(test)]
