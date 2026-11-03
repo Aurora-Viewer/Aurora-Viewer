@@ -180,6 +180,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(flash_conversations_nearby),
                     );
                 });
+                // "Show number of unread IMs in the window title"
+                // (FSShowMessageCountInWindowTitle)
+                cx.toggle(
+                    tr!("ui-options-unread-ims-in-window-title"),
+                    tr!("ui-options-unread-ims-in-window-title-hint"),
+                    &field!(unread_ims_in_window_title),
+                );
+                // "Announce incoming IMs as soon as the sender starts typing"
+                // (FSAnnounceIncomingIM)
+                cx.toggle(
+                    tr!("ui-options-announce-incoming-im"),
+                    tr!("ui-options-announce-incoming-im-hint"),
+                    &field!(announce_incoming_im),
+                );
                 // the Legacy Viewer's IM chiclets (FSDisableIMChiclets off):
                 // beside the chat bar by default, the human's choice (#1134)
                 use crate::settings::ChatThumbnails;

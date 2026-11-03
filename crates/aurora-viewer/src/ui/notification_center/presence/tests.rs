@@ -163,6 +163,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         marketplace: false,
         parcel_landmark: None,
         can_set_home: false,
+        can_go_home: true,
         release_notes: false,
         region_console: false,
         motd: false,

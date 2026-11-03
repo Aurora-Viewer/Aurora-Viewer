@@ -41,6 +41,7 @@ pub mod home;
 pub mod hover_height;
 pub mod hud_lock;
 pub mod hud_scale;
+mod im_announce;
 pub mod inventory;
 pub mod inventory_offers;
 pub mod land;
@@ -338,6 +339,10 @@ pub struct World {
     /// Lines not sent by a person neither count as unread nor alert
     /// (Preferences › Chat, #741, off), given every frame by the app.
     pub quiet_automated_chat: bool,
+    /// A resident starting to type to us opens the conversation with an
+    /// announcement (FSAnnounceIncomingIM, `im_announce.rs`), given every
+    /// frame by the app.
+    pub announce_incoming_im: bool,
     /// Fly override (the Legacy Viewer's FSAlwaysFly, read by LLAgent::canFly
     /// in indra/newview/llagent.cpp): the parcel's and the region's no-fly
     /// no longer stop a takeoff nor land the avatar. Never saved, off at
@@ -713,6 +718,7 @@ impl World {
             nearby_news: false,
             chat_badge: 0,
             quiet_automated_chat: false,
+            announce_incoming_im: false,
             fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
@@ -4062,6 +4068,9 @@ impl World {
         // Stop): "is typing" in their conversation, never a line
         if matches!(im.dialog, IM_TYPING_START | IM_TYPING_STOP) {
             if !im.from_agent_id.is_nil() {
+                if im.dialog == IM_TYPING_START {
+                    self.announce_typing(&im);
+                }
                 self.social.set_typing(im.from_agent_id, im.dialog == IM_TYPING_START);
             }
             return;
@@ -4845,10 +4854,15 @@ impl World {
         };
         let (from, text) = (line.source, line.text.clone());
         let group = m.kind != ImKind::Private;
+        // an emote reads "Jane waves", as LLToastIMPanel writes it
+        let emote = attention::emote_line(&line.from, &text);
         let (title, body) = if group {
-            (self.session_title(&m.session), format!("{}: {text}", line.from))
+            (
+                self.session_title(&m.session),
+                emote.unwrap_or_else(|| format!("{}: {text}", line.from)),
+            )
         } else {
-            (line.from.clone(), text)
+            (line.from.clone(), emote.unwrap_or(text))
         };
         let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
         self.notifications

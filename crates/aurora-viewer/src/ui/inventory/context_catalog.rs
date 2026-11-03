@@ -507,7 +507,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     } else {
                         aurora_i18n::tr!("common-open")
                     },
-                    opens,
+                    opens && !(kind == 3 && facts.landmark_blocked),
                     if single {
                         Command::Open(id)
                     } else {
