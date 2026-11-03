@@ -3174,15 +3174,12 @@ impl TextureStreamer {
         let (used, live) = (renderer.textures.page_bytes(), renderer.textures.bytes());
         let video = renderer.video_memory.read(&renderer.device);
         self.video_usage = video.map_or(0, |v| v.usage);
-        if self.card_sharing
-            && !self.card_asked
-            && let Some(card) = renderer.video_memory.card()
-        {
+        if self.card_sharing && !self.card_asked {
             self.card_asked = true;
-            if let Some((luid, total, dedicated)) = card {
+            if let Some((luid, total, dedicated)) = renderer.video_memory.card() {
                 self.card_luid = luid;
                 // (an integrated GPU has no memory of its own to measure
-                // the counters against: no relief)
+                // the counters against, but its engines are read all the same)
                 self.card_total = dedicated.then_some(total);
                 self.gpu.start(luid);
             }
