@@ -2568,7 +2568,7 @@ impl App {
             .map(|(_, _, place)| place);
         // then a SLURL given from outside (LLStartUp::getStartSLURL)
         let slurl = if let Some(l) = self.login_form.start_slurl.as_ref() {
-            let name = match crate::grids::resolve(&self.settings, &l.target()) {
+            let name = match crate::grids::resolve(&self.settings, None, &l.target()) {
                 Ok(name) => name,
                 Err(error) => {
                     self.login_form.error = Some(error.text().to_owned());
@@ -5675,7 +5675,7 @@ impl App {
     /// Teleport to a position of a region given by name: the current region
     /// directly, others through a map lookup by name.
     fn grid_region(&mut self, region: &str) -> Option<String> {
-        match crate::grids::resolve(&self.settings, region) {
+        match crate::grids::resolve(&self.settings, self.world.opensim_extras(), region) {
             Ok(region) => Some(region),
             Err(error) => {
                 self.world.system_message(error.text());
@@ -7669,13 +7669,9 @@ impl App {
         if !self.demo
             && let Some(l) = &self.world.login
         {
-            // login "map-server-url", else MapServerURL
-            let url = l.raw["map-server-url"].as_str();
-            let url = if url.trim().is_empty() {
-                "https://map.secondlife.com/"
-            } else {
-                url
-            };
+            // the region's map-server-url (a Hypergrid visit shows the
+            // visited grid's tiles), else the login's, else MapServerURL
+            let url = crate::grids::map_server(self.world.opensim_extras(), l.raw["map-server-url"].as_str());
             self.map_tiles.configure(url, self.net.runtime(), self.net.caps_http());
         }
         self.map_tiles.update(&self.egui_ctx);
@@ -13051,14 +13047,17 @@ impl App {
             };
             return Some(crate::world::search::WebHome { url, identified: false });
         }
-        if let Some(grid) = crate::grids::active(&self.settings) {
-            return grid
-                .search_url(
-                    self.search_ui.web_query(self.settings.classic_search),
-                    aurora_i18n::language(),
-                    self.world.agent_access().preferred,
-                )
-                .map(|url| crate::world::search::WebHome { url, identified: false });
+        if self.settings.grid == crate::settings::GridChoice::Custom {
+            let login_search = self.world.login.as_ref().map(|l| l.raw["search"].as_str()).unwrap_or("");
+            return crate::grids::opensim_search_url(
+                &self.settings,
+                self.world.opensim_extras(),
+                login_search,
+                self.search_ui.web_query(self.settings.classic_search),
+                aurora_i18n::language(),
+                self.world.agent_access().preferred,
+            )
+            .map(|url| crate::world::search::WebHome { url, identified: false });
         }
         crate::world::search::web_home(
             self.search_grid(),

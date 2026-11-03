@@ -960,6 +960,7 @@ impl Session<'_> {
                     let grid_status_feed = extras["GridStatusRSS"].to_string_value();
                     let grid_status_page = extras["GridStatus"].to_string_value();
                     let currency_base_uri = extras["currency-base-uri"].to_string_value();
+                    let opensim = crate::types::OpenSimExtras::from_llsd(extras);
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
@@ -971,6 +972,7 @@ impl Session<'_> {
                         grid_status_feed,
                         grid_status_page,
                         currency_base_uri,
+                        opensim,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),

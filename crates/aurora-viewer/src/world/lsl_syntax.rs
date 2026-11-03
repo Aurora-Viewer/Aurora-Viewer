@@ -79,6 +79,7 @@ mod tests {
             grid_status_feed: String::new(),
             grid_status_page: String::new(),
             currency_base_uri: String::new(),
+            opensim: Default::default(),
         });
         w
     }
