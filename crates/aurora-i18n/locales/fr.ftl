@@ -9232,6 +9232,14 @@ search-aurora-remind = Me prévenir
 ui-context-do-not-show-again = Ne plus afficher
 ui-options-confirm-teleports = Confirmer les téléportations
 ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = Demander avant de se téléporter vers un repère, un lieu de l'historique ou un lien de téléportation
+ui-options-warn-hypergrid-suitcase = Prévenir des objets portés laissés derrière soi
+ui-options-warn-hypergrid-suitcase-help = Avant une téléportation Hypergrid, nommer les objets portés qui ne sont pas dans My Suitcase : l'autre grille ne peut pas les charger
+ui-hypergrid-suitcase-title = Une partie de ce que vous portez reste ici
+ui-hypergrid-suitcase-text = { $count ->
+    [one] Un objet porté n'est pas dans My Suitcase : { $grid } ne pourra pas le charger :
+   *[other] { $count } objets portés ne sont pas dans My Suitcase : { $grid } ne pourra pas les charger :
+}
+ui-hypergrid-suitcase-go = Se téléporter quand même
 ui-options-confirm-no-transfer-settings = Confirmer les réglages non transférables
 ui-options-confirm-no-transfer-settings-help = Demander avant qu'un ciel, une eau ou une piste non transférable chargé dans un cycle du jour le rende non transférable
 ui-options-objects = Objets

@@ -134,6 +134,16 @@ enum Screen {
     World,
 }
 
+/// A Hypergrid teleport waiting for its question (`App::suitcase_held`).
+struct SuitcaseAsk {
+    destination: String,
+    pos: Vec3,
+    look_at: Vec3,
+    grid: String,
+    names: Vec<String>,
+    dont_ask: bool,
+}
+
 struct Gfx {
     window: Arc<Window>,
     /// Revealed only once the renderer has presented its first image.
@@ -506,6 +516,12 @@ pub struct App {
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
     /// with the state of its "Do not show again" box.
     place_confirm: Option<(String, Vec3, bool)>,
+    /// A Hypergrid teleport held back by its question (`world::suitcase`):
+    /// the destination as asked, position, look at, the grid, the worn items
+    /// left behind and the "Do not show again" box.
+    suitcase_ask: Option<SuitcaseAsk>,
+    /// The question was answered: the next teleport goes without it.
+    suitcase_passed: bool,
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>)>,
@@ -1330,6 +1346,8 @@ impl App {
             moderation_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
+            suitcase_ask: None,
+            suitcase_passed: false,
             url_confirm: None,
             media_filter_prompt: Default::default(),
             script_dialogs_were: 0,
@@ -5672,6 +5690,47 @@ impl App {
         self.settings.save();
     }
 
+    /// A Hypergrid teleport from the home grid (a `gatekeeper:region` name)
+    /// while worn items are outside My Suitcase: held for the question,
+    /// once per teleport.
+    fn suitcase_held(&mut self, asked: &str, resolved: &str, pos: Vec3, look_at: Vec3) -> bool {
+        if std::mem::take(&mut self.suitcase_passed) || !self.settings.warn_hypergrid_suitcase || self.demo_suitcase_off() {
+            return false;
+        }
+        let Some((grid, _)) = resolved.rsplit_once(':') else {
+            return false;
+        };
+        let extras = self.world.opensim_extras();
+        let at_home = crate::grids::current(&self.settings, extras)
+            .zip(crate::grids::home(&self.settings))
+            .is_some_and(|(here, home)| crate::grids::same_grid(&self.settings, &here, &home));
+        if !at_home || crate::grids::same_grid(&self.settings, grid, &crate::grids::home(&self.settings).unwrap_or_default()) {
+            return false;
+        }
+        let names = crate::world::suitcase::left_behind(&self.world.inventory);
+        if names.is_empty() {
+            return false;
+        }
+        log::info!(
+            "hypergrid: {} worn items not in My Suitcase, asking before the teleport",
+            names.len()
+        );
+        self.suitcase_ask = Some(SuitcaseAsk {
+            destination: asked.to_owned(),
+            pos,
+            look_at,
+            grid: grid.to_owned(),
+            names,
+            dont_ask: false,
+        });
+        true
+    }
+
+    /// Demo mode keeps the question to its own scenario.
+    fn demo_suitcase_off(&self) -> bool {
+        self.demo && std::env::var_os("AURORA_DEMO_SUITCASE").is_none()
+    }
+
     /// Teleport to a position of a region given by name: the current region
     /// directly, others through a map lookup by name.
     fn grid_region(&mut self, region: &str) -> Option<String> {
@@ -5690,11 +5749,16 @@ impl App {
     }
 
     fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) -> bool {
+        let asked = region.clone();
         let Some(region) = self.grid_region(&region) else {
             return false;
         };
         let here = self.world.region_name();
         let local = region.eq_ignore_ascii_case(&here);
+        // held for its question: not started yet
+        if !local && self.suitcase_held(&asked, &region, pos, look_at) {
+            return false;
+        }
         let command = if local {
             let Some(handle) = self.world.main_region else {
                 return false;
@@ -15498,6 +15562,39 @@ impl App {
                         self.stop_confirming_teleports();
                     }
                     ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
+                }
+                // AURORA_DEMO_SUITCASE: the question, as a Hypergrid teleport
+                // from the plaza would ask it (docs/TESTING.md)
+                if self.demo && self.frame_count == 300 && std::env::var_os("AURORA_DEMO_SUITCASE").is_some() {
+                    self.suitcase_ask = Some(SuitcaseAsk {
+                        destination: "hop://hg.osgrid.org:80/Wright%20Plaza/128/128/25".into(),
+                        pos: Vec3::new(128.0, 128.0, 25.0),
+                        look_at: Vec3::X,
+                        grid: "hg.osgrid.org:80".into(),
+                        names: [
+                            "Ash Hair",
+                            "Fluff - Ebody",
+                            "Haru Head - Short F neck",
+                            "REBORN eBODY v1.69.4",
+                            "Tail (Haru)",
+                        ]
+                        .map(str::to_owned)
+                        .to_vec(),
+                        dont_ask: false,
+                    });
+                }
+                if let Some(ask) = self.suitcase_ask.as_mut()
+                    && let Some(yes) = ui::context::suitcase_confirm(&ctx, &p, &ask.grid, &ask.names, &mut ask.dont_ask)
+                    && let Some(ask) = self.suitcase_ask.take()
+                    && yes
+                {
+                    if ask.dont_ask {
+                        self.settings.warn_hypergrid_suitcase = false;
+                        self.settings.save();
+                    }
+                    log::info!("hypergrid: teleport accepted with worn items left behind");
+                    self.suitcase_passed = true;
+                    self.teleport_to_location_looking(ask.destination, ask.pos, ask.look_at);
                 }
                 if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
