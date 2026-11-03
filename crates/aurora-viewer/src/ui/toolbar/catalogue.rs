@@ -82,8 +82,8 @@ pub const COMMANDS: &[Command] = commands![
     "RFO", "user-check", "toolbar-command-friends-only", true;
     "gridstatus", "building-broadcast-tower-filled", "toolbar-command-grid-status", true;
     "voice", "Command_Voice_Icon", "toolbar-command-voice", true;
-    "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", false;
-    "webbrowser", "world-filled", "toolbar-command-web-browser", false;
+    "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", true;
+    "webbrowser", "world-filled", "toolbar-command-web-browser", true;
     "defaultchatbar", "message-filled", "toolbar-command-chat-bar", true;
     "areasearch", "zoom-scan-filled", "toolbar-command-area-search", true;
     "settings_debug", "terminal-2", "toolbar-command-debug-settings", false;
