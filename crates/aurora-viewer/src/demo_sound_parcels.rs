@@ -42,6 +42,7 @@ pub fn events(sound: Uuid, mode: &str) -> Vec<NetEvent> {
             .collect();
         events.push(NetEvent::ParcelOverlay {
             handle: HANDLE,
+            size: (256, 256),
             sequence,
             data,
         });

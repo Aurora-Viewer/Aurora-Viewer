@@ -326,6 +326,7 @@ mod tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let mut session = Session {
             sh: &sh,
             sock: sock.clone(),
@@ -336,6 +337,9 @@ mod tests {
             caps_tx,
             notecard_copy_tx,
             inventory_move_tx,
+            inventory_udp_tx,
+            appearance_serial: 0,
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,

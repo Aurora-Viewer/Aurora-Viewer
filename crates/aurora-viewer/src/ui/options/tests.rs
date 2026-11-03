@@ -807,6 +807,57 @@ fn preference_shapes(
 }
 
 #[test]
+fn preference_rows_settle_with_a_scrollbar_at_compact_widths() {
+    for (width, height) in [700.0, 740.0, 760.0, 780.0, 800.0, 820.0, 900.0]
+        .into_iter()
+        .flat_map(|width| [460.0, 500.0, 540.0, 580.0, 620.0].map(move |height| (width, height)))
+    {
+        let mut frames = Frames::new();
+        crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::INTER);
+        let theme = crate::theme::Theme::default();
+        theme.apply(&frames.ctx, 1.0);
+        let p = theme.palette();
+        let (mut s, d, mut st, mut r) = (
+            Settings::default(),
+            Settings::default(),
+            OptionsUi::default(),
+            OptionsResult::default(),
+        );
+        let mut previous = None;
+        let mut previous_text = None;
+        for frame in 0..90 {
+            let texts = frames.run(Vec::new(), |ui| {
+                count(ui, &p, &mut s, &d, &mut st, &mut r);
+                page_area(
+                    ui,
+                    &p,
+                    &mut s,
+                    &d,
+                    &mut st,
+                    &mut r,
+                    Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height)),
+                    false,
+                );
+            });
+            if frame >= 60 {
+                if let Some(previous) = &previous {
+                    assert!(
+                        &st.control_sizes == previous,
+                        "rows still reflowing at {width}x{height}, frame {frame}"
+                    );
+                }
+                previous = Some(st.control_sizes.clone());
+                let painted: Vec<_> = texts.into_iter().map(|text| (text.source, text.rect)).collect();
+                if let Some(previous_text) = &previous_text {
+                    assert_eq!(&painted, previous_text, "text still moving at {width}x{height}, frame {frame}");
+                }
+                previous_text = Some(painted);
+            }
+        }
+    }
+}
+
+#[test]
 fn rows_after_a_width_change_match_a_fresh_layout() {
     fn texts(shapes: &[egui::Shape], out: &mut Vec<(String, i32, i32)>) {
         for shape in shapes {

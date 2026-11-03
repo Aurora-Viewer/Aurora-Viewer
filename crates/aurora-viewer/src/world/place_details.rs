@@ -323,11 +323,12 @@ impl PlaceDetails {
 
     /// ParcelInfoReply: a profile opened by its parcel learns where it is
     /// (Teleport, Map, its SLURL), as displayParcelInfo would have known.
-    pub fn parcel_known(&mut self, id: Uuid, global: DVec3) {
+    pub fn parcel_known(&mut self, id: Uuid, global: DVec3, map: &WorldMap) {
         for place in self.all() {
             if matches!(place.source, Source::Parcel(p) if p == id) && place.global.is_none() {
                 place.global = Some(global);
-                place.region_pos = region_pos_of(global);
+                let (x, y) = map.local_xy(global.x, global.y);
+                place.region_pos = Vec3::new(x as f32, y as f32, global.z as f32);
             }
         }
     }
@@ -568,7 +569,7 @@ mod tests {
         assert_eq!(d.panel.as_ref().and_then(|p| p.parcel()), Some(parcel));
         assert_eq!(d.panel.as_ref().and_then(|p| p.global), None);
         // ParcelInfoReply: where it is, for Teleport and Map
-        d.parcel_known(parcel, DVec3::new(256_140.0, 256_120.0, 25.0));
+        d.parcel_known(parcel, DVec3::new(256_140.0, 256_120.0, 25.0), &WorldMap::default());
         let p = d.panel.as_ref().expect("panel");
         assert_eq!(p.global, Some(DVec3::new(256_140.0, 256_120.0, 25.0)));
         assert_eq!(p.region_pos, Vec3::new(140.0, 120.0, 25.0));

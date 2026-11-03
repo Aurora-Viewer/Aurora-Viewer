@@ -1597,6 +1597,10 @@ fn page_area(
     };
     let query = st.query.clone();
     let tab = st.tab;
+    // Reserve the full scrollbar strip before entering the scroll area.
+    // Its animated appearance otherwise changes the cells' width, invalidates
+    // their control measurements and can alternate short/tall rows forever.
+    let rows_width = (super::widgets::scrolled_width(&ui) - 6.0).max(0.0);
     egui::ScrollArea::vertical()
         .id_salt(scroll_id)
         .auto_shrink([false, false])
@@ -1604,7 +1608,7 @@ fn page_area(
         .min_scrolled_height(rows_h)
         .show(&mut ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            ui.set_width(ui.available_width() - 6.0);
+            ui.set_width(rows_width);
             ui.add_space(4.0);
             let mut cx = Cx::new(ui, *p, s, d, st, r, mode, &query);
             match mode {

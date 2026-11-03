@@ -305,8 +305,8 @@ the PRs **ready to review / merge** (CI with its running duration, verdict of
 the agent's review), the PRs **waiting on the author** (dimmed, with why:
 `■ DRAFT`, `■ CI FAIL`, or `■ CHANGES ASKED` when a GitHub review requests
 changes or a comment opening with `## Maintainer review` or `## Changes
-requested` came after the last commit; a new commit brings the PR back to
-review) and the **recently merged** ones (how long ago: "04 min"). A PR with
+requested` came after the last commit; a new commit of the author brings the
+PR back to review, a merge of main into the branch does not) and the **recently merged** ones (how long ago: "04 min"). A PR with
 the `on-hold` label (put on hold at a human's request, AGENTS.md section 9)
 is left out of the panel, the banner and the notifications until the label
 is removed, unless it is in the merge queue. Each section shows, for

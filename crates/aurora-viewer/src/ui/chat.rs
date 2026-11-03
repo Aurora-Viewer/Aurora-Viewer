@@ -77,6 +77,14 @@ pub struct ChatUi {
     /// The chat bar shows only while it is used (Preferences › Chat; the
     /// Legacy Viewer's AutohideChatBar, #1009): `bar_shown`.
     pub autohide: bool,
+    /// The toolbar's Chat bar put the bar away for this session (the Legacy
+    /// Viewer's MainChatbarVisible off, not saved): `toggle_bar`. Enter or
+    /// a letter key brings it back with the keyboard.
+    pub bar_hidden: bool,
+    /// The bar was shown before the pointer went down (`note_frame`): a
+    /// press on the toolbar takes the keyboard from an autohidden bar, which
+    /// then hides before the click lands on the Chat bar button.
+    shown_before_click: bool,
     /// The pointer was over the chat bar the last time it was drawn: a
     /// click on it (its emoji, its handle) does not hide it under the
     /// pointer once the field lets the keyboard go.
@@ -389,7 +397,42 @@ impl ChatUi {
     /// empty bar puts it away too, where the Legacy Viewer waited for
     /// Escape. A draft keeps it.
     pub fn bar_shown(&self) -> bool {
+        if self.bar_hidden {
+            return self.focus_request;
+        }
         !self.autohide || self.has_focus || self.focus_request || !self.input.trim().is_empty() || self.bar_emoji_open || self.bar_hovered
+    }
+
+    /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
+    /// showDefaultChatBar): a shown bar goes away, its draft kept; a hidden
+    /// one comes back with the keyboard (setFocus(visible)). The Legacy
+    /// Viewer hides the bar's whole panel; here the chat island keeps its
+    /// Conversations button, as when autohidden (human decision).
+    pub fn toggle_bar(&mut self) {
+        if self.bar_shown() || self.shown_before_click {
+            self.bar_hidden = true;
+            self.has_focus = false;
+            self.focus_request = false;
+            self.shown_before_click = false;
+        } else {
+            self.bar_hidden = false;
+            self.focus_request = true;
+        }
+    }
+
+    /// Once a frame, after the bars are drawn: whether the bar shows is kept
+    /// while a pointer button is down or released, for `toggle_bar`.
+    pub fn note_frame(&mut self, pointer_busy: bool) {
+        if !pointer_busy {
+            self.shown_before_click = self.bar_shown();
+        }
+    }
+
+    /// The nearby chat is being used, for the bars kept in mouselook or with
+    /// the interface hidden: a draft put away with the Chat bar button does
+    /// not count, a keyboard request does.
+    pub fn in_use(&self) -> bool {
+        self.focus_request || (!self.bar_hidden && (self.has_focus || !self.input.trim().is_empty()))
     }
 
     /// The nearby chat is in its own window (#910): the chat island's
@@ -578,6 +621,22 @@ pub fn colon_emote(text: &mut String) {
         _ => return,
     };
     text.replace_range(..1, with);
+}
+
+/// A channel-0 local line as the Legacy Viewer sends it: the MU* pose and the
+/// gesture replacement apply first (`triggerAndReviseString`, llgesturemgr.cpp),
+/// then the channel is read from the text really sent (FSNearbyChat::sendChatFromViewer
+/// → stripChannelNumber, fsnearbychathub.cpp, llfloaterimnearbychat.cpp). A
+/// replacement opening with "/1" therefore speaks on channel 1 (#1916). The
+/// gesture id is returned to be played, as triggerAndReviseString does.
+pub fn prepare_local_line(manager: &mut crate::gestures::Manager, text: &str, pose: bool) -> (i32, String, Option<uuid::Uuid>) {
+    let mut text = text.to_owned();
+    if pose {
+        colon_emote(&mut text);
+    }
+    let (revised, gesture) = manager.revise(&text);
+    let (channel, message) = parse_channel(&revised);
+    (channel, message, gesture)
 }
 
 fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
@@ -3932,6 +3991,8 @@ pub(crate) fn bar_input(
     // straight back to the world
     let focusing = std::mem::take(&mut st.focus_request);
     if focusing {
+        // Enter or a letter key shows a bar put away (showDefaultChatBar(true))
+        st.bar_hidden = false;
         resp.request_focus();
         // FSNearbyChat::showDefaultChatBar only moves the caret after
         // inserting `/` into an empty field; a draft keeps its position.
@@ -3987,6 +4048,62 @@ mod tests {
             focused,
             tab_visible,
         }
+    }
+
+    #[test]
+    fn the_chat_bar_button_puts_the_bar_away_and_brings_it_back_with_the_keyboard() {
+        for autohide in [false, true] {
+            let mut st = ChatUi {
+                autohide,
+                ..Default::default()
+            };
+            st.input = "draft".into();
+            assert!(st.bar_shown(), "autohide {autohide}");
+            st.toggle_bar();
+            assert!(!st.bar_shown(), "autohide {autohide}: put away, even with a draft");
+            assert_eq!(st.input, "draft", "the draft is kept");
+            st.toggle_bar();
+            assert!(st.bar_shown() && st.focus_request, "autohide {autohide}: back with the keyboard");
+            assert!(!st.bar_hidden);
+            // Enter or a letter key also brings a hidden bar back
+            st.toggle_bar();
+            st.focus_request = true;
+            assert!(st.bar_shown(), "autohide {autohide}: Enter shows it");
+        }
+    }
+
+    #[test]
+    fn a_click_on_the_chat_bar_button_hides_an_autohidden_bar_that_lost_the_keyboard_to_it() {
+        let mut st = ChatUi {
+            autohide: true,
+            ..Default::default()
+        };
+        st.has_focus = true;
+        st.note_frame(false);
+        // the press on the toolbar takes the keyboard: the bar hides
+        st.has_focus = false;
+        st.note_frame(true);
+        assert!(!st.bar_shown());
+        // the click lands on Chat bar: put away, not brought back
+        st.toggle_bar();
+        assert!(st.bar_hidden && !st.focus_request && !st.bar_shown());
+        st.note_frame(false);
+        // the next click brings it back with the keyboard
+        st.toggle_bar();
+        assert!(st.focus_request && st.bar_shown());
+    }
+
+    #[test]
+    fn a_draft_put_away_does_not_keep_the_bars_in_mouselook() {
+        let mut st = ChatUi {
+            input: "draft".into(),
+            ..Default::default()
+        };
+        assert!(st.in_use());
+        st.toggle_bar();
+        assert!(!st.in_use(), "put away with its draft");
+        st.focus_request = true;
+        assert!(st.in_use(), "Enter brings it back");
     }
 
     #[test]
@@ -4657,6 +4774,48 @@ mod tests {
         assert_eq!(parse_channel("/5-3"), (5, "-3".into()), "the sign only before the digits");
         assert_eq!(parse_channel("/-"), (0, "/-".into()));
         assert_eq!(parse_channel("/--5 x"), (0, "/--5 x".into()));
+    }
+
+    /// A gesture's replacement may itself open with a channel: the Legacy
+    /// Viewer reads it from the revised line, so "/cap" replaced by
+    /// "/1capture" speaks on channel 1 (#1916).
+    #[test]
+    fn gesture_replacement_channel_is_read_from_the_revised_line() {
+        let mut manager = crate::gestures::Manager::default();
+        let id = uuid::Uuid::from_u128(1);
+        manager.entries.insert(
+            id,
+            crate::gestures::Entry {
+                asset: uuid::Uuid::nil(),
+                definition: aurora_assets::gesture::Gesture {
+                    trigger: "/cap".into(),
+                    replacement: "/1capture".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        manager.active.insert(id);
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (1, "capture".into(), Some(id)));
+        // only a leading channel is read: further in the line it stays text
+        assert_eq!(
+            prepare_local_line(&mut manager, "say /cap", false),
+            (0, "say /1capture".into(), Some(id))
+        );
+        // the same channel forms as parse_channel
+        if let Some(entry) = manager.entries.get_mut(&id) {
+            entry.definition.replacement = "/-4242 ping".into();
+        }
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (-4242, "ping".into(), Some(id)));
+        if let Some(entry) = manager.entries.get_mut(&id) {
+            entry.definition.replacement = "/5 test".into();
+        }
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (5, "test".into(), Some(id)));
+        // no gesture: the MU* pose alone, and only when asked for
+        assert_eq!(prepare_local_line(&mut manager, ":waves", true), (0, "/me waves".into(), None));
+        assert_eq!(prepare_local_line(&mut manager, ":waves", false), (0, ":waves".into(), None));
+        // disabled gestures leave the line untouched
+        manager.enabled = false;
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (0, "/cap".into(), None));
     }
 
     /// ":" as "/me" (FSCommon::applyMuPose): poses and possessives become
