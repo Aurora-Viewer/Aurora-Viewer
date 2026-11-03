@@ -224,16 +224,17 @@ impl EnvironmentUi {
     /// One list with its < > arrows.
     fn list_row(&mut self, ui: &mut egui::Ui, p: &Palette, kind: SettingsKind, shown: Shown) -> Option<EnvAction> {
         let salt = ("env_list", kind as u8);
+        // opened by `settings_list` itself: its combo sits in a child `Ui`,
+        // whose ids are not this one's
         if self.open_list == Some(kind) {
             self.open_list = None;
-            let id = ui.make_persistent_id(egui::IdSalt::new(salt));
-            egui::Popup::open_id(ui.ctx(), id.with("popup"));
+            ui.data_mut(|d| d.insert_temp(demo_open_id(&salt), String::new()));
         }
         if let Some((k, text)) = self.search_list
             && k == kind
         {
             self.search_list = None;
-            ui.data_mut(|d| d.insert_temp(search_seed_id(&salt), text.to_owned()));
+            ui.data_mut(|d| d.insert_temp(demo_open_id(&salt), text.to_owned()));
         }
         settings_list(ui, p, &self.catalog, kind, shown, salt, COMBO_W).map(|id| EnvAction::Pick(kind, id))
     }
@@ -601,14 +602,16 @@ pub fn settings_list(
         // empty, with the field focused so typing filters at once
         let combo_id = ui.make_persistent_id(egui::IdSalt::new(&salt));
         let query_id = combo_id.with("search");
-        let opening = !egui::ComboBox::is_open(ui.ctx(), combo_id);
-        if opening {
+        let demo = ui.data_mut(|d| d.remove_temp::<String>(demo_open_id(&salt)));
+        if let Some(text) = &demo {
+            egui::Popup::open_id(ui.ctx(), combo_id.with("popup"));
+            ui.data_mut(|d| d.insert_temp(query_id, text.clone()));
+        }
+        let opening = !egui::ComboBox::is_open(ui.ctx(), combo_id) || demo.is_some();
+        if opening && demo.is_none() {
             ui.data_mut(|d| d.remove_temp::<String>(query_id));
         }
         let mut query: String = ui.data_mut(|d| d.get_temp(query_id)).unwrap_or_default();
-        if let Some(seed) = ui.data_mut(|d| d.remove_temp::<String>(search_seed_id(&salt))) {
-            query = seed;
-        }
         egui::ComboBox::from_id_salt(salt)
             .width(width)
             .height(LIST_H + 40.0)
@@ -679,9 +682,10 @@ pub fn settings_list(
     picked
 }
 
-/// Where a list's search text is handed in from outside its frame (demo).
-fn search_seed_id(salt: &(impl std::hash::Hash + std::fmt::Debug)) -> egui::Id {
-    egui::Id::unique("env_list_search_seed").with(salt)
+/// A list to open on its next frame, with this text in its search field
+/// (demo captures).
+fn demo_open_id(salt: &(impl std::hash::Hash + std::fmt::Debug)) -> egui::Id {
+    egui::Id::unique("env_list_demo_open").with(salt)
 }
 
 /// Azimuth and elevation (degrees) of a sun or moon rotation
