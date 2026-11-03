@@ -142,6 +142,10 @@ your desktop (GNOME, KDE and other GLib desktops read such paths).
 - Automatic installation of updates (above).
 - The crash window right after a crash: it opens at the next launch
   instead, and a native crash (a signal) leaves no trace in it.
+- Preferences › Sound and voice › "Mute when minimised" on Wayland: the
+  compositor does not tell a window that it is minimised, so the sound
+  keeps playing. Under X11 the viewer reads the window manager's hidden
+  state (X11 is not tested yet).
 
 ## Building from source
 

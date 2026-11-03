@@ -187,6 +187,12 @@ pub struct Facts {
     pub me: Uuid,
     pub seated: bool,
     pub flying: bool,
+    /// RLVa would refuse a ground sit (@sit, or @unsit while seated:
+    /// RlvActions::canGroundSit), standing up (@unsit: canStand) or sitting
+    /// on the clicked object (canSit): those entries are greyed.
+    pub ground_sit_blocked: bool,
+    pub stand_blocked: bool,
+    pub object_sit_blocked: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
     pub object: ObjectFacts,

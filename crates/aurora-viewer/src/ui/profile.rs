@@ -340,7 +340,7 @@ impl ProfileUi {
                     .map_or(520.0, |rect| rect.size().max_elem())
                     * ctx.pixels_per_point()
             };
-            scene.textures.note_usage(&asset, pixels);
+            scene.textures.note_usage_boosted(&asset, pixels);
             photo.view.prepare(ctx, asset, scene);
             if let Some(size) = scene.textures.full_size(&asset) {
                 photo.view.dimensions = Some(size);
