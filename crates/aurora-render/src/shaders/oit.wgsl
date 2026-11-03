@@ -20,9 +20,7 @@
 // no tile is listed and `flags` turns the in-order replay of the blended
 // faces on and the composite's glow off (renderer.rs: the gated draws read
 // copies of their arguments that oit_gate.wgsl zeroes or keeps from them):
-// the frame is then drawn in the drawing order, as without the lists. The
-// frames after it skip the capture for a while (the hold-off, oit_gate.wgsl)
-// and are drawn in order directly.
+// the frame is then drawn in the drawing order, as without the lists.
 //
 // Sorting: the `max_layers` nearest layers of a pixel, whatever their draw
 // order, back to front; the others folded first, behind them, as a weighted
@@ -49,15 +47,13 @@ struct OitParams {
     tiles: u32,
     // layers per pixel in the slot array
     slots: u32,
-    // heads[tile_base + t]: 1 when the capture stored a layer in tile t
-    tile_base: u32,
+    _pad0: u32,
     _pad1: u32,
     _pad2: u32,
     _pad3: u32,
 };
 // heads[0] counts the pool's nodes; pixel p: heads[1 + 2p] its layers,
-// heads[2 + 2p] the first node of its list plus one (0: none); then one
-// flag per tile
+// heads[2 + 2p] the first node of its list plus one (0: none)
 @group(0) @binding(0) var<storage, read> heads: array<u32>;
 @group(0) @binding(1) var<storage, read> nodes: array<vec4<u32>>;
 @group(0) @binding(2) var<uniform> params: OitParams;
@@ -69,12 +65,9 @@ struct OitParams {
 @group(0) @binding(5) var<storage, read_write> args: array<atomic<u32>, 8>;
 @group(0) @binding(6) var<storage, read_write> tiles_w: array<u32>;
 // The DrawIndirectArgs of the replay's depth copy (one triangle, when the
-// frame is replayed): flags[1], its instance count, is also what
-// oit_gate.wgsl reads to keep or zero the gated draws' instances; flags[2]
-// whether the pool overflowed this frame; flags[4] the frames left of the
-// hold-off after an overflow, during which the capture is skipped
-// (oit_gate.wgsl moves it on), flags[5] the last hold-off's length
-@group(0) @binding(9) var<storage, read_write> flags: array<u32, 8>;
+// pool overflowed): flags[1], its instance count, is also what
+// oit_gate.wgsl reads to keep or zero the gated draws' instances
+@group(0) @binding(9) var<storage, read_write> flags: array<u32, 4>;
 // the draws only
 @group(0) @binding(7) var resolved: texture_2d<f32>;
 @group(0) @binding(8) var<storage, read> tiles_r: array<u32>;
@@ -249,15 +242,12 @@ fn overflowed() -> bool {
     return heads[0] > params.node_cap;
 }
 
-// One thread of the dispatch sets the draw counts that follow: the replay
-// (and its depth copy) when the pool overflowed, or while the hold-off
-// after an overflow skips the capture (nothing was captured then).
+// One thread of the dispatch sets the draw counts that follow.
 fn set_flags(g: vec3<u32>) {
     if (g.x == 0u && g.y == 0u) {
-        let over = overflowed();
         flags[0] = 3u;
-        flags[1] = select(0u, 1u, over || flags[4] > 0u);
-        flags[2] = u32(over);
+        flags[1] = select(0u, 1u, overflowed());
+        flags[2] = 0u;
         flags[3] = 0u;
     }
 }
@@ -302,23 +292,15 @@ fn list_tile(flag: u32, li: u32, wg: vec2<u32>) {
     }
 }
 
-// Whether the capture stored a layer in this workgroup's tile. An empty
-// tile (most of the screen, most of the time) reads and stores nothing per
-// pixel: the barriers stay, the work goes.
-fn tile_has_layers(wg: vec2<u32>) -> bool {
-    return heads[params.tile_base + wg.y * params.tiles_x + wg.x] != 0u;
-}
-
 @compute @workgroup_size(8, 8)
 fn cs_classify(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     set_flags(g);
-    let busy = tile_has_layers(wg.xy);
     if (li == 0u) {
         atomicStore(&tile_flags, 0u);
     }
     workgroupBarrier();
     var flag = 0u;
-    if (busy && g.x < params.width && g.y < params.height) {
+    if (g.x < params.width && g.y < params.height) {
         // the capture kept only what is in front of the opaque scene
         flag = classify(g.xy, 1u, -1.0, -1.0);
     }
@@ -328,13 +310,12 @@ fn cs_classify(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invoc
 @compute @workgroup_size(8, 8)
 fn cs_classify_ms(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wg: vec3<u32>) {
     set_flags(g);
-    let busy = tile_has_layers(wg.xy);
     if (li == 0u) {
         atomicStore(&tile_flags, 0u);
     }
     workgroupBarrier();
     var flag = 0u;
-    if (busy && g.x < params.width && g.y < params.height) {
+    if (g.x < params.width && g.y < params.height) {
         // the scene's depth range in the pixel: a layer in front of all its
         // samples, or behind all, is the same for each
         var dmin = 2.0;

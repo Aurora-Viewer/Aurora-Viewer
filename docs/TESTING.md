@@ -9806,15 +9806,10 @@ What the inventory must show with these scenarios:
   layers per pixel on average (2 to 32, Graphics › Image › Transparency's
   "Layers kept per pixel"). At 2, the hair cards scenario above fills it:
   the frame is then drawn again in the object order, exactly as with
-  `AURORA_OIT=0` (compare the two captures), and the frames after it skip
-  the capture and are drawn in order directly for a while (a hold-off of 4
-  frames, doubling after each try that overflows again, 128 at most:
-  `oit_gate.wgsl`), so the cost of such a scene is the in-order drawing
-  plus one capture a second or so, not a capture, a classify and a replay
-  every frame. This replay and the composite are chosen on the GPU through
-  copies of the draws' arguments (`oit_gate.rs`), the path every backend
-  takes, Metal included: on a Mac, check both this capture and the one at
-  the default size.
+  `AURORA_OIT=0` (compare the two captures). This replay and the composite
+  are chosen on the GPU through copies of the draws' arguments
+  (`oit_gate.rs`), the path every backend takes, Metal included: on a Mac,
+  check both this capture and the one at the default size.
 - **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
   default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
