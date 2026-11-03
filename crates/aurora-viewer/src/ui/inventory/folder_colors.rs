@@ -222,9 +222,11 @@ pub fn demo_frame(ctx: &egui::Context, st: &mut InventoryUi, prefs: &InventoryPr
     if !mode.contains("folder-colors") {
         return;
     }
+    // as a click: the selection and its focused entry (the details card's)
     let select = |st: &mut InventoryUi, id: u128| {
         st.selection.clear();
         st.selection.insert(Uuid::from_u128(id));
+        st.selected = Some(Uuid::from_u128(id));
     };
     match (mode.as_str(), frame) {
         (_, 600) => select(st, 8200),
@@ -286,6 +288,34 @@ mod tests {
         assert_eq!(tint(&prefs, Uuid::from_u128(2)), None);
         prefs.folder_colors_enabled = false;
         assert_eq!(tint(&prefs, id), None);
+    }
+
+    /// The palette keeps its size, its privacy note inside, with a folder
+    /// selected and with none (the greyed palette and its hint).
+    #[test]
+    fn the_palette_keeps_its_size() {
+        let ui_id = Uuid::from_u128(77);
+        for selected in [Some(8200u128), None] {
+            crate::ui::widgets::steady_tests::assert_window_steady(
+                &format!("inventory_folder_color_{ui_id}"),
+                &[Vec2::new(220.0, 150.0)],
+                aurora_i18n::tr!("inventory-folder-color-private"),
+                || {
+                    let mut inv = Inventory::default();
+                    crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+                    let mut prefs = InventoryPreferences::default();
+                    let mut st = InventoryUi {
+                        ui_id,
+                        ..Default::default()
+                    };
+                    demo(&mut st, &mut prefs);
+                    st.selection.clear();
+                    st.selection.extend(selected.map(Uuid::from_u128));
+                    (inv, st, prefs)
+                },
+                |(inv, st, prefs), ctx, p| show(ctx, p, inv, st, prefs),
+            );
+        }
     }
 
     #[test]
