@@ -135,12 +135,15 @@ enum Screen {
 }
 
 struct Gfx {
+    /// Before the window: fields drop in this order, and the renderer's
+    /// surface, made from the window's raw handles, must go first
+    /// (`Renderer::new`'s safety contract).
+    renderer: Renderer,
+    egui_state: egui_winit::State,
     window: Arc<Window>,
     /// Revealed only once the renderer has presented its first image.
     shown: bool,
     maximize_on_show: bool,
-    renderer: Renderer,
-    egui_state: egui_winit::State,
 }
 
 /// Teleport screen state (also the login loading screen fading out).
@@ -16439,7 +16442,9 @@ impl ApplicationHandler for App {
         let created = if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
             Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()))
         } else {
-            Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)
+            // SAFETY: the renderer lives in `Gfx` beside this window and is
+            // dropped before it (field order of `Gfx`).
+            unsafe { Renderer::new(&*window, size.width, size.height, self.settings.vsync, &gpu) }
         };
         let renderer = match created {
             Ok(r) => r,

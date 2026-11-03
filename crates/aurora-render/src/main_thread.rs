@@ -263,13 +263,20 @@ impl Renderer {
     /// Create the renderer on the native graphics backend for the given window, on
     /// the GPU `gpu` asks for (`adapter_choice::Wanted`: empty for the
     /// automatic choice).
-    pub fn new(
-        target: impl Into<wgpu::SurfaceTarget<'static>>,
-        width: u32,
-        height: u32,
-        vsync: bool,
-        gpu: &str,
-    ) -> Result<Renderer, RenderError> {
+    ///
+    /// The surface is made from the window's raw handles and does not keep
+    /// the window alive: after a device loss the surface is abandoned, never
+    /// dropped (`Backend::drop`), and an `Arc` of the window inside it kept
+    /// the old window open behind a new one.
+    ///
+    /// # Safety
+    ///
+    /// `window` must outlive the renderer: drop the renderer first (its
+    /// swapchain is torn down through the window's handles).
+    pub unsafe fn new<W>(window: &W, width: u32, height: u32, vsync: bool, gpu: &str) -> Result<Renderer, RenderError>
+    where
+        W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle,
+    {
         crate::start_progress::enter(crate::start_progress::Phase::GpuDevice);
         let desc = || {
             let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
@@ -308,7 +315,15 @@ impl Renderer {
             instance = wgpu::Instance::new(desc());
             adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
         }
-        let surface = instance.create_surface(target).map_err(|e| RenderError::Surface(e.to_string()))?;
+        // SAFETY: the caller keeps the window alive for as long as the
+        // renderer (this function's contract); an abandoned surface is never
+        // used again once its device is lost.
+        let surface = unsafe {
+            let target =
+                wgpu::SurfaceTargetUnsafe::from_display_and_window(window, window).map_err(|e| RenderError::Surface(e.to_string()))?;
+            instance.create_surface_unsafe(target)
+        }
+        .map_err(|e| RenderError::Surface(e.to_string()))?;
         let candidates: Vec<crate::adapter_choice::Candidate> = adapters
             .iter()
             .map(|a| {
