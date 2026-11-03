@@ -1,5 +1,17 @@
 # Aurora Viewer architecture
 
+Avatar gait playback resolves standard walk/run signals to the modern male or
+female assets selected by LLVOAvatar::remapMotionID with its default settings
+(#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the
+asset lookup in `Controller::sync_avatar`; AO state, network signals, clocks and
+diagnostics keep their original UUIDs. Shape sex comes directly from transmitted
+visual parameter 80, without expanding the full shape every frame. An active
+gait swaps variants after a shape change without restarting; pending variants
+retain the last modern clip. Control-avatar playback uses the requested asset.
+The four unmodified native clips are embedded from `assets/animations/locomotion/`
+and registered at scene startup, following the reference static asset cache;
+they do not depend on asset-server availability or the disposable disk cache.
+
 The mesh Collisions tab keeps its level-of-detail selector and triangle-retention
 slider on one row, without numbered steps. Optional source-file/preset actions
 occupy a following row so they do not displace those primary controls.
