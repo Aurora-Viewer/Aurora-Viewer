@@ -860,6 +860,22 @@ pub enum NetEvent {
     MeanCollisions(Vec<MeanCollision>),
     /// Avatar profile data (AgentProfile / AvatarPropertiesReply).
     AvatarProfile(Box<crate::profile::AvatarProfile>),
+    /// A profile's picks, where `AgentProfile` is missing (AvatarPicksReply,
+    /// to the generic "avatarpicksrequest").
+    AvatarPicks {
+        target: Uuid,
+        picks: Vec<(Uuid, String)>,
+    },
+    /// Our notes about an avatar (AvatarNotesReply, to "avatarnotesrequest").
+    AvatarNotes {
+        target: Uuid,
+        notes: String,
+    },
+    /// An avatar's groups (AvatarGroupsReply, sent with AvatarPropertiesReply).
+    AvatarGroups {
+        avatar: Uuid,
+        groups: Vec<crate::profile::ProfileGroup>,
+    },
     /// PickInfoReply.
     PickInfo(Box<crate::PickInfo>),
     /// AvatarClassifiedReply: an avatar's classifieds (id, name).
