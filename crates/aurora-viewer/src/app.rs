@@ -680,6 +680,7 @@ pub struct App {
     buy_land_source: buy_land::BuyLandSource,
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
+    web_browser_ui: ui::web_browser::WebBrowserUi,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
     listings_ui: ui::marketplace_listings::ListingsUi,
     /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
@@ -1473,6 +1474,7 @@ impl App {
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
+            web_browser_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
             people_map_ui: Default::default(),
@@ -2754,6 +2756,7 @@ impl App {
         self.money_tracker_ui = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
+        self.web_browser_ui = Default::default();
         // the listings belong to the account (LLMarketplaceData)
         self.listings_ui = Default::default();
         self.demo_slm = None;
@@ -13420,7 +13423,10 @@ impl App {
 
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
-        self.profile_ui.web_has_focus() || self.search_ui.web_has_focus() || self.marketplace_ui.web_has_focus()
+        self.profile_ui.web_has_focus()
+            || self.search_ui.web_has_focus()
+            || self.marketplace_ui.web_has_focus()
+            || self.web_browser_ui.web_has_focus(self.panels.web_browser)
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -13430,6 +13436,7 @@ impl App {
             .focused_web()
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
+            .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -16167,6 +16174,18 @@ impl App {
                         home: marketplace_home.as_deref(),
                     },
                 );
+                // the toolbar's web browser: the same plugins and browser
+                // settings, the shared profile, no OpenID cookie
+                self.web_browser_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.web_browser,
+                    &ui::web_browser::BrowserWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        home: &self.settings.browser_home_page,
+                    },
+                );
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -17364,6 +17383,15 @@ impl ApplicationHandler for App {
             // page, open at start
             if self.marketplace_home().is_some() {
                 self.marketplace_ui.open(None);
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_WEB_BROWSER=<page>: the toolbar's web browser on
+            // that page, open at start
+            if let Ok(page) = std::env::var("AURORA_DEMO_WEB_BROWSER")
+                && !page.trim().is_empty()
+            {
+                self.web_browser_ui.go_to(&page);
+                self.panels.web_browser = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:

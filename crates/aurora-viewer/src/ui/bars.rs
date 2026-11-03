@@ -2034,6 +2034,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
+        // ToggleWebBrowser: the browser window on the home page, or closed
+        "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
@@ -2125,6 +2127,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
         "gridstatus" => panels.grid_status,
+        "webbrowser" => panels.web_browser,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
@@ -3536,6 +3539,7 @@ mod tests {
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
+            ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("statistics", "perf", |p| p.perf),
         ] {
@@ -3578,7 +3582,7 @@ mod tests {
     fn statistics_picks_and_chat_bar_toolbar_commands_are_wired() {
         let ctx = egui::Context::default();
         let mut panels = Panels::from_settings(&crate::settings::Settings::default());
-        for cmd in ["statistics", "picks", "defaultchatbar"] {
+        for cmd in ["statistics", "picks", "defaultchatbar", "webbrowser"] {
             assert!(super::super::toolbar::ready(cmd), "{cmd}");
         }
         // Statistics is Aurora's Performance window: both buttons light
@@ -3589,6 +3593,13 @@ mod tests {
         assert!(command_active("performance", &panels, false, false, false));
         assert!(matches!(run_command(&ctx, "picks", &mut panels), BarAction::MyPicks));
         assert!(matches!(run_command(&ctx, "defaultchatbar", &mut panels), BarAction::ToggleChatBar));
+        // ToggleWebBrowser: the window opens, lights the button, closes
+        assert!(!command_active("webbrowser", &panels, false, false, false));
+        run_command(&ctx, "webbrowser", &mut panels);
+        assert!(panels.web_browser);
+        assert!(command_active("webbrowser", &panels, false, false, false));
+        run_command(&ctx, "webbrowser", &mut panels);
+        assert!(!panels.web_browser);
     }
 
     #[test]

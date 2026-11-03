@@ -126,6 +126,7 @@ pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
 pub mod wearable;
+pub mod web_browser;
 pub mod web_view;
 pub mod widgets;
 
@@ -192,6 +193,8 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// The built-in web browser (toolbar `webbrowser`).
+    pub web_browser: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -252,6 +255,7 @@ impl Panels {
             experiences: false,
             bumps: false,
             grid_status: false,
+            web_browser: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,
