@@ -263,6 +263,10 @@ pub mod toasts;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;
+/// The Voice controls window with residents in the nearby channel
+/// (AURORA_DEMO_VOICE_CONTROLS).
+#[path = "demo_voice_controls.rs"]
+pub mod voice_controls;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;
@@ -3020,6 +3024,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             // unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
                 || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
+                || std::env::var_os("AURORA_DEMO_FRIENDS_ONLY").is_some()
                 || seat_kill::on()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
                 || people::mode().is_some()
