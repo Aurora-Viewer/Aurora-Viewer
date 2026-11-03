@@ -5,7 +5,7 @@ use crate::build::task_inventory::{self, TransferKind, TransferRequest};
 use aurora_net::build::TaskItem;
 
 /// The dragged rows, one request each in list order
-/// (LLFolderViewModelInventory::startDrag → beginMultiDrag).
+/// (LLFolderViewModelInventory::startDrag â†’ beginMultiDrag).
 #[derive(Clone)]
 pub struct TaskDrag {
     pub requests: Vec<TransferRequest>,
@@ -173,15 +173,7 @@ fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, ite
     }
 }
 
-pub fn target(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    r: &egui::Response,
-    inv: &Inventory,
-    folder: Uuid,
-    prefs: &InventoryPreferences,
-    actions: &mut Vec<InvAction>,
-) {
+pub fn target(ui: &mut egui::Ui, p: &Palette, r: &egui::Response, inv: &Inventory, folder: Uuid, actions: &mut Vec<InvAction>) {
     if demo_enabled() && folder != inv.root {
         // the folder's own row comes before the zones enclosing it
         let pass = ui.ctx().cumulative_pass_nr();
@@ -198,7 +190,7 @@ pub fn target(
     let allowed = cargo
         .requests
         .iter()
-        .all(|request| task_inventory::destination(inv, folder, &request.item, &prefs.protected));
+        .all(|request| task_inventory::destination(inv, folder, &request.item));
     if !target_cursor(
         ui.ctx(),
         if allowed {
@@ -365,7 +357,7 @@ mod tests {
     #[test]
     fn real_drag_sets_task_cargo_and_drops_once_into_the_chosen_folder_or_rejects_it() {
         for (copyable, rejected) in [(true, false), (true, true), (false, false), (false, true)] {
-            let (world, mut request) = fixture();
+            let (mut world, mut request) = fixture();
             if !copyable {
                 request.item.owner_mask = 0;
             }
@@ -387,9 +379,9 @@ mod tests {
                 .id;
             let ctx = egui::Context::default();
             let p = crate::theme::Theme::default().palette();
-            let mut prefs = InventoryPreferences::default();
             if rejected {
-                prefs.protected.insert(folder);
+                // the Library never receives a delivery
+                world.inventory.folders.get_mut(&folder).expect("folder").library = true;
             }
             let mut time = 0.0;
             let mut actions = Vec::new();
@@ -407,9 +399,9 @@ mod tests {
                             egui::Rect::from_min_size(egui::pos2(20.0, 180.0), Vec2::new(180.0, 26.0)),
                             egui::Button::new("Folder"),
                         );
-                        target(ui, &p, &r, &world.inventory, folder, &prefs, &mut actions);
+                        target(ui, &p, &r, &world.inventory, folder, &mut actions);
                     });
-                    target(ui, &p, &zone.response, &world.inventory, world.inventory.root, &prefs, &mut actions);
+                    target(ui, &p, &zone.response, &world.inventory, world.inventory.root, &mut actions);
                     // A later window/widget must not override the drag cursor.
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                     if let Some(cursor) = cursor(ui.ctx()) {
@@ -535,7 +527,6 @@ mod tests {
                 .id;
             let ctx = egui::Context::default();
             let p = crate::theme::Theme::default().palette();
-            let prefs = InventoryPreferences::default();
             let mut time = 0.0;
             let mut actions = Vec::new();
             let mut frame = |events| {
@@ -550,7 +541,7 @@ mod tests {
                         egui::Rect::from_min_size(egui::pos2(20.0, 180.0), Vec2::new(180.0, 26.0)),
                         egui::Button::new("Folder"),
                     );
-                    target(ui, &p, &r, &world.inventory, folder, &prefs, &mut actions);
+                    target(ui, &p, &r, &world.inventory, folder, &mut actions);
                     if let Some(cursor) = cursor(ui.ctx()) {
                         ui.ctx().set_cursor_icon(cursor);
                     }

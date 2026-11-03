@@ -60,8 +60,8 @@ fn quote(imports: &mut Imports, cost: i32) {
     });
     draft.pending = None;
 }
-fn folders(imports: &mut Imports, world: &mut crate::world::World, inventory: &crate::ui::inventory::InventoryPreferences) {
-    while let Some(command) = imports.next_import_folder(world, inventory) {
+fn folders(imports: &mut Imports, world: &mut crate::world::World) {
+    while let Some(command) = imports.next_import_folder(world) {
         assert!(
             imports.queue.is_empty() && imports.current.is_none(),
             "no paid transfer before folder acknowledgements"
@@ -86,9 +86,9 @@ fn folders(imports: &mut Imports, world: &mut crate::world::World, inventory: &c
 #[test]
 fn confirmation_creates_acknowledged_folders_then_starts_uploads_without_another_action() {
     let (mut imports, mut world, inventory, settings, prices) = fixture(false);
-    assert!(imports.folder_plan_valid(&world, &inventory));
-    assert!(!imports.folder_plan_ready(&world, &inventory));
-    assert!(imports.next_import_folder(&world, &inventory).is_none());
+    assert!(imports.folder_plan_valid(&world));
+    assert!(!imports.folder_plan_ready(&world));
+    assert!(imports.next_import_folder(&world).is_none());
     imports.start_confirmed(&world, &inventory, &settings, &prices);
     assert!(imports.busy());
     assert_eq!(
@@ -96,7 +96,7 @@ fn confirmation_creates_acknowledged_folders_then_starts_uploads_without_another
         1,
         "confirmation schedules but does not invent acknowledgements"
     );
-    folders(&mut imports, &mut world, &inventory);
+    folders(&mut imports, &mut world);
     assert!(imports.advance_confirmed(&world, &inventory).is_empty());
     assert_eq!(imports.queue.len(), 1);
     assert_eq!(imports.queue[0].folder, imports.entries[0].folder);
@@ -117,11 +117,11 @@ fn named_loose_files_create_the_folder_only_after_confirmation_and_use_its_ackno
     assert!(imports.set_loose_folder(Some("Release")));
     imports.sync_destinations(&settings, &world, &inventory);
     assert_eq!(world.inventory.folders.len(), 1);
-    assert!(imports.next_import_folder(&world, &inventory).is_none());
+    assert!(imports.next_import_folder(&world).is_none());
     imports.start_confirmed(&world, &inventory, &settings, &prices);
     assert!(imports.busy());
     assert_eq!(world.inventory.folders.len(), 1);
-    folders(&mut imports, &mut world, &inventory);
+    folders(&mut imports, &mut world);
     assert!(imports.advance_confirmed(&world, &inventory).is_empty());
     assert_eq!(imports.queue.len(), 1);
     let target = imports.queue[0].folder;
@@ -152,7 +152,7 @@ fn type_confirmation_retains_its_scope_while_other_windows_and_folder_jobs_are_a
     assert!(imports.pending_confirmed.is_some());
     assert_eq!(imports.choice, Choice::Bulk);
     imports.open_type_window(&egui::Context::default(), Choice::Mesh);
-    folders(&mut imports, &mut world, &inventory);
+    folders(&mut imports, &mut world);
     assert!(imports.advance_confirmed(&world, &inventory).is_empty(), "no unrelated mesh quote");
     assert_eq!(imports.choice, Choice::Bulk);
     assert_eq!(imports.queue.len(), 1);
@@ -173,11 +173,11 @@ fn a_type_mesh_requote_ignores_an_invalid_destination_in_another_type_window() {
     texture.upload_path = Some(vec!["invalid/name".into()]);
     imports.entries.push(texture);
     imports.sync_destinations(&settings, &world, &inventory);
-    assert!(!imports.folder_plan_valid(&world, &inventory));
+    assert!(!imports.folder_plan_valid(&world));
     imports.with_choice(Choice::Mesh, |imports| {
         imports.start_confirmed(&world, &inventory, &settings, &prices);
     });
-    folders(&mut imports, &mut world, &inventory);
+    folders(&mut imports, &mut world);
     let requests = imports.advance_confirmed(&world, &inventory);
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].0, mesh);
@@ -198,7 +198,7 @@ fn confirmed_mesh_requotes_real_destination_and_stops_if_the_approved_price_incr
     for new_price in [20, 21] {
         let (mut imports, mut world, inventory, settings, prices) = fixture(true);
         imports.start_confirmed(&world, &inventory, &settings, &prices);
-        folders(&mut imports, &mut world, &inventory);
+        folders(&mut imports, &mut world);
         let requests = imports.advance_confirmed(&world, &inventory);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].0, imports.entries[0].id);
@@ -217,10 +217,10 @@ fn cancellation_failure_and_invalid_metadata_never_start_an_unconfirmed_transfer
     let (mut imports, mut world, inventory, settings, prices) = fixture(false);
     imports.entries[0].name.clear();
     imports.start_confirmed(&world, &inventory, &settings, &prices);
-    assert!(!imports.busy() && imports.next_import_folder(&world, &inventory).is_none());
+    assert!(!imports.busy() && imports.next_import_folder(&world).is_none());
     imports.entries[0].name = "Chair".into();
     imports.start_confirmed(&world, &inventory, &settings, &prices);
-    let aurora_net::NetCommand::EditInventory { request, .. } = imports.next_import_folder(&world, &inventory).unwrap() else {
+    let aurora_net::NetCommand::EditInventory { request, .. } = imports.next_import_folder(&world).unwrap() else {
         panic!("folder")
     };
     imports.import_folder_result(request, Err("failure".into()), &mut world.inventory);
@@ -229,6 +229,6 @@ fn cancellation_failure_and_invalid_metadata_never_start_an_unconfirmed_transfer
     imports.start_confirmed(&world, &inventory, &settings, &prices);
     imports.cancel_remaining();
     imports.advance_confirmed(&world, &inventory);
-    assert!(imports.next_import_folder(&world, &inventory).is_none());
+    assert!(imports.next_import_folder(&world).is_none());
     assert!(imports.queue.is_empty() && imports.spent == 0);
 }

@@ -84,8 +84,8 @@ pub fn kind(world: &World, object: Uuid, item: &TaskItem, object_owned: bool) ->
     Err(aurora_i18n::tr!("task-transfer-no-permission"))
 }
 
-pub fn destination(inv: &Inventory, folder: Uuid, item: &TaskItem, protected: &HashSet<Uuid>) -> bool {
-    if !inv.folders.contains_key(&folder) || !actions::mutable(inv, folder, protected) {
+pub fn destination(inv: &Inventory, folder: Uuid, item: &TaskItem) -> bool {
+    if !inv.folders.contains_key(&folder) || !actions::mutable(inv, folder) {
         return false;
     }
     let mut at = folder;

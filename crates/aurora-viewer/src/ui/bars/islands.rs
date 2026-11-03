@@ -754,7 +754,10 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "video-filled", aurora_i18n::tr!("ui-bars-camera-controls")) {
-            *action = BarAction::CameraControls;
+            *action = BarAction::Controls {
+                movement: false,
+                toggle: false,
+            };
         }
     });
     menu::separator(ui, p);
