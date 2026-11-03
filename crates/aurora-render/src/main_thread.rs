@@ -356,11 +356,8 @@ impl Renderer {
         }
         let wanted = crate::adapter_choice::Wanted::parse(gpu);
         let plan = crate::adapter_choice::plan(&candidates, &wanted);
-        if plan.reason == crate::adapter_choice::Reason::WantedMissing {
-            log::warn!(
-                "GPU: \"{}\" asked for, not found among the adapters that can present: automatic choice",
-                gpu.trim()
-            );
+        if let Some(w) = plan.reason.warning(gpu.trim()) {
+            log::warn!("{w}");
         }
         let mut opened = None;
         let mut failure = RenderError::NoAdapter("no native GPU adapter can present to the window".into());
@@ -860,7 +857,7 @@ impl Renderer {
 
     /// The draw lists can be culled on the GPU (`DrawLists::gpu`).
     pub fn gpu_culling(&self) -> bool {
-        self.gpu_cull
+        self.gpu_cull && GpuCull::fits(&self.device, self.records.faces.len(), self.cull.objects.len())
     }
 
     /// Supported MSAA sample counts (besides 1).

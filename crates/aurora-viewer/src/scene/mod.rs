@@ -4848,9 +4848,12 @@ impl Scene {
         if usage_phase == 0 {
             // LLTerrainMaterials::boost: TERRAIN_DECODE_PRIORITY = 2048²,
             // for every material map too. A 512 px cap loses terrain relief.
+            // BOOST_TERRAIN is under BOOST_HIGH: the maximum texture
+            // resolution chosen in Preferences still caps it.
+            let px = terrain_surface::DECODE_PIXELS.min(self.textures.max_resolution() as f32);
             for r in self.regions.values() {
                 for id in &r.surface.texture_ids {
-                    self.textures.note_usage_fixed(id, terrain_surface::DECODE_PIXELS);
+                    self.textures.note_usage_fixed(id, px);
                 }
             }
             self.textures.recompute_wants();

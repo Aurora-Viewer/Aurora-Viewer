@@ -194,6 +194,12 @@ fn card<'a>(
 ) {
     let first = group[0];
     if first.kind.is_notice() {
+        // its time above it, as a card's head shows it (FSChatHistory::
+        // appendMessage stamps the system's lines too, #1999)
+        let time = hhmm(first.time);
+        if times && !time.is_empty() {
+            ui.label(egui::RichText::new(time).size(chat_size(ui.ctx(), 10.5)).color(p.muted_dim));
+        }
         body(
             ui,
             p,

@@ -130,6 +130,10 @@ pub mod home;
 pub mod hover_tips;
 #[path = "demo_hud.rs"]
 pub mod hud;
+/// IMs announced as their sender starts typing, and the unread count in
+/// the window title (AURORA_DEMO_IM_ANNOUNCE).
+#[path = "demo_im_announce.rs"]
+pub mod im_announce;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
@@ -248,6 +252,10 @@ pub mod tangents;
 /// (AURORA_DEMO_TEXREFRESH).
 #[path = "demo_tex_refresh.rs"]
 pub mod tex_refresh;
+/// Boards with 2048 px streamed textures, tinted by the level shown, for
+/// the maximum texture resolution (AURORA_DEMO_TEXTURE_RES).
+#[path = "demo_texture_res.rs"]
+pub mod texture_res;
 /// Toasts of friends and messages, and the list under the bell
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]

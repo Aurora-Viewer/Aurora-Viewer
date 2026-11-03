@@ -44,6 +44,8 @@ pub enum SkyPlace {
     #[default]
     Paris,
     London,
+    Lisbon,
+    Oslo,
     NewYork,
     LosAngeles,
     Tokyo,
@@ -57,9 +59,11 @@ pub enum SkyPlace {
 }
 
 impl SkyPlace {
-    pub const ALL: [SkyPlace; 11] = [
+    pub const ALL: [SkyPlace; 13] = [
         SkyPlace::Paris,
         SkyPlace::London,
+        SkyPlace::Lisbon,
+        SkyPlace::Oslo,
         SkyPlace::NewYork,
         SkyPlace::LosAngeles,
         SkyPlace::Tokyo,
@@ -76,6 +80,8 @@ impl SkyPlace {
         Some(match self {
             SkyPlace::Paris => LATITUDE as f32,
             SkyPlace::London => 51.507,
+            SkyPlace::Lisbon => 38.722,
+            SkyPlace::Oslo => 59.913,
             SkyPlace::NewYork => 40.713,
             SkyPlace::LosAngeles => 34.052,
             SkyPlace::Tokyo => 35.676,
@@ -92,6 +98,8 @@ impl SkyPlace {
         match self {
             SkyPlace::Paris => aurora_i18n::tr!("ui-options-night-sky-place-paris"),
             SkyPlace::London => aurora_i18n::tr!("ui-options-night-sky-place-london"),
+            SkyPlace::Lisbon => aurora_i18n::tr!("ui-options-night-sky-place-lisbon"),
+            SkyPlace::Oslo => aurora_i18n::tr!("ui-options-night-sky-place-oslo"),
             SkyPlace::NewYork => aurora_i18n::tr!("ui-options-night-sky-place-new-york"),
             SkyPlace::LosAngeles => aurora_i18n::tr!("ui-options-night-sky-place-los-angeles"),
             SkyPlace::Tokyo => aurora_i18n::tr!("ui-options-night-sky-place-tokyo"),
