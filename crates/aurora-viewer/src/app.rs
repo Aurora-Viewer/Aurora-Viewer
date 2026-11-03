@@ -14039,6 +14039,22 @@ impl App {
         self.panels.settings = open;
     }
 
+    /// The bars' clock settings, with the demo's (`AURORA_DEMO_BARS`) for
+    /// the run.
+    fn system_island(&self) -> crate::settings::SystemIsland {
+        let s = self.settings.system_island;
+        if !self.demo {
+            return s;
+        }
+        let demo = ui::bars::demo::get();
+        crate::settings::SystemIsland {
+            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
+            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
+            clock_format: demo.clock_format.unwrap_or(s.clock_format),
+            ..s
+        }
+    }
+
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique("vr-active"), renderer.vr_engaged()));
@@ -14059,6 +14075,7 @@ impl App {
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
         ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
+        ui::bars::clock::set_chat_format(self.system_island().clock_format);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
         self.beacon_hit = None;
         let mut t = Instant::now();
@@ -14457,17 +14474,7 @@ impl App {
                     own_pic: self.avatar_pics.get(&self.world.agent_id),
                     recent: if classic_bars { Vec::new() } else { self.recent_places() },
                     favorites: &favorites,
-                    system_island: if self.demo {
-                        let (demo, s) = (ui::bars::demo::get(), self.settings.system_island);
-                        crate::settings::SystemIsland {
-                            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
-                            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
-                            clock_format: demo.clock_format.unwrap_or(s.clock_format),
-                            ..s
-                        }
-                    } else {
-                        self.settings.system_island
-                    },
+                    system_island: self.system_island(),
                     net_stats: if self.demo {
                         ui::bars::demo::get().net_stats.unwrap_or(self.settings.show_net_stats)
                     } else {
