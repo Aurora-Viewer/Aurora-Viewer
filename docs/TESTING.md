@@ -3967,7 +3967,8 @@ both open states and the selection count. Capture at frame 620.
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500). `search`: the same list, "sunset" typed in its search field
   (2510): only the two sunsets are left, without the two fixed entries.
-  `search-none`: "zzz", the list says no name contains it.
+  `search-none`: a long text no name contains: the list says so, the
+  line cut to the list's width.
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,

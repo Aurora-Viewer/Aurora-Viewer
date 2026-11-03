@@ -621,12 +621,18 @@ pub fn settings_list(
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
                 // Aurora addition: the Legacy Viewer's lists only jump to
-                // the first name starting with a typed letter
-                let search = widgets::search_field(
-                    ui,
-                    &mut query,
-                    aurora_i18n::tr!("ui-environment-search-by-name"),
-                    ui.available_width(),
+                // the first name starting with the letters typed
+                // (LLScrollListCtrl::handleUnicodeCharHere). `search_field`
+                // with ↑ ↓ left to the list, so ↓ reaches the names.
+                let search = ui.add(
+                    egui::TextEdit::singleline(&mut query)
+                        .hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
+                        .desired_width(ui.available_width())
+                        .event_filter(egui::EventFilter {
+                            horizontal_arrows: true,
+                            vertical_arrows: false,
+                            ..Default::default()
+                        }),
                 );
                 if opening {
                     search.request_focus();
@@ -654,10 +660,15 @@ pub fn settings_list(
                         }
                         widgets::divider(ui, p);
                     } else if matches.is_empty() {
-                        ui.label(
-                            RichText::new(aurora_i18n::tr!("ui-environment-no-match", query = query.trim().to_string()))
-                                .size(12.0)
-                                .color(p.muted),
+                        // cut to the list's width: the drop-down does not wrap,
+                        // and a long query would widen it
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(aurora_i18n::tr!("ui-environment-no-match", query = query.trim().to_string()))
+                                    .size(12.0)
+                                    .color(p.muted),
+                            )
+                            .truncate(),
                         );
                     }
                     for c in matches {
