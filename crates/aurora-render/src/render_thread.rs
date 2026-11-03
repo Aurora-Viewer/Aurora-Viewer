@@ -271,7 +271,11 @@ pub(crate) type KeepAlive = Arc<dyn std::any::Any + Send + Sync>;
 /// (field order).
 pub(crate) enum Host {
     /// On the calling thread (AURORA_RENDER_THREAD=0).
-    Inline(Box<Backend>, KeepAlive),
+    Inline(
+        Box<Backend>,
+        // only held, to drop after the backend
+        #[allow(dead_code)] KeepAlive,
+    ),
     Thread {
         owner: Owner<Job, Done>,
         /// Gives the backend and its keep-alive back when it ends.
