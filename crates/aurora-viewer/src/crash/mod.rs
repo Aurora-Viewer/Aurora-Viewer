@@ -6,6 +6,8 @@
 //! asked for by default; the full diagnostics stay in the session folder.
 
 pub mod github;
+#[cfg(target_os = "linux")]
+mod linux;
 mod native;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):

@@ -12,6 +12,7 @@
 //! system's regional format instead, the user's own 12 / 24 hours choice.
 
 use crate::settings::{ClockFormat, ClockZone, SystemIsland};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// Seconds since the epoch, now.
@@ -239,12 +240,36 @@ fn twelve_hours(format: ClockFormat) -> bool {
     }
 }
 
+/// Whether the chat's times are written in 12 hours this frame: the
+/// clock's format, published once per UI frame by the app
+/// (`set_chat_format`). The Legacy Viewer's chat follows Use24HourClock
+/// (FSFloaterNearbyChat's appendTime, LLFloaterIMSessionTab::appendTime);
+/// Aurora's chat follows the bars' clock, its one 12 / 24 hours setting.
+/// 24 hours until the first frame.
+static CHAT_12H: AtomicBool = AtomicBool::new(false);
+
+/// Publishes the clock's format for the chat's times (once per UI frame).
+pub(crate) fn set_chat_format(format: ClockFormat) {
+    CHAT_12H.store(twelve_hours(format), Ordering::Relaxed);
+}
+
+/// Whether the chat's times are written in 12 hours.
+pub(crate) fn chat_twelve_hours() -> bool {
+    CHAT_12H.load(Ordering::Relaxed)
+}
+
 /// "14:05", "14:05:09", "2:05 PM" or "2:05:09 PM", at `offset` seconds
 /// from UTC.
 fn hours(unix: i64, offset: i64, seconds: bool, twelve: bool) -> String {
     let t = (unix + offset).rem_euclid(86400);
     let (h, m, s) = (t / 3600, (t / 60) % 60, t % 60);
     let secs = if seconds { format!(":{s:02}") } else { String::new() };
+    hour_text(h, m, &secs, twelve)
+}
+
+/// "14:05" or "2:05 PM" for the hour `h` (0–23) and minute `m`, with
+/// `secs` (":09" or nothing) after the minutes.
+pub(crate) fn hour_text(h: i64, m: i64, secs: &str, twelve: bool) -> String {
     if twelve {
         let marker = if h < 12 {
             aurora_i18n::tr!("ui-bars-clock-am")

@@ -857,7 +857,7 @@ impl Renderer {
 
     /// The draw lists can be culled on the GPU (`DrawLists::gpu`).
     pub fn gpu_culling(&self) -> bool {
-        self.gpu_cull
+        self.gpu_cull && GpuCull::fits(&self.device, self.records.faces.len(), self.cull.objects.len())
     }
 
     /// Supported MSAA sample counts (besides 1).

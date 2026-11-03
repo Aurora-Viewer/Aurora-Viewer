@@ -42,6 +42,7 @@ pub mod exit;
 pub mod experience_profile;
 pub mod experiences;
 pub mod find_shortcut;
+pub mod fly_override;
 pub mod follow;
 pub mod fonts;
 pub mod friend_prompt;
