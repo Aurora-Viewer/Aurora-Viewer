@@ -210,7 +210,9 @@ fn font(cx: &mut Cx) {
                         // row laid out), each name in its own face, loaded as
                         // it scrolls into view
                         let mut previews = fonts::preview::Previews::begin(ui.ctx());
-                        let row_h = ui.text_style_height(&egui::TextStyle::Body) * 1.5;
+                        // no shorter than a button, or rows would drift from
+                        // where `show_rows` puts them
+                        let row_h = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).max(ui.spacing().interact_size.y);
                         // one width: a wide face truncates, never widens the list
                         let width = FONT_LIST_W;
                         egui::ScrollArea::vertical()
@@ -226,11 +228,12 @@ fn font(cx: &mut Cx) {
                                     }
                                     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
                                     let layout = egui::Layout::top_down_justified(egui::Align::Min);
-                                    let row = ui
-                                        .scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
-                                            ui.add(egui::Button::selectable(sel, name).truncate().min_size(rect.size()))
-                                        })
-                                        .inner;
+                                    // a child leaves the cursor where the row's own
+                                    // allocation put it, clipped to the row whatever
+                                    // the face's height
+                                    let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+                                    row_ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                                    let row = row_ui.add(egui::Button::selectable(sel, name).truncate().min_size(rect.size()));
                                     previews.visible(i);
                                     if row.clicked() && !sel {
                                         s.font = key;

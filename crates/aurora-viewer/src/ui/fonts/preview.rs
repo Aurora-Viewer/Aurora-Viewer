@@ -53,18 +53,21 @@ pub struct Previews {
 }
 
 impl Previews {
-    /// Start a frame of the open list. Faces dropped by a font change since
-    /// the last frame (a new interface font, the text size) are forgotten,
-    /// to be loaded again.
+    /// Start a frame of the open list. When a font change since the last
+    /// frame (a new interface font, the text size) dropped faces, all are
+    /// forgotten, to be loaded again: a change in the frame of a batch keeps
+    /// that batch and drops the older ones, so every family is checked.
     pub fn begin(ctx: &egui::Context) -> Self {
         let state = state(ctx);
         {
             let mut s = state.lock();
             s.drawn = ctx.cumulative_frame_nr();
-            let loaded = s.faces.values().flatten().next().cloned();
-            if let Some(family) = loaded
-                && !ctx.fonts(|f| f.definitions().families.contains_key(&family))
-            {
+            let dropped = s.added > 0
+                && ctx.fonts(|f| {
+                    let families = &f.definitions().families;
+                    s.faces.values().flatten().any(|family| !families.contains_key(family))
+                });
+            if dropped {
                 s.faces.clear();
                 s.added = 0;
             }
@@ -88,6 +91,10 @@ impl Previews {
     /// Load, in one batch, the rows around the visible ones when one of
     /// those is missing. `shown` is the list as drawn this frame.
     pub fn finish(self, ctx: &egui::Context, shown: &[&SystemFont]) {
+        self.finish_capped(ctx, shown, CAP);
+    }
+
+    fn finish_capped(self, ctx: &egui::Context, shown: &[&SystemFont], cap: usize) {
         let Some((first, last)) = self.visible else {
             return;
         };
@@ -96,12 +103,17 @@ impl Previews {
             return;
         }
         let window = &shown[first.saturating_sub(MARGIN)..(last + MARGIN + 1).min(shown.len())];
-        let mut wanted: Vec<&SystemFont> = window.iter().copied().filter(|f| !s.faces.contains_key(&f.path)).collect();
-        if s.added + wanted.len() > CAP {
+        let wanted: Vec<&SystemFont> = window.iter().copied().filter(|f| !s.faces.contains_key(&f.path)).collect();
+        // a first batch larger than the cap loads anyway: reinstalling for
+        // it would only start again at the next frame
+        if s.added > 0 && s.added + wanted.len() > cap {
+            // the interface fonts alone first: egui takes them at the next
+            // frame, and ignores until then the faces it still has, so the
+            // window is loaded again only once they are gone
             super::reinstall(ctx);
             s.faces.clear();
             s.added = 0;
-            wanted = window.to_vec();
+            return;
         }
         let scale = super::scale(ctx);
         for font in wanted {
@@ -146,7 +158,9 @@ fn face(path: &Path, name: &str, scale: f32) -> Option<(String, egui::FontData)>
         .ok()?;
     // SAFETY: the font file is opened read-only and never written by the
     // viewer. Windows refuses to truncate or delete a mapped file; elsewhere
-    // fonts are replaced by renaming, which leaves this mapping whole.
+    // fonts are replaced by renaming, which leaves this mapping whole. A file
+    // truncated in place while its row is loaded (only while the list is
+    // open) would fault on a page read, as with the fallback fonts.
     let map = unsafe { memmap2::Mmap::map(&file) }
         .inspect_err(|e| log::debug!("font preview {}: {e}", path.display()))
         .ok()?;
@@ -163,7 +177,7 @@ fn face(path: &Path, name: &str, scale: f32) -> Option<(String, egui::FontData)>
 /// Does `face` draw `name` as letters? It needs a glyph for every character,
 /// and symbol fonts are refused: those with a Windows Symbol `cmap`
 /// (Wingdings) and those whose Latin letters lead to glyphs named for
-/// something else (dingbats at `A` named `a10`, a Greek `Alpha`). Such
+/// something else (dingbats at `A` named `a10`, a Greek `psi` at `y`). Such
 /// names, and fonts of another script than their name's, stay in the
 /// interface font.
 fn draws(face: &ttf_parser::Face<'_>, name: &str) -> bool {
@@ -179,10 +193,19 @@ fn draws(face: &ttf_parser::Face<'_>, name: &str) -> bool {
         })
 }
 
-/// Is a glyph named `name` the letter `c`: `A`, `a.ss01`, or its code
-/// point (`uni0041`, `u0041`)?
+/// Is a glyph named `name` the letter `c`: `A`, `a.ss01`, its code point
+/// (`uni0041`, `u0041`), or a name that says nothing (`glyph36`, `gid36`)?
+/// Only the first letter is compared: `alpha` passes for `a`, which the
+/// other characters of a name and the Symbol `cmap` test make harmless.
 fn letter_glyph(name: &str, c: char) -> bool {
     let code = format!("{:04X}", c as u32);
+    let numbered = |prefix| {
+        name.strip_prefix(prefix)
+            .is_some_and(|n: &str| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    if numbered("glyph") || numbered("gid") {
+        return true;
+    }
     name.chars().next().is_some_and(|first| first.eq_ignore_ascii_case(&c)) && !name.starts_with("uni")
         || name
             .strip_prefix("uni")
@@ -193,6 +216,99 @@ fn letter_glyph(name: &str, c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Embedded fonts written as files, as system fonts are read.
+    fn font_files() -> Vec<SystemFont> {
+        let dir = std::env::temp_dir().join(format!("aurora-font-previews-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temporary folder");
+        [
+            ("Inter", super::super::INTER_TTF),
+            ("Noto Sans", super::super::NOTO_TTF),
+            ("Roboto", super::super::ROBOTO_TTF),
+        ]
+        .into_iter()
+        .map(|(name, data)| {
+            let path = dir.join(format!("{name}.ttf"));
+            std::fs::write(&path, data).expect("font file");
+            SystemFont {
+                name: name.to_owned(),
+                path,
+            }
+        })
+        .collect()
+    }
+
+    /// One frame of the open list showing `shown`, all visible, after other
+    /// text has been laid out (as in the viewer: additions wait for the next
+    /// frame). Every family a row is given must be one egui has.
+    fn frame(ctx: &egui::Context, shown: &[&SystemFont], cap: usize, after: impl Fn(&egui::Context)) {
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.label("text laid out before the list");
+            let mut previews = Previews::begin(ui.ctx());
+            for (i, font) in shown.iter().enumerate() {
+                if let Some(family) = previews.family(font) {
+                    let known = ui.ctx().fonts(|f| f.definitions().families.contains_key(&family));
+                    assert!(known, "{} is given a family egui dropped", font.name);
+                }
+                previews.visible(i);
+            }
+            previews.finish_capped(ui.ctx(), shown, cap);
+            after(ui.ctx());
+        });
+    }
+
+    fn loaded(ctx: &egui::Context, font: &SystemFont) -> bool {
+        state(ctx).lock().faces.get(&font.path).is_some_and(Option::is_some)
+    }
+
+    #[test]
+    fn faces_past_the_cap_are_loaded_again_only_once_egui_dropped_them() {
+        let fonts = font_files();
+        let [a, b, c] = [&fonts[0], &fonts[1], &fonts[2]];
+        let ctx = egui::Context::default();
+        super::super::install(&ctx, super::super::definitions_for(super::super::DEFAULT, &[]));
+        frame(&ctx, &[a, b], 2, |_| {});
+        frame(&ctx, &[a, b], 2, |_| {});
+        assert!(loaded(&ctx, a) && loaded(&ctx, b));
+        // a third face goes past the cap: the interface fonts go back
+        // first, and the two faces egui still has until the next frame are
+        // never given to a row once they are gone
+        for _ in 0..4 {
+            frame(&ctx, &[a, b, c], 2, |_| {});
+        }
+        assert!(loaded(&ctx, a) && loaded(&ctx, b) && loaded(&ctx, c));
+    }
+
+    #[test]
+    fn a_font_change_in_the_frame_of_a_batch_drops_the_older_faces() {
+        let fonts = font_files();
+        let [a, b, c] = [&fonts[0], &fonts[1], &fonts[2]];
+        let ctx = egui::Context::default();
+        super::super::install(&ctx, super::super::definitions_for(super::super::DEFAULT, &[]));
+        frame(&ctx, &[a, b], CAP, |_| {});
+        frame(&ctx, &[a, b], CAP, |_| {});
+        // the list's batch, then a new interface font, in the same frame:
+        // the batch stays, the two older faces go
+        frame(&ctx, &[a, b, c], CAP, |ctx| {
+            super::super::install(ctx, super::super::definitions_for(super::super::ROBOTO, &[]));
+        });
+        for _ in 0..3 {
+            frame(&ctx, &[a, b, c], CAP, |_| {});
+        }
+        assert!(loaded(&ctx, a) && loaded(&ctx, b) && loaded(&ctx, c));
+    }
+
+    #[test]
+    fn a_first_batch_larger_than_the_cap_still_loads() {
+        let fonts = font_files();
+        let shown: Vec<&SystemFont> = fonts.iter().collect();
+        let ctx = egui::Context::default();
+        super::super::install(&ctx, super::super::definitions_for(super::super::DEFAULT, &[]));
+        for _ in 0..3 {
+            frame(&ctx, &shown, 1, |_| {});
+        }
+        assert!(shown.iter().all(|f| loaded(&ctx, f)));
+    }
 
     #[test]
     fn a_face_draws_its_name_only_with_every_glyph() {
@@ -208,6 +324,8 @@ mod tests {
         assert!(letter_glyph("a.ss01", 'a'));
         assert!(letter_glyph("uni0048", 'H'));
         assert!(letter_glyph("u0048", 'H'));
+        assert!(letter_glyph("glyph36", 'H'));
+        assert!(letter_glyph("gid36", 'H'));
         assert!(!letter_glyph("a10", 'D'));
         assert!(!letter_glyph("psi", 'y'));
         // `uni…` of another code point is not the letter `u`
