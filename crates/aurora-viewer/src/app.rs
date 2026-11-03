@@ -6999,8 +6999,14 @@ impl App {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
             let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0;
+            let roll = self.camera.roll;
             self.camera
                 .reset_view(&mut self.world.agent, &self.settings.camera, true, false, true, steering);
+            // walking with the photo viewfinder open keeps its tilt: the shot
+            // being framed is the viewfinder's, levelled only when it closes
+            if self.viewfinder_on() {
+                self.camera.roll = roll;
+            }
         }
         self.input = i;
         // camera keys (Alt + arrows...), ramping up like get_orbit_rate
