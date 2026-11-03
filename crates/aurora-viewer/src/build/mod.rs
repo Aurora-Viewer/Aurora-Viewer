@@ -1720,7 +1720,7 @@ impl BuildTool {
     // ---- per frame
 
     /// Mouse, drags and land brush, once per frame (before the UI).
-    pub fn update(&mut self, world: &mut World, s: &BuildSettings, cursor: (f32, f32), over_ui: bool, mods: Mods) {
+    pub fn update(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, cursor: (f32, f32), over_ui: bool, mods: Mods) {
         let now = Instant::now();
         let dt = self
             .last_frame
@@ -1770,6 +1770,10 @@ impl BuildTool {
                     );
                     for c in cmds {
                         self.send(c);
+                    }
+                    for idx in self.manip.take_te_dirty() {
+                        self.send_te(world, idx);
+                        self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
                     }
                 }
                 if let Some(r) = self.rect.as_mut() {
@@ -1995,6 +1999,10 @@ impl BuildTool {
         self.land.mouse_up();
         for c in cmds {
             self.send(c);
+        }
+        for idx in self.manip.take_te_dirty() {
+            self.send_te(world, idx);
+            self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
         }
         self.grab_up();
     }

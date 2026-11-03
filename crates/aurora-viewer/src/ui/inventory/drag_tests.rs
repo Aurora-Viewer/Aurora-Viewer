@@ -187,7 +187,7 @@ impl Fixture {
         self.actions
             .iter()
             .flat_map(|a| match a {
-                InvAction::Edit(change) => change
+                InvAction::Drop(change) => change
                     .operations
                     .iter()
                     .map(|op| match op {

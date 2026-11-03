@@ -466,7 +466,7 @@ pub(super) enum Worker {
         Uuid,
         Uuid,
         u64,
-        Result<(Arc<mesh::Prepared>, aurora_net::inventory::mesh_upload::Request), String>,
+        Result<(Arc<mesh::Prepared>, Option<aurora_net::inventory::mesh_upload::Request>), String>,
     ),
     MeshFile(
         Uuid,
@@ -1301,7 +1301,11 @@ impl Imports {
                                 draft.inspector.prepared(&prepared);
                                 draft.prepared = Some(prepared);
                                 entry.model = None;
-                                commands.push(aurora_net::NetCommand::QuoteMesh { request, upload });
+                                if let Some(upload) = upload {
+                                    commands.push(aurora_net::NetCommand::QuoteMesh { request, upload });
+                                } else {
+                                    draft.pending = None;
+                                }
                             }
                             Err(error) => {
                                 draft.pending = None;

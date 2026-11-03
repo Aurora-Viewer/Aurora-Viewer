@@ -861,6 +861,8 @@ pub struct App {
     shape_camera: Option<Camera>,
     physics_ui: crate::physics_editor::State,
     wearable_ui: crate::wearable_editor::State,
+    /// Our own bakes on a grid that does not bake (local_bakes.rs).
+    local_bakes: crate::local_bakes::LocalBakes,
     /// Me › Avatar health and the customise animation.
     avatar_health: avatar_health::AvatarHealth,
     last_social_poll: Instant,
@@ -1561,6 +1563,7 @@ impl App {
             shape_camera: None,
             physics_ui: Default::default(),
             wearable_ui: Default::default(),
+            local_bakes: Default::default(),
             avatar_health: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
@@ -1612,6 +1615,18 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        // a region that does not bake: our own bakes stand for the server's
+        if let NetCommand::RequestServerAppearance { cof_version } = cmd
+            && self.world.bakes_locally()
+        {
+            self.local_bakes.refresh();
+            self.world.apply(NetEvent::AppearanceRequestResult {
+                cof_version,
+                success: true,
+                expected: None,
+            });
+            return;
+        }
         self.settings.inventory.creation_permissions.prepare(&mut cmd);
         if !self.object_profile.retain_selection(&self.world, &mut cmd) {
             return;
@@ -2427,6 +2442,8 @@ impl App {
             }
             return;
         }
+        let mut cmd = cmd;
+        self.world.prepare_inventory_command(&mut cmd);
         self.net.send(cmd);
     }
 
@@ -2736,6 +2753,7 @@ impl App {
         self.shape_camera = None;
         self.physics_ui = Default::default();
         self.wearable_ui = Default::default();
+        self.local_bakes.end_session(&mut self.scene);
         self.reset_avatar_health();
         self.interactions = Default::default();
         self.screen = Screen::Login;
@@ -3047,6 +3065,23 @@ impl App {
             }
             self.inventory_result(request, result);
             return;
+        }
+        if let NetEvent::BakeUploaded { request, result } = &ev {
+            self.local_bakes.uploaded(*request, result);
+            return;
+        }
+        if let NetEvent::CachedBakes { serial, faces } = &ev {
+            self.local_bakes.cached_answer(*serial, faces);
+            return;
+        }
+        if let NetEvent::RebakeRequested(texture) = &ev {
+            if self.local_bakes.rebake(Instant::now()) {
+                log::info!("local bake: the region lacks a bake ({texture}), baking again");
+            }
+            return;
+        }
+        if let NetEvent::InventoryPreview { item, asset, result } = &ev {
+            self.local_bakes.loaded(*item, *asset, result);
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
             if self.ik_editor.project_preview(&self.world, item, &result) {
@@ -6851,10 +6886,7 @@ impl App {
         if self.joystick_flycam_step(dt) {
             return;
         }
-        let web_or_popup = self.media.focus.is_some()
-            || self.profile_ui.focused_web().is_some()
-            || self.search_ui.focused_web().is_some()
-            || egui::Popup::is_any_open(&self.egui_ctx);
+        let web_or_popup = self.media.focus.is_some() || self.web_has_focus() || egui::Popup::is_any_open(&self.egui_ctx);
         let typing = typing || web_or_popup;
         let (kb, m) = (&self.settings.keybinds, self.mods());
         // typing in the chat bar, only the keys it hands to the avatar move
@@ -7004,8 +7036,14 @@ impl App {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
             let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0;
+            let roll = self.camera.roll;
             self.camera
                 .reset_view(&mut self.world.agent, &self.settings.camera, true, false, true, steering);
+            // walking with the photo viewfinder open keeps its tilt: the shot
+            // being framed is the viewfinder's, levelled only when it closes
+            if self.viewfinder_on() {
+                self.camera.roll = roll;
+            }
         }
         self.input = i;
         // camera keys (Alt + arrows...), ramping up like get_orbit_rate
@@ -8266,6 +8304,13 @@ impl App {
         };
         self.apply_local_imports(&mut gfx.renderer);
         self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
+        for command in self.local_bakes.update(&self.world, &mut self.scene) {
+            self.send(command);
+        }
+        if let Some(bakes) = self.local_bakes.take_sent() {
+            self.world.show_local_bakes(bakes);
+        }
+        self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
@@ -8375,6 +8420,7 @@ impl App {
                     .map(|_| self.settings.build.follow_edit_object),
                 eye_offset: None,
                 draw_distance: self.settings.draw_distance,
+                region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
             if frame.edit_tracking.is_some() || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                 // Evaluate the focused edit selection after the local drag,
@@ -8880,8 +8926,14 @@ impl App {
                 ctrl: self.ctrl,
                 alt: self.alt,
             };
-            self.build
-                .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
+            self.build.update(
+                &mut self.world,
+                &self.settings.build,
+                Some(&self.scene),
+                self.cursor_pos,
+                over_ui,
+                mods,
+            );
             let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             // another avatar's attachment the open menu is about, outlined
             // like a child prim of a selection (it cannot be selected)
@@ -10548,10 +10600,23 @@ impl App {
             if self.frame_count == crate::demo::notifs::DND_AT && mode == "dnd" {
                 self.world.set_dnd(true);
             }
+            // the demo inventory, for the purchase to link its Received
+            // Items (#1604)
+            if self.frame_count == crate::demo::notifs::PURCHASE_AT && mode.starts_with("purchase") {
+                crate::world::inventory::demo::seed(&mut self.world.inventory, agent);
+                crate::world::inventory::demo::seed_received(&mut self.world.inventory, agent);
+            }
             for event in crate::demo::notifs::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+            // the link clicked: the inventory on its Received tab
+            if self.frame_count == crate::demo::notifs::PURCHASE_AT + 60
+                && mode == "purchase-open"
+                && let Some(inbox) = crate::world::inventory::actions::system(&self.world.inventory, 50)
+            {
+                self.run_app_link(crate::slapp::AppLink::Inventory { id: inbox, name: None });
             }
             if self.frame_count == 850 && mode == "object-history" {
                 if let Some(id) = self.world.notifications.list.first().map(|n| n.id) {
@@ -12432,6 +12497,11 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
+            BarAction::MyPicks => {
+                self.profile_ui
+                    .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
+            }
+            BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
@@ -12864,8 +12934,8 @@ impl App {
                 loaded
             });
             let slurl = global.zip(sim.as_ref()).map(|(g, (region, _))| {
-                let pos = glam::Vec3::new(g.x.rem_euclid(256.0) as f32, g.y.rem_euclid(256.0) as f32, g.z as f32);
-                crate::slurl::make(region, pos)
+                let (x, y) = self.world.map.local_xy(g.x, g.y);
+                crate::slurl::make(region, glam::Vec3::new(x as f32, y as f32, g.z as f32))
             });
             list.push(ui::bars::favorites::Favorite {
                 item: id,
@@ -13067,6 +13137,20 @@ impl App {
             return std::env::var("AURORA_DEMO_MARKETPLACE").ok().filter(|u| !u.trim().is_empty());
         }
         ui::marketplace::home(&self.settings.grid).map(str::to_owned)
+    }
+
+    /// All embedded web windows share native input ownership and shortcut guards.
+    fn web_has_focus(&self) -> bool {
+        self.profile_ui.web_has_focus() || self.search_ui.web_has_focus() || self.marketplace_ui.web_has_focus()
+    }
+
+    /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
+    /// receives keys before chat, gestures or viewer commands.
+    fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
+        self.profile_ui
+            .focused_web()
+            .or_else(|| self.search_ui.focused_web())
+            .or_else(|| self.marketplace_ui.focused_web())
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -14119,7 +14203,7 @@ impl App {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
                     show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
-                    chat_active: self.chat_ui.has_focus || self.chat_ui.focus_request || !self.chat_ui.input.trim().is_empty(),
+                    chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
                         Some(egui::pos2(screen_rect.center().x, screen_rect.top()))
@@ -14512,7 +14596,7 @@ impl App {
                     };
                     // Focused web/media pages already received the native
                     // keys; their history must not also change world objects.
-                    if self.media.focus.is_none() && self.profile_ui.focused_web().is_none() && self.search_ui.focused_web().is_none() {
+                    if self.media.focus.is_none() && !self.web_has_focus() {
                         contents_actions.extend(ui::object_actions::contents_shortcuts(
                             &ctx,
                             &self.interactions,
@@ -15783,6 +15867,10 @@ impl App {
                     self.settings.classic_profiles,
                     self.settings.profile_rights,
                 );
+                self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
+                self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
+                let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
+                self.chat_ui.note_frame(pointer_busy);
                 for pa in acts {
                     match pa {
                         ui::profile::ProfileAction::Im(id) => a.ctx_action = Some(ui::context::CtxAction::Im(id)),
@@ -18877,6 +18965,14 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event: ke, .. } => self.key_mods(ke),
             _ => self.mods(),
         };
+        // Tab navigates the focused browser's fields. Giving the press to
+        // egui as well would focus a viewer widget and steal the next key.
+        let web_tab = bound_key == Some(KeyCode::Tab)
+            && self.web_has_focus()
+            && !self.egui_ctx.egui_wants_keyboard_input()
+            && !egui::Popup::is_any_open(&self.egui_ctx)
+            && self.options_ui.capture.is_none()
+            && !self.exit_prompt.open;
         let lens_shortcut = matches!(bound_key, Some(code)
             if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
                 Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
@@ -18885,8 +18981,7 @@ impl ApplicationHandler for App {
             && self.in_world()
             && self.options_ui.capture.is_none()
             && !self.exit_prompt.open
-            && self.profile_ui.focused_web().is_none()
-            && self.search_ui.focused_web().is_none()
+            && !self.web_has_focus()
             && self.media.focus.is_none();
         // the hidden cursor the camera holds is the tool's (cursor_hold.rs):
         // it never hovers, clicks or scrolls the windows (#1343)
@@ -18919,7 +19014,7 @@ impl ApplicationHandler for App {
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass || lens_shortcut || held_pointer || altgr_shortcut || claim_over_focus {
+        let resp = if chat_pass || web_tab || lens_shortcut || held_pointer || altgr_shortcut || claim_over_focus {
             egui_winit::EventResponse {
                 consumed: false,
                 repaint: true,
@@ -19122,8 +19217,7 @@ impl ApplicationHandler for App {
                         && !typing
                         && self.in_world()
                         && !mods.alt
-                        && self.profile_ui.focused_web().is_none()
-                        && self.search_ui.focused_web().is_none()
+                        && !self.web_has_focus()
                         && self.media.focus.is_none()
                         && let Some(key) = gesture_key
                         && let Some(id) = self
@@ -19134,22 +19228,18 @@ impl ApplicationHandler for App {
                         self.gesture_play(id, Some(key));
                         return;
                     }
-                    // a profile's web page that was clicked gets the keyboard
-                    let web = match self.profile_ui.focused_web() {
-                        Some(p) => Some(p),
-                        None => self.search_ui.focused_web(),
+                    let web_mods = aurora_media::Modifiers {
+                        control: self.ctrl,
+                        alt: self.alt,
+                        shift: self.shift,
+                        command: self.command,
                     };
+                    let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
-                        let mods = aurora_media::Modifiers {
-                            control: self.ctrl,
-                            alt: self.alt,
-                            shift: self.shift,
-                            command: self.command,
-                        };
-                        if crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods) || pressed {
+                        if crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods) || pressed {
                             return;
                         }
                     }

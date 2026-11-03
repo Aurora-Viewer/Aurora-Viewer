@@ -825,9 +825,9 @@ pub fn land_near_target(world: &mut crate::world::World, pilot: &mut AutoPilot) 
 /// region (`size` metres wide, its south-west corner at `origin`) stays in
 /// it; a point beyond goes to the 256 m slot under it, which a variable
 /// region's simulator accepts as its own.
-pub fn teleport_destination(origin: (u32, u32), size: f32, point: Vec3, pelvis_to_foot: f32) -> ((u32, u32), Vec3) {
+pub fn teleport_destination(origin: (u32, u32), size: (f32, f32), point: Vec3, pelvis_to_foot: f32) -> ((u32, u32), Vec3) {
     let p = point + Vec3::Z * pelvis_to_foot;
-    if (0.0..size).contains(&p.x) && (0.0..size).contains(&p.y) {
+    if (0.0..size.0).contains(&p.x) && (0.0..size.1).contains(&p.y) {
         return (origin, p);
     }
     let gx = (origin.0 as f64 + p.x as f64).max(0.0);
@@ -1096,7 +1096,7 @@ mod tests {
         };
         let p = follow_recovery_position(Vec3::new(240.0, 20.0, 1.0), &target, settings).expect("precise target");
         assert!(p.abs_diff_eq(Vec3::new(254.1, 20.0, 49.5), 0.001));
-        let (slot, local) = teleport_destination((256_000, 256_000), 256.0, p, 0.0);
+        let (slot, local) = teleport_destination((256_000, 256_000), (256.0, 256.0), p, 0.0);
         assert_eq!(slot, (256_000, 256_000));
         assert_eq!(local.z, 49.5, "the centre is not raised twice");
         target.flight.flying = Some(true);
@@ -1751,15 +1751,15 @@ mod tests {
     #[test]
     fn a_teleport_stays_in_the_region_or_goes_to_the_slot_under_the_point() {
         // in the region: the same point, raised to the avatar's centre
-        let (slot, p) = teleport_destination((256_000, 256_512), 256.0, Vec3::new(10.0, 20.0, 30.0), 1.0);
+        let (slot, p) = teleport_destination((256_000, 256_512), (256.0, 256.0), Vec3::new(10.0, 20.0, 30.0), 1.0);
         assert_eq!(slot, (256_000, 256_512));
         assert_eq!(p, Vec3::new(10.0, 20.0, 31.0));
         // east of it: the neighbour's slot
-        let (slot, p) = teleport_destination((256_000, 256_512), 256.0, Vec3::new(260.0, 20.0, 30.0), 1.0);
+        let (slot, p) = teleport_destination((256_000, 256_512), (256.0, 256.0), Vec3::new(260.0, 20.0, 30.0), 1.0);
         assert_eq!(slot, (256_256, 256_512));
         assert!((p.x - 4.0).abs() < 1e-3 && (p.y - 20.0).abs() < 1e-3);
         // a variable region keeps a point of its own
-        let (slot, _) = teleport_destination((256_000, 256_512), 512.0, Vec3::new(300.0, 20.0, 30.0), 1.0);
+        let (slot, _) = teleport_destination((256_000, 256_512), (512.0, 512.0), Vec3::new(300.0, 20.0, 30.0), 1.0);
         assert_eq!(slot, (256_000, 256_512));
     }
 }

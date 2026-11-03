@@ -1,5 +1,53 @@
 # Aurora Viewer architecture
 
+Avatar gait playback resolves standard walk/run signals to the modern male or
+female assets selected by LLVOAvatar::remapMotionID with its default settings
+(#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the
+asset lookup in `Controller::sync_avatar`; AO state, network signals, clocks and
+diagnostics keep their original UUIDs. Shape sex comes directly from transmitted
+visual parameter 80, without expanding the full shape every frame. An active
+gait swaps variants after a shape change without restarting; pending variants
+retain the last modern clip. Control-avatar playback uses the requested asset.
+The four unmodified native clips are embedded from `assets/animations/locomotion/`
+and registered at scene startup, following the reference static asset cache;
+they do not depend on asset-server availability or the disposable disk cache.
+
+The mesh Collisions tab keeps its level-of-detail selector and triangle-retention
+slider on one row, without numbered steps. Optional source-file/preset actions
+occupy a following row so they do not displace those primary controls.
+Analyze sits at the right of the five VHACD inputs with a common caption height
+and room for its busy state. Resolution exposes the Legacy quality presets from
+200,000 to 2,000,000 voxels, retaining the 400,000 default and describing the
+current budget in hover text. Existing custom values remain unchanged until an
+explicit preset choice.
+
+Texture decoding tries the bounded TGA decoder when memory signature detection
+finds no format: TGA has no reliable magic bytes. Texture imports and material
+maps share this path and its existing pixel/allocation limits; recognised formats
+retain their own decoder and errors.
+
+`imports/ui/zoom.rs` keeps the shared enlarged preview alive while any importer
+is open, including the independent type windows; the unified queue's `open`
+flag alone cannot determine its lifetime. Closing the last importer or pressing
+Escape clears the loupe and its material-map GPU handle.
+
+Mesh fee preparation retains invalid collision geometry for the import footer's
+live diagnosis and explicit convex-hull conversion. The action invalidates the
+quote, opens the collision preview and uses the existing asynchronous analysis;
+it never edits visual LODs or drops triangles. Fee requests wait for a valid
+prepared collision shape, with the protocol's degeneracy threshold unchanged.
+The collision UI exposes VHACD's five analysis parameters; hull vertex limits
+apply during analysis, without a separate post-analysis simplification stage.
+The Analyze button uses the preview queue's pending/debounce state while hull
+preparation is missing; a shared busy action face shows its spinner and status
+without another clickable analysis request. Cached view-only redraws stay idle.
+
+Embedded profile, Search and Marketplace pages share `App::web_has_focus`
+and `focused_web` for native keyboard forwarding and the movement, gesture,
+history and AltGr guards. Native Tab navigation stays with the browser instead
+of focusing an egui widget. Marketplace releases its browser focus when closed
+or minimized, following `LLMediaCtrl` keyboard ownership (#1725, #1968).
+
 `world/inventory/system.rs` indexes system-folder lookups for inventory and
 Appearance by inventory generation and root identity. Root-listed duplicates
 retain their smallest UUID; incomplete listings retain the previous fallback.
@@ -453,6 +501,12 @@ wearables cannot block the edited region. It pins the server bakes for cancellat
 GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
 preview textures never enter the inventory or replace server appearance.
 Local imports share their worker-prepared RGBA images with `PreviewSource`.
+`local_bakes.rs` uses the same compositor for our own bakes on a region that
+does not bake (OpenSim: `UploadBakedTexture` without `UpdateAvatarAppearance`):
+it watches the Current Outfit folder, asks the region for the bakes it keeps
+(AgentCachedTexture), composes and encodes the others on the scene's workers,
+uploads them and sends AgentSetAppearance; `aurora-net/src/local_bakes.rs`
+holds the protocol (cache keys, the message, the two-step upload).
 Closing a wearable's texture picker retains the applied choice in its draft;
 explicit Cancel restores the slot. Closing the editor retains the unsaved
 Save/Discard/Cancel confirmation, including when its picker was still open.
@@ -2346,6 +2400,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/inventory/aurora.rs`, `ui/inventory/aurora/` | Aurora's inventory window (`Settings::classic_inventory` off, Preferences › Aurora › Inventory): one window that widens. `aurora.rs` picks the layout from the body width (narrow below 700 px: icon tabs, search row, the tree, the selection's card; medium: a column of shortcuts and folders, an explorer of one folder with type, permissions and date columns, the card; wide from 1020 px: breadcrumb, Ctrl+F field, filter chips, details pane, status bar), counts the shortcuts per inventory generation and runs the explorer on its own `PlainTree` (folders never open in place, a double-click or held cargo goes in); `rows.rs` draws the 28 px rows (pills, star, rights, columns, Add / Take off and More on hover; body parts and physics retain Wear) over the shared `item_response` / `folder_response`; `rights.rs` the C/M/T letters and the CMT menu (`InventoryPreferences::rights`: mine, next owner, both, none); `sidebar.rs` the shortcuts and the folders-only tree; `columns.rs` the saved sidebar/column splitters, responsive geometry and column visibility menu (`InventoryPreferences::explorer`); `toolbar.rs` the bars, the Sort and New menus, the chips; a folder window is the same window under `InventoryUi::scope` (no tabs, its folder as the root of the lists, the column and the breadcrumb); `details.rs` the card and the pane (main action of the double-click, Give, next owner switches patched like the properties) |
 | `ui/inventory/embedded.rs` | Items embedded in notecards: icon and name in the text, preview / opening and copy to the inventory, drop at the pointer position; one character per item to preserve selection, deletion and undo |
 | `aurora-net/src/session/inventory_preview.rs` | Reading of the notecards and scripts protected by the simulator's inventory transfer (identifiers of the agent, the session, the owner, the object, the item and the asset); bounded reassembly of out-of-order packets, correlation with the simulator and expiry |
+| `aurora-net/src/session/inventory_udp.rs`, `inventory/operations.rs` (`udp_edits`) | Inventory changes on grids without AIS (OpenSim), as the Legacy Viewer's `[UDP-Msg]` paths: folders, renames, links, removals, purges and outfits over the circuit, each UDP update carrying the whole record the viewer holds (`operations::Known`); a new folder awaited in its parent through the fetch service before anything goes in it |
 | `app/task_notecards.rs`, `aurora-net/src/session/task_notecard.rs` | Notecards in the contents of objects: double-click / Open, shared editor with a state specific to the object and to the item; rights of the object and of the notecard, asset transfer authorised by the inventory, save through UpdateNotecardTaskInventory, read-back and draft kept on refusal |
 | `main.rs`, `app.rs`, `app/` | Startup, event loop, one frame of the viewer, interface actions; chat bar commands (`app/chat_commands.rs`), right-click menus (`app/context_menu.rs`: opening, rights on the object, chosen actions), "Freeze" and "Eject" of a resident on our land, their question and `AURORA_DEMO_LAND_MODERATION` (`app/land_moderation.rs`), the left button's clicks for scripts (`app/script_clicks.rs`: mouselook bits when a script took the button, touch at the crosshair otherwise, LBUTTON bits for a press nothing takes; the counts of `aurora-net/src/script_controls.rs`), clicks on the world without waiting for the GPU (`app/click_pick.rs`: the depth under the click is requested from the renderer, the click is handled when the reply arrives with the cursor and the keys it had, and what follows it — release, other buttons, mouse movement that moves the camera — waits behind it in order; check `AURORA_CLICK_PICK`, demo clicks `AURORA_DEMO_CLICKS`), HUD move gesture with a configurable key (Ctrl by default) and left click, and offline scenario (`app/hud_drag.rs`), the system cursor hidden and locked by mouselook and the camera drags, and where it comes back (`app/cursor_hold.rs`), AltGr counted as Ctrl + Alt for shortcut capture, keyboard shortcuts while preserving text/web/media characters and the mouse's camera gestures (`app/alt_graph.rs`), the name plate under the pointer (expanded on hover) and its independent plain, Shift and Ctrl left-click actions (`app/plate_click.rs`), "Reset skeleton (and animations)" of an avatar and "Stop animations" of ours, with the ResetSkeleton ViewerEffect sent and followed (`app/reset_skeleton.rs`), Me › Avatar health's "Undeform avatar" and "Refresh attachments", and the customise animation while our appearance is edited (`app/avatar_health.rs`), "Derender" of the menus, the Asset blacklist window and `AURORA_DEMO_DERENDER` (`app/derender.rs`), the Dev Toolbox's tools — toggles, copies, live views, windows — and "Send a diagnostic" (header, system configuration, hidden names; Copy, Save as .txt, Log) (`app/dev_toolbox.rs`), its "Debug to log / clipboard" (J1, J2), which ask the names of the worn items they detail, then hand it the lines of `scene/describe.rs` (`app/describe.rs`, `AURORA_DEMO_DESCRIBE`), the double click on the ground (walk, run or teleport there) and the walk frame after frame (`app/double_click.rs`), the object menus' entries that take more than one message — Return, Drop, Put on after a walk to the object, the script actions on a selection, Block particle owner, our attachments' favorites, Link and Take multiple on a kept selection, Touch with the right click's surface (`app/object_menu.rs`; `AURORA_DEMO_OBJECT_MENU` in `app/object_menu_demo.rs`, its objects in `demo_object_menu.rs`) |
 | `cli.rs` | Command-line arguments (`--title`, `--fps-limit`, `--language`, `--grid` / `--loginuri`, `--login`, the startup SLURL, `--version`); title with the common version and the build profile; the Linux desktop identity (`DESKTOP_ID`: Wayland app_id, X11 WM_CLASS, name of the desktop entry) |
@@ -2466,6 +2521,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `world/open_ims.rs` | Private and group conversations open at logout, kept per account (`open_ims.xml`, extending FSLastOpenIMs) and reopened when FSRestoreOpenIMs is on. Typed entries exclude conferences; older untyped group ids migrate from membership replies. Membership names display immediately; `GroupChats::restoring` tracks visible, unjoined groups until mutes arrive. Incoming traffic remains deferred, blocked previews are removed, and authorized groups quietly use the ordinary start/history path (#1683). Manual sends/calls start normally, while close/snooze cancels pending restoration; previews do not grant RLVa existing-session exemptions. `AURORA_DEMO_CHATLOG=restore[:slow]` exercises the file reader and restoration, optionally withholding mutes until frame 1100. |
 | `world/region_alerts.rs` | The region's script count change (SimStats, nearby chat) and simulator version change (AgentMovementComplete, a notice) alerts of Preferences › Alerts |
 | `world/region_messages.rs` | A message to the whole region (an IM to nobody: an estate manager's or a god's, GodMessage): its notification and its line of nearby chat, before the rules of conversations (mute, friends only, automatic responses) |
+| `world/system_messages.rs` | A message of the grid itself (an IM with no sender or from "Second Life"): a notice of the nearby chat instead of a "System" line; a delivered Marketplace purchase links its Received Items folder |
 | `ui/about.rs`, `ui/about/notice.rs`, `app/about.rs`, `system_info.rs` | Help › About Aurora Viewer (LLFloaterAbout): the banner with the logo, the version, the build and the project's links; the Info tab's cards (viewer, computer, graphics, location with RLVa @showloc, network), a click on a value copying it alone, and "Copy to clipboard" in English (`ui/about.rs`, the information gathered by `app/about.rs`); the Licences tab, NOTICE.md built into the viewer and read into cards (`ui/about/notice.rs`); the computer (OS, CPU, threads, memory and the viewer's share) read with sysinfo off the frame, shared with the Dev Toolbox's J4 (`system_info.rs`); `AURORA_DEMO_ABOUT` |
 | `world/collisions.rs`, `ui/bumps.rs` | Bumps, pushes and hits (MeanCollisionAlert): the last 20, one per resident and kind, newest first, the optional nearby chat line and report to the agent's scripts (`world/collisions.rs`), and the Help menu's "Bumps, pushes & hits" window with its copy and avatar menu (`ui/bumps.rs`, LLFloaterBump) |
 | `grid_status.rs`, `grid_status/tests.rs`, `ui/grid_status.rs`, `app/grid_status.rs`, `demo_grid_status.rs` | Help › Grid status and the toolbar's Grid status command (LLFloaterGridStatus): the grid's status feed (Second Life's Atom feed, an OpenSim grid's `OpenSimExtras` `GridStatusRSS`), fetched off the frame every 60 s while the command stands on a toolbar or the window is open, read as entries and updates (Atom or RSS 2.0, the status page's HTML), and the new or changed entries that flash the button (`grid_status.rs`); the native window listing them (`ui/grid_status.rs`); the polling, the flash and the window in the frame (`app/grid_status.rs`); the demo feed (`AURORA_DEMO_GRID_STATUS`) |

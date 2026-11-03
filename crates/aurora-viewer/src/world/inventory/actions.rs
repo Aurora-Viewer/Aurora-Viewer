@@ -73,10 +73,13 @@ fn mutable_content(inv: &Inventory, id: Uuid, inbox: Option<Uuid>) -> bool {
 /// (indra/newview/llinventorybridge.cpp, originally LGPL 2.1): Received
 /// contents move out (no inbox check there; the inbox itself is a system
 /// folder), and a locked folder (LLFolderBridge::isProtected, #1728) stays
-/// in place while its contents are ordinary entries.
+/// in place while its contents are ordinary entries. A listed listing and
+/// its version folder stay too, like every listing folder before the SLM
+/// data loads (`marketplace::Holds`).
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable_content(inv, id, None)
         && !protected.contains(&id)
+        && !inv.listing_holds.holds(inv, id)
         && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
 }
 /// get_is_item_removable / get_is_category_removable
@@ -116,18 +119,14 @@ pub fn renameable(inv: &Inventory, id: Uuid) -> bool {
             |f| matches!(f.info.type_default, -1 | 47 | 54),
         )
 }
+/// A folder that receives a new entry, a move or a paste; a locked folder
+/// does too. A folder in the Current Outfit or Received Items stays closed,
+/// as do the Trash (moved to by the delete path) and My Outfits
+/// (`outfit_folders::move_into`).
 pub fn destination(inv: &Inventory, id: Uuid) -> bool {
     inv.folders.contains_key(&id) && mutable(inv, id) && !in_type(inv, id, 14) && !in_type(inv, id, 48)
 }
-/// A folder that receives a move or a paste: `destination` without the
-/// locked-folder rule, so a locked folder and its subfolders receive moves.
-/// A folder in the Current Outfit or Received Items (one the resident locked
-/// included) stays closed, as do the Trash (moved to by the delete path)
-/// and My Outfits (`outfit_folders::move_into`).
-pub fn move_destination(inv: &Inventory, id: Uuid) -> bool {
-    link_destination(inv, id) && !in_type(inv, id, 48)
-}
-/// Where a link can be pasted: `move_destination` plus My Outfits and its
+/// Where a link can be pasted: `destination` plus My Outfits and its
 /// folders, whose contents are links (LLFolderBridge::pasteLinkFromClipboard,
 /// indra/newview/llinventorybridge.cpp, originally LGPL 2.1).
 pub fn link_destination(inv: &Inventory, id: Uuid) -> bool {
@@ -306,7 +305,7 @@ pub fn move_selection(
         }
         return super::super::outfit_folders::move_into(inv, ids, to);
     }
-    if !move_destination(inv, to) && Some(to) != system(inv, 14) {
+    if !destination(inv, to) && Some(to) != system(inv, 14) {
         return Err(aurora_i18n::tr!("world-inventory-actions-this-folder-cannot-receive-the-selection").into());
     }
     let mut change = Mutation::default();
@@ -318,13 +317,16 @@ pub fn move_selection(
         holds_worn.extend(ancestors(inv, current));
     }
     for id in roots(inv, ids) {
-        // the Trash is a delete: a locked folder's contents may move but
-        // not go there (`removable` checks the ancestors, like Delete)
+        // the Trash is a delete, checked like Delete
         let allowed = if to_trash {
             removable(inv, id, protected)
         } else {
             relocatable(inv, id, protected)
         };
+        if inv.listing_holds.active.contains(&id) {
+            // TooltipOutboxDragActive (LLFolderBridge::dragCategoryIntoFolder)
+            return Err(aurora_i18n::tr!("marketplace-reason-drag-active").into());
+        }
         if !allowed || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }
@@ -409,13 +411,7 @@ pub fn paste(
     protected: &HashSet<Uuid>,
     worn: &HashSet<Uuid>,
 ) -> Result<Mutation, String> {
-    if ids.is_empty()
-        || !(if links {
-            link_destination(inv, to)
-        } else {
-            move_destination(inv, to)
-        })
-    {
+    if ids.is_empty() || !(if links { link_destination(inv, to) } else { destination(inv, to) }) {
         return Err(aurora_i18n::tr!("world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected").into());
     }
     if let Some(root) = crate::world::marketplace::root(inv).filter(|root| under(inv, to, *root)) {
@@ -817,7 +813,7 @@ pub fn paste_allowed(
         && (if links {
             link_destination(inv, to)
         } else {
-            move_destination(inv, to)
+            destination(inv, to)
         })
         && !(links && cut)
         && ids.iter().all(|id| {

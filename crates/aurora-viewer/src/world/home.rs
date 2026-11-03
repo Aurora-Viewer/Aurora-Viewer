@@ -26,11 +26,11 @@ pub struct SetHome {
 
 /// setStartPosition: from the avatar's centre down to its feet, inside the
 /// region by `INSET`, between the land and the highest object.
-pub fn start_position(centre: Vec3, half_height: f32, region_width: f32, land: impl Fn(Vec3) -> Option<f32>) -> Vec3 {
+pub fn start_position(centre: Vec3, half_height: f32, region: (f32, f32), land: impl Fn(Vec3) -> Option<f32>) -> Vec3 {
     let mut p = centre;
     p.z -= half_height;
-    p.x = p.x.clamp(INSET, (region_width - INSET).max(INSET));
-    p.y = p.y.clamp(INSET, (region_width - INSET).max(INSET));
+    p.x = p.x.clamp(INSET, (region.0 - INSET).max(INSET));
+    p.y = p.y.clamp(INSET, (region.1 - INSET).max(INSET));
     let floor = land(p).unwrap_or(0.0).min(MAX_HEIGHT);
     p.z = p.z.clamp(floor, MAX_HEIGHT);
     p
@@ -50,13 +50,15 @@ impl World {
     /// simulator checks the land and answers with an alert.
     pub fn set_home_here(&mut self) -> Option<NetCommand> {
         let handle = self.main_region?;
-        let width = self.main().map_or(256.0, |r| r.heightmap.size_x as f32);
+        let size = self
+            .main()
+            .map_or((256.0, 256.0), |r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32));
         let half_height = self
             .objects
             .index_of_uuid(&self.agent_id)
             .and_then(|idx| self.objects.get(idx))
             .map_or(0.84, |o| 0.5 * o.scale.z);
-        let position = start_position(self.agent.position, half_height, width, |p| self.ground_height(p));
+        let position = start_position(self.agent.position, half_height, size, |p| self.ground_height(p));
         self.set_home.pending = Some((handle, position));
         Some(NetCommand::SetHomeLocation {
             position,
@@ -135,17 +137,17 @@ mod tests {
     fn the_home_is_the_feet_inside_the_region_and_above_the_land() {
         let flat = |_: Vec3| Some(20.0);
         assert_eq!(
-            start_position(Vec3::new(128.0, 64.0, 31.0), 1.0, 256.0, flat),
+            start_position(Vec3::new(128.0, 64.0, 31.0), 1.0, (256.0, 256.0), flat),
             Vec3::new(128.0, 64.0, 30.0)
         );
         // drifted past the edge, sunk under the land
         assert_eq!(
-            start_position(Vec3::new(-3.0, 300.0, 10.0), 0.9, 256.0, flat),
+            start_position(Vec3::new(-3.0, 300.0, 10.0), 0.9, (256.0, 256.0), flat),
             Vec3::new(0.5, 255.5, 20.0)
         );
         // a variable region, and a sky box above the highest object
         assert_eq!(
-            start_position(Vec3::new(500.0, 1.0, 5000.0), 1.0, 512.0, |_| None),
+            start_position(Vec3::new(500.0, 1.0, 5000.0), 1.0, (512.0, 512.0), |_| None),
             Vec3::new(500.0, 1.0, 4096.0)
         );
     }

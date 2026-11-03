@@ -625,7 +625,7 @@ fn vehicle_events(t: f32, origin: Vec3, crash: bool) -> Vec<NetEvent> {
 /// (the demo has no asset server for Linden's): legs and arms swinging at
 /// the pace of each, so a start or a stop shows.
 pub fn animations() -> Vec<(Uuid, aurora_assets::Animation)> {
-    vec![
+    let mut clips = vec![
         (ANIM_STAND, super::idle_animation()),
         (ANIM_WALK, cycle(1.0, 0.45, 0.0)),
         (ANIM_RUN, cycle(0.65, 0.8, 0.15)),
@@ -634,7 +634,16 @@ pub fn animations() -> Vec<(Uuid, aurora_assets::Animation)> {
         (ANIM_HOVER, pose(0.0, 0.3)),
         (ANIM_HOVER_UP, pose(0.0, -0.4)),
         (ANIM_HOVER_DOWN, pose(0.0, 0.8)),
-    ]
+    ];
+    for id in [ANIM_WALK, ANIM_RUN] {
+        let clip = clips.iter().find(|(stock, _)| *stock == id).map(|(_, clip)| clip.clone());
+        if let Some(clip) = clip {
+            for male in [false, true] {
+                clips.push((crate::scene::default_motions::walk_run_asset(id, male), clip.clone()));
+            }
+        }
+    }
+    clips
 }
 
 fn joint(name: &str, keys: Vec<(f32, Quat)>) -> aurora_assets::anim::JointMotion {

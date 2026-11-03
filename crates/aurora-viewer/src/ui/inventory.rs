@@ -126,6 +126,9 @@ pub enum InvAction {
     CopyLandmarkSlurl(Uuid),
     ShowLandmarkOnMap(Uuid),
     Edit(Mutation),
+    /// The same change from a drag dropped on a folder: the listings ask
+    /// some questions for a drag only (LLFolderBridge::dragCategoryIntoFolder).
+    Drop(Mutation),
     Create {
         parent: Uuid,
         kind: NewItem,
@@ -704,9 +707,10 @@ impl InventoryUi {
         self.reveal_item(inv, id);
     }
 
-    /// "Show in inventory" from a notification: like `show_original`, on the
-    /// Received tab for what sits in the Marketplace inbox, which the main
-    /// tab leaves out (#752).
+    /// "Show in inventory" from a notification or an inventory link: like
+    /// `show_original`, on the Received tab for what sits in the
+    /// Marketplace inbox (and the inbox itself), which the main tab leaves
+    /// out (#752, #1604).
     pub fn show_notified(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original(inv, id);
         if crate::world::inventory::actions::system(inv, 50).is_some_and(|inbox| crate::world::inventory::actions::under(inv, id, inbox)) {

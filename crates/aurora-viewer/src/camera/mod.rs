@@ -172,6 +172,8 @@ pub struct FrameInput {
     /// Sitting and optional eye following consume it after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
     pub draw_distance: f32,
+    /// The main region's width (LLWorld::mWidth, which follows the region).
+    pub region_width: f32,
     pub aspect: f32,
 }
 
@@ -312,6 +314,7 @@ pub struct Camera {
     avatar: AvatarFrame,
     head: Vec3,
     draw_distance: f32,
+    region_width: f32,
     /// DisableCameraConstraints, as of the last frame.
     unconstrained: bool,
     /// Our avatar's id (the alt-camera focus object of unlockView).
@@ -387,6 +390,7 @@ impl Default for Camera {
             },
             head: start + Vec3::Z * 0.7,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             unconstrained: false,
             own: Uuid::nil(),
             dt: 0.0,
@@ -864,6 +868,8 @@ impl Camera {
             self.change_to_default(agent, s);
         }
         if reset_camera {
+            // LLAgentCamera::resetView resets the camera roll too.
+            self.roll = 0.0;
             if !steering && self.third_person() {
                 // leaving mouse steering: the pitch fades out
                 self.pitch *= 1.0 - interpolant(0.3, self.dt);
@@ -1104,7 +1110,7 @@ impl Camera {
         }
         MAX_CAMERA_DISTANCE_FROM_OBJECT
             .min(self.draw_distance - 1.0)
-            .min(REGION_WIDTH - CAMERA_FUDGE_FROM_OBJECT)
+            .min(self.region_width - CAMERA_FUDGE_FROM_OBJECT)
     }
 
     /// Distance limits of the alt camera for its focus (min, max).
@@ -1466,6 +1472,7 @@ impl Camera {
         let dt = f.dt.max(0.0);
         self.dt = dt;
         self.draw_distance = f.draw_distance;
+        self.region_width = f.region_width;
         self.unconstrained = s.disable_constraints;
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
@@ -2219,6 +2226,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: None,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             aspect: 1.0,
         }
     }
@@ -3165,9 +3173,11 @@ mod tests {
         cam.orbit_drag(-200.0, 60.0, 1.0, &mut agent);
         cam.zoom_fraction = 0.4;
         cam.fov_zoom = 0.3;
+        cam.roll = 0.4;
         let heading = agent.yaw;
         cam.reset_to_defaults(&mut agent, &s);
         assert_eq!((cam.orbit_yaw, cam.pitch, cam.zoom_fraction, cam.fov_zoom), (0.0, 0.0, 1.0, 0.0));
+        assert_eq!(cam.roll, 0.0, "reset levels the camera");
         assert_eq!(agent.yaw, heading, "the avatar keeps its heading");
         w.agent = agent;
         settle(&mut cam, &mut w, &s);
@@ -3629,7 +3639,7 @@ mod tests {
                 assert!(pan.cross(Vec3::Y).length() < 1e-6);
                 camera.pan_edit(pan, &mut w.agent, &s);
                 tool.cam = projection(&camera);
-                tool.update(&mut w, &settings, cursor, false, Mods::default());
+                tool.update(&mut w, &settings, None, cursor, false, Mods::default());
                 camera.update(&mut w, &s, &f);
                 tool.cam = projection(&camera);
                 let position = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
