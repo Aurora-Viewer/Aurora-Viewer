@@ -19781,6 +19781,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        crate::crash::pumped();
         self.sync_minimized_mute();
         self.record_window_geometry();
         self.attention_window();
