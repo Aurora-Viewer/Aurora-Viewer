@@ -1268,6 +1268,9 @@ impl World {
         }
         self.inventory_background.start(&self.inventory);
         self.inventory.repair_lost_hierarchy();
+        // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
+        self.inventory_background
+            .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
         self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
