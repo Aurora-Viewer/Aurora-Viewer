@@ -215,7 +215,7 @@ pub(super) fn row(
 
 /// The Snap item's three lines in Objects mode, Place on surface and its
 /// rotation under the choice (`snap_mode`).
-const SNAP_ROWS_HEIGHT: f32 = 76.0;
+const SNAP_ROWS_HEIGHT: f32 = 84.0;
 
 /// "Snap": off, to the grid or to objects, one at a time
 /// (`BuildSettings::snap_mode`); under it in Objects mode, "Place on
