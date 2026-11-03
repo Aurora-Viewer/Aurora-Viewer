@@ -59,6 +59,8 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         .and_then(hex32)
     {
         (format!("Native exception 0x{code:08X}"), format!("native exception 0x{code:08X}"))
+    } else if let Some((number, name)) = native_text.lines().next().and_then(native_signal) {
+        (format!("Native signal {name} ({number})"), format!("native signal {name}"))
     } else if dir.join("failure.txt").exists() {
         // Its text is an error chain with paths: the kind alone is public.
         (
@@ -276,6 +278,16 @@ fn out_of_memory(text: &str) -> Option<(u64, Stack)> {
     let (first, rest) = last.split_once('\n')?;
     let size = first.strip_suffix(" bytes")?.parse().ok()?;
     Some((size, Stack::parse(rest)))
+}
+
+/// `Native signal 11 (SIGSEGV)`, the first line of a Linux `native.txt`
+/// (crash/linux.rs): the number and a name of the fixed list only.
+fn native_signal(line: &str) -> Option<(u8, &'static str)> {
+    let (number, name) = line.strip_prefix("Native signal ")?.split_once(' ')?;
+    let name = ["SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT"]
+        .into_iter()
+        .find(|known| name.strip_prefix('(').and_then(|n| n.strip_suffix(')')) == Some(*known))?;
+    Some((number.parse().ok()?, name))
 }
 
 /// The usual meaning of an exit code, for the reader of the report.
@@ -673,6 +685,41 @@ mod tests {
         for private in ["0x00007", "PRIVATE_LOG_PATH", "SECRET", "Alice", "Demo session"] {
             assert!(!body.contains(private), "leaked {private}:\n{body}");
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A Linux `native.txt` (crash/linux.rs): the handler's frames and the
+    /// signal trampoline above the fault, build IDs as module identities.
+    const SIGNAL: &str = "Native signal 11 (SIGSEGV)\nSignal code: 1\nFault address: 0x7f0012345000\nNative stack (addresses):\n00: 0x5612aa001000\n01: 0x7f00aa0451d0\n02: 0x5612aa1b2c3d\nFault: aurora-viewer+0x1b2c3d\nNative stack (modules):\n00: aurora-viewer+0x1000\n01: libc.so.6+0x451d0\n02: aurora-viewer+0x1b2c3d\n03: libvulkan_radeon.so+0x9abc\nModules:\naurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314\nlibc.so.6 id=AABBCCDD11223344556677889900AABB0 code=ddccbbaa443322116677889900aabbccddeeff00\nlibvulkan_radeon.so\n";
+
+    #[test]
+    fn a_linux_signal_publishes_its_name_and_module_offsets_from_the_fault() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("native.txt"), SIGNAL).unwrap();
+        let summary = build(&record, &dir);
+        assert_eq!(
+            summary.title,
+            "Crash: native signal SIGSEGV at aurora-viewer+0x1b2c3d (0.7.1+3.gabcdef)"
+        );
+        let body = &summary.body;
+        for expected in [
+            "| Crash | Native signal SIGSEGV (11) |",
+            "00 aurora-viewer+0x1b2c3d\n01 libvulkan_radeon.so+0x9abc\n",
+            "aurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314",
+            "libvulkan_radeon.so\n",
+        ] {
+            assert!(body.contains(expected), "missing {expected:?} in\n{body}");
+        }
+        // The handler's frames above the fault, and every raw address, stay out.
+        for private in ["libc.so.6+0x451d0", "0x7f00", "0x5612"] {
+            assert!(!body.contains(private), "leaked {private}:\n{body}");
+        }
+        // Only the fixed signal names are published.
+        assert_eq!(native_signal("Native signal 11 (SIGSEGV)"), Some((11, "SIGSEGV")));
+        assert_eq!(native_signal("Native signal 6 (SIGABRT)"), Some((6, "SIGABRT")));
+        assert_eq!(native_signal("Native signal 11 (Alice)"), None);
+        assert_eq!(native_signal("Native signal x (SIGSEGV)"), None);
+        assert_eq!(native_signal("Native signal 11 (?)"), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
