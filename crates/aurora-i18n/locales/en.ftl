@@ -12989,3 +12989,8 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
+
+# Quick preferences: the name tags row (AvatarNameTagMode)
+quickprefs-name-tags-off = Off
+quickprefs-name-tags-on = On
+quickprefs-name-tags-brief = Briefly

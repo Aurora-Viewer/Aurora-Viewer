@@ -104,6 +104,7 @@ mod photo_isolate;
 mod physics_editor;
 mod plate_click;
 mod pointing;
+mod quick_prefs;
 mod region_restart;
 mod region_window;
 mod relogin;
@@ -635,6 +636,9 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Quick preferences (the toolbar's `quickprefs`).
+    quick_prefs_ui: ui::quick_prefs::QuickPrefsUi,
+    quick_prefs_demo_done: bool,
     /// Report Abuse (LLFloaterReporter).
     report_abuse: ui::report_abuse::ReportAbuseUi,
     /// The depth of field's focus distance and its transition.
@@ -1438,6 +1442,8 @@ impl App {
             create_landmark_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            quick_prefs_ui: Default::default(),
+            quick_prefs_demo_done: false,
             follow_ui: Default::default(),
             portal_ui: Default::default(),
             particle_editor: Default::default(),
@@ -16467,7 +16473,7 @@ impl App {
                 );
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
-                if self.panels.environment {
+                if self.panels.environment || self.panels.quick_prefs {
                     if !self.env_scan {
                         self.env_scan = true;
                         self.env_ui.scan_left = usize::MAX;
@@ -16486,8 +16492,11 @@ impl App {
                     &mut lighting,
                 );
                 self.panels.environment = open;
+                // Quick preferences' environment block shares the window's
+                // lists and "Personal lighting"
+                let quick_actions = self.quick_prefs_window(&ctx, &p, &mut lighting);
                 let reset = self.personal_lighting(&ctx, &p, lighting);
-                self.env_actions(env_actions.into_iter().chain(reset));
+                self.env_actions(env_actions.into_iter().chain(quick_actions).chain(reset));
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);

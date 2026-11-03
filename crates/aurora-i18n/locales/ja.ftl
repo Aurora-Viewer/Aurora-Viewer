@@ -12966,3 +12966,8 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+# Quick preferences: the name tags row (AvatarNameTagMode)
+quickprefs-name-tags-off = 非表示
+quickprefs-name-tags-on = 表示
+quickprefs-name-tags-brief = 一時的に表示
