@@ -7862,8 +7862,6 @@ impl Backend {
                         samples,
                         crate::oit::nodes_override().unwrap_or(s.oit_nodes_per_pixel),
                         s.oit_max_layers,
-                        // (the largest range a gated draw asks for)
-                        bn.max(rg.creation_preview.1),
                         depth_ss,
                         depth_msaa,
                         indirect,
@@ -7873,6 +7871,14 @@ impl Backend {
                     )
                 })
         };
+        // Off, the pool is freed: `prepare` only runs while it is on. (Not
+        // when merely no face is blended this frame: the pool would be made
+        // again as soon as one is.)
+        if !crate::oit::env_override().unwrap_or(self.settings.oit)
+            && let Some(o) = &mut self.oit
+        {
+            o.release();
+        }
         let split = n_depth > 0 && !oit_on;
         let blend_pipe = self
             .pipelines
@@ -7880,15 +7886,15 @@ impl Backend {
             .as_ref()
             .filter(|_| f.blend_late_discard)
             .unwrap_or(&self.pipelines.blend);
-        // A draw of the in-order path, or gated by the OIT flags (`Some((flags,
-        // offset))`, oit::REPLAY_FLAG or COMPOSITED_FLAG): then all of it or
-        // nothing, as the classify decided on the GPU, through the copy of
-        // its arguments with or without their instances (oit_gate.rs).
+        // A draw of the in-order path, or gated by the OIT (`Some(copy)`):
+        // then all of it or nothing, as the classify decided on the GPU,
+        // through the copy of its arguments with or without their instances
+        // (oit_gate.rs).
         let draw_g =
-            |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, r: (u64, u32), gate: Option<(&wgpu::Buffer, u64)>| match gate {
+            |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, r: (u64, u32), gate: Option<crate::oit_gate::Copy>| match gate {
                 None => draw(pass, pipe, r),
-                Some((_, at)) if r.1 > 0 => {
-                    if let Some((args, offset)) = self.oit.as_ref().and_then(|o| o.gated(at, r.0, r.1)) {
+                Some(copy) if r.1 > 0 => {
+                    if let Some((args, offset)) = self.oit.as_ref().and_then(|o| o.gated(copy, r.0, r.1)) {
                         calls.set(calls.get() + 1);
                         pass.set_pipeline(pipe);
                         pass.multi_draw_indexed_indirect(args, offset, r.1);
@@ -7899,7 +7905,7 @@ impl Backend {
         // `draw_sided` (the faces `first..` of the blend list, by sidedness
         // runs), gated as `draw_g`
         let draw_sided_g =
-            |pass: &mut wgpu::RenderPass, pipes: &SidedPipelines, r: (u64, u32), first: u32, gate: Option<(&wgpu::Buffer, u64)>| {
+            |pass: &mut wgpu::RenderPass, pipes: &SidedPipelines, r: (u64, u32), first: u32, gate: Option<crate::oit_gate::Copy>| {
                 for (run, double_sided) in blend_runs(&lists.blend_double_sided, first..first + r.1) {
                     draw_g(
                         pass,
@@ -7911,7 +7917,7 @@ impl Backend {
             };
         // blended faces `from..to`, back to front; a glowing one adds its glow
         // right after itself, so later layers in front dim it (LLDrawPoolAlpha)
-        let blended_g = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, from: u32, to: u32, gate: Option<(&wgpu::Buffer, u64)>| {
+        let blended_g = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, from: u32, to: u32, gate: Option<crate::oit_gate::Copy>| {
             let mut start = from;
             for i in from..to {
                 if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
@@ -8017,12 +8023,11 @@ impl Backend {
         }
         // The rigged blended faces drawn in order, by `RiggedBlendDepth` mode
         // (each fragment written ahead of the faces drawn after it). `replay`:
-        // the OIT pool's flags, every draw then gated at REPLAY_FLAG (nothing
-        // unless the pool overflowed) and the depth copy drawn on the GPU's
+        // the OIT, every draw then gated by its `Replay` copy (nothing unless
+        // the pool overflowed) and the depth copy drawn on the GPU's
         // decision too: an overflowed frame is the frame without OIT.
-        let rigged_in_order = |encoder: &mut wgpu::CommandEncoder,
-                               replay: Option<(&crate::oit::Oit, &crate::oit::Resolve, &wgpu::Buffer)>| {
-            let gate = replay.map(|(_, _, flags)| (flags, crate::oit::REPLAY_FLAG));
+        let rigged_in_order = |encoder: &mut wgpu::CommandEncoder, replay: Option<(&crate::oit::Oit, &crate::oit::Resolve)>| {
+            let gate = replay.map(|_| crate::oit_gate::Copy::Replay);
             // (the frame group without the scene copy and the depth: the
             // depth is written here, and fs_blend reads neither)
             match lists.blend_depth_mode {
@@ -8048,7 +8053,7 @@ impl Backend {
                             None => {
                                 encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size())
                             }
-                            Some((oit, resolve, _)) => oit.copy_depth_if_overflowed(encoder, resolve, layers),
+                            Some((oit, resolve)) => oit.copy_depth_if_overflowed(encoder, resolve, layers),
                         }
                         let mut pass = begin_scene_b_on(encoder, t, "scene b rigged blend", false, true, layers);
                         bind_mesh(&mut pass, &self.groups.a);
@@ -8094,7 +8099,7 @@ impl Backend {
                             None => {
                                 encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size())
                             }
-                            Some((oit, resolve, _)) => oit.copy_depth_if_overflowed(encoder, resolve, layers),
+                            Some((oit, resolve)) => oit.copy_depth_if_overflowed(encoder, resolve, layers),
                         }
                         let mut pass = begin_scene_b_on(encoder, t, "scene b rigged blend", false, true, layers);
                         bind_mesh(&mut pass, &self.groups.a);
@@ -8140,12 +8145,11 @@ impl Backend {
                 }
             }
         };
-        if let (true, Some(oit), Some(capture), Some(resolve), Some(flags), Some(oit_group), Some(glow_group)) = (
+        if let (true, Some(oit), Some(capture), Some(resolve), Some(oit_group), Some(glow_group)) = (
             oit_on,
             &self.oit,
             &self.pipelines.blend_oit,
             &self.pipelines.oit_resolve,
-            self.oit.as_ref().and_then(|o| o.flags()),
             self.oit.as_ref().and_then(|o| o.capture_group()),
             self.oit.as_ref().and_then(|o| o.glow_group()),
         ) {
@@ -8159,14 +8163,14 @@ impl Backend {
                 draw_sided(&mut pass, capture, (b0, bn), 0);
             }
             // sorted once per pixel, the tiles to composite listed, the
-            // replay's and the glow's draw counts set
+            // replay's and the glow's gated draws set
             oit.classify(&mut encoder, resolve);
-            // Drawn: the composite, or (counted on the GPU, all or nothing)
+            // Drawn: the composite, or (chosen on the GPU, all or nothing)
             // the frame in the drawing order exactly as without OIT when the
             // pool overflowed. The creation preview (opaque, no depth) under
             // the composite, as under the blended faces drawn in order.
-            let composited = Some((flags, crate::oit::COMPOSITED_FLAG));
-            let replayed = Some((flags, crate::oit::REPLAY_FLAG));
+            let composited = Some(crate::oit_gate::Copy::Composited);
+            let replayed = Some(crate::oit_gate::Copy::Replay);
             let rigged = n_depth > 0;
             if rigged {
                 {
@@ -8183,7 +8187,7 @@ impl Backend {
                     bind_mesh(&mut pass, &self.groups.a);
                     draw_sided_g(&mut pass, &self.pipelines.blend_depth_fringe_depth, (b0, n_depth), 0, composited);
                 }
-                rigged_in_order(&mut encoder, Some((oit, resolve, flags)));
+                rigged_in_order(&mut encoder, Some((oit, resolve)));
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);

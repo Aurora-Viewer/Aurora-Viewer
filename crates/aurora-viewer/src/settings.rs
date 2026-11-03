@@ -1265,8 +1265,8 @@ pub struct Settings {
     /// Screen-space reflections.
     pub ssr: bool,
     /// Order-independent transparency (aurora-render oit.rs): blended faces
-    /// sorted per pixel rather than per object. An Aurora addition, on by
-    /// default; GPUs that cannot keep the per-object order.
+    /// sorted per pixel rather than per object. An Aurora addition, off by
+    /// default (an opt-in); GPUs that cannot keep the per-object order.
     pub oit: bool,
     /// Its pool: blended fragments per screen pixel on average.
     pub oit_nodes_per_pixel: u32,

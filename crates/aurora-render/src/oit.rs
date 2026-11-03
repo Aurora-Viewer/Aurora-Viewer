@@ -18,11 +18,17 @@
 //! (LLDrawPoolAlpha). What does not fit changes nothing: when the pool is
 //! full, the classify skips the composite and the blended faces are drawn
 //! again exactly as without OIT, rigged ones by their `RiggedBlendDepth`
-//! mode, its depth copy included (all decided on the GPU from [`Oit::flags`]:
-//! the gated draws read copies of their arguments, oit_gate.rs, no wait on
-//! the CPU); past `max_layers` layers
-//! in one pixel, the farthest are folded into a weighted average. Off, or
-//! when the pool cannot be allocated, the renderer draws exactly as before.
+//! mode, its depth copy included (all decided on the GPU: the gated draws
+//! read copies of their arguments, oit_gate.rs, no wait on the CPU); past
+//! `max_layers` layers in one pixel, the nearest are kept and sorted, the
+//! farthest folded into a weighted average behind them. Off, or when the
+//! pool cannot be allocated, the renderer draws exactly as before; turning
+//! it off frees the pool ([`Oit::release`]).
+//!
+//! Limit: where the device cannot force the capture's depth test before its
+//! shader (`SHADER_EARLY_DEPTH_TEST`, Vulkan and GLES only in wgpu: not Metal
+//! nor DX12), the fragments hidden by the opaque scene of an MSAA frame also
+//! reach the pool, which then fills faster.
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
@@ -34,8 +40,15 @@ pub const MAX_NODES_PER_PIXEL: u32 = 32;
 /// Layers sorted exactly in one pixel (oit.wgsl sorts up to 24: `resolve_24`).
 pub const DEFAULT_SORTED_LAYERS: u32 = 24;
 pub const MAX_SORTED_LAYERS: u32 = 24;
-/// The node pool never takes more video memory than this.
+/// The whole OIT never takes more video memory than this: the slot array,
+/// the node pool, the heads, the composite texture and the tile list.
 pub const MAX_POOL_BYTES: u64 = 512 << 20;
+/// Bytes per pixel of the heads (a fragment count and a list head, 2 words).
+const HEADS_BYTES: u64 = 8;
+/// Bytes per pixel of the composite texture (`rgba16float`).
+const COMPOSITE_BYTES: u64 = 8;
+/// Bytes per screen tile of the tile list (a plain and an edge entry).
+const TILE_LIST_BYTES: u64 = 8;
 /// A slot (a texel of the array) has the size of a node.
 const SLOT_BYTES: u64 = 16;
 /// Slots per pixel at most: past that the array costs more than it saves.
@@ -61,21 +74,17 @@ struct Params {
     samples: u32,
     tiles_x: u32,
     tiles: u32,
-    /// blended faces this frame (oit.wgsl `draws`)
-    draws: u32,
     /// fragments per pixel kept in the slot array (the rest go to the list)
     slots: u32,
-    _pad: [u32; 3],
+    _pad: [u32; 4],
 }
 
-/// Byte offsets in [`Oit::flags`]: the draw count of the in-order replay
-/// (all of them when the pool overflowed, else none) and of what follows a
-/// composite (the reverse).
-pub(crate) const REPLAY_FLAG: u64 = 0;
-pub(crate) const COMPOSITED_FLAG: u64 = 4;
-/// Byte offset in [`Oit::flags`] of the DrawIndirectArgs of the replay's
-/// depth copy (one triangle when the pool overflowed, none otherwise).
-const DEPTH_COPY_ARGS: u64 = 8;
+/// The pool's `flags` buffer is the DrawIndirectArgs of the replay's depth
+/// copy (one triangle when the pool overflowed, none otherwise, set by the
+/// classify); its instance count also tells oit_gate.wgsl which gated draws
+/// keep their instances.
+const DEPTH_COPY_ARGS: u64 = 0;
+const FLAGS_BYTES: u64 = 16;
 
 /// Whether this device can capture: storage written from fragment shaders,
 /// with two more storage buffers than the blended faces already read. The
@@ -143,28 +152,36 @@ pub struct Plan {
     pub node_cap: u32,
 }
 
+/// Video memory that does not depend on the layer counts: the heads, the
+/// composite texture and the tile list of a `width` x `height` screen.
+pub fn fixed_bytes(width: u32, height: u32) -> u64 {
+    let pixels = u64::from(width.max(1)) * u64::from(height.max(1));
+    let tiles = u64::from(width.max(1).div_ceil(TILE)) * u64::from(height.max(1).div_ceil(TILE));
+    pixels * (HEADS_BYTES + COMPOSITE_BYTES) + tiles * TILE_LIST_BYTES + FLAGS_BYTES
+}
+
 /// Splits the budget: half of the per-pixel count goes to the slots (1 to
-/// [`MAX_SLOTS`]), the rest stays in the pool on average. The slots are
-/// reduced first when they alone would take more than half of
-/// `MAX_POOL_BYTES` (4K screens) and by the device's layer limit; the pool
-/// gets what is left of the budget within `max_binding`. `None` when no slot
-/// fits or the screen exceeds `max_dim`.
+/// [`MAX_SLOTS`]), the rest stays in the pool on average. The whole OIT stays
+/// within `MAX_POOL_BYTES`: what the heads and the composite take
+/// ([`fixed_bytes`]) comes off first, the slots are reduced when they alone
+/// would take more than half of what is left (4K screens) and by the
+/// device's layer limit; the pool gets the rest of the budget within
+/// `max_binding`. `None` when no slot fits or the screen exceeds `max_dim`.
 pub fn plan(width: u32, height: u32, nodes_per_pixel: u32, max_binding: u64, max_layers: u32, max_dim: u32) -> Option<Plan> {
     if width > max_dim || height > max_dim {
         return None;
     }
     let pixels = u64::from(width.max(1)) * u64::from(height.max(1));
     let per_pixel = nodes_per_pixel.clamp(MIN_NODES_PER_PIXEL, MAX_NODES_PER_PIXEL);
-    let by_budget = u32::try_from((MAX_POOL_BYTES / 2) / (pixels * SLOT_BYTES)).unwrap_or(u32::MAX);
+    let budget = MAX_POOL_BYTES.saturating_sub(fixed_bytes(width, height));
+    let by_budget = u32::try_from((budget / 2) / (pixels * SLOT_BYTES)).unwrap_or(u32::MAX);
     let slots = (per_pixel / 2).clamp(1, MAX_SLOTS).min(by_budget).min(max_layers);
     if slots == 0 {
         return None;
     }
     let slot_bytes = pixels * SLOT_BYTES * u64::from(slots);
     let wanted = pixels * u64::from(per_pixel - slots);
-    let bytes = (wanted * NODE_BYTES)
-        .min(MAX_POOL_BYTES.saturating_sub(slot_bytes))
-        .min(max_binding);
+    let bytes = (wanted * NODE_BYTES).min(budget.saturating_sub(slot_bytes)).min(max_binding);
     let node_cap = u32::try_from(bytes / NODE_BYTES).unwrap_or(u32::MAX);
     Some(Plan { slots, node_cap })
 }
@@ -557,7 +574,6 @@ impl Oit {
         samples: u32,
         nodes_per_pixel: u32,
         max_layers: u32,
-        draws: u32,
         depth_ss: &wgpu::TextureView,
         depth_msaa: Option<&wgpu::TextureView>,
         indirect: &wgpu::Buffer,
@@ -610,9 +626,8 @@ impl Oit {
             samples,
             tiles_x: pool.tiles_x,
             tiles: pool.tiles,
-            draws: draws.max(1),
             slots: pool.slots,
-            _pad: [0; 3],
+            _pad: [0; 4],
         };
         if self.last_params != Some(params) {
             queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
@@ -664,7 +679,7 @@ impl Oit {
         let nodes = buffer("oit nodes", u64::from(node_cap) * NODE_BYTES, U::STORAGE)?;
         let args = buffer("oit tile draws", 32, U::STORAGE | U::INDIRECT)?;
         let tile_list = buffer("oit tiles", u64::from(tiles) * 2 * 4, U::STORAGE)?;
-        let flags = buffer("oit draw flags", 24, U::STORAGE | U::INDIRECT)?;
+        let flags = buffer("oit draw flags", FLAGS_BYTES, U::STORAGE | U::INDIRECT)?;
         let (_, color) = crate::gpu_alloc::try_texture(
             device,
             &wgpu::TextureDescriptor {
@@ -814,10 +829,14 @@ impl Oit {
         }
     }
 
-    /// The draw counts that follow the classify (REPLAY_FLAG,
-    /// COMPOSITED_FLAG), once [`Oit::prepare`] made the pool.
-    pub fn flags(&self) -> Option<&wgpu::Buffer> {
-        self.pool.as_ref().map(|p| &p.flags)
+    /// Frees the pool, its heads and its composite texture (up to 512 MB):
+    /// the renderer calls it while OIT is off (as `Bloom::release`), since
+    /// [`Oit::prepare`] runs, and so drops a stale pool, only while it is on.
+    pub fn release(&mut self) {
+        if self.pool.take().is_some() {
+            log::info!("oit: off, pool freed");
+        }
+        self.last_params = None;
     }
 
     /// Sorts the lists and lists the tiles to composite (after the capture);
@@ -840,14 +859,9 @@ impl Oit {
 
     /// Where a gated draw reads its arguments: the draws `offset..` of the
     /// indirect buffer (`count` of them) in the copy drawn when the pool
-    /// overflowed (REPLAY_FLAG) or when it did not (COMPOSITED_FLAG).
-    /// `None`: not a gated range this frame, nothing to draw.
-    pub fn gated(&self, flag: u64, offset: u64, count: u32) -> Option<(&wgpu::Buffer, u64)> {
-        let copy = if flag == REPLAY_FLAG {
-            crate::oit_gate::Copy::Replay
-        } else {
-            crate::oit_gate::Copy::Composited
-        };
+    /// overflowed (`Replay`) or when it did not (`Composited`). `None`: not a
+    /// gated range this frame, nothing to draw.
+    pub fn gated(&self, copy: crate::oit_gate::Copy, offset: u64, count: u32) -> Option<(&wgpu::Buffer, u64)> {
         self.gate.args(copy, offset, count)
     }
 
@@ -904,8 +918,65 @@ mod tests {
 
     const BIG: u64 = u64::MAX;
 
+    /// Everything the OIT holds for a plan: slots, nodes, heads, composite,
+    /// tile list (what `make_pool` allocates).
     fn total(p: Plan, w: u32, h: u32) -> u64 {
-        u64::from(w) * u64::from(h) * u64::from(p.slots) * SLOT_BYTES + u64::from(p.node_cap) * NODE_BYTES
+        u64::from(w) * u64::from(h) * u64::from(p.slots) * SLOT_BYTES + u64::from(p.node_cap) * NODE_BYTES + fixed_bytes(w, h)
+    }
+
+    /// The selection rule of oit.wgsl `resolve_N`, on the layers' depths in
+    /// draw order (reverse-Z: the nearest has the largest depth): the indices
+    /// of the `keep` nearest, and of the others, which the shader folds into
+    /// the tail. A layer as far as the farthest kept goes to the tail.
+    fn nearest(depths: &[f32], keep: usize) -> (Vec<usize>, Vec<usize>) {
+        let (mut kept, mut tail): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
+        for (i, &z) in depths.iter().enumerate() {
+            if kept.len() < keep {
+                kept.push(i);
+                continue;
+            }
+            let far = (0..kept.len()).fold(0, |far, k| if depths[kept[k]] < depths[kept[far]] { k } else { far });
+            if z > depths[kept[far]] {
+                tail.push(kept[far]);
+                kept[far] = i;
+            } else {
+                tail.push(i);
+            }
+        }
+        (kept, tail)
+    }
+
+    #[test]
+    fn the_nearest_layers_are_kept_whatever_the_draw_order() {
+        // 30 layers drawn nearest first, then farthest first, then shuffled
+        let ascending: Vec<f32> = (1..=30).map(|i| i as f32 / 31.0).collect();
+        let descending: Vec<f32> = ascending.iter().rev().copied().collect();
+        let shuffled: Vec<f32> = (0..30).map(|i| ascending[(i * 7) % 30]).collect();
+        for depths in [ascending, descending, shuffled] {
+            let (kept, tail) = nearest(&depths, 24);
+            let mut kept_z: Vec<f32> = kept.iter().map(|&i| depths[i]).collect();
+            kept_z.sort_by(f32::total_cmp);
+            assert_eq!(kept_z.len(), 24);
+            let farthest_kept = kept_z[0];
+            assert!(
+                tail.iter().all(|&i| depths[i] < farthest_kept),
+                "nothing in the tail is nearer than a kept layer"
+            );
+            assert_eq!(tail.len(), 6);
+        }
+    }
+
+    #[test]
+    fn one_sorted_layer_is_the_nearest_not_the_first_or_the_last() {
+        let depths = [0.5, 0.9, 0.2, 0.7];
+        let (kept, tail) = nearest(&depths, 1);
+        assert_eq!(kept, vec![1]);
+        assert_eq!(tail.len(), 3);
+        // equal depths: the first stays
+        assert_eq!(nearest(&[0.4, 0.4], 1).0, vec![0]);
+        // fewer layers than the limit: all kept, no tail
+        let (kept, tail) = nearest(&[0.1, 0.2], 24);
+        assert_eq!((kept.len(), tail.len()), (2, 0));
     }
 
     #[test]
@@ -914,16 +985,37 @@ mod tests {
         let p = plan(1920, 1080, 8, BIG, 2048, 16384).unwrap();
         assert_eq!(p.slots, 4);
         assert_eq!(p.node_cap, 1920 * 1080 * 4);
-        // the default at 1600x900 stays near the former 175 MB
+        // the default at 1600x900: 198 MB in all, heads and composite included
         let p = plan(1600, 900, 8, BIG, 2048, 16384).unwrap();
-        assert!(total(p, 1600, 900) <= (190 << 20));
+        assert_eq!((p.slots, p.node_cap), (4, 1600 * 900 * 4));
+        let mb = total(p, 1600, 900) >> 20;
+        assert!((197..=199).contains(&mb), "{mb} MB");
+    }
+
+    #[test]
+    fn the_heads_and_the_composite_count_in_the_budget() {
+        // 16 bytes per pixel before the first slot, plus the tile list
+        assert_eq!(fixed_bytes(1600, 900), 1600 * 900 * 16 + 200 * 113 * 8 + FLAGS_BYTES);
+        // however large the budget wanted, the total never passes the cap
+        for (w, h) in [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160), (7680, 4320)] {
+            for per_pixel in [2, 8, 16, 32] {
+                if let Some(p) = plan(w, h, per_pixel, BIG, 2048, 16384) {
+                    assert!(
+                        total(p, w, h) <= MAX_POOL_BYTES,
+                        "{w}x{h} at {per_pixel}: {} MB",
+                        total(p, w, h) >> 20
+                    );
+                }
+            }
+        }
     }
 
     #[test]
     fn a_4k_screen_reduces_the_slots_and_stays_within_the_budget() {
         let p = plan(3840, 2160, 8, BIG, 2048, 16384).unwrap();
-        assert_eq!(p.slots, 2, "4 slots would be 531 MB");
+        assert_eq!(p.slots, 1, "2 slots and the heads would pass half of what is left");
         assert!(total(p, 3840, 2160) <= MAX_POOL_BYTES);
+        assert!(total(p, 3840, 2160) > (500 << 20), "the rest of the budget goes to the pool");
         let p = plan(3840, 2160, 32, BIG, 2048, 16384).unwrap();
         assert!(p.slots >= 1 && total(p, 3840, 2160) <= MAX_POOL_BYTES);
     }

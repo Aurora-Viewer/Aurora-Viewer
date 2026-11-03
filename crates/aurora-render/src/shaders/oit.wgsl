@@ -18,13 +18,14 @@
 //
 // When the pool overflowed (heads[0], the nodes asked for, past node_cap),
 // no tile is listed and `flags` turns the in-order replay of the blended
-// faces on and the composite's glow off (renderer.rs, draws counted by them):
+// faces on and the composite's glow off (renderer.rs: the gated draws read
+// copies of their arguments that oit_gate.wgsl zeroes or keeps from them):
 // the frame is then drawn in the drawing order, as without the lists.
 //
-// Sorting: the first `max_layers` layers of a list (the last drawn: the faces
-// come back to front, so mostly the nearest) back to front; the others
-// folded first as a weighted average whose coverage is exact (the product
-// of their transparencies), so a deep stack fades instead of popping. The
+// Sorting: the `max_layers` nearest layers of a pixel, whatever their draw
+// order, back to front; the others folded first, behind them, as a weighted
+// average whose coverage is exact (the product of their transparencies), so
+// a deep stack fades instead of popping. The
 // arrays of a sort must stay in registers: a pixel first tries the 8-layer
 // sort (resolve_8) and only a deeper one sorts again with 24 (resolve_24),
 // both generated from the template between the resolve_N markers below
@@ -44,15 +45,12 @@ struct OitParams {
     tiles_x: u32,
     // tiles on screen: the edge tiles are listed from here
     tiles: u32,
-    // blended faces this frame: the draw count meaning "all of them"
-    // (oit.rs `prepare`; not u32::MAX, which a driver multiplies by the
-    // draw stride and loses the device)
-    draws: u32,
     // layers per pixel in the slot array
     slots: u32,
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    _pad3: u32,
 };
 // heads[0] counts the pool's nodes; pixel p: heads[1 + 2p] its layers,
 // heads[2 + 2p] the first node of its list plus one (0: none)
@@ -66,10 +64,10 @@ struct OitParams {
 // two DrawIndirectArgs: the plain tiles, then the edge tiles
 @group(0) @binding(5) var<storage, read_write> args: array<atomic<u32>, 8>;
 @group(0) @binding(6) var<storage, read_write> tiles_w: array<u32>;
-// the draw counts of the replay and of the composite's glow (oit.rs
-// REPLAY_FLAG, COMPOSITED_FLAG): all or none; then the DrawIndirectArgs of
-// the replay's depth copy (DEPTH_COPY_ARGS: one triangle, when overflowed)
-@group(0) @binding(9) var<storage, read_write> flags: array<u32, 6>;
+// The DrawIndirectArgs of the replay's depth copy (one triangle, when the
+// pool overflowed): flags[1], its instance count, is also what
+// oit_gate.wgsl reads to keep or zero the gated draws' instances
+@group(0) @binding(9) var<storage, read_write> flags: array<u32, 4>;
 // the draws only
 @group(0) @binding(7) var resolved: texture_2d<f32>;
 @group(0) @binding(8) var<storage, read> tiles_r: array<u32>;
@@ -107,7 +105,7 @@ fn node_color(n: vec4<u32>) -> vec4<f32> {
 
 // <resolve_N>
 // The layers of pixel `px`: `count` stored, the slots' then the list from
-// `first`. `full`, the samples a layer must cover; a layer at or behind
+// `first`; the `keep` nearest are sorted, the others go to the tail. `full`, the samples a layer must cover; a layer at or behind
 // `dmin` is hidden everywhere, one in front of `dmax` nowhere (reverse-Z).
 // Per sample (fs_edge): `full` that sample's bit and dmin = dmax its depth.
 // Without MSAA: 1 and -1, every layer kept.
@@ -117,6 +115,9 @@ fn resolve___N__(px: vec2<u32>, count: u32, first: u32, full: u32, dmin: f32, dm
     var ids: array<u32, __N__>;
     var dep: array<f32, __N__>;
     var cnt = 0u;
+    // the farthest kept layer: its depth and index (valid once cnt > 0)
+    var far_z = 2.0;
+    var far_i = 0u;
     var tail_sum = vec3<f32>(0.0);
     var tail_a = 0.0;
     var tail_trans = 1.0;
@@ -156,10 +157,31 @@ fn resolve___N__(px: vec2<u32>, count: u32, first: u32, full: u32, dmin: f32, dm
             }
             ids[cnt] = id;
             dep[cnt] = z;
+            if (z < far_z) {
+                far_z = z;
+                far_i = cnt;
+            }
             cnt += 1u;
             continue;
         }
-        let c = node_color(n);
+        // full: keep the nearest layers whatever the draw order (reverse-Z:
+        // the nearest has the largest depth). A nearer layer takes the place
+        // of the farthest kept, which is folded into the tail instead.
+        var c = node_color(n);
+        if (z > far_z) {
+            let evicted = layer(px, ids[far_i]);
+            ids[far_i] = id;
+            dep[far_i] = z;
+            c = node_color(evicted);
+            far_z = dep[0];
+            far_i = 0u;
+            for (var i = 1u; i < cnt; i += 1u) {
+                if (dep[i] < far_z) {
+                    far_z = dep[i];
+                    far_i = i;
+                }
+            }
+        }
         tail_sum += c.rgb;
         tail_a += c.a;
         tail_trans *= 1.0 - c.a;
@@ -223,13 +245,10 @@ fn overflowed() -> bool {
 // One thread of the dispatch sets the draw counts that follow.
 fn set_flags(g: vec3<u32>) {
     if (g.x == 0u && g.y == 0u) {
-        let over = overflowed();
-        flags[0] = select(0u, params.draws, over);
-        flags[1] = select(params.draws, 0u, over);
-        flags[2] = 3u;
-        flags[3] = select(0u, 1u, over);
-        flags[4] = 0u;
-        flags[5] = 0u;
+        flags[0] = 3u;
+        flags[1] = select(0u, 1u, overflowed());
+        flags[2] = 0u;
+        flags[3] = 0u;
     }
 }
 

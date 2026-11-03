@@ -43,7 +43,7 @@ fn cs_gate(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // the replay depth copy's instance count (oit.wgsl): 1 when the pool
     // overflowed
-    let over = flags[3] != 0u;
+    let over = flags[1] != 0u;
     let replay = i * ARGS;
     let composited = (gate.total + i) * ARGS;
     for (var k = 0u; k < ARGS; k++) {

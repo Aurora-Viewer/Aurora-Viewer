@@ -9622,15 +9622,20 @@ What the inventory must show with these scenarios:
   depends on the content: see `AURORA_DEMO_HAIR`.
 - **`AURORA_OIT=0|1`**: the blended faces sorted per pixel (Preferences ›
   Aurora, or Graphics › Image › Transparency; off by default, the Legacy
-  Viewer's order) or by object, as before, for this launch. With `1` the log gives `oit: <n> nodes (<MB> MB) for
-  <w>x<h>, <k> per pixel` when the pool is made. Before / after:
+  Viewer's order) or by object, as before, for this launch. With `1` the log gives `oit: <s> slots (<MB> MB) + <n> nodes (<MB> MB) for
+  <w>x<h>, <k> per pixel` when the pool is made (the heads and the composite
+  texture, 16 B per pixel, come on top of those two: 198 MB in all at 1600 × 900,
+  512 MB at most), and `oit: off, pool freed` when the setting is turned off. Before / after:
   `AURORA_DEMO_HAIR_CARDS=60 AURORA_DEMO_CAMERA=close,846,560,40
   AURORA_DEMO_POS=133,129`, capture at frame 780: with `0` the head and the
   back show between the shuffled strand cards, with `1` the cards cover them
   in their depth order. Check each antialiasing (`AURORA_AA=0`, `3`, `5`,
   `6`): with MSAA each sample keeps the layers that cover it, the strands'
-  edges stay smooth. In `perf summary`, `g_transparent` includes the
-  capture and the resolve.
+  edges stay smooth. Deep stacks keep their nearest layers: with
+  `AURORA_DEMO_HAIR_CARDS=400`, more than 24 layers overlap, and the
+  strands in front must stay in front of the farther ones at any "Layers
+  sorted per pixel" (24 and 1 in Graphics › Image › Transparency). In `perf
+  summary`, `g_transparent` includes the capture and the resolve.
 - **`AURORA_OIT_NODES=<n>`**: with `AURORA_OIT=1`, the pool holds `n`
   layers per pixel on average (2 to 32, Graphics › Image › Transparency's
   "Layers kept per pixel"). At 2, the hair cards scenario above fills it:

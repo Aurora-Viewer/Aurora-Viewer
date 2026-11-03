@@ -1034,15 +1034,17 @@ pub struct RenderSettings {
     /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
     /// Order-independent transparency (oit.rs): the blended faces are sorted
-    /// per pixel rather than per object. Off, or on a GPU without writable
-    /// storage in fragment shaders, they are blended in the drawing order.
+    /// per pixel rather than per object. Off (the default: an opt-in), or on
+    /// a GPU without writable storage in fragment shaders, they are blended
+    /// in the drawing order, and the OIT's video memory is freed.
     pub oit: bool,
     /// Its node pool: blended fragments per screen pixel on average
     /// (`oit::MIN_NODES_PER_PIXEL..=oit::MAX_NODES_PER_PIXEL`), within
-    /// `oit::MAX_POOL_BYTES`.
+    /// `oit::MAX_POOL_BYTES` in all (the per-pixel tables included).
     pub oit_nodes_per_pixel: u32,
     /// Layers sorted exactly in each pixel (`1..=oit::MAX_SORTED_LAYERS`);
-    /// the farther ones are blended as a weighted average.
+    /// the nearest are kept whatever the drawing order, the farther ones are
+    /// blended behind them as a weighted average.
     pub oit_max_layers: u32,
 }
 
@@ -1069,7 +1071,7 @@ impl Default for RenderSettings {
             anisotropy: 8,
             probe_slots: 32,
             occlusion: true,
-            oit: true,
+            oit: false,
             oit_nodes_per_pixel: crate::oit::DEFAULT_NODES_PER_PIXEL,
             oit_max_layers: crate::oit::DEFAULT_SORTED_LAYERS,
         }

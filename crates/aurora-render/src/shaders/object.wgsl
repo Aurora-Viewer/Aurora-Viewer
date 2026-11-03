@@ -1633,11 +1633,11 @@ struct OitParams {
     samples: u32,
     tiles_x: u32,
     tiles: u32,
-    draws: u32,
     slots: u32,
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    _pad3: u32,
 };
 // heads[0] counts the pool's nodes; pixel p = y * width + x: heads[1 + 2p]
 // counts its fragments, heads[2 + 2p] is the first node of its list plus
