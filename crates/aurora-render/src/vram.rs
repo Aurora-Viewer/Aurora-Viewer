@@ -99,6 +99,9 @@ impl BudgetFloor {
 /// off every frame/UI path; readers only copy the last complete sample.
 pub struct VideoMemoryProbe {
     sampler: BudgetSampler,
+    /// Read by the sampling thread with the budget heap (the same driver
+    /// queries, kept off the frame path): empty until its first pass.
+    card: Arc<std::sync::OnceLock<Option<(u64, u64, bool)>>>,
 }
 
 const PROBE_INTERVAL: Duration = Duration::from_millis(250);
@@ -165,11 +168,17 @@ const SOURCE: &str = "MTLDevice working set";
 impl VideoMemoryProbe {
     pub fn new(adapter: wgpu::Adapter) -> Self {
         let heap = std::sync::OnceLock::new();
+        let card = Arc::new(std::sync::OnceLock::new());
+        let found = card.clone();
         let sampler = BudgetSampler::new(
-            move || Self::query(&adapter, (*heap.get_or_init(|| Self::budget_heap(&adapter)))?),
+            move || {
+                let heap = *heap.get_or_init(|| Self::budget_heap(&adapter));
+                found.get_or_init(|| heap.and_then(|heap| Self::card_of(&adapter, heap)));
+                Self::query(&adapter, heap?)
+            },
             PROBE_INTERVAL,
         );
-        VideoMemoryProbe { sampler }
+        VideoMemoryProbe { sampler, card }
     }
 
     /// The most recent complete sample, at most one driver query per
@@ -192,11 +201,17 @@ impl VideoMemoryProbe {
     /// memory (a discrete GPU: on an integrated one it is system RAM, often
     /// full by design, and no size to measure the card's load against); None
     /// without the Vulkan 1.1 query.
+    /// The outer None while the sampling thread has not looked yet: asked
+    /// again then, and not once it answered (even with None).
+    pub fn card(&self) -> Option<Option<(u64, u64, bool)>> {
+        self.card.get().copied()
+    }
+
     #[cfg(not(target_os = "macos"))]
-    pub fn card(&self) -> Option<(u64, u64, bool)> {
+    fn card_of(adapter: &wgpu::Adapter, heap: usize) -> Option<(u64, u64, bool)> {
         // SAFETY: the hal adapter is only borrowed for this call; the queries
         // read properties and change no state.
-        let hal = unsafe { self.adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+        let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
         let shared = hal.shared_instance();
         if shared.instance_api_version() < vk::API_VERSION_1_1 {
             return None;
@@ -219,13 +234,13 @@ impl VideoMemoryProbe {
                 .raw_instance()
                 .get_physical_device_memory_properties(hal.raw_physical_device())
         };
-        let total = memory.memory_heaps_as_slice().get(self.heap?)?.size;
+        let total = memory.memory_heaps_as_slice().get(heap)?.size;
         Some((u64::from_le_bytes(id.device_luid), total, dedicated))
     }
 
     /// Metal has no adapter-wide counters to name.
     #[cfg(target_os = "macos")]
-    pub fn card(&self) -> Option<(u64, u64, bool)> {
+    fn card_of(_adapter: &wgpu::Adapter, _heap: usize) -> Option<(u64, u64, bool)> {
         None
     }
 
