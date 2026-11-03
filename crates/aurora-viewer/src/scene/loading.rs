@@ -564,7 +564,12 @@ impl Scene {
         // (ours stays between the region left by a teleport and the next
         // one: forgotten with its object, it was a cloud again for 6 to 8 s
         // at every arrival)
-        loading.states.retain(|id, _| seen.contains(id) || *id == world.agent_id);
+        // (and an avatar the world hides on purpose, derendered or not a
+        // friend: put back, it is the same avatar, already shown once, not
+        // a first appearance with its 3 s of cloud and grid)
+        loading
+            .states
+            .retain(|id, _| seen.contains(id) || *id == world.agent_id || world.derender.hides_resident(id));
         self.loading = loading;
         for (t, px) in hurry {
             self.textures.note_usage(&t, px);
@@ -892,6 +897,38 @@ mod tests {
         world.reset();
         scene.update_loading(&world, t0 + secs(30.0));
         assert!(scene.loading.states.is_empty());
+    }
+
+    #[test]
+    fn an_avatar_put_back_after_being_hidden_is_not_a_first_appearance() {
+        let (mut world, mut scene, _, _) = cloud_self();
+        let loup = crate::demo::DEMO_LOUP;
+        let t0 = Instant::now();
+        scene.update_loading(&world, t0);
+        scene.update_loading(&world, t0 + secs(5.1));
+        assert!(!scene.loading_avatars().contains_key(&loup), "shown");
+        // Show Friends Only takes it out, then puts it back at once
+        world.set_friends_only(true);
+        assert!(world.objects.index_of_uuid(&loup).is_none());
+        scene.update_loading(&world, t0 + secs(6.0));
+        world.set_friends_only(false);
+        scene.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
+        scene.update_loading(&world, t0 + secs(6.1));
+        assert!(!scene.loading_avatars().contains_key(&loup), "no cloud, no grid");
+        // a derender entry works the same way (main's path)
+        let entry = crate::world::derender::Entry {
+            name: String::new(),
+            region: String::new(),
+            kind: crate::world::derender::Kind::Resident,
+            date: 0,
+            permanent: false,
+        };
+        world.derender(loup, entry);
+        scene.update_loading(&world, t0 + secs(7.0));
+        world.underender(&[loup]);
+        scene.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
+        scene.update_loading(&world, t0 + secs(7.1));
+        assert!(!scene.loading_avatars().contains_key(&loup));
     }
 
     #[test]

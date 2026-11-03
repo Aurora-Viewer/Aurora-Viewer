@@ -522,6 +522,12 @@ impl Derender {
         self.remove(&temporary)
     }
 
+    /// The avatar is kept out of the world on purpose (a derender entry or
+    /// "Show Friends Only"), so it is not a new arrival when it comes back.
+    pub fn hides_resident(&self, id: &Uuid) -> bool {
+        self.friends_only_hid.contains(id) || self.contains(id)
+    }
+
     /// "Show Friends Only" is on (FSRenderFriendsOnly).
     pub fn friends_only(&self) -> bool {
         self.friends_only
