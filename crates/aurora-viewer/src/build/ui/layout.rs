@@ -113,6 +113,9 @@ pub(super) fn row(
         34.0
     } else if matches!(item, Item::Manipulators | Item::Actions) {
         28.0
+    } else if item == Item::Snap && !organizing {
+        // the snap choice, then Place on surface and its alignment
+        SNAP_ROWS_HEIGHT
     } else {
         24.0
     };
@@ -211,9 +214,20 @@ pub(super) fn row(
     }
 }
 
+/// The Snap item's three lines (`snap_mode`).
+const SNAP_ROWS_HEIGHT: f32 = 74.0;
+
 /// "Snap": off, to the grid or to objects, one at a time
-/// (`BuildSettings::snap_mode`).
-fn snap_mode(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+/// (`BuildSettings::snap_mode`); under it, "Place on surface" with the side
+/// put against the surface and "Align to surface" (`build/place.rs`).
+fn snap_mode(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        snap_rows(ui, p, tool, world, s);
+    });
+}
+
+fn snap_rows(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
     use crate::build::SnapMode;
     const MODES: [SnapMode; 3] = [SnapMode::Off, SnapMode::Grid, SnapMode::Objects];
     let options = [
@@ -231,6 +245,51 @@ fn snap_mode(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
             if widgets::segmented(ui, p, &mut selected, &options) {
                 s.set_snap_mode(MODES[selected]);
             }
+        },
+    );
+    ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), 24.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let kind = if tool.place.active {
+                widgets::ActionKind::Primary
+            } else {
+                widgets::ActionKind::Flat
+            };
+            let label = aurora_i18n::tr!("build-place");
+            if widgets::action_button_if(
+                ui,
+                p,
+                "box-align-bottom-filled",
+                label,
+                kind,
+                Vec2::new(0.0, 22.0),
+                tool.can_place(world),
+            )
+            .on_hover_text(aurora_i18n::tr!("build-place-tip"))
+            .clicked()
+            {
+                tool.toggle_place(world);
+            }
+            let sides: Vec<(&str, crate::build::place::Side)> =
+                crate::build::place::Side::ALL.iter().map(|side| (side.label(), *side)).collect();
+            ui.add_space((ui.available_width() - 126.0).max(4.0));
+            if let Some(side) = common::combo(ui, "place-side", Some(s.place_side), &sides, 120.0, true) {
+                s.place_side = side;
+            }
+        },
+    );
+    ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), 22.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            widgets::checkbox(
+                ui,
+                p,
+                &mut s.place_align,
+                RichText::new(aurora_i18n::tr!("build-place-align")).size(common::BODY),
+            )
+            .on_hover_text(aurora_i18n::tr!("build-place-align-tip"));
         },
     );
 }
@@ -253,7 +312,7 @@ pub(super) fn control(
         return;
     }
     if item == Item::Snap {
-        snap_mode(ui, p, s);
+        snap_mode(ui, p, tool, world, s);
         return;
     }
     let mut value = match item {

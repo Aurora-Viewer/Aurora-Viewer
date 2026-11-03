@@ -22,6 +22,8 @@
 //!   contents-move-many: drop every item into inventory at once (two no-copy
 //!   items share one move warning).
 //!   shared | shared-denied: another resident's object with granted / denied editing.
+//!   place: `place,object:<id>,<target id>[,click]` turns "Place on surface"
+//!   on and holds the cursor over the target's top (`click` clicks there).
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -82,6 +84,8 @@ pub enum Step {
     ReplaceBegin(bool),
     ReplacePick(usize),
     ReplaceApply,
+    /// "Place on surface" on or off.
+    Place(bool),
 }
 
 fn part_of(s: &str) -> Option<Part> {
@@ -372,6 +376,31 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                     .map(|(x, y)| vec![Step::Cursor(x, y)])
                     .unwrap_or_default()
             }
+            _ => Vec::new(),
+        };
+    }
+    // place,object:<id>,<target id>[,click]: Place on surface, the cursor on
+    // the top of the target object, clicked with `click`
+    if parts[0] == "place" {
+        let target = parts
+            .get(2)
+            .and_then(|v| v.parse::<u32>().ok())
+            .and_then(|id| world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i)));
+        let top = target.and_then(|i| {
+            let (at, _, _) = crate::scene::Scene::object_transform(world, i, Instant::now(), 0)?;
+            Some(at + Vec3::Z * world.visual_scale(i).z * 0.5)
+        });
+        let click = parts.get(3) == Some(&"click");
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            250 => vec![Step::Place(true)],
+            280 if click => vec![Step::Press],
+            282 if click => vec![Step::Release],
+            255.. => top
+                .and_then(|p| tool.cam.project_px(p))
+                .map(|(x, y)| vec![Step::Cursor(x, y)])
+                .unwrap_or_default(),
             _ => Vec::new(),
         };
     }

@@ -1716,14 +1716,15 @@ fn snap_to_objects(
 }
 
 /// Guides of the object snap: the target's face and the selection's
-/// matching face (or corner), joined by a line; solid for a contact.
+/// matching face (or corner), joined by a line, in the accent; solid for a
+/// contact, amber for centres.
 fn draw_object_snap(p: &mut Painter3d, guides: &[object_snap::Guide]) {
     let pal = p.pal;
     for g in guides {
         let (color, opacity) = match g.kind {
             object_snap::Kind::Center => (pal.amber, 0.9),
-            _ if g.contact => (pal.rose, 1.0),
-            _ => (pal.rose, 0.7),
+            _ if g.contact => (pal.violet_light, 1.0),
+            _ => (pal.violet_light, 0.7),
         };
         let outline = |p: &Painter3d, pts: &[Vec3], width: f32| {
             for k in 0..pts.len() {

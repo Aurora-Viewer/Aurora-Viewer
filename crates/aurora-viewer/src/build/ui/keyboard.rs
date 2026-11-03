@@ -136,6 +136,8 @@ impl Shortcut {
             }
             Self::Open(which) => tool.open_build(which),
             Self::GridOptions => tool.ui.grid_options_open = !tool.ui.grid_options_open,
+            // Esc first turns "Place on surface" off
+            Self::Close if tool.place.active => tool.toggle_place(world),
             Self::Close => tool.close(world, settings),
             Self::Delete => tool.delete(world),
             Self::Duplicate => tool.duplicate(world, settings, Vec3::new(0.5, 0.5, 0.0), true),

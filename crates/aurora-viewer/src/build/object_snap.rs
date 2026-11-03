@@ -159,7 +159,7 @@ fn axis_of(b: &Bounds, i: usize) -> Vec3 {
 }
 
 /// Half extent of a box along a unit direction.
-fn support(b: &Bounds, u: Vec3) -> f32 {
+pub(super) fn support(b: &Bounds, u: Vec3) -> f32 {
     (0..3).map(|i| (b.half[i] * axis_of(b, i).dot(u)).abs()).sum()
 }
 

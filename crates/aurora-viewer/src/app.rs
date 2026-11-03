@@ -12189,6 +12189,11 @@ impl App {
                             self.panels.chat = false;
                         }
                     }
+                    crate::build::demo::Step::Place(on) => {
+                        if self.build.place.active != on {
+                            self.build.toggle_place(&self.world);
+                        }
+                    }
                     crate::build::demo::Step::Linked(on) => {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                         self.flush_build();

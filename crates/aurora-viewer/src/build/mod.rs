@@ -29,6 +29,7 @@ mod material_preview;
 pub mod materials;
 mod object_snap;
 pub mod particle_editor;
+pub mod place;
 mod property_query;
 pub mod replace;
 pub mod script_queue;
@@ -138,6 +139,10 @@ pub struct BuildSettings {
     /// with `snap` (`snap_mode`); off by default, so moving behaves as the
     /// Legacy Viewer's until it is chosen.
     pub object_snap: bool,
+    /// "Place on surface": the selection's side put against the surface,
+    /// and whether it turns flat on it (`place.rs`; Aurora's own).
+    pub place_side: place::Side,
+    pub place_align: bool,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
     /// EditLinkedParts.
@@ -555,6 +560,8 @@ impl Default for BuildSettings {
             grid_mode: 0,
             snap: true,
             object_snap: false,
+            place_side: place::Side::Auto,
+            place_align: false,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,
@@ -727,6 +734,8 @@ pub struct BuildTool {
     pub replacement: replace::Replacement,
     pub grab: grab::Grab,
     pub align: align::Align,
+    /// The "Place on surface" button and its preview.
+    pub place: place::Place,
     /// Everything the floater keeps between frames (tabs, clipboards,
     /// fields being typed, secondary floaters).
     pub ui: ui::FloaterState,
@@ -793,6 +802,7 @@ impl Default for BuildTool {
             replacement: replace::Replacement::default(),
             grab: grab::Grab::default(),
             align: align::Align::default(),
+            place: place::Place::default(),
             ui: ui::FloaterState::default(),
             caps: HashMap::new(),
             next_tag: 1,
@@ -1844,6 +1854,9 @@ impl BuildTool {
             return;
         }
         self.prune(world, s, now);
+        if self.tool != Tool::Edit {
+            self.place.active = false;
+        }
         self.pick_up_created(world, s);
         self.sync_hud_zoom(world);
         self.refresh_costs(world);
@@ -1857,6 +1870,9 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
+                if self.place.active {
+                    self.place_hover(world, s, scene, cursor, over_ui);
+                }
                 if mode == EditMode::Align {
                     self.align_hover(world, cursor, mods.shift);
                 }
@@ -1945,6 +1961,10 @@ impl BuildTool {
                 } else if !mods.shift {
                     self.deselect_all(world);
                 }
+                true
+            }
+            Tool::Edit if self.place.active => {
+                self.place_click(world, mods.shift);
                 true
             }
             Tool::Edit => {
@@ -2371,6 +2391,9 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
+                if self.place.active {
+                    self.place_draw(&mut p);
+                }
                 if mode == EditMode::Align {
                     self.align_draw(&mut p, world);
                 } else if mode != EditMode::Face {

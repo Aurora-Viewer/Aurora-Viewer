@@ -1499,7 +1499,11 @@ Objects in the construction settings, select the blue cube and drag its
 arrows or plane squares near the others: within 8 pixels it jumps flush
 (rose outline on both faces, a corner square on the plank's slope, amber
 for centres), and it stops at any face it would enter, however far the
-cursor goes past (a plane square slides along that face). `on` also chooses
+cursor goes past (a plane square slides along that face). `AURORA_DEMO_BUILD=place,object:87701,87702` turns "Place on
+surface" on with the blue cube selected and holds the cursor over the
+orange cube's top: a purple pad there and the blue cube's box resting on
+it; `place,object:87701,87702,click` clicks, and the blue cube sits on the
+orange one. `on` also chooses
 Objects for a build script, for example
 `AURORA_DEMO_BUILD=move,object:87701,z,0,40`.
 
