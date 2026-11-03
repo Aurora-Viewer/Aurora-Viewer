@@ -4640,7 +4640,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > RLVa |
-| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, reset, or a graphics profile dialog/list |
+| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
@@ -4648,7 +4648,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
+| `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
+| `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
@@ -4668,6 +4670,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
+| `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
+| `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new window and device instead of closing (work in progress) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
@@ -4929,6 +4933,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
   friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
   and `--language en`.
+- **`AURORA_DEMO_SUITCASE=1`**: at frame 300, the question a Hypergrid
+  teleport from the home grid asks when worn items are not in My Suitcase:
+  seven invented items, an invented grid as the destination. "Teleport anyway" goes
+  on to a demo teleport, Cancel and a click outside close it, "Do not show
+  again" turns Preferences › Confirmations' switch off. Outside this mode
+  the demo never asks.
 - **`AURORA_DEMO_BUY_CURRENCY=<mode>`**: gives a balance of L$ 479 and opens
   "Buy L$". The purchase service is simulated (made-up rate): no real L$,
   no request sent. `click` opens nothing: click the balance in the top
@@ -4939,9 +4949,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   with a password (OK greyed out as long as it is empty). `direct`: purchase
   without confirmation. `error`: refusal by the service shown in the
   window, with its link. `nopayment`: account without a payment method.
-  `grid`: grid with no known purchase service. After Buy then OK: the
+  `grid`: grid with no known purchase service. `opensim`: an OpenSim grid,
+  the form at once with 1000 entered (no payment method check). After Buy
+  then OK: the
   window closes, the balance goes up and the bell receives the
   notification.
+- **`AURORA_DEMO_CURRENCY=<symbol>`**: the symbol an OpenSim grid names
+  in its login answer (`currency`), shown wherever L$ is: the balance, Buy
+  L$, Pay, Buy Land, prices. Combine with `AURORA_DEMO_BUY_CURRENCY` or
+  `AURORA_DEMO_PAY` to see the windows.
 - **`AURORA_DEMO_BUY_LAND=<mode>[:confirm]`**: the plaza parcel (16384 m²) is for sale
   by a demo resident for L$ 4,500, with its objects, and "Buy Land" opens on it.
   The land service is simulated: nothing is sent, the purchase only moves
@@ -5864,6 +5880,13 @@ failure. Grid validation and any paid upload are performed by the human.
   - `cogs`: every cog open (the rows behind the cog of a row: the twelve
     effects of Aurora's water, the eight of the depth of field…), for
     captures; each opened block has its own darker face.
+  - `appearance:system-fonts`: the System fonts list kept open, each
+    family's name in its own face once its picture is drawn (a few frames
+    after its row comes on screen, the interface font until then); a name
+    its font cannot draw (symbol fonts, another script) stays in the
+    interface font. `appearance:system-fonts-scroll` also scrolls it, 6
+    points a frame, to check with `AURORA_PROFILE=1` that scrolling keeps
+    every frame short.
   - `reset`: the page reset at once, with its Undo at the bottom; the chat
     says it was reset once the Undo is gone (8 s) or the window closed.
   - `restore` (with `system`): the confirmation of a settings restore, for
@@ -6615,7 +6638,33 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `| Crash | GPU device lost |` and `| GPU device lost | yes … |`, and the
   next start offers the safe graphics. The window's close button closes at
   once too. A real loss cannot be caused here: the flag is set as the
-  callback would set it, wgpu's own device stays alive.
+  callback would set it, wgpu's own device stays alive. A list
+  (`600,600,600`) gives one frame to each renderer of the run, the start's
+  then each recovery's (a recovery's counts its frames from 0 again): with
+  `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
+  with the safe graphics level, then close.
+- **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
+  at that frame, for testing the recovery on a real driver reset. One
+  compute dispatch whose loop runs about 12 s on a recent card (the log says
+  `AURORA_DEMO_GPU_HANG: submitting a GPU hang`): the driver's watchdog
+  resets the GPU first (a Windows TDR after 2 s; on Linux amdgpu resets its
+  graphics ring, `ring gfx_0.0.0 timeout` in the kernel log), and wgpu's
+  device-lost callback follows (`GPU device lost (Unknown): Device is lost`).
+  The reset is shared: other programs drawing with the GPU at that moment
+  (a GPU-drawn terminal, a browser, another viewer) may lose their work or
+  close. Without `AURORA_GPU_RECOVERY=1` the viewer then closes as after
+  any loss. Once a run.
+- **`AURORA_GPU_RECOVERY=1`** (work in progress, off by default): a GPU
+  device loss no longer ends the session. The window, the renderer and
+  egui's input state are made again the way the start makes them
+  (`app/gpu_recovery.rs`); the old window stays until the new one has
+  presented, the network session and the world are kept, the scene reloads
+  from memory and the disk cache (no download) and egui's textures come back
+  from their CPU copy (`app/egui_shadow.rs`). The log says `GPU recovery: new
+  window and renderer in … ms` and `egui's textures sent again (… KB)`. With
+  `AURORA_DEMO_GPU_LOST=600` (simulated) or `AURORA_DEMO_GPU_HANG=900` (a real
+  reset): the plaza, its particles, the avatars and the interface are back
+  within a second.
 - **`AURORA_DEMO_OVERLAY_HOOK=<file>`**, with `AURORA_DEMO=1` (Windows): the
   overlay hook watch (`overlay_hooks.rs`) counts that module file name as
   loaded, for example `DiscordHook64.dll`, `GameOverlayRenderer64.dll`,
@@ -8124,11 +8173,12 @@ trigger` lines of the log (each F7 press starts the clap over; Ctrl+Z
 plays its gesture while the build tools are closed; Ctrl+B is kept by
 them). Capture frame 620 for the editor's warning.
 `channel` adds an active `/hudping` gesture whose chat steps command worn
-scripts: `/-4242 ping`, `/5 test` and `/5test`, and sends `/hudping` from the
-chat bar at frame 650. Script-channel chat is never echoed as local chat:
-the demo's worn listener answers each line ("Heard on channel -4242: ping"),
-and the log has one `demo channel chat: channel=…` line per step. Capture
-frame 800 (`AURORA_FPS_LIMIT=60`) to see the three answers. On the grid, a
+scripts: `/-4242 ping`, `/5 test`, `/5test` and a bare `/-4242` (an empty
+line, #2095), and sends `/hudping` from the chat bar at frame 650.
+Script-channel chat is never echoed as local chat: the demo's worn listener
+answers each line ("Heard on channel -4242: ping"), and the log has one
+`demo channel chat: channel=…` line per step. Capture frame 800
+(`AURORA_FPS_LIMIT=60`) to see the four answers. On the grid, a
 negative channel goes as a `ScriptDialogReply`, as in the Legacy Viewer.
 `channel-replace` adds an active `/hudreplace` gesture whose replacement is
 `/5capture` and sends its trigger from the chat bar at frame 650: the

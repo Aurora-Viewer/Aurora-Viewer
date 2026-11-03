@@ -1684,6 +1684,9 @@ app-gpu-stall =
     ・次回の起動時に、Auroraが提案する安全なグラフィックを選ぶ。
 
     待ち続けますか？「はい」で待ち続け、「いいえ」でAuroraを閉じます（正しくログアウトされます）。
+app-gpu-recovered-title = グラフィックカードがリセットされました
+app-gpu-recovered = グラフィックカードのドライバーがリセットされました（画像の描画に時間がかかりすぎた、ビデオメモリがいっぱいになった、または他のプログラムがグラフィックカードを使用した可能性があります）。Auroraはグラフィックカードでウィンドウを開き直しました。ログインしたままで、ワールドはまもなく再読み込みされます。
+app-gpu-recovered-safe = 数分のうちに、グラフィックカードのドライバーが再びリセットされました。再発を防ぐため、Auroraは安全なグラフィック設定（Potatoレベル）でウィンドウを開き直しました。ログインしたままです。グラフィック設定は保存されており、ログイン画面で元に戻すことができます。
 app-gpu-lost-title = Auroraビューア：グラフィックカードが失われました
 app-gpu-lost =
     Auroraでグラフィックカードが動作しなくなりました。ドライバーがリセットされた（画像の描画に時間がかかりすぎた、またはビデオメモリがいっぱいになった）、あるいはグラフィックカードが取り外されたか、他のプログラムによって使用された可能性があります。これ以上何も描画できません。ＯＫをクリックするとAuroraが終了します（正常にログアウトされます）。
@@ -1779,6 +1782,8 @@ ui-login-other-grid = その他のグリッド…
 ui-login-grid-link-title = ログインするグリッドを変更しますか？
 ui-login-grid-link-text = Aurora の外から開いたリンクが、別のグリッドへのログインを求めています。パスワードはログイン先のグリッドに送られます。信頼できるグリッドの場合のみ変更してください。
 ui-login-grid-link-switch = グリッドを変更
+ui-login-grid-link-add = グリッド管理に追加…
+ui-login-grid-link-add-hint = httpでしか応答しないグリッドにはリンクから接続できません。グリッド管理で一度追加してから、もう一度リンクを開いてください。
 
 grids-manage = グリッドの管理
 grids-remove-question = { $name }をグリッドのリストから削除してもよろしいですか？
@@ -1804,6 +1809,7 @@ grids-help = ヘルプ
 grids-about = Webサイト
 grids-search = 検索ＵＲＬ（[QUERY]、[LANGUAGE]、[MATURITY]）
 grids-profile = WebプロフィールのＵＲＬ
+grids-helper = 通貨ヘルパーのＵＲＬ（L$の購入）
 grids-fetch = グリッド情報を取得
 grids-fetching = グリッド情報を取得しています…
 grids-error-address = 認証情報を含まない有効なＨＴＴＰまたはＨＴＴＰＳのアドレスを入力してください。
@@ -4158,6 +4164,7 @@ ui-options-same-sounds-and-defaults-as-firestorm-these-are-second = レガシー
 ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot = 住人の体験はすべてブロックできます。ブロックした体験はこの土地で実行できません。
 build-ui-floaters-anyone = 全員
 build-ui-general-anyone = 全員：
+build-ui-general-export = エクスポート
 build-ui-floaters-anyone-can-copy = 全員がコピー可能
 ui-land-media-web-browser = ウェブブラウザー
 ui-land-objects-count = 数
@@ -9233,6 +9240,12 @@ search-aurora-remind = 予定通知
 ui-context-do-not-show-again = 今後表示しない
 ui-options-confirm-teleports = テレポートを確認
 ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = ランドマーク、履歴のエントリ、テレポートリンクにテレポートする前に確認します
+ui-options-warn-hypergrid-suitcase = 置いていかれる着用アイテムを警告
+ui-options-warn-hypergrid-suitcase-help = ハイパーグリッドでテレポートする前に、My Suitcaseに入っていない着用アイテムを示します。移動先のグリッドはそれらを読み込めません
+ui-hypergrid-suitcase-title = 着用中のものの一部はここに残ります
+ui-hypergrid-suitcase-text = My Suitcaseに入っていない着用アイテムが{ $count }個あるため、{ $grid }では読み込めません:
+ui-hypergrid-suitcase-go = それでもテレポート
+ui-hypergrid-suitcase-hint = 持って行くには、My Suitcase（またはその中のフォルダー）に入れてください。
 ui-options-confirm-no-transfer-settings = 譲渡不可の設定を確認
 ui-options-confirm-no-transfer-settings-help = デイサイクルに読み込んだ譲渡不可の空、水面、トラックによってデイサイクルが譲渡不可になる前に確認します
 ui-options-objects = オブジェクト
@@ -10322,6 +10335,8 @@ group-ability-experience-contributor-help = この能力を持つ役割のメン
 
 ## Buying L$
 currency-title = L$ の購入
+currency-region-helper = このリージョンは独自の通貨サービス（{ $host }）を使っています。ここでの購入はあなたとそのサービスとの取引で、そのサービスにはセッション（求められた場合はパスワードも）が送られます。信頼できる場合のみ購入してください。
+currency-service = 通貨サービス: { $host }
 currency-menu = L$ の購入…
 money-tracker-title = 取引ログ
 money-tracker-legacy-title = 取引ログ
@@ -10386,6 +10401,7 @@ currency-contacting-lindex = LindeXに接続しています…
 currency-cannot-buy = 購入できません
 currency-more-information = 詳細情報
 currency-helper-unreachable = L$購入サービスが応答していません。後でもう一度お試しください。
+currency-password-needs-https = パスワードは送信されませんでした。この購入サービスは安全な接続（https）を使用していません。
 currency-checking-account = アカウントを確認しています…
 currency-unavailable-on-this-grid = このグリッドではビューアからL$を購入できません。
 currency-add-payment-method = リンデンドルを購入してSecond Lifeを最大限に楽しむには、支払い方法を追加してください。

@@ -67,6 +67,19 @@ impl SurfaceState {
         }
     }
 
+    /// After a GPU recovery: what was staged went with the lost device's
+    /// pool. The paint map stages again from its own levels (`prepare`), and
+    /// a bake under way is asked for again.
+    pub fn gpu_reset(&mut self) {
+        if let Some(paint) = &mut self.paintmap {
+            paint.staged = None;
+            paint.restage = None;
+        }
+        if self.paint_job.take().is_some() {
+            self.paint_requested = true;
+        }
+    }
+
     pub fn clear_paint(&mut self) {
         self.paintmap = None;
         self.paint_requested = false;

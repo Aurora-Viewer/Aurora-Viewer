@@ -1578,6 +1578,58 @@ impl TextureStreamer {
         true
     }
 
+    /// The GPU device is lost (app/gpu_recovery.rs): the slots of the old
+    /// renderer are gone. Every texture keeps its bytes, its cache state and
+    /// its users, gets a slot of `new` and is uploaded again as it was: from
+    /// the JPEG 2000 data in memory, or read again from the transcoded or the
+    /// disk cache. Nothing is downloaded again and the disk cache stays
+    /// (unlike `refresh`).
+    pub fn gpu_reset(&mut self, new: &mut Renderer) {
+        self.gpu_reset_into(new);
+    }
+
+    fn gpu_reset_into(&mut self, new: &mut impl SlotTable) {
+        // their staged data is in the old device's pool
+        self.uploads = Default::default();
+        self.alpha_by_slot.clear();
+        self.alpha_channel_by_slot.clear();
+        self.alpha_changes.clear();
+        self.first_texels.clear();
+        self.reductions.clear();
+        self.local_slots.clear();
+        self.slotless = 0;
+        self.slotless_unreported = 0;
+        self.staging = None;
+        self.generation = self.generation.wrapping_add(1);
+        let ids: Vec<Uuid> = self.entries.keys().copied().collect();
+        for id in ids {
+            let slot = self.new_slot(new);
+            set_slot_alpha(
+                &mut self.alpha_by_slot,
+                &mut self.generation,
+                &mut self.alpha_changes,
+                slot,
+                AlphaKind::Opaque,
+            );
+            let Some(e) = self.entries.get_mut(&id) else {
+                continue;
+            };
+            e.slot = slot;
+            e.decoded = None;
+            e.gpu_size = (0, 0);
+            e.alpha = AlphaKind::Opaque;
+            if !e.busy() {
+                // 3: shown from the transcoded cache, read it again; 2 with
+                // the data in memory: decoded again from it
+                e.cache_state = if e.cache_state == 3 || e.data.is_empty() { 0 } else { 2 };
+            }
+            if e.unavailable() {
+                self.unavailable.push(id);
+            }
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
+        }
+    }
+
     /// The slot of a texture met for the first time. With the table full,
     /// the textures nothing uses any more give theirs back at once, oldest
     /// release first, instead of after `evict_after`: on arrival in a region
@@ -2528,10 +2580,23 @@ impl TextureStreamer {
                 sculpt,
             } => {
                 self.decodes = self.decodes.saturating_sub(1);
+                // staged in the pool of a GPU device lost since (`gpu_reset`):
+                // decoded again into the new one
+                let stale = staged
+                    .as_ref()
+                    .is_some_and(|s| self.staging.as_ref().is_none_or(|pool| !s.data.is_from(pool)));
                 let Some(e) = self.entries.get_mut(&id) else {
                     return;
                 };
                 e.decoding = false;
+                if stale {
+                    if e.cache_state == 3 {
+                        // (a transcoded result: read again)
+                        e.cache_state = 0;
+                    }
+                    Self::settle(&mut self.todo, &mut self.counts, id, e);
+                    return;
+                }
                 if sculpt.is_some() {
                     e.sculpt = sculpt;
                     self.generation += 1;

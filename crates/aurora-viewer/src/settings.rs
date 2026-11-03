@@ -597,6 +597,11 @@ pub struct Settings {
     /// box "Do not show again" of the confirmation turns it off). Firestorm
     /// keeps one "ignore" per notification: one setting here for the three.
     pub confirm_teleports: bool,
+    /// Ask before a Hypergrid teleport that leaves worn items behind: with
+    /// OpenSim's suitcase, another grid loads only what is in My Suitcase
+    /// (`world::suitcase`). Not a Legacy Viewer setting; its box "Do not
+    /// show again" turns it off.
+    pub warn_hypergrid_suitcase: bool,
     /// SettingsMakeNoTrans is asked (its "ignore" box turns it off; shown
     /// by default like the notification).
     pub confirm_no_transfer_settings: bool,
@@ -1755,6 +1760,7 @@ impl Default for Settings {
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
             confirm_teleports: true,
+            warn_hypergrid_suitcase: true,
             confirm_no_transfer_settings: true,
             confirm_object_bonus: true,
             confirm_return_to_owner: true,

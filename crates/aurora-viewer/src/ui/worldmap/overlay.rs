@@ -781,10 +781,13 @@ impl WorldMapUi {
             }
             Pick::History(i) => {
                 if let Some(h) = world.tp_storage.items.get(i).cloned() {
-                    world.map.track_location(h.global.x, h.global.y, h.global.z as f32, true);
+                    // tracked here for its label; the app teleports (its grid
+                    // may be another one, LLTeleportHistoryStorage::goToItem)
+                    world.map.track_location(h.global.x, h.global.y, h.global.z as f32, false);
                     if let Some(t) = world.map.track.as_mut() {
                         t.label = h.title;
                     }
+                    actions.push(WorldMapAction::TeleportHistory(h.global));
                 }
             }
             Pick::Region(_) | Pick::Friend(..) => {}
