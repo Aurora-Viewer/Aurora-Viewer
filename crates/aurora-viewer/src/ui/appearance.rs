@@ -15,6 +15,7 @@ mod clipboard;
 mod folders;
 mod gallery;
 pub(crate) mod items;
+pub(crate) mod json;
 mod layers;
 #[cfg(test)]
 mod perf_tests;
@@ -23,6 +24,7 @@ pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
 pub struct AppearanceUi {
+    pub(crate) json: json::State,
     pub tab: usize,
     pub fill_previews: bool,
     pub editing: bool,
@@ -1813,6 +1815,26 @@ pub fn show(
                 if menu::item_if(ui, p, "restore", restore, base.is_some() && st.pending.is_none()) {
                     actions.push(Action::Revert);
                 }
+                let selected = st.outfit_selection.ordered(&outfits);
+                let export = if !st.editing && st.tab < 2 && !selected.is_empty() {
+                    (selected.len() == 1).then(|| selected[0])
+                } else {
+                    model::cof(&world.inventory)
+                };
+                let idle = !st.json.busy() && st.pending.is_none();
+                if menu::item_if(
+                    ui,
+                    p,
+                    "file-export",
+                    aurora_i18n::tr!("outfit-json-export"),
+                    idle && export.is_some_and(|id| model::complete(&world.inventory, id)),
+                ) && let Some(folder) = export
+                {
+                    actions.push(Action::ExportJson(folder));
+                }
+                if menu::item_if(ui, p, "file-import", aurora_i18n::tr!("outfit-json-import"), idle) {
+                    actions.push(Action::PickJson);
+                }
             });
             if !st.editing && st.tab < 2 {
                 ui.label(
@@ -1935,6 +1957,7 @@ pub fn show(
         });
         st.save_as = if close || response.should_close() { None } else { Some(name) };
     }
+    json::confirmation(ctx, p, world, st, &mut actions);
     items::profile(ctx, p, world, st, &mut actions);
     gallery::dialogs(ctx, p, world, st, images, &mut actions);
     folders::dialogs(ctx, p, world, st, &mut actions);
