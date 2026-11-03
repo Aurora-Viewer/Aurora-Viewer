@@ -30,6 +30,20 @@ pub enum EnvAction {
     Shared,
     /// A time of day preset (1..=4).
     Preset(u8),
+    /// Keep the local environment for the parcel under the agent.
+    SaveParcel,
+    /// Forget what is kept for that parcel.
+    ForgetParcel,
+}
+
+/// What can be done for the parcel under the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ParcelChoice {
+    /// No local environment to keep, or no parcel yet.
+    #[default]
+    Nothing,
+    Save,
+    Saved,
 }
 
 /// LLFloaterEnvironmentAdjust slider scales.
@@ -73,6 +87,8 @@ pub struct EnvironmentUi {
     pub night: Option<NightSkyPick>,
     /// The Aurora Weather window is open (from the Environment window).
     pub weather_open: bool,
+    /// The parcel button (kept by the app).
+    pub parcel_choice: ParcelChoice,
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
     /// Type this into an open list's search field (demo captures).
@@ -264,6 +280,21 @@ impl EnvironmentUi {
                 true,
             ) {
                 out.push(EnvAction::Shared);
+            }
+            // the parcel pin beside it: it keeps or forgets this same
+            // sky, water and day cycle for the parcel
+            if self.parcel_choice == ParcelChoice::Saved {
+                if widgets::icon_toggle(ui, p, "map-pin-filled", aurora_i18n::tr!("parcel-environment-forget"), true) {
+                    out.push(EnvAction::ForgetParcel);
+                }
+            } else if widgets::icon_button(
+                ui,
+                p,
+                "map-pin-filled",
+                aurora_i18n::tr!("parcel-environment-save"),
+                self.parcel_choice == ParcelChoice::Save,
+            ) {
+                out.push(EnvAction::SaveParcel);
             }
             // Aurora Weather after them ("Aurora" in the aurora gradient),
             // with its own way back to the region's: it turns "Let regions

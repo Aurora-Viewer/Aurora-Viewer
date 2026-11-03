@@ -193,6 +193,8 @@ pub enum InvAction {
     },
     Environment(Uuid, u32),
     EnvironmentParcel(Uuid),
+    /// Apply to myself and keep it for the parcel under the agent.
+    EnvironmentSaveParcel(Uuid, u32),
     ExportTextures {
         items: Vec<Uuid>,
         png: bool,

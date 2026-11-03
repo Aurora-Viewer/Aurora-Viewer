@@ -230,6 +230,15 @@ struct Pending {
     preset: u8,
 }
 
+/// The local environment put aside by a parcel's saved one
+/// (`world/parcel_env.rs`), with what was still loading for it.
+#[derive(Debug, Clone, Default)]
+struct Outside {
+    local: Option<LocalEnv>,
+    preset: u8,
+    pending: VecDeque<Pending>,
+}
+
 /// LOCAL_ENV_STORAGE_FILE of LLEnvironment (in the account folder).
 pub const LOCAL_ENV_FILE: &str = "local_environment_data.bin";
 
@@ -358,6 +367,9 @@ pub struct EnvSelector {
     local_preset: u8,
     /// The preset was dropped by another local change: the panels follow.
     preset_dropped: bool,
+    /// A parcel changed the preset: the panels follow, even when its sky has
+    /// loaded by the time they ask.
+    preset_moved: bool,
     pending: VecDeque<Pending>,
     /// Aurora Weather by settings asset (`note_asset_weather`).
     asset_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
@@ -394,6 +406,11 @@ pub struct EnvSelector {
     photo: PhotoLayer,
     /// What experience environment controllers pushed (`eep_push`).
     push: PushLayer,
+    /// The local environment on arrival at a parcel with nothing saved:
+    /// what a save there sets aside, rather than the picks leading to it.
+    arrival: Option<Outside>,
+    /// A parcel's saved environment is on: what comes back on leaving.
+    held: Option<Outside>,
     /// The selector changed the photo's choice (a change made elsewhere, a
     /// camera preset, "Keep this light"): the photo window follows.
     photo_changed: bool,
@@ -720,6 +737,11 @@ impl EnvSelector {
             return;
         };
         self.photo_yield(SettingsKind::Sky);
+        self.push_preset(preset, asset);
+        self.preset_dropped = false;
+    }
+
+    fn push_preset(&mut self, preset: u8, asset: Uuid) {
         self.pending
             .retain(|p| !(p.kind == SettingsKind::Sky && matches!(p.state, PendingState::Waiting) && !p.asset.is_nil()));
         self.pending.push_back(Pending {
@@ -730,13 +752,13 @@ impl EnvSelector {
             preset,
         });
         self.local_preset = preset;
-        self.preset_dropped = false;
     }
 
     /// The preset to show after a local change that replaced its sky (the
     /// panels' time of day follows), once.
     pub fn take_preset_change(&mut self) -> Option<u8> {
-        std::mem::take(&mut self.preset_dropped).then_some(self.local_preset)
+        let moved = std::mem::take(&mut self.preset_moved);
+        (std::mem::take(&mut self.preset_dropped) || moved).then_some(self.local_preset)
     }
 
     /// FSEnvironmentManualTransitionTime (s, 0 = instant).
@@ -999,8 +1021,99 @@ impl EnvSelector {
     }
 
     /// The local environment changed since the last call (to save it).
+    /// Waits for a set-aside one that is still loading: its file stands.
     pub fn take_local_dirty(&mut self) -> bool {
+        if self.held.as_ref().is_some_and(|o| !o.pending.is_empty()) {
+            return false;
+        }
         std::mem::take(&mut self.local_dirty)
+    }
+
+    /// `saved_local` for the next session: a parcel's saved environment
+    /// comes from the parcel, not from this file.
+    pub fn saved_session(&self) -> Option<Llsd> {
+        match &self.held {
+            Some(outside) => outside.local.as_ref().and_then(saved_of),
+            None => self.saved_local(),
+        }
+    }
+
+    /// A parcel's saved environment is on.
+    pub fn parcel_held(&self) -> bool {
+        self.held.is_some()
+    }
+
+    /// The time of day to keep in the settings, likewise.
+    pub fn session_time_of_day(&self, shown: u8) -> u8 {
+        self.held.as_ref().map_or(shown, |outside| outside.preset)
+    }
+
+    fn outside_now(&self) -> Outside {
+        Outside {
+            local: self.local.clone(),
+            preset: self.local_preset,
+            pending: self.pending.clone(),
+        }
+    }
+
+    /// The agent is on a parcel with nothing saved: what a saved environment
+    /// had set aside comes back, and this is what a save here would set
+    /// aside.
+    pub fn settle_parcel(&mut self) {
+        if let Some(outside) = self.held.take() {
+            self.generation += 1;
+            self.local = outside.local.map(|mut l| {
+                l.generation = self.generation;
+                l
+            });
+            self.pending = outside.pending;
+            self.preset_moved |= self.local_preset != outside.preset;
+            self.local_preset = outside.preset;
+            self.drain_pending();
+        }
+        self.arrival = Some(self.outside_now());
+    }
+
+    /// The agent is on a parcel with a saved environment (`saved_local`
+    /// form, time of day preset): it replaces the local one, set aside until
+    /// the agent leaves. Over the photo's light, which stays.
+    pub fn hold_parcel(&mut self, data: Option<&Llsd>, preset: u8) {
+        if self.held.is_none() {
+            let outside = self.arrival.take().unwrap_or_else(|| self.outside_now());
+            self.held = Some(outside);
+        }
+        let dirty = self.local_dirty;
+        self.pending.clear();
+        self.local = None;
+        self.drop_preset();
+        if let Some(data) = data {
+            self.restore_local(data);
+        }
+        if let Some(asset) = super::env::time_of_day_sky(preset) {
+            self.push_preset(preset, asset);
+            self.preset_moved = true;
+        }
+        self.local_dirty = dirty;
+    }
+
+    /// Save here: the local environment for the parcel, and what stood on
+    /// arrival set aside as if it had been saved all along. None with
+    /// nothing to keep, or when the item picked for it could not load.
+    pub fn capture_parcel(&mut self) -> Option<(Option<Llsd>, u8)> {
+        if !self.failed_local.is_empty() {
+            return None;
+        }
+        let saved = self.saved_local();
+        if saved.is_none() && self.local_preset == 0 {
+            return None;
+        }
+        if self.held.is_none() {
+            let outside = self.arrival.take().unwrap_or_else(|| self.outside_now());
+            self.held = Some(outside);
+            // the next session's file goes back to it
+            self.local_dirty = true;
+        }
+        Some((saved, self.local_preset))
     }
 
     /// The local environment to keep for the next session
@@ -2046,6 +2159,114 @@ mod tests {
         assert!((sky.gamma - 1.3).abs() < 1e-6);
         assert!((water.fog_density - 6.0).abs() < 1e-6);
         assert_eq!(sel.personal_sky().map(|s| s.gamma), Some(1.3));
+    }
+
+    /// A sky on arrival, then the parcel settled.
+    fn arrived(gamma: f32) -> EnvSelector {
+        let mut sel = region_selector();
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(gamma)));
+        sel.frame(&input(1.0));
+        sel.take_local_dirty();
+        sel.settle_parcel();
+        sel
+    }
+
+    #[test]
+    fn a_parcels_environment_gives_way_to_what_came_before_on_leaving() {
+        let mut sel = arrived(1.1);
+        // picked and saved here: leaving brings back the sky of the arrival
+        sel.request_local(WATER, SettingsKind::Water);
+        sel.on_settings(WATER, Some(water_asset(8.0)));
+        let (saved, preset) = sel.capture_parcel().expect("something to save");
+        assert_eq!(preset, 0);
+        assert_eq!(saved.as_ref().expect("saved")["water_id"].as_uuid(), WATER);
+        assert!(sel.take_local_dirty(), "the session's file goes back to the arrival's");
+        let session = sel.saved_session().expect("the arrival's sky");
+        assert_eq!(session["sky_id"].as_uuid(), SKY);
+        assert!(!session.has("water_id"));
+        sel.settle_parcel();
+        let (sky, _) = sel.frame(&input(50.0));
+        assert!((sky.gamma - 1.1).abs() < 1e-6);
+        assert!(sel.local_view().water != ListShown::Item(WATER));
+        // back on the parcel: the saved environment returns
+        sel.hold_parcel(saved.as_ref(), 0);
+        assert_eq!(sel.wanted_settings(), vec![SKY, WATER]);
+        assert!(!sel.take_local_dirty(), "not a change for the session's file");
+    }
+
+    #[test]
+    fn a_pick_inside_a_saved_parcel_lasts_until_leaving() {
+        let mut sel = arrived(1.1);
+        sel.hold_parcel(Some(&llsd_map! {"water_id" => WATER}), 0);
+        sel.on_settings(WATER, Some(water_asset(8.0)));
+        sel.request_local(DAY, SettingsKind::Day);
+        sel.on_settings(DAY, Some(day_asset(1.0, 2.0)));
+        assert_eq!(sel.local_view().day, ListShown::Item(DAY));
+        assert_eq!(sel.saved_session().expect("kept")["sky_id"].as_uuid(), SKY);
+        sel.settle_parcel();
+        assert_eq!(sel.local_view().sky, ListShown::Item(SKY));
+    }
+
+    #[test]
+    fn from_one_saved_parcel_to_the_next_the_first_arrival_stands() {
+        let mut sel = arrived(1.1);
+        sel.hold_parcel(Some(&llsd_map! {"water_id" => WATER}), 0);
+        sel.hold_parcel(Some(&llsd_map! {"day_id" => DAY}), 0);
+        assert_eq!(sel.wanted_settings(), vec![DAY], "the first parcel's load is dropped");
+        sel.settle_parcel();
+        assert_eq!(sel.local_view().sky, ListShown::Item(SKY));
+    }
+
+    #[test]
+    fn a_preset_goes_with_the_parcel_and_comes_back() {
+        let mut sel = region_selector();
+        sel.set_time_of_day(2);
+        sel.settle_parcel();
+        sel.hold_parcel(None, 4);
+        assert_eq!(sel.take_preset_change(), Some(4), "the panels follow");
+        assert_eq!(sel.session_time_of_day(4), 2);
+        sel.settle_parcel();
+        assert_eq!(sel.take_preset_change(), Some(2));
+        assert_eq!(sel.session_time_of_day(2), 2);
+    }
+
+    #[test]
+    fn the_panels_hear_of_a_parcels_preset_whose_sky_is_already_in() {
+        let mut sel = region_selector();
+        sel.set_time_of_day(2);
+        sel.settle_parcel();
+        sel.hold_parcel(None, 4);
+        let asset = crate::world::env::time_of_day_sky(4).expect("a library sky");
+        sel.on_settings(asset, Some(sky_asset(1.1)));
+        assert_eq!(sel.take_preset_change(), Some(4));
+        // and the panels' value then holds
+        sel.set_time_of_day(4);
+        assert!(sel.wanted_settings().is_empty());
+    }
+
+    #[test]
+    fn an_environment_still_loading_is_set_aside_with_its_load() {
+        let mut sel = region_selector();
+        sel.restore_local(&llsd_map! {"sky_id" => SKY});
+        sel.settle_parcel();
+        sel.hold_parcel(Some(&llsd_map! {"water_id" => WATER}), 0);
+        sel.local_dirty = true;
+        assert!(!sel.take_local_dirty(), "the session's file stands");
+        sel.settle_parcel();
+        assert_eq!(sel.wanted_settings(), vec![SKY]);
+        sel.on_settings(SKY, Some(sky_asset(1.1)));
+        assert_eq!(sel.local_view().sky, ListShown::Item(SKY));
+    }
+
+    #[test]
+    fn nothing_to_keep_saves_nothing() {
+        let mut sel = region_selector();
+        sel.settle_parcel();
+        assert!(sel.capture_parcel().is_none());
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, None);
+        assert!(sel.capture_parcel().is_none(), "a failed pick is not saved");
     }
 
     #[test]

@@ -223,8 +223,47 @@ impl App {
                     self.panels.time_of_day = 0;
                 }
                 EnvAction::Preset(n) => self.panels.time_of_day = n,
+                EnvAction::SaveParcel => self.world.parcel_env.request_save(),
+                EnvAction::ForgetParcel => {
+                    if let Some(id) = self.world.parcel_env.saved_here(&self.settings.parcel_environments) {
+                        self.settings.parcel_environments.retain(|e| e.parcel != id);
+                        self.settings.save();
+                    }
+                }
             }
         }
+    }
+
+    /// The environments saved for parcels, each frame.
+    pub(super) fn parcel_environment_frame(&mut self) {
+        use crate::ui::environment::ParcelChoice;
+        use crate::world::parcel_env::Outcome;
+        let (outcome, ask) = self
+            .world
+            .parcel_environment_frame(&self.settings.parcel_environments, std::time::Instant::now());
+        if let Some(ask) = ask {
+            self.send(ask);
+        }
+        match outcome {
+            Outcome::Nothing => {}
+            Outcome::Saved(entry) => {
+                log::info!("environment saved for parcel {}", entry.parcel);
+                self.settings.parcel_environments.retain(|e| e.parcel != entry.parcel);
+                self.settings.parcel_environments.push(entry);
+                self.settings.save();
+            }
+            Outcome::NotSaved => self.env_alert(
+                aurora_i18n::tr!("common-environment"),
+                aurora_i18n::tr!("parcel-environment-not-saved"),
+            ),
+        }
+        self.env_ui.parcel_choice = if self.world.parcel_env.saved_here(&self.settings.parcel_environments).is_some() {
+            ParcelChoice::Saved
+        } else if self.world.parcel.is_some() && (self.world.eep.has_local() || self.panels.time_of_day != 0) {
+            ParcelChoice::Save
+        } else {
+            ParcelChoice::Nothing
+        };
     }
 
     /// The sunbeacon / moonbeacon settings, saved when changed.

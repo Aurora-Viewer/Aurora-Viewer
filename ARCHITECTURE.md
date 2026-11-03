@@ -901,6 +901,12 @@ joint offsets never move the shot; a focus picked on land, water or another
 object stops the tracking. The Preferences intensity control
 scales that translation from 0% to 500%; 100% is the default and the unscaled
 behavior.
+`world/parcel_env.rs` follows the agent's parcel for the environments saved per
+parcel: it names the parcel by its UUID (RemoteParcelRequest, only once something
+is saved) and tells `EnvSelector` to set the local environment aside and bring it
+back (`hold_parcel`, `settle_parcel`). The session's `local_environment_data.bin`
+keeps the set-aside environment, never a parcel's. `demo_parcel_env.rs` is its
+demo.
 
 `world/parcel_visibility.rs` owns saved parcel-isolation modes, region UUID/local
 parcel identities and exact bitmap membership. Independent same-owner and
