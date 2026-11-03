@@ -72,6 +72,9 @@ fn maturity_of(parcel: Option<&ParcelSummary>) -> Option<&'static str> {
 /// LLPanelProfileClassified::isValidName: a name, starting with a letter
 /// from A to Z or a digit (isalnum of its first byte).
 pub(super) fn classified_name_error(name: &str) -> Option<&'static str> {
+    // LLPanelProfileClassified::isValidName checks only the first byte on
+    // Save. The field prevalidates new insertions separately; received
+    // Unicode elsewhere in an existing title must not block other edits.
     match name.bytes().next() {
         None => Some(aurora_i18n::tr!("ui-profile-aurora-classified-blank-name")),
         Some(b) if !b.is_ascii_alphanumeric() => Some(aurora_i18n::tr!("ui-profile-aurora-classified-alphanumeric")),
@@ -956,7 +959,9 @@ fn publish_strip(ui: &mut egui::Ui, p: &Palette, publish: &mut Publish, name: &s
                         .font(semibold(ui, 12.0))
                         .color(p.amber),
                 );
-                ui.add(egui::TextEdit::singleline(&mut publish.price).desired_width(56.0).char_limit(9));
+                widgets::restricted_text_field(ui, true, &mut publish.price, widgets::TextPolicy::Digits, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(56.0).char_limit(9)
+                });
                 ui.label(RichText::new(aurora_i18n::currency()).font(semibold(ui, 12.0)).color(p.amber));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = Vec2::new(0.0, 24.0);
@@ -1316,11 +1321,11 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             field(ui, p, aurora_i18n::tr!("ui-profile-aurora-title"), |ui| {
-                let typed = ui.add(
-                    egui::TextEdit::singleline(&mut e.name)
+                let typed = widgets::restricted_text_field(ui, true, &mut e.name, widgets::TextPolicy::Ascii, |b, ui| {
+                    egui::TextEdit::singleline(b)
                         .desired_width(ui.available_width())
-                        .font(semibold(ui, 12.5)),
-                );
+                        .font(semibold(ui, 12.5))
+                });
                 if typed.changed() {
                     clip_bytes(&mut e.name, CLASSIFIED_NAME_BYTES);
                 }
@@ -1882,7 +1887,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_classified_name_like_firestorm() {
+    fn a_classified_name_like_the_legacy_viewer() {
         assert!(classified_name_error("").is_some());
         assert!(classified_name_error("« Atelier »").is_some(), "punctuation first");
         assert!(
@@ -1891,6 +1896,10 @@ mod tests {
         );
         assert!(classified_name_error("Atelier ouvert").is_none());
         assert!(classified_name_error("3 chalets").is_none());
+        assert!(
+            classified_name_error("A 桜龍 Été").is_none(),
+            "existing titles are checked by their first byte on Save"
+        );
         // 30 bytes at most, never through a character
         let mut s = "Cours de construction du samedi".to_owned();
         clip_bytes(&mut s, 30);

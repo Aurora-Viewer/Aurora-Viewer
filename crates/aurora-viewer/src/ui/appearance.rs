@@ -15,6 +15,7 @@ mod clipboard;
 mod folders;
 mod gallery;
 pub(crate) mod items;
+pub(crate) mod json;
 mod layers;
 #[cfg(test)]
 mod perf_tests;
@@ -23,6 +24,7 @@ pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
 pub struct AppearanceUi {
+    pub(crate) json: json::State,
     pub tab: usize,
     pub fill_previews: bool,
     pub editing: bool,
@@ -353,7 +355,7 @@ impl AppearanceUi {
             .and_then(|id| inv.folders.get(&id))
             .map(|f| aurora_i18n::tr!("status-new", value0 = f.info.name.to_string()))
             .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-new-outfit").into());
-        self.save_as = Some(name.chars().take(63).collect());
+        self.save_as = Some(crate::text_validation::generated_name(&name, 63));
         self.select_name = true;
         // beside the outfit it comes from: a variant goes in the same group
         self.save_in = model::base(inv)
@@ -1813,6 +1815,26 @@ pub fn show(
                 if menu::item_if(ui, p, "restore", restore, base.is_some() && st.pending.is_none()) {
                     actions.push(Action::Revert);
                 }
+                let selected = st.outfit_selection.ordered(&outfits);
+                let export = if !st.editing && st.tab < 2 && !selected.is_empty() {
+                    (selected.len() == 1).then(|| selected[0])
+                } else {
+                    model::cof(&world.inventory)
+                };
+                let idle = !st.json.busy() && st.pending.is_none();
+                if menu::item_if(
+                    ui,
+                    p,
+                    "file-export",
+                    aurora_i18n::tr!("outfit-json-export"),
+                    idle && export.is_some_and(|id| model::complete(&world.inventory, id)),
+                ) && let Some(folder) = export
+                {
+                    actions.push(Action::ExportJson(folder));
+                }
+                if menu::item_if(ui, p, "file-import", aurora_i18n::tr!("outfit-json-import"), idle) {
+                    actions.push(Action::PickJson);
+                }
             });
             if !st.editing && st.tab < 2 {
                 ui.label(
@@ -1895,7 +1917,9 @@ pub fn show(
             ui.add_space(6.0);
             ui.label(aurora_i18n::tr!("ui-appearance-save-what-i-am-wearing-as-a-new-outfit"));
             ui.add_space(8.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY).char_limit(63));
+            let r = widgets::restricted_text_field(ui, true, &mut name, widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(f32::INFINITY).char_limit(63)
+            });
             if st.select_name {
                 r.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, r.id) {
@@ -1935,6 +1959,7 @@ pub fn show(
         });
         st.save_as = if close || response.should_close() { None } else { Some(name) };
     }
+    json::confirmation(ctx, p, world, st, &mut actions);
     items::profile(ctx, p, world, st, &mut actions);
     gallery::dialogs(ctx, p, world, st, images, &mut actions);
     folders::dialogs(ctx, p, world, st, &mut actions);

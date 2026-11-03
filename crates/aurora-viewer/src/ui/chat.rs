@@ -185,9 +185,10 @@ pub struct ChatUi {
     pub mic: Option<bool>,
     /// Residents' voice volumes, for the call's participants.
     pub volumes: std::collections::BTreeMap<uuid::Uuid, f32>,
-    /// The times of the lines are shown (Preferences › Chat), given every
-    /// frame by the app.
-    pub timestamps: bool,
+    /// The times of the lines are shown (Preferences › Chat), in the nearby
+    /// chat and in the conversations apart, given every frame by the app.
+    pub timestamps_nearby: bool,
+    pub timestamps_im: bool,
     /// Objects' lines take one small row (Preferences › Chat, #475, off),
     /// given every frame by the app.
     pub compact_automated: bool,
@@ -686,15 +687,27 @@ fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> C
         })
 }
 
-/// Time of a chat line, in Second Life time as Firestorm shows it and as
-/// the transcripts have it ("hour,datetime,slt"). Empty for a line whose
+/// Time of a chat line, in Second Life time as the Legacy Viewer shows it
+/// and as the transcripts have it ("hour,datetime,slt"), in 12 or 24 hours
+/// as the bars' clock (`clock::chat_twelve_hours`). Empty for a line whose
 /// time is unknown (history without a timestamp).
 pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
+    hhmm_in(t, super::bars::clock::chat_twelve_hours())
+}
+
+/// `hhmm` in 24 hours whatever the clock, where the Legacy Viewer keeps 24
+/// hours: the money tracker's times (FSMoneyTracker::getTime) and the
+/// "(Saved at …)" of an offline group message (formatted_time).
+pub(crate) fn hhmm_24(t: std::time::SystemTime) -> String {
+    hhmm_in(t, false)
+}
+
+fn hhmm_in(t: std::time::SystemTime, twelve: bool) -> String {
     if t == std::time::UNIX_EPOCH {
         return String::new();
     }
     let t = Slt::of(t);
-    format!("{:02}:{:02}", t.hour, t.minute)
+    super::bars::clock::hour_text(t.hour, t.minute, "", twelve)
 }
 
 /// Color of the name and text of a history line: Firestorm greys what comes
@@ -2415,18 +2428,28 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
         return;
     }
     if line.kind == ChatKind::System {
-        chat_text_marked(
-            ui,
-            p,
-            env.emoji,
-            world,
-            env.want_names,
-            &line.text,
-            super::fonts::chat_size(ui.ctx(), 12.5),
-            tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
-            true,
-            mark,
-        );
+        // its time first, as the header strips show theirs
+        // (FSChatHistory::appendMessage stamps the system's lines too, #1999)
+        ui.horizontal_top(|ui| {
+            let time = hhmm(line.time);
+            if !time.is_empty() {
+                ui.label(header_time(ui, p, time));
+            }
+            ui.vertical(|ui| {
+                chat_text_marked(
+                    ui,
+                    p,
+                    env.emoji,
+                    world,
+                    env.want_names,
+                    &line.text,
+                    super::fonts::chat_size(ui.ctx(), 12.5),
+                    tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
+                    true,
+                    mark,
+                );
+            });
+        });
         return;
     }
     let own = line.kind.is_own();

@@ -821,6 +821,22 @@ impl App {
     }
 
     pub(super) fn apply_appearance_action_from(&mut self, action: crate::world::appearance::Action, actor: Uuid) {
+        match &action {
+            crate::world::appearance::Action::ExportJson(folder) => {
+                let result =
+                    crate::world::outfit_backup::Backup::capture(&self.world.inventory, *folder, &self.world.outfit_attachment_points());
+                match result {
+                    Ok(backup) => self.appearance_ui.json.export(&self.egui_ctx, &self.world, backup),
+                    Err(reason) => self.appearance_ui.message = reason,
+                }
+                return;
+            }
+            crate::world::appearance::Action::PickJson => {
+                self.appearance_ui.json.import(&self.egui_ctx, &self.world);
+                return;
+            }
+            _ => {}
+        }
         let allow_recovery = self
             .appearance_ui
             .pending
@@ -880,7 +896,9 @@ impl App {
         }
         self.appearance_ui.saved_new = matches!(
             &action,
-            crate::world::appearance::Action::Save(Some(_)) | crate::world::appearance::Action::SaveIn(..)
+            crate::world::appearance::Action::Save(Some(_))
+                | crate::world::appearance::Action::SaveIn(..)
+                | crate::world::appearance::Action::ImportJson { .. }
         );
         let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {

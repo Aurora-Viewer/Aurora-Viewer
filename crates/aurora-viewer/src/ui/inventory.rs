@@ -1,6 +1,7 @@
 //! Inventory window: lazily fetched folder tree, type icons, search.
 
 use super::icons::Icons;
+use super::widgets;
 use crate::theme::Palette;
 use crate::world::inventory::{FetchState, Inventory};
 use crate::world::{World, inventory::actions as rules};
@@ -36,6 +37,8 @@ mod document;
 pub use embedded::save_focused as document_save_focused;
 pub(crate) mod drag;
 mod embedded;
+mod folder_colors;
+pub use folder_colors::{demo as folder_colors_demo, demo_frame as folder_colors_demo_frame};
 mod hover;
 pub use hover::demo_events as hover_demo_events;
 mod keyboard;
@@ -225,6 +228,9 @@ pub struct Facts {
     pub parcel_environment: bool,
     /// What RLVa locks leave of wearing and taking off, for the menus.
     pub rlva: crate::world::rlva::WearLocks,
+    /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
+    /// (LLLandmarksPanel "teleport", LLPanelPlaces' Teleport button).
+    pub landmark_blocked: bool,
 }
 
 impl Facts {
@@ -292,6 +298,7 @@ impl Facts {
                     )
                 }),
             rlva: world.rlva_wear_locks(),
+            landmark_blocked: !world.rlva_can_teleport_landmark(),
         }
     }
 
@@ -511,6 +518,7 @@ pub struct InventoryUi {
     thumbnail_notice: Option<progress::Notice>,
     pub message: String,
     pub dialog: Option<EditDialog>,
+    folder_color: Option<folder_colors::Picker>,
     move_to: Option<move_to::MoveTo>,
     pub links_filter: Option<Uuid>,
     pub windows: Vec<InventoryWindow>,
@@ -665,6 +673,17 @@ impl InventoryUi {
             state: Box::new(InventoryUi::default()),
             open,
         });
+    }
+
+    /// Me › New Inventory Window (Inventory.NewWindow): the additional
+    /// window opens, or comes to the front when it is already open (Aurora
+    /// keeps one, where the Legacy Viewer adds another).
+    pub fn open_additional_window(&mut self, ctx: &egui::Context) {
+        if self.additional_open() {
+            super::widgets::expand_floater(ctx, &floater_id(ADDITIONAL_WINDOW));
+        } else {
+            self.toggle_additional_window(ctx);
+        }
     }
 
     /// RLVa's @showinv closes the additional window with the main one
@@ -1123,7 +1142,8 @@ fn folder_row(
         if resp.clicked() {
             *open = !*open;
         }
-        icon(ui, icons, folder_icon(folder.info.type_default, *open), p);
+        let tint = folder_colors::tint(prefs, id);
+        tree::icon(ui, icons, folder_icon(folder.info.type_default, *open), p, tint);
         let label = match fetch_state {
             FetchState::Fetching => aurora_i18n::tr!("status-name-loading", name = name.to_string()),
             FetchState::Failed => aurora_i18n::tr!("ui-inventory-failed-2", name = name.to_string()),
@@ -1599,14 +1619,15 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
     if !rules::renameable(inv, id) {
         return false;
     }
-    let r = ui.add_sized(
-        [ui.available_width(), 20.0],
-        egui::TextEdit::singleline(&mut edit.name)
+    let r = widgets::restricted_text_field(ui, true, &mut edit.name, widgets::TextPolicy::PrintableNoPipe, |b, ui| {
+        egui::TextEdit::singleline(b)
             .id(ui.make_persistent_id(("inventory_rename", id)))
             .font(egui::FontId::proportional(13.0))
             .text_color(p.ink)
-            .char_limit(63),
-    );
+            .char_limit(63)
+            .desired_width(ui.available_width())
+            .min_size(egui::vec2(0.0, 20.0))
+    });
     if st.reveal == Some(id) {
         scroll_to_row(ui, &r, egui::Align::Center);
         st.reveal = None;
@@ -2012,6 +2033,7 @@ pub fn show(
     st.hover.show(p, inv, prefs, hover_images, &mut st.wanted_hover_images);
     st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
     controls::dialogs(ctx, p, st, prefs);
+    folder_colors::show(ctx, p, inv, st, prefs);
     finish_hidden_rename(inv, st, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
@@ -2146,6 +2168,7 @@ pub fn show(
             finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
         }
         controls::dialogs(ctx, p, &mut w.state, prefs);
+        folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
@@ -4146,13 +4169,17 @@ mod tests {
         let mut st = InventoryUi::default();
         st.begin_rename(&inv, id);
         rename_frame(&ctx, &inv, &mut st, Vec::new());
-        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Objet renommé".into())]);
+        for input in [egui::Event::Text("桜".into()), egui::Event::Paste("Objet renommé".into())] {
+            assert!(rename_frame(&ctx, &inv, &mut st, vec![input]).is_empty());
+            assert_eq!(st.rename.as_ref().expect("rename remains open").name, old);
+        }
+        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Renamed object".into())]);
         let actions = rename_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
         assert!(st.rename.is_none());
         assert!(st.dialog.is_none());
         assert_eq!(inv.items[&id].name, old);
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
-            [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] if *target == id && body["name"].as_str() == "Objet renommé")));
+            [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] if *target == id && body["name"].as_str() == "Renamed object")));
     }
 
     #[test]
@@ -4162,6 +4189,7 @@ mod tests {
             let mut inv = Inventory::default();
             crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
             let id = Uuid::from_u128(8100);
+            inv.items.get_mut(&id).expect("demo object").name = "Objet de démonstration 桜".into();
             let mut st = InventoryUi::default();
             st.begin_rename(&inv, id);
             rename_frame(&ctx, &inv, &mut st, Vec::new());

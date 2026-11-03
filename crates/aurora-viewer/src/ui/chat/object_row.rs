@@ -156,9 +156,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
     ui.add_space(1.0);
     let top = ui.cursor().top();
     let left = ui.max_rect().left();
-    // (a notice has no time, as everywhere)
+    // a notice keeps its time like any line (FSChatHistory::appendMessage
+    // stamps the system's lines too, #1999)
     let notice = line.kind == ChatKind::System;
-    let times = times && !notice;
     let size = chat_size(ui.ctx(), TEXT);
     let row_h = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(size)));
     // the text's first line stands there: everything beside it too

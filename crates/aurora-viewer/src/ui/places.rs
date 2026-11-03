@@ -294,6 +294,16 @@ impl PlacesUi {
         self.raise = true;
     }
 
+    /// The window, when open, shows the teleport history: the History tab
+    /// of the classic look (`classic`) or of Aurora's.
+    pub fn history_shown(&self, classic: bool) -> bool {
+        if classic {
+            self.tab == TAB_HISTORY
+        } else {
+            self.aurora.source == aurora::Source::History
+        }
+    }
+
     /// Bring the window to the front (a profile was opened).
     pub fn raise(&mut self) {
         self.raise = true;
@@ -1091,7 +1101,7 @@ impl PlacesUi {
                 p,
                 aurora_i18n::tr!("common-teleport"),
                 aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
-                place.global.is_some(),
+                place.global.is_some() && place_details::teleport_allowed(place, world),
                 w,
             ) && let Some(a) = place_details::teleport_action(place, world)
             {

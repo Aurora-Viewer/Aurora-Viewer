@@ -437,6 +437,8 @@ impl Renderer {
                 on_lost.set();
                 crate::pipeline_cache::device_lost();
                 log::error!("GPU device lost ({reason:?}): {message}");
+                // hang or fault, for the crash report (device_lost.rs)
+                log::error!("GPU work at the loss: {}", on_lost.work_at_loss());
             }
         });
         let info = GpuInfo {
@@ -857,7 +859,7 @@ impl Renderer {
 
     /// The draw lists can be culled on the GPU (`DrawLists::gpu`).
     pub fn gpu_culling(&self) -> bool {
-        self.gpu_cull
+        self.gpu_cull && GpuCull::fits(&self.device, self.records.faces.len(), self.cull.objects.len())
     }
 
     /// Supported MSAA sample counts (besides 1).
@@ -1185,6 +1187,7 @@ impl Renderer {
         if self.demo_lost == Some(self.frames) && !self.lost.get() {
             self.lost.set();
             log::error!("GPU device lost (Unknown): AURORA_DEMO_GPU_LOST at frame {}", self.frames);
+            log::error!("GPU work at the loss: {}", self.lost.work_at_loss());
         }
         if self.lost.get() {
             // nothing reaches a lost device: no frame is built, the photo

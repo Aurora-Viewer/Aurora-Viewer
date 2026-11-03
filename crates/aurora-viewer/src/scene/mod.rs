@@ -12,6 +12,7 @@ pub mod banlines;
 pub mod blend_order;
 mod blender_live;
 pub mod body_physics;
+pub mod build_hologram;
 pub mod complexity;
 pub mod creation_preview;
 pub(crate) mod default_motions;
@@ -965,6 +966,7 @@ pub struct Scene {
     rlva_render_state: (Option<Uuid>, bool, bool),
     pub lists: DrawLists,
     pub creation_preview: creation_preview::CreationPreview,
+    pub build_hologram: build_hologram::BuildHologram,
     pub physics_shapes: physics_shapes::PhysicsShapes,
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
@@ -1523,6 +1525,7 @@ impl Scene {
             rlva_render_state: (None, false, false),
             lists: DrawLists::default(),
             creation_preview: creation_preview::CreationPreview::default(),
+            build_hologram: build_hologram::BuildHologram::default(),
             physics_shapes: physics_shapes::PhysicsShapes::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
@@ -2068,6 +2071,7 @@ impl Scene {
         self.banlines.clear(renderer);
         self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
+        self.build_hologram.clear(renderer);
         self.physics_shapes.clear(renderer);
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
@@ -4848,9 +4852,12 @@ impl Scene {
         if usage_phase == 0 {
             // LLTerrainMaterials::boost: TERRAIN_DECODE_PRIORITY = 2048²,
             // for every material map too. A 512 px cap loses terrain relief.
+            // BOOST_TERRAIN is under BOOST_HIGH: the maximum texture
+            // resolution chosen in Preferences still caps it.
+            let px = terrain_surface::DECODE_PIXELS.min(self.textures.max_resolution() as f32);
             for r in self.regions.values() {
                 for id in &r.surface.texture_ids {
-                    self.textures.note_usage_fixed(id, terrain_surface::DECODE_PIXELS);
+                    self.textures.note_usage_fixed(id, px);
                 }
             }
             self.textures.recompute_wants();

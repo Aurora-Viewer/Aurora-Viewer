@@ -979,9 +979,9 @@ impl ListingsUi {
             );
             ui.add_space(8.0);
             ui.label(RichText::new(aurora_i18n::tr!("marketplace-associate-prompt")).color(p.ink));
-            let edit = ui.add(egui::TextEdit::singleline(&mut text).desired_width(200.0));
-            // validateNonNegativeS32
-            text.retain(|c| c.is_ascii_digit());
+            let edit = widgets::restricted_text_field(ui, true, &mut text, widgets::TextPolicy::Digits, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(200.0)
+            });
             text.truncate(10);
             if edit.lost_focus() && widgets::enter_pressed(ui) {
                 answer = Some(true);

@@ -299,11 +299,12 @@ pub fn show(
                                 // on every paint. That dirties fractional defaults
                                 // and can restart the bake debounce indefinitely.
                                 if ui
-                                    .add(
+                                    .add(widgets::restricted_number(
                                         egui::Slider::new(&mut percent, 0.0..=100.0)
                                             .clamping(egui::SliderClamping::Edits)
                                             .fixed_decimals(0),
-                                    )
+                                        widgets::TextPolicy::Decimal,
+                                    ))
                                     .changed()
                                 {
                                     let next = param.min + percent / 100.0 * (param.max - param.min);
@@ -363,7 +364,9 @@ pub fn show(
         let mut dismissed = false;
         widgets::Modal::new(egui::Id::unique("wearable_save_as")).show(ctx, |ui| {
             ui.label(aurora_i18n::tr!("common-save-as"));
-            ui.text_edit_singleline(name);
+            widgets::restricted_text_field(ui, true, name, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                egui::TextEdit::singleline(b)
+            });
             ui.horizontal(|ui| {
                 accepted =
                     widgets::default_button(ui.add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save"))))

@@ -33,6 +33,7 @@ pub mod experiences;
 pub mod favorites;
 pub mod flying_at_exit;
 mod friend_join;
+pub mod friends_only;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -41,6 +42,7 @@ pub mod home;
 pub mod hover_height;
 pub mod hud_lock;
 pub mod hud_scale;
+mod im_announce;
 pub mod inventory;
 pub mod inventory_offers;
 pub mod land;
@@ -63,6 +65,7 @@ pub mod object_im_filter;
 pub mod objects;
 pub mod open_ims;
 pub mod outfit;
+pub mod outfit_backup;
 pub mod outfit_folders;
 pub mod outfit_paste;
 pub mod parcel_visibility;
@@ -338,6 +341,15 @@ pub struct World {
     /// Lines not sent by a person neither count as unread nor alert
     /// (Preferences › Chat, #741, off), given every frame by the app.
     pub quiet_automated_chat: bool,
+    /// A resident starting to type to us opens the conversation with an
+    /// announcement (FSAnnounceIncomingIM, `im_announce.rs`), given every
+    /// frame by the app.
+    pub announce_incoming_im: bool,
+    /// Fly override (the Legacy Viewer's FSAlwaysFly, read by LLAgent::canFly
+    /// in indra/newview/llagent.cpp): the parcel's and the region's no-fly
+    /// no longer stop a takeoff nor land the avatar. Never saved, off at
+    /// every launch; kept across a relog, like the Legacy setting.
+    pub fly_override: bool,
     /// What the notices of the nearby chat are about, for their icon.
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
@@ -469,6 +481,8 @@ pub struct World {
     rlva_location_hidden: bool,
     /// Derendered objects and residents, and the asset blacklist.
     pub derender: derender::Derender,
+    /// "Show Friends Only" beside it (`friends_only.rs`).
+    pub friends_only: friends_only::State,
     /// Our groups and the group / conference chat sessions.
     pub groups: groups::GroupChats,
     /// Voice calls with residents, groups and conferences.
@@ -708,6 +722,8 @@ impl World {
             nearby_news: false,
             chat_badge: 0,
             quiet_automated_chat: false,
+            announce_incoming_im: false,
+            fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
             nearby_history: Default::default(),
@@ -775,6 +791,7 @@ impl World {
             rlva_hover_privacy: Default::default(),
             rlva_location_hidden: false,
             derender: derender::Derender::default(),
+            friends_only: Default::default(),
             groups: groups::GroupChats::default(),
             calls: calls::Calls::default(),
             status: status::Status::default(),
@@ -861,10 +878,12 @@ impl World {
         chat_log.logout();
         // a setting, not the session's: the arrival's lines follow it too
         let quiet = self.quiet_automated_chat;
+        let fly_override = self.fly_override;
         *self = World::new(lib);
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
         self.quiet_automated_chat = quiet;
+        self.fly_override = fly_override;
     }
 
     /// LLTeleportHistory::onTeleportFinished → LLTeleportHistoryStorage:
@@ -1577,9 +1596,11 @@ impl World {
     /// A region that blocks flying lands our avatar when it arrives there or
     /// when the region's flags change (process_agent_movement_complete and
     /// process_region_info, indra/newview/llviewermessage.cpp): a flight
-    /// restored at login, or carried into a no-fly region, ends.
+    /// restored at login, or carried into a no-fly region, ends. Not under
+    /// the fly override: setFlying(canFly()) keeps the flight there.
     fn land_if_fly_blocked(&mut self, handle: RegionHandle) {
-        let blocked = Some(handle) == self.main_region
+        let blocked = !self.fly_override
+            && Some(handle) == self.main_region
             && self
                 .regions
                 .get(&handle)
@@ -2293,6 +2314,7 @@ impl World {
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.hud_locks = hud_lock::HudLocks::load(account.join(hud_lock::FILE));
                 self.derender = derender::Derender::load(account.join(derender::FILE));
+                self.friends_only.reload = true;
                 self.media_filter = crate::media::filter::MediaFilter::load(account.join(crate::media::filter::FILE));
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
@@ -2507,6 +2529,9 @@ impl World {
                     self.tp_status = aurora_i18n::tr!("common-loading-region").into();
                 }
                 self.arrived_once = true;
+                if self.teleporting {
+                    self.friends_only_teleport_arrival();
+                }
                 self.teleporting = false;
                 self.park_far_regions();
                 self.land_if_fly_blocked(handle);
@@ -2521,7 +2546,8 @@ impl World {
                 let mut land_changed = false;
                 let land_watches = self.land.watches(handle);
                 for u in objects {
-                    if let Some(dropped) = self.derender.filter(handle, &u) {
+                    let hide_avatar = self.hides_non_friend(&u);
+                    if let Some(dropped) = self.derender.filter_avatar(handle, &u, hide_avatar) {
                         if dropped.newly {
                             self.hide_key(dropped.key, dropped.by);
                         }
@@ -2617,6 +2643,9 @@ impl World {
                                 at,
                             );
                         }
+                    } else {
+                        // kept out of the world: it comes back where it is now
+                        self.derender.apply_terse(&key, &t);
                     }
                 }
                 None
@@ -4052,6 +4081,9 @@ impl World {
         // Stop): "is typing" in their conversation, never a line
         if matches!(im.dialog, IM_TYPING_START | IM_TYPING_STOP) {
             if !im.from_agent_id.is_nil() {
+                if im.dialog == IM_TYPING_START {
+                    self.announce_typing(&im);
+                }
                 self.social.set_typing(im.from_agent_id, im.dialog == IM_TYPING_START);
             }
             return;
@@ -4835,10 +4867,15 @@ impl World {
         };
         let (from, text) = (line.source, line.text.clone());
         let group = m.kind != ImKind::Private;
+        // an emote reads "Jane waves", as LLToastIMPanel writes it
+        let emote = attention::emote_line(&line.from, &text);
         let (title, body) = if group {
-            (self.session_title(&m.session), format!("{}: {text}", line.from))
+            (
+                self.session_title(&m.session),
+                emote.unwrap_or_else(|| format!("{}: {text}", line.from)),
+            )
         } else {
-            (line.from.clone(), text)
+            (line.from.clone(), emote.unwrap_or(text))
         };
         let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
         self.notifications

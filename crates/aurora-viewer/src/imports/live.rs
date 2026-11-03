@@ -36,11 +36,7 @@ fn entry(source: PreparedSource, images: Vec<PreparedImage>, prefs: &Preferences
         }
     }
     let mut entry = Entry::new(PathBuf::new(), Ok(Source::Mesh(Box::new(draft))), prefs.texture());
-    entry.name = source.name;
-    if entry.name.len() > 63 {
-        let end = entry.name.floor_char_boundary(63);
-        entry.name.truncate(end);
-    }
+    entry.name = crate::text_validation::generated_name(&source.name, 63);
     entry.from_live = true;
     entry
 }
