@@ -3,9 +3,9 @@
 //!
 //! Port of FloaterQuickPrefs (newview/quickprefs.cpp, floater_quickprefs.xml,
 //! app_settings/quick_preferences.xml, originally LGPL 2.1). From top to
-//! bottom, like the Legacy Viewer: the user-defined rows (here its nine
-//! default ones, each bound to the typed setting Preferences edits), a line,
-//! "Hover Height", "Max Bandwidth", "Max Complexity" (with "No Limit" at the
+//! bottom, like the Legacy Viewer: the user-defined rows (here seven of its
+//! nine default ones, each bound to the typed setting Preferences edits), a
+//! line, "Hover Height", "Max Bandwidth", "Max Complexity" (with "No Limit" at the
 //! end of the slider), then the environment block (Sky, Water, Day Cycle,
 //! "Personal Lighting…" and the return to the shared environment, shared
 //! with the Environment window: `EnvironmentUi::selector_body`).
@@ -155,8 +155,14 @@ pub fn set_complexity_position(s: &mut Settings, position: u32) {
     s.max_complexity = crate::scene::complexity::slider::to_limit(position);
 }
 
-/// AvatarNameTagMode (0 off, 1 on, 2 fade) as Aurora keeps it: the three
-/// "show name tags" switches and the "briefly" one of Preferences › Avatars.
+/// AvatarNameTagMode (0 off, 1 on, 2 fade) as Aurora keeps it: the friends'
+/// and the other residents' "show name tags" switches and the "briefly" one
+/// of Preferences › Avatars. The own tag's switch is RenderNameShowSelf, a
+/// setting of its own that the Legacy Viewer's quick preferences leave
+/// alone, so this row never touches it. One difference: the Legacy Viewer's
+/// Off also hides the own tag (LLVOAvatar::idleUpdateNameTag draws it
+/// on RenderNameShowSelf && AvatarNameTagMode); Aurora has no mode apart
+/// from these switches to remember, so Off keeps the own tag's choice.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NameTags {
     Off,
@@ -166,7 +172,7 @@ pub enum NameTags {
 
 impl NameTags {
     pub fn of(s: &Settings) -> NameTags {
-        if !(s.show_own_name_tag || s.show_friend_name_tags || s.show_other_name_tags) {
+        if !(s.show_friend_name_tags || s.show_other_name_tags) {
             NameTags::Off
         } else if s.temporary_name_tags {
             NameTags::Brief
@@ -175,11 +181,11 @@ impl NameTags {
         }
     }
 
-    /// Off hides every tag (the timer's switch stays as it is); On and Brief
-    /// show them all, the second only for a while.
+    /// Off hides the residents' tags (the timer's switch stays as it is); On
+    /// and Brief show them, the second only for a while. The own tag keeps
+    /// its Preferences switch.
     pub fn apply(self, s: &mut Settings) {
         let shown = self != NameTags::Off;
-        s.show_own_name_tag = shown;
         s.show_friend_name_tags = shown;
         s.show_other_name_tags = shown;
         match self {
@@ -482,16 +488,68 @@ mod tests {
         let mut s = Settings::default();
         assert_eq!(NameTags::of(&s), NameTags::On);
         NameTags::Brief.apply(&mut s);
-        assert!(s.temporary_name_tags && s.show_own_name_tag && s.show_friend_name_tags && s.show_other_name_tags);
+        assert!(s.temporary_name_tags && s.show_friend_name_tags && s.show_other_name_tags);
         assert_eq!(NameTags::of(&s), NameTags::Brief);
         NameTags::Off.apply(&mut s);
-        assert!(!(s.show_own_name_tag || s.show_friend_name_tags || s.show_other_name_tags));
+        assert!(!(s.show_friend_name_tags || s.show_other_name_tags));
         assert_eq!(NameTags::of(&s), NameTags::Off);
         NameTags::On.apply(&mut s);
         assert!(!s.temporary_name_tags);
         assert_eq!(NameTags::of(&s), NameTags::On);
-        // the tags hidden one by one in Preferences: Off only when all are
+        // the tags hidden one by one in Preferences: Off only when both are
         s.show_other_name_tags = false;
         assert_eq!(NameTags::of(&s), NameTags::On);
+    }
+
+    /// The window keeps its size, the environment block's status line, its
+    /// last text, inside it.
+    #[test]
+    fn the_window_keeps_its_size() {
+        let status = aurora_i18n::tr!("ui-environment-skies-waters-day-cycles", value0 = "0", value1 = "0", value2 = "0");
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[egui::vec2(WIDTH, 420.0)],
+            &status,
+            || {
+                (
+                    QuickPrefsUi::default(),
+                    Settings::default(),
+                    HoverHeight::default(),
+                    EnvironmentUi::default(),
+                )
+            },
+            |(quick, settings, height, env), ctx, p| {
+                let mut open = true;
+                let mut lighting = false;
+                quick.show(
+                    ctx,
+                    p,
+                    &mut open,
+                    settings,
+                    Hover { height, enabled: true },
+                    env,
+                    LocalView::SHARED,
+                    false,
+                    &mut lighting,
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn name_tag_modes_leave_the_own_tag_switch_alone() {
+        // RenderNameShowSelf is its own setting: the quick preferences set
+        // AvatarNameTagMode only
+        for own in [false, true] {
+            let mut s = Settings {
+                show_own_name_tag: own,
+                ..Settings::default()
+            };
+            for mode in [NameTags::Off, NameTags::On, NameTags::Brief, NameTags::On] {
+                mode.apply(&mut s);
+                assert_eq!(s.show_own_name_tag, own, "{mode:?} with own tag {own}");
+                assert_eq!(NameTags::of(&s), mode, "own tag {own}");
+            }
+        }
     }
 }

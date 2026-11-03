@@ -2563,6 +2563,10 @@ ui-options-name-tags = Avatar name tags
 ui-options-show-own-tag = Show my name tag
 ui-options-show-friend-tags = Show friends' name tags
 ui-options-show-other-tags = Show other residents' name tags
+# Quick preferences: the name tags row (AvatarNameTagMode)
+quickprefs-name-tags-off = Off
+quickprefs-name-tags-on = On
+quickprefs-name-tags-brief = Briefly
 ui-options-hover-tips = World tooltips
 ui-options-hover-tips-show = Show world tooltips
 ui-options-hover-tips-show-help = Name, owner and sale of what is under the pointer, after a short rest. Also in World › World tooltips (Ctrl+Shift+T).
@@ -12989,8 +12993,3 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
-
-# Quick preferences: the name tags row (AvatarNameTagMode)
-quickprefs-name-tags-off = Off
-quickprefs-name-tags-on = On
-quickprefs-name-tags-brief = Briefly

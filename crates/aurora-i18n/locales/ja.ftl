@@ -2559,6 +2559,10 @@ ui-options-name-tags = アバターの名前タグ
 ui-options-show-own-tag = 自分の名前タグを表示
 ui-options-show-friend-tags = フレンドの名前タグを表示
 ui-options-show-other-tags = 他の住人の名前タグを表示
+# Quick preferences: the name tags row (AvatarNameTagMode)
+quickprefs-name-tags-off = 非表示
+quickprefs-name-tags-on = 表示
+quickprefs-name-tags-brief = 一時的に表示
 ui-options-hover-tips = ワールドツールチップ
 ui-options-hover-tips-show = ワールドツールチップを表示
 ui-options-hover-tips-show-help = ポインターの下にあるものの名前、所有者、販売情報を少し待ってから表示します。「ワールド」›「ワールドツールチップ」（Ctrl＋Shift＋T）からも切り替えられます。
@@ -12966,8 +12970,3 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
-
-# Quick preferences: the name tags row (AvatarNameTagMode)
-quickprefs-name-tags-off = 非表示
-quickprefs-name-tags-on = 表示
-quickprefs-name-tags-brief = 一時的に表示

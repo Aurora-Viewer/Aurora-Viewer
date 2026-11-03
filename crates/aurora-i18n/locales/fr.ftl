@@ -2566,6 +2566,10 @@ ui-options-name-tags = Étiquettes des avatars
 ui-options-show-own-tag = Afficher mon étiquette
 ui-options-show-friend-tags = Afficher les étiquettes des amis
 ui-options-show-other-tags = Afficher les étiquettes des autres
+# Quick preferences: the name tags row (AvatarNameTagMode)
+quickprefs-name-tags-off = Aucune
+quickprefs-name-tags-on = Toujours
+quickprefs-name-tags-brief = Brièvement
 ui-options-hover-tips = Infobulles du monde
 ui-options-hover-tips-show = Afficher les infobulles du monde
 ui-options-hover-tips-show-help = Nom, propriétaire et vente de ce qui est sous le pointeur, après un court arrêt. Aussi dans Monde › Infobulles du monde (Ctrl+Maj+T).
@@ -12985,8 +12989,3 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
-
-# Quick preferences: the name tags row (AvatarNameTagMode)
-quickprefs-name-tags-off = Aucune
-quickprefs-name-tags-on = Toujours
-quickprefs-name-tags-brief = Brièvement
