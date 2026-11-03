@@ -94,8 +94,9 @@ impl DeviceLost {
     }
 }
 
-/// The demo's loss, and its hang, were given to a renderer already.
-pub(crate) static DEMO_LOSS_TAKEN: AtomicBool = AtomicBool::new(false);
+/// The renderers made so far in the run, for `AURORA_DEMO_GPU_LOST`'s list,
+/// and whether the demo's hang was given to one already.
+pub(crate) static DEMO_RENDERERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 pub(crate) static DEMO_HANG_TAKEN: AtomicBool = AtomicBool::new(false);
 
 /// `AURORA_DEMO_GPU_HANG=<frame>`: a real GPU hang, for the recovery's test
@@ -117,12 +118,16 @@ pub(crate) fn demo_hang(device: &wgpu::Device, queue: &wgpu::Queue) {
     const GROUPS: u32 = 4096;
     // ~6e11 loop steps a second on an RX 9070 XT: about 12 s
     const STEPS: u32 = 30_000_000;
-    log::warn!("AURORA_DEMO_GPU_HANG: submitting a GPU hang ({STEPS} steps in each of {} threads)", GROUPS * 64);
+    log::warn!(
+        "AURORA_DEMO_GPU_HANG: submitting a GPU hang ({STEPS} steps in each of {} threads)",
+        GROUPS * 64
+    );
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("demo hang"),
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
     });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    use crate::pipeline_cache::CachedPipelines;
+    let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
         label: Some("demo hang"),
         layout: None,
         module: &module,
@@ -171,10 +176,17 @@ pub(crate) fn demo_hang(device: &wgpu::Device, queue: &wgpu::Queue) {
 /// taken as lost at that frame, as the device-lost callback would after a
 /// driver reset.
 pub(crate) fn demo_frame(demo: bool, var: Option<&str>) -> Option<u64> {
+    demo_frame_of(demo, var, 0)
+}
+
+/// `AURORA_DEMO_GPU_LOST=<frame>,<frame>…`: the frame the `renderer`-th
+/// renderer of the run (0 at the start, then one per GPU recovery) takes its
+/// device as lost at, counted from its own start; none past the list.
+pub(crate) fn demo_frame_of(demo: bool, var: Option<&str>, renderer: usize) -> Option<u64> {
     if !demo {
         return None;
     }
-    var?.trim().parse().ok()
+    var?.split(',').nth(renderer)?.trim().parse().ok()
 }
 
 #[cfg(test)]
@@ -205,6 +217,14 @@ mod tests {
         assert!(!in_guarded_poll(), "the guard is reset after the panic");
         assert_eq!(guarded(|| 7), Some(7));
         assert!(!in_guarded_poll());
+    }
+
+    #[test]
+    fn each_renderer_of_a_run_takes_the_next_loss_of_the_list() {
+        assert_eq!(demo_frame_of(true, Some("600,700, 800"), 0), Some(600));
+        assert_eq!(demo_frame_of(true, Some("600,700, 800"), 2), Some(800));
+        assert_eq!(demo_frame_of(true, Some("600,700, 800"), 3), None);
+        assert_eq!(demo_frame_of(true, Some("600"), 1), None, "a single loss, the first renderer's");
     }
 
     #[test]

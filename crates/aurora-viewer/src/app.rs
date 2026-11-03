@@ -250,6 +250,8 @@ pub struct App {
     /// The window of a lost GPU device, kept on screen until the new one has
     /// presented its first image (gpu_recovery.rs).
     retired_window: Option<Arc<Window>>,
+    /// When the GPU device was lost lately (gpu_recovery.rs `loss_step`).
+    gpu_losses: std::collections::VecDeque<Instant>,
     egui_ctx: egui::Context,
     logo: Option<egui::TextureHandle>,
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
@@ -1187,6 +1189,7 @@ impl App {
             net,
             gfx: None,
             retired_window: None,
+            gpu_losses: Default::default(),
             egui_ctx,
             logo: None,
             logo_rx: Some(rx),
@@ -10963,8 +10966,8 @@ impl App {
         self.crash_state(&gfx.renderer, &gfx.window);
         self.gpu_stall_frame(&gfx.renderer);
         self.gfx = Some(gfx);
-        if std::mem::take(&mut self.gpu_stall.recover) {
-            if !self.recover_from_gpu_loss(event_loop) {
+        if let Some(safe) = self.gpu_stall.recover.take() {
+            if !self.recover_from_gpu_loss(event_loop, safe) {
                 crate::crash::gpu_lost();
                 self.close_while_gpu_stalled(event_loop);
             }

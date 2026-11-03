@@ -610,12 +610,13 @@ impl Renderer {
             histogram_request: None,
             histogram: None,
             lost,
-            // once a run: the renderer of a recovery counts its frames from 0
-            demo_lost: crate::device_lost::demo_frame(
+            // one of the list for each renderer of the run (a recovery's
+            // counts its frames from 0 again)
+            demo_lost: crate::device_lost::demo_frame_of(
                 std::env::var_os("AURORA_DEMO").is_some(),
                 std::env::var("AURORA_DEMO_GPU_LOST").ok().as_deref(),
-            )
-            .filter(|_| !crate::device_lost::DEMO_LOSS_TAKEN.swap(true, std::sync::atomic::Ordering::Relaxed)),
+                crate::device_lost::DEMO_RENDERERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ),
             demo_hang,
         })
     }

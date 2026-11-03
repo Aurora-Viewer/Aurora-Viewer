@@ -89,6 +89,36 @@ impl App {
     }
 }
 
+/// Losses closer than this count together.
+const LOSS_SPAN: Duration = Duration::from_secs(5 * 60);
+
+/// What a device loss leads to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LossStep {
+    /// A new window and device, the settings as they are.
+    Recover,
+    /// Again within a few minutes: recovered with the safe graphics level.
+    RecoverSafe,
+    /// A third time: closed as before, with the crash report.
+    Close,
+}
+
+/// The human's rule of 2026-11-03: of the losses of the last few minutes,
+/// the first recovers as it was, the second with the safe graphics level
+/// (the cause, a pass or the video memory, is likely still there), the
+/// third closes. `history` keeps their times.
+pub(super) fn loss_step(history: &mut std::collections::VecDeque<Instant>, now: Instant) -> LossStep {
+    while history.front().is_some_and(|at| now.duration_since(*at) > LOSS_SPAN) {
+        history.pop_front();
+    }
+    history.push_back(now);
+    match history.len() {
+        1 => LossStep::Recover,
+        2 => LossStep::RecoverSafe,
+        _ => LossStep::Close,
+    }
+}
+
 /// `AURORA_GPU_RECOVERY=1`: recover from a device loss instead of closing
 /// (work in progress, off by default until it is complete).
 pub(super) fn enabled() -> bool {
@@ -133,7 +163,7 @@ impl App {
     /// the world kept, the scene reloaded on the new device. The old window
     /// stays on screen until the new one has presented (`retired_window`).
     /// False when no new renderer could be made: the caller closes as before.
-    pub(super) fn recover_from_gpu_loss(&mut self, event_loop: &ActiveEventLoop) -> bool {
+    pub(super) fn recover_from_gpu_loss(&mut self, event_loop: &ActiveEventLoop, safe: bool) -> bool {
         let Some(old) = self.gfx.take() else {
             return false;
         };
@@ -151,6 +181,9 @@ impl App {
         // handles (Renderer::new's contract)
         drop(renderer);
         self.retired_window = Some(window);
+        if safe {
+            self.safe_graphics_after_losses();
+        }
         let window = match self.open_window(event_loop, &plan) {
             Ok(w) => w,
             Err(e) => {
@@ -180,7 +213,47 @@ impl App {
         self.gpu_stall = Default::default();
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;
-        log::warn!("GPU recovery: new window and renderer in {} ms", started.elapsed().as_millis());
+        log::warn!(
+            "GPU recovery: new window and renderer in {} ms{}",
+            started.elapsed().as_millis(),
+            if safe { ", with the safe graphics level" } else { "" }
+        );
+        self.world.notifications.push(
+            crate::world::notifications::Kind::Alert,
+            aurora_i18n::tr!("app-gpu-recovered-title"),
+            if safe {
+                aurora_i18n::tr!("app-gpu-recovered-safe")
+            } else {
+                aurora_i18n::tr!("app-gpu-recovered")
+            }
+            .to_owned(),
+            crate::world::notifications::Data::None,
+        );
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_loss_recovers_the_second_with_safe_graphics_the_third_closes() {
+        let mut history = std::collections::VecDeque::new();
+        let t = Instant::now();
+        let m = |n: u64| Duration::from_secs(n * 60);
+        assert_eq!(loss_step(&mut history, t), LossStep::Recover);
+        assert_eq!(loss_step(&mut history, t + m(2)), LossStep::RecoverSafe);
+        assert_eq!(loss_step(&mut history, t + m(4)), LossStep::Close);
+        // losses far apart each recover as the first
+        let mut history = std::collections::VecDeque::new();
+        assert_eq!(loss_step(&mut history, t), LossStep::Recover);
+        assert_eq!(loss_step(&mut history, t + m(6)), LossStep::Recover);
+        assert_eq!(loss_step(&mut history, t + m(12)), LossStep::Recover);
+        // the first of three counts out after its five minutes
+        let mut history = std::collections::VecDeque::new();
+        assert_eq!(loss_step(&mut history, t), LossStep::Recover);
+        assert_eq!(loss_step(&mut history, t + m(4)), LossStep::RecoverSafe);
+        assert_eq!(loss_step(&mut history, t + m(6)), LossStep::RecoverSafe);
     }
 }

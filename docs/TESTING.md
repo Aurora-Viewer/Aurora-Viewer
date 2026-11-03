@@ -6617,8 +6617,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `| Crash | GPU device lost |` and `| GPU device lost | yes … |`, and the
   next start offers the safe graphics. The window's close button closes at
   once too. A real loss cannot be caused here: the flag is set as the
-  callback would set it, wgpu's own device stays alive. Once a run: the
-  renderer a recovery makes counts its frames from 0 again.
+  callback would set it, wgpu's own device stays alive. A list
+  (`600,600,600`) gives one frame to each renderer of the run, the start's
+  then each recovery's (a recovery's counts its frames from 0 again): with
+  `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
+  with the safe graphics level, then close.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
   compute dispatch whose loop runs about 12 s on a recent card (the log says
