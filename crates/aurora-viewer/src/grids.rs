@@ -442,7 +442,8 @@ mod tests {
     fn a_hypergrid_link_region_names_its_grid() {
         assert_eq!(
             link_grid("http://hg.osgrid.org:80/ wright plaza").as_deref(),
-            Some("hg.osgrid.org:80")
+            // port 80 is http's own: the address has none
+            Some("hg.osgrid.org")
         );
         assert_eq!(
             link_grid("grid.wolfterritories.org:8002:Sandbox").as_deref(),
