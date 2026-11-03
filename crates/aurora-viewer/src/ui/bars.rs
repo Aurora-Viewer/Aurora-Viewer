@@ -74,6 +74,8 @@ pub enum BarAction {
     /// The nearby chat bar put away or brought back with the keyboard
     /// (MainChatbarVisible, FSNearbyChat::onDefaultChatBarButtonClicked).
     ToggleChatBar,
+    /// Show Friends Only switched (RFO, FSRenderFriendsOnly).
+    ToggleFriendsOnly,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
@@ -246,6 +248,8 @@ pub struct StatusInfo<'a> {
     pub double_click: crate::autopilot::DoubleClick,
     /// Quickjump is on (Me › Quickjump).
     pub quickjump: bool,
+    /// Show Friends Only is on (World › Show Friends only).
+    pub friends_only: bool,
     /// The fly override is on (Me › Fly override).
     pub fly_override: bool,
     /// Photos are taken without the shutter sound nor the snapshot
@@ -1149,6 +1153,18 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::avatar_render_settings::WINDOW,
             &mut panels.avatar_render_settings,
         );
+        // menu_viewer.xml: World › Show Friends only (TogglePerAccountControl
+        // FSRenderFriendsOnly), after Avatar Render Settings
+        if menu::check(
+            ui,
+            p,
+            "user-check",
+            aurora_i18n::tr!("toolbar-command-friends-only"),
+            st.friends_only,
+            true,
+        ) {
+            *action = BarAction::ToggleFriendsOnly;
+        }
         menu::separator(ui, p);
         // Firestorm's View › Camera Controls and Movement Controls
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
@@ -2089,6 +2105,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
+        // Floater.Toggle fs_voice_controls
+        "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
@@ -2101,6 +2119,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "picks" => return BarAction::MyPicks,
         // MainChatbarVisible: the nearby chat bar shown or put away
         "defaultchatbar" => return BarAction::ToggleChatBar,
+        // TogglePerAccountControl FSRenderFriendsOnly
+        "RFO" => return BarAction::ToggleFriendsOnly,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
@@ -2180,6 +2200,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
         "gridstatus" => panels.grid_status,
+        "voice" => panels.voice_controls,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
@@ -2894,6 +2915,8 @@ pub(crate) fn toolbar_row(
             toolbar.picks_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
+        } else if b.command == "RFO" {
+            toolbar.friends_only_active
         } else if b.command == "vr_view" {
             ui.ctx()
                 .data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")))
@@ -3607,6 +3630,7 @@ mod tests {
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("statistics", "perf", |p| p.perf),
+            ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {
@@ -3658,6 +3682,22 @@ mod tests {
         assert!(command_active("performance", &panels, false, false, false));
         assert!(matches!(run_command(&ctx, "picks", &mut panels), BarAction::MyPicks));
         assert!(matches!(run_command(&ctx, "defaultchatbar", &mut panels), BarAction::ToggleChatBar));
+        assert!(super::super::toolbar::ready("RFO"));
+        assert!(matches!(run_command(&ctx, "RFO", &mut panels), BarAction::ToggleFriendsOnly));
+    }
+
+    #[test]
+    fn voice_toolbar_command_toggles_the_voice_controls() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("voice"));
+        assert!(!panels.voice_controls);
+        assert!(!command_active("voice", &panels, false, false, false));
+        assert!(matches!(run_command(&ctx, "voice", &mut panels), BarAction::None));
+        assert!(panels.voice_controls);
+        assert!(command_active("voice", &panels, false, false, false));
+        run_command(&ctx, "voice", &mut panels);
+        assert!(!panels.voice_controls);
     }
 
     /// Issue #2143: these buttons toggle their window (commands.xml), while

@@ -271,6 +271,8 @@ pub struct ToolbarUi {
     pub chat_bar_active: bool,
     /// The windows the app opens itself, for their buttons' highlight.
     pub shown: Shown,
+    /// "Show Friends Only" is on (FSRenderFriendsOnly).
+    pub friends_only_active: bool,
     pub movelock_status: String,
     /// The violet of the Grid status button's flash (0: none), given by
     /// the app on a new entry of the grid's status feed.
