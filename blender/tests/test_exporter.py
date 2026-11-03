@@ -472,17 +472,72 @@ class ExporterTests(unittest.TestCase):
                 for column in range(4):
                     self.assertAlmostEqual(actual[row][column], expected[row][column], places=5)
 
-        self.rig["has_bind_data"] = False
-        assert_matrix(inverses()["mPelvis"], Matrix.Translation((0, 0, -1)))
-        self.rig["has_bind_data"] = True
+        # "No add-on" kits keep bind_mat without Avastar's has_bind_data flag (#2022).
+        for flag in (None, False, True):
+            if flag is not None:
+                self.rig["has_bind_data"] = flag
+            binds = inverses()
+            assert_matrix(binds["mPelvis"], rotation.transposed() @ Matrix.Translation((0, 0, -1)))
+            # A bone without bind data keeps its parent's bind rotation.
+            assert_matrix(binds["mChest"], rotation.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        # The kit's shape scale is undone too, as the Collada export inverts all of bind_mat.
+        scale = Matrix.Diagonal((1.0, 1.35, 0.94, 1.0))
+        scaled = Matrix.Translation((0, 0, 1)) @ rotation @ scale
+        pelvis["bind_mat"] = [scaled[row][column] for column in range(4) for row in range(4)]
         binds = inverses()
-        assert_matrix(binds["mPelvis"], rotation.transposed() @ Matrix.Translation((0, 0, -1)))
-        # A bone without bind data keeps its parent's bind rotation.
+        assert_matrix(binds["mPelvis"], scale.inverted() @ rotation.transposed() @ Matrix.Translation((0, 0, -1)))
+        # A child inherits the rotation only: the scale belongs to its parent.
         assert_matrix(binds["mChest"], rotation.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        # Nested 4x4 rows, as Blender stores a Matrix custom property, read the same.
+        pelvis["bind_mat"] = [list(row) for row in scaled]
+        assert_matrix(inverses()["mPelvis"], binds["mPelvis"])
         # Stale bind data (rest pose edited since) is ignored.
         stale = Matrix.Translation((0, 0, 1.5)) @ rotation
         pelvis["bind_mat"] = [stale[row][column] for column in range(4) for row in range(4)]
         assert_matrix(inverses()["mPelvis"], Matrix.Translation((0, 0, -1)))
+
+    def test_avastar_rig_without_bind_data_binds_from_its_default_rest(self):
+        # Avastar kits with "Use Bind Pose" and no bind_mat (#2022): the A-pose
+        # is the rest matrix against the bone's default one, mat0.
+        from mathutils import Matrix
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        bones = self.rig.data.edit_bones
+        root = bones.new("COG")
+        root.head, root.tail = (0, 0, 0.9), (0, 0, 1.0)
+        bones["mPelvis"].parent = root
+        bones["mChest"].parent = bones["mPelvis"]
+        # mChest's default rest points up; its rest is swung 45 degrees about X.
+        default = bones["mChest"].matrix.copy()
+        bones["mChest"].tail = (0.2, -0.3 * 0.7071067811865476, 1 + 0.3 * 0.7071067811865476)
+        swing = (bones["mChest"].matrix.to_3x3() @ default.to_3x3().inverted()).to_4x4()
+        for bone in bones:
+            bone["mat0"] = default if bone.name == "mChest" else bone.matrix.copy()
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.new(name="mChest").add([1], 1.0, "REPLACE")
+        self.mesh.vertex_groups["mPelvis"].remove([1])
+
+        def inverses():
+            value = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1)["meshes"][0]
+            return {name: Matrix([m[i:i + 4] for i in range(0, 16, 4)]).transposed()
+                    for name, m in zip(value["joints"], value["inverse_bind"])}
+
+        def assert_matrix(actual, expected):
+            for row in range(4):
+                for column in range(4):
+                    self.assertAlmostEqual(actual[row][column], expected[row][column], places=5)
+
+        # Without "Use Bind Pose" Avastar exports the rest heads only.
+        assert_matrix(inverses()["mChest"], Matrix.Translation((-0.2, 0, -1)))
+        self.rig["RigProp"] = {"rig_use_bind_pose": 1}
+        binds = inverses()
+        self.assertGreater(swing.to_quaternion().angle, 0.7)
+        assert_matrix(binds["mChest"], swing.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        assert_matrix(binds["mPelvis"], Matrix.Translation((0, 0, -1)))
+        # Any bind_mat on the rig takes precedence, as in Avastar's export.
+        self.rig.data.bones["mPelvis"]["bind_mat"] = [float(row == column) + (column == 3 and row == 2)
+                                                      for column in range(4) for row in range(4)]
+        assert_matrix(inverses()["mChest"], Matrix.Translation((-0.2, 0, -1)))
 
     def test_live_handler_captures_edits_and_deletions_without_export_loop(self):
         captures = []
