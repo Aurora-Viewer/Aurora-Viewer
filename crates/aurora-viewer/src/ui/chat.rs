@@ -677,10 +677,10 @@ fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> C
         })
 }
 
-/// Time of a chat line, in Second Life time as Firestorm shows it and as
-/// the transcripts have it ("hour,datetime,slt"), in 12 or 24 hours as the
-/// bars' clock (`clock::chat_twelve_hours`). Empty for a line whose time
-/// is unknown (history without a timestamp).
+/// Time of a chat line, in Second Life time as the Legacy Viewer shows it
+/// and as the transcripts have it ("hour,datetime,slt"), in 12 or 24 hours
+/// as the bars' clock (`clock::chat_twelve_hours`). Empty for a line whose
+/// time is unknown (history without a timestamp).
 pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
     hhmm_in(t, super::bars::clock::chat_twelve_hours())
 }
