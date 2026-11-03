@@ -245,6 +245,18 @@ fn prepare(
     Ok(prepared)
 }
 impl Imports {
+    /// Local assets whose source changed after they were published need the
+    /// same stable local ID republished so existing appearance targets update.
+    pub fn stale_local_publications(&self) -> Vec<Uuid> {
+        self.entries
+            .iter()
+            .filter(|entry| {
+                entry.local && entry.local_published && !entry.local_pending && entry.local_generation != entry.preview_generation
+            })
+            .map(|entry| entry.id)
+            .collect()
+    }
+
     pub fn target_local(&mut self, entry_id: Uuid, object: Uuid, faces: &[u8], use_scale: bool) {
         use crate::world::objects::LocalAppearance;
         let Some(entry) = self.entries.iter().find(|entry| entry.id == entry_id) else {
