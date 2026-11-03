@@ -99,6 +99,9 @@ impl BudgetFloor {
 /// off every frame/UI path; readers only copy the last complete sample.
 pub struct VideoMemoryProbe {
     sampler: BudgetSampler,
+    /// For the card's identity, read once on demand (`card`).
+    #[cfg(not(target_os = "macos"))]
+    adapter: wgpu::Adapter,
 }
 
 const PROBE_INTERVAL: Duration = Duration::from_millis(250);
@@ -164,12 +167,18 @@ const SOURCE: &str = "MTLDevice working set";
 
 impl VideoMemoryProbe {
     pub fn new(adapter: wgpu::Adapter) -> Self {
+        #[cfg(not(target_os = "macos"))]
+        let card = adapter.clone();
         let heap = std::sync::OnceLock::new();
         let sampler = BudgetSampler::new(
             move || Self::query(&adapter, (*heap.get_or_init(|| Self::budget_heap(&adapter)))?),
             PROBE_INTERVAL,
         );
-        VideoMemoryProbe { sampler }
+        VideoMemoryProbe {
+            sampler,
+            #[cfg(not(target_os = "macos"))]
+            adapter: card,
+        }
     }
 
     /// The most recent complete sample, at most one driver query per
@@ -184,6 +193,56 @@ impl VideoMemoryProbe {
         // (the texture pages in memory of their own are not in them)
         let allocated = (live.texture_memory.read() + live.buffer_memory.read()).max(0) as u64 + crate::dedicated::bytes();
         Some(VideoMemory { budget, usage, allocated })
+    }
+
+    /// The card's identity for the system's adapter-wide counters (the LUID
+    /// Windows names its adapters by, `high << 32 | low`), the size of its
+    /// largest device-local heap, and whether that heap is the card's own
+    /// memory (a discrete GPU: on an integrated one it is system RAM, often
+    /// full by design, and no size to measure the card's load against); None
+    /// without the Vulkan 1.1 query.
+    #[cfg(not(target_os = "macos"))]
+    pub fn card(&self) -> Option<(u64, u64, bool)> {
+        // SAFETY: the hal adapter is only borrowed for this call; the queries
+        // read properties and change no state.
+        let hal = unsafe { self.adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+        let shared = hal.shared_instance();
+        if shared.instance_api_version() < vk::API_VERSION_1_1 {
+            return None;
+        }
+        let mut id = vk::PhysicalDeviceIDProperties::default();
+        let mut props = vk::PhysicalDeviceProperties2::default().push_next(&mut id);
+        // SAFETY: as above.
+        unsafe {
+            shared
+                .raw_instance()
+                .get_physical_device_properties2(hal.raw_physical_device(), &mut props);
+        }
+        let dedicated = props.properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU;
+        if id.device_luid_valid != vk::TRUE {
+            return None;
+        }
+        // SAFETY: as above.
+        let memory = unsafe {
+            shared
+                .raw_instance()
+                .get_physical_device_memory_properties(hal.raw_physical_device())
+        };
+        // (the heap budget_heap picks, without its memory_budget condition:
+        // only the size is read here, never the blocking budget query)
+        let total = memory
+            .memory_heaps_as_slice()
+            .iter()
+            .filter(|h| h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
+            .map(|h| h.size)
+            .max()?;
+        Some((u64::from_le_bytes(id.device_luid), total, dedicated))
+    }
+
+    /// Metal has no adapter-wide counters to name.
+    #[cfg(target_os = "macos")]
+    pub fn card(&self) -> Option<(u64, u64, bool)> {
+        None
     }
 
     /// The largest device-local heap (the card's own memory on a discrete
