@@ -19,11 +19,11 @@ use egui::mutex::Mutex;
 use super::SystemFont;
 
 /// Rows loaded beyond each end of the visible ones.
-const MARGIN: usize = 24;
+const MARGIN: usize = 64;
 /// Faces kept loaded at most: past them, the interface fonts are put back
 /// before the next batch, so a long scroll does not keep growing egui's
 /// fonts.
-const CAP: usize = 256;
+const CAP: usize = 512;
 
 const STATE_ID: &str = "aurora-font-previews";
 

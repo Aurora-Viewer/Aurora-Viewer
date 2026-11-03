@@ -5,6 +5,11 @@
 
 use super::super::cx::{Cx, F, Nothing, field, fields};
 use super::super::{COMBO_W, swatch, toggle};
+
+/// Size of the system font list's rows, under its search field (about
+/// the width the list took when it sized itself to the longest name).
+const FONT_LIST_W: f32 = 360.0;
+const FONT_LIST_H: f32 = 280.0;
 use crate::ui::fonts;
 use egui::RichText;
 
@@ -188,7 +193,7 @@ fn font(cx: &mut Cx) {
                     .width(COMBO_W)
                     .selected_text(shown)
                     .truncate()
-                    .height(320.0)
+                    .height(FONT_LIST_H + 40.0)
                     .show_ui(ui, |ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut st.font_filter)
@@ -200,29 +205,44 @@ fn font(cx: &mut Cx) {
                             .iter()
                             .filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter))
                             .collect();
-                        // each name in its own face, loaded as it scrolls into view
+                        // only the rows on screen are laid out, at one height
+                        // whatever their face (a font change re-shapes every
+                        // row laid out), each name in its own face, loaded as
+                        // it scrolls into view
                         let mut previews = fonts::preview::Previews::begin(ui.ctx());
-                        for (i, f) in shown.iter().enumerate() {
-                            let key = format!("system:{}", f.path.display());
-                            let sel = s.font == key;
-                            let mut name = RichText::new(&f.name);
-                            if let Some(family) = previews.family(f) {
-                                name = name.family(family);
-                            }
-                            let row = ui.selectable_label(sel, name);
-                            if ui.is_rect_visible(row.rect) {
-                                previews.visible(i);
-                            }
-                            if row.clicked() && !sel {
-                                s.font = key;
-                                r.font_changed = true;
-                                changed = true;
-                            }
-                        }
+                        let row_h = ui.text_style_height(&egui::TextStyle::Body) * 1.5;
+                        // one width: a wide face truncates, never widens the list
+                        let width = FONT_LIST_W;
+                        egui::ScrollArea::vertical()
+                            .max_height(FONT_LIST_H)
+                            .show_rows(ui, row_h, shown.len(), |ui, rows| {
+                                for i in rows {
+                                    let f = shown[i];
+                                    let key = format!("system:{}", f.path.display());
+                                    let sel = s.font == key;
+                                    let mut name = RichText::new(&f.name);
+                                    if let Some(family) = previews.family(f) {
+                                        name = name.family(family);
+                                    }
+                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+                                    let layout = egui::Layout::top_down_justified(egui::Align::Min);
+                                    let row = ui
+                                        .scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
+                                            ui.add(egui::Button::selectable(sel, name).truncate().min_size(rect.size()))
+                                        })
+                                        .inner;
+                                    previews.visible(i);
+                                    if row.clicked() && !sel {
+                                        s.font = key;
+                                        r.font_changed = true;
+                                        changed = true;
+                                    }
+                                }
+                                if st.demo_font_list == Some(true) {
+                                    ui.scroll_with_delta(egui::vec2(0.0, -6.0));
+                                }
+                            });
                         previews.finish(ui.ctx(), &shown);
-                        if st.demo_font_list == Some(true) {
-                            ui.scroll_with_delta(egui::vec2(0.0, -6.0));
-                        }
                     });
                 changed
             },
