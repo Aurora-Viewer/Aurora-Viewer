@@ -185,9 +185,9 @@ fn lists_memory_budget(extensions: &[vk::ExtensionProperties]) -> bool {
 
 /// Whether a reading can be used: a driver that fills nothing in reports no
 /// budget, and a figure wrapped below zero (mesa#15725 read
-/// 18446744073709367296, on the host-visible heap, not the one read here)
-/// would be past any budget, which pauses a window behind and takes its
-/// textures, or a budget without a limit.
+/// 18446744073709367296 on a 256 MB heap, not the one read here on a
+/// discrete GPU) would be past any budget, which pauses a window behind and
+/// takes its textures, or a budget without a limit.
 fn plausible(budget: u64, usage: u64) -> bool {
     budget > 0 && budget.max(usage) <= i64::MAX as u64
 }
