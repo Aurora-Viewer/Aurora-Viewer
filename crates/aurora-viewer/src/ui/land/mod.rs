@@ -155,6 +155,8 @@ struct View {
     handle: RegionHandle,
     region: Option<RegionView>,
     agent: Uuid,
+    /// We hold a god level: every parcel is ours to edit.
+    god: bool,
     groups: Vec<GroupMembership>,
     /// The selection is in the agent's region.
     same_region: bool,
@@ -179,6 +181,7 @@ impl View {
         AgentRights {
             id: self.agent,
             groups: &self.groups,
+            god: self.god,
         }
     }
 
@@ -658,6 +661,7 @@ impl LandUi {
             handle,
             region,
             agent: world.agent_id,
+            god: world.god_level > 0,
             groups: world.groups.groups.clone(),
             same_region: world.main_region == Some(handle),
             now: now_secs(),

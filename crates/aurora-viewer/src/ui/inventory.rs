@@ -287,10 +287,7 @@ impl Facts {
                 .is_some_and(|parcel| {
                     crate::world::env_apply::can_update_parcel(
                         parcel,
-                        &crate::world::land::AgentRights {
-                            id: world.agent_id,
-                            groups: &world.groups.groups,
-                        },
+                        &world.agent_rights(),
                         world
                             .main_region
                             .and_then(|handle| world.regions.get(&handle))

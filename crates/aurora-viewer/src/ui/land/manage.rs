@@ -1926,6 +1926,7 @@ mod tests {
             handle: 0,
             region: None,
             agent,
+            god: false,
             groups,
             same_region: true,
             now: 0,

@@ -132,10 +132,7 @@ impl App {
                 || self.world.main_region.and_then(|h| self.world.regions.get(&h)).is_some_and(|r| {
                     r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory")
                 });
-        let rights = AgentRights {
-            id: self.world.agent_id,
-            groups: &self.world.groups.groups,
-        };
+        let rights = self.world.agent_rights();
         let extended = self.extended_environment();
         EditorAccess {
             inventory,
@@ -566,10 +563,7 @@ impl App {
         let (Some(local_id), EnvState::Ready(summary)) = (sel.local_id(), &sel.env) else {
             return;
         };
-        let rights = AgentRights {
-            id: self.world.agent_id,
-            groups: &self.world.groups.groups,
-        };
+        let rights = self.world.agent_rights();
         let enabled = sel
             .parcel
             .as_ref()

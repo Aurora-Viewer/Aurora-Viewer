@@ -797,10 +797,7 @@ pub(crate) fn land_allows_flight(world: &crate::world::World, unknown_region: bo
     if world.fly_override {
         return true;
     }
-    let rights = AgentRights {
-        id: world.agent_id,
-        groups: &world.groups.groups,
-    };
+    let rights = world.agent_rights();
     world
         .main()
         .and_then(|r| r.info.as_ref())

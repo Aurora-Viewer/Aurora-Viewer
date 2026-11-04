@@ -68,6 +68,8 @@ const GRID_STEP: f32 = 4.0;
 pub struct AgentRights<'a> {
     pub id: Uuid,
     pub groups: &'a [GroupMembership],
+    /// The region gave us a god level (Advanced › Request Admin Status).
+    pub god: bool,
 }
 
 impl AgentRights<'_> {
@@ -81,9 +83,10 @@ impl AgentRights<'_> {
     }
 }
 
-/// LLViewerParcelMgr::isParcelOwnedByAgent (we are never godlike).
+/// LLViewerParcelMgr::isParcelOwnedByAgent.
 pub fn owned_by_agent(p: &ParcelInfo, a: &AgentRights, power: u64) -> bool {
-    if p.owner_id == a.id {
+    // gods can always assume ownership
+    if a.god || p.owner_id == a.id {
         return true;
     }
     // only gods can assume ownership of public land
@@ -94,9 +97,10 @@ pub fn owned_by_agent(p: &ParcelInfo, a: &AgentRights, power: u64) -> bool {
 }
 
 /// LLViewerParcelMgr::isParcelModifiableByAgent: our own land must be
-/// leased (a purchase waiting for approval cannot be changed).
+/// leased (a purchase waiting for approval cannot be changed), unless we
+/// are a god.
 pub fn modifiable_by_agent(p: &ParcelInfo, a: &AgentRights, power: u64) -> bool {
-    owned_by_agent(p, a, power) && !(p.owner_id == a.id && p.status != land::OS_LEASED)
+    owned_by_agent(p, a, power) && !(p.owner_id == a.id && !a.god && p.status != land::OS_LEASED)
 }
 
 /// LLViewerParcelMgr::canAgentBuyParcel; `can_access` tells if the
@@ -1158,7 +1162,11 @@ mod tests {
     #[test]
     fn modify_rules_follow_ownership_and_powers() {
         let groups = [group(50, powers::LAND_OPTIONS)];
-        let a = AgentRights { id: me(), groups: &groups };
+        let a = AgentRights {
+            id: me(),
+            groups: &groups,
+            god: false,
+        };
         let mut p = ParcelInfo {
             owner_id: me(),
             ..Default::default()
@@ -1181,7 +1189,11 @@ mod tests {
 
     #[test]
     fn buying_needs_a_sale_for_us() {
-        let a = AgentRights { id: me(), groups: &[] };
+        let a = AgentRights {
+            id: me(),
+            groups: &[],
+            god: false,
+        };
         let mut p = ParcelInfo {
             owner_id: Uuid::from_u128(9),
             ..Default::default()
