@@ -454,8 +454,7 @@ impl App {
             }
             ReelAction::ShowProfile => self.photo_reel_action_show_profile(),
             ReelAction::Delete(id) => self.photo_reel_delete(id),
-            // the photo window's button: the folder, the last photo saved
-            // selected in it
+            // the photos' folder, the last photo saved selected in it
             ReelAction::OpenFolder => self.photo_action(crate::ui::snapshot::Action::OpenFolder, renderer),
         }
     }

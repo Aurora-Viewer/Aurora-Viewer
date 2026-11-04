@@ -6707,6 +6707,7 @@ photo-vf-countdown = Photo in { $seconds } s · Enter or Escape: cancel
 photo-vf-all-sharp = All sharp
 photo-vf-shutter-tip = Shutter: held, the focus; released, the photo (Enter)
 photo-reel-tip = This session's photos
+photo-reel-tray-tip = This session's photos. Click to view them, Shift+click to open their folder.
 photo-reel-none = No photos this session yet
 photo-reel-index = { $index } / { $count }
 photo-reel-not-sent = Not sent

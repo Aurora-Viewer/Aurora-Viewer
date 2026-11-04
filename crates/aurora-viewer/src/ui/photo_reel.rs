@@ -71,87 +71,77 @@ pub fn picture(painter: &egui::Painter, p: &Palette, rect: Rect, radius: egui::C
     }
 }
 
-/// The viewfinder's tray, in the dock's tiles: the stack's and the folder's
-/// squares (the dock's buttons' side), the dock's gap between them, the
-/// room between a photo tile's edge and its picture.
-const TRAY_STACK: f32 = DOCK_SIDE;
-const TRAY_GAP: f32 = 10.0;
-const TRAY_PAD: f32 = 5.0;
+/// The viewfinder's tray: one tile of the dock holding the session's photos
+/// as loose prints, shuffled together: the tile, a print's picture, the edge
+/// around it, how many of the newest show.
+pub const TRAY_TILE: Vec2 = Vec2::new(112.0, 92.0);
+const PRINT: Vec2 = Vec2::new(78.0, 52.0);
+pub const PRINT_EDGE: f32 = 2.0;
+const PRINTS: usize = 4;
 
-/// A photo's tile in the tray: as tall as the stack and the folder's
-/// button, its picture 3:2 like the card's.
-fn tray_thumb() -> Vec2 {
-    let h = TRAY_STACK * 2.0 + TRAY_GAP;
-    let picture = h - 2.0 * TRAY_PAD;
-    Vec2::new(picture * 1.5 + 2.0 * TRAY_PAD, h)
+/// How a photo lies in the pile: its offset from the tile's middle and its
+/// angle. Taken from its id, so a print stays where it fell when the next
+/// one lands on it; the golden ratio keeps two photos in a row apart.
+fn scatter(id: u64) -> (Vec2, f32) {
+    let spread = |ratio: f64| ((id as f64 * ratio).fract() as f32 - 0.5) * 2.0;
+    let offset = Vec2::new(spread(0.754_877_666) * 6.0, spread(0.569_840_291) * 5.0);
+    (offset, spread(0.618_033_989) * 10f32.to_radians())
 }
 
-/// The viewfinder's tray: the stack of the older photos with the folder's
-/// button under it, then the two newest, the newest on the right; a click
-/// opens the quick view on that photo. Each on a tile of the dock.
+/// The picture of photo `id` in the tile whose top left is `origin`, and its
+/// angle: where the card's photo flies to.
+pub fn tray_slot(origin: Pos2, id: u64) -> (Rect, f32) {
+    let (offset, angle) = scatter(id);
+    (Rect::from_center_size(origin + TRAY_TILE / 2.0 + offset, PRINT), angle)
+}
+
+/// A photo as a loose print: its picture on `pic` turned by `angle`, an edge
+/// of `edge` around it, its shadow on what lies under it.
+pub fn print(painter: &egui::Painter, p: &Palette, pic: Rect, edge: f32, angle: f32, tex: Option<&egui::TextureHandle>) {
+    use egui::epaint::RectShape;
+    let radius = widgets::inner_radius(&painter.ctx().global_style().visuals);
+    let paper = pic.expand(edge);
+    painter.add(RectShape::filled(paper.translate(Vec2::new(1.0, 2.0)), radius, p.navy.gamma_multiply(0.45)).with_angle(angle));
+    painter.add(RectShape::filled(paper, radius, p.ink).with_angle(angle));
+    painter.add(RectShape::filled(pic, radius, p.field).with_angle(angle));
+    if let Some(t) = tex {
+        let uv = cover_uv(t.size_vec2(), pic.width() / pic.height().max(1.0));
+        painter.add(
+            RectShape::filled(pic, radius, widgets::PICTURE_TINT)
+                .with_texture(t.id(), uv)
+                .with_angle(angle),
+        );
+    }
+}
+
+/// What a click on the tray asks: the quick view on the newest photo, or
+/// with Shift the folder it was saved to (the photos' folder when it is not
+/// on disk).
+fn tray_click(photos: &[Photo], shift: bool) -> Option<ReelAction> {
+    let newest = photos.first()?;
+    Some(match (shift, newest.on_disk()) {
+        (false, _) => ReelAction::Show(newest.id),
+        (true, Some(_)) => ReelAction::Reveal(newest.id),
+        (true, None) => ReelAction::OpenFolder,
+    })
+}
+
+/// The viewfinder's tray: the session's photos shuffled in one tile, the
+/// newest on top, with their count.
 pub fn tray(ui: &mut egui::Ui, p: &Palette, view: &ReelView, out: &mut Vec<ReelAction>) {
     let photos = &view.photos[usize::from(view.arriving).min(view.photos.len())..];
-    let radius = widgets::inner_radius(ui.visuals());
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::splat(TRAY_GAP);
-        ui.vertical(|ui| {
-            if photos.len() > 2 {
-                let older = ReelView {
-                    photos: &photos[2..],
-                    arriving: false,
-                    ..*view
-                };
-                let (rect, resp) = ui.allocate_exact_size(Vec2::splat(TRAY_STACK), Sense::click());
-                dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
-                // the front photo down and to the left, the two behind
-                // peeking up and to the right inside the tile
-                let front = Rect::from_min_size(rect.left_bottom() + Vec2::new(6.0, -36.0), Vec2::splat(30.0));
-                paint_stack(ui.painter(), p, &older, front, photos.len());
-                let resp = resp.on_hover_text(aurora_i18n::tr!("photo-reel-tip"));
-                if resp.clicked() {
-                    resp.surrender_focus();
-                    out.push(ReelAction::Show(photos[2].id));
-                }
-            } else {
-                // (the button stays under the stack's place)
-                ui.add_space(TRAY_STACK);
-            }
-            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(TRAY_STACK), Sense::click());
-            dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
-            vf_icon(
-                ui.painter(),
-                "folder-open-filled",
-                Rect::from_center_size(rect.center(), Vec2::splat(20.0)),
-                p.ink,
-            );
-            let resp = resp.on_hover_text(aurora_i18n::tr!("photo-open-folder"));
-            if resp.clicked() {
-                resp.surrender_focus();
-                out.push(ReelAction::OpenFolder);
-            }
-        });
-        for photo in photos.iter().take(2).rev() {
-            let (rect, resp) = ui.allocate_exact_size(tray_thumb(), Sense::click());
-            dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
-            picture(ui.painter(), p, rect.shrink(TRAY_PAD), radius, view.thumbs.get(&photo.id));
-            let resp = resp.on_hover_text(places_text(photo));
-            if resp.clicked() {
-                resp.surrender_focus();
-                out.push(ReelAction::Show(photo.id));
-            }
-        }
-    });
-}
-
-/// Where the tray puts its newest photo's picture once the reel holds
-/// `len`, its tiles starting at `origin` (their top left): the card's
-/// photo flies there.
-pub fn tray_slot(origin: Pos2, len: usize) -> Rect {
-    let mut x = origin.x + TRAY_STACK + TRAY_GAP;
-    if len > 1 {
-        x += tray_thumb().x + TRAY_GAP;
+    let (rect, resp) = ui.allocate_exact_size(TRAY_TILE, Sense::click());
+    dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
+    for photo in photos.iter().take(PRINTS).rev() {
+        let (pic, angle) = tray_slot(rect.min, photo.id);
+        print(ui.painter(), p, pic, PRINT_EDGE, angle, view.thumbs.get(&photo.id));
     }
-    Rect::from_min_size(Pos2::new(x, origin.y), tray_thumb()).shrink(TRAY_PAD)
+    count_pill(ui.painter(), p, rect.right_bottom() - Vec2::splat(5.0), photos.len());
+    let resp = resp.on_hover_text(aurora_i18n::tr!("photo-reel-tray-tip"));
+    if resp.clicked() {
+        resp.surrender_focus();
+        out.extend(tray_click(photos, ui.input(|i| i.modifiers.shift)));
+    }
 }
 
 /// The tray's top left on `screen`: where it was moved (`at`, fractions of
@@ -250,17 +240,23 @@ fn paint_stack(painter: &egui::Painter, p: &Palette, view: &ReelView, front: Rec
     }
     picture(painter, p, front, radius, view.thumbs.get(&shown[0].id));
     painter.rect_stroke(front, radius, Stroke::new(1.0, p.ink.gamma_multiply(0.5)), StrokeKind::Inside);
-    // the count, on a violet pill at the bottom right
-    if count > 1 {
-        let font = egui::FontId::proportional(10.5);
-        let text = painter.layout_no_wrap(count.to_string(), font, p.on_accent);
-        // over the corner, 3 points out: a row of thumbnails leaves room
-        let size = Vec2::new((text.size().x + 8.0).max(16.0), 16.0);
-        let pill = Rect::from_min_size(front.right_bottom() + Vec2::splat(3.0) - size, size);
-        painter.rect_filled(pill, radius, p.violet);
-        painter.galley(pill.center() - text.size() / 2.0, text, p.on_accent);
-    }
+    // over the corner, 3 points out: a row of thumbnails leaves room
+    count_pill(painter, p, front.right_bottom() + Vec2::splat(3.0), count);
     true
+}
+
+/// The count of photos, from 2, on a violet pill whose bottom right is
+/// `corner`.
+fn count_pill(painter: &egui::Painter, p: &Palette, corner: Pos2, count: usize) {
+    if count < 2 {
+        return;
+    }
+    let radius = widgets::inner_radius(&painter.ctx().global_style().visuals);
+    let text = painter.layout_no_wrap(count.to_string(), egui::FontId::proportional(10.5), p.on_accent);
+    let size = Vec2::new((text.size().x + 8.0).max(16.0), 16.0);
+    let pill = Rect::from_min_size(corner - size, size);
+    painter.rect_filled(pill, radius, p.violet);
+    painter.galley(pill.center() - text.size() / 2.0, text, p.on_accent);
 }
 
 /// The photo window's row: the photos of the reel after the first `skip`,
@@ -818,18 +814,104 @@ mod tests {
     }
 
     #[test]
-    fn the_newest_lands_after_the_stack_and_the_older_one() {
+    fn the_prints_stay_in_their_tile_and_lie_differently() {
         let o = Pos2::new(10.0, 20.0);
-        let column = TRAY_STACK + TRAY_GAP;
-        let thumb = tray_thumb();
-        // the stack's column first, kept for the folder's button; the
-        // picture inside its tile
-        assert_eq!(tray_slot(o, 1).min, Pos2::new(o.x + column + TRAY_PAD, o.y + TRAY_PAD));
-        assert_eq!(tray_slot(o, 2).min.x, o.x + column + thumb.x + TRAY_GAP + TRAY_PAD);
-        assert_eq!(tray_slot(o, 5).min.x, tray_slot(o, 2).min.x);
-        assert_eq!(tray_slot(o, 5).size(), thumb - Vec2::splat(2.0 * TRAY_PAD));
-        // 3:2 like the card's picture
-        assert!((tray_slot(o, 5).aspect_ratio() - 1.5).abs() < 1e-4);
+        let tile = Rect::from_min_size(o, TRAY_TILE);
+        for id in 0..200 {
+            let (pic, angle) = tray_slot(o, id);
+            // 3:2 like the card's picture
+            assert!((pic.aspect_ratio() - 1.5).abs() < 1e-4);
+            // every corner of the print, turned, inside the tile
+            let paper = pic.expand(PRINT_EDGE);
+            let turn = egui::emath::Rot2::from_angle(angle);
+            for corner in [paper.left_top(), paper.right_top(), paper.left_bottom(), paper.right_bottom()] {
+                assert!(tile.contains(pic.center() + turn * (corner - pic.center())), "photo {id}");
+            }
+            // the next photo does not lie along this one, and the same id
+            // falls the same way
+            assert!((angle - tray_slot(o, id + 1).1).abs() > 4f32.to_radians(), "photo {id}");
+            assert_eq!(tray_slot(o, id), (pic, angle));
+        }
+    }
+
+    #[test]
+    fn a_click_views_the_newest_and_shift_opens_its_folder() {
+        let saved = photo(vec![Place::Disk("a.png".into())]);
+        assert_eq!(tray_click(std::slice::from_ref(&saved), false), Some(ReelAction::Show(1)));
+        assert_eq!(tray_click(std::slice::from_ref(&saved), true), Some(ReelAction::Reveal(1)));
+        // not on disk: the photos' folder
+        let sent = photo(vec![Place::Email]);
+        assert_eq!(tray_click(std::slice::from_ref(&sent), true), Some(ReelAction::OpenFolder));
+        assert_eq!(tray_click(&[], true), None);
+    }
+
+    /// The tile as it floats in the viewfinder, under real pointer events:
+    /// what it asked, and whether its area is being dragged.
+    fn tray_frame(ctx: &egui::Context, mut events: Vec<egui::Event>, shift: bool, photos: &[Photo]) -> (Vec<ReelAction>, bool) {
+        events.insert(
+            0,
+            egui::Event::ModifiersChanged(egui::Modifiers {
+                shift,
+                ..Default::default()
+            }),
+        );
+        let p = crate::theme::Theme::default().palette();
+        let thumbs = HashMap::new();
+        let time = |_: i64| String::new();
+        let view = ReelView {
+            photos,
+            thumbs: &thumbs,
+            full: &thumbs,
+            can_send: &[],
+            time: &time,
+            arriving: false,
+        };
+        let mut out = Vec::new();
+        let mut dragged = false;
+        let input = egui::RawInput {
+            events,
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(600.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            let area = egui::Area::new(Id::unique("tray"))
+                .movable(true)
+                .current_pos(Pos2::new(100.0, 100.0))
+                .show(ui.ctx(), |ui| tray(ui, &p, &view, &mut out));
+            dragged = area.response.dragged();
+        });
+        (out, dragged)
+    }
+
+    fn press(pos: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn the_tile_clicks_with_or_without_shift_and_drags() {
+        let saved = [photo(vec![Place::Disk("a.png".into())])];
+        let ctx = egui::Context::default();
+        let at = Pos2::new(150.0, 140.0);
+        // two frames for the tile to be laid out and under the pointer
+        let _ = tray_frame(&ctx, vec![], false, &saved);
+        let _ = tray_frame(&ctx, vec![egui::Event::PointerMoved(at)], false, &saved);
+        for (shift, wanted) in [(false, ReelAction::Show(1)), (true, ReelAction::Reveal(1))] {
+            let _ = tray_frame(&ctx, vec![press(at, true)], shift, &saved);
+            let (out, _) = tray_frame(&ctx, vec![press(at, false)], shift, &saved);
+            assert_eq!(out, [wanted]);
+        }
+        // pressed on the tile and moved: the area follows, no click
+        let _ = tray_frame(&ctx, vec![press(at, true)], false, &saved);
+        let to = at + Vec2::new(40.0, 0.0);
+        let (out, dragged) = tray_frame(&ctx, vec![egui::Event::PointerMoved(to)], false, &saved);
+        assert!(dragged && out.is_empty());
+        let (out, _) = tray_frame(&ctx, vec![press(to, false)], false, &saved);
+        assert!(out.is_empty());
     }
 
     #[test]

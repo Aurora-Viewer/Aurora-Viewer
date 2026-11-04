@@ -6704,6 +6704,7 @@ photo-vf-countdown = { $seconds }秒後に撮影・EnterまたはEscape：キャ
 photo-vf-all-sharp = すべて鮮明
 photo-vf-shutter-tip = シャッター：押している間はフォーカス、離すと撮影（Enter）
 photo-reel-tip = このセッションの写真
+photo-reel-tray-tip = このセッションの写真。クリックで表示、Shift+クリックでフォルダーを開きます。
 photo-reel-none = このセッションの写真はまだありません
 photo-reel-index = { $index } / { $count }
 photo-reel-not-sent = 未送信

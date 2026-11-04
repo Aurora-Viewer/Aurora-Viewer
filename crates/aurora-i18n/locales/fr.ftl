@@ -6712,6 +6712,7 @@ photo-vf-countdown = Photo dans { $seconds } s · Entrée ou Échap : annuler
 photo-vf-all-sharp = Tout est net
 photo-vf-shutter-tip = Déclencheur : enfoncé, la mise au point ; relâché, la photo (Entrée)
 photo-reel-tip = Les photos de cette session
+photo-reel-tray-tip = Les photos de cette session. Cliquez pour les voir, Maj+clic pour ouvrir leur dossier.
 photo-reel-none = Pas encore de photo dans cette session
 photo-reel-index = { $index } / { $count }
 photo-reel-not-sent = Non envoyée

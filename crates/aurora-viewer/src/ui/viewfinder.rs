@@ -109,11 +109,11 @@ pub struct Viewfinder {
     /// The display level drawn last frame (the interface just hidden says
     /// how to show it again).
     shown_display: Option<Display>,
-    /// The last photo's picture on its card, and the place of the newest
-    /// photo in the reel's tray, as drawn last frame: when the card goes,
+    /// The last photo's picture on its card, and the place and angle of the
+    /// newest photo in the reel's tray, as drawn last frame: when the card goes,
     /// its photo flies from one to the other (started then, from there).
     card_rect: Option<Rect>,
-    reel_slot: Option<Rect>,
+    reel_slot: Option<(Rect, f32)>,
     /// The reel's tray being dragged: where it is (kept once let go).
     reel_drag: Option<Pos2>,
     fly: Option<(f64, Rect)>,
@@ -580,7 +580,15 @@ impl Viewfinder {
             self.reel_tray(ctx, p, screen, s, f, if pad { 300.0 } else { 132.0 }, &mut out);
         }
         if f.now < self.review_until && !self.menu {
-            self.card_rect = review(ctx, p, screen, f, if ctl { 156.0 } else { 128.0 });
+            let (rect, clicked) = review(ctx, p, screen, f, if ctl { 156.0 } else { 128.0 });
+            self.card_rect = rect;
+            // clicked: its photo in the quick view at once, no flight (the
+            // tray shows it behind)
+            if clicked && let Some(newest) = f.reel.photos.first() {
+                self.review_until = f.now;
+                self.card_rect = None;
+                out.push(Out::Reel(crate::ui::photo_reel::ReelAction::Show(newest.id)));
+            }
         } else if let Some(from) = self.card_rect.take()
             && f.now >= self.review_until
             && shows
@@ -1637,21 +1645,20 @@ impl Viewfinder {
     }
 
     /// The session's photos (`ui::photo_reel::tray`), floating: dragged by
-    /// their background anywhere on the screen, kept there between sessions
+    /// their tile anywhere on the screen, kept there between sessions
     /// (bottom left at first, `bottom` points up); the photo just taken
     /// joins them once it has flown from its card, wherever they are.
     #[allow(clippy::too_many_arguments)]
     fn reel_tray(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, bottom: f32, out: &mut Vec<Out>) {
-        use crate::ui::photo_reel::{tray_fraction, tray_place, tray_slot};
-        // no surface of its own, like the dock: its tiles on the world, a
-        // clear edge around them to take it by
+        use crate::ui::photo_reel::{TRAY_TILE, tray_fraction, tray_place, tray_slot};
+        // no surface of its own, like the dock: its tile on the world
         let margin = egui::Margin::same(6);
         let reel = crate::ui::photo_reel::ReelView {
             arriving: (f.now < self.review_until && f.review.is_some()) || self.fly.is_some(),
             ..*f.reel
         };
         let id = Id::unique("vf_reel_tray");
-        let size = ctx.memory(|m| m.area_rect(id)).map_or(Vec2::new(250.0, 92.0), |r| r.size());
+        let size = ctx.memory(|m| m.area_rect(id)).map_or(TRAY_TILE + Vec2::splat(12.0), |r| r.size());
         let default = Pos2::new(screen.left() + GAP, screen.bottom() - bottom - size.y);
         let pos = match self.reel_drag {
             Some(dragged) => tray_place(None, screen, size, dragged),
@@ -1660,7 +1667,7 @@ impl Viewfinder {
         // where the photo just taken lands: the tray's last place, once it
         // holds it
         let inner = pos + Vec2::new(f32::from(margin.left), f32::from(margin.top));
-        self.reel_slot = Some(tray_slot(inner, f.reel.photos.len()));
+        self.reel_slot = f.reel.photos.first().map(|photo| tray_slot(inner, photo.id));
         if reel.photos.len() <= usize::from(reel.arriving) {
             return;
         }
@@ -1700,7 +1707,7 @@ impl Viewfinder {
         let Some((t0, from)) = self.fly else {
             return;
         };
-        let (Some(to), Some(tex)) = (self.reel_slot, f.review) else {
+        let (Some((to, angle)), Some(tex)) = (self.reel_slot, f.review) else {
             self.fly = None;
             return;
         };
@@ -1715,8 +1722,9 @@ impl Viewfinder {
         let center = crate::ui::photo_reel::arc_point(from.center(), to.center(), ease);
         let rect = Rect::from_center_size(center, from.size() + (to.size() - from.size()) * ease);
         let painter = ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::unique("vf_reel_fly")));
-        let radius = ctx.global_style().visuals.window_corner_radius;
-        crate::ui::photo_reel::picture(&painter, p, rect, radius, Some(tex));
+        // turning as it lands, to lie as a print of the tray
+        use crate::ui::photo_reel::{PRINT_EDGE, print};
+        print(&painter, p, rect, PRINT_EDGE * ease, angle * ease, Some(tex));
     }
 
     /// The round shutter: pressed, the focus; released on it, the photo;
@@ -2085,10 +2093,13 @@ fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
 
 /// The card of the photo just taken: its picture alone, centred over the
 /// lens and aperture controls (where the first hint was), framed like the
-/// dock's buttons; where its picture is.
-fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, bottom: f32) -> Option<Rect> {
-    let texture = f.review?;
+/// dock's buttons; where its picture is, and whether it was clicked.
+fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, bottom: f32) -> (Option<Rect>, bool) {
+    let Some(texture) = f.review else {
+        return (None, false);
+    };
     let mut picture = None;
+    let mut clicked = false;
     egui::Area::new(Id::unique("vf_review"))
         .order(Order::Foreground)
         .fade_in(false)
@@ -2096,15 +2107,23 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, bottom: f32
         .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - bottom))
         .show(ctx, |ui| {
             // the dock's face and edge (`dock_button`)
-            dock_frame(p, ui.visuals(), 5).show(ui, |ui| {
+            let card = dock_frame(p, ui.visuals(), 5).show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
                 // the photo covering the card's picture
                 let radius = widgets::inner_radius(ui.visuals());
                 crate::ui::photo_reel::picture(ui.painter(), p, rect, radius, Some(texture));
                 picture = Some(rect);
             });
+            let resp = card
+                .response
+                .interact(Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                resp.surrender_focus();
+                clicked = true;
+            }
         });
-    picture
+    (picture, clicked)
 }
 
 /// The face of a dock button.
