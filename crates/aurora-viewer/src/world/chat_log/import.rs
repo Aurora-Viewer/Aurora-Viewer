@@ -627,7 +627,11 @@ mod tests {
         // a third that shares that folder: found once
         let third = root.join("three");
         std::fs::create_dir_all(third.join("jane_doe")).unwrap();
-        std::fs::copy(other.join("jane_doe").join(ACCOUNT_SETTINGS), third.join("jane_doe").join(ACCOUNT_SETTINGS)).unwrap();
+        std::fs::copy(
+            other.join("jane_doe").join(ACCOUNT_SETTINGS),
+            third.join("jane_doe").join(ACCOUNT_SETTINGS),
+        )
+        .unwrap();
         let found = find(&[app.clone(), other, third, root.join("missing")], &account("agni"), &target);
         let dirs: Vec<&Path> = found.iter().map(|f| f.dir.as_path()).collect();
         assert_eq!(dirs, [app.join("jane_doe").as_path(), chosen.join("jane_doe").as_path()]);

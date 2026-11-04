@@ -178,9 +178,8 @@ pub fn seed_legacy(root: &Path, own_name: &str, stage: ImportStage) -> std::io::
     let now = SystemTime::now();
     let day = Duration::from_secs(86_400);
     let s = sentences();
-    let line = |ago: Duration, from: &str, text: &str| {
-        format!("{}\n", format::format_line(Some(&format::stamp(now - ago, true)), from, text))
-    };
+    let line =
+        |ago: Duration, from: &str, text: &str| format!("{}\n", format::format_line(Some(&format::stamp(now - ago, true)), from, text));
     let mut text = String::new();
     for (i, sentence) in s.iter().enumerate() {
         let from = if i % 2 == 0 { peer.as_str() } else { own_name };
