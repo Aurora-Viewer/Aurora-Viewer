@@ -19616,6 +19616,17 @@ impl ApplicationHandler for App {
         {
             return;
         }
+        // egui-winit drops text while Ctrl is held. Preserve a real Windows
+        // layout character (Ctrl+Alt+2 -> @) for its focused text field.
+        #[cfg(target_os = "windows")]
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && let Some(text) = self.ctrl_alt_text(key)
+        {
+            if let Some(graphics) = &mut self.gfx {
+                graphics.egui_state.egui_input_mut().events.push(egui::Event::Text(text));
+            }
+            return;
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
