@@ -9317,7 +9317,7 @@ What the inventory must show with these scenarios:
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_OIT=0` or `1` | Order-independent transparency off or on for this launch, whatever the setting |
-| `AURORA_OIT_LAYERS=<n>` | Layers kept per pixel for this launch (2 to 24): 2 shows the averaged tail |
+| `AURORA_OIT_NODES=<n>` | Layers per pixel of its pool for this launch (2 to 32): 2 makes it overflow |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
@@ -9792,29 +9792,28 @@ What the inventory must show with these scenarios:
   depends on the content: see `AURORA_DEMO_HAIR`.
 - **`AURORA_OIT=0|1`**: the blended faces sorted per pixel (Preferences ›
   Aurora, or Graphics › Image › Transparency; off by default, the Legacy
-  Viewer's order) or by object, as before, for this launch. With `1` the log gives `oit: <k> layers per pixel (<MB> MB of keys and colours, <MB> MB in all) for
-  <w>x<h>` when the arrays are made (12 B per layer and pixel, 28 B per
-  pixel besides: 302 MB in all at 1600 × 900 with 16 layers, 512 MB at most, so
-  fewer layers on a larger screen), and `oit: off, layers freed` when the setting is turned off. Before / after:
+  Viewer's order) or by object, as before, for this launch. With `1` the log gives `oit: <s> slots (<MB> MB) + <n> nodes (<MB> MB) for
+  <w>x<h>, <k> per pixel` when the pool is made (the heads and the composite
+  texture, 16 B per pixel, come on top of those two: 198 MB in all at 1600 × 900,
+  512 MB at most), and `oit: off, pool freed` when the setting is turned off. Before / after:
   `AURORA_DEMO_HAIR_CARDS=60 AURORA_DEMO_CAMERA=close,846,560,40
   AURORA_DEMO_POS=133,129`, capture at frame 780: with `0` the head and the
   back show between the shuffled strand cards, with `1` the cards cover them
   in their depth order. Check each antialiasing (`AURORA_AA=0`, `3`, `5`,
   `6`): with MSAA each sample keeps the layers that cover it, the strands'
   edges stay smooth. Deep stacks keep their nearest layers: with
-  `AURORA_DEMO_HAIR_CARDS=400`, more than 16 layers overlap, and the
+  `AURORA_DEMO_HAIR_CARDS=400`, more than 24 layers overlap, and the
   strands in front must stay in front of the farther ones at any "Layers
-  per pixel" (16 and 2 in Graphics › Image › Transparency). The image must
-  be the same from one frame to the next on a still view, and with a moving
-  one (`AURORA_DEMO_CAMERA=orbit,800,450`, `AURORA_DEMO_ALPHA_PLANES=20`):
-  nothing overflows, nothing is drawn again. In `perf summary`,
-  `g_transparent` includes the two capture passes and the resolve.
-- **`AURORA_OIT_LAYERS=<n>`**: with `AURORA_OIT=1`, each pixel keeps its
-  `n` nearest layers (2 to 24, Graphics › Image › Transparency's "Layers
-  per pixel", fewer when the screen is too large for them within 512 MB).
-  At 2, the hair cards scenario above shows the tail: the strands beyond
-  the two nearest ones become their average, a soft haze behind them
-  instead of strands, the same on every frame.
+  sorted per pixel" (24 and 1 in Graphics › Image › Transparency). In `perf
+  summary`, `g_transparent` includes the capture and the resolve.
+- **`AURORA_OIT_NODES=<n>`**: with `AURORA_OIT=1`, the pool holds `n`
+  layers per pixel on average (2 to 32, Graphics › Image › Transparency's
+  "Layers kept per pixel"). At 2, the hair cards scenario above fills it:
+  the frame is then drawn again in the object order, exactly as with
+  `AURORA_OIT=0` (compare the two captures). This replay and the composite
+  are chosen on the GPU through copies of the draws' arguments
+  (`oit_gate.rs`), the path every backend takes, Metal included: on a Mac,
+  check both this capture and the one at the default size.
 - **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
   default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)

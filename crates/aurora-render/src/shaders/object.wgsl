@@ -1564,8 +1564,7 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 }
 
 // A blended face's premultiplied colour (fs_blend), shared with the
-// order-independent capture (fs_blend_payloads; blend_alpha discards as
-// this does).
+// order-independent capture (fs_blend_oit).
 fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
     // The batch mixes material sidedness: reject single-sided backs before
     // texture samples, keeping glTF doubleSided backs and their flipped normals.
@@ -1614,207 +1613,81 @@ fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
 
 // ---- order-independent transparency: capture (oit.rs, oit.wgsl)
 //
-// Each pixel keeps its `layers` nearest blended fragments, in two passes
-// over the blended faces, so that no fragment is shaded twice and nothing
-// grows or overflows:
-// - fs_blend_keys inserts each fragment's depth into the pixel's keys,
-//   sorted nearest first, by a chain of atomic maxima: a nearer key takes
-//   its rank and pushes the farther ones down, the farthest falling off;
-//   a fragment farther than the last kept key is left out at once;
-// - fs_blend_payloads then shades each fragment once, finds its key among
-//   the pixel's by a binary search and stores its colour beside it, or,
-//   when its key was not kept, adds it to the pixel's tail (premultiplied
-//   colour, alpha and -log transparency summed in 16.16 fixed point:
-//   integer sums, the same whatever the order of the fragments).
-// oit.wgsl composites the layers over the tail. The work is bounded: at
-// most `layers` atomics per fragment, then a binary search and one store
-// or five atomic adds, every address the pixel's own. Both passes discard
-// exactly the same fragments (blend_alpha, blend_color). Two fragments of
-// one pixel at exactly the same depth share a key: one of them is kept.
+// Each blended fragment in front of the opaque scene is stored instead of
+// being blended: premultiplied colour (rg and b as halves), alpha (8 bits),
+// the MSAA samples it covers (8 bits) and its depth. A pixel's first
+// `slots` fragments go to its slots of a texture array (layer k holding
+// every pixel's slot k: neighbours write and read side by side, and these
+// fragments leave the pool's counter alone); the others are appended to its
+// linked list in the node pool, with the next node. oit.wgsl sorts and
+// composites them. Once the node pool is full, the fragment is dropped: the
+// classify then skips the composite and the frame's blended faces are drawn
+// again exactly as without OIT (renderer.rs `rigged_in_order`, then the
+// others in order), so a crowded frame is the image it had before OIT: no
+// holes, no reversed order.
 struct OitParams {
+    node_cap: u32,
     width: u32,
     height: u32,
-    pixels: u32,
-    layers: u32,
+    max_layers: u32,
     samples: u32,
     tiles_x: u32,
     tiles: u32,
-    _pad: u32,
+    slots: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    _pad3: u32,
 };
-// layer i of pixel p: oit_keys[i * pixels + p], the bits of its depth (0:
-// none; the top bit, OIT_CLAIMED, once its payload is stored);
-// oit_payloads[i * pixels + p]: its premultiplied colour as rgb9e5, then
-// its alpha (8 bits) and the samples it covers (4 bits)
-@group(3) @binding(20) var<storage, read_write> oit_keys: array<atomic<u32>>;
-@group(3) @binding(21) var<storage, read_write> oit_payloads: array<vec2<u32>>;
+// heads[0] counts the pool's nodes; pixel p = y * width + x: heads[1 + 2p]
+// counts its fragments, heads[2 + 2p] is the first node of its list plus
+// one (0: none)
+@group(3) @binding(20) var<storage, read_write> oit_heads: array<atomic<u32>>;
+@group(3) @binding(21) var<storage, read_write> oit_nodes: array<vec4<u32>>;
 @group(3) @binding(22) var<uniform> oit_params: OitParams;
-// per pixel five words of tail sums, then one flag per 8 x 8 tile
-// (oit.wgsl `tail`)
-@group(3) @binding(23) var<storage, read_write> oit_tail: array<atomic<u32>>;
-// fs_glow_oit's read-only view of the keys and payloads: it runs in the
-// pass that composites them, which binds them read only (oit.rs)
-@group(3) @binding(25) var<storage, read> oit_keys_r: array<u32>;
-@group(3) @binding(26) var<storage, read> oit_payloads_r: array<vec2<u32>>;
+// the slots: written by the capture, read by fs_glow_oit
+@group(3) @binding(23) var oit_slots_w: texture_storage_2d_array<rgba32uint, write>;
+@group(3) @binding(24) var oit_slots_r: texture_2d_array<u32>;
+// fs_glow_oit's read-only view of the heads and nodes: it runs in the pass
+// that composites the lists, which binds them read only (oit.rs)
+@group(3) @binding(25) var<storage, read> oit_heads_r: array<u32>;
+@group(3) @binding(26) var<storage, read> oit_nodes_r: array<vec4<u32>>;
 
 // The depth test runs before the shader where the GPU allows forcing it
 // (oit.rs `object_source` turns the marker below into
-// `@early_depth_test(force)` and sets OIT_EARLY_DEPTH): writing the keys
-// would otherwise make it run for every fragment behind the opaque scene
-// (the strands behind a head) before testing it. With MSAA a fragment runs
-// when one of its samples passes; the resolve tests each sample again.
-// Without it, the shader leaves early itself against the single-sample
-// prepass, only without MSAA: with it, that one depth would hide a layer
-// that some samples of an edge still show (the resolve then tests each
-// sample).
+// `@early_depth_test(force)` and sets OIT_EARLY_DEPTH): writing the lists
+// would otherwise make it shade every fragment behind the opaque scene (the
+// strands behind a head) before testing it. With MSAA a fragment runs when
+// one of its samples passes; the resolve tests each sample again. Without
+// it, the shader leaves early itself against the single-sample prepass, only
+// without MSAA: with it, that one depth would hide a layer that some samples
+// of an edge still show (the resolve then tests each sample).
 override OIT_EARLY_DEPTH: bool = false;
-// the loops' bound (oit.rs `MAX_LAYERS`); `oit_params.layers` ends them
-const OIT_MAX_LAYERS: u32 = 24u;
-const OIT_FIXED: f32 = 65536.0;
-// Set on a key by the fragment whose payload the slot holds (a coplanar
-// fragment shares the key); a key without it got no payload.
-const OIT_CLAIMED: u32 = 0x80000000u;
-
-fn oit_pixel(px: vec2<u32>) -> u32 {
-    return px.y * oit_params.width + px.x;
-}
-
-// rgb9e5: three 9-bit mantissas under a shared 5-bit exponent (oit.wgsl
-// `unpack_rgb9e5` reads it): HDR-safe up to 65408
-fn pack_rgb9e5(c: vec3<f32>) -> u32 {
-    let v = clamp(c, vec3<f32>(0.0), vec3<f32>(65408.0));
-    let m = max(v.x, max(v.y, v.z));
-    if (m <= 0.0) {
-        return 0u;
-    }
-    let e = clamp(floor(log2(m)) + 16.0, 0.0, 31.0);
-    let q = min(vec3<u32>(round(v * exp2(24.0 - e))), vec3<u32>(511u));
-    return q.x | (q.y << 9u) | (q.z << 18u) | (u32(e) << 27u);
-}
-
-// The alpha a blended fragment ends with, discarding exactly as blend_color
-// does, without the lighting: the key pass of the OIT.
-fn blend_alpha(in: VsOut, front: bool) -> f32 {
-    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
-    let rec = records[in.record];
-    if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
-        let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
-        let surface = portal_surface(rec, in.uv, portal_aa);
-        if (surface.alpha < 0.004) { discard; }
-        return surface.alpha;
-    }
-    water_clip(in.world_pos);
-    let m = eval_material(in, front);
-    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
-        discard;
-    }
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
-        discard;
-    }
-    let a = m.color.a * rez_alpha(rec, in);
-    if (a < 0.004) {
-        discard;
-    }
-    return a;
-}
 
 @fragment /*OIT_EARLY_DEPTH*/
-fn fs_blend_keys(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let px = vec2<u32>(in.clip.xy);
-    if (!OIT_EARLY_DEPTH && oit_params.samples <= 1u && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
-        discard;
-    }
-    let _alpha = blend_alpha(in, front);
-    let p = oit_pixel(px);
-    // (reverse-Z: a nearer fragment has a larger depth, and so a larger key;
-    // a visible one is past the far plane, so its key is never 0)
-    let key = bitcast<u32>(in.clip.z);
-    if (key <= atomicLoad(&oit_keys[(oit_params.layers - 1u) * oit_params.pixels + p])) {
-        // farther than every kept layer: the tail, in the payload pass
-        return vec4<f32>(0.0);
-    }
-    atomicStore(&oit_tail[oit_params.pixels * 5u + (px.y / 8u) * oit_params.tiles_x + px.x / 8u], 1u);
-    var v = key;
-    for (var i = 0u; i < OIT_MAX_LAYERS; i += 1u) {
-        if (i >= oit_params.layers) {
-            break;
-        }
-        let old = atomicMax(&oit_keys[i * oit_params.pixels + p], v);
-        if (old == v) {
-            // a coplanar fragment put it there: one slot for the two (the
-            // payload pass gives it to the first that claims it, the tail to
-            // the other)
-            break;
-        }
-        if (old < v) {
-            // this rank taken: the key it held moves down
-            v = old;
-        }
-        if (v == 0u) {
-            break;
-        }
-    }
-    return vec4<f32>(0.0);
-}
-
-@fragment /*OIT_EARLY_DEPTH*/
-fn fs_blend_payloads(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
+fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
     let px = vec2<u32>(in.clip.xy);
     if (!OIT_EARLY_DEPTH && oit_params.samples <= 1u && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
         discard;
     }
     let c = blend_color(in, front);
-    let p = oit_pixel(px);
-    let key = bitcast<u32>(in.clip.z);
-    // its rank among the pixel's keys, sorted nearest first (0 past the last)
-    var lo = 0u;
-    var hi = oit_params.layers;
-    var found = OIT_MAX_LAYERS;
-    loop {
-        if (lo >= hi) {
-            break;
-        }
-        let mid = (lo + hi) / 2u;
-        let k = atomicLoad(&oit_keys[mid * oit_params.pixels + p]) & ~OIT_CLAIMED;
-        if (k > key) {
-            lo = mid + 1u;
-        } else if (k < key) {
-            hi = mid;
-        } else {
-            found = mid;
-            break;
-        }
+    let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
+    let b16 = pack2x16float(vec2<f32>(clamp(c.b, 0.0, 65504.0), 0.0)) & 0xffffu;
+    let rg = pack2x16float(clamp(c.rg, vec2<f32>(0.0), vec2<f32>(65504.0)));
+    let rest = b16 | (a8 << 16u) | ((coverage & 0xffu) << 24u);
+    let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
+    let slot = atomicAdd(&oit_heads[pixel], 1u);
+    if (slot < oit_params.slots) {
+        textureStore(oit_slots_w, px, slot, vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), 0u));
+        return vec4<f32>(0.0);
     }
-    if (found < OIT_MAX_LAYERS) {
-        // the slot goes to the first fragment that claims it (a coplanar one
-        // shares the key), the others to the tail: no payload is ever torn
-        // between two, and the resolve skips a key nobody claimed
-        let at = found * oit_params.pixels + p;
-        var claimed = false;
-        loop {
-            let r = atomicCompareExchangeWeak(&oit_keys[at], key, key | OIT_CLAIMED);
-            if (r.exchanged) {
-                claimed = true;
-                break;
-            }
-            if (r.old_value != key) {
-                break;
-            }
-            // (a weak exchange may fail for no reason: once more)
-        }
-        if (claimed) {
-            let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
-            oit_payloads[at] = vec2<u32>(pack_rgb9e5(c.rgb), a8 | ((coverage & 0xfu) << 8u));
-            return vec4<f32>(0.0);
-        }
+    // (still counted past the end: the classify sees the overflow)
+    let idx = atomicAdd(&oit_heads[0], 1u);
+    if (idx >= oit_params.node_cap) {
+        return vec4<f32>(0.0);
     }
-    // not kept: the tail (16.16 fixed point, the colour clamped to 255)
-    let t = p * 5u;
-    let rgb = vec3<u32>(min(c.rgb, vec3<f32>(255.0)) * OIT_FIXED);
-    atomicAdd(&oit_tail[t], rgb.x);
-    atomicAdd(&oit_tail[t + 1u], rgb.y);
-    atomicAdd(&oit_tail[t + 2u], rgb.z);
-    atomicAdd(&oit_tail[t + 3u], u32(c.a * OIT_FIXED));
-    atomicAdd(&oit_tail[t + 4u], u32(-log(1.0 - min(c.a, 254.0 / 255.0)) * OIT_FIXED));
+    let prev = atomicExchange(&oit_heads[pixel + 1u], idx + 1u);
+    oit_nodes[idx] = vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), prev);
     return vec4<f32>(0.0);
 }
 
@@ -1831,27 +1704,40 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
 }
 
 // The glow of a blended face drawn with order-independent transparency, once
-// the layers are composited: dimmed by the kept layers of its pixel in front
+// the lists are composited: dimmed by the layers of its pixel's list in front
 // of it, as the faces drawn after it in the drawing order dim it (each one by
 // its alpha, LLDrawPoolAlpha), so a glowing face behind a nearly opaque pane
 // barely shows. Its own layer, at its depth, is not in front.
 @fragment
 fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) mask: u32) -> @location(0) vec4<f32> {
     let g = glow_amount(in, front);
-    let p = oit_pixel(vec2<u32>(in.clip.xy));
+    let px = vec2<u32>(in.clip.xy);
     var through = 1.0;
-    for (var i = 0u; i < OIT_MAX_LAYERS; i += 1u) {
-        if (i >= oit_params.layers) {
+    let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
+    let in_slots = min(oit_heads_r[pixel], oit_params.slots);
+    var k = 0u;
+    var idx = oit_heads_r[pixel + 1u];
+    var steps = 0u;
+    loop {
+        if (through <= 0.0) {
             break;
         }
-        let key = oit_keys_r[i * oit_params.pixels + p];
-        // sorted nearest first: from here on, nothing is in front
-        if (key == 0u || bitcast<f32>(key & ~OIT_CLAIMED) <= in.clip.z) {
-            break;
+        var n: vec4<u32>;
+        if (k < in_slots) {
+            n = textureLoad(oit_slots_r, px, k, 0);
+            k += 1u;
+        } else {
+            // (bounded by the pool, as oit.wgsl: never cuts a valid list)
+            if (idx == 0u || steps >= oit_params.node_cap) {
+                break;
+            }
+            n = oit_nodes_r[idx - 1u];
+            idx = n.w;
+            steps += 1u;
         }
-        let pl = oit_payloads_r[i * oit_params.pixels + p];
-        if ((key & OIT_CLAIMED) != 0u && (((pl.y >> 8u) & 0xfu) & mask) != 0u) {
-            through *= 1.0 - f32(pl.y & 0xffu) / 255.0;
+        // nearer (reverse-Z) and over one of this fragment's samples
+        if (bitcast<f32>(n.z) > in.clip.z && ((n.y >> 24u) & mask) != 0u) {
+            through *= 1.0 - f32((n.y >> 16u) & 0xffu) / 255.0;
         }
     }
     if (g * through <= 0.0) {

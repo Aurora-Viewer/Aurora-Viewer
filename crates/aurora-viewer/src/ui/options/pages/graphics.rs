@@ -745,10 +745,17 @@ fn image(cx: &mut Cx) {
         let off = !cx.s.oit;
         cx.subs(off, |cx| {
             cx.slider(
+                tr!("ui-options-oit-nodes"),
+                tr!("ui-options-oit-nodes-help"),
+                &field!(oit_nodes_per_pixel),
+                aurora_render::oit::MIN_NODES_PER_PIXEL..=aurora_render::oit::MAX_NODES_PER_PIXEL,
+                "",
+            );
+            cx.slider(
                 tr!("ui-options-oit-layers"),
                 tr!("ui-options-oit-layers-help"),
-                &field!(oit_layers),
-                aurora_render::oit::MIN_LAYERS..=aurora_render::oit::MAX_LAYERS,
+                &field!(oit_max_layers),
+                1..=aurora_render::oit::MAX_SORTED_LAYERS,
                 "",
             );
         });
