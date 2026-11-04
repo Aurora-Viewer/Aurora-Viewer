@@ -8034,8 +8034,10 @@ impl Backend {
                     .as_mut()
                     .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj, !st_glow.is_empty()))
         };
-        // off, its targets are freed (as `Bloom::release`)
-        if method != crate::oit_stochastic::Method::Stochastic
+        // off, or without MSAA (FXAA, SMAA, TAA, none: the per-object order;
+        // the first frames may have drawn at the default 4x), its targets are
+        // freed (as `Bloom::release`)
+        if (method != crate::oit_stochastic::Method::Stochastic || self.targets.depth_msaa_tex.is_none())
             && let Some(s) = &mut self.st
         {
             s.release();
