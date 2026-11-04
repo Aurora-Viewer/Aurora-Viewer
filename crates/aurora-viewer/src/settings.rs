@@ -432,6 +432,9 @@ pub struct Settings {
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
     pub language_is_public: bool,
+    /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
+    /// button) opens on (Preferences › Network and cache).
+    pub browser_home_page: String,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
@@ -480,6 +483,9 @@ pub struct Settings {
     /// Requested position lock and options, independent for each avatar.
     pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
     pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
+    /// Show Friends Only and keeping it after a teleport, for each account
+    /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
+    pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
     /// Depth of field (Preferences › Graphics).
@@ -1718,6 +1724,7 @@ impl Default for Settings {
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
+            browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             show_bug_report: true,
             show_huds: true,
             sun_beacon: false,
@@ -1828,6 +1835,7 @@ impl Default for Settings {
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
+            friends_only: Default::default(),
             snapshot: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,

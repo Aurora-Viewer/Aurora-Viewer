@@ -37,6 +37,8 @@ pub mod aa_switch;
 /// Help › About Aurora Viewer on one of its tabs (AURORA_DEMO_ABOUT).
 #[path = "demo_about.rs"]
 pub mod about;
+#[path = "demo_alpha_mask_ab.rs"]
+pub mod alpha_mask_ab;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
@@ -162,6 +164,9 @@ pub mod object_im;
 /// The object menu scenario's objects (AURORA_DEMO_OBJECT_MENU).
 #[path = "demo_object_menu.rs"]
 pub mod object_menu;
+/// Boxes for the build tools' snap to objects (AURORA_DEMO_OBJECT_SNAP).
+#[path = "demo_object_snap.rs"]
+pub mod object_snap;
 /// AURORA_DEMO_OUTFIT_RESTORE: the login restore of the outfit against a
 /// region that puts part of it back by itself.
 #[path = "demo_outfit_restore.rs"]
@@ -263,6 +268,10 @@ pub mod toasts;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;
+/// The Voice controls window with residents in the nearby channel
+/// (AURORA_DEMO_VOICE_CONTROLS).
+#[path = "demo_voice_controls.rs"]
+pub mod voice_controls;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;
@@ -2970,6 +2979,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             // unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
                 || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
+                || std::env::var_os("AURORA_DEMO_FRIENDS_ONLY").is_some()
                 || seat_kill::on()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
                 || people::mode().is_some()
@@ -5752,8 +5762,10 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(alpha_mask_ab::events());
     ev.extend(bom_rezzed::events());
     ev.extend(land_beside_events());
+    ev.extend(object_snap::events());
     ev
 }
 
@@ -8303,6 +8315,9 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
 
 /// Pixels of a procedural demo texture (RGBA8, 64×64; the hair demo's 256×256).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if let Some(texture) = alpha_mask_ab::texture(id) {
+        return Some(texture);
+    }
     if let Some(pixels) = texture_library::texture(id) {
         return Some(pixels);
     }

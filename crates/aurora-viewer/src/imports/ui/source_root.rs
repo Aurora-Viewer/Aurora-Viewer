@@ -66,9 +66,10 @@ fn source(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports, prefs: &mut Pre
                 editor.text.clone_from(&name);
                 editor.applied = name;
             }
-            let field = ui
-                .add(egui::TextEdit::singleline(&mut editor.text).desired_width(160.0).char_limit(63))
-                .on_hover_text(aurora_i18n::tr!("import-source-folder-name-help", source = editor.source.as_str()));
+            let field = widgets::restricted_text_field(ui, true, &mut editor.text, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(160.0).char_limit(63)
+            })
+            .on_hover_text(aurora_i18n::tr!("import-source-folder-name-help", source = editor.source.as_str()));
             let valid = folders::parse_path(&editor.text).is_some_and(|path| path.len() == 1);
             let apply = tool_button(ui, p, aurora_i18n::tr!("common-apply"), valid);
             #[cfg(test)]
@@ -119,7 +120,9 @@ fn loose(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports) {
     if enabled {
         ui.horizontal_wrapped(|ui| {
             ui.label(aurora_i18n::tr!("import-folder-name"));
-            let field = ui.add(egui::TextEdit::singleline(&mut editor.text).desired_width(160.0).char_limit(63));
+            let field = widgets::restricted_text_field(ui, true, &mut editor.text, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(160.0).char_limit(63)
+            });
             #[cfg(test)]
             ui.ctx().data_mut(|data| {
                 data.insert_temp(egui::Id::unique("import_loose_folder_name"), field.rect);

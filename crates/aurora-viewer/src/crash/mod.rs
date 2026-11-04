@@ -18,7 +18,7 @@ mod threads;
 mod watchdog;
 mod window;
 
-pub use watchdog::{State, note as note_state, watch_window};
+pub use watchdog::{State, note as note_state, pumped, watch_window};
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -303,7 +303,7 @@ pub fn failure(message: &str) {
 }
 
 /// The GPU has kept a frame for `seconds` while the window still answers:
-/// `gpu-stall.txt` (with the render thread's stack on Windows), so a
+/// `gpu-stall.txt` (with the render thread's stack on Windows and Linux), so a
 /// session ended now is reported as such. [`gpu_answered`] takes it back.
 pub fn gpu_stalled(seconds: u64) {
     if let Some(session) = SESSION.get() {
@@ -380,6 +380,10 @@ pub fn gpu_closed() {
 }
 
 pub fn gpu_answered() {
+    // first, so that a stall's stacks still being read do not bring the
+    // file back once it is removed
+    #[cfg(target_os = "linux")]
+    watchdog::gpu_answered();
     if let Some(session) = SESSION.get() {
         let _ = std::fs::remove_file(session.dir.join("gpu-stall.txt"));
     }
