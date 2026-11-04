@@ -6,6 +6,18 @@ use super::*;
 pub struct ImportData(ContactSets);
 
 impl ImportData {
+    /// What a merge into `sets` would add: sets, members, residents kept
+    /// outside the friends and nicknames (none: the file is already in).
+    pub fn adds(&self, sets: &ContactSets) -> usize {
+        let members = self.0.sets.iter().map(|(name, set)| match sets.sets.get(name) {
+            Some(ours) => set.friends.difference(&ours.friends).count(),
+            None => 1 + set.friends.len(),
+        });
+        members.sum::<usize>()
+            + self.0.extra.difference(&sets.extra).count()
+            + self.0.pseudonyms.keys().filter(|id| !sets.pseudonyms.contains_key(*id)).count()
+    }
+
     pub fn from_xml(bytes: &[u8]) -> Result<Self, &'static str> {
         let mut data = aurora_llsd::from_xml(bytes).map_err(|_| "invalid LLSD XML")?;
         if data.has("groupname") && !data["groupname"].is_map() {
@@ -149,6 +161,15 @@ mod tests {
 
     fn parse(data: &Llsd) -> ImportData {
         ImportData::from_xml(&aurora_llsd::to_xml(data)).expect("valid export")
+    }
+
+    #[test]
+    fn adds_counts_what_a_merge_would_bring_and_nothing_once_it_is_in() {
+        let mut cs = ContactSets::default();
+        assert_eq!(parse(&exported("Business", id(1))).adds(&cs), 2, "the set and its member");
+        cs.merge_import(parse(&exported("Business", id(1))), |_| false).expect("merge");
+        assert_eq!(parse(&exported("Business", id(1))).adds(&cs), 0);
+        assert_eq!(parse(&exported("Business", id(2))).adds(&cs), 1);
     }
 
     #[test]

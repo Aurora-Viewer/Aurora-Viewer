@@ -200,6 +200,23 @@ fn pattern_of(typed: &str) -> Option<String> {
     domain(&format!("http://{typed}"))
 }
 
+/// The rules of a `medialist.xml`.
+pub fn parse(bytes: &[u8]) -> Result<Vec<Rule>, String> {
+    let data = aurora_llsd::from_xml(bytes).map_err(|e| format!("{e:?}"))?;
+    let mut filter = MediaFilter::default();
+    for entry in data.as_array() {
+        let action = match entry.get("action").as_str() {
+            "allow" => Action::Allow,
+            "deny" => Action::Deny,
+            _ => continue,
+        };
+        if let Some(pattern) = pattern_of(entry.get("domain").as_str()) {
+            filter.put(pattern, action);
+        }
+    }
+    Ok(filter.rules)
+}
+
 impl MediaFilter {
     /// loadDomainFilterList: the account's list.
     pub fn load(path: PathBuf) -> Self {
@@ -216,25 +233,35 @@ impl MediaFilter {
                 return filter;
             }
         };
-        let data = match aurora_llsd::from_xml(&bytes) {
-            Ok(data) => data,
+        match parse(&bytes) {
+            Ok(rules) => filter.rules = rules,
             Err(e) => {
-                log::warn!("media filter list unreadable: {e:?}");
+                log::warn!("media filter list unreadable: {e}");
                 return filter;
-            }
-        };
-        for entry in data.as_array() {
-            let action = match entry.get("action").as_str() {
-                "allow" => Action::Allow,
-                "deny" => Action::Deny,
-                _ => continue,
-            };
-            if let Some(pattern) = pattern_of(entry.get("domain").as_str()) {
-                filter.put(pattern, action);
             }
         }
         log::info!("media filter: {} entries", filter.rules.len());
         filter
+    }
+
+    /// A Legacy Viewer's rules added to the list, adding only: a pattern
+    /// the list has keeps its answer. The number of rules added.
+    pub fn merge(&mut self, rules: Vec<Rule>) -> usize {
+        let before = self.rules.len();
+        for rule in rules {
+            if !self.rules.iter().any(|r| r.pattern == rule.pattern) {
+                self.rules.push(rule);
+            }
+        }
+        let added = self.rules.len() - before;
+        if added > 0 {
+            self.save();
+            // the questions a new rule settles go too
+            let (rules, session) = (&self.rules, &self.session);
+            self.questions
+                .retain(|o| !session.contains_key(&o.url) && rule_for(rules, &o.url, &o.domain).is_none());
+        }
+        added
     }
 
     /// saveDomainFilterList.
@@ -396,6 +423,22 @@ impl MediaFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_adds_only_and_settles_the_questions_it_answers() {
+        let rule = |pattern: &str, action| Rule {
+            pattern: pattern.into(),
+            action,
+        };
+        let mut f = MediaFilter::default();
+        f.apply(Edit::Set("kept.example".into(), Action::Allow));
+        assert_eq!(f.check("http://new.example/a", Source::ParcelMedia), Verdict::Ask);
+        let legacy = vec![rule("kept.example", Action::Deny), rule("new.example", Action::Deny)];
+        assert_eq!(f.merge(legacy.clone()), 1);
+        assert_eq!(f.rules, [rule("kept.example", Action::Allow), rule("new.example", Action::Deny)]);
+        assert!(f.question().is_none());
+        assert_eq!(f.merge(legacy), 0);
+    }
 
     #[test]
     fn domain_is_the_host_alone() {

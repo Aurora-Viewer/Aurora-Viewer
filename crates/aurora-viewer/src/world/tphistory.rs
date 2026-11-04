@@ -10,6 +10,7 @@
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
 use glam::{DVec3, Vec3};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 const MAX_ITEMS: usize = 100;
@@ -223,6 +224,19 @@ impl HistoryItem {
     }
 }
 
+/// The places of a `teleport_history.txt`, oldest first.
+pub fn parse(text: &str) -> Vec<HistoryItem> {
+    let mut items = Vec::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match aurora_llsd::from_notation(line.as_bytes()) {
+            Ok(v) if v.is_map() => items.push(HistoryItem::from_llsd(&v)),
+            _ => log::info!("teleport history: a line could not be read"),
+        }
+    }
+    items.sort_by(|a, b| a.date.total_cmp(&b.date));
+    items
+}
+
 /// The saved history, oldest first (LLTeleportHistoryStorage::mItems).
 #[derive(Debug, Default)]
 pub struct HistoryStorage {
@@ -235,17 +249,47 @@ impl HistoryStorage {
     /// LLTeleportHistoryStorage::load: lines that do not parse are skipped
     /// (Firestorm stops at the first one), then sorted by date.
     pub fn load(path: PathBuf) -> HistoryStorage {
-        let mut items = Vec::new();
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                match aurora_llsd::from_notation(line.as_bytes()) {
-                    Ok(v) if v.is_map() => items.push(HistoryItem::from_llsd(&v)),
-                    _ => log::info!("teleport history: a line could not be read"),
+        let items = std::fs::read_to_string(&path).map_or_else(|_| Vec::new(), |text| parse(&text));
+        HistoryStorage { items, path: Some(path) }
+    }
+
+    /// A Legacy Viewer's places added to this history, adding only. `add`'s
+    /// rule decides between two entries of one place: the newest visit
+    /// stays, at the older position, so importing again changes nothing.
+    /// The number of places added or updated.
+    pub fn merge(&mut self, items: Vec<HistoryItem>) -> usize {
+        let mut by_title: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, item) in self.items.iter().enumerate() {
+            by_title.entry(item.title.clone()).or_default().push(i);
+        }
+        let mut changed = 0;
+        for item in items.into_iter().filter(|item| !item.title.is_empty()) {
+            let same = by_title.entry(item.title.clone()).or_default();
+            let found = same
+                .iter()
+                .copied()
+                .find(|&i| (self.items[i].global - item.global).length() < MAX_GLOBAL_POS_OFFSET);
+            match found {
+                Some(i) if self.items[i].date < item.date => {
+                    self.items[i].date = item.date;
+                    if !item.slurl.is_empty() {
+                        self.items[i].slurl = item.slurl;
+                    }
+                    changed += 1;
+                }
+                Some(_) => {}
+                None => {
+                    same.push(self.items.len());
+                    self.items.push(item);
+                    changed += 1;
                 }
             }
         }
-        items.sort_by(|a, b| a.date.total_cmp(&b.date));
-        HistoryStorage { items, path: Some(path) }
+        if changed > 0 {
+            self.items.sort_by(|a, b| a.date.total_cmp(&b.date));
+            self.save();
+        }
+        changed
     }
 
     /// A history kept in memory only (the demo's).
@@ -390,6 +434,41 @@ pub fn history_matches(title: &str, filter: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn place(title: &str, x: f64, date: f64) -> HistoryItem {
+        HistoryItem {
+            title: title.into(),
+            global: DVec3::new(x, 0.0, 0.0),
+            date,
+            slurl: String::new(),
+        }
+    }
+
+    #[test]
+    fn merge_keeps_the_newest_visit_of_a_place_and_adds_nothing_twice() {
+        let mut history = HistoryStorage::in_memory(vec![place("Home", 0.0, 100.0), place("Shop", 10.0, 200.0)]);
+        let legacy = parse(
+            "{'date':d\"1970-01-01T00:00:50Z\",'global_pos':[r0,r0,r0],'slurl':'','title':'Home'}\n\
+             not a place\n\
+             {'date':d\"1970-01-01T00:05:00Z\",'global_pos':[r13,r0,r0],'slurl':'','title':'Shop'}\n\
+             {'date':d\"1970-01-01T00:02:30Z\",'global_pos':[r500,r0,r0],'slurl':'','title':'Shop'}\n\
+             {'date':d\"1970-01-01T00:01:00Z\",'global_pos':[r900,r0,r0],'slurl':'','title':'Far'}\n",
+        );
+        assert_eq!(legacy.len(), 4);
+        assert_eq!(history.merge(legacy.clone()), 3);
+        let seen: Vec<_> = history.items.iter().map(|i| (i.title.as_str(), i.global.x, i.date)).collect();
+        assert_eq!(
+            seen,
+            [
+                ("Far", 900.0, 60.0),
+                ("Home", 0.0, 100.0),
+                ("Shop", 500.0, 150.0),
+                // the visit is the Legacy one, the position stays ours
+                ("Shop", 10.0, 300.0),
+            ]
+        );
+        assert_eq!(history.merge(legacy), 0);
+    }
 
     fn e(n: &str) -> TpEntry {
         TpEntry {
