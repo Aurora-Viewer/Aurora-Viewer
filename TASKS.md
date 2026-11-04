@@ -1,5 +1,7 @@
 # Aurora Viewer — task tracking
 
+- 🟡 Preserve a profile pick parcel while editing its contents (#2016; task `profile-pick-location-2016`): implementation prepared in the fork; reference and finishing checks in HANDOFF.md. Human validation pending.
+
 - ✅ One UpdateAvatarAppearance request at a time, always for the newest outfit version, like `LLAppearanceMgr::requestServerAppearanceUpdate` (human request, 2026-11-04; task `appearance-request-queue`; refs #1265; [PR #2325](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/2325)): during a burst of outfit changes the requests went out side by side and out of order, and about a third came back HTTP 503. They now wait for one another, a held request takes the newest version and region, and a version already sent is not sent again. Justified differences: a failure forgets the version last sent, for the retry on the server's `expected`, and a request holds the queue for 60 s at most. Validated by the human on the grid on 2026-11-04: rapid activations of a product forcing a folder on and off, outfit changes and a teleport.
   - ⬜ Later: requests sent one at a time still get HTTP 503 during such a burst (12 of 69, against about a third before), with no retry, as in the Legacy Viewer: the avatar can stay on an older appearance if the last request of a burst fails, until the next outfit change. Also, `serverAppearanceUpdateCoro` skips a version the server has already answered; here only the outfit restore path does.
 
