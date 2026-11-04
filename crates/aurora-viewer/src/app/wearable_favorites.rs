@@ -97,9 +97,15 @@ impl App {
             return;
         }
         let request = Uuid::new_v4();
+        let command = NetCommand::EditInventory { request, change };
+        // `send` drops what RLVa refuses: no reply would free the window
+        if !self.world.rlva_allows_command(&command, Uuid::nil()) {
+            self.wearable_favorites_ui.message = aurora_i18n::tr!("rlva-blocked").into();
+            return;
+        }
         self.wearable_favorites_ui.pending = Some(Pending { request, select, synced });
         self.wearable_favorites_ui.message.clear();
-        self.send(NetCommand::EditInventory { request, change });
+        self.send(command);
     }
 
     pub(super) fn wearable_favorites_result(&mut self, result: Result<aurora_net::inventory::operations::Reply, String>) {
