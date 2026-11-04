@@ -231,9 +231,10 @@ struct Pending {
     not_before: Instant,
     /// When it was first queued (the logs of our own requests).
     queued_at: Instant,
-    /// Sent first: our HUDs and attachments, which LLMediaDataClient's
-    /// sorted queue (by getMediaInterest) puts ahead of the world's media.
-    first: bool,
+    /// Sent first, highest first: our HUDs (2), our other attachments (1),
+    /// the world (0), as LLMediaDataClient's sorted queue (by
+    /// getMediaInterest) puts a HUD panel ahead of a body's prims.
+    priority: u8,
 }
 
 /// ObjectMedia GET queue (LLObjectMediaDataClient): one request per
@@ -245,8 +246,8 @@ pub struct MediaDataClient {
     queue: VecDeque<Pending>,
     queued: HashMap<Uuid, u32>,
     in_flight: usize,
-    tx: crossbeam_channel::Sender<(Fetched, String, u32, bool, Instant)>,
-    rx: crossbeam_channel::Receiver<(Fetched, String, u32, bool, Instant)>,
+    tx: crossbeam_channel::Sender<(Fetched, String, u32, u8, Instant)>,
+    rx: crossbeam_channel::Receiver<(Fetched, String, u32, u8, Instant)>,
     last_batch: Instant,
 }
 
@@ -255,6 +256,10 @@ const RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_RETRIES: u32 = 4;
 const MAX_IN_FLIGHT: usize = 4;
 const BATCH: usize = 1;
+/// Request priorities (`Pending::priority`).
+pub const HUD: u8 = 2;
+pub const ATTACHMENT: u8 = 1;
+pub const WORLD: u8 = 0;
 
 impl Default for MediaDataClient {
     fn default() -> Self {
@@ -275,17 +280,17 @@ impl MediaDataClient {
         self.queued.contains_key(object)
     }
 
-    /// Queue a GET for an object (no-op if already queued). `first`: ours
-    /// (a HUD, an attachment), asked before the rest.
-    pub fn request(&mut self, object: Uuid, cap: &str, first: bool) {
+    /// Queue a GET for an object (no-op if already queued), `priority` as
+    /// `Pending::priority`.
+    pub fn request(&mut self, object: Uuid, cap: &str, priority: u8) {
         if self.queued.contains_key(&object) {
             return;
         }
         self.queued.insert(object, 0);
-        if first {
+        if priority == HUD {
+            let ahead = self.queue.iter().filter(|p| p.priority == HUD).count();
             log::info!(
-                "media: ObjectMedia for our {object} queued ({} ahead, {} in flight)",
-                self.queue.len(),
+                "media: ObjectMedia for our HUD {object} queued ({ahead} HUD requests ahead, {} in flight)",
                 self.in_flight
             );
         }
@@ -295,18 +300,20 @@ impl MediaDataClient {
             retries: 0,
             not_before: Instant::now(),
             queued_at: Instant::now(),
-            first,
+            priority,
         });
     }
 
     /// A queued request turns out to be ours (its avatar arrived after it
-    /// was queued): it goes first.
-    pub fn prioritize(&mut self, object: &Uuid) {
+    /// was queued): it moves up to `priority`.
+    pub fn prioritize(&mut self, object: &Uuid, priority: u8) {
         if let Some(p) = self.queue.iter_mut().find(|p| p.object == *object)
-            && !p.first
+            && p.priority < priority
         {
-            p.first = true;
-            log::info!("media: ObjectMedia for our {object} moved first ({} in flight)", self.in_flight);
+            p.priority = priority;
+            if priority == HUD {
+                log::info!("media: ObjectMedia for our HUD {object} moved up ({} in flight)", self.in_flight);
+            }
         }
     }
 
@@ -318,10 +325,10 @@ impl MediaDataClient {
     /// Send due requests, return the answers that arrived.
     pub fn update(&mut self, rt: &tokio::runtime::Handle, http: &reqwest::Client) -> Vec<Fetched> {
         let mut out = Vec::new();
-        while let Ok((f, cap, retries, first, queued_at)) = self.rx.try_recv() {
-            if first {
+        while let Ok((f, cap, retries, priority, queued_at)) = self.rx.try_recv() {
+            if priority == HUD {
                 log::info!(
-                    "media: ObjectMedia for our {} answered {:.1} s after it was queued ({})",
+                    "media: ObjectMedia for our HUD {} answered {:.1} s after it was queued ({})",
                     f.object,
                     queued_at.elapsed().as_secs_f32(),
                     if f.data.is_ok() { "ok" } else { "failed" }
@@ -337,7 +344,7 @@ impl MediaDataClient {
                         retries: retries + 1,
                         not_before: Instant::now() + RETRY_DELAY,
                         queued_at,
-                        first,
+                        priority,
                     });
                 }
                 _ => {
@@ -352,22 +359,19 @@ impl MediaDataClient {
         let now = Instant::now();
         let mut sent = 0;
         while sent < BATCH && self.in_flight < MAX_IN_FLIGHT {
-            // ours first, then the oldest due request
-            let due = |p: &Pending| p.not_before <= now;
-            let Some(i) = self
-                .queue
-                .iter()
-                .position(|p| due(p) && p.first)
-                .or_else(|| self.queue.iter().position(due))
-            else {
+            // the highest priority first, the oldest due request of it
+            let Some(top) = self.queue.iter().filter(|p| p.not_before <= now).map(|p| p.priority).max() else {
+                break;
+            };
+            let Some(i) = self.queue.iter().position(|p| p.not_before <= now && p.priority == top) else {
                 break;
             };
             let Some(p) = self.queue.remove(i) else {
                 break;
             };
-            if p.first {
+            if p.priority == HUD {
                 log::info!(
-                    "media: ObjectMedia for our {} sent {:.1} s after it was queued",
+                    "media: ObjectMedia for our HUD {} sent {:.1} s after it was queued",
                     p.object,
                     p.queued_at.elapsed().as_secs_f32()
                 );
@@ -377,7 +381,7 @@ impl MediaDataClient {
             let (tx, http) = (self.tx.clone(), http.clone());
             rt.spawn(async move {
                 let data = get(&http, &p.cap, p.object).await;
-                let _ = tx.send((Fetched { object: p.object, data }, p.cap, p.retries, p.first, p.queued_at));
+                let _ = tx.send((Fetched { object: p.object, data }, p.cap, p.retries, p.priority, p.queued_at));
             });
         }
         if sent > 0 {
@@ -440,7 +444,11 @@ mod tests {
         let http = reqwest::Client::new();
         let mut client = MediaDataClient::default();
         for n in 1..=3 {
-            client.request(Uuid::from_u128(n), "http://127.0.0.1:9/media", n == 3);
+            client.request(
+                Uuid::from_u128(n),
+                "http://127.0.0.1:9/media",
+                if n == 3 { HUD } else { ATTACHMENT },
+            );
         }
         client.update(rt.handle(), &http);
         assert_eq!(client.queue.len(), 2, "one sent, as serviceQueue peels one off");
@@ -448,9 +456,9 @@ mod tests {
         client.update(rt.handle(), &http);
         assert_eq!(client.queue.len(), 2, "the next waits for PrimMediaRequestQueueDelay");
         // a request queued before its avatar was known goes first once it is
-        client.request(Uuid::from_u128(4), "http://127.0.0.1:9/media", false);
-        client.prioritize(&Uuid::from_u128(4));
-        assert!(client.queue.iter().any(|p| p.object == Uuid::from_u128(4) && p.first));
+        client.request(Uuid::from_u128(4), "http://127.0.0.1:9/media", WORLD);
+        client.prioritize(&Uuid::from_u128(4), HUD);
+        assert!(client.queue.iter().any(|p| p.object == Uuid::from_u128(4) && p.priority == HUD));
     }
 
     #[test]

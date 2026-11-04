@@ -259,12 +259,10 @@ impl MediaManager {
         };
         if need && self.client.is_queued(&o.full_id) {
             // queued before its avatar was known: ours goes first now
-            if e.hud || e.on_own_avatar {
-                self.client.prioritize(&o.full_id);
-            }
+            self.client.prioritize(&o.full_id, request_priority(e));
         } else if need && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia")) {
             e.requested_version = version;
-            self.client.request(o.full_id, cap, e.hud || e.on_own_avatar);
+            self.client.request(o.full_id, cap, request_priority(e));
         }
     }
 
@@ -947,6 +945,18 @@ fn trusted_by_filter(objects: &HashMap<Uuid, ObjMedia>, key: MediaKey, settings:
 }
 
 /// Root avatar of an attachment.
+/// Where an object's ObjectMedia request goes in the queue: a HUD panel
+/// first, then our other attachments, then the world.
+fn request_priority(e: &ObjMedia) -> u8 {
+    if e.hud {
+        entry::HUD
+    } else if e.on_own_avatar {
+        entry::ATTACHMENT
+    } else {
+        entry::WORLD
+    }
+}
+
 fn attachment_avatar(world: &World, mut idx: usize) -> Option<Uuid> {
     for _ in 0..16 {
         let o = world.objects.get(idx)?;
