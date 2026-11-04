@@ -2243,12 +2243,14 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     let area = super::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("conv", st.selected));
     let out = area
         .stick_to_bottom(!paused)
+        // the view moves the offset before this frame's wheel (`View::show`)
+        .animated(false)
         .auto_shrink([false, false])
         .max_height(height)
         .min_scrolled_height(height)
         .show_viewport(ui, |ui, viewport| {
             let Some(lines) = lines else {
-                return 0.0;
+                return;
             };
             let width = (ui.available_width() * 2.0).round() / 2.0;
             let changed = view.sync(
@@ -2275,7 +2277,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
             let selection = &mut st.selection.1;
-            let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+            let content = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                 let Some(line) = lines.get(row.line) else {
                     return;
                 };
@@ -2321,12 +2323,9 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     |seq| selection.of_row(seq).map(|_| copied.text(selection)),
                 );
             }
-            shift
         });
     let mut offset = out.state.unclamped_offset();
-    // rows above changed height: what is in sight stays
-    offset.y += out.inner;
-    let mut store = out.inner != 0.0;
+    let mut store = false;
     // what came in since the reader left the end: others' messages, not
     // ours nor the notices
     let arrived = lines.map_or(0, |lines| {
