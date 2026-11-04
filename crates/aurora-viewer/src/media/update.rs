@@ -744,6 +744,21 @@ impl MediaManager {
                 continue;
             }
             if fresh {
+                // the sizes a face's repeats and offsets are matched against
+                // (Build › Media "Align", LLPanelFace::onClickAutoFix)
+                log::info!(
+                    "media texture: {:?} {}: media {}x{} in texture {}x{} (bottom up {}), entry {}x{}, auto scale {}",
+                    m.key,
+                    sanitize(&m.url),
+                    frame.media_width,
+                    frame.media_height,
+                    tw,
+                    th,
+                    bottom_up,
+                    m.width,
+                    m.height,
+                    m.auto_scale
+                );
                 let black: Vec<u8> = [0u8, 0, 0, 255].repeat((tw * th) as usize);
                 let level = [MipLevel {
                     width: tw,
