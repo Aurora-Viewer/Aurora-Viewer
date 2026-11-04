@@ -388,6 +388,7 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
     if editing && let Some(i) = world.profiles.picks.get(&sel) {
         let server = PickEdit {
             id: i.id,
+            parcel: i.parcel,
             name: i.name.clone(),
             desc: i.desc.clone(),
             snapshot: i.snapshot,
@@ -630,6 +631,7 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
             // onClickSetLocation: our position, parcel and region now
             let here = new_pick(world);
             e.pos = here.pos;
+            e.parcel = here.parcel;
             e.location = here.location;
         }
         let has_pos = e.pos != DVec3::ZERO;
