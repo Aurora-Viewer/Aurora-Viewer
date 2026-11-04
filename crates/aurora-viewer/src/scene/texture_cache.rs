@@ -29,7 +29,9 @@ const MAGIC: &[u8; 4] = b"AUTX";
 /// colour of the mips is the plain average of the texels (`build_mips`). 3:
 /// the ends of alpha stay exact (`aurora_render::bc7::encode_chain`).
 /// 4: retain the legacy pick mask and an exact alpha > 0 plane together.
-const VERSION: u8 = 4;
+/// 5: textures classed opaque keep an alpha under 255 in their blocks
+/// (`bc7_keeps_alpha`): only their chains are decoded again ([`parse`]).
+const VERSION: u8 = 5;
 const KIND_KEEP_RGBA: u8 = 0;
 const KIND_BC7: u8 = 1;
 /// Fixed part of the header, then 8 bytes per level.
@@ -262,7 +264,7 @@ enum Parsed {
 /// The header checked against the length of the file, and where to read
 /// the levels from `want` on.
 fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
-    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3 | VERSION) {
+    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3 | 4 | VERSION) {
         return None;
     }
     let kind = head[5];
@@ -292,7 +294,14 @@ fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
     let (mw, mh, mlen) = (u32_at(head, 20)?, u32_at(head, 24)?, u32_at(head, 28)? as usize);
     // Opaque version-3 chains remain usable. Alpha masks need a fresh decode
     // once to supply the exact bit plane rather than guessing transparency.
-    if mlen > MAX_MASK_BYTES || (mlen > 0 && (head[4] != VERSION || pick_mask_bytes(mw, mh) != Some(mlen))) {
+    if mlen > MAX_MASK_BYTES || (mlen > 0 && (head[4] < 4 || pick_mask_bytes(mw, mh) != Some(mlen))) {
+        return None;
+    }
+    // Before version 5, a chain classed opaque was encoded without the alpha
+    // channel its texture may have. Only those are decoded again: the other
+    // chains are unchanged, and decoding a whole cache again is minutes of
+    // processor back in a busy region.
+    if head[4] < 5 && alpha == AlphaKind::Opaque && head[8] != 0 {
         return None;
     }
     let mut sizes = Vec::with_capacity(count);
@@ -384,6 +393,30 @@ mod tests {
         assert_eq!(c.levels, chain());
         // a finer level than the file holds: its finest
         assert_eq!(read(&path, 0), read(&path, 2));
+    }
+
+    #[test]
+    fn only_old_chains_that_lost_their_alpha_are_decoded_again() {
+        let old = |meta: &Meta, name: &str| {
+            let mut bytes = encode(meta, None, &chain()).expect("file");
+            bytes[4] = 4;
+            file(name, &bytes)
+        };
+        let lost = Meta {
+            alpha: AlphaKind::Opaque,
+            ..meta(0)
+        };
+        assert!(read(&old(&lost, "lost.bc7"), 0).is_none());
+        // the same chain written now is what it should be
+        let path = file("kept.bc7", &encode(&lost, None, &chain()).expect("file"));
+        assert!(matches!(read(&path, 0), Some(Transcoded::Bc7(_))));
+        // no alpha channel, or an alpha that was encoded: nothing was lost
+        let plain = Meta {
+            alpha_channel: false,
+            ..lost
+        };
+        assert!(matches!(read(&old(&plain, "plain.bc7"), 0), Some(Transcoded::Bc7(_))));
+        assert!(matches!(read(&old(&meta(0), "mask.bc7"), 0), Some(Transcoded::Bc7(_))));
     }
 
     #[test]
