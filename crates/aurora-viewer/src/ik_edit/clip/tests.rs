@@ -217,3 +217,91 @@ fn current_ik_pose_can_be_added_to_an_existing_draft_and_new_drafts_preserve_pre
     assert_eq!(editor.clip.history[0].frames(Some(rig.names["mHead"])), vec![0, 30]);
     assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(rig.names["mHead"])), vec![0]);
 }
+
+#[test]
+fn creation_records_the_rest_skeleton_never_the_animation_playing_on_the_avatar() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let world = World::new(lib.clone());
+    let elbow = rig.names["mElbowLeft"];
+    let mut rotations = rig.local_rot.clone();
+    rotations[elbow] = Quat::from_euler(EulerRot::ZYX, 0.9, -0.4, 0.7);
+    let mut positions = rig.local_pos.clone();
+    positions[rig.pelvis] += Vec3::new(0.1, -0.2, 0.3);
+    let playing = frame(&lib, &rotations, &positions, &rig.scale);
+    let at_rest = |editor: &Editor, time: f32| {
+        let document = editor.clip.document.as_ref().unwrap();
+        let track = document.tracks.iter().find(|t| t.bone == elbow).unwrap();
+        track.motion.rotation_at(time).unwrap().dot(rig.local_rot[elbow]).abs() > 0.9999
+    };
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.new_clip(&world, &playing);
+    assert!(at_rest(&editor, 0.0), "a new animation");
+    let document = editor.clip.document.as_ref().unwrap();
+    let pelvis = document.tracks.iter().find(|t| t.bone == rig.pelvis).unwrap();
+    assert!(pelvis.motion.position_at(0.0).unwrap().abs_diff_eq(Vec3::ZERO, 1e-4));
+    editor.leave_clip();
+    editor.clip.frame = 30;
+    editor.capture_ik_clip(&world, &playing);
+    assert!(at_rest(&editor, 1.0), "the IK capture");
+    editor.leave_clip();
+    editor.clip.document = None;
+    editor.enter_clip(&world, &playing);
+    assert!(at_rest(&editor, 0.0), "entering without a draft");
+
+    // while the first preview builds the avatar still shows its source, and
+    // a key cannot read it
+    assert!(editor.clip.waiting_source());
+    assert!(!editor.request().suppress_live);
+    editor.clip.frame = 45;
+    editor.clip.capture = Some(Capture::Pose);
+    editor.capture_clip(&world, &playing);
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(elbow)), vec![0]);
+    let ctx = egui::Context::default();
+    let (jobs, _) = Jobs::new();
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    editor.tick_clip(&jobs, &ctx, rig.clone());
+    editor.tick_clip(&jobs, &ctx, rig.clone());
+    assert!(!editor.clip.waiting_source());
+    assert!(
+        editor.request().suppress_live,
+        "disabled tracks show the rest skeleton, not the animation"
+    );
+}
+
+#[test]
+fn creation_bakes_the_contacts_the_user_set_on_the_rest_skeleton() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let world = World::new(lib.clone());
+    let wrist = rig.names["mWristLeft"];
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.select(wrist, &rig, &original);
+    editor.position += Vec3::new(0.04, 0.02, -0.01);
+    editor.commit();
+    let goal = editor.request().goals[0].clone();
+    let mut solved = ik::LocalPose {
+        rotations: rig.local_rot.clone(),
+        positions: rig.local_pos.clone(),
+    };
+    assert!(ik::apply_goal(&rig, &mut solved, Vec3::ZERO, &rig.scale, &goal));
+    let mut rotations = rig.local_rot.clone();
+    rotations[rig.names["mHead"]] = Quat::from_rotation_x(0.8);
+    editor.new_clip(&world, &frame(&lib, &rotations, &rig.local_pos, &rig.scale));
+    let document = editor.clip.document.as_ref().unwrap();
+    let key = |bone: usize| {
+        let track = document.tracks.iter().find(|t| t.bone == bone).unwrap();
+        track.motion.rotation_at(0.0).unwrap()
+    };
+    let elbow = rig.names["mElbowLeft"];
+    assert!(
+        solved.rotations[elbow].dot(rig.local_rot[elbow]).abs() < 0.99999,
+        "the contact moves the arm"
+    );
+    assert!(key(elbow).dot(solved.rotations[elbow]).abs() > 0.9999, "and is in the key");
+    let head = rig.names["mHead"];
+    assert!(key(head).dot(rig.local_rot[head]).abs() > 0.9999, "the played head is not");
+}

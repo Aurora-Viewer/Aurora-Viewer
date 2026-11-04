@@ -4,9 +4,10 @@
 //! sizes and proportions a photo can have, how it is split when the card
 //! cannot draw it in one pass, its file name, and the settings kept between
 //! sessions. Saving runs on a worker (`save`), the recent photos are listed
-//! by `gallery`, a photo for the inventory is prepared by `inventory`, one
-//! for the profile feed posted by `profile`; what the photo shows is chosen
-//! by `isolate`; the window is `ui::snapshot`, the frames `app::snapshot`.
+//! by `gallery` and the session's kept by `reel`, a photo for the inventory
+//! is prepared by `inventory`, one for the profile feed posted by
+//! `profile`; what the photo shows is chosen by `isolate`; the window is
+//! `ui::snapshot`, the frames `app::snapshot`.
 
 pub mod gallery;
 pub mod inventory;
@@ -17,6 +18,7 @@ pub mod looks;
 pub mod luts;
 pub mod profile;
 pub mod quality;
+pub mod reel;
 pub mod save;
 pub mod viewfinder;
 

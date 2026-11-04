@@ -26,6 +26,22 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-04 — Aurora 0.9.0: OpenSim and Hypergrid, for real
+On OpenSim grids your avatar now bakes and is seen as you dress it, the land of large regions goes past 256 m, and the inventory, outfits and profiles save on grids without AIS. Buy and prices use the grid's own currency and money symbol. After a Hypergrid teleport Aurora follows the grid you are on, asks before a trip that would leave worn items behind, and offers to add an unknown grid from a link.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.0)
+
+## 2026-11-04 — Snap to objects, place on surface, holograms
+Building gets three placement aids. Set Snap to Objects and the selection goes flush against nearby objects, purple guides on the faces that meet, never pushing through them. Press P to place it on any surface or on the ground, previewed as a hologram. A hologram can also show the object you move, or where it started (Preferences › Aurora › Behavior › Building). Stretch Textures holds while resizing, and the camera controls roll the view.
+
+## 2026-11-04 — The Legacy toolbar, complete
+The toolbar's Quick preferences, Web browser and Voice buttons open their Legacy Viewer windows: the settings changed most often, a built-in browser on a home page, the voice controls. Statistics, Picks, Beacons, Snapshot to disk and Show Friends Only join them, a button lights while its window is open, and the Legacy Viewer's missing menu shortcuts are in. Me › Fly override (Ctrl+Alt+V) lets you fly where flying is off, with a word of caution first.
+
+## 2026-11-04 — Inventory, chat and groups
+Give an inventory folder a colour of your own, seen by you only, and back an outfit up to a JSON file to restore it later. Me › Experiences lists your experiences and what their scripts did. Wear a group title chosen by region, and log in straight at a favourite landmark. The chat gets its own text size, a long IM goes out as several messages instead of being cut, and chat times follow the clock's 12 or 24 hours.
+
+## 2026-11-04 — Steadier on your graphics card
+Intel Iris Xe starts again, and Aurora shares the graphics card fairly with other viewers and programs. Photo quality climbs to what video memory holds instead of losing the card, and world textures can be capped at 512, 1024 or 2048 pixels. Links, logs and simulator connections are hardened after a security review by Butter Roux, thank you! Thanks also to Aznlilly, anne-skydancer, circuskid, ddagetracker, emmelinedevere, Gaalrauch, iGao, jumpinmimi, KanikaBreed, Marakiinfinity, Memekiller, Odessa-Draekavik, vexxbyte, voidel, wolfosbournesl, xWynt3r and zdub0is.
+
 ## 2026-11-02 — Aurora 0.8.5: immersive sound and VR, both experimental
 World sounds now go dull behind a wall or inside a closed box, pass behind your head with headphones (HRTF), and ring like the place you stand in: dry in the open air, a long soft tail in a large hall. Three switches in Preferences › Sound; HRTF and reverb are off by default. With an OpenXR headset, the headset button of the bottom toolbar shows the world in stereo, from your avatar's eyes or the camera. Viewing only for now: Esc brings the desktop back.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.5)

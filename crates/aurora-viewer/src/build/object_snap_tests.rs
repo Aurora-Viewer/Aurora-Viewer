@@ -316,14 +316,17 @@ fn without_a_target_in_reach_every_move_is_unchanged() {
                             continue;
                         }
                         assert_eq!(positions.len(), 3, "the same handles in every world");
-                        assert_eq!(
-                            positions[0], positions[1],
-                            "{selected} {part:?} grid {grid} mode {grid_mode} ({dx}, {dy})"
-                        );
-                        assert_eq!(
-                            positions[1], positions[2],
-                            "{selected} {part:?} grid {grid} mode {grid_mode} ({dx}, {dy})"
-                        );
+                        // The same move up to float rounding: the cursor ray is cast
+                        // in a different world, and on Apple's CPU the result drifts
+                        // by up to a tenth of a millimetre from run to run. A snap
+                        // moves the box by centimetres, far above this 1 mm.
+                        for pair in positions.windows(2) {
+                            let ((a, a_snap), (b, b_snap)) = (pair[0], pair[1]);
+                            assert!(
+                                a.abs_diff_eq(b, 1e-3) && a_snap == b_snap,
+                                "{selected} {part:?} grid {grid} mode {grid_mode} ({dx}, {dy}): {a} {a_snap} vs {b} {b_snap}"
+                            );
+                        }
                         checked += 1;
                     }
                 }

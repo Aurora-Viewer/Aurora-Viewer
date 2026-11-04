@@ -1135,9 +1135,10 @@ pub fn sync_with_attachments(
     agent: Uuid,
     worn: &HashSet<Uuid>,
     worn_before: &HashSet<Uuid>,
+    keep: Uuid,
     attachments: Vec<AttachRequest>,
 ) -> CofSync {
-    let mut sync = sync_plan(inv, agent, worn);
+    let mut sync = sync_plan_keeping(inv, agent, worn, keep);
     for command in &mut sync.commands {
         if let NetCommand::DetachAttachments(items) = command {
             items.retain(|id| worn_before.contains(id) && !attachments.iter().any(|request| request.item_id == *id));
@@ -1155,13 +1156,21 @@ pub fn sync_with_attachments(
 }
 
 pub fn sync_plan(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> CofSync {
+    sync_plan_keeping(inv, agent, worn, Uuid::nil())
+}
+
+/// `sync_plan` that never takes `keep` off, linked or not: the Aurora bridge,
+/// which the Legacy Viewer puts back into every replaced outfit (FSLSLBridge
+/// in LLAppearanceMgr::updateCOF, llappearancemgr.cpp). It stays in `worn`,
+/// or its link would ask to wear it again at each sync.
+pub fn sync_plan_keeping(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>, keep: Uuid) -> CofSync {
     let Some(cof) = cof(inv) else {
         return CofSync::default();
     };
     // the links to objects, with those whose item is not known yet: a worn
     // object linked in the COF stays on even before its item is fetched
     let objects: HashSet<_> = super::outfit::cof_objects(inv, cof).into_iter().collect();
-    let detach: Vec<_> = worn.difference(&objects).copied().collect();
+    let detach: Vec<_> = worn.difference(&objects).copied().filter(|id| *id != keep).collect();
     let mut unknown = Vec::new();
     let mut attach = Vec::new();
     for id in objects.difference(worn) {
@@ -2580,6 +2589,7 @@ mod tests {
                 agent,
                 &worn.keys().copied().collect(),
                 &worn.keys().copied().collect(),
+                Uuid::nil(),
                 attachments,
             );
             assert_eq!(
@@ -2656,6 +2666,7 @@ mod tests {
             agent,
             &HashSet::from([item, another, removed]),
             &HashSet::from([removed]),
+            Uuid::nil(),
             attachments,
         );
         assert!(
@@ -2930,6 +2941,47 @@ mod tests {
             .is_err()
         );
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), before);
+    }
+
+    /// The bridge item: on while it is worn, whether the COF links it or not,
+    /// and only worn again when a link finds it really absent.
+    #[test]
+    fn cof_sync_neither_wears_again_nor_takes_off_the_kept_bridge() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let cof = cof(&inv).expect("COF");
+        let bridge = Uuid::from_u128(960);
+        let touched = |sync: &CofSync| {
+            sync.commands.iter().fold((false, false), |(worn, off), command| match command {
+                NetCommand::RezAttachments(items) => (worn || items.iter().any(|a| a.item_id == bridge), off),
+                NetCommand::DetachAttachments(items) => (worn, off || items.contains(&bridge)),
+                _ => (worn, off),
+            })
+        };
+        inv.add_items(vec![InvItem {
+            id: bridge,
+            parent: inv.root,
+            asset_type: 6,
+            inv_type: 6,
+            name: "bridge".into(),
+            ..Default::default()
+        }]);
+        let on = HashSet::from([bridge]);
+        let unlinked = sync_plan_keeping(&inv, agent, &on, bridge);
+        assert_eq!(touched(&unlinked), (false, false), "worn and not linked: it stays on");
+        assert_eq!(touched(&sync_plan(&inv, agent, &on)), (false, true), "any other object comes off");
+        inv.add_items(vec![InvItem {
+            id: Uuid::from_u128(961),
+            parent: cof,
+            asset_type: 24,
+            inv_type: 6,
+            asset_id: bridge,
+            ..Default::default()
+        }]);
+        let linked = sync_plan_keeping(&inv, agent, &on, bridge);
+        assert_eq!(touched(&linked), (false, false), "worn and linked: nothing to do");
+        let absent = sync_plan_keeping(&inv, agent, &HashSet::new(), bridge);
+        assert_eq!(touched(&absent), (true, false), "linked and absent: it is worn");
     }
 
     /// `missing_targets` reads the links in place; it finds what the copied
