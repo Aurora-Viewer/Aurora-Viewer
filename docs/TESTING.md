@@ -4606,7 +4606,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
-| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails; `tabs` opens a material batch. |
+| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails; `tabs*` opens grouped previews. |
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
 the agent's parcel, `sale` shows sale entries, `filters` opens Filters (required/excluded properties, permissions, click action and scope), and
@@ -4718,6 +4718,12 @@ preview camera, that the handle does not rotate the scene, and that dropping
 it applies the material. Its permission/retention checks match other sources.
 `tabs` opens six material items in one scrollable tabbed preview at frame 620.
 Switch tabs and edit each material independently; an asterisk marks unsaved edits.
+`tabs-textures`, `tabs-properties`, `tabs-notecards`, `tabs-scripts`,
+`tabs-animations` and `tabs-sounds` exercise bulk opening for textures, object
+properties, editable notecards, inventory scripts and media previews. Each
+compatible editor family has its own host. Objects use bulk Properties;
+wearing/attachment actions and environment editors retain their existing paths. Script tabs keep their source
+identity and cursor; Ctrl+F follows the active tab.
 The tab strip’s close button closes the current item. Closing the whole host
 checks each material for unsaved edits before removing it; Cancel keeps the
 remaining tabs open. Capture at frame 850. A single-item Open stays independent.

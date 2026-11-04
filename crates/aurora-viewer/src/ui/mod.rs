@@ -473,3 +473,5 @@ mod tests {
         assert!(settings.show_minimap && !settings.show_chat);
     }
 }
+
+pub(crate) mod preview_tabs;

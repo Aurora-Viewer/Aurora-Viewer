@@ -34,6 +34,19 @@ pub(super) fn claim(ctx: &egui::Context, layer: LayerId, owner: Id) {
     });
 }
 
+/// A tab activation changes the editor within the same window layer. The
+/// pointer claim from the click still belongs to the previous tab that frame.
+pub(super) fn activate(ctx: &egui::Context, owner: Id) {
+    let keyboard = ctx.memory(|memory| memory.focused());
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|data| {
+        let state = data.get_temp_mut_or_default::<State>(state_id());
+        state.active = Some(owner);
+        state.keyboard = keyboard;
+        state.frame = frame;
+    });
+}
+
 fn resolve(ctx: &egui::Context, state: &State) -> Option<Id> {
     if ctx.memory(|m| m.top_modal_layer()).is_some() {
         return None;
@@ -74,7 +87,7 @@ pub(super) fn find(ctx: &egui::Context, editors: &mut [Editor], search: &mut Sea
         .map(|e| {
             let window = format!("script_editor_{}_{}", e.target.object, e.target.item);
             let owner = Id::unique((&window, "source_text"));
-            (window, owner)
+            (e.host_window.clone().unwrap_or(window), owner)
         })
         .collect();
     let mut state = ctx.data(|d| d.get_temp::<State>(state_id())).unwrap_or_default();

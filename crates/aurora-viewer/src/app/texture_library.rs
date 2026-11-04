@@ -359,11 +359,39 @@ impl App {
         if self.demo
             && self.library_demo_seeded
             && self.frame_count == 620
-            && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("tabs")
+            && let Ok(mode) = std::env::var("AURORA_DEMO_TEXTURE_LIBRARY")
+            && mode.starts_with("tabs")
         {
-            self.apply_inventory_action(crate::ui::inventory::InvAction::PreviewMany(
-                crate::demo::texture_library::cascade_items(57).to_vec(),
-            ));
+            let kind = match mode.as_str() {
+                "tabs-properties" => 6,
+                "tabs-animations" => 20,
+                "tabs-sounds" => 1,
+                "tabs-notecards" => 7,
+                "tabs-scripts" => 10,
+                "tabs-textures" => 0,
+                _ => 57,
+            };
+            crate::demo::texture_library::seed_cascade(&mut self.world.inventory, self.world.agent_id, kind);
+            let items = if matches!(kind, 1 | 6 | 20) {
+                let mut items: Vec<_> = self
+                    .world
+                    .inventory
+                    .items
+                    .values()
+                    .filter(|item| item.asset_type == kind)
+                    .map(|item| item.id)
+                    .collect();
+                items.sort();
+                items.truncate(6);
+                items
+            } else {
+                crate::demo::texture_library::cascade_items(kind).to_vec()
+            };
+            if mode == "tabs-properties" {
+                self.inventory_ui.open_properties_many(&items);
+            } else {
+                self.apply_inventory_action(crate::ui::inventory::InvAction::PreviewMany(items));
+            }
         }
         if self.demo
             && self.library_demo_seeded

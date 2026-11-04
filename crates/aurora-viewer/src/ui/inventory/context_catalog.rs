@@ -1222,29 +1222,11 @@ pub(super) fn execute(
             }
         }
         Command::Batch(batch) => actions.extend(batch),
-        Command::PropertiesMany(ids) => {
-            for id in ids {
-                if !st
-                    .windows
-                    .iter()
-                    .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
-                {
-                    let state = InventoryUi {
-                        ui_id: Uuid::new_v4(),
-                        dialog: Some(EditDialog::Properties(id)),
-                        ..Default::default()
-                    };
-                    st.windows.push(InventoryWindow {
-                        id: state.ui_id,
-                        root: Uuid::nil(),
-                        additional: false,
-                        state: Box::new(state),
-                        open: false,
-                    });
-                }
-            }
-        }
+        Command::PropertiesMany(ids) => st.open_properties_many(&ids),
         Command::Properties(id) => {
+            if st.focus_properties(ui.ctx(), id) {
+                return;
+            }
             st.property_edit = None;
             st.dialog = Some(EditDialog::Properties(id));
         }
@@ -1313,7 +1295,7 @@ mod tests {
         let ids = [9101, 9102, 9103].map(Uuid::from_u128);
         inv.add_items(
             ids.into_iter()
-                .zip([57, 0, 7])
+                .zip([57, 0, 3])
                 .map(|(id, kind)| aurora_net::inventory::InvItem {
                     id,
                     asset_type: kind,
@@ -1340,7 +1322,7 @@ mod tests {
         assert!(
             actions
                 .iter()
-                .any(|action| matches!(action, InvAction::Preview(id) if *id == ids[2]))
+                .any(|action| matches!(action, InvAction::TeleportLandmark(id) if *id == Uuid::from_u128(9203)))
         );
         assert!(
             actions
