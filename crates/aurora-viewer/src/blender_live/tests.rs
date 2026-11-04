@@ -19,6 +19,24 @@ fn supported() -> HashSet<String> {
     HashSet::from(["mPelvis".into()])
 }
 
+#[test]
+fn blender_live_window_stays_steady_at_reported_ui_scales() {
+    let bottom = aurora_i18n::tr!("blender-live-clear").to_string();
+    crate::ui::widgets::steady_tests::assert_window_steady_at_scales(
+        "blender_live",
+        &[egui::vec2(560.0, 660.0), egui::vec2(460.0, 350.0)],
+        &bottom,
+        &[(0.94, 1.0), (0.947, 1.0), (0.953, 1.0)],
+        || Live {
+            open: true,
+            ..Default::default()
+        },
+        |live, ctx, palette| {
+            super::ui::show(live, ctx, palette, false);
+        },
+    );
+}
+
 fn static_triangle() -> serde_json::Value {
     let mut value = triangle();
     value["meshes"][0]["joints"] = serde_json::json!([]);
