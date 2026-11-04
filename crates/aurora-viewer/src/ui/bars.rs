@@ -1194,7 +1194,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
-        build_menu(ui, p, action, &st.ik_keys, st.edit_particles);
+        build_menu(ui, p, panels, action, &st.ik_keys, st.edit_particles);
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels, action, st.marketplace, st.motd);
@@ -1372,7 +1372,17 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
     });
 }
 
-fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str, edit_particles: bool) {
+fn build_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, action: &mut BarAction, ik_keys: &str, edit_particles: bool) {
+    if menu::check(
+        ui,
+        p,
+        "man-filled",
+        aurora_i18n::tr!("avatar-studio-title"),
+        panels.avatar_studio,
+        true,
+    ) {
+        *action = run_command(ui.ctx(), "avatar_studio", panels);
+    }
     if menu::item(ui, p, "wand", aurora_i18n::tr!("poser-title")) {
         *action = BarAction::Poser;
     }

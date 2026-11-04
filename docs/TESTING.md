@@ -8254,7 +8254,10 @@ focus even with the pointer over the sky or water, and must not change its heigh
 Compare 30 and 120 FPS for the same smooth response. Reset restores full-body framing; Leave
 studio, Escape and the toolbar toggle restore the ordinary world. Add Avatar
 Studio through Toolbar buttons and verify its active indication and removal
-from any of the three bars. Combine with `AURORA_DEMO_SHAPE=body|mesh-head`
+from any of the three bars. Wolf menu > Build > Avatar Studio appears before
+Poser and IK Edit, toggles the same mode, and is checked while open. Use
+`AURORA_DEMO_MENU_SEARCH=Avatar Studio` to capture its Build path without
+entering the studio. Combine with `AURORA_DEMO_SHAPE=body|mesh-head`
 and `AURORA_DEMO_APPEARANCE=worn`: the windows remain usable, edits appear
 on the studio avatar and Cancel restores the draft. Compare the ordinary
 scene before and after leaving, including SMAA and MSAA. Human grid checks:
