@@ -534,7 +534,13 @@ impl SampleMaskShaders {
         self.fixed_words_mapped(facts, label, wgsl, binding_map(groups))
     }
 
-    fn fixed_words_mapped(&self, facts: &VulkanFacts, label: &str, wgsl: &str, map: spv::BindingMap) -> Result<Option<FixedWords>, FixError> {
+    fn fixed_words_mapped(
+        &self,
+        facts: &VulkanFacts,
+        label: &str,
+        wgsl: &str,
+        map: spv::BindingMap,
+    ) -> Result<Option<FixedWords>, FixError> {
         if !self.passthrough {
             return Err(FixError::NoPassthrough);
         }
