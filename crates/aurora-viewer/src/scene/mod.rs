@@ -19,7 +19,7 @@ pub(crate) mod default_motions;
 pub mod describe;
 pub mod drawn;
 pub mod fetch_priority;
-mod flexible;
+pub(crate) mod flexible;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -695,6 +695,11 @@ pub struct SceneStats {
     pub posed: usize,
     /// Worn objects placed by the GPU (anchors.rs): not visited by the sync.
     pub anchored: usize,
+    /// Flexible prims whose mesh was swept again this frame, and those
+    /// simulated with their mesh held because no view shows them
+    /// (flexible.rs).
+    pub flexies: usize,
+    pub flexies_held: usize,
     /// Skeletons built again this frame (a shape, an attachment or their
     /// age changed), out of `posed` (AURORA_PROFILE).
     pub skeletons_rebuilt: usize,
@@ -761,6 +766,9 @@ pub struct Scene {
     job_rx: crossbeam_channel::Receiver<JobResult>,
     geoms: FastMap<GeomKey, GeomEntry>,
     flexibles: FastMap<usize, flexible::State>,
+    /// The plane (point, normal) of the mirror the last frame drew, for the
+    /// flexible prims only it shows (flexible.rs).
+    pub mirror_plane: Option<(Vec3, Vec3)>,
     /// Grass tufts drawn, and the terrain they were placed on (plants.rs).
     grass: HashMap<usize, plants::GrassBuilt>,
     pub textures: TextureStreamer,
@@ -1417,6 +1425,7 @@ impl Scene {
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),
             geoms: Default::default(),
             flexibles: Default::default(),
+            mirror_plane: None,
             grass: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
             meshes: MeshStreamer::new(cache_dir.clone()),
@@ -2890,6 +2899,7 @@ impl Scene {
         step(&mut slow, "anchors");
         self.sync_flexibles(renderer, world, &synced, now, view);
         self.sync_grass_ground(renderer, world, now, &mut synced);
+        let t_part = self.parts.lap(Part::SyncFlexibles, t_part);
         step(&mut slow, "flexibles");
         self.sync_photo_isolation(renderer, world, &synced);
         // GPU object table: bounds and flags of what was synced (unchanged
