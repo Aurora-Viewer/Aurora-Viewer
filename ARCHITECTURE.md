@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+Experience generic-message documents accept standard spaced, case-insensitive
+LLSD codec headers. Full pushed environments retain receipt order independently
+for day, sky and water, so late asset responses cannot restore an older scene
+or erase newer independent halves. Clearing an unrelated experience leaves
+the active transition intact. `demo_experience` supplies the offline `scenes`
+sequence for two controller changes and return to shared lighting (#1805).
+
 Mask fragment shaders (`aurora-render/src/shaders/object.wgsl`) evaluate
 material derivatives and alpha coverage before derivative-free lighting,
 discarding rejected pixels and zero MSAA coverage without changing cutoff
