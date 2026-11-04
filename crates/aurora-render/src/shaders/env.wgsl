@@ -149,6 +149,20 @@ fn mw_texel(x: i32, y: i32) -> vec3<f32> {
     return vec3<f32>(f32(t & 255u), f32((t >> 8u) & 255u), f32((t >> 16u) & 255u));
 }
 
+// The map between texel centres (`uv` in texels, centres on the integers).
+fn mw_bilinear(uv: vec2<f32>) -> vec3<f32> {
+    let i = vec2<i32>(floor(uv));
+    let f = uv - floor(uv);
+    return mix(mix(mw_texel(i.x, i.y), mw_texel(i.x + 1, i.y), f.x), mix(mw_texel(i.x, i.y + 1), mw_texel(i.x + 1, i.y + 1), f.x), f.y);
+}
+
+// The chance that a lattice cell holds a point, from the map's light and its
+// counted stars there.
+fn mw_occupancy(t: vec3<f32>) -> f32 {
+    let glow = (t.x / 255.0) * (t.x / 255.0);
+    return 1.0 - exp(-(glow * MW_POINTS + t.y / 16.0 / 4.0));
+}
+
 // The Milky Way at catalogue direction `q` (J2000 equatorial), linear,
 // from the map of the real stars too faint for the naked eye (stars.rs,
 // Tycho-2): their glow, with its clouds and dark lanes, and their grain,
@@ -169,9 +183,7 @@ fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32
     let l = atan2(g.y, g.x);
     // texel coordinates, centres on the integers
     let uv = vec2<f32>((l / 6.28318531 + 0.5) * f32(MW_WIDTH), (b / MW_REACH * 0.5 + 0.5) * f32(MW_HEIGHT)) - 0.5;
-    let i = vec2<i32>(floor(uv));
-    let f = uv - floor(uv);
-    let t = mix(mix(mw_texel(i.x, i.y), mw_texel(i.x + 1, i.y), f.x), mix(mw_texel(i.x, i.y + 1), mw_texel(i.x + 1, i.y + 1), f.x), f.y);
+    let t = mw_bilinear(uv);
     if (t.x + t.y < 0.5) {
         return vec3<f32>(0.0);
     }
@@ -184,16 +196,18 @@ fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32
     // The band is made of stars: part of its light stays a haze (the stars
     // too faint to tell apart), the rest is gathered into faint points on a
     // lattice fixed in the sky, two cells per texel each way, each holding a
-    // star or none, as many as the map's light and its counted stars say.
-    // The points keep the band's mean light; where a pixel covers more than
-    // a cell (wide views, reflection probes) they would shimmer, and give
-    // way to that mean.
+    // star or none, as many as the map's light and its counted stars say at
+    // the cell's centre (so every pixel that sees a point agrees whether it
+    // is there). The points keep the band's mean light; where a pixel covers
+    // more than a cell (wide views, reflection probes) they would shimmer,
+    // and give way to that mean.
     let cell = MW_REACH * 2.0 / f32(MW_HEIGHT * 2u);
     let sparkle = 1.0 - smoothstep(0.8 * cell, 1.6 * cell, pixel);
-    let p = 1.0 - exp(-(glow * MW_POINTS + t.y / 16.0 / 4.0));
-    if (sparkle <= 0.0 || p < 0.002) {
+    if (sparkle <= 0.0) {
         return light;
     }
+    // the chance here, for the field's expected mean below
+    let p = mw_occupancy(t);
     // the pixel's footprint along longitude (east) and latitude (north),
     // and back: a point's offset in pixels
     let east = vec3<f32>(-sin(l), cos(l), 0.0);
@@ -217,7 +231,8 @@ fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32
         let ci = base + vec2<i32>(k % 3, k / 3);
         let h = pcg3(vec3<u32>(u32((ci.x + i32(MW_WIDTH * 2u)) % i32(MW_WIDTH * 2u)), u32(ci.y + 4), 0x5717u));
         let r = vec3<f32>(h & vec3<u32>(0xffffu)) / 65535.0;
-        if (r.z >= p) {
+        // the cell's centre is at c = ci + 0.5, so uv = ci / 2
+        if (r.z >= mw_occupancy(mw_bilinear(vec2<f32>(ci) * 0.5))) {
             continue;
         }
         let d = (vec2<f32>(ci) + r.xy - c) * vec2<f32>(cell * cos(b), cell);
@@ -235,13 +250,16 @@ fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32
         }
     }
     // the field's mean over a pixel: occupied cells per pixel times a
-    // point's area (within its fade, about), not below a floor, so that
-    // zooming in shows separate points rather than ever brighter ones
+    // point's area (within its fade, about). The points are scaled by it, but
+    // never by less than a floor, so that zooming in shows separate points
+    // rather than ever brighter ones; the light the floor holds back stays as
+    // haze, so the band keeps its mean light at every zoom.
     let cells = pixel * pixel / (cell * cell * max(cos(b), 0.1));
     let kept = 0.75 * reach / MW_GRAIN_SIGMA;
     let area = 6.2831853 * MW_GRAIN_SIGMA * MW_GRAIN_SIGMA * (1.0 - exp(-0.5 * kept * kept));
-    let mean = max(p * area * cells, MW_POINT_MEAN_MIN);
-    let points = mix(vec3<f32>(1.0), field / mean, sparkle);
+    let expected = p * area * cells;
+    let mean = max(expected, MW_POINT_MEAN_MIN);
+    let points = mix(vec3<f32>(1.0), field / mean + vec3<f32>(1.0 - expected / mean), sparkle);
     return light * (MW_HAZE + (1.0 - MW_HAZE) * points);
 }
 

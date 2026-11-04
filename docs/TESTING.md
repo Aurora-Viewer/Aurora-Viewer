@@ -4034,10 +4034,11 @@ both open states and the selection count. Capture at frame 620.
   haze under many tiny stars whose density follows the real star counts,
   with dark lanes; turning the camera keeps every point in its place
   (they belong to the sky, not the screen), zooming in separates them
-  without making them brighter, and a wide view or the water's
-  reflection shows their mean light. With `AURORA_PROFILE=1`,
-  `g_terrain_sky` is lower than with the former noise (0.158 against
-  0.173 ms at 1600 × 900 on an RTX 5070 Ti).
+  without making them brighter or darker (the band keeps the same mean
+  light at every zoom), a point is never cut by a hard edge, and a wide
+  view or the water's reflection shows their mean light. With
+  `AURORA_PROFILE=1`, `g_terrain_sky` is about 0.18 ms at 1600 × 900 on
+  an RTX 5070 Ti.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
