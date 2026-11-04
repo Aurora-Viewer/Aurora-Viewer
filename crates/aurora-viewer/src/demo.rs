@@ -7993,6 +7993,28 @@ pub fn loop_animation() -> aurora_assets::Animation {
     anim
 }
 
+/// `AURORA_DEMO_PELVIS_CONSTRAINT`: the loop below, with a pelvis constraint
+/// that carries the body out of sight for the last 4 s of every 8 s.
+pub fn pelvis_constraint_animation() -> (aurora_assets::Animation, Vec<aurora_assets::anim::Constraint>) {
+    let mut anim = loop_animation();
+    anim.duration = 8.0;
+    anim.loop_out = 8.0;
+    let constraint = aurora_assets::anim::Constraint {
+        chain_length: 0,
+        constraint_type: 0,
+        source_volume: "PELVIS".into(),
+        source_offset: Vec3::new(0.0, 0.0, f32::MAX),
+        target_volume: "PELVIS".into(),
+        target_offset: Vec3::ZERO,
+        target_dir: Vec3::ZERO,
+        ease_in_start: 4.0,
+        ease_in_stop: 163_840.0,
+        ease_out_start: 163_840.0,
+        ease_out_stop: 163_840.0,
+    };
+    (anim, vec![constraint])
+}
+
 pub const SYNC_LEADER_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0021);
 pub const SYNC_DELAYED_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0022);
 
