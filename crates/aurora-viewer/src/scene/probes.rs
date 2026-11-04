@@ -6,9 +6,15 @@
 //!
 //! - The default probe (slot 0) sees the sky and the terrain from 64 m above
 //!   the camera; it is refreshed every 2 s (RenderDefaultProbeUpdatePeriod).
-//! - Automatic probes: one per 16 m cell holding objects that fit in it (LL
-//!   registers a probe per 16 m octree node of the volume partition), its
-//!   origin at the objects' bounds center, raised over the ground.
+//! - Automatic probes: one per cell holding objects that fit in a 16 m node
+//!   (LL registers a probe per 16 m octree node of the volume partition),
+//!   its origin at the objects' bounds center, raised over the ground. The
+//!   cells are 16 m near the camera and twice as large at each doubling of
+//!   the distance (`probe_cell`), up to 256 m: LL's 16 m everywhere gave a
+//!   forest some 660 probes within the draw distance, the 64 slots held the
+//!   nearest 70 m of them and the trees beyond lit up from the default
+//!   probe, on a line around the camera. A far probe covers few pixels and
+//!   shows little detail; the whole draw distance now fits the slots.
 //! - Manual probes: prims with reflection probe parameters (sphere or box).
 //!
 //! Candidates are found again every 500 ms by a pass over every object,
@@ -38,6 +44,14 @@ pub mod level {
 }
 
 const CELL: f32 = 16.0;
+/// Coarsest automatic probe cell: 16 m << 4 = 256 m.
+const MAX_LEVEL: u8 = 4;
+/// The camera point the cell sizes are measured from moves on this grid
+/// (m): cells change size only when the camera crosses it, not every frame.
+const ANCHOR_GRID: f32 = 32.0;
+/// Near clip of an automatic probe's capture, at most (m): half its radius
+/// (LL), which in a large cell would clip the trees around its centre away.
+const MAX_AUTO_NEAR: f32 = 8.0;
 /// Part of the probe field, at its far end, over which the probes fade into
 /// the default one (`edge_fade`).
 const EDGE_FADE: f32 = 0.3;
@@ -54,7 +68,8 @@ const FLAG_MIRROR: u8 = 0x04;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Key {
-    Cell(IVec3),
+    /// An automatic probe's cell: its level (16 m << level) and index.
+    Cell(u8, IVec3),
     Object(Uuid),
 }
 
@@ -79,10 +94,14 @@ struct Probe {
 /// visited ones gave.
 #[derive(Default)]
 struct ScanPass {
+    /// The camera the cell sizes of this pass are measured from, on the
+    /// anchor grid (`probe_cell`), taken at its first step: one pass never
+    /// mixes two sizes of the same place.
+    anchor: Option<Vec3>,
     next_gpu: usize,
     next_obj: usize,
-    /// Object bounds per 16 m cell (automatic probes).
-    cells: HashMap<IVec3, (Vec3, Vec3)>,
+    /// Object bounds per cell (automatic probes, `probe_cell`).
+    cells: HashMap<(u8, IVec3), (Vec3, Vec3)>,
     /// Manual probes.
     found: HashMap<Key, Probe>,
 }
@@ -367,13 +386,14 @@ impl ProbeManager {
     fn scan_step(&self, pass: &mut ScanPass, scene: &Scene, world: &World, eye: Vec3, now: Instant) -> bool {
         let n = scene.gpu.len();
         if self.level >= level::FULL {
-            // object bounds per 16 m cell (objects that fit in a 16 m node)
+            // object bounds per cell (objects that fit in a 16 m node)
+            let anchor = *pass.anchor.get_or_insert_with(|| (eye / ANCHOR_GRID).round() * ANCHOR_GRID);
             let end = (pass.next_gpu + n.div_ceil(SCAN_SLICES).max(SCAN_MIN_SLICE)).min(n);
             for g in scene.gpu.get(pass.next_gpu..end).unwrap_or_default() {
                 if !auto_candidate(g) || (g.center - eye).length() > self.range + g.radius {
                     continue;
                 }
-                let cell = (g.center / CELL).floor().as_ivec3();
+                let cell = probe_cell(g.center, anchor);
                 let lo = g.center - Vec3::splat(g.radius);
                 let hi = g.center + Vec3::splat(g.radius);
                 pass.cells
@@ -451,14 +471,14 @@ impl ProbeManager {
             let ground = world.ground_height(origin).unwrap_or(f32::MIN) + 2.0;
             origin.z = origin.z.max(ground).max(ground + radius * 0.5);
             found.insert(
-                Key::Cell(cell),
+                Key::Cell(cell.0, cell.1),
                 Probe {
                     origin,
                     radius,
                     kind: 0.0,
                     box_inv: Mat4::IDENTITY,
                     ambiance: 0.0,
-                    near: (radius * 0.5).max(0.1),
+                    near: (radius * 0.5).clamp(0.1, MAX_AUTO_NEAR),
                     slot: None,
                     complete: false,
                     last_update: None,
@@ -483,6 +503,22 @@ impl ProbeManager {
     }
 }
 
+/// The automatic probe cell of a point: its level (16 m << level) and its
+/// index at that level. A cell is used when its centre is at least its own
+/// size from `anchor`, the coarsest level first: about ten cells per
+/// doubling of the distance, and since the cells nest, the points of one
+/// cell all get it, and no two levels cover the same place.
+fn probe_cell(p: Vec3, anchor: Vec3) -> (u8, IVec3) {
+    for level in (1..=MAX_LEVEL).rev() {
+        let size = CELL * f32::from(1u16 << level);
+        let cell = (p / size).floor();
+        if ((cell + Vec3::splat(0.5)) * size).distance(anchor) >= size {
+            return (level, cell.as_ivec3());
+        }
+    }
+    (0, (p / CELL).floor().as_ivec3())
+}
+
 /// Static, non-avatar, in-world objects that fit in a 16 m octree node.
 fn auto_candidate(g: &ObjGpu) -> bool {
     !g.faces.is_empty() && !g.is_avatar && g.owner_avatar.is_none() && !g.hud && g.radius <= CELL * 0.5
@@ -491,7 +527,37 @@ fn auto_candidate(g: &ObjGpu) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
     use std::sync::Arc;
+
+    #[test]
+    fn probe_cells_grow_with_the_distance() {
+        let anchor = Vec3::new(128.0, 128.0, 32.0);
+        let size = |p: Vec3| CELL * f32::from(1u16 << probe_cell(p, anchor).0);
+        assert_eq!(size(anchor + Vec3::new(5.0, 3.0, 0.0)), 16.0);
+        assert!(size(anchor + Vec3::new(100.0, 0.0, 0.0)) >= 32.0);
+        assert!(size(anchor + Vec3::new(300.0, 0.0, 0.0)) >= 128.0);
+        // the points of a cell share it: nothing in it gets a finer probe
+        let far = anchor + Vec3::new(200.0, 40.0, 0.0);
+        let (level, cell) = probe_cell(far, anchor);
+        let s = CELL * f32::from(1u16 << level);
+        let lo = cell.as_vec3() * s;
+        for k in 0..64 {
+            let t = Vec3::new((k % 4) as f32, ((k / 4) % 4) as f32, (k / 16) as f32) / 4.0 + Vec3::splat(0.1);
+            assert_eq!(probe_cell(lo + t * s, anchor), (level, cell));
+        }
+        // a forest within 230 m fits the 64 slots (one cell per column)
+        let mut cells = HashSet::new();
+        for x in -15..15 {
+            for y in -15..15 {
+                let p = anchor + Vec3::new(x as f32 * 16.0 + 8.0, y as f32 * 16.0 + 8.0, -20.0);
+                if (p - anchor).length() <= 230.0 {
+                    cells.insert(probe_cell(p, anchor));
+                }
+            }
+        }
+        assert!(cells.len() < 64, "{}", cells.len());
+    }
 
     #[test]
     fn probes_fade_out_at_the_edge_of_the_field() {
