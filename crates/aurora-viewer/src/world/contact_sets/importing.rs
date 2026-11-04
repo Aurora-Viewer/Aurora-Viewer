@@ -9,9 +9,10 @@ pub const EMPTY_MAP: &str = "empty contact sets map";
 pub struct ImportData(ContactSets);
 
 impl ImportData {
-    /// The sets of the file.
-    pub fn sets(&self) -> usize {
-        self.0.sets.len()
+    /// What the file holds: sets, and residents kept outside the friends or
+    /// with a nickname, which can be all it has.
+    pub fn entries(&self) -> usize {
+        self.0.sets.len() + self.0.extra.len() + self.0.pseudonyms.len()
     }
 
     /// What a merge into `sets` would add: sets, members, residents kept

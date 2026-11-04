@@ -12,6 +12,8 @@ pub(super) struct LegacyLists {
     looking: Option<Receiver<Vec<Found>>>,
     /// What they hold, until the window closes on an import.
     found: Vec<Found>,
+    /// The account they were read for: nothing crosses to another login.
+    account: uuid::Uuid,
     /// AURORA_DEMO_LEGACY_LISTS: the folder is written, then imports left.
     demo_started: bool,
     demo_imports: u8,
@@ -30,6 +32,7 @@ impl App {
         let apps = self.world.chat_log.legacy_apps();
         let (tx, rx) = channel();
         self.legacy_lists.looking = Some(rx);
+        self.legacy_lists.account = self.world.agent_id;
         let _ = std::thread::Builder::new().name("aurora-legacy-lists".into()).spawn(move || {
             let _ = tx.send(legacy_lists::find(&apps, &account));
         });
@@ -37,6 +40,9 @@ impl App {
 
     pub(super) fn legacy_lists_start(&mut self, index: usize, parts: Parts) {
         let found = std::mem::take(&mut self.legacy_lists.found);
+        if self.legacy_lists.account != self.world.agent_id {
+            return;
+        }
         let Some(found) = found.into_iter().nth(index) else {
             return;
         };
@@ -61,6 +67,11 @@ impl App {
             return;
         };
         self.legacy_lists.looking = None;
+        if self.legacy_lists.account != self.world.agent_id {
+            // another login: its own search is the one that counts
+            self.options_ui.legacy_lists = Default::default();
+            return;
+        }
         self.options_ui.legacy_lists.found = Some(found.iter().map(|f| (f.dir.clone(), f.counts)).collect());
         self.legacy_lists.found = found;
         if self.legacy_lists.demo_imports > 0 {

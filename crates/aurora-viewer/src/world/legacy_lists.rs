@@ -83,7 +83,7 @@ impl Lists {
             teleports: self.history.len(),
             derender: self.derender.as_ref().map_or(0, FileEntries::len),
             media: self.media.len(),
-            contact_sets: self.contact_sets.as_ref().map_or(0, ImportData::sets),
+            contact_sets: self.contact_sets.as_ref().map_or(0, ImportData::entries),
         }
     }
 
@@ -304,6 +304,18 @@ mod tests {
         let report = world.merge_legacy_lists(lists);
         assert_eq!((report.teleports, report.total()), (1, 1));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_contact_file_with_nicknames_alone_counts() {
+        let dir = folder("nicknames");
+        std::fs::write(
+            dir.join(CONTACT_SETS_FILE),
+            "<llsd><map><key>Pseudonyms</key><map><key>00000000-0000-0000-0000-000000000042</key><string>Nick</string></map></map></llsd>",
+        )
+        .expect("contact sets");
+        assert_eq!(read(&dir).counts().contact_sets, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
