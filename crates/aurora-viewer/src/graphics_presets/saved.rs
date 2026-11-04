@@ -203,7 +203,7 @@ mod tests {
         saved.dof.f_number = f32::NAN;
         let mut s = Settings::default();
         saved.apply(&mut s);
-        assert!(s.draw_distance <= 512.0);
+        assert!(s.draw_distance <= crate::settings::DRAW_DISTANCE_MAX);
         assert!(s.shadow_quality <= 4);
         assert!(s.antialiasing <= 6);
         assert!(s.dof.f_number.is_finite());
