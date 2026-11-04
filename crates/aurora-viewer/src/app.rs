@@ -1153,6 +1153,11 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
     }
+    if let Ok(value) = std::env::var("AURORA_PROJECTOR_SHADOW_LIMIT")
+        && let Ok(limit) = value.parse::<u8>()
+    {
+        settings.projector_shadow_limit = limit.clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
+    }
     if let Ok(v) = std::env::var("AURORA_HDR") {
         settings.hdr_emissive = v != "0";
     }
@@ -8246,6 +8251,11 @@ impl App {
         if self.demo {
             self.demo_uri_restore();
         }
+        if self.demo && crate::demo::projector_bench_done() {
+            log::info!("projector benchmark end");
+            self.shutdown(event_loop);
+            return;
+        }
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
@@ -8806,6 +8816,13 @@ impl App {
                 late_camera_frame = Some(frame);
             } else {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            }
+            if self.demo
+                && let Some((eye, target)) = crate::demo::projector_camera(self.frame_count)
+            {
+                self.camera.position = eye;
+                self.camera.target = target;
+                self.interface.set_hidden(&self.egui_ctx, true);
             }
             let at = self.camera.forward();
             let step_back = self.settings.walk_backwards_without_turning;
@@ -9680,7 +9697,7 @@ impl App {
             // offline demo teleport: the real steps, landing where we were
             let e = t0.elapsed().as_secs_f32();
             let w = &mut self.world;
-            if e >= 3.2 {
+            if e >= 3.2 && !crate::demo::tp_no_arrival() {
                 self.demo_tp_start = None;
                 w.tp_progress = 0.6;
                 w.tp_status = aurora_i18n::tr!("common-loading-region").into();
@@ -9733,6 +9750,22 @@ impl App {
                 self.tp_dest = None;
             }
         }
+        // no answer from the region: stop waiting, without ending the session
+        if self.world.arrival_overdue(Instant::now(), self.scene.own_attachment_count()) {
+            let kind = if self.world.teleporting {
+                aurora_net::transition::Kind::Teleport
+            } else {
+                aurora_net::transition::Kind::Crossing
+            };
+            aurora_net::transition::end(
+                Some(kind),
+                "failed (the region did not confirm the arrival in time)",
+                &self.net.stats,
+            );
+            self.demo_tp_start = None;
+            self.world.give_up_arrival();
+            self.net.send(NetCommand::ArrivalGivenUp);
+        }
         let tp = self.world.teleporting && self.world.tp_show_progress && matches!(self.screen, Screen::World);
         if tp && !self.was_teleporting {
             // keep the view we are leaving for the teleport screen
@@ -9773,15 +9806,6 @@ impl App {
                         teleport_screen::Mode::Quick => "arrived (teleport screen hidden)",
                         teleport_screen::Mode::Old => "arrived (teleport screen hidden, old screen)",
                     },
-                    &self.net.stats,
-                );
-            }
-            // no answer from the simulator: give up the screen
-            if o.arrived.is_none() && o.start.elapsed() > Duration::from_secs(90) && o.end.is_none() {
-                o.end = Some(Instant::now());
-                aurora_net::transition::end(
-                    Some(aurora_net::transition::Kind::Teleport),
-                    "failed (no arrival 90 s after the teleport screen was shown)",
                     &self.net.stats,
                 );
             }
@@ -9907,10 +9931,15 @@ impl App {
                 range: self.settings.draw_distance,
                 dt,
                 projector_shadows: self.settings.projector_shadows && self.settings.shadow_quality > 0,
+                projector_shadow_limit: aurora_render::projector_shadows::effective_limit(
+                    self.settings.shadow_params().0,
+                    self.settings.projector_shadow_limit,
+                    gfx.renderer.max_texture_dimension(),
+                ),
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
-            (Vec::new(), [None; 2])
+            (Vec::new(), [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS])
         };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
