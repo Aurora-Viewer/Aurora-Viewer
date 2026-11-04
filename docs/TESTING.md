@@ -366,6 +366,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
+| `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
@@ -686,6 +687,40 @@ environment`) and leaves the photo mode (960): the scene keeps that light.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
+
+`AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]`: from
+`AURORA_DEMO_SNAPSHOT_FRAME` (700 by default) the photo mode takes `n` real
+photos (12 at most), 20 frames apart, saved to `demo-photo-reel` in the
+cache folder (never the Pictures folder), the focal length going through
+35, 50, 24 and 85 mm so that they differ; the photo mode's look follows
+`AURORA_DEMO_SNAPSHOT` (`viewfinder`, or `open` for the panel). In the
+viewfinder each photo shows its card (its picture alone, on a tile of the
+dock like the tray's photos) centred over the lens and aperture controls for
+2 s, then flies in an arc to the reel's tray, bottom left: the stack of
+the photos shuffled as loose prints, the newest on top, a badge counting
+them. The pile gives a small bounce and a soft glow when a photo lands, or
+when a new photo cuts the last one's card or flight short, as these photos in
+quick succession do. `apart` takes them 600 frames apart instead: each pile
+pulses only when its photo lands. `moved` puts the
+tray at the middle of the screen (as if dragged there): the photos fly to
+it there. In the panel the row under the shutter shows the stack and the
+older photos. `quick` then opens the quick view on the newest (the world
+darkened in its own colours, the full photo in a frame, each button on its
+own under it, the filmstrip with the newest on the right); `delete` adds the
+deletion's confirmation ("reel-<n>.png goes to the Recycle Bin."); `send`
+sends the newest again to the inventory at once: the price's confirmation
+shows over the quick view (its price from the photo's own size), and Upload
+sends it, the view neither frozen nor left; `upload` confirms that price at once: the photo is uploaded, its
+thumbnail in the strip gets a green check and Apply to profile takes the
+Upload button's place (Apply only shows for an uploaded photo); `item` then
+presses Show in inventory: the quick view and photo mode close and the
+inventory shows the photo; `mail` opens the e-mail's form
+over the quick view (Send waits for a valid recipient); `apply` uploads it, then
+asks to make it our profile picture over the quick view; `applied` accepts:
+photo mode closes and our profile opens on its main tab with the picture. `toolbar` puts the Photo roll button on
+the right toolbar (dimmed, "No photos this session yet", until the first
+photo), then closes photo mode and opens the quick view with it (the button
+lit). The log gives `photo reel demo: <n> photos in the reel`.
 
 `AURORA_DEMO_ISOLATE` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
 mode): at frame 640 `own` shows our avatar alone (My avatar), the sky,
@@ -1440,6 +1475,8 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
 | `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
+| `AURORA_DEMO_OBJECT_SNAP=1\|on` | Boxes to snap together with "Snap to objects" |
+| `AURORA_DEMO_MOVE_HOLOGRAM=moving\|start` | The hologram of a move, for a build script |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
@@ -1488,6 +1525,36 @@ example `AURORA_DEMO_BUILD=move,object:151` with `150`. Compare the arrows,
 plane squares, rotation rings (`rotate`) and stretch handles (`stretch`)
 with a 100 % capture: everything grows by the same factor, strokes
 included, and a handle can be grabbed anywhere on its larger shape.
+
+`AURORA_DEMO_OBJECT_SNAP=1` adds six boxes 6 m along the start view (use
+`AURORA_DEMO_POS="80,100"` for open land): a slab, a blue cube floating
+0.3 m over it (`object:87701`), an orange cube 0.8 m to its +X
+(`object:87702`),
+a green box turned 30°, a purple plank tilted 20° (`object:87704`) and a 2 m
+pillar (`object:87705`); to the left, a hollow room with a yellow cube
+inside its box (`object:87707`), and a cylinder. Choose Snap › Objects in
+the construction settings, select the blue cube and drag its arrows or plane
+squares near the others: within 8 pixels it jumps flush (purple outline on
+both faces, a corner square on the plank's slope, amber for centres), and it
+stops at any face it would enter, however far the cursor goes past (a plane
+square slides along that face). A shaped prim or a mesh counts as its
+visible surface: the yellow cube stops at the room's inner walls, never at
+its outer box. `on` also chooses Objects for a build script, for example
+`AURORA_DEMO_BUILD=move,object:87701,z,0,40`.
+
+`AURORA_DEMO_BUILD=place,object:87701,87702` chooses Snap › Objects (the
+button and P go with it) and turns "Place on surface" on with the blue cube
+selected and holds the cursor over the orange cube's top:
+a pad in the accent there and a hologram of the blue cube resting on it.
+`,click` clicks, and the blue cube sits on the orange one; `,rotate:<side>`
+chooses Auto rotate with that side
+(`place,object:87704,87705,rotate:bottom`: the plank's bottom goes flat
+against the pillar's side, the face in front of the cursor).
+
+`AURORA_DEMO_MOVE_HOLOGRAM=moving|start` chooses Preferences › Aurora ›
+Behavior › "Hologram while moving" for a build script: with
+`AURORA_DEMO_BUILD=move,object:87701,x,-60,0`, `moving` draws the dragged
+cube as a hologram, `start` leaves a hologram of it where the move began.
 
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
@@ -3968,7 +4035,8 @@ both open states and the selection count. Capture at frame 620.
   with no day (`default`: Firestorm's default day asset, the built-in
   default sky offline) or replies for another parcel and
   another region (`stale`: ignored).
-- **`AURORA_DEMO_ENV_SELECT=1|lighting|list`**: environment picker
+- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none`**:
+  environment picker
   (`demo_env.rs`), with a library containing an
   "Environments" folder and a Settings folder in the inventory, whose
   settings assets are known locally. `1`: the window opens, then
@@ -3976,7 +4044,10 @@ both open states and the selection count. Capture at frame 620.
   (3200), a day cycle (3500) and "Shared environment" (3800, 5 s
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
-  (2500).
+  (2500). `search`: the same list, "sunset" typed in its search field
+  (2510): only the two sunsets are left, without the two fixed entries.
+  `search-none`: a long text no name contains: the list says so, the
+  line cut to the list's width.
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
@@ -4041,6 +4112,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>` | The crowd's worn prims and meshes use a legacy material, and a material nobody uses arrives every `seconds` |
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
+| `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4067,6 +4139,18 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
+
+- **`AURORA_DEMO_ALPHA_MASK_AB=planes|cross|spheres:<layers>:mask|blend[:touch]`**:
+  adds 1 to 512 static layered prims with a procedural alpha texture; `none`
+  keeps the ordinary plaza. The optional `touch` marks those prims touchable.
+  For shader A/B, the existing demo-only `AURORA_DEMO_WATER_SHADERS=1` loads
+  the object shader from this checkout before each process starts. Keep the
+  executable, camera and settings identical, alternate variants after warmup,
+  and measure SMAA and MSAA separately with the transparency overlay off.
+  The measured view uses `AURORA_DEMO_POS=144,125`,
+  `AURORA_DEMO_HOVER=800,350` and `AURORA_DEMO_TOD=5`; compare
+  `planes:64:mask` with the `planes:64:blend` control. Use `planes:4:mask`
+  for visible holes and edge checks after loading (`AURORA_CAPTURE_FRAMES=1500`).
 
 - **`AURORA_DEMO_TEXTURES=<n>`**: n small cubes (9000 if the value is
   not a number), each with its own texture, of several sizes (including
@@ -8255,6 +8339,17 @@ rows use the same type-specific icons.
 
 These operations stay offline; creating new clothing and
 new body parts is not available yet.
+
+For restricted text input (#2119), use `save` or rename an outfit in `gallery`.
+Select the current name and type or paste `Test 桜龙`: the entire attempted
+replacement is rejected, the old text and selection remain, and an immediate
+localized "Unsupported characters" tooltip explains the ASCII restriction.
+Check typing, paste, IME commit, undo/redo and a valid ASCII replacement. Repeat
+with inventory names/descriptions, landmark notes (ASCII line breaks allowed),
+environment names and numeric fields (reject letters/full-width digits). Parcel
+descriptions, chat, notice bodies and local filenames continue to accept Unicode.
+The same rules apply in both interface styles. The agent uses demo mode only;
+the human verifies actual saved inventory names on the grid.
 
 **`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`** — with
 `AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names like

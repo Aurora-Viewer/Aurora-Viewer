@@ -91,6 +91,7 @@ mod stream_title;
 mod sys_probe;
 mod system_info;
 mod system_notify;
+mod text_validation;
 mod theme;
 mod tolerant;
 mod ui;

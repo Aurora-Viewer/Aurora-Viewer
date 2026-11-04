@@ -101,6 +101,7 @@ mod object_menu_demo;
 mod own_motion;
 mod pay;
 mod photo_isolate;
+mod photo_reel;
 mod physics_editor;
 mod plate_click;
 mod pointing;
@@ -2768,6 +2769,8 @@ impl App {
         }
         self.scene.jobs.discard(imports);
         self.record_inventory_logout();
+        // the session's photo reel and its copies
+        self.photo_reel_end();
         if !self.demo {
             self.settings.release_hover_account();
         }
@@ -4048,6 +4051,7 @@ impl App {
                 self.world.eep.edit_personal(crate::demo::env::edit_lighting);
             }
             Step::OpenList(kind) => self.env_ui.open_list = Some(kind),
+            Step::Search(kind, text) => self.env_ui.search_list = Some((kind, text)),
         }
     }
 
@@ -7227,7 +7231,11 @@ impl App {
         if self.joystick_flycam_step(dt) {
             return;
         }
-        let web_or_popup = self.media.focus.is_some() || self.web_has_focus() || egui::Popup::is_any_open(&self.egui_ctx);
+        // (the photo reel's quick view holds the keys like a popup)
+        let web_or_popup = self.media.focus.is_some()
+            || self.web_has_focus()
+            || egui::Popup::is_any_open(&self.egui_ctx)
+            || self.snapshots.reel.quick.is_open();
         let typing = typing || web_or_popup;
         let (kb, m) = (&self.settings.keybinds, self.mods());
         // typing in the chat bar, only the keys it hands to the avatar move
@@ -9518,6 +9526,26 @@ impl App {
             };
             self.scene.creation_preview.update(&mut gfx.renderer, preview);
             self.scene.creation_preview.append(&mut self.scene.lists);
+            // the build tools' holograms: where Place on surface would put
+            // the selection, or a move's (scene/build_hologram.rs)
+            {
+                use crate::build::MoveHologram;
+                use crate::scene::build_hologram::Ghost;
+                let landing = self.build.place.active.then_some(self.build.place.preview).flatten();
+                let moving = self.build.move_hologram(&self.world, &self.settings.build);
+                let now = moving.as_ref().map(|(_, m)| crate::build::Bounds {
+                    center: m.start.center + m.delta,
+                    ..m.start
+                });
+                let (copies, in_place) = match (&landing, &moving, &now) {
+                    (Some(l), _, _) => (Some((self.build.place.moving.as_slice(), Ghost::landing(l))), None),
+                    (None, Some((MoveHologram::Start, m)), _) => (Some((m.prims.as_slice(), Ghost::start(&m.start, m.delta))), None),
+                    (None, Some((_, m)), Some(now)) => (None, Some((m.prims.as_slice(), now))),
+                    _ => (None, None),
+                };
+                self.scene.update_build_hologram(&mut gfx.renderer, copies, in_place);
+            }
+            self.scene.build_hologram.append(&mut self.scene.lists);
             let physics = crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build);
             self.scene
                 .physics_shapes
@@ -12010,6 +12038,7 @@ impl App {
                         self.build.edit_mode = m;
                         crate::build::demo::apply_tab(&mut self.build);
                         crate::build::demo::apply_handle_size(&mut self.settings.build);
+                        crate::build::demo::apply_object_snap(&mut self.settings.build);
                         self.settings.build.land_action = land;
                     }
                     crate::build::demo::Step::Cursor(x, y) => self.cursor_pos = (x, y),
@@ -12241,6 +12270,19 @@ impl App {
                             );
                             self.panels.inventory = false;
                             self.panels.chat = false;
+                        }
+                    }
+                    crate::build::demo::Step::PlaceRotate(side) => {
+                        self.settings.build.place_rotate = true;
+                        self.settings.build.place_side = side;
+                    }
+                    crate::build::demo::Step::Place(on) => {
+                        // its button and P go with the object snap
+                        if on {
+                            self.settings.build.set_snap_mode(crate::build::SnapMode::Objects);
+                        }
+                        if self.build.place.active != on {
+                            self.build.toggle_place(&self.world);
                         }
                     }
                     crate::build::demo::Step::Linked(on) => {
@@ -12978,6 +13020,7 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
+            BarAction::PhotoRoll => self.photo_reel_show_newest(),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
             BarAction::PlaceBar { stretch, rights_text } => {
                 self.settings.place_bar_stretch = stretch;
@@ -13739,6 +13782,15 @@ impl App {
                     message,
                     item,
                 } => {
+                    if let Err(reason) = crate::text_validation::require(crate::text_validation::Policy::Ascii, &subject) {
+                        self.world.notifications.push(
+                            crate::world::notifications::Kind::Alert,
+                            aurora_i18n::tr!("input-restricted-title"),
+                            reason,
+                            crate::world::notifications::Data::None,
+                        );
+                        continue;
+                    }
                     // send_group_notice: an instant message to the group
                     let (text, bucket) = aurora_net::groups::notice_to_send(&subject, &message, item);
                     self.send(NetCommand::SendImDialog {
@@ -16405,6 +16457,8 @@ impl App {
                     self.settings.profile_rights,
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
+                self.toolbar_ui.photo_roll_empty = self.snapshots.reel.reel.is_empty();
+                self.toolbar_ui.photo_roll_active = self.snapshots.reel.quick.is_open();
                 self.toolbar_ui.shown = ui::toolbar::Shown {
                     profile: self.profile_ui.mine_shown(self.world.agent_id),
                     build: self.build.open,
@@ -19694,6 +19748,13 @@ impl ApplicationHandler for App {
                     // keep it held.
                     if pressed && ui::close_key::take_native_key(&ke.logical_key, code, mods, &mut self.down) {
                         self.check_temp_run();
+                        return;
+                    }
+                    // the photo reel's quick view reads its keys through egui
+                    // (arrows, Delete, Escape): none moves the avatar, the
+                    // camera or the viewfinder meanwhile
+                    if self.snapshots.reel.quick.is_open() {
+                        self.down.remove(&Input::key(code));
                         return;
                     }
                     // the photo viewfinder's keys (the shutter, its menu…)

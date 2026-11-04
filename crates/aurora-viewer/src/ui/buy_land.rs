@@ -377,7 +377,10 @@ impl BuyLandUi {
 
     /// currencyKey: digits that fit an S32.
     fn typed(&mut self, now: Instant) {
-        self.text.retain(|c| c.is_ascii_digit());
+        if !widgets::TextPolicy::Digits.accepts(&self.text) {
+            self.text = if self.amount == 0 { String::new() } else { self.amount.to_string() };
+            return;
+        }
         let value = if self.text.is_empty() {
             Some(0)
         } else {
@@ -971,12 +974,18 @@ impl BuyLandUi {
             if !funds.have_enough() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("buy-land-buy-additional")).size(12.0).color(p.ink));
-                    let field = crate::ui::widgets::text_field(ui, self.site_txn.is_none(), &mut self.text, |b, _| {
-                        egui::TextEdit::singleline(b)
-                            .desired_width(80.0)
-                            .char_limit(10)
-                            .align(egui::Align2::RIGHT_TOP)
-                    });
+                    let field = crate::ui::widgets::restricted_text_field(
+                        ui,
+                        self.site_txn.is_none(),
+                        &mut self.text,
+                        widgets::TextPolicy::Digits,
+                        |b, _| {
+                            egui::TextEdit::singleline(b)
+                                .desired_width(80.0)
+                                .char_limit(10)
+                                .align(egui::Align2::RIGHT_TOP)
+                        },
+                    );
                     ui.label(RichText::new(aurora_i18n::currency()).size(12.0).color(p.muted));
                     if field.changed() {
                         self.typed(Instant::now());

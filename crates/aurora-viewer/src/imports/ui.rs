@@ -242,18 +242,30 @@ fn metadata_controls(ui: &mut egui::Ui, entry: &mut Entry) {
         .spacing(Vec2::new(12.0, 8.0))
         .show(ui, |ui| {
             ui.label(aurora_i18n::tr!("common-name"));
-            ui.add(
-                egui::TextEdit::singleline(&mut entry.name)
-                    .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
-                    .char_limit(63),
+            crate::ui::widgets::restricted_text_field(
+                ui,
+                true,
+                &mut entry.name,
+                crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                |b, ui| {
+                    egui::TextEdit::singleline(b)
+                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
+                        .char_limit(63)
+                },
             );
             ui.end_row();
             if !entry.local {
                 ui.label(aurora_i18n::tr!("common-description"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut entry.description)
-                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
-                        .char_limit(127),
+                crate::ui::widgets::restricted_text_field(
+                    ui,
+                    true,
+                    &mut entry.description,
+                    crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                    |b, ui| {
+                        egui::TextEdit::singleline(b)
+                            .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
+                            .char_limit(127)
+                    },
                 );
                 ui.end_row();
             }
@@ -814,7 +826,7 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
         RichText::new(aurora_i18n::tr!(
             "import-animation-frames",
             frames = bvh.frames,
-            rate = format!("{:.2}", 1.0 / bvh.frame_time)
+            rate = format!("{:.2}", if bvh.frame_time > 0.0 { 1.0 / bvh.frame_time } else { 0.0 })
         ))
         .small()
         .color(p.muted),
@@ -894,7 +906,11 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                     {
                         *value = percent / 100.0 * animation.duration;
                     }
-                    let mut frame = (*value / bvh.frame_time).round() as usize;
+                    let mut frame = if bvh.frame_time > 0.0 {
+                        (*value / bvh.frame_time).round() as usize
+                    } else {
+                        0
+                    };
                     if ui
                         .add_sized(
                             Vec2::new(52.0, 26.0),

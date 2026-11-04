@@ -28,6 +28,14 @@ pub(crate) mod keycap;
 mod modal_keys;
 pub(crate) mod pills;
 mod resize;
+mod restricted_text;
+#[cfg(test)]
+mod restricted_text_tests;
+pub use crate::text_validation::Policy as TextPolicy;
+pub use restricted_text::field as restricted_text_field;
+pub use restricted_text::number as restricted_number;
+pub use restricted_text::optional as text_field_with_policy;
+pub use restricted_text::show as restricted_text_edit;
 pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
@@ -46,8 +54,8 @@ pub use text_field::text_field;
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
-    Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation, navigation_beside,
-    navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+    Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
+    navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island_shape, organization_drag_preview,
