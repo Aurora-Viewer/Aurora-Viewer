@@ -152,7 +152,10 @@ fn kind(path: &Path) -> Kind {
         return Kind::Transcript;
     }
     let mut head = Vec::with_capacity(64);
-    if std::fs::File::open(path).and_then(|f| f.take(store::LOG_RECALL_SIZE).read_to_end(&mut head)).is_err() {
+    if std::fs::File::open(path)
+        .and_then(|f| f.take(store::LOG_RECALL_SIZE).read_to_end(&mut head))
+        .is_err()
+    {
         return Kind::NoStamp;
     }
     let head = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&head);
