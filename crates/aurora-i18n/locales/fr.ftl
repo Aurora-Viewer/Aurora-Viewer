@@ -1,6 +1,12 @@
 language-name = Français
 avatar-studio-title = Studio avatar
-avatar-studio-help = Glisser : gauche pour tourner • droit pour haut/bas • milieu pour déplacer la vue • Molette : zoom
+avatar-studio-input-left = Glisser : gauche
+avatar-studio-input-right = Glisser : droit
+avatar-studio-input-middle = Glisser : milieu
+avatar-studio-input-wheel = Molette
+avatar-studio-action-focus = Hauteur du regard
+avatar-studio-action-pan = Déplacer la vue
+avatar-studio-action-zoom = Zoom
 avatar-studio-exit = Quitter le studio
 joystick-title = Joystick et souris 3D
 joystick-enabled = Activer le joystick

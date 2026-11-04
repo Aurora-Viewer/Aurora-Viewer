@@ -234,18 +234,72 @@ impl App {
         }
         let mut reset = false;
         egui::Area::new(egui::Id::unique("avatar_studio_controls"))
-            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 72.0))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
             .order(egui::Order::Middle)
             .show(ctx, |ui| {
                 crate::ui::widgets::overlay(ui, &self.palette, egui::Margin::same(10), |ui| {
+                    let controls = [
+                        (aurora_i18n::tr!("avatar-studio-input-left"), aurora_i18n::tr!("common-rotate")),
+                        (
+                            aurora_i18n::tr!("avatar-studio-input-right"),
+                            aurora_i18n::tr!("avatar-studio-action-focus"),
+                        ),
+                        (
+                            aurora_i18n::tr!("avatar-studio-input-middle"),
+                            aurora_i18n::tr!("avatar-studio-action-pan"),
+                        ),
+                        (
+                            aurora_i18n::tr!("avatar-studio-input-wheel"),
+                            aurora_i18n::tr!("avatar-studio-action-zoom"),
+                        ),
+                    ];
+                    let font = egui::TextStyle::Body.resolve(ui.style());
+                    let width = |text: &str| {
+                        ui.painter()
+                            .layout_no_wrap(text.to_owned(), font.clone(), self.palette.ink)
+                            .size()
+                            .x
+                    };
+                    // Measure translated labels instead of shrinking the help
+                    // text or assuming English-sized columns.
+                    let grid_width = width(controls[0].0).max(width(controls[2].0))
+                        + width(controls[0].1).max(width(controls[2].1))
+                        + width(controls[1].0).max(width(controls[3].0))
+                        + width(controls[1].1).max(width(controls[3].1))
+                        + 36.0;
+                    let title = aurora_i18n::tr!("avatar-studio-title");
+                    let reset_label = aurora_i18n::tr!("common-reset");
+                    let exit_label = aurora_i18n::tr!("avatar-studio-exit");
+                    let header_width = width(title)
+                        + width(reset_label)
+                        + width(exit_label)
+                        + ui.spacing().button_padding.x * 4.0
+                        + ui.spacing().item_spacing.x * 3.0
+                        + 16.0;
+                    ui.set_width(grid_width.max(header_width).min((ctx.content_rect().width() - 40.0).max(1.0)));
                     ui.horizontal(|ui| {
-                        ui.label(aurora_i18n::tr!("avatar-studio-title"));
-                        reset = ui.button(aurora_i18n::tr!("common-reset")).clicked();
-                        if ui.button(aurora_i18n::tr!("avatar-studio-exit")).clicked() {
-                            self.panels.avatar_studio = false;
-                        }
+                        ui.strong(title);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(exit_label).clicked() {
+                                self.panels.avatar_studio = false;
+                            }
+                            reset = ui.button(reset_label).clicked();
+                        });
                     });
-                    ui.small(aurora_i18n::tr!("avatar-studio-help"));
+                    ui.add_space(6.0);
+                    egui::Grid::new("avatar_studio_control_legend")
+                        .num_columns(4)
+                        .min_row_height(ui.text_style_height(&egui::TextStyle::Body))
+                        .spacing(egui::vec2(12.0, 4.0))
+                        .show(ui, |ui| {
+                            for (i, (gesture, action)) in controls.into_iter().enumerate() {
+                                ui.label(egui::RichText::new(gesture).color(self.palette.muted));
+                                ui.label(action);
+                                if i % 2 == 1 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
                 });
             });
         if reset {
