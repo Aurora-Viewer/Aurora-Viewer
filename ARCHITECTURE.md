@@ -14,7 +14,6 @@ The Appearance gear menu shares the scoped file-job lifecycle in
 run off the frame thread. Account changes discard stale completion notices.
 Texture UUIDs remain null; the root is avatar-local rather than a world location.
 
-
 `aurora-prim::params::VolumeParams::constrain` preserves the path-ratio
 limits of `LLVolumeParams::setRatio` (indra/llmath/llvolume.cpp): spheres
 and alternate paths accept 0..2; ordinary circular non-sphere paths use
