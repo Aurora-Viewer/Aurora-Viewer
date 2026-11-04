@@ -90,6 +90,12 @@ impl App {
             self.send(NetCommand::DiscardMeshQuote(token));
         }
         let commands = self.imports.poll(ctx, &self.scene.jobs, &self.world, &self.settings.inventory);
+        // A watched local texture file changes the source generation while
+        // its local identity and in-world mesh-face target stay put. Republish
+        // it so the face sees the new pixels without reselecting the texture.
+        for id in self.imports.stale_local_publications() {
+            self.publish_local_import(id, ctx);
+        }
         self.save_import_animation_models();
         for command in commands {
             self.send(command);

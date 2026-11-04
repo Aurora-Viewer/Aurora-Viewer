@@ -526,9 +526,10 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
     for entry in entries {
         entry.local = true;
         entry.local_assume_meters = prefs.local_assume_meters;
+        let mut paths = vec![entry.path.clone()];
         if let Some(Source::Mesh(draft)) = &entry.source {
             entry.local_live = prefs.local_mesh_auto_reload;
-            let mut paths = mesh_dependencies(&entry.path, &draft.scene);
+            paths = mesh_dependencies(&entry.path, &draft.scene);
             for lod in &draft.lods {
                 if let Some(path) = &lod.path {
                     paths.extend(
@@ -546,10 +547,12 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
                         .map_or_else(|| vec![path.clone()], |scene| mesh_dependencies(path, scene)),
                 );
             }
-            paths.sort();
-            paths.dedup();
-            entry.watch = Some(super::local::Watch::new(paths));
+        } else if let Some(Source::Material { images, .. }) = &entry.source {
+            paths.extend(images.iter().flatten().filter_map(|image| image.path.clone()));
         }
+        paths.sort();
+        paths.dedup();
+        entry.watch = Some(super::local::Watch::new(paths));
     }
 }
 
@@ -1125,6 +1128,23 @@ mod tests {
                 .paths
                 .contains(&files.0.join("mesh.bin").canonicalize().expect("path"))
         );
+    }
+    #[test]
+    fn texture_picker_local_files_watch_the_source_for_prim_and_mesh_face_refresh() {
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+
+        let entry = &entries[0];
+        assert!(entry.local);
+        assert!(entry.local_live);
+        let watch = entry.watch.as_ref().expect("local texture file watch");
+        assert_eq!(watch.paths.as_slice(), std::slice::from_ref(&path));
+        let before = watch.stamp.clone();
+
+        std::fs::write(&path, b"updated local texture file").expect("change source file");
+        assert_ne!(before, super::super::local::stamp(&watch.paths));
     }
     #[test]
     fn long_wav_sources_enable_bounded_splitting_instead_of_uploading_an_oversized_asset() {
