@@ -824,7 +824,7 @@ impl ViewCache {
                     }
                     return !filters.active()
                         && match query.field {
-                            SearchField::Name => matches_text(&e.name, &query.text),
+                            SearchField::Name => matches_text(&name(), &query.text),
                             SearchField::Uuid => matches_text(&e.id.to_string(), &query.text),
                             SearchField::All => matches_text(&format!("{} {}", e.name, e.id), &query.text),
                             SearchField::Description | SearchField::Creator => query.text.is_empty(),
@@ -900,12 +900,20 @@ impl ViewCache {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
+                // LLItemBridge::buildDisplayName includes the link suffix in search.
+                let name = || {
+                    if linked {
+                        std::borrow::Cow::Owned(format!("{} (link)", e.name))
+                    } else {
+                        std::borrow::Cow::Borrowed(e.name.as_str())
+                    }
+                };
                 match query.field {
                     SearchField::Name => matches_text(&e.name, &query.text),
                     SearchField::Description => matches_text(&e.desc, &query.text),
                     SearchField::Creator => matches_text(&creator(), &query.text),
                     SearchField::Uuid => matches_text(&e.id.to_string(), &query.text),
-                    SearchField::All => matches_text(&format!("{} {} {} {}", e.name, e.desc, creator(), e.id), &query.text),
+                    SearchField::All => matches_text(&format!("{} {} {} {}", name(), e.desc, creator(), e.id), &query.text),
                 }
             })
             .map(|e| e.id)
