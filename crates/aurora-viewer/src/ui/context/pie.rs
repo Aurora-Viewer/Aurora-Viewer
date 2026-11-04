@@ -171,13 +171,20 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
     paginate(root)
 }
 
-fn geometry(screen: Rect, pos: Pos2) -> (Pos2, f32) {
+pub(super) fn geometry(screen: Rect, pos: Pos2) -> (Pos2, f32) {
     let radius = OUTER.min((screen.width().min(screen.height()) * 0.5 - 8.0).max(0.0));
     let center = egui::pos2(
         pos.x.clamp(screen.left() + radius, screen.right() - radius),
         pos.y.clamp(screen.top() + radius, screen.bottom() - radius),
     );
     (center, radius)
+}
+
+/// A secondary click beyond the visible pie belongs to the world, where it
+/// opens a fresh menu. The full-screen area still captures other pointer input.
+pub(super) fn right_click_reopens_world(screen: Rect, pos: Pos2, pointer: Pos2, voice_panel: Option<Rect>) -> bool {
+    let (center, radius) = geometry(screen, pos);
+    pointer.distance(center) > radius && !voice_panel.is_some_and(|panel| panel.contains(pointer))
 }
 
 fn sector(offset: Vec2, inner: f32, outer: f32) -> Option<usize> {
@@ -220,10 +227,9 @@ fn paint_icon(painter: &egui::Painter, icon: &str, center: Pos2, size: f32, colo
 /// The voice row of an avatar in our voice channel, in a panel under the
 /// disc (above it when the screen ends there), the pie having no rows;
 /// returns the panel's rectangle, where clicks leave the pie open.
-fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: uuid::Uuid, voice: crate::ui::menu::VoiceVolume) -> Rect {
+pub(super) fn voice_panel_rect(screen: Rect, center: Pos2, radius: f32) -> Rect {
     const WIDTH: f32 = 250.0;
     const HEIGHT: f32 = 38.0;
-    let screen = ctx.content_rect();
     let below = center.y + radius + 8.0;
     let y = if below + HEIGHT <= screen.bottom() {
         below
@@ -231,9 +237,16 @@ fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: 
         center.y - radius - 8.0 - HEIGHT
     };
     let x = (center.x - WIDTH * 0.5).clamp(screen.left(), (screen.right() - WIDTH).max(screen.left()));
+    Rect::from_min_size(egui::pos2(x, y), egui::vec2(WIDTH, HEIGHT))
+}
+
+fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: uuid::Uuid, voice: crate::ui::menu::VoiceVolume) -> Rect {
+    const WIDTH: f32 = 250.0;
+    let screen = ctx.content_rect();
+    let rect = voice_panel_rect(screen, center, radius);
     egui::Area::new(egui::Id::unique("world_pie_voice"))
         .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2(x, y))
+        .fixed_pos(rect.min)
         .movable(false)
         .fade_in(false)
         .show(ctx, |ui| {
@@ -490,6 +503,17 @@ mod tests {
             pie_path: Vec::new(),
             pie_input_frame: None,
         })
+    }
+
+    #[test]
+    fn right_click_outside_the_pie_reaches_the_world_but_not_the_menu_or_voice_panel() {
+        let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 900.0));
+        let menu_pos = egui::pos2(400.0, 400.0);
+        let panel = Rect::from_min_size(egui::pos2(700.0, 700.0), egui::vec2(250.0, 38.0));
+
+        assert!(!right_click_reopens_world(screen, menu_pos, egui::pos2(500.0, 400.0), Some(panel)));
+        assert!(!right_click_reopens_world(screen, menu_pos, egui::pos2(800.0, 710.0), Some(panel)));
+        assert!(right_click_reopens_world(screen, menu_pos, egui::pos2(900.0, 400.0), Some(panel)));
     }
 
     #[test]
