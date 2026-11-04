@@ -1,0 +1,6 @@
+test shader_tests::water_mesh_depth_clamp_preserves_coverage_and_occlusion_on_gpu ... FAILED
+test terrain_tests::pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu ... FAILED
+test result: FAILED. 346 passed; 2 failed; 31 ignored; 0 measured; 0 filtered out; finished in 6.71s
+test ui::fonts::tests::what_inter_lacks_comes_from_the_same_faces_as_with_noto ... FAILED
+test result: FAILED. 6111 passed; 1 failed; 11 ignored; 0 measured; 0 filtered out; finished in 8.52s
+DONE
