@@ -229,6 +229,9 @@ struct Pending {
     cap: String,
     retries: u32,
     not_before: Instant,
+    /// Sent first: our HUDs and attachments, which LLMediaDataClient's
+    /// sorted queue (by getMediaInterest) puts ahead of the world's media.
+    first: bool,
 }
 
 /// ObjectMedia GET queue (LLObjectMediaDataClient): one request per
@@ -240,8 +243,8 @@ pub struct MediaDataClient {
     queue: VecDeque<Pending>,
     queued: HashMap<Uuid, u32>,
     in_flight: usize,
-    tx: crossbeam_channel::Sender<(Fetched, String, u32)>,
-    rx: crossbeam_channel::Receiver<(Fetched, String, u32)>,
+    tx: crossbeam_channel::Sender<(Fetched, String, u32, bool)>,
+    rx: crossbeam_channel::Receiver<(Fetched, String, u32, bool)>,
     last_batch: Instant,
 }
 
@@ -270,8 +273,9 @@ impl MediaDataClient {
         self.queued.contains_key(object)
     }
 
-    /// Queue a GET for an object (no-op if already queued).
-    pub fn request(&mut self, object: Uuid, cap: &str) {
+    /// Queue a GET for an object (no-op if already queued). `first`: ours
+    /// (a HUD, an attachment), asked before the rest.
+    pub fn request(&mut self, object: Uuid, cap: &str, first: bool) {
         if self.queued.contains_key(&object) {
             return;
         }
@@ -281,6 +285,7 @@ impl MediaDataClient {
             cap: cap.to_string(),
             retries: 0,
             not_before: Instant::now(),
+            first,
         });
     }
 
@@ -292,7 +297,7 @@ impl MediaDataClient {
     /// Send due requests, return the answers that arrived.
     pub fn update(&mut self, rt: &tokio::runtime::Handle, http: &reqwest::Client) -> Vec<Fetched> {
         let mut out = Vec::new();
-        while let Ok((f, cap, retries)) = self.rx.try_recv() {
+        while let Ok((f, cap, retries, first)) = self.rx.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
             match &f.data {
                 Err(e) if retries < MAX_RETRIES && !e.starts_with("error 8002") => {
@@ -302,6 +307,7 @@ impl MediaDataClient {
                         cap,
                         retries: retries + 1,
                         not_before: Instant::now() + RETRY_DELAY,
+                        first,
                     });
                 }
                 _ => {
@@ -315,12 +321,17 @@ impl MediaDataClient {
         }
         let now = Instant::now();
         let mut sent = 0;
-        let mut i = 0;
-        while i < self.queue.len() && sent < BATCH && self.in_flight < MAX_IN_FLIGHT {
-            if self.queue[i].not_before > now {
-                i += 1;
-                continue;
-            }
+        while sent < BATCH && self.in_flight < MAX_IN_FLIGHT {
+            // ours first, then the oldest due request
+            let due = |p: &Pending| p.not_before <= now;
+            let Some(i) = self
+                .queue
+                .iter()
+                .position(|p| due(p) && p.first)
+                .or_else(|| self.queue.iter().position(due))
+            else {
+                break;
+            };
             let Some(p) = self.queue.remove(i) else {
                 break;
             };
@@ -329,7 +340,7 @@ impl MediaDataClient {
             let (tx, http) = (self.tx.clone(), http.clone());
             rt.spawn(async move {
                 let data = get(&http, &p.cap, p.object).await;
-                let _ = tx.send((Fetched { object: p.object, data }, p.cap, p.retries));
+                let _ = tx.send((Fetched { object: p.object, data }, p.cap, p.retries, p.first));
             });
         }
         if sent > 0 {
@@ -392,10 +403,11 @@ mod tests {
         let http = reqwest::Client::new();
         let mut client = MediaDataClient::default();
         for n in 1..=3 {
-            client.request(Uuid::from_u128(n), "http://127.0.0.1:9/media");
+            client.request(Uuid::from_u128(n), "http://127.0.0.1:9/media", n == 3);
         }
         client.update(rt.handle(), &http);
         assert_eq!(client.queue.len(), 2, "one sent, as serviceQueue peels one off");
+        assert!(client.queue.iter().all(|p| p.object != Uuid::from_u128(3)), "our HUD goes first");
         client.update(rt.handle(), &http);
         assert_eq!(client.queue.len(), 2, "the next waits for PrimMediaRequestQueueDelay");
     }

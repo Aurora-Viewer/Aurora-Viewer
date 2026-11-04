@@ -232,7 +232,7 @@ impl MediaManager {
             && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
         {
             e.requested_version = version;
-            self.client.request(o.full_id, cap);
+            self.client.request(o.full_id, cap, e.hud || e.on_own_avatar);
         }
     }
 
