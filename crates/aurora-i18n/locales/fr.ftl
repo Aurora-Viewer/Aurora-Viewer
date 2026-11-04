@@ -12690,7 +12690,7 @@ wearable-changed = Cet élément a changé ou n’est plus porté. Ouvrez-le à 
 wearable-error = Cet élément d’apparence n’a pas pu être lu ou enregistré.
 wearable-readonly = Cet élément n’est pas modifiable.
 wearable-texture-permissions = Choisissez une texture d’inventaire copiable et, pour un vêtement transférable, transférable.
-wearable-local-preview = Les textures locales servent d’aperçu privé. Importez la texture puis sélectionnez-la dans l’inventaire pour enregistrer.
+wearable-local-preview = L’enregistrement conserve les références locales sans importer les images.
 wearable-loading = Chargement de l’élément d’apparence…
 wearable-saving = Enregistrement…
 wearable-saved = Élément d’apparence enregistré.
@@ -13140,3 +13140,5 @@ picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son 
 picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventaire.
 
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
+
+local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.

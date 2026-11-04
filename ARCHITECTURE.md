@@ -1,5 +1,7 @@
 # Aurora Viewer architecture
 
+`ui/widgets/local_texture.rs` shares local asset/image identity and the Local previews eye badge across texture controls. Swatches keep their original click and drag response; the mark is painted inside their lower-right corner, including pending images.
+
 `world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.
 
 `ui/texture_picker/pipette.rs` routes a transient world sample to the picker session that armed it, independently of its opening window. `app/texture_picker.rs` samples the nearest volume face through the shared scene pipette ray query; inventory copy permissions, material assets and reversible previews remain owned by the picker.

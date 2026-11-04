@@ -1972,6 +1972,14 @@ changing the choice. Blank PBR material needs no inventory item. Hold and drag
 to sample another face; release, Escape, closing the picker or changing source
 puts the tool down. Cancel restores the value from before sampling. The sampled
 face is highlighted rather than the whole prim (the Legacy tool's TODO).
+`faces-picker-badges-local` and `faces-picker-material-badges-local`, combined
+with `AURORA_DEMO_IMPORTS=local`, apply local files before opening the picker.
+The Local previews eye appears inside the bottom-right corner of local
+texture/material previews, including pending images. Inventory and empty
+previews remain unmarked. Check both construction layouts, layer slots,
+environment textures, imported maps and enlarged previews; the eye's tooltip
+identifies a local texture, while clicking or dragging still operates the
+underlying preview. Map zoom icons use the opposite corner.
 Keep the picker open while changing the main inventory's name/date order,
 "Folders always by name" and "System folders first": its tree and search
 results must follow those options, including in the Aurora Library tab.
@@ -8135,8 +8143,15 @@ the normal local import publication. `tattoo:local-picker` opens its Local tab
 at frame 700. `tattoo:local-reload` replaces the violet checker with a green
 one at frame 900 using the importer's reload generation; capture before and
 after frame 1100. `tattoo:local-cancel` cancels at frame 1000 and restores the
-server appearance. These modes also accept the other wearable types. Save
-and Save As stay disabled until inventory textures replace the local maps.
+server appearance. These modes also accept the other wearable types.
+`tattoo:local-save` saves at frame 650 and acknowledges the saved wearable;
+`skin:local-save` and `universal:local-save` cover body parts and extra slots.
+Save, Save As and Save on closing accept confirmed local bitmap references,
+like LLWearable::exportStream; they do not upload the source images. Original
+wearable permissions and inventory texture permissions still apply. Reopen
+the saved item while the local file is loaded: its slots retain their local
+references and the Local previews eye. Removing a saved local file restores
+the slot's default instead of leaving a stale local preview reference.
 `tattoo:picker-live` opens the Local picker on an empty head slot and selects
 its image with a mouse click at frame 700 without confirming: the avatar and
 swatch must change while the picker remains open. `tattoo:picker-cancel`

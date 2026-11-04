@@ -530,6 +530,7 @@ fn material_asset(
         #[cfg(test)]
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", "PbrMaterial".to_string())), response.rect));
+        crate::ui::widgets::local_texture::asset(ui, p, response.rect, asset);
         let caption = aurora_i18n::tr!("build-ui-texture-material");
         ui.add_sized(
             [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
@@ -671,7 +672,13 @@ fn uv_controls(
 // ---------------------------------------------------------------- PBR
 
 fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &mut Env, sel: &[Sel]) {
-    let (asset, asset_mixed) = same(sel.iter().map(|x| BuildTool::gltf_asset(world, x.idx, x.face)));
+    let (asset, asset_mixed) = same(sel.iter().map(|x| {
+        world
+            .objects
+            .get(x.idx)
+            .and_then(|object| object.local_texture(x.face as usize, crate::world::objects::LocalTextureSlot::Material))
+            .or_else(|| BuildTool::gltf_asset(world, x.idx, x.face))
+    }));
     let asset = asset.flatten();
     let has_all = sel.iter().all(|x| BuildTool::gltf_asset(world, x.idx, x.face).is_some());
     // effective material of the first face: base asset + override
@@ -680,7 +687,9 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     let base = asset.and_then(|a| env.scene.materials.get(&a));
     let loaded = base.is_some();
     let mut mat = base.map(|m| (*m).clone()).unwrap_or_default();
-    mat.apply_override(&over);
+    if !asset.is_some_and(|asset| world.local_assets.contains_key(&asset)) {
+        mat.apply_override(&over);
+    }
     if let Some(appearance) = world
         .objects
         .get(first.idx)
@@ -904,7 +913,12 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             material
         })
         .collect();
-    let (tex, tex_mixed) = same(sel.iter().map(|x| x.te.texture));
+    let (tex, tex_mixed) = same(sel.iter().map(|x| {
+        world
+            .objects
+            .get(x.idx)
+            .map_or(x.te.texture, |object| object.visual_texture_face(x.face as usize).texture)
+    }));
     let (normal, normal_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.normal_map).unwrap_or_default()));
     let (spec, spec_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_map).unwrap_or_default()));
     let normal = normal.filter(|n| !n.is_nil());

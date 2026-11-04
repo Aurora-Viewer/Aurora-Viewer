@@ -323,7 +323,9 @@ impl TexturePicker {
                         #[cfg(test)]
                         ui.ctx()
                             .data_mut(|data| data.insert_temp(egui::Id::unique("picker_material_scene"), response.rect));
-                        let _ = response;
+                        if self.selected.is_some_and(|id| world.local_assets.contains_key(&id)) {
+                            widgets::local_texture::paint(ui, p, response.rect);
+                        }
                         return;
                     }
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
@@ -379,6 +381,9 @@ impl TexturePicker {
                             egui::FontId::proportional(11.5),
                             p.muted,
                         );
+                    }
+                    if self.selected.is_some_and(|id| world.local_assets.contains_key(&id)) {
+                        widgets::local_texture::paint(ui, p, rect);
                     }
                 });
                 ui.vertical(|ui| {

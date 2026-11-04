@@ -12694,7 +12694,7 @@ wearable-changed = This appearance item changed or is no longer worn. Open it ag
 wearable-error = This appearance asset could not be read or saved.
 wearable-readonly = This item cannot be modified.
 wearable-texture-permissions = Choose an inventory texture with Copy permission and, for transferable clothing, Transfer permission.
-wearable-local-preview = Local textures are a private preview. Upload the texture and select it from inventory before saving.
+wearable-local-preview = Saving keeps the local texture references without uploading the images.
 wearable-loading = Loading appearance item…
 wearable-saving = Saving…
 wearable-saved = Appearance item saved.
@@ -13144,3 +13144,5 @@ picker-pipette-hint = Click an object face to select its texture or material fro
 picker-pipette-no-texture = No copyable texture found in your inventory.
 
 picker-pipette-no-material = No copyable material found in your inventory.
+
+local-texture-preview-hint = Local texture — preview from a file on this computer.
