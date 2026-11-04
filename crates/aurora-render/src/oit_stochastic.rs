@@ -19,6 +19,12 @@
 //!    the accumulated colour averaged over the pixel's samples, times the
 //!    alpha correction (total alpha over accumulated alpha).
 //!
+//! The glow of the blended faces that have some is accumulated like their
+//! colour (`fs_st_glow`, after each accumulation), corrected the same way and
+//! added to the scene alpha after the composite: on average each face's
+//! glow dimmed by the layers in front of it, as the Legacy Viewer's glow
+//! drawn after each face in order and suppressed by the ones after it.
+//!
 //! The passes 3 and 4 run at their own sample count, the most the device
 //! has up to 8 (the paper's, section 4: 8 per pass, 1 + 2 S / 8 passes),
 //! even when the scene is at 4x: their depth starts as the opaque depth
@@ -357,6 +363,9 @@ pub(crate) struct ScenePipes {
     pub depth: [wgpu::RenderPipeline; 2],
     /// accumulation, by sidedness
     pub accum: [wgpu::RenderPipeline; 2],
+    /// the glowing faces' glow accumulated (no culling: fs_glow's own test
+    /// of the backs, as the Legacy glow pass)
+    pub glow: wgpu::RenderPipeline,
 }
 
 /// What the renderer's pipelines are made with.
@@ -386,6 +395,8 @@ pub(crate) struct Resolve {
     resolve: wgpu::ComputePipeline,
     filter: wgpu::ComputePipeline,
     composite: wgpu::RenderPipeline,
+    /// the blended faces' glow added to the scene alpha
+    composite_glow: wgpu::RenderPipeline,
     /// the opaque depth spread over the pass's samples (more than the
     /// scene's only)
     expand: Option<wgpu::RenderPipeline>,
@@ -405,6 +416,8 @@ struct Targets {
     pass: u32,
     trans: wgpu::TextureView,
     accum: wgpu::TextureView,
+    /// the glow accumulated (red), at the passes' samples
+    glow: wgpu::TextureView,
     depth_tex: wgpu::Texture,
     depth: wgpu::TextureView,
     /// per parity of the frame: the resolve's, the filter's and the
@@ -427,6 +440,8 @@ pub(crate) struct Stochastic {
     expand_params: wgpu::Buffer,
     targets: Option<Targets>,
     frame: u32,
+    /// glowing faces are accumulated this frame
+    glow: bool,
 }
 
 fn entry(binding: u32, visibility: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -496,7 +511,7 @@ impl Stochastic {
                 entry(1, all, texture(true)),
                 entry(2, all, texture(true)),
                 entry(3, S::COMPUTE, storage(wgpu::TextureFormat::Rgba16Float)),
-                entry(4, S::COMPUTE, storage(wgpu::TextureFormat::R32Float)),
+                entry(4, S::COMPUTE, storage(wgpu::TextureFormat::Rg32Float)),
                 entry(5, all, texture(false)),
                 entry(6, all, texture(false)),
                 entry(7, all, texture(false)),
@@ -511,6 +526,7 @@ impl Stochastic {
                         multisampled: true,
                     },
                 ),
+                entry(11, S::COMPUTE, texture(true)),
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -610,6 +626,7 @@ impl Stochastic {
             expand_params,
             targets: None,
             frame: 0,
+            glow: false,
         }
     }
 
@@ -633,7 +650,9 @@ impl Stochastic {
         self.targets.as_ref().map_or(1, |t| self.iterations_for(t.pass))
     }
 
-    /// The frame's targets and parameters. `false` without MSAA.
+    /// The frame's targets and parameters. `false` without MSAA. `glow`:
+    /// glowing blended faces will be accumulated (`begin_glow`).
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -642,6 +661,7 @@ impl Stochastic {
         height: u32,
         samples: u32,
         reproj: [[f32; 4]; 4],
+        glow: bool,
     ) -> bool {
         if samples <= 1 {
             return false;
@@ -676,7 +696,7 @@ impl Stochastic {
             height,
             samples_hw: pass,
             samples: pass * iterations,
-            flags: u32::from(c.correction) | (u32::from(c.filter > 0) << 1) | (u32::from(c.temporal > 0.0) << 2),
+            flags: u32::from(c.correction) | (u32::from(c.filter > 0) << 1) | (u32::from(c.temporal > 0.0) << 2) | (u32::from(glow) << 3),
             radius: c.filter,
             sigma_alpha: c.sigma_alpha,
             temporal_weight: c.temporal,
@@ -685,6 +705,7 @@ impl Stochastic {
             reproj,
         };
         queue.write_buffer(&self.resolve_params, 0, bytemuck::bytes_of(&rp));
+        self.glow = glow;
         true
     }
 
@@ -706,6 +727,12 @@ impl Stochastic {
             pass,
             U::RENDER_ATTACHMENT | U::TEXTURE_BINDING,
         );
+        let (_, glow) = make(
+            "oit stochastic glow",
+            wgpu::TextureFormat::R16Float,
+            pass,
+            U::RENDER_ATTACHMENT | U::TEXTURE_BINDING,
+        );
         let (depth_tex, depth) = make(
             "oit stochastic depth",
             self.shared.depth_format,
@@ -717,7 +744,8 @@ impl Stochastic {
             make("oit stochastic resolved 0", wgpu::TextureFormat::Rgba16Float, 1, single).1,
             make("oit stochastic resolved 1", wgpu::TextureFormat::Rgba16Float, 1, single).1,
         ];
-        let (_, total) = make("oit stochastic total alpha", wgpu::TextureFormat::R32Float, 1, single);
+        // the total alpha (red) and the corrected glow (green)
+        let (_, total) = make("oit stochastic total alpha", wgpu::TextureFormat::Rg32Float, 1, single);
         let (_, filtered) = make("oit stochastic filtered", wgpu::TextureFormat::Rgba16Float, 1, single);
         // A texture written as storage and read as sampled in one group
         // conflicts: each step's group binds dummies where it does not
@@ -728,8 +756,8 @@ impl Stochastic {
             dummy("oit stochastic dummy rgba w", wgpu::TextureFormat::Rgba16Float),
         );
         let (df_r, df_w) = (
-            dummy("oit stochastic dummy r32 r", wgpu::TextureFormat::R32Float),
-            dummy("oit stochastic dummy r32 w", wgpu::TextureFormat::R32Float),
+            dummy("oit stochastic dummy rg32 r", wgpu::TextureFormat::Rg32Float),
+            dummy("oit stochastic dummy rg32 w", wgpu::TextureFormat::Rg32Float),
         );
         let groups = std::array::from_fn(|parity| {
             let (cur, old) = (&resolved[parity], &resolved[1 - parity]);
@@ -739,6 +767,7 @@ impl Stochastic {
                     bind(1, wgpu::BindingResource::TextureView(&accum)),
                     bind(2, wgpu::BindingResource::TextureView(&trans)),
                     bind(10, wgpu::BindingResource::TextureView(&depth)),
+                    bind(11, wgpu::BindingResource::TextureView(&glow)),
                 ];
                 all.extend(entries.iter().map(|&(b, v)| bind(b, wgpu::BindingResource::TextureView(v))));
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -792,6 +821,7 @@ impl Stochastic {
             pass,
             trans,
             accum,
+            glow,
             depth_tex,
             depth,
             groups,
@@ -953,6 +983,36 @@ impl Stochastic {
         }))
     }
 
+    /// The glow accumulation of an iteration: additive into the glow
+    /// target (cleared on the first), the stochastic depth read only.
+    pub fn begin_glow<'a>(&'a self, encoder: &'a mut wgpu::CommandEncoder, first: bool) -> Option<wgpu::RenderPass<'a>> {
+        let t = self.targets.as_ref()?;
+        Some(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("oit stochastic glow"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &t.glow,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: if first {
+                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &t.depth,
+                depth_ops: None,
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        }))
+    }
+
     /// The resolve (and the filter when on).
     pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder, r: &Resolve) {
         let Some(t) = &self.targets else { return };
@@ -978,6 +1038,10 @@ impl Stochastic {
         pass.set_pipeline(&r.composite);
         pass.set_bind_group(0, &t.groups[self.parity()].2, &[]);
         pass.draw(0..3, 0..1);
+        if self.glow {
+            pass.set_pipeline(&r.composite_glow);
+            pass.draw(0..3, 0..1);
+        }
     }
 }
 
@@ -1144,6 +1208,52 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
         multiview_mask: None,
         cache: None,
     });
+    let composite_glow = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+        label: Some("oit stochastic composite glow"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shared.module,
+            entry_point: Some("vs_full"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shared.module,
+            entry_point: Some("fs_composite_glow"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: shared.hdr_format,
+                // added to the glow amount (the scene alpha) alone
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::Zero,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                }),
+                write_mask: wgpu::ColorWrites::ALPHA,
+            })],
+        }),
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: shared.depth_format,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
+        multiview_mask: None,
+        cache: None,
+    });
     let pass = shared.pass_samples(samples);
     let expand = (pass != samples).then(|| {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1187,6 +1297,7 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
         resolve: compute("oit stochastic resolve", "cs_resolve"),
         filter: compute("oit stochastic filter", "cs_filter"),
         composite,
+        composite_glow,
         expand,
     }
 }

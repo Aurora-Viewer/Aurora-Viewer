@@ -3733,7 +3733,37 @@ impl Backend {
                     },
                 )
             });
-            crate::oit_stochastic::ScenePipes { alpha, depth, accum }
+            // the glowing faces' glow, accumulated as their colour (as
+            // `glow_water`: no culling, fs_glow tests the backs; clipped to
+            // the camera's side of the water)
+            let glow = make_pipeline(
+                device,
+                &module,
+                &scene_layout,
+                PipeDesc {
+                    cull: None,
+                    format: Some(wgpu::TextureFormat::R16Float),
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::RED,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::GreaterEqual,
+                    constants: &[("WATER_CLIP", 1.0)],
+                    samples: pass_samples,
+                    ..base("stochastic glow", "vs_main", "fs_st_glow")
+                },
+            );
+            crate::oit_stochastic::ScenePipes { alpha, depth, accum, glow }
         });
         let st_resolve = st.map(|st| crate::oit_stochastic::make_resolve(device, st, samples));
         let particles = pipe(PipeDesc {
@@ -7983,6 +8013,15 @@ impl Backend {
         // transparency (MSAA only: its targets are multisampled) instead of
         // the per-object order below
         let method = crate::oit_stochastic::method(self.settings.oit);
+        // the glowing blended faces (their glow accumulated with the
+        // method, as `blended` adds it after each face in order)
+        let st_glow: Vec<u32> = if glow_on && glow_skip & 8 == 0 {
+            (0..bn)
+                .filter(|&i| lists.blend_glow.get(i as usize).copied().unwrap_or(false))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let st_on = method == crate::oit_stochastic::Method::Stochastic && bn > 0 && self.pipelines.st.is_some() && {
             let size = self.targets.depth_ss_tex.size();
             let samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
@@ -7993,7 +8032,7 @@ impl Backend {
                 && self
                     .st
                     .as_mut()
-                    .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj))
+                    .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj, !st_glow.is_empty()))
         };
         // off, its targets are freed (as `Bloom::release`)
         if method != crate::oit_stochastic::Method::Stochastic
@@ -8138,6 +8177,14 @@ impl Backend {
                     bind_mesh(&mut pass, &self.groups.b);
                     draw_sided(&mut pass, &pipes.accum, (b0, bn), 0);
                 }
+                if !st_glow.is_empty()
+                    && let Some(mut pass) = st.begin_glow(&mut encoder, i == 0)
+                {
+                    bind_mesh(&mut pass, &self.groups.b);
+                    for &g in &st_glow {
+                        draw(&mut pass, &pipes.glow, (b0 + u64::from(g) * stride, 1));
+                    }
+                }
                 if i == 0 {
                     mark(&mut encoder, MARK_ST_ACCUM_END);
                 }
@@ -8160,7 +8207,6 @@ impl Backend {
                 bind_mesh(&mut pass, &self.groups.a);
                 draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, (b0, n_depth), 0);
             }
-            // (the blended faces' glow is not drawn with this method)
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
             rest(&mut pass);

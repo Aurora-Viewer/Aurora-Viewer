@@ -16,6 +16,9 @@
 //    sample's transparency (the blend's destination factor) plus the
 //    filtered accumulated colour times the alpha correction (the ratio of
 //    the total alpha to the accumulated alpha; 1 without correction).
+// 4. fs_composite_glow: the blended faces' glow, accumulated like their
+//    colour (object.wgsl fs_st_glow) and corrected the same way, added to
+//    the scene alpha (the glow amount) once the composite has dimmed it.
 
 struct ResolveParams {
     width: u32,
@@ -24,7 +27,7 @@ struct ResolveParams {
     samples_hw: u32,
     samples: u32,
     // bit 0 alpha correction, bit 1 filtered colour read by the composite,
-    // bit 2 temporal blend
+    // bit 2 temporal blend, bit 3 glowing faces accumulated (glow_ms)
     flags: u32,
     // the filter's radius in pixels (1 to 4) and its alpha sigma
     radius: u32,
@@ -44,9 +47,10 @@ struct ResolveParams {
 // the accumulation and the transmittance, multisampled
 @group(0) @binding(1) var accum_ms: texture_multisampled_2d<f32>;
 @group(0) @binding(2) var trans_ms: texture_multisampled_2d<f32>;
-// cs_resolve writes: the averaged accumulation, and the total alpha
+// cs_resolve writes: the averaged accumulation, and the total alpha (red)
+// with the blended faces' corrected glow (green)
 @group(0) @binding(3) var resolved_w: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(4) var total_w: texture_storage_2d<r32float, write>;
+@group(0) @binding(4) var total_w: texture_storage_2d<rg32float, write>;
 // the previous frame's resolved colour (temporal)
 @group(0) @binding(5) var history: texture_2d<f32>;
 // cs_filter and fs_composite read
@@ -57,6 +61,8 @@ struct ResolveParams {
 // the stochastic depth (cs_resolve, temporal): the nearest transparent
 // winner of the pixel, reprojected
 @group(0) @binding(10) var st_depth_ms: texture_depth_multisampled_2d;
+// the glow accumulated over the stochastic passes' samples (red)
+@group(0) @binding(11) var glow_ms: texture_multisampled_2d<f32>;
 
 // The averaged accumulation of a pixel: each iteration added its own
 // samples' worth, so the average is over all of them.
@@ -121,11 +127,23 @@ fn cs_resolve(@builtin(global_invocation_id) g: vec3<u32>) {
     }
     var resolved = resolve_pixel(px);
     let total = 1.0 - trans / f32(max(n, 1u));
+    // the glow, averaged as the colour and corrected by the same ratio
+    var glow = 0.0;
+    if ((rp.flags & 8u) != 0u) {
+        let m = min(rp.samples_hw, 32u);
+        for (var s = 0u; s < m; s += 1u) {
+            glow += textureLoad(glow_ms, px, i32(s)).x;
+        }
+        glow /= f32(max(rp.samples, 1u));
+        if ((rp.flags & 1u) != 0u && resolved.a > 1e-5) {
+            glow *= total / resolved.a;
+        }
+    }
     if ((rp.flags & 4u) != 0u) {
         resolved = reprojected(px, resolved);
     }
     textureStore(resolved_w, px, resolved);
-    textureStore(total_w, px, vec4<f32>(total, 0.0, 0.0, 0.0));
+    textureStore(total_w, px, vec4<f32>(total, glow, 0.0, 0.0));
 }
 
 @compute @workgroup_size(8, 8)
@@ -189,4 +207,14 @@ fn fs_composite(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) 
         discard;
     }
     return vec4<f32>(c.rgb * corr, 1.0 - trans);
+}
+
+// The blended faces' glow added to the scene alpha (alpha only, additive).
+@fragment
+fn fs_composite_glow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    let glow = textureLoad(total_r, vec2<i32>(p.xy), 0).y;
+    if (glow <= 0.0) {
+        discard;
+    }
+    return vec4<f32>(0.0, 0.0, 0.0, glow);
 }

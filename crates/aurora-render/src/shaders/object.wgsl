@@ -1827,13 +1827,13 @@ fn fs_st_depth_mask(in: VsOut, @builtin(front_facing) front: bool, /*ST_PRIM_PAR
 // usual culling: a face seen from behind adds nothing, or the far side of a
 // translucent shell (hair, fur, an aura) would glow through its near side
 // without being dimmed by it.
-@fragment
-fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+// The glow amount of a fragment (discarded where it has none).
+fn glow_amount(in: VsOut, front: bool) -> f32 {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
         if (surface.glow <= 0.0) { discard; }
-        return vec4<f32>(0.0, 0.0, 0.0, surface.glow);
+        return surface.glow;
     }
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
@@ -1857,7 +1857,22 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     if (a <= 0.0) {
         discard;
     }
-    return vec4<f32>(0.0, 0.0, 0.0, a);
+    return a;
+}
+
+@fragment
+fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, glow_amount(in, front));
+}
+
+// Depth-based stochastic transparency (oit_stochastic.rs): the glow of a
+// blended face accumulated like its colour, into the samples where it is
+// at or in front of the stochastic depth (red of an R16Float target): on
+// average its glow times the transparency of the layers in front of it,
+// what fs_glow drawn after each face in order leaves in the scene alpha.
+@fragment
+fn fs_st_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(glow_amount(in, front), 0.0, 0.0, 0.0);
 }
 
 // Debug overlays ("Show transparency", wireframe): one flat

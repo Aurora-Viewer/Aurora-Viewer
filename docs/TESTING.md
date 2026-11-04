@@ -10030,7 +10030,13 @@ What the inventory must show with these scenarios:
   al., "Stochastic Transparency", I3D 2010, section 3.4): the total alpha of every sample, then each fragment
   covering a random subset of its samples of size alpha x S into a copy of
   the opaque depth, then the accumulation of the fragments at or in front
-  of that depth, composited per sample with the alpha correction. MSAA
+  of that depth, composited per sample with the alpha correction; the glow
+  of the blended faces that have some is accumulated the same way (each
+  face's glow where it is at or in front of the stochastic depth: on
+  average its glow dimmed by the layers in front of it, as with OIT off),
+  corrected by the same ratio and added to the scene's glow (check with
+  `AURORA_DEMO_GLOW_LAYERS=1` or `shell`, `AURORA_DEBUG_GLOW=1`: the same
+  glow as `AURORA_OIT=0`). MSAA
   modes only (`AURORA_AA=2`, `3`, `4`): the targets are multisampled, with
   `AURORA_AA=0` the faces stay in the object order. The two stochastic
   passes run at their own sample count, the most the device takes up to 8
