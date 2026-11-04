@@ -295,6 +295,9 @@ struct VsOut {
     // zero for the per-pixel one
     @location(9) tangent: vec3<f32>,
     @location(10) @interpolate(flat) tangent_sign: f32,
+    // the order-independent transparency's tie-break: a hash of the draw
+    // record and the provoking vertex (`oit_tie`), the same on every frame
+    @location(11) @interpolate(flat) tie: u32,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -528,6 +531,7 @@ fn vs_land_overlay(in: VsIn) -> VsOut {
     var out: VsOut;
     out.world_pos = (rec.model * vec4<f32>(in.pos, 1.0)).xyz;
     out.record = in.instance;
+    out.tie = oit_tie(in.instance, in.vertex);
     if (rec.params.x > 0.5) {
         out.world_pos.z = max(out.world_pos.z, rec.params.y);
     }
@@ -610,6 +614,7 @@ fn vs_main(in: VsIn) -> VsOut {
         }
     }
     out.record = in.instance;
+    out.tie = oit_tie(in.instance, in.vertex);
     out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
     return out;
 }
@@ -1668,9 +1673,11 @@ fn blend_color_kept(in: VsOut, front: bool) -> vec4<f32> {
 // ---- order-independent transparency: capture (oit.rs, oit.wgsl)
 //
 // Each blended fragment in front of the opaque scene is stored instead of
-// being blended: premultiplied colour (rg and b as halves), alpha (8 bits)
-// and its depth; no coverage (the capture reads no sample mask): the
-// resolve is per pixel, oit.wgsl. A pixel's first
+// being blended: premultiplied colour (rgb9e5), alpha (8 bits), its
+// tie-break (16 bits, `oit_tie`: layers of one depth are sorted by it, so
+// two coplanar faces keep their order from one frame to the next whatever
+// the order their fragments came in) and its depth; no coverage (the
+// capture reads no sample mask): the resolve is per pixel, oit.wgsl. A pixel's first
 // `slots` fragments go to its slots of a texture array (layer k holding
 // every pixel's slot k: neighbours write and read side by side, and these
 // fragments leave the pool's counter alone); the others are appended to its
@@ -1725,6 +1732,27 @@ struct OitParams {
 // that one depth would hide a layer that some samples of an edge still
 // show.
 override OIT_EARLY_DEPTH: bool = false;
+
+// The tie-break of a face's fragments (VsOut `tie`): 16 bits of a hash of
+// the draw record and the provoking vertex of the triangle, so that two
+// coplanar layers of a pixel sort the same way on every frame, and two
+// triangles of one face too.
+fn oit_tie(instance: u32, vertex: u32) -> u32 {
+    return ((instance * 0x9E3779B1u) ^ (vertex * 0x85EBCA6Bu)) >> 16u;
+}
+
+// rgb9e5: three 9-bit mantissas under a shared 5-bit exponent (oit.wgsl
+// `unpack_rgb9e5` reads it): HDR-safe up to 65408
+fn pack_rgb9e5(c: vec3<f32>) -> u32 {
+    let v = clamp(c, vec3<f32>(0.0), vec3<f32>(65408.0));
+    let m = max(v.x, max(v.y, v.z));
+    if (m <= 0.0) {
+        return 0u;
+    }
+    let e = clamp(floor(log2(m)) + 16.0, 0.0, 31.0);
+    let q = min(vec3<u32>(round(v * exp2(24.0 - e))), vec3<u32>(511u));
+    return q.x | (q.y << 9u) | (q.z << 18u) | (u32(e) << 27u);
+}
 
 // A node for this fragment: allocated for the whole subgroup with one
 // atomic where the device has subgroups (oit.rs `object_source` swaps the
@@ -1790,9 +1818,8 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) v
         return vec4<f32>(0.0);
     }
     let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
-    let b16 = pack2x16float(vec2<f32>(clamp(c.b, 0.0, 65504.0), 0.0)) & 0xffffu;
-    let rg = pack2x16float(clamp(c.rg, vec2<f32>(0.0), vec2<f32>(65504.0)));
-    let rest = b16 | (a8 << 16u);
+    let rg = pack_rgb9e5(c.rgb);
+    let rest = a8 | (in.tie << 16u);
     let slot = atomicAdd(&oit_heads[pixel], 1u);
     if (slot < oit_params.slots) {
         textureStore(oit_slots_w, px, slot, vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), 0u));
@@ -1873,7 +1900,7 @@ fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) ve
         }
         // nearer (reverse-Z)
         if (bitcast<f32>(n.z) > in.clip.z) {
-            through *= 1.0 - f32((n.y >> 16u) & 0xffu) / 255.0;
+            through *= 1.0 - f32(n.y & 0xffu) / 255.0;
         }
     }
     if (g * through <= 0.0) {

@@ -26,7 +26,10 @@
 //! mode, its depth copy included (all decided on the GPU: the gated draws
 //! read copies of their arguments, oit_gate.rs, no wait on the CPU); past
 //! `max_layers` layers in one pixel, the nearest are kept and sorted, the
-//! farthest folded into a weighted average behind them. Off, or when the
+//! farthest folded into a weighted average behind them. Layers are sorted
+//! by depth then by a tie-break stored with each (a hash of the draw
+//! record and the provoking vertex), so coplanar faces keep one order from
+//! frame to frame, whatever order their fragments arrive in. Off, or when the
 //! pool cannot be allocated, the renderer draws exactly as before; turning
 //! it off frees the pool ([`Oit::release`]).
 //!
@@ -59,7 +62,7 @@ const TILE_LIST_BYTES: u64 = 4;
 const SLOT_BYTES: u64 = 16;
 /// Slots per pixel at most: past that the array costs more than it saves.
 const MAX_SLOTS: u32 = 8;
-/// A node: premultiplied colour, alpha and coverage, depth, next.
+/// A node: premultiplied colour (rgb9e5), alpha and tie-break, depth, next.
 const NODE_BYTES: u64 = 16;
 /// Per node, the stamp of the frame that claimed it (object.wgsl
 /// `oit_claims`).
@@ -1135,6 +1138,32 @@ mod tests {
         assert_eq!(plan(5000, 100, 8, BIG, 2048, 4096), None);
         // no layer allowed
         assert_eq!(plan(100, 100, 8, BIG, 0, 16384), None);
+    }
+
+    /// The order of oit.wgsl's sort (`before`): by depth, farthest first
+    /// (reverse-Z: ascending), then by the tie-break; a total order, so the
+    /// result never depends on the order the layers are listed in.
+    fn sorted(layers: &[(u32, u32)]) -> Vec<(u32, u32)> {
+        let before = |(k, t): (u32, u32), (k2, t2): (u32, u32)| k < k2 || (k == k2 && t < t2);
+        let mut out: Vec<(u32, u32)> = Vec::new();
+        for &l in layers {
+            let at = out.iter().position(|&o| before(l, o)).unwrap_or(out.len());
+            out.insert(at, l);
+        }
+        out
+    }
+
+    #[test]
+    fn coplanar_layers_sort_by_their_tie_break_whatever_their_order() {
+        // two panes at one depth (bits 0x3f00_0000) and a nearer strand
+        let a = (0x3f00_0000, 0x1234);
+        let b = (0x3f00_0000, 0x0abc);
+        let c = (0x3f80_0000, 0x7777);
+        let expected = vec![b, a, c];
+        assert_eq!(sorted(&[a, b, c]), expected);
+        assert_eq!(sorted(&[b, a, c]), expected);
+        assert_eq!(sorted(&[c, a, b]), expected);
+        assert_eq!(sorted(&[c, b, a]), expected);
     }
 
     #[test]

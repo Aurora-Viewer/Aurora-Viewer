@@ -28,7 +28,10 @@
 // the frame is then drawn in the drawing order, as without the lists.
 //
 // Sorting: the `max_layers` nearest layers of a pixel, whatever their draw
-// order, back to front; the others folded first, behind them, as a weighted
+// order, back to front, by depth then by the tie-break the capture stored
+// (object.wgsl `oit_tie`: two coplanar layers, which arrive in an order
+// the GPU decides, sort the same way on every frame; nothing depends on
+// the order of a list); the others folded first, behind them, as a weighted
 // average whose coverage is exact (the product of their transparencies), so
 // a deep stack fades instead of popping. The arrays of a sort must stay in
 // registers: a pixel first tries the 8-layer sort (resolve_8) and only a
@@ -108,10 +111,22 @@ fn layer(px: vec2<u32>, id: u32) -> vec4<u32> {
     return nodes[id];
 }
 
+// rgb9e5: three 9-bit mantissas under a shared 5-bit exponent (packed by
+// object.wgsl `pack_rgb9e5`)
+fn unpack_rgb9e5(v: u32) -> vec3<f32> {
+    let s = exp2(f32(v >> 27u) - 24.0);
+    return vec3<f32>(f32(v & 0x1ffu), f32((v >> 9u) & 0x1ffu), f32((v >> 18u) & 0x1ffu)) * s;
+}
+
 fn node_color(n: vec4<u32>) -> vec4<f32> {
-    let rg = unpack2x16float(n.x);
-    let b = unpack2x16float(n.y & 0xffffu).x;
-    return vec4<f32>(rg, b, f32((n.y >> 16u) & 0xffu) / 255.0);
+    return vec4<f32>(unpack_rgb9e5(n.x), f32(n.y & 0xffu) / 255.0);
+}
+
+// Layer (k, t) is farther than (k2, t2): a smaller depth (reverse-Z), or
+// the same depth and a smaller tie-break. A total order: the sort and
+// the choice of the farthest kept layer never depend on the list's order.
+fn before(k: u32, t: u32, k2: u32, t2: u32) -> bool {
+    return k < k2 || (k == k2 && t < t2);
 }
 
 // <resolve_N>
@@ -120,13 +135,16 @@ fn node_color(n: vec4<u32>) -> vec4<f32> {
 // at or behind `dmed` is hidden (reverse-Z): the opaque depth that half of
 // the pixel's samples are at or behind (-1 without MSAA: every layer kept).
 fn resolve___N__(px: vec2<u32>, count: u32, first: u32, dmed: f32, keep: u32) -> Resolved {
-    // the kept layers' nodes and depths only (two words each), the colours
-    // read again once sorted: the arrays stay in registers
+    // the kept layers' nodes, depths and tie-breaks only (three words
+    // each), the colours read again once sorted: the arrays stay in
+    // registers
     var ids: array<u32, __N__>;
-    var dep: array<f32, __N__>;
+    var key: array<u32, __N__>;
+    var tie: array<u32, __N__>;
     var cnt = 0u;
-    // the farthest kept layer: its depth and index (valid once cnt > 0)
-    var far_z = 2.0;
+    // the farthest kept layer: its order and index (valid once cnt > 0)
+    var far_key = 0xffffffffu;
+    var far_tie = 0xffffffffu;
     var far_i = 0u;
     // the nearest layer of all, kept or folded
     var near_z = -1.0;
@@ -160,14 +178,19 @@ fn resolve___N__(px: vec2<u32>, count: u32, first: u32, dmed: f32, keep: u32) ->
             continue;
         }
         near_z = max(near_z, z);
+        // (a visible depth is positive: its bits order like it)
+        let k = n.z;
+        let t = n.y >> 16u;
         if (cnt < keep) {
             if (cnt == __N__u) {
                 return Resolved(3u, vec4<f32>(0.0), 0.0);
             }
             ids[cnt] = id;
-            dep[cnt] = z;
-            if (z < far_z) {
-                far_z = z;
+            key[cnt] = k;
+            tie[cnt] = t;
+            if (before(k, t, far_key, far_tie)) {
+                far_key = k;
+                far_tie = t;
                 far_i = cnt;
             }
             cnt += 1u;
@@ -177,16 +200,19 @@ fn resolve___N__(px: vec2<u32>, count: u32, first: u32, dmed: f32, keep: u32) ->
         // the nearest has the largest depth). A nearer layer takes the place
         // of the farthest kept, which is folded into the tail instead.
         var c = node_color(n);
-        if (z > far_z) {
+        if (before(far_key, far_tie, k, t)) {
             let evicted = layer(px, ids[far_i]);
             ids[far_i] = id;
-            dep[far_i] = z;
+            key[far_i] = k;
+            tie[far_i] = t;
             c = node_color(evicted);
-            far_z = dep[0];
+            far_key = key[0];
+            far_tie = tie[0];
             far_i = 0u;
             for (var i = 1u; i < cnt; i += 1u) {
-                if (dep[i] < far_z) {
-                    far_z = dep[i];
+                if (before(key[i], tie[i], far_key, far_tie)) {
+                    far_key = key[i];
+                    far_tie = tie[i];
                     far_i = i;
                 }
             }
@@ -198,21 +224,25 @@ fn resolve___N__(px: vec2<u32>, count: u32, first: u32, dmed: f32, keep: u32) ->
     if (cnt == 0u && tail_a <= 0.0) {
         return Resolved(0u, vec4<f32>(0.0), 0.0);
     }
-    // insertion sort, farthest first (reverse-Z: ascending depth)
+    // insertion sort, farthest first (reverse-Z: ascending depth, then the
+    // tie-break)
     for (var i = 1u; i < cnt; i += 1u) {
         let c = ids[i];
-        let d = dep[i];
+        let d = key[i];
+        let t = tie[i];
         var j = i;
         loop {
-            if (j == 0u || dep[j - 1u] <= d) {
+            if (j == 0u || !before(d, t, key[j - 1u], tie[j - 1u])) {
                 break;
             }
             ids[j] = ids[j - 1u];
-            dep[j] = dep[j - 1u];
+            key[j] = key[j - 1u];
+            tie[j] = tie[j - 1u];
             j -= 1u;
         }
         ids[j] = c;
-        dep[j] = d;
+        key[j] = d;
+        tie[j] = t;
     }
     var accum = vec3<f32>(0.0);
     var cov = 0.0;
