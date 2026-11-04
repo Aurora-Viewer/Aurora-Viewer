@@ -4249,6 +4249,10 @@ curtains and distant ridgelines (`ui/aurora_bg.rs`) onto sky directions in
 material reflection paths see that sky too. It is disabled by default in
 `SkyParams`, enabled only in the studio frame, and respects reduced motion.
 The backdrop and three neutral local lights follow the inspection angle.
+The pedestal is a closed, rounded-bevel cylinder with a satin-metal PBR
+finish using the renderer's built-in neutral textures. Its supplemental CPU
+draw is included in the main view and both water captures, alongside GPU
+avatar draws; the reflected camera therefore sees the same solid occluder.
 The existing isolation visibility path selects the live avatar and its
 attachments without replacing photo choices. Terrain isolation also clears
 the separate classic/PBR terrain lists used by water reflection and refraction,
