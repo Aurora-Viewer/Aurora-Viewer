@@ -21,6 +21,9 @@ const MAX_ASKS: u8 = 5;
 /// only means something within its region, and is reused).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
+    /// `chat_log::grid_name` of the login: a parcel's UUID says nothing on
+    /// another grid, and OpenSim's are built from the region's position.
+    pub grid: String,
     pub parcel: Uuid,
     pub name: String,
     pub region_name: String,
@@ -28,6 +31,22 @@ pub struct Entry {
     pub environment: Option<String>,
     /// Time of day preset (0: none).
     pub time_of_day: u8,
+}
+
+impl Entry {
+    fn is(&self, grid: &str, parcel: Uuid) -> bool {
+        self.parcel == parcel && self.grid == grid
+    }
+}
+
+/// A new save, in place of the one it replaces on that grid.
+pub fn store(saved: &mut Vec<Entry>, entry: Entry) {
+    forget(saved, &entry.grid, entry.parcel);
+    saved.push(entry);
+}
+
+pub fn forget(saved: &mut Vec<Entry>, grid: &str, parcel: Uuid) {
+    saved.retain(|e| !e.is(grid, parcel));
 }
 
 /// The parcel under the agent and what was decided for it.
@@ -74,9 +93,9 @@ pub enum Outcome {
 
 impl ParcelEnv {
     /// The saved parcel under the agent, if any.
-    pub fn saved_here(&self, saved: &[Entry]) -> Option<Uuid> {
+    pub fn saved_here(&self, saved: &[Entry], grid: &str) -> Option<Uuid> {
         let id = self.here.as_ref()?.id?;
-        saved.iter().any(|e| e.parcel == id).then_some(id)
+        saved.iter().any(|e| e.is(grid, id)).then_some(id)
     }
 
     /// RemoteParcelRequest answer, which may come after the agent left that
@@ -151,7 +170,7 @@ impl World {
     /// off its saved environment, and do a save that was asked. What was
     /// shown stays until the parcel is known, so that a teleport does not
     /// flash the environment left behind.
-    pub fn parcel_environment_frame(&mut self, saved: &[Entry], now: Instant) -> (Outcome, Option<NetCommand>) {
+    pub fn parcel_environment_frame(&mut self, saved: &[Entry], grid: &str, now: Instant) -> (Outcome, Option<NetCommand>) {
         let (Some(handle), Some(parcel)) = (self.main_region, self.parcel.clone()) else {
             return (Outcome::Nothing, None);
         };
@@ -160,7 +179,7 @@ impl World {
             self.parcel_env.saving = None;
             return (Outcome::Left, None);
         }
-        let wanted = !saved.is_empty() || self.parcel_env.saving.is_some();
+        let wanted = saved.iter().any(|e| e.grid == grid) || self.parcel_env.saving.is_some();
         let mut ask = None;
         let mut gave_up = false;
         match self.parcel_env.follow(key, wanted, now) {
@@ -188,7 +207,7 @@ impl World {
         if wanted && here.id.is_none() && !gave_up {
             return (Outcome::Nothing, ask);
         }
-        let target = here.id.and_then(|id| saved.iter().find(|e| e.parcel == id));
+        let target = here.id.and_then(|id| saved.iter().find(|e| e.is(grid, id)));
         // a save takes what is shown: putting the parcel's own on now would
         // replace the pick it waits for
         if self.parcel_env.saving.is_none() && (!here.settled || here.shown != target.map(|e| e.parcel)) {
@@ -221,6 +240,7 @@ impl World {
         here.shown = Some(id);
         here.forget_baseline();
         let entry = Entry {
+            grid: grid.to_owned(),
             parcel: id,
             name: parcel.name.clone(),
             region_name: self.regions.get(&handle).map_or_else(String::new, |r| r.name.clone()),
@@ -257,6 +277,7 @@ mod tests {
     use std::sync::Arc;
 
     const KEY: (RegionHandle, i32) = (7, 3);
+    const GRID: &str = "agni";
 
     #[test]
     fn nothing_is_asked_until_something_is_saved() {
@@ -326,14 +347,14 @@ mod tests {
         let mut world = a_world_on(3);
         let now = Instant::now();
         world.save_parcel_environment();
-        let (outcome, ask) = world.parcel_environment_frame(&[], now);
+        let (outcome, ask) = world.parcel_environment_frame(&[], GRID, now);
         assert_eq!(outcome, Outcome::Nothing);
         assert!(ask.is_some());
         put_on(&mut world, 4);
         world.parcel_env.on_parcel_id(7, 4, Some(Uuid::from_u128(9)));
-        assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::Left);
+        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::Left);
         assert_eq!(world.parcel_env.saving, None);
-        assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::Nothing);
+        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::Nothing);
     }
 
     #[test]
@@ -342,12 +363,12 @@ mod tests {
         let mut now = Instant::now();
         world.save_parcel_environment();
         for _ in 0..MAX_ASKS {
-            let (outcome, ask) = world.parcel_environment_frame(&[], now);
+            let (outcome, ask) = world.parcel_environment_frame(&[], GRID, now);
             assert_eq!(outcome, Outcome::Nothing);
             assert!(ask.is_some());
             now += ASK_EVERY;
         }
-        assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::NotSaved);
+        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::NotSaved);
     }
 
     #[test]
@@ -356,18 +377,19 @@ mod tests {
         let mut now = Instant::now();
         world.save_parcel_environment();
         for _ in 0..MAX_ASKS {
-            let _ = world.parcel_environment_frame(&[], now);
+            let _ = world.parcel_environment_frame(&[], GRID, now);
             now += ASK_EVERY;
         }
-        assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::NotSaved);
+        assert_eq!(world.parcel_environment_frame(&[], GRID, now).0, Outcome::NotSaved);
         world.save_parcel_environment();
-        let (outcome, ask) = world.parcel_environment_frame(&[], now);
+        let (outcome, ask) = world.parcel_environment_frame(&[], GRID, now);
         assert_eq!(outcome, Outcome::Nothing);
         assert!(ask.is_some());
     }
 
     fn entry(parcel: Uuid, time_of_day: u8) -> Entry {
         Entry {
+            grid: GRID.to_owned(),
             parcel,
             name: String::new(),
             region_name: String::new(),
@@ -383,17 +405,20 @@ mod tests {
         let id = Uuid::from_u128(9);
         let saved = [entry(id, 2)];
         // the parcel is not named yet, and its saved light not on
-        let _ = world.parcel_environment_frame(&saved, now);
+        let _ = world.parcel_environment_frame(&saved, GRID, now);
         world.eep.set_time_of_day(4);
         let sky = crate::world::env::time_of_day_sky(4).expect("a library sky");
         world.eep.on_settings(sky, Some(crate::world::eep_env::tests::sky_asset(1.1)));
         world.save_parcel_environment();
         world.parcel_env.on_parcel_id(7, 3, Some(id));
-        let (Outcome::Saved(new), _) = world.parcel_environment_frame(&saved, now) else {
+        let (Outcome::Saved(new), _) = world.parcel_environment_frame(&saved, GRID, now) else {
             panic!("saved");
         };
         assert_eq!((new.parcel, new.time_of_day), (id, 4));
-        assert_eq!(world.parcel_environment_frame(std::slice::from_ref(&new), now).0, Outcome::Nothing);
+        assert_eq!(
+            world.parcel_environment_frame(std::slice::from_ref(&new), GRID, now).0,
+            Outcome::Nothing
+        );
         assert_eq!(world.eep.parcel_form().1, 4, "the pick stays on");
     }
 
@@ -403,9 +428,9 @@ mod tests {
         let now = Instant::now();
         let id = Uuid::from_u128(9);
         let saved = [entry(id, 2)];
-        let _ = world.parcel_environment_frame(&saved, now);
+        let _ = world.parcel_environment_frame(&saved, GRID, now);
         world.parcel_env.on_parcel_id(7, 3, Some(id));
-        let _ = world.parcel_environment_frame(&saved, now);
+        let _ = world.parcel_environment_frame(&saved, GRID, now);
         assert!(!world.parcel_environment_changed(), "still loading");
         let sky = crate::world::env::time_of_day_sky(2).expect("a library sky");
         world.eep.on_settings(sky, Some(crate::world::eep_env::tests::sky_asset(1.1)));
@@ -415,10 +440,10 @@ mod tests {
         world.eep.on_settings(other, Some(crate::world::eep_env::tests::sky_asset(1.2)));
         assert!(world.parcel_environment_changed());
         world.save_parcel_environment();
-        let (Outcome::Saved(new), _) = world.parcel_environment_frame(&saved, now) else {
+        let (Outcome::Saved(new), _) = world.parcel_environment_frame(&saved, GRID, now) else {
             panic!("saved");
         };
-        let _ = world.parcel_environment_frame(std::slice::from_ref(&new), now);
+        let _ = world.parcel_environment_frame(std::slice::from_ref(&new), GRID, now);
         assert!(!world.parcel_environment_changed(), "saved over");
     }
 
@@ -426,16 +451,68 @@ mod tests {
     fn saved_here_needs_the_parcel_in_the_list() {
         let mut env = ParcelEnv::default();
         let id = Uuid::from_u128(9);
-        let entry = Entry {
-            parcel: id,
-            name: String::new(),
-            region_name: String::new(),
-            environment: None,
-            time_of_day: 0,
-        };
+        let entry = entry(id, 0);
         let _ = env.follow(KEY, true, Instant::now());
         env.on_parcel_id(7, 3, Some(id));
-        assert_eq!(env.saved_here(&[]), None);
-        assert_eq!(env.saved_here(std::slice::from_ref(&entry)), Some(id));
+        assert_eq!(env.saved_here(&[], GRID), None);
+        assert_eq!(env.saved_here(std::slice::from_ref(&entry), GRID), Some(id));
+    }
+
+    fn entry_on(grid: &str, parcel: Uuid, time_of_day: u8) -> Entry {
+        Entry {
+            grid: grid.to_owned(),
+            ..entry(parcel, time_of_day)
+        }
+    }
+
+    #[test]
+    fn a_save_on_another_grid_asks_nothing_here() {
+        let mut world = a_world_on(3);
+        let saved = [entry_on("custom_grid_test", Uuid::from_u128(9), 2)];
+        assert!(world.parcel_environment_frame(&saved, GRID, Instant::now()).1.is_none());
+        assert!(
+            world
+                .parcel_environment_frame(&saved, "custom_grid_test", Instant::now())
+                .1
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_same_id_on_another_grid_is_another_parcel() {
+        let mut world = a_world_on(3);
+        let now = Instant::now();
+        let id = Uuid::from_u128(9);
+        let saved = [entry_on("custom_grid_test", id, 2), entry(Uuid::from_u128(10), 4)];
+        world.parcel_env.on_parcel_id(7, 3, Some(id));
+        let _ = world.parcel_environment_frame(&saved, GRID, now);
+        assert_eq!(world.parcel_env.saved_here(&saved, GRID), None);
+        assert_eq!(world.eep.parcel_form().1, 0, "its preset stays off");
+        assert_eq!(world.parcel_env.saved_here(&saved, "custom_grid_test"), Some(id));
+    }
+
+    #[test]
+    fn a_save_is_made_for_the_grid_of_the_login() {
+        let mut world = a_world_on(3);
+        let id = Uuid::from_u128(9);
+        world.parcel_env.on_parcel_id(7, 3, Some(id));
+        world.eep.set_time_of_day(4);
+        let sky = crate::world::env::time_of_day_sky(4).expect("a library sky");
+        world.eep.on_settings(sky, Some(crate::world::eep_env::tests::sky_asset(1.1)));
+        world.save_parcel_environment();
+        let (Outcome::Saved(new), _) = world.parcel_environment_frame(&[], "custom_grid_test", Instant::now()) else {
+            panic!("saved");
+        };
+        assert_eq!(new.grid, "custom_grid_test");
+    }
+
+    #[test]
+    fn saving_and_forgetting_leave_the_other_grid_alone() {
+        let id = Uuid::from_u128(9);
+        let mut saved = vec![entry_on("custom_grid_test", id, 2), entry(id, 3)];
+        store(&mut saved, entry(id, 4));
+        assert_eq!(saved, [entry_on("custom_grid_test", id, 2), entry(id, 4)]);
+        forget(&mut saved, GRID, id);
+        assert_eq!(saved, [entry_on("custom_grid_test", id, 2)]);
     }
 }
