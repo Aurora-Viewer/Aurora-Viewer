@@ -13150,4 +13150,5 @@ ui-options-legacy-lists-contact-sets = Cercles ({ $count })
 ui-options-legacy-lists-confirm = Importer
 ui-options-legacy-lists-imported = Ajouté ou mis à jour : { $teleports } historique, { $derender } liste noire, { $media } filtre média, { $sets } cercles.
 ui-options-legacy-lists-nothing = Rien de nouveau : ce compte a déjà ces listes.
+ui-options-legacy-lists-not-saved = Impossible d'enregistrer les cercles.
 ui-options-legacy-lists-failed = Illisible : { $files }.

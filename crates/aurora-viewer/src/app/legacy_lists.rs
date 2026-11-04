@@ -12,8 +12,6 @@ pub(super) struct LegacyLists {
     looking: Option<Receiver<Vec<Found>>>,
     /// What they hold, until the window closes on an import.
     found: Vec<Found>,
-    /// The account they were read for: nothing crosses to another login.
-    account: uuid::Uuid,
     /// AURORA_DEMO_LEGACY_LISTS: the folder is written, then imports left.
     demo_started: bool,
     demo_imports: u8,
@@ -32,7 +30,6 @@ impl App {
         let apps = self.world.chat_log.legacy_apps();
         let (tx, rx) = channel();
         self.legacy_lists.looking = Some(rx);
-        self.legacy_lists.account = self.world.agent_id;
         let _ = std::thread::Builder::new().name("aurora-legacy-lists".into()).spawn(move || {
             let _ = tx.send(legacy_lists::find(&apps, &account));
         });
@@ -40,9 +37,6 @@ impl App {
 
     pub(super) fn legacy_lists_start(&mut self, index: usize, parts: Parts) {
         let found = std::mem::take(&mut self.legacy_lists.found);
-        if self.legacy_lists.account != self.world.agent_id {
-            return;
-        }
         let Some(found) = found.into_iter().nth(index) else {
             return;
         };
@@ -57,6 +51,14 @@ impl App {
         self.options_ui.legacy_lists_status = status(&report);
     }
 
+    /// Logout: what was read stays with its account.
+    pub(super) fn legacy_lists_reset(&mut self) {
+        self.legacy_lists.looking = None;
+        self.legacy_lists.found.clear();
+        self.options_ui.legacy_lists = Default::default();
+        self.options_ui.legacy_lists_status.clear();
+    }
+
     /// Every frame: what the folders hold.
     pub(super) fn poll_legacy_lists(&mut self) {
         self.demo_legacy_lists();
@@ -67,11 +69,6 @@ impl App {
             return;
         };
         self.legacy_lists.looking = None;
-        if self.legacy_lists.account != self.world.agent_id {
-            // another login: its own search is the one that counts
-            self.options_ui.legacy_lists = Default::default();
-            return;
-        }
         self.options_ui.legacy_lists.found = Some(found.iter().map(|f| (f.dir.clone(), f.counts)).collect());
         self.legacy_lists.found = found;
         if self.legacy_lists.demo_imports > 0 {
@@ -102,6 +99,17 @@ impl App {
             log::warn!("demo Legacy Viewer lists not written: {e}");
         }
         self.world.chat_log.set_legacy_apps(vec![root]);
+        // kept in memory, and what the run writes wiped: a run must not
+        // change what the next one shows
+        self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(Vec::new());
+        self.world.derender = Default::default();
+        self.world.media_filter = Default::default();
+        self.world.contact_sets = Default::default();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
         self.legacy_lists.demo_imports = match mode {
             Mode::Window | Mode::None => 0,
             Mode::Run => 1,
@@ -131,6 +139,10 @@ fn status(report: &Report) -> String {
     if !report.unreadable.is_empty() {
         text.push(' ');
         text.push_str(&tr!("ui-options-legacy-lists-failed", files = report.unreadable.join(", ")));
+    }
+    if report.contact_sets_unsaved {
+        text.push(' ');
+        text.push_str(tr!("ui-options-legacy-lists-not-saved"));
     }
     text
 }

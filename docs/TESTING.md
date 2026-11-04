@@ -7452,7 +7452,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   made up beside the demo account's and Preferences › Language and updates
   opens on it. `1` waits in the import window, `run` imports (an object of the
   plaza leaves the world, the row says what was added), `again` imports twice
-  (the row says there is nothing new), `none` shows a folder missing.
+  (the row says there is nothing new), `none` shows a folder missing. The four
+  lists are in memory during the run, and the account's transcripts are wiped.
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|import[:run|again|login|same|none]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in

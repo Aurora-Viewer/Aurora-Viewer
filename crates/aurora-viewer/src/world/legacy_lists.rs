@@ -18,9 +18,6 @@ use crate::media::filter::{self, Rule};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// Teleport history file (LLTeleportHistoryStorage::mFilename).
-const HISTORY_FILE: &str = "teleport_history.txt";
-
 /// Large enough for years of history, bounded before parsing.
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -112,6 +109,8 @@ pub struct Report {
     pub media: usize,
     pub contact_sets: usize,
     pub unreadable: Vec<&'static str>,
+    /// The account's contact sets could not be written.
+    pub contact_sets_unsaved: bool,
     /// Our avatar sat on something that left the world.
     pub unseated: bool,
 }
@@ -162,7 +161,7 @@ pub fn find(apps: &[PathBuf], account: &Account) -> Vec<Found> {
 pub fn read(folder: &Path) -> Lists {
     let mut lists = Lists::default();
     let mut failed = Vec::new();
-    if let Some(data) = bytes(folder, HISTORY_FILE, &mut failed) {
+    if let Some(data) = bytes(folder, tphistory::TELEPORT_HISTORY_FILE, &mut failed) {
         lists.history = tphistory::parse(&String::from_utf8_lossy(&data));
     }
     if let Some(data) = bytes(folder, derender::FILE, &mut failed) {
@@ -217,7 +216,7 @@ impl super::World {
                     Ok(_) => report.contact_sets = adds,
                     Err(e) => {
                         log::warn!("contact sets not saved: {e}");
-                        report.unreadable.push(CONTACT_SETS_FILE);
+                        report.contact_sets_unsaved = true;
                     }
                 }
             }
@@ -241,7 +240,7 @@ mod tests {
     fn write_lists(dir: &Path) {
         // as the Legacy Viewer writes them
         std::fs::write(
-            dir.join(HISTORY_FILE),
+            dir.join(tphistory::TELEPORT_HISTORY_FILE),
             "{'date':d\"2017-06-21T03:13:59.28Z\",'global_pos':[r462388,r303008,r2402.53],'slurl':'','title':'A place, A region'}\n",
         )
         .expect("history");

@@ -13127,4 +13127,5 @@ ui-options-legacy-lists-contact-sets = コンタクトセット（{ $count }）
 ui-options-legacy-lists-confirm = インポート
 ui-options-legacy-lists-imported = 追加または更新：テレポート履歴 { $teleports }、ブロックリスト { $derender }、メディアフィルター { $media }、コンタクトセット { $sets }。
 ui-options-legacy-lists-nothing = 新しい項目はありません。このアカウントにはすでにこれらのリストがあります。
+ui-options-legacy-lists-not-saved = コンタクトセットを保存できませんでした。
 ui-options-legacy-lists-failed = 読み取れません：{ $files }。

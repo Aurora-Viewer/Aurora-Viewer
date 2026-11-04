@@ -13154,4 +13154,5 @@ ui-options-legacy-lists-contact-sets = Contact sets ({ $count })
 ui-options-legacy-lists-confirm = Import
 ui-options-legacy-lists-imported = Added or updated: { $teleports } teleport history, { $derender } asset blacklist, { $media } media filter, { $sets } contact sets.
 ui-options-legacy-lists-nothing = Nothing new: this account already has these lists.
+ui-options-legacy-lists-not-saved = Could not save the contact sets.
 ui-options-legacy-lists-failed = Could not read: { $files }.
