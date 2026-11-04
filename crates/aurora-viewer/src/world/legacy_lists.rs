@@ -353,6 +353,26 @@ mod tests {
     }
 
     #[test]
+    fn contact_sets_that_cannot_be_saved_are_not_counted() {
+        let dir = folder("unsaved");
+        write_lists(&dir);
+        let (mut world, _) = demo_world();
+        // a file where the account's folder should be
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "").expect("blocker");
+        world.contact_sets = crate::world::contact_sets::ContactSets::load(blocker.join(CONTACT_SETS_FILE));
+        let report = world.merge_legacy_lists(read(&dir));
+        assert!(report.contact_sets_unsaved);
+        assert_eq!(report.contact_sets, 0);
+        assert_eq!(
+            (report.teleports, report.derender, report.media),
+            (1, 1, 1),
+            "the other lists still come in"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_folder_without_lists_adds_nothing_and_a_broken_file_is_named() {
         let dir = folder("broken");
         let (mut world, _) = demo_world();
