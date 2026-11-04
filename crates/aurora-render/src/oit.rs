@@ -1005,6 +1005,59 @@ impl Oit {
     }
 }
 
+// ---- The per-sample form of the resolve's pipelines, kept for reference, not compiled.
+//
+// 1. What it did: per-sample OIT coverage for the MSAA edges. The capture
+//    read each fragment's `@builtin(sample_mask)` into its node (8 bits),
+//    and the resolve composited the pixels whose samples disagreed sample
+//    by sample (`fs_edge`, a second indirect draw over the edge tiles), so
+//    the transparent edges were anti-aliased by their own coverage.
+// 2. Why it is off: naga 30.0.1's SPIR-V writer emits the SampleMask
+//    built-in as a scalar where Vulkan wants an array of 32-bit integers,
+//    so the validation layer reports VUID-SampleMask-SampleMask-04359 at
+//    every start; and the per-sample edge pass cost about a third of OIT's
+//    time on hair.
+// 3. What replaces it: the resolve per pixel (a layer kept where it is in
+//    front of at least half of the pixel's samples, the composite tested at
+//    the depth of its nearest layer) and, in the MSAA modes while OIT is
+//    on, the SMAA passes over the resolved image (renderer.rs
+//    `smaa_wanted`).
+// 4. When to bring it back: once naga emits SampleMask as an array, and
+//    only if it measures faster or better than the per-pixel resolve with
+//    SMAA.
+// 5. The last working version: commit e19a2ab5 (the one before d5855ef5),
+//    which the code below is taken from.
+// (`Resolve` had an `edge: Option<wgpu::RenderPipeline>` for MSAA, the
+// `args` buffer held two DrawIndirectArgs and the tile list two lists: the
+// plain tiles, then the edge tiles from `tiles` on)
+//
+// make_resolve:
+//     Resolve {
+//         samples,
+//         classify,
+//         composite: draw("oit composite", "fs_composite"),
+//         edge: ms.then(|| draw("oit composite msaa edges", "fs_edge")),
+//         depth_copy,
+//     }
+//
+// prepare:
+//         // no tile listed yet: 6 vertices and no instance each; the edge
+//         // tiles' list starts at `tiles` (their first_instance)
+//         let args: [u32; 8] = [6, 0, 0, 0, 6, 0, 0, pool.tiles];
+//         queue.write_buffer(&pool.args, 0, bytemuck::cast_slice(&args));
+//
+// make_pool:
+//         let args = buffer("oit tile draws", 32, U::STORAGE | U::INDIRECT)?;
+//         let tile_list = buffer("oit tiles", u64::from(tiles) * 2 * 4, U::STORAGE)?;
+//
+// resolve, after the composite's draw:
+//             pass.set_pipeline(&r.composite);
+//             pass.draw_indirect(&pool.args, 0);
+//             if let Some(edge) = &r.edge {
+//                 pass.set_pipeline(edge);
+//                 pass.draw_indirect(&pool.args, 16);
+//             }
+
 #[cfg(test)]
 mod tests {
     use super::*;

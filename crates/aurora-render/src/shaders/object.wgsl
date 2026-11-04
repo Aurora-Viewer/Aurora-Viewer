@@ -1853,6 +1853,86 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) v
     return vec4<f32>(0.0);
 }
 
+// ---- The per-sample form of the capture, kept for reference, not compiled.
+//
+// 1. What it did: per-sample OIT coverage for the MSAA edges. The capture
+//    read each fragment's `@builtin(sample_mask)` into its node (8 bits),
+//    and the resolve composited the pixels whose samples disagreed sample
+//    by sample (`fs_edge`, a second indirect draw over the edge tiles), so
+//    the transparent edges were anti-aliased by their own coverage.
+// 2. Why it is off: naga 30.0.1's SPIR-V writer emits the SampleMask
+//    built-in as a scalar where Vulkan wants an array of 32-bit integers,
+//    so the validation layer reports VUID-SampleMask-SampleMask-04359 at
+//    every start; and the per-sample edge pass cost about a third of OIT's
+//    time on hair.
+// 3. What replaces it: the resolve per pixel (a layer kept where it is in
+//    front of at least half of the pixel's samples, the composite tested at
+//    the depth of its nearest layer) and, in the MSAA modes while OIT is
+//    on, the SMAA passes over the resolved image (renderer.rs
+//    `smaa_wanted`).
+// 4. When to bring it back: once naga emits SampleMask as an array, and
+//    only if it measures faster or better than the per-pixel resolve with
+//    SMAA.
+// 5. The last working version: commit e19a2ab5 (the one before d5855ef5),
+//    which the code below is taken from.
+// @fragment (the OIT_EARLY_DEPTH marker here)
+// fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
+//     let px = vec2<u32>(in.clip.xy);
+//     if (!OIT_EARLY_DEPTH && oit_params.samples <= 1u && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
+//         discard;
+//     }
+//     let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
+//     // A full pool and full slots: nothing to store, so nothing to shade (the
+//     // replay of the frame shades every face once, in order)
+//     let used = atomicLoad(&oit_heads[0]);
+//     if (used >= oit_params.node_cap && atomicLoad(&oit_heads[pixel]) >= oit_params.slots) {
+//         oit_overflow(used);
+//         return vec4<f32>(0.0);
+//     }
+//     // (no discard from here on: oit_alloc counts the subgroup's lanes) a
+//     // fragment blend_color would discard, or a helper invocation (it
+//     // covers no sample), stores nothing
+//     let c = blend_color_kept(in, front);
+//     if (c.a <= 0.0 || (coverage & 0xffu) == 0u) {
+//         return vec4<f32>(0.0);
+//     }
+//     let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
+//     let b16 = pack2x16float(vec2<f32>(clamp(c.b, 0.0, 65504.0), 0.0)) & 0xffffu;
+//     let rg = pack2x16float(clamp(c.rg, vec2<f32>(0.0), vec2<f32>(65504.0)));
+//     let rest = b16 | (a8 << 16u) | ((coverage & 0xffu) << 24u);
+//     let slot = atomicAdd(&oit_heads[pixel], 1u);
+//     if (slot < oit_params.slots) {
+//         textureStore(oit_slots_w, px, slot, vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), 0u));
+//         return vec4<f32>(0.0);
+//     }
+//     if (used >= oit_params.node_cap) {
+//         // (the slots were free at the check above, this fragment lost them)
+//         oit_overflow(used);
+//         return vec4<f32>(0.0);
+//     }
+//     var idx = oit_alloc();
+//     // the node claimed with this frame's stamp; one already claimed this
+//     // frame was handed out twice (oit_alloc): nodes of this fragment's own
+//     // then, a few tries, else dropped (the overflow marked, the frame
+//     // replayed)
+//     for (var attempt = 0u; attempt < 4u; attempt += 1u) {
+//         if (idx >= oit_params.node_cap) {
+//             return vec4<f32>(0.0);
+//         }
+//         if (atomicExchange(&oit_claims[idx], oit_params.stamp) != oit_params.stamp) {
+//             break;
+//         }
+//         if (attempt == 3u) {
+//             atomicMax(&oit_heads[0], oit_params.node_cap + 1u);
+//             return vec4<f32>(0.0);
+//         }
+//         idx = atomicAdd(&oit_heads[0], 1u);
+//     }
+//     let prev = atomicExchange(&oit_heads[pixel + 1u], idx + 1u);
+//     oit_nodes[idx] = vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), prev);
+//     return vec4<f32>(0.0);
+// }
+
 // Glow amount into the scene alpha (additive, alpha channel only), drawn
 // for faces with glow after the scene: emissiveF.glsl (texture alpha x TE
 // glow, the face alpha is ignored: invisible faces still glow) and
@@ -1908,6 +1988,66 @@ fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) ve
     }
     return vec4<f32>(0.0, 0.0, 0.0, g * through);
 }
+
+// ---- The per-sample form of the glow, kept for reference, not compiled.
+//
+// 1. What it did: per-sample OIT coverage for the MSAA edges. The capture
+//    read each fragment's `@builtin(sample_mask)` into its node (8 bits),
+//    and the resolve composited the pixels whose samples disagreed sample
+//    by sample (`fs_edge`, a second indirect draw over the edge tiles), so
+//    the transparent edges were anti-aliased by their own coverage.
+// 2. Why it is off: naga 30.0.1's SPIR-V writer emits the SampleMask
+//    built-in as a scalar where Vulkan wants an array of 32-bit integers,
+//    so the validation layer reports VUID-SampleMask-SampleMask-04359 at
+//    every start; and the per-sample edge pass cost about a third of OIT's
+//    time on hair.
+// 3. What replaces it: the resolve per pixel (a layer kept where it is in
+//    front of at least half of the pixel's samples, the composite tested at
+//    the depth of its nearest layer) and, in the MSAA modes while OIT is
+//    on, the SMAA passes over the resolved image (renderer.rs
+//    `smaa_wanted`).
+// 4. When to bring it back: once naga emits SampleMask as an array, and
+//    only if it measures faster or better than the per-pixel resolve with
+//    SMAA.
+// 5. The last working version: commit e19a2ab5 (the one before d5855ef5),
+//    which the code below is taken from.
+// @fragment
+// fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) mask: u32) -> @location(0) vec4<f32> {
+//     let g = glow_amount(in, front);
+//     let px = vec2<u32>(in.clip.xy);
+//     var through = 1.0;
+//     let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
+//     let in_slots = min(oit_heads_r[pixel], oit_params.slots);
+//     var k = 0u;
+//     var idx = oit_heads_r[pixel + 1u];
+//     var steps = 0u;
+//     loop {
+//         if (through <= 0.0) {
+//             break;
+//         }
+//         var n: vec4<u32>;
+//         if (k < in_slots) {
+//             n = textureLoad(oit_slots_r, px, k, 0);
+//             k += 1u;
+//         } else {
+//             // (bounded by the pixel's count and OIT_MAX_WALK, as oit.wgsl)
+//             if (idx == 0u || steps >= min(oit_heads_r[pixel], OIT_MAX_WALK)) {
+//                 break;
+//             }
+//             n = oit_nodes_r[idx - 1u];
+//             idx = n.w;
+//             steps += 1u;
+//         }
+//         // nearer (reverse-Z) and over one of this fragment's samples
+//         if (bitcast<f32>(n.z) > in.clip.z && ((n.y >> 24u) & mask) != 0u) {
+//             through *= 1.0 - f32((n.y >> 16u) & 0xffu) / 255.0;
+//         }
+//     }
+//     if (g * through <= 0.0) {
+//         discard;
+//     }
+//     return vec4<f32>(0.0, 0.0, 0.0, g * through);
+// }
 
 // The glow fs_glow adds (discards a fragment without any).
 fn glow_amount(in: VsOut, front: bool) -> f32 {
