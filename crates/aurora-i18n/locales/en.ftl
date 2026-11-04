@@ -13109,3 +13109,9 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
+god-mode-entering = Entering god mode, level { $level }
+god-mode-leaving = Leaving god mode, level { $level }
+god-mode-request = Request Admin Status
+god-mode-leave = Leave Admin Status
+god-mode-badge = Admin
+god-mode-badge-tip = Admin status (god level { $level }). Advanced › Leave Admin Status gives it back.

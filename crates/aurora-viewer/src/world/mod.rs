@@ -112,6 +112,8 @@ mod automated_chat_tests;
 #[cfg(test)]
 mod flash_tests;
 #[cfg(test)]
+mod god_mode_tests;
+#[cfg(test)]
 mod group_notice_tests;
 #[cfg(test)]
 mod toasts_tests;
@@ -444,6 +446,9 @@ pub struct World {
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
+    /// The god level the region gave us (GrantGodlikePowers, Advanced ›
+    /// Request Admin Status): 0 none; shown on the navigation bar.
+    pub god_level: u8,
     /// What the simulator killed while the photo mode held the world still
     /// (`freeze_motion`): each object's key and id, removed on thaw.
     held_kills: Vec<(ObjKey, Uuid)>,
@@ -775,6 +780,7 @@ impl World {
             environment_answers: Vec::new(),
             health: 100.0,
             frozen: false,
+            god_level: 0,
             held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -1921,6 +1927,22 @@ impl World {
 
     /// A notice of the viewer in the nearby chat, about `topic` (the icon
     /// of its compact row, #741).
+    /// set_god_level (llviewermenu.cpp): the level the region granted, said
+    /// as the EnteringGodMode / LeavingGodMode notifications say it.
+    pub fn set_god_level(&mut self, level: u8) {
+        let old = std::mem::replace(&mut self.god_level, level);
+        if old == level {
+            return;
+        }
+        let text = if level > 0 {
+            aurora_i18n::tr!("god-mode-entering", level = i64::from(level))
+        } else {
+            aurora_i18n::tr!("god-mode-leaving", level = i64::from(old))
+        };
+        log::info!("admin status: god level {old} -> {level}");
+        self.system_notice(text, notice_topics::Topic::Region);
+    }
+
     pub fn system_notice(&mut self, text: impl Into<String>, topic: notice_topics::Topic) {
         let line = ChatLine {
             time: SystemTime::now(),
@@ -2349,6 +2371,10 @@ impl World {
                 // back in a region left moments ago: its objects first, its
                 // simulator only sends what changed since
                 self.unpark_region(handle);
+                None
+            }
+            NetEvent::GodLevel(level) => {
+                self.set_god_level(level);
                 None
             }
             NetEvent::RegionHandshake(info) => {

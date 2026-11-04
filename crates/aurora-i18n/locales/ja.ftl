@@ -13082,3 +13082,9 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+god-mode-entering = ゴッドモードに入りました。レベル { $level }
+god-mode-leaving = ゴッドモードを終了しました。レベル { $level }
+god-mode-request = 管理者ステータスを要求
+god-mode-leave = 管理者ステータスを解除
+god-mode-badge = 管理者
+god-mode-badge-tip = 管理者ステータス（ゴッドレベル { $level }）。「詳細」›「管理者ステータスを解除」で戻せます。

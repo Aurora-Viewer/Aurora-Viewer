@@ -1150,6 +1150,7 @@ mod tests {
             can_go_home: true,
             release_notes: false,
             region_console: false,
+            god_level: 0,
             motd: false,
             grid_help: None,
             classic_bars: false,

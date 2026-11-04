@@ -56,6 +56,8 @@ pub struct ParcelState<'a> {
     pub health: f32,
     /// Frozen by a parcel owner or an estate manager (ViewerFrozenMessage).
     pub frozen: bool,
+    /// The god level the region gave us (Request Admin Status), 0 none.
+    pub god_level: u8,
 }
 
 /// allowAgentBuild / LLParcel::allowModifyBy, with "rez under land group":
@@ -76,6 +78,14 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     let region = |f: u32| s.region_flags & f != 0;
     let parcel = |f: u32| flags & f != 0;
     let mut out = Vec::with_capacity(8);
+
+    // Admin status: the Legacy Viewer reddens its menu bar
+    // (setMenuBackgroundColor); Aurora keeps a crown in front, lit, with the
+    // level and the way back in its tooltip
+    if s.god_level > 0 {
+        let tip = aurora_i18n::tr!("god-mode-badge-tip", level = i64::from(s.god_level));
+        out.push(icon("crown-filled", true, aurora_i18n::tr!("god-mode-badge"), &tip));
+    }
 
     // process_frozen_message shows nothing; Aurora keeps the state in sight
     // until the simulator releases us. Red without a strike: it is active.
@@ -338,6 +348,7 @@ mod tests {
             group: None,
             health: 100.0,
             frozen: false,
+            god_level: 0,
         }
     }
 

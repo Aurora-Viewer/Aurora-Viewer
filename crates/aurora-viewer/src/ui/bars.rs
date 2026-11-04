@@ -81,6 +81,8 @@ pub enum BarAction {
     ToggleQuickjump,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Request Admin Status (true) / Leave Admin Status (false).
+    AdminStatus(bool),
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -272,6 +274,9 @@ pub struct StatusInfo<'a> {
     /// console, estate managers).
     pub release_notes: bool,
     pub region_console: bool,
+    /// The god level the region gave us: Advanced › Request / Leave Admin
+    /// Status.
+    pub god_level: u8,
     /// The grid sent a message at login (Contents › Message of the day).
     pub motd: bool,
     /// The help page of the grid info (OpenSim), with the grid's name:
@@ -1224,6 +1229,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     crate::ui::sim_console::WINDOW,
                     &mut panels.sim_console,
                 );
+            }
+            // Advanced › Request Admin Status (Ctrl+Alt+G) / Leave Admin
+            // Status (Advanced.RequestAdminStatus / LeaveAdminStatus): asked
+            // of the region, which grants it or not
+            if st.god_level == 0 {
+                if menu::item_keys(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-request"), "Ctrl+Alt+G") {
+                    *action = BarAction::AdminStatus(true);
+                }
+            } else if menu::item(ui, p, "crown", aurora_i18n::tr!("god-mode-leave")) {
+                *action = BarAction::AdminStatus(false);
             }
             // Advanced › Quiet Snapshots (PlayModeUISndSnapshot)
             let quiet = aurora_i18n::tr!("photo-quiet-snapshots");

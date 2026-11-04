@@ -13105,3 +13105,9 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+god-mode-entering = Passage en mode dieu, niveau { $level }
+god-mode-leaving = Sortie du mode dieu, niveau { $level }
+god-mode-request = Demander le statut d’administrateur
+god-mode-leave = Quitter le statut d’administrateur
+god-mode-badge = Admin
+god-mode-badge-tip = Statut d’administrateur (niveau dieu { $level }). Avancé › Quitter le statut d’administrateur le rend.

@@ -60,6 +60,7 @@ mod describe;
 mod dev_toolbox;
 mod folders;
 use folders::chat_log_root;
+mod admin_status;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod dof;
@@ -4331,6 +4332,7 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
+            Action::RequestAdminStatus => self.request_admin_status(true),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
@@ -11452,6 +11454,7 @@ impl App {
         self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
+        self.demo_admin_status();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -13086,6 +13089,7 @@ impl App {
                 self.settings.save();
                 log::info!("quickjump: {}", self.settings.quickjump);
             }
+            BarAction::AdminStatus(godlike) => self.request_admin_status(godlike),
             BarAction::ToggleQuietSnapshots => {
                 self.settings.snapshot.sound = !self.settings.snapshot.sound;
                 self.settings.save();
@@ -14642,6 +14646,7 @@ impl App {
                     can_go_home: self.world.rlva_can_teleport_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
+                    god_level: self.world.god_level,
                     motd: !self.world.motd.is_empty(),
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
@@ -14654,6 +14659,7 @@ impl App {
                             group: self.world.groups.group(&parcel.group_id),
                             health: self.world.health,
                             frozen: self.world.frozen,
+                            god_level: self.world.god_level,
                         }),
                         _ => Vec::new(),
                     },
