@@ -10053,8 +10053,12 @@ What the inventory must show with these scenarios:
   corrected by the same ratio and added to the scene's glow (check with
   `AURORA_DEMO_GLOW_LAYERS=1` or `shell`, `AURORA_DEBUG_GLOW=1`: the same
   glow as `AURORA_OIT=0`). MSAA
-  modes only (`AURORA_AA=2`, `3`, `4`): the targets are multisampled, with
-  `AURORA_AA=0` the faces stay in the object order. The two stochastic
+  modes only (`AURORA_AA=2`, `3`, `4`): the targets are multisampled.
+  Without MSAA (`AURORA_AA=0` none, `1` FXAA, `5` TAA, `6` SMAA, or a
+  device without it) the method is off whatever the setting or
+  `AURORA_OIT`: the blended faces are drawn in the Legacy per-object order,
+  the same image as `AURORA_OIT=0` (the Preferences tooltip says so in the
+  three languages). The two stochastic
   passes run at their own sample count, the most the device takes up to 8
   (the paper's 8 per pass), even when the scene is at 4x: their depth
   starts as the opaque depth spread over those samples (each takes the
