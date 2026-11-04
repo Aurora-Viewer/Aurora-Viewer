@@ -2559,7 +2559,7 @@ fn empty_trash_ignores_rlva_locks_without_exempting_other_purges() {
     assert!(world.rlva.inventory_locked());
     let trash = Uuid::from_u128(90);
     let unloaded = Uuid::from_u128(91);
-    for (id, kind, state) in [(trash, 14, FetchState::Fetched), (unloaded, -1, FetchState::default())] {
+    for (id, kind, state) in [(trash, 14, FetchState::Fetched), (unloaded, -1, FetchState::Unknown)] {
         world.inventory.folders.insert(
             id,
             Folder {
