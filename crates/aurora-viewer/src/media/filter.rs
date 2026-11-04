@@ -293,7 +293,7 @@ impl MediaFilter {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        crate::atomic_file::publish(path, aurora_llsd::to_xml(&Llsd::Array(list)).as_bytes())
+        crate::atomic_file::publish(path, &aurora_llsd::to_xml(&Llsd::Array(list)))
     }
 
     pub fn rules(&self) -> &[Rule] {
