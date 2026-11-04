@@ -418,6 +418,12 @@ impl DebugView {
 /// The former look-at range slider's maximum, which meant no limit.
 const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 
+/// The draw distance's range (m): the Legacy Viewer's Graphics slider
+/// (RenderFarClip, panel_preferences_graphics1.xml, 32 to 1024). A region
+/// sends what it allows of it (OpenSim's MaxDrawDistance, 512 by default).
+pub const DRAW_DISTANCE_MIN: f32 = 32.0;
+pub const DRAW_DISTANCE_MAX: f32 = 1024.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -2625,7 +2631,7 @@ impl Settings {
         if !self.chat_island_width.is_finite() || self.chat_island_width < 0.0 {
             self.chat_island_width = 0.0;
         }
-        self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
+        self.draw_distance = self.draw_distance.clamp(DRAW_DISTANCE_MIN, DRAW_DISTANCE_MAX);
         self.chat_commands.sanitize();
         if let Some(toolbar) = &mut self.toolbar {
             toolbar.sanitize();
@@ -3063,6 +3069,18 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(disabled.render_settings().projector_shadow_limit, 0);
+    }
+
+    #[test]
+    fn draw_distance_goes_to_1024_like_the_legacy_slider() {
+        for (asked, kept) in [(16.0, 32.0), (512.0, 512.0), (1024.0, 1024.0), (2000.0, 1024.0)] {
+            let s = super::Settings {
+                draw_distance: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.draw_distance, kept, "{asked} m");
+        }
     }
 
     #[test]
