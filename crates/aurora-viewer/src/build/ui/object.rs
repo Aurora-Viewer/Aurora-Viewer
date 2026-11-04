@@ -1209,6 +1209,22 @@ mod tests {
     }
 
     #[test]
+    fn tortured_sphere_keeps_its_ratios_when_another_shape_field_changes() {
+        let mut v = box_params();
+        v.path.curve_type = LL_PCODE_PATH_CIRCLE;
+        v.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+        v.path.scale = [1.0, 2.0];
+        v.path.twist_begin = -0.5;
+        v.path.twist_end = -0.5;
+        v.profile.hollow = 0.6;
+        let mut u = ui_from_volume(&v);
+        assert_eq!(u.ty, 3);
+        u.hollow = 50.0;
+        v.profile.hollow = 0.5;
+        assert_eq!(volume_from_ui(&u, u.ty, false).to_raw(), v.to_raw());
+    }
+
+    #[test]
     fn box_to_sphere_swaps_cuts() {
         let mut u = ui_from_volume(&box_params());
         u.cut = (0.25, 0.75);
