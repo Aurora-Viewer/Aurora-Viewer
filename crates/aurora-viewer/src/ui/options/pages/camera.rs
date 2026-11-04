@@ -224,6 +224,23 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-avatar-hover-height-also-moves-the-camera"),
                     &field!(camera.hover_affects_camera),
                 );
+                cx.combo(
+                    tr!("ui-options-camera-follow-joint"),
+                    tr!("ui-options-camera-follow-joint-tip"),
+                    &field!(camera.third_person_follow_joint),
+                    &crate::camera::CameraFollowJoint::choices(),
+                );
+                cx.row(
+                    tr!("ui-options-camera-follow-intensity"),
+                    tr!("ui-options-camera-follow-intensity-tip"),
+                    &field!(camera.third_person_follow_intensity),
+                    |ui, s| {
+                        ui.add_enabled_ui(s.camera.third_person_follow_joint.is_some(), |ui| {
+                            super::super::slider(ui, &mut s.camera.third_person_follow_intensity, 0..=200, "%")
+                        })
+                        .inner
+                    },
+                );
                 cx.toggle(
                     tr!("ui-options-camera-no-mouse-wheel-zoom"),
                     tr!("ui-options-camera-the-mouse-wheel-does-not-move-the-camera-closer"),
