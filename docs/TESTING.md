@@ -4077,6 +4077,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>` | The crowd's worn prims and meshes use a legacy material, and a material nobody uses arrives every `seconds` |
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
+| `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4103,6 +4104,18 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
+
+- **`AURORA_DEMO_ALPHA_MASK_AB=planes|cross|spheres:<layers>:mask|blend[:touch]`**:
+  adds 1 to 512 static layered prims with a procedural alpha texture; `none`
+  keeps the ordinary plaza. The optional `touch` marks those prims touchable.
+  For shader A/B, the existing demo-only `AURORA_DEMO_WATER_SHADERS=1` loads
+  the object shader from this checkout before each process starts. Keep the
+  executable, camera and settings identical, alternate variants after warmup,
+  and measure SMAA and MSAA separately with the transparency overlay off.
+  The measured view uses `AURORA_DEMO_POS=144,125`,
+  `AURORA_DEMO_HOVER=800,350` and `AURORA_DEMO_TOD=5`; compare
+  `planes:64:mask` with the `planes:64:blend` control. Use `planes:4:mask`
+  for visible holes and edge checks after loading (`AURORA_CAPTURE_FRAMES=1500`).
 
 - **`AURORA_DEMO_TEXTURES=<n>`**: n small cubes (9000 if the value is
   not a number), each with its own texture, of several sizes (including
