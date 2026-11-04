@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+`aurora-prim::params::VolumeParams::constrain` preserves the path-ratio
+limits of `LLVolumeParams::setRatio` (indra/llmath/llvolume.cpp): spheres
+and alternate paths accept 0..2; ordinary circular non-sphere paths use
+the narrower hole-size limits. Raw updates and shape edits therefore keep
+the same geometry as `volume::ll_constrain`. `demo_tortured_prims.rs`
+compares a hollow reversed sphere with the former clamped oval and ordinary
+sphere/torus controls, without grid assets (#2138).
+
 Mask fragment shaders (`aurora-render/src/shaders/object.wgsl`) evaluate
 material derivatives and alpha coverage before derivative-free lighting,
 discarding rejected pixels and zero MSAA coverage without changing cutoff
