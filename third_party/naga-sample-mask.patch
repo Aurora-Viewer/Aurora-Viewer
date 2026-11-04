@@ -1,0 +1,119 @@
+naga 30.0.1 (crates.io; gfx-rs/wgpu, naga/ at 40f4a34ebaf56f9a046231f54125ad046239d3f3),
+SPIR-V backend: the `sample_mask` built-in declared as an array of one
+32-bit integer, loaded and stored through its first element, as Vulkan
+requires (VUID-SampleMask-SampleMask-04359: "BuiltIn SampleMask variable
+needs to be a 32-bit int array"); a scalar was emitted before. Apply in
+naga/ with `patch -p1 < ../naga-sample-mask.patch` when moving to a newer
+naga that still lacks the fix.
+
+--- a/src/back/spv/mod.rs
++++ b/src/back/spv/mod.rs
+@@ -983,6 +983,14 @@
+     /// when `StorageInputOutput16` capability is not available.
+     io_f16_polyfills: f16_polyfill::F16IoPolyfill,
+ 
++    /// The `SampleMask` built-in's variables, with their storage class:
++    /// SPIR-V wants them as arrays of 32-bit integers
++    /// (VUID-SampleMask-SampleMask-04359), so each is an array of one,
++    /// read and written through its first element.
++    sample_mask_vars: crate::FastHashMap<Word, spirv::StorageClass>,
++    /// `array<u32, 1>`, once declared.
++    sample_mask_array_type: Option<Word>,
++
+     /// Non semantic debug printf extension `OpExtInstImport`
+     debug_printf: Option<Word>,
+     pub(crate) ray_query_initialization_tracking: bool,
+--- a/src/back/spv/writer.rs
++++ b/src/back/spv/writer.rs
+@@ -118,6 +118,8 @@
+             io_f16_polyfills: super::f16_polyfill::F16IoPolyfill::new(
+                 options.use_storage_input_output_16,
+             ),
++            sample_mask_vars: crate::FastHashMap::default(),
++            sample_mask_array_type: None,
+             debug_printf: None,
+             task_dispatch_limits: options.task_dispatch_limits,
+             mesh_shader_primitive_indices_clamp: options.mesh_shader_primitive_indices_clamp,
+@@ -212,6 +214,8 @@
+             ray_tracing_functions: take(&mut self.ray_tracing_functions).reclaim(),
+             has_ray_tracing_pipeline: false,
+             io_f16_polyfills: take(&mut self.io_f16_polyfills).reclaim(),
++            sample_mask_vars: take(&mut self.sample_mask_vars).reclaim(),
++            sample_mask_array_type: None,
+             debug_printf: None,
+         };
+ 
+@@ -2983,7 +2987,15 @@
+         let ty_inner = &ir_module.types[ty].inner;
+         let needs_polyfill = self.needs_f16_polyfill(ty_inner);
+ 
+-        let pointer_type_id = if needs_polyfill {
++        let pointer_type_id = if let crate::Binding::BuiltIn(crate::BuiltIn::SampleMask) = *binding {
++            // SPIR-V wants the SampleMask built-in as an array of 32-bit
++            // integers (VUID-SampleMask-SampleMask-04359): an array of one,
++            // its element loaded by `load_io_with_f16_polyfill` and stored by
++            // `store_io_with_f16_polyfill`
++            let array_type_id = self.get_sample_mask_array_type_id(ty);
++            self.sample_mask_vars.insert(id, class);
++            self.get_pointer_type_id(array_type_id, class)
++        } else if needs_polyfill {
+             let f32_value_local =
+                 super::f16_polyfill::F16IoPolyfill::create_polyfill_type(ty_inner)
+                     .expect("needs_polyfill returned true but create_polyfill_type returned None");
+@@ -3359,6 +3371,40 @@
+         }
+     }
+ 
++    /// `array<u32, 1>`, the type of the `SampleMask` built-in's variables
++    /// (`ty` is their `u32`).
++    fn get_sample_mask_array_type_id(&mut self, ty: Handle<crate::Type>) -> Word {
++        if let Some(id) = self.sample_mask_array_type {
++            return id;
++        }
++        let base_id = self.get_handle_type_id(ty);
++        let length_id = self.get_index_constant(1);
++        let id = self.id_gen.next();
++        Instruction::type_array(id, base_id, length_id)
++            .to_words(&mut self.logical_layout.declarations);
++        self.sample_mask_array_type = Some(id);
++        id
++    }
++
++    /// The pointer an IO variable is loaded from or stored to: itself, or
++    /// for a `SampleMask` variable, its first element.
++    fn io_pointer(&mut self, body: &mut Vec<Instruction>, varying_id: Word) -> Word {
++        let Some(class) = self.sample_mask_vars.get(&varying_id).copied() else {
++            return varying_id;
++        };
++        let u32_id = self.get_u32_type_id();
++        let pointer_type_id = self.get_pointer_type_id(u32_id, class);
++        let zero_id = self.get_index_constant(0);
++        let id = self.id_gen.next();
++        body.push(Instruction::access_chain(
++            pointer_type_id,
++            id,
++            varying_id,
++            &[zero_id],
++        ));
++        id
++    }
++
+     /// Load an IO variable, converting from `f32` to `f16` if polyfill is active.
+     /// Returns the id of the loaded value matching `target_type_id`.
+     pub(super) fn load_io_with_f16_polyfill(
+@@ -3367,6 +3413,7 @@
+         varying_id: Word,
+         target_type_id: Word,
+     ) -> Word {
++        let varying_id = self.io_pointer(body, varying_id);
+         let tmp = self.id_gen.next();
+         if let Some(f32_ty) = self.io_f16_polyfills.get_f32_io_type(varying_id) {
+             body.push(Instruction::load(f32_ty, tmp, varying_id, None));
+@@ -3391,6 +3438,7 @@
+         varying_id: Word,
+         value_id: Word,
+     ) {
++        let varying_id = self.io_pointer(body, varying_id);
+         if let Some(f32_ty) = self.io_f16_polyfills.get_f32_io_type(varying_id) {
+             let converted = self.id_gen.next();
+             super::f16_polyfill::F16IoPolyfill::emit_f16_to_f32_conversion(

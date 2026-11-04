@@ -1458,6 +1458,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ scripts/                     tools for agents and humans (PowerShell)
 │  ├─ automation-window-border.ps1 dashed yellow outline of the automated-test windows (Windows)
 │  └─ tools/                    aurora-tools: menu, interface (ui), checks and repair (checks), actions, live PRs (prs), releases, reset (reset), Claude Code permissions (claude)
+├─ third_party/                 crates built in place of their crates.io release (`[patch.crates-io]` in Cargo.toml) while they need a fix of ours: naga (`naga-sample-mask.patch`, the SPIR-V `sample_mask` built-in as the array Vulkan requires)
 └─ .github/                     CI and wiki publication (workflows/, actions/), release and nightly betas, PR template, Dependabot
 ```
 

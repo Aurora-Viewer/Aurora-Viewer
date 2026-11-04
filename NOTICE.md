@@ -44,6 +44,16 @@ the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`: Copyright ©
 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
 GPL-3.0-or-later as described above.
 
+## Vendored crates
+
+`third_party/naga/` is naga 30.0.1 (gfx-rs/wgpu, `naga/` at revision
+`40f4a34e`), Copyright © the gfx-rs developers, MIT OR Apache-2.0 (its
+`LICENSE.MIT` and `LICENSE.APACHE` are next to it), with one change of its
+SPIR-V backend, kept in `third_party/naga-sample-mask.patch`: the
+`sample_mask` built-in declared as the array of 32-bit integers Vulkan
+requires. The workspace builds it in place of the crates.io release
+(`[patch.crates-io]` in `Cargo.toml`) until a release carries the fix.
+
 ## Bundled assets
 
 | Asset | Location | License |
