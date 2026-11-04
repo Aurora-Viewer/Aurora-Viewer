@@ -495,7 +495,8 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
         };
         head(ui, p, &e.name, None, Some(content), &e.category);
         ui.add_space(4.0);
-        text_field(ui, p, aurora_i18n::tr!("search-event-date"), &e.date);
+        let date = super::event_date_text(&e.date, i64::from(e.date_utc), crate::ui::bars::clock::zone());
+        text_field(ui, p, aurora_i18n::tr!("search-event-date"), &date);
         text_field(
             ui,
             p,
@@ -533,8 +534,11 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
 
 /// The event's day in large type, its time and duration beside it, and
 /// "Started" once its start is past.
+/// The start of an event: month, day and hour in the clock's zone, which
+/// the line under the hour names (#1754).
 fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, duration: Option<String>) {
-    let (_, month, day, _, hour, minute, _) = crate::ui::land::slt_parts(start);
+    let zone = crate::ui::bars::clock::zone();
+    let (_, month, day, _, hour, minute, _) = super::event_parts(start, zone);
     let width = ui.available_width();
     egui::Frame::new()
         .fill(p.field)
@@ -557,7 +561,10 @@ fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, duration: Option<Stri
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.add_space(3.0);
                     ui.label(RichText::new(format!("{hour:02}:{minute:02}")).size(15.0).strong().color(p.ink));
-                    let mut sub = aurora_i18n::tr!("search-aurora-slt").to_owned();
+                    let mut sub = match zone {
+                        crate::settings::ClockZone::Slt => aurora_i18n::tr!("search-aurora-slt").to_owned(),
+                        crate::settings::ClockZone::Local => crate::ui::bars::clock::zone_name(zone, start),
+                    };
                     if let Some(d) = duration {
                         sub = format!("{sub} · {d}");
                     }

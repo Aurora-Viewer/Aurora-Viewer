@@ -641,7 +641,8 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, actions: &mut 
                 },
             )
         });
-        text_field(ui, p, aurora_i18n::tr!("search-event-date"), &e.date);
+        let date = super::event_date_text(&e.date, i64::from(e.date_utc), crate::ui::bars::clock::zone());
+        text_field(ui, p, aurora_i18n::tr!("search-event-date"), &date);
         text_field(
             ui,
             p,

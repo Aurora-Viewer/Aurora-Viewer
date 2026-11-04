@@ -15,6 +15,7 @@
 //! same for each landmark they show (LLRemoteParcelInfoProcessor).
 
 use super::{SearchAction, SearchUi, WebEnv, aurora_details, combo, event_categories, place_categories, status_text, unix_now};
+use crate::settings::ClockZone;
 use crate::theme::Palette;
 use crate::ui::place_card::{self, RowSize, Thumb};
 use crate::ui::place_details::Ctx;
@@ -165,12 +166,24 @@ impl Aurora {
     }
 }
 
-/// "Today · 19:00 SLT", "Tomorrow · …", or the weekday and date, in SLT
-/// like the event dates of the directory.
-fn event_when(unix: i64, now: i64) -> String {
-    let (y, m, d, weekday, h, min, _) = crate::ui::land::slt_parts(unix);
+/// "Today · 19:00 SLT", "Tomorrow · …", or the weekday and date, in the
+/// clock's zone: SLT like the event dates of the directory, or local time
+/// with its zone ("Today · 04:00 CET", #1754).
+fn event_when(unix: i64, now: i64, zone: ClockZone) -> String {
+    let name = match zone {
+        ClockZone::Slt => None,
+        ClockZone::Local => Some(crate::ui::bars::clock::zone_name(zone, unix)),
+    };
+    event_when_at(unix, now, |t| crate::ui::bars::clock::offset(zone, t), name.as_deref())
+}
+
+/// `event_when` with the zone's offset at a time, and its name (none:
+/// SLT, which the line's own text names).
+fn event_when_at(unix: i64, now: i64, offset: impl Fn(i64) -> i64, zone: Option<&str>) -> String {
+    let parts = |t: i64| crate::ui::land::parts_at(t, offset(t));
+    let (y, m, d, weekday, h, min, _) = parts(unix);
     let same = |t: i64| {
-        let (ty, tm, td, ..) = crate::ui::land::slt_parts(t);
+        let (ty, tm, td, ..) = parts(t);
         (ty, tm, td) == (y, m, d)
     };
     let day = if same(now) {
@@ -181,7 +194,11 @@ fn event_when(unix: i64, now: i64) -> String {
         let date = aurora_i18n::tr!("search-events-date", month = m as i64, day = d);
         format!("{} {date}", crate::ui::land::weekdays()[weekday])
     };
-    aurora_i18n::tr!("search-aurora-event-time", day = day, time = format!("{h:02}:{min:02}"))
+    let time = format!("{h:02}:{min:02}");
+    match zone {
+        None => aurora_i18n::tr!("search-aurora-event-time", day = day, time = time),
+        Some(zone) => aurora_i18n::tr!("search-aurora-event-time-zone", day = day, time = time, zone = zone),
+    }
 }
 
 /// The user name of a directory row: "First Last" → "first.last", a
@@ -965,7 +982,8 @@ impl SearchUi {
                     _ => 0,
                 };
                 let now = unix_now();
-                let (_, month, day, ..) = crate::ui::land::slt_parts(unix);
+                let zone = crate::ui::bars::clock::zone();
+                let (_, month, day, ..) = super::event_parts(unix, zone);
                 let mon = crate::ui::land::months()[(month.max(1) - 1).min(11)]
                     .trim_end_matches('.')
                     .to_uppercase();
@@ -978,7 +996,7 @@ impl SearchUi {
                     let d = painter.layout_no_wrap(day.clone(), FontId::new(16.0, font.clone()), ink);
                     widgets::paint_ink_centered(painter, d, rect.center() + Vec2::new(0.0, 6.0), ink);
                 };
-                let subtitle = if unix > 0 { event_when(unix, now) } else { String::new() };
+                let subtitle = if unix > 0 { event_when(unix, now, zone) } else { String::new() };
                 let card = place_card::Row {
                     thumb: Thumb::Paint(&paint),
                     title: &row.name,
@@ -1236,11 +1254,76 @@ mod tests {
         let base = 1_791_475_200;
         let (.., h, min, sec) = crate::ui::land::slt_parts(base);
         let now = base - h * 3600 - min * 60 - sec + 10 * 3600;
-        assert!(event_when(now + 3600, now).starts_with(aurora_i18n::tr!("search-events-today")));
-        assert!(event_when(now + 86_400, now).starts_with(aurora_i18n::tr!("search-aurora-tomorrow")));
+        assert!(event_when(now + 3600, now, ClockZone::Slt).starts_with(aurora_i18n::tr!("search-events-today")));
+        assert!(event_when(now + 86_400, now, ClockZone::Slt).starts_with(aurora_i18n::tr!("search-aurora-tomorrow")));
         assert_eq!(event_rating(RowIcon::EventAdult), aurora_i18n::tr!("common-adult"));
         assert_eq!(Kind::of(Tab::Classifieds).tab(), Some(Tab::Classifieds));
         assert_eq!(Kind::All.tabs(), SECTIONS.to_vec());
         assert!(Kind::Web.tabs().is_empty());
+    }
+
+    /// `event_when` before #1754: SLT parts, "… SLT".
+    fn event_when_before(unix: i64, now: i64) -> String {
+        let (y, m, d, weekday, h, min, _) = crate::ui::land::slt_parts(unix);
+        let same = |t: i64| {
+            let (ty, tm, td, ..) = crate::ui::land::slt_parts(t);
+            (ty, tm, td) == (y, m, d)
+        };
+        let day = if same(now) {
+            aurora_i18n::tr!("search-events-today").to_owned()
+        } else if same(now + 86_400) {
+            aurora_i18n::tr!("search-aurora-tomorrow").to_owned()
+        } else {
+            let date = aurora_i18n::tr!("search-events-date", month = m as i64, day = d);
+            format!("{} {date}", crate::ui::land::weekdays()[weekday])
+        };
+        aurora_i18n::tr!("search-aurora-event-time", day = day, time = format!("{h:02}:{min:02}"))
+    }
+
+    /// #1754, the clock in SLT (its default): an event card's line is the
+    /// one of before, for events from an hour to three days ahead of every
+    /// hour of 2026 (today, tomorrow, a weekday; both daylight saving
+    /// switches).
+    #[test]
+    fn event_cards_in_slt_are_unchanged() {
+        for now in (1_767_225_600..1_798_761_600_i64).step_by(3600) {
+            for ahead in [0, 3600, 7 * 3600, 20 * 3600, 30 * 3600, 3 * 86_400] {
+                assert_eq!(
+                    event_when(now + ahead, now, ClockZone::Slt),
+                    event_when_before(now + ahead, now),
+                    "{now} +{ahead}"
+                );
+            }
+        }
+    }
+
+    /// #1754, the clock in local time: the hour and the day are local
+    /// time's, and its zone ends the line.
+    #[test]
+    fn event_cards_in_local_time() {
+        // now 2026-11-04 12:00 UTC, the event at 2026-11-05 03:00 UTC: 19:00
+        // today in SLT, 12:00 tomorrow in Tokyo
+        let (now, start) = (1_793_793_600, 1_793_847_600);
+        let today = aurora_i18n::tr!("search-events-today");
+        let tomorrow = aurora_i18n::tr!("search-aurora-tomorrow");
+        assert_eq!(
+            event_when(start, now, ClockZone::Slt),
+            aurora_i18n::tr!("search-aurora-event-time", day = today, time = "19:00")
+        );
+        assert_eq!(
+            event_when_at(start, now, |_| 9 * 3600, Some("JST")),
+            aurora_i18n::tr!("search-aurora-event-time-zone", day = tomorrow, time = "12:00", zone = "JST")
+        );
+        // Paris: 04:00 tomorrow
+        assert_eq!(
+            event_when_at(start, now, |_| 3600, Some("CET")),
+            aurora_i18n::tr!("search-aurora-event-time-zone", day = tomorrow, time = "04:00", zone = "CET")
+        );
+        // the machine's own zone, as the clock names it
+        let name = crate::ui::bars::clock::zone_name(ClockZone::Local, start);
+        assert_eq!(
+            event_when(start, now, ClockZone::Local),
+            event_when_at(start, now, |t| crate::ui::bars::clock::offset(ClockZone::Local, t), Some(&name))
+        );
     }
 }
