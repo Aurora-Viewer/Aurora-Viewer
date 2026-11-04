@@ -3,12 +3,13 @@
 //! the messages toast only, `bell`: they stay listed) and, with `click` /
 //! `minimized`, a click on the resident's entry (the Conversations window
 //! closed / minimized before it). The Conversations button flashes while
-//! the window is closed, its bar while it is minimized.
+//! the window is closed, its bar while it is minimized. `emote`: the second
+//! message and the group's are emotes ("/me …"), toasted as "Name …".
 
 use aurora_net::NetEvent;
 use uuid::Uuid;
 
-/// The scenario, if asked: `1`, `bell`, `click` or `minimized`.
+/// The scenario, if asked: `1`, `bell`, `click`, `minimized` or `emote`.
 pub fn mode() -> Option<String> {
     std::env::var("AURORA_DEMO_TOASTS").ok()
 }
@@ -41,6 +42,8 @@ fn im(agent: Uuid, from: Uuid, name: &str, dialog: u8, session: Uuid, text: &str
 /// The events of `frame`.
 pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     use super::{DEMO_GROUP1, DEMO_NOVA, DEMO_TESS};
+    let emote = mode().as_deref() == Some("emote");
+    let said = |plain: &str, as_emote: &str| if emote { format!("/me {as_emote}") } else { plain.to_owned() };
     match frame {
         700 => vec![NetEvent::FriendsOnline {
             ids: vec![friend()],
@@ -65,7 +68,7 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             "Nova Exemple",
             0,
             Uuid::nil(),
-            aurora_i18n::tr!("demo-toast-are-you-there"),
+            &said(aurora_i18n::tr!("demo-toast-are-you-there"), aurora_i18n::tr!("demo-toast-emote")),
             b"",
         )],
         940 => vec![im(
@@ -74,7 +77,10 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             "Tess Touch",
             17,
             DEMO_GROUP1,
-            aurora_i18n::tr!("demo-toast-group-message"),
+            &said(
+                aurora_i18n::tr!("demo-toast-group-message"),
+                aurora_i18n::tr!("demo-toast-group-emote"),
+            ),
             b"Aurora Builders\0",
         )],
         _ => Vec::new(),

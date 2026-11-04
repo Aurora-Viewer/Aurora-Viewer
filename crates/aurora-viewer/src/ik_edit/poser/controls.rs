@@ -29,7 +29,8 @@ impl Editor {
         session.checkpoint();
         let pose = Arc::make_mut(&mut session.pose);
         let copy = |pose: &mut SubjectPose, from: usize, to: usize| {
-            pose.rotations[to] = (rig.local_rot[to] * reflected(rig.local_rot[from].inverse() * before.rotations[from])).normalize();
+            pose.rotations[to] = data::mirrored(rig, before.rotations[from], from, to);
+            pose.origin[to] = data::mirrored(rig, before.origin[from], from, to);
             pose.positions[to] = session.base.positions[to] + rig_controls::reflect(before.positions[from] - session.base.positions[from]);
             pose.scales[to] = session.base.scales[to] * (before.scales[from] / session.base.scales[from]);
             pose.locks.remove(&to);
@@ -55,6 +56,7 @@ impl Editor {
                         }
                     } else if matches!(operation, Operation::Flip) {
                         pose.rotations[b] = reflected(before.rotations[b]);
+                        pose.origin[b] = reflected(before.origin[b]);
                         pose.positions[b] =
                             session.base.positions[b] + rig_controls::reflect(before.positions[b] - session.base.positions[b]);
                         pose.locks.remove(&b);
@@ -64,6 +66,7 @@ impl Editor {
             Operation::ResetJoint => {
                 if let Some(b) = self.selected {
                     pose.rotations[b] = session.base.rotations[b];
+                    pose.origin[b] = session.base.origin[b];
                     pose.positions[b] = session.base.positions[b];
                     pose.scales[b] = session.base.scales[b];
                     pose.locks.remove(&b);
@@ -73,6 +76,9 @@ impl Editor {
             Operation::TPose => {
                 *pose = (*session.base).clone();
                 pose.rotations.clone_from(&rig.local_rot);
+                // from here on the whole pose is the user's: it exports in
+                // full (FSPoserAnimator::setAllAvatarStartingRotationsToZero)
+                pose.origin.clone_from(&rig.local_rot);
                 pose.locks.clear();
             }
             Operation::WorldLock => {
@@ -105,6 +111,7 @@ impl Editor {
             };
             if applies && let Some(&bone) = rig.names.get(name) {
                 pose.rotations[bone] = Quat::from_euler(EulerRot::ZYX, xyz[2], xyz[1], xyz[0]);
+                pose.origin[bone] = rig.local_rot[bone];
                 pose.locks.remove(&bone);
             }
         }
@@ -347,8 +354,8 @@ impl Editor {
             if self.symmetry
                 && let Some(other) = self.mirrors.counterpart(bone)
             {
-                pose.rotations[other] =
-                    (rig.local_rot[other] * reflected(rig.local_rot[bone].inverse() * pose.rotations[bone])).normalize();
+                pose.rotations[other] = data::mirrored(rig, pose.rotations[bone], bone, other);
+                pose.origin[other] = data::mirrored(rig, pose.origin[bone], bone, other);
                 pose.scales[other] = base.scales[other] * (pose.scales[bone] / base.scales[bone]);
                 pose.locks.remove(&other);
             }

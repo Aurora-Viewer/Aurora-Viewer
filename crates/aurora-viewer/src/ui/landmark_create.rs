@@ -154,9 +154,20 @@ pub fn folders(inv: &Inventory) -> Vec<(Uuid, String)> {
 /// empty and something changed, and move it to `folder` when it is another.
 pub fn save_change(inv: &Inventory, item: Uuid, title: &str, notes: &str, folder: Uuid) -> Option<Mutation> {
     let it = inv.items.get(&item)?;
-    let (title, notes) = (title.trim(), notes.trim());
+    let title = if title == it.name { title } else { title.trim() };
+    let notes = if notes == it.desc { notes } else { notes.trim() };
+    if crate::text_validation::require_edit(widgets::TextPolicy::Ascii, &it.name, title).is_err()
+        || crate::text_validation::require_edit(widgets::TextPolicy::MultilineNoPipe, &it.desc, notes).is_err()
+    {
+        return None;
+    }
     let mut body = Llsd::new_map();
-    if let Ok(name) = crate::world::inventory::actions::clean_name(title)
+    let name = if title == it.name {
+        Ok(it.name.clone())
+    } else {
+        crate::world::inventory::actions::clean_name(title)
+    };
+    if let Ok(name) = name
         && (it.name != name || it.desc != notes)
     {
         body.insert("name", name);
@@ -393,11 +404,9 @@ impl CreateLandmarkUi {
             );
             ui.add_space(8.0);
             label(ui, aurora_i18n::tr!("landmark-create-name"));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.title)
-                    .char_limit(63)
-                    .desired_width(f32::INFINITY),
-            );
+            widgets::restricted_text_field(ui, true, &mut self.title, widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).char_limit(63).desired_width(f32::INFINITY)
+            });
             ui.add_space(6.0);
             label(ui, aurora_i18n::tr!("landmark-create-folder"));
             let selected = list.iter().find(|(id, _)| *id == self.folder).map_or("", |(_, n)| n.as_str());
@@ -425,10 +434,9 @@ impl CreateLandmarkUi {
             }
             ui.add_space(6.0);
             label(ui, aurora_i18n::tr!("landmark-create-notes"));
-            let mut notes = egui::TextEdit::multiline(&mut self.notes)
-                .desired_rows(4)
-                .desired_width(f32::INFINITY)
-                .show(ui);
+            let mut notes = widgets::restricted_text_edit(ui, true, &mut self.notes, widgets::TextPolicy::MultilineNoPipe, |b, _| {
+                egui::TextEdit::multiline(b).desired_rows(4).desired_width(f32::INFINITY)
+            });
             // spell checked, as floater_create_landmark.xml
             crate::ui::spelling::field(ui, p, &mut notes, &mut self.notes, false);
             ui.add_space(10.0);
@@ -460,7 +468,9 @@ impl CreateLandmarkUi {
                         .color(p.ink),
                 );
                 ui.add_space(6.0);
-                let r = ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
+                let r = widgets::restricted_text_field(ui, true, name, widgets::TextPolicy::Ascii, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
+                });
                 r.request_focus();
                 if r.lost_focus() && widgets::enter_pressed(ui) {
                     done = Some(true);
@@ -622,6 +632,21 @@ mod tests {
         let (b, refresh) = body(save_change(&inv, item, "", "", art).expect("moved"));
         assert_eq!(b, llsd_map! { "parent_id" => art }, "an empty title renames nothing");
         assert_eq!(refresh, vec![fav, art]);
+    }
+
+    #[test]
+    fn restricted_text_landmark_keeps_received_unicode_when_notes_or_folder_change() {
+        let mut inv = inventory();
+        let id = Uuid::from_u128(100);
+        inv.items.get_mut(&id).expect("landmark").name = "桜の場所".into();
+        inv.items.get_mut(&id).expect("landmark").desc = "説明".into();
+        for (notes, folder) in [("ASCII notes", Uuid::from_u128(30)), ("説明", Uuid::from_u128(13))] {
+            let change = save_change(&inv, id, "桜の場所", notes, folder).expect("unrelated edit");
+            assert!(
+                matches!(&change.operations[..], [Operation::Patch { body, .. }] if !body.has("name") || body["name"].as_str() == "桜の場所")
+            );
+        }
+        assert!(save_change(&inv, id, "New 龙", "ASCII", Uuid::from_u128(30)).is_none());
     }
 
     #[test]

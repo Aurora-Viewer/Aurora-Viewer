@@ -1,5 +1,40 @@
 use super::*;
 
+#[test]
+fn folder_glb_extracts_mesh_and_materials_with_independent_filters() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.0.join("preview.glb"),
+        include_bytes!("../../../../../../assets/models/aurora-3d.glb"),
+    )
+    .unwrap();
+    let entries = fixture.load(&Preferences::default());
+    assert!(entries.iter().any(|entry| matches!(entry.source, Some(Source::Mesh(_)))));
+    assert!(entries.iter().any(|entry| matches!(entry.source, Some(Source::Material { .. }))));
+    assert!(entries.iter().all(|entry| entry.selected && entry.source.is_some()));
+    assert!(entries.iter().all(|entry| entry.source_folders == entries[0].source_folders));
+    let mut imports = Imports {
+        entries,
+        ..Default::default()
+    };
+    imports.type_filters[4] = false;
+    let visible = imports.visible_indices();
+    assert!(!visible.is_empty());
+    assert!(
+        visible
+            .iter()
+            .all(|&i| matches!(imports.entries[i].source, Some(Source::Material { .. })))
+    );
+    imports.type_filters[4] = true;
+    imports.type_filters[3] = false;
+    assert!(
+        imports
+            .visible_indices()
+            .iter()
+            .all(|&i| matches!(imports.entries[i].source, Some(Source::Mesh(_))))
+    );
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {

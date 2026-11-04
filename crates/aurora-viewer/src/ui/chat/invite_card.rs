@@ -13,6 +13,7 @@
 use super::{LineEnv, chat_text_marked, hhmm};
 use crate::theme::Palette;
 use crate::ui::context::{CtxAction, request};
+use crate::ui::fonts::chat_size;
 use crate::ui::widgets;
 use crate::world::ChatLine;
 use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place, Rating, rating_note};
@@ -142,15 +143,37 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
         let (ink, muted) = if done.is_some() { (p.muted, p.muted_dim) } else { (p.ink, p.muted) };
         ui.horizontal(|ui| {
             icon(ui, env, ICON, if done.is_some() { p.muted_dim } else { p.teal });
-            ui.add(egui::Label::new(RichText::new(&t.title).size(13.0).strong().color(ink)).wrap());
+            ui.add(egui::Label::new(RichText::new(&t.title).size(chat_size(ui.ctx(), 13.0)).strong().color(ink)).wrap());
         });
         if let Some(place) = &t.place {
             let world = env.world;
-            chat_text_marked(ui, p, env.emoji, world, env.want_names, place, 12.0, muted, false, None);
+            chat_text_marked(
+                ui,
+                p,
+                env.emoji,
+                world,
+                env.want_names,
+                place,
+                chat_size(ui.ctx(), 12.0),
+                muted,
+                false,
+                None,
+            );
         }
         if !t.message.is_empty() {
             let world = env.world;
-            chat_text_marked(ui, p, env.emoji, world, env.want_names, &t.message, 12.5, ink, false, None);
+            chat_text_marked(
+                ui,
+                p,
+                env.emoji,
+                world,
+                env.want_names,
+                &t.message,
+                chat_size(ui.ctx(), 12.5),
+                ink,
+                false,
+                None,
+            );
         }
         if let Some(q) = &t.question {
             // the region's rating, with the navigation bar's badge
@@ -158,7 +181,7 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
                 if let Rating::Exceeded(r) | Rating::Blocked(r) = v.rating {
                     widgets::maturity_badge_of(ui, p, r, 16.0);
                 }
-                ui.add(egui::Label::new(RichText::new(q).size(12.0).color(muted)).wrap());
+                ui.add(egui::Label::new(RichText::new(q).size(chat_size(ui.ctx(), 12.0)).color(muted)).wrap());
             });
         }
         match done {
@@ -175,7 +198,7 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
 /// What a card says once answered, in place of its buttons.
 pub(super) fn answered(ui: &mut egui::Ui, p: &Palette, label: &str) {
     ui.add_space(5.0);
-    ui.label(RichText::new(label).size(12.0).color(p.muted_dim));
+    ui.label(RichText::new(label).size(chat_size(ui.ctx(), 12.0)).color(p.muted_dim));
 }
 
 /// The frame of a card on the sender's side after `indent` (the column of
@@ -227,7 +250,7 @@ pub(super) fn card_frame(
     if !time.is_empty() {
         ui.horizontal(|ui| {
             ui.add_space(inset + indent + 2.0);
-            ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
+            ui.label(RichText::new(time).size(chat_size(ui.ctx(), 10.5)).color(p.muted_dim));
         });
     }
     ui.add_space(4.0);
@@ -260,12 +283,27 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
         }
         let world = env.world;
         let color = if done.is_some() { p.muted } else { p.ink };
-        chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, 12.5, color, false, None);
+        chat_text_marked(
+            ui,
+            p,
+            env.emoji,
+            world,
+            env.want_names,
+            &text,
+            chat_size(ui.ctx(), 12.5),
+            color,
+            false,
+            None,
+        );
         match done {
             None => buttons(ui, p, invite, &t.buttons, Vec2::new(80.0, 20.0)),
             Some("") => {}
             Some(label) => {
-                ui.label(RichText::new(format!("· {label}")).size(12.0).color(p.muted_dim));
+                ui.label(
+                    RichText::new(format!("· {label}"))
+                        .size(chat_size(ui.ctx(), 12.0))
+                        .color(p.muted_dim),
+                );
             }
         }
     });
@@ -281,7 +319,7 @@ pub(super) fn notice(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine) {
         world,
         env.want_names,
         &line.text,
-        12.5,
+        chat_size(ui.ctx(), 12.5),
         env.p.muted,
         true,
         None,

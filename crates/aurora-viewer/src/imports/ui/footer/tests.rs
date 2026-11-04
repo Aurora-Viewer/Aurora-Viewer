@@ -1,6 +1,95 @@
 use super::*;
 
 #[test]
+fn mesh_physics_warning_precedes_quotes_and_convex_action_opens_the_collision_preview() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut draft = crate::imports::tests::invalid_physics_fixture();
+    draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("physics validation")));
+    let scene = draft.scene.clone();
+    let entry = Entry::new("physics.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+    let id = entry.id;
+    let mut imports = Imports {
+        choice: Choice::Mesh,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let frame = |imports: &mut Imports, events| {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(820.0, 400.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                show(
+                    ui,
+                    &theme.palette(),
+                    imports,
+                    &Preferences::default(),
+                    &world,
+                    &Prices::default(),
+                    &mut actions,
+                );
+            },
+        );
+        output.textures_delta.clear();
+        (output, actions)
+    };
+    for _ in 0..3 {
+        frame(&mut imports, vec![]);
+    }
+    let (output, actions) = frame(&mut imports, vec![]);
+    assert!(actions.is_empty());
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.text().contains(&aurora_i18n::tr!("import-degenerate-physics", count = 1)))));
+    let quote_state = || {
+        ctx.data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_mesh_quote_action")))
+            .unwrap()
+    };
+    assert!(!quote_state().2, "invalid physics blocks the fee action before any request");
+    let (rect, clip) = ctx
+        .data(|data| data.get_temp::<(egui::Rect, egui::Rect)>(egui::Id::unique("import_mesh_repair_action")))
+        .unwrap();
+    assert!(clip.contains_rect(rect), "the repair action remains reachable");
+    assert!(rect.height() >= 20.0, "the repair action needs a real pointer target");
+    for pressed in [true, false] {
+        let (_, actions) = frame(
+            &mut imports,
+            vec![
+                egui::Event::PointerMoved(rect.center()),
+                egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(actions.is_empty(), "conversion neither quotes nor uploads");
+    }
+    let entry = &mut imports.entries[0];
+    let Some(Source::Mesh(draft)) = &mut entry.source else {
+        panic!("mesh")
+    };
+    assert!(draft.options.decompose && draft.preview_physics);
+    assert!(draft.prepared.is_none() && draft.quote.is_none());
+    assert!(Arc::ptr_eq(&scene, &draft.scene), "visual source remains intact");
+    assert_eq!(
+        ctx.data(|data| data.get_temp::<usize>(egui::Id::unique(("mesh_section", id)))),
+        Some(1)
+    );
+    assert!(!quote_state().2, "wait for the replacement geometry");
+    draft.prepared = Some(Arc::new(mesh::prepare(draft).expect("completed convex analysis")));
+    frame(&mut imports, vec![]);
+    assert!(quote_state().2, "a valid convex shape can be quoted");
+    assert!(imports.queue.is_empty() && !imports.confirm && imports.spent == 0);
+}
+
+#[test]
 fn local_upload_button_uses_checked_files_instead_of_the_active_item_and_disables_during_loading() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
@@ -41,7 +130,6 @@ fn local_upload_button_uses_checked_files_instead_of_the_active_item_and_disable
                     imports,
                     &Preferences::default(),
                     &world,
-                    &Default::default(),
                     &Prices::default(),
                     &mut actions,
                 );

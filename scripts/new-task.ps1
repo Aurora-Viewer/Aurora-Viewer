@@ -7,7 +7,10 @@
 
     On its way, frees the target\ of the other tasks that no longer need
     it (PR merged, or no build for -IdleDays days): the code stays, only
-    the build goes; a task that resumes rebuilds.
+    the build goes; a task that resumes rebuilds. A task with no build for
+    -TrimHours hours only loses its incremental\ folders, three quarters
+    of a target\ (5 to 20 GB): its next build recompiles Aurora's own
+    crates, the dependencies stay.
 
 .EXAMPLE
     ./scripts/new-task.ps1 -Name "avatar gaze" -Kind feat
@@ -16,7 +19,8 @@
 param(
     [Parameter(Mandatory)][string]$Name,
     [ValidateSet('feat', 'fix', 'perf', 'refactor', 'docs', 'chore')][string]$Kind = 'feat',
-    [int]$IdleDays = 7
+    [int]$IdleDays = 2,
+    [int]$TrimHours = 24
 )
 . "$PSScriptRoot\common.ps1"
 
@@ -28,11 +32,14 @@ if (Test-Path $dir) { throw "The folder $dir already exists (task in progress?).
 
 # Free the build folders of the other tasks that no longer need them. The
 # last build is when Cargo last wrote into a deps\ or incremental\ folder.
+# Before the whole target\ goes, an idle task first loses its incremental
+# cache: it only speeds up the next small rebuild of that same task.
 if (Test-Path -LiteralPath $p.Work) {
     foreach ($t in Get-ChildItem -LiteralPath $p.Work -Directory -Force) {
         $target = Join-Path $t.FullName 'target'
         if (-not (Test-Path -LiteralPath (Join-Path $target 'CACHEDIR.TAG'))) { continue }
         $why = $null
+        $trim = @()
         $b = git -C $t.FullName rev-parse --abbrev-ref HEAD 2>$null
         if ($LASTEXITCODE -eq 0 -and (gh pr view $b.Trim() --json state --jq .state 2>$null) -eq 'MERGED') {
             $why = 'PR merged'
@@ -40,16 +47,29 @@ if (Test-Path -LiteralPath $p.Work) {
             $last = Get-ChildItem -LiteralPath $target -Directory -Force | ForEach-Object {
                 Get-Item -LiteralPath (Join-Path $_.FullName 'deps'), (Join-Path $_.FullName 'incremental') -Force -ErrorAction SilentlyContinue
             } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            $idle = if ($last) { ((Get-Date) - $last.LastWriteTime).Days } else { [int]::MaxValue }
-            if ($idle -ge $IdleDays) { $why = "no build for $idle days" }
+            $idleHours = if ($last) { ((Get-Date) - $last.LastWriteTime).TotalHours } else { [double]::MaxValue }
+            if ($idleHours -ge $IdleDays * 24) {
+                $why = "no build for $([math]::Floor($idleHours / 24)) days"
+            } elseif ($idleHours -ge $TrimHours) {
+                $trim = @(Get-IncrementalDirs $target)
+            }
         }
-        if (-not $why) { continue }
+        if (-not $why -and -not $trim) { continue }
         if (Test-InUse $t.FullName) { Write-Warning "$($t.Name): target kept (a build or a viewer is running)."; continue }
-        Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $target) {
-            Write-Warning "$($t.Name): target not fully deleted (locked file?)."
+        if ($why) {
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $target) {
+                Write-Warning "$($t.Name): target not fully deleted (locked file?)."
+            } else {
+                Write-Host "$($t.Name): target freed ($why)." -ForegroundColor DarkGray
+            }
         } else {
-            Write-Host "$($t.Name): target freed ($why)." -ForegroundColor DarkGray
+            foreach ($d in $trim) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+            if ($trim | Where-Object { Test-Path -LiteralPath $_ }) {
+                Write-Warning "$($t.Name): incremental cache not fully deleted (locked file?)."
+            } else {
+                Write-Host "$($t.Name): incremental cache freed (no build for $([math]::Floor($idleHours)) hours)." -ForegroundColor DarkGray
+            }
         }
     }
 }

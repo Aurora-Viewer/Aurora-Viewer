@@ -25,7 +25,7 @@ fn far_folder(n: u128) -> Uuid {
     Uuid::from_u128(0xde40_a170_0000_0000_0000_0000_0000_9000 + n)
 }
 
-pub fn setup(ctx: &egui::Context, inv: &mut Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+pub fn setup(ctx: &egui::Context, inv: &mut Inventory, st: &mut InventoryUi) {
     let Some(root) = crate::ui::texture_library::catalogue::root(inv) else {
         return;
     };
@@ -56,10 +56,12 @@ pub fn setup(ctx: &egui::Context, inv: &mut Inventory, st: &mut InventoryUi, pre
     let Some(w) = st.windows.last_mut() else { return };
     w.state.ui_id = w.id;
     w.state.show_original(inv, first);
+    // a locked folder still receives moves (LLFolderBridge::isProtected): a
+    // Library folder does not
     if mode() == Some("inventory-move-rejected")
-        && let Some(to) = destination(inv)
+        && let Some(folder) = destination(inv).and_then(|to| inv.folders.get_mut(&to))
     {
-        prefs.protected.insert(to);
+        folder.library = true;
     }
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique("inventory_drag_demo_editor"), w.id));
     crate::ui::widgets::place_floater(ctx, &format!("inventory_{}", w.id), egui::pos2(40.0, 65.0), Vec2::new(550.0, 550.0));

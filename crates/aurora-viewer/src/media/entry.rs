@@ -351,12 +351,12 @@ async fn get(http: &reqwest::Client, cap: &str, object: Uuid) -> Result<ObjectMe
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.without_url().to_string())?;
     let status = resp.status();
     if !status.is_success() {
         return Err(format!("HTTP {status}"));
     }
-    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = resp.bytes().await.map_err(|e| e.without_url().to_string())?;
     let v = aurora_llsd::from_xml(&bytes).map_err(|e| e.to_string())?;
     parse_get_response(&v, object)
 }

@@ -196,7 +196,10 @@ fn scan() -> Vec<SystemFace> {
         return Vec::new();
     }
     let start = std::time::Instant::now();
-    let files = index_files(&super::font_dirs());
+    let mut dirs = super::font_dirs();
+    let extra = super::extra_font_dirs(&dirs);
+    dirs.extend(extra);
+    let files = index_files(&dirs);
     let mut maps: HashMap<&'static str, memmap2::Mmap> = HashMap::new();
     let chosen = select(CANDIDATES, |spec, probe| {
         let (file, face) = face_spec(spec);
@@ -268,18 +271,24 @@ fn index_files(dirs: &[PathBuf]) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
     let mut stack: Vec<PathBuf> = dirs.iter().rev().cloned().collect();
     let mut visited = 0;
+    let mut seen = std::collections::HashSet::new();
     while let Some(dir) = stack.pop() {
+        if !super::first_visit(&mut seen, &dir) {
+            continue;
+        }
+        // only directories that exist count: most XDG data directories have no fonts
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         visited += 1;
         if visited > 512 {
             break;
         }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(kind) = entry.file_type() else { continue };
-            if kind.is_dir() {
+            // a linked directory too: NixOS profiles are trees of links
+            if kind.is_dir() || (kind.is_symlink() && path.is_dir()) {
                 stack.push(path);
                 continue;
             }
@@ -443,6 +452,26 @@ mod tests {
         assert_eq!(files.get("demo.ttf"), Some(&a.join("Demo.TTF")));
         assert_eq!(files.get("other.otf"), Some(&b.join("Other.otf")));
         assert_eq!(files.len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_directories_are_indexed() {
+        let root = std::env::temp_dir().join(format!("aurora-font-links-{}", std::process::id()));
+        let (store, profile) = (root.join("store").join("noto"), root.join("profile"));
+        std::fs::create_dir_all(&store).expect("temp dir");
+        std::fs::create_dir_all(&profile).expect("temp dir");
+        std::fs::write(store.join("NotoSansThai-Regular.ttf"), b"x").expect("temp file");
+        std::os::unix::fs::symlink(&store, profile.join("noto")).expect("link");
+        // a link back up the tree is skipped: the file keeps its short
+        // path whichever entry the system lists first
+        std::os::unix::fs::symlink(&profile, profile.join("noto-loop")).expect("link");
+        let files = index_files(std::slice::from_ref(&profile));
+        assert_eq!(
+            files.get("notosansthai-regular.ttf"),
+            Some(&profile.join("noto").join("NotoSansThai-Regular.ttf"))
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -5,6 +5,7 @@ use super::*;
 #[derive(Clone)]
 pub struct SourceRoots {
     pub include: bool,
+    pub loose: Option<String>,
     names: HashMap<String, String>,
 }
 
@@ -12,23 +13,26 @@ impl Default for SourceRoots {
     fn default() -> Self {
         Self {
             include: true,
+            loose: None,
             names: HashMap::new(),
         }
     }
 }
 
 impl SourceRoots {
+    fn wrapper(&self, entry: &Entry) -> Option<String> {
+        match entry.source_folders.first() {
+            Some(source) => self.include.then(|| self.name(source)),
+            None => self.loose.clone(),
+        }
+    }
+
     pub fn name(&self, source: &str) -> String {
         self.names.get(source).cloned().unwrap_or_else(|| folder_name(source))
     }
 
     pub(super) fn layout_path(&self, entry: &Entry, layout: Layout) -> Vec<String> {
-        let mut path = Vec::new();
-        if self.include
-            && let Some(root) = entry.source_folders.first()
-        {
-            path.push(self.name(root));
-        }
+        let mut path: Vec<_> = self.wrapper(entry).into_iter().collect();
         match layout {
             Layout::Mirror => path.extend(entry.source_folders.iter().skip(1).map(|part| folder_name(part))),
             Layout::Flat => {}
@@ -46,6 +50,27 @@ impl SourceRoots {
 }
 
 impl Imports {
+    /// An empty enabled name is an unfinished draft: path validation blocks upload.
+    pub fn set_loose_folder(&mut self, name: Option<&str>) -> bool {
+        if self.busy() || self.confirm {
+            return false;
+        }
+        let loose = match name {
+            None => None,
+            Some("") => Some(String::new()),
+            Some(name) => {
+                let Some(path) = parse_path(name).filter(|path| path.len() == 1) else {
+                    return false;
+                };
+                Some(path[0].clone())
+            }
+        };
+        let mut roots = self.folders.roots.clone();
+        roots.loose = loose;
+        self.update_source_roots(roots);
+        true
+    }
+
     pub fn source_roots(&self) -> BTreeSet<String> {
         self.entries
             .iter()
@@ -74,9 +99,8 @@ impl Imports {
         let previous = &self.folders.roots;
         let mut changed = false;
         for entry in self.entries.iter_mut().filter(|e| !e.local) {
-            let Some(source) = entry.source_folders.first() else { continue };
-            let old = previous.include.then(|| previous.name(source));
-            let new = roots.include.then(|| roots.name(source));
+            let old = previous.wrapper(entry);
+            let new = roots.wrapper(entry);
             if old == new {
                 continue;
             }

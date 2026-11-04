@@ -22,6 +22,42 @@ use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
+/// LLVOAvatar::remapMotionID (indra/newview/llvoavatar.cpp), with the
+/// default UseNewWalkRun enabled. Only local playback changes: the simulator
+/// and AO retain the original walk/run UUIDs. The old clips key the pelvis
+/// and legs at priority 3; the modern clips use 0, allowing HUD AOs to win.
+pub(crate) fn walk_run_asset(id: Uuid, male: bool) -> Uuid {
+    use crate::own_motion::{ANIM_RUN, ANIM_WALK};
+    match (id, male) {
+        (ANIM_WALK, true) => uuid::uuid!("33339176-7ddc-9397-94a4-bf3403cbc8f5"),
+        (ANIM_WALK, false) => uuid::uuid!("d60c41d2-7c24-7074-d3fa-6101cea22a51"),
+        (ANIM_RUN, true) => uuid::uuid!("1ab1b236-cd08-21e6-0cbc-0d923fc6eca2"),
+        (ANIM_RUN, false) => uuid::uuid!("85995026-eade-5d78-d364-94a64512cb66"),
+        _ => id,
+    }
+}
+
+// The reference viewer's static asset cache supplies these native clips.
+// Embed the same files so default locomotion needs no asset-server request.
+const GAITS: [(Uuid, &[u8]); 4] = [
+    (
+        uuid::uuid!("33339176-7ddc-9397-94a4-bf3403cbc8f5"),
+        include_bytes!("../../assets/animations/locomotion/33339176-7ddc-9397-94a4-bf3403cbc8f5.animatn"),
+    ),
+    (
+        uuid::uuid!("d60c41d2-7c24-7074-d3fa-6101cea22a51"),
+        include_bytes!("../../assets/animations/locomotion/d60c41d2-7c24-7074-d3fa-6101cea22a51.animatn"),
+    ),
+    (
+        uuid::uuid!("1ab1b236-cd08-21e6-0cbc-0d923fc6eca2"),
+        include_bytes!("../../assets/animations/locomotion/1ab1b236-cd08-21e6-0cbc-0d923fc6eca2.animatn"),
+    ),
+    (
+        uuid::uuid!("85995026-eade-5d78-d364-94a64512cb66"),
+        include_bytes!("../../assets/animations/locomotion/85995026-eade-5d78-d364-94a64512cb66.animatn"),
+    ),
+];
+
 /// The built-in expressions: (UUID, LLAnimationLibrary name, the visual
 /// parameter of their morph in avatar_lad.xml).
 const EMOTES: [(u128, &str, i32); 19] = [
@@ -103,12 +139,18 @@ fn emote_animation() -> Animation {
     }
 }
 
-/// Register the expressions as built-in motions: they are never fetched as
-/// assets (LLVOAvatar registers them with LLEmote::create).
+/// Register built-in expressions (LLVOAvatar, LLEmote::create) and native
+/// modern gaits from the reference static asset cache. Neither is fetched.
 pub fn register(anims: &mut AnimStreamer, rig: &Rig) {
     let anim = Arc::new(BoundAnim::bind(emote_animation(), rig));
     for e in &EMOTES {
         anims.insert(Uuid::from_u128(e.0), anim.clone());
+    }
+    for (id, data) in GAITS {
+        match aurora_assets::parse_animation(data) {
+            Ok(anim) => anims.insert(id, Arc::new(BoundAnim::bind(anim, rig))),
+            Err(error) => log::error!("bundled native gait {id}: {error}"),
+        }
     }
 }
 

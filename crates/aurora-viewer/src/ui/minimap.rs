@@ -666,13 +666,15 @@ impl MiniMap {
         let gme = to_global(world, me);
         draw_self(&painter, view.to_screen(gme.0, gme.1), dot_r, super::colors::c(k.map_me));
 
-        // --- chat rings: whisper 10 m, say 20 m, shout 100 m ---
+        // --- chat rings: the region's whisper, say and shout ranges (10,
+        // 20 and 100 m unless an OpenSim region says otherwise) ---
         if k.map_ranges {
             let c = view.to_screen(gme.0, gme.1);
+            let ranges = crate::world::radar::chat_ranges();
             for (on, r, col) in [
-                (k.map_whisper_on, 10.0, k.map_whisper),
-                (k.map_say_on, 20.0, k.map_say),
-                (k.map_shout_on, 100.0, k.map_shout),
+                (k.map_whisper_on, ranges.whisper, k.map_whisper),
+                (k.map_say_on, ranges.say, k.map_say),
+                (k.map_shout_on, ranges.shout, k.map_shout),
             ] {
                 if on {
                     painter.circle_stroke(c, r * ppm - 1.0, Stroke::new(2.0, super::colors::c(col)));

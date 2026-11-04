@@ -82,11 +82,26 @@ impl Wanted {
         }
     }
 
+    /// The adapter asked for. A name can match several adapters (the same
+    /// card shown by two Vulkan drivers, or twice by one): the first that
+    /// can present wins, so a duplicate that cannot does not hide it (#2025).
     fn find(&self, candidates: &[Candidate]) -> Option<usize> {
         match self {
             Wanted::Auto => None,
             Wanted::Index(i) => (*i < candidates.len()).then_some(*i),
-            Wanted::Name(n) => candidates.iter().position(|c| c.name.to_lowercase().contains(n.as_str())),
+            Wanted::Name(n) => {
+                // Preferences saves the whole name: when one adapter has it
+                // exactly, a longer name that contains it ("… RX 5700 XT")
+                // must not take its place
+                let exact = |c: &Candidate| c.name.to_lowercase() == *n;
+                let part = |c: &Candidate| c.name.to_lowercase().contains(n.as_str());
+                let strict = candidates.iter().any(exact);
+                let matches = |c: &Candidate| if strict { exact(c) } else { part(c) };
+                candidates
+                    .iter()
+                    .position(|c| matches(c) && c.surface)
+                    .or_else(|| candidates.iter().position(matches))
+            }
         }
     }
 }
@@ -96,9 +111,26 @@ impl Wanted {
 pub enum Reason {
     /// The one asked for.
     Wanted,
-    /// One was asked for but is missing or cannot present: automatic.
-    WantedMissing,
+    /// One was asked for, but no adapter matches it: automatic.
+    WantedNotFound,
+    /// The adapter asked for is there but cannot present to the window:
+    /// automatic.
+    WantedCannotPresent,
     Automatic,
+}
+
+impl Reason {
+    /// The startup warning for a choice that could not be followed, with
+    /// the value asked for; `None` when there is nothing to warn about.
+    pub fn warning(self, asked: &str) -> Option<String> {
+        match self {
+            Reason::WantedNotFound => Some(format!("GPU: \"{asked}\" asked for, no adapter matches it: automatic choice")),
+            Reason::WantedCannotPresent => Some(format!(
+                "GPU: \"{asked}\" asked for, found but it cannot present to the window: automatic choice"
+            )),
+            Reason::Wanted | Reason::Automatic => None,
+        }
+    }
 }
 
 /// The adapters to try, in order (indices into the candidates), and why.
@@ -121,7 +153,8 @@ pub fn plan(candidates: &[Candidate], wanted: &Wanted) -> Plan {
             auto.insert(0, i);
             Reason::Wanted
         }
-        _ => Reason::WantedMissing,
+        (_, Some(_)) => Reason::WantedCannotPresent,
+        (_, None) => Reason::WantedNotFound,
     };
     Plan { order: auto, reason }
 }
@@ -203,7 +236,7 @@ mod tests {
         // asked for by name, it still cannot be used
         let p = plan(&list, &Wanted::parse("rtx"));
         assert_eq!(p.order, vec![0]);
-        assert_eq!(p.reason, Reason::WantedMissing);
+        assert_eq!(p.reason, Reason::WantedCannotPresent);
         assert_eq!(hint(&list), Some(Notice::DiscreteCannotPresent));
     }
 
@@ -220,9 +253,9 @@ mod tests {
         assert_eq!(p.order, vec![1, 0]);
         // an index or a name that matches nothing: automatic
         let p = plan(&list, &Wanted::parse("7"));
-        assert_eq!((p.order, p.reason), (vec![0, 1], Reason::WantedMissing));
+        assert_eq!((p.order, p.reason), (vec![0, 1], Reason::WantedNotFound));
         let p = plan(&list, &Wanted::parse("radeon"));
-        assert_eq!(p.reason, Reason::WantedMissing);
+        assert_eq!(p.reason, Reason::WantedNotFound);
     }
 
     #[test]
@@ -231,10 +264,64 @@ mod tests {
         // or hidden by the driver: the viewer still starts, on what is left
         let only_intel = [c("Intel(R) UHD Graphics", Kind::Integrated, Some(128), true)];
         let p = plan(&only_intel, &Wanted::parse("NVIDIA GeForce RTX 3060 Laptop GPU"));
-        assert_eq!((p.order, p.reason), (vec![0], Reason::WantedMissing));
+        assert_eq!((p.order, p.reason), (vec![0], Reason::WantedNotFound));
         let only_nvidia = [c("NVIDIA GeForce RTX 3060 Laptop GPU", Kind::Discrete, Some(6144), true)];
         let p = plan(&only_nvidia, &Wanted::parse("Intel(R) UHD Graphics"));
-        assert_eq!((p.order, p.reason), (vec![0], Reason::WantedMissing));
+        assert_eq!((p.order, p.reason), (vec![0], Reason::WantedNotFound));
+    }
+
+    #[test]
+    fn a_name_matching_twice_takes_the_one_that_can_present() {
+        // #2025: the same card listed twice (two Vulkan drivers, or one
+        // shown twice), the first copy unable to present
+        let list = [
+            c("AMD Radeon RX 5700 (RADV NAVI10)", Kind::Discrete, Some(8176), false),
+            c("AMD Radeon RX 5700 (RADV NAVI10)", Kind::Discrete, Some(8176), true),
+            c("llvmpipe (LLVM 21.1.0, 256 bits)", Kind::Cpu, None, true),
+        ];
+        let p = plan(&list, &Wanted::parse("AMD Radeon RX 5700 (RADV NAVI10)"));
+        assert_eq!((p.order, p.reason), (vec![1, 2], Reason::Wanted));
+        // a part of the name, same rule
+        let p = plan(&list, &Wanted::parse("rx 5700"));
+        assert_eq!((p.order, p.reason), (vec![1, 2], Reason::Wanted));
+        // an index names one adapter: it is not swapped for its twin
+        let p = plan(&list, &Wanted::parse("0"));
+        assert_eq!((p.order, p.reason), (vec![1, 2], Reason::WantedCannotPresent));
+    }
+
+    #[test]
+    fn an_exact_name_is_not_swapped_for_a_longer_one_that_contains_it() {
+        let list = [
+            c("AMD Radeon RX 5700", Kind::Discrete, Some(8176), false),
+            c("AMD Radeon RX 5700 XT", Kind::Discrete, Some(8176), true),
+        ];
+        // the saved card cannot present: automatic, not its namesake
+        let p = plan(&list, &Wanted::parse("AMD Radeon RX 5700"));
+        assert_eq!((p.order, p.reason), (vec![1], Reason::WantedCannotPresent));
+        // a part of the name still reaches the one that can present
+        let p = plan(&list, &Wanted::parse("rx 5700"));
+        assert_eq!((p.order, p.reason), (vec![1], Reason::Wanted));
+    }
+
+    #[test]
+    fn a_name_matching_only_adapters_that_cannot_present_says_so() {
+        let list = [
+            c("AMD Radeon RX 5700 (RADV NAVI10)", Kind::Discrete, Some(8176), false),
+            c("AMD Radeon RX 5700 (RADV NAVI10)", Kind::Discrete, Some(8176), false),
+            c("llvmpipe (LLVM 21.1.0, 256 bits)", Kind::Cpu, None, true),
+        ];
+        let p = plan(&list, &Wanted::parse("rx 5700"));
+        assert_eq!((p.order, p.reason), (vec![2], Reason::WantedCannotPresent));
+    }
+
+    #[test]
+    fn the_warning_tells_a_missing_adapter_from_one_that_cannot_present() {
+        let missing = Reason::WantedNotFound.warning("rx 5700").expect("a warning");
+        assert!(missing.contains("\"rx 5700\"") && missing.contains("no adapter matches"));
+        let blocked = Reason::WantedCannotPresent.warning("rx 5700").expect("a warning");
+        assert!(blocked.contains("cannot present"));
+        assert_eq!(Reason::Wanted.warning("rx 5700"), None);
+        assert_eq!(Reason::Automatic.warning(""), None);
     }
 
     #[test]

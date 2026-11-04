@@ -596,9 +596,11 @@ fn material_map(
                     Some(DEFAULT_SPECULAR),
                     true,
                 ),
-                _ => tool.ui.picker.open(
+                _ => tool.ui.picker.open_with_defaults(
                     &aurora_i18n::tr!("build-ui-texture-choose", cap = caption.to_owned()),
                     id.unwrap_or_default(),
+                    None,
+                    true,
                 ),
             }
             tool.ui.pick_target = Some(target);

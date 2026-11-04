@@ -163,31 +163,29 @@ fn destinations_accept_regular_and_trash_folders_and_reject_protected_library_ou
     };
     folder(&mut inv, 1, Uuid::nil(), 8, false);
     let root = inv.root;
-    let protected = HashSet::new();
-    assert!(destination(&inv, root, &item, &protected));
+    assert!(destination(&inv, root, &item));
     for (n, kind) in [(2, -1), (3, 14), (4, 3)] {
         let id = folder(&mut inv, n, root, kind, false);
-        assert!(destination(&inv, id, &item, &protected));
-        assert!(!destination(&inv, id, &item, &HashSet::from([id])));
+        assert!(destination(&inv, id, &item));
     }
     for (n, kind) in [(10, 46), (11, 47), (12, 48), (13, 50), (14, 53), (15, 54)] {
         let id = folder(&mut inv, n, root, kind, false);
         let child = folder(&mut inv, n + 100, id, -1, false);
-        assert!(!destination(&inv, child, &item, &protected));
+        assert!(!destination(&inv, child, &item));
     }
     let lib = folder(&mut inv, 20, root, -1, true);
-    assert!(!destination(&inv, lib, &item, &protected));
+    assert!(!destination(&inv, lib, &item));
     let cyclic = folder(&mut inv, 21, Uuid::from_u128(21), -1, false);
-    assert!(!destination(&inv, cyclic, &item, &protected));
+    assert!(!destination(&inv, cyclic, &item));
     let fav = folder(&mut inv, 22, root, 23, false);
-    assert!(!destination(&inv, fav, &item, &protected));
+    assert!(!destination(&inv, fav, &item));
     item.asset_type = 3;
-    assert!(destination(&inv, fav, &item, &protected));
+    assert!(destination(&inv, fav, &item));
     item.asset_type = 24;
     item.inv_type = 3;
-    assert!(destination(&inv, fav, &item, &protected));
+    assert!(destination(&inv, fav, &item));
     item.inv_type = 0;
-    assert!(!destination(&inv, fav, &item, &protected));
+    assert!(!destination(&inv, fav, &item));
 }
 
 #[test]

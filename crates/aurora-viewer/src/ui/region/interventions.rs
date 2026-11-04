@@ -673,10 +673,13 @@ fn show_dialog(
                         let mut v = f64::from(*value);
                         ui.add_sized(
                             [52.0, 24.0],
-                            egui::DragValue::new(&mut v)
-                                .range(0.0..=f64::from(max))
-                                .speed(0.2)
-                                .custom_formatter(|v, _| format!("{:02}", v.round() as i64)),
+                            widgets::restricted_number(
+                                egui::DragValue::new(&mut v)
+                                    .range(0.0..=f64::from(max))
+                                    .speed(0.2)
+                                    .custom_formatter(|v, _| format!("{:02}", v.round() as i64)),
+                                widgets::TextPolicy::Digits,
+                            ),
                         );
                         *value = v.round() as u32;
                     };

@@ -153,10 +153,13 @@ pub(super) fn show(
                         let chip = local && roomy && st.show_channel;
                         let chip_w = if chip { 34.0 } else { 0.0 };
                         let field_w = (ui.available_width() - chip_w - BUTTON - 12.0).max(40.0);
-                        let hint = match st.selected {
-                            None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
-                            Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
-                        };
+                        let hint = super::input::hint(
+                            ui,
+                            match st.selected {
+                                None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
+                                Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
+                            },
+                        );
                         super::input::prepare(ui, conv_input, local);
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
                         let nav = crate::ui::emoji::codes::keys(ui, conv_input);

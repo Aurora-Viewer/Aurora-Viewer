@@ -483,7 +483,7 @@ impl ParticleManager {
         self.inst_tmp.clear();
         self.order_tmp.clear();
         for s in self.sources.values() {
-            let slot = if s.texture.is_nil() || !textures.is_loaded(&s.texture) {
+            let slot = if s.texture.is_nil() || !(textures.is_loaded(&s.texture) || textures.is_local(&s.texture)) {
                 0
             } else {
                 s.slot

@@ -302,6 +302,18 @@ impl ShapeParams {
         }
     }
 
+    /// Shape sex without expanding all visual-parameter drivers each frame.
+    pub(super) fn is_male(&self, values: &[u8]) -> bool {
+        let Some(param) = self.params.get(&PARAM_MALE) else { return false };
+        let weight = self
+            .transmitted
+            .binary_search(&PARAM_MALE)
+            .ok()
+            .and_then(|index| values.get(index))
+            .map_or(param.default, |value| u8_to_f32(*value, param.min, param.max));
+        weight > 0.5
+    }
+
     /// Weights of every parameter from the AvatarAppearance values (empty:
     /// defaults).
     pub fn weights(&self, values: &[u8]) -> HashMap<i32, f32> {
@@ -350,6 +362,26 @@ impl ShapeParams {
                 let range = p.max - p.min;
                 if range > 0.0 {
                     ((w.clamp(p.min, p.max) - p.min) / range * 255.0).round() as u8
+                } else {
+                    0
+                }
+            })
+            .collect()
+    }
+
+    /// The transmitted values of worn wearables' parameters (the others at
+    /// their default), quantised as LLAgent::sendAgentSetAppearance sends
+    /// them: F32_to_U8 truncates (llquantize.h), where `values_with` rounds.
+    pub fn transmit_values(&self, weights: &BTreeMap<i32, f32>) -> Vec<u8> {
+        self.transmitted
+            .iter()
+            .map(|id| {
+                let Some(p) = self.params.get(id) else {
+                    return 0;
+                };
+                let w = weights.get(id).copied().filter(|w| w.is_finite()).unwrap_or(p.default);
+                if p.max > p.min {
+                    ((w.clamp(p.min, p.max) - p.min) / (p.max - p.min) * 255.0) as u8
                 } else {
                     0
                 }
@@ -489,6 +521,22 @@ mod tests {
     }
 
     #[test]
+    fn gait_sex_matches_the_shape_for_partial_and_complete_appearances() {
+        let (_, rig, p) = load();
+        assert!(!ShapeParams::default().is_male(&[]));
+        assert_eq!(p.is_male(&[]), p.shape(&[], &rig).male);
+        let index = p.transmitted.binary_search(&PARAM_MALE).expect("male parameter");
+        let mut values = p.values_with(&[]);
+        for weight in [0, 127, 128, 255] {
+            values[index] = weight;
+            for len in [0, index, index + 1, values.len()] {
+                let values = &values[..len];
+                assert_eq!(p.is_male(values), p.shape(values, &rig).male);
+            }
+        }
+    }
+
+    #[test]
     fn shape_from_appearance_values() {
         let (_, rig, p) = load();
         assert_eq!(p.transmitted_count(), 253);
@@ -543,5 +591,27 @@ mod tests {
                 assert_eq!(edited[index], base[index]);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod transmit_tests {
+    use crate::scene::avatar::AvatarLibrary;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn transmitted_values_truncate_as_the_legacy_viewer_sends_them() {
+        let lib = AvatarLibrary::load();
+        let p = &lib.shape_params;
+        let defaults = p.transmit_values(&BTreeMap::new());
+        assert_eq!(defaults.len(), p.transmitted_count());
+        // a weight a hair under a step goes down, where rounding goes up
+        let id = p.transmitted[0];
+        let param = &p.params[&id];
+        let step = (param.max - param.min) / 255.0;
+        let weight = param.min + step * 10.9;
+        let values = p.transmit_values(&BTreeMap::from([(id, weight)]));
+        assert_eq!(values[0], 10);
+        assert_eq!(p.values_with(&[(id, weight)])[0], 11);
     }
 }

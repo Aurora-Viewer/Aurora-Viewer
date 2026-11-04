@@ -46,11 +46,13 @@ fn snapshot(ctx: &Context, layer: LayerId, rect: Rect, action: Rect) -> derez::S
 }
 
 /// The card's grid and start menus; `slurl` is the login screen's start
-/// SLURL, shown by every card's start menu.
+/// SLURL, shown by every card's start menu, `favorites` the account's own
+/// favourite landmarks and the one chosen.
 pub(super) fn controls(
     ui: &mut egui::Ui,
     account: &mut Account,
     slurl: &mut Option<crate::slurl::Location>,
+    favorites: &mut super::StartFavorites,
     grids: &[crate::grids::Grid],
 ) -> bool {
     let previous = (account.uri.clone(), account.start_location.clone(), account.start_region.clone());
@@ -78,12 +80,13 @@ pub(super) fn controls(
     }
     ui.horizontal(|ui| {
         ui.add_sized(label_size, egui::Label::new(aurora_i18n::tr!("ui-login-start")));
+        super::demo_open_start_menu(ui, "accounts_start", favorites);
         let combo = egui::ComboBox::from_id_salt("accounts_start")
             .width(ui.available_width())
             .truncate();
-        super::start_menu(ui, combo, &mut account.start_location, slurl);
+        super::start_menu(ui, combo, &mut account.start_location, slurl, favorites);
     });
-    if account.start_location == "region" && slurl.is_none() {
+    if account.start_location == "region" && slurl.is_none() && favorites.chosen().is_none() {
         ui.add(
             egui::TextEdit::singleline(&mut account.start_region)
                 .interactive(ui.is_enabled())
@@ -453,9 +456,12 @@ pub fn show(
                                                         inner_width,
                                                     ));
                                                     ui.add_space(6.0);
-                                                    if controls(ui, &mut account, &mut form.start_slurl, &settings.grids) {
-                                                        edited = Some((index, previous, account.clone()));
+                                                    let mut favorites =
+                                                        super::StartFavorites::of(&form.favorites, &form.start_favorite, &previous);
+                                                    if controls(ui, &mut account, &mut form.start_slurl, &mut favorites, &settings.grids) {
+                                                        edited = Some((index, previous.clone(), account.clone()));
                                                     }
+                                                    favorites.keep(&mut form.start_favorite, previous.clone());
                                                     ui.add_space(8.0);
                                                     ui.label(
                                                         RichText::new(aurora_i18n::tr!("login-accounts-last-place"))
@@ -955,12 +961,63 @@ mod tests {
                         // Larger text exercises the same overflow as a longer
                         // translation, without changing the process-wide locale.
                         ui.style_mut().text_styles.get_mut(&egui::TextStyle::Button).unwrap().size = 24.0;
-                        controls(ui, &mut account, &mut None, &[]);
+                        controls(ui, &mut account, &mut None, &mut super::super::StartFavorites::none(), &[]);
                         width = ui.min_rect().width();
                     });
                 },
             ));
             assert!(width <= 185.1, "selector widened the card to {width}");
+        }
+    }
+
+    #[test]
+    fn a_chosen_favorite_names_the_start_menu_and_keeps_the_card_width() {
+        let ctx = Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut account = Account::from_settings(&Settings::default(), false, None);
+        account.start_location = "region".into();
+        let list = vec![crate::login_favorites::Favorite {
+            item: uuid::Uuid::from_u128(7),
+            asset: uuid::Uuid::from_u128(8),
+            name: "A synthetic favourite with a very long name that never fits".into(),
+            region: "Synthetic region".into(),
+            pos: [1.0, 2.0, 3.0],
+        }];
+        for frame in 0..4 {
+            let mut width = 0.0;
+            let mut favorites = super::super::StartFavorites {
+                list: &list,
+                chosen: Some(list[0].item),
+            };
+            let output = super::super::test_output(ctx.run_ui(
+                egui::RawInput {
+                    time: Some(frame as f64 / 30.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.scope(|ui| {
+                        ui.set_width(185.0);
+                        controls(ui, &mut account, &mut None, &mut favorites, &[]);
+                        width = ui.min_rect().width();
+                    });
+                },
+            ));
+            assert!(width <= 185.1, "the favourite widened the card to {width}");
+            let texts: Vec<String> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                texts.iter().any(|t| t.starts_with("A synthetic")),
+                "the menu shows the favourite: {texts:?}"
+            );
+            // a favourite chosen: no region field under the menu
+            assert!(!texts.iter().any(|t| t == aurora_i18n::tr!("ui-login-region-name")));
+            assert_eq!(favorites.chosen, Some(list[0].item));
         }
     }
 

@@ -37,6 +37,20 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_DOUBLECLICK").is_some() {
             log::info!("demo double click: {action:?} at {point:?}");
         }
+        // LLToolPie::walkToClickedLocation / teleportToClickedLocation: under
+        // RLVa a point that a local teleport may not reach (@tplocal, @sittp,
+        // @unsit while seated) is refused, walking there included
+        let global = self
+            .world
+            .main_origin()
+            .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + point.as_dvec3());
+        if action != DoubleClick::Nothing && global.is_some_and(|g| !self.world.rlva_can_teleport_global(g)) {
+            self.world.system_notice(
+                aurora_i18n::tr!("rlva-blocked-autopilot"),
+                crate::world::notice_topics::Topic::Warning,
+            );
+            return;
+        }
         match action {
             DoubleClick::Nothing => {}
             DoubleClick::Walk => self.walk_to(point, false),
@@ -97,7 +111,10 @@ impl App {
         if !point.is_finite() {
             return;
         }
-        let size = self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32);
+        let size = self
+            .world
+            .main()
+            .map_or((256.0, 256.0), |r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32));
         let (slot, position) = autopilot::teleport_destination(origin, size, point, self.pelvis_to_foot());
         let here = slot == origin;
         let handle = if here { main } else { aurora_net::origin_to_handle(slot.0, slot.1) };

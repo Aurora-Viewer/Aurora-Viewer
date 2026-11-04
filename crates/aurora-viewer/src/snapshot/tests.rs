@@ -2,6 +2,24 @@ use super::*;
 use std::sync::atomic::AtomicU32;
 
 #[test]
+fn the_viewfinder_scale_is_the_photos_height_over_the_viewfinders() {
+    // an 8K photo of the window's proportions: 4 times its height
+    assert_eq!(viewfinder_scale((7680, 4320), (1920, 1080), 100), 4.0);
+    // a square photo in a wide window: the window's height of view
+    assert_eq!(viewfinder_scale((7680, 7680), (1920, 1080), 100), 7680.0 / 1080.0);
+    // a wide photo in a tall window: shown 1600 / (16 / 9) = 900 high
+    assert_eq!(viewfinder_scale((3840, 2160), (1600, 2000), 100), 2.4);
+    // the 3D drawn at half the window: the viewfinder's pixels are half
+    assert_eq!(viewfinder_scale((3840, 2160), (1920, 1080), 50), 4.0);
+    // a photo smaller than the viewfinder (the preview) keeps the window's
+    assert_eq!(viewfinder_scale((720, 405), (1920, 1080), 100), 1.0);
+    assert_eq!(viewfinder_scale((0, 0), (0, 0), 100), 1.0);
+    // a render scale out of the setting's range counts as its nearest end
+    assert_eq!(viewfinder_scale((3840, 2160), (1920, 1080), 0), 4.0);
+    assert_eq!(viewfinder_scale((3840, 2160), (1920, 1080), 200), 2.0);
+}
+
+#[test]
 fn presets_give_their_long_side_with_the_proportions() {
     let win = (2560, 1369);
     assert_eq!(photo_size(Aspect::R16x9, Resolution::Uhd, [0, 0], win), (3840, 2160));
@@ -146,6 +164,36 @@ fn a_card_over_its_budget_still_draws_passes_of_the_windows_size() {
     let tiles = plan((3840, 2160), 16384, pass_pixels(0, 88, (1920, 1080)), TILE_GUARD);
     assert!(tiles.len() <= 16, "{}", tiles.len());
     assert!(plan((2636, 1490), 16384, 0, TILE_GUARD).len() > 1000);
+}
+
+#[test]
+fn a_pass_counts_the_targets_the_renderer_measured_and_its_output() {
+    // measured: whatever the MSAA, the targets' own bytes (rounded up)
+    assert_eq!(pass_bytes_per_pixel(Some(112.3), 1), 113 + PASS_OUTPUT_BYTES);
+    assert_eq!(pass_bytes_per_pixel(Some(195.0), 8), 195 + PASS_OUTPUT_BYTES);
+    // not measured yet, or nonsense: the fallback grows with the samples
+    let one = pass_bytes_per_pixel(None, 1);
+    let eight = pass_bytes_per_pixel(None, 8);
+    assert!(one >= 120 && eight > one, "{one} {eight}");
+    assert_eq!(pass_bytes_per_pixel(Some(0.0), 1), one);
+    assert_eq!(pass_bytes_per_pixel(Some(f32::NAN), 1), one);
+}
+
+#[test]
+fn an_8k_photo_no_longer_fits_one_pass_on_a_card_with_2_gb_free() {
+    // Agni, 2026-11-02, RTX 5070: 9,959 MB budget, 7,504 MB used, no MSAA;
+    // the targets took 87 bytes a pixel (measured there), counted 34 before
+    let free = (9_959u64 - 7_504) * 1_000_000 / 2;
+    let photo = (7680, 4108);
+    let before = plan(photo, 16384, pass_pixels(free, 34, (3840, 2054)), TILE_GUARD);
+    assert_eq!(before.len(), 1, "the plan that lost the GPU");
+    let per_pixel = pass_bytes_per_pixel(Some(87.0), 1);
+    let tiles = plan(photo, 16384, pass_pixels(free, per_pixel, (3840, 2054)), TILE_GUARD);
+    assert!(tiles.len() > 1, "{}", tiles.len());
+    for t in &tiles {
+        let bytes = u64::from(t.draw.width) * u64::from(t.draw.height) * per_pixel;
+        assert!(bytes <= free, "a pass of {} x {} takes {bytes} bytes", t.draw.width, t.draw.height);
+    }
 }
 
 #[test]
@@ -312,6 +360,40 @@ fn every_tile_of_a_photo_shows_the_instant_of_its_first() {
     }
     // a first part drawn again (its frame lost) takes its own instant
     assert_eq!(Hold::for_part(4, 0, &mut kept, at(80, 3.0)), Some(at(80, 3.0)));
+}
+
+#[test]
+fn only_a_tiled_photo_with_occlusion_draws_its_context_first() {
+    // a quarter of each side, rounded up
+    assert_eq!(ContextPass::plan((7680, 4320), 6, true), ContextPass::Pending((1920, 1080)));
+    assert_eq!(ContextPass::plan((3003, 1801), 4, true), ContextPass::Pending((751, 451)));
+    assert_eq!(ContextPass::plan((7680, 4320), 1, true), ContextPass::None, "one pass");
+    assert_eq!(ContextPass::plan((7680, 4320), 6, false), ContextPass::None, "no occlusion");
+    // never a target smaller than a few texels
+    assert_eq!(ContextPass::plan((40, 20), 2, true), ContextPass::Pending((16, 16)));
+}
+
+#[test]
+fn the_context_is_the_first_part_and_its_tiles_keep_its_instant() {
+    let t0 = std::time::Instant::now();
+    let at = |ms: u64| Hold {
+        at: t0 + std::time::Duration::from_millis(ms),
+        clock: ms as f32,
+        later: false,
+    };
+    let tiles = 3;
+    let mut kept = None;
+    let (part, parts) = ContextPass::Pending((960, 540)).part(0, tiles);
+    assert_eq!((part, parts), (0, 4));
+    assert_eq!(Hold::for_part(parts, part, &mut kept, at(16)), Some(at(16)));
+    // the first tile is a later part: it shows the context's instant
+    for next in 0..tiles {
+        let (part, parts) = ContextPass::Drawn.part(next, tiles);
+        assert_eq!((part, parts), (next + 1, 4));
+        let hold = Hold::for_part(parts, part, &mut kept, at(33 + next as u64 * 16));
+        assert_eq!(hold, Some(Hold { later: true, ..at(16) }), "tile {next}");
+    }
+    assert_eq!(ContextPass::None.part(2, tiles), (2, 3));
 }
 
 #[test]
@@ -645,4 +727,104 @@ fn a_refused_configuration_stops_the_post() {
     };
     let result = rt.block_on(profile::post(&web, "_my_session=demo-auth", vec![1, 2, 3], "", false));
     assert_eq!(result, Err(profile::Error::Config(500)));
+}
+
+#[test]
+fn a_photo_pass_stays_within_the_gpus_time() {
+    let window = (1226, 2055);
+    // no measure: 4K at most, never less than the window
+    let mut cost = GpuCost::default();
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), UNTIMED_PASS_PIXELS);
+    // 50 ms for 2.5 Mpx (20 ns a pixel): 25 Mpx in the 500 ms of a pass
+    cost.note(Some(50.0), 2_500_000);
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 25_000_000);
+    // an 8K photo is split, a 4K one is not
+    let max = cost.pass_pixels(window, PASS_GPU_MS);
+    assert!(plan((7680, 4320), 16384, max, TILE_GUARD).len() > 1);
+    assert_eq!(plan((3840, 2160), 16384, max, TILE_GUARD).len(), 1);
+    // a fast GPU (1 ns a pixel) draws 8K in one pass
+    let mut fast = GpuCost::default();
+    fast.note(Some(8.0), 8_000_000);
+    assert_eq!(
+        plan((7680, 4320), 16384, fast.pass_pixels(window, PASS_GPU_MS), TILE_GUARD).len(),
+        1
+    );
+    // never fewer pixels than the window's frame, however slow
+    let mut slow = GpuCost::default();
+    slow.note(Some(10_000.0), 2_500_000);
+    assert_eq!(slow.pass_pixels(window, PASS_GPU_MS), 1226 * 2055);
+}
+
+#[test]
+fn the_cost_of_a_pixel_keeps_the_slowest_recent_frame() {
+    let mut cost = GpuCost::default();
+    cost.note(Some(40.0), 2_000_000);
+    // a faster frame lowers it a little only
+    cost.note(Some(10.0), 2_000_000);
+    assert_eq!(
+        cost.pass_pixels((1, 1), PASS_GPU_MS),
+        (500e6 / f64::from(20.0f32 * COST_DECAY)) as u64
+    );
+    // a slower one raises it at once
+    cost.note(Some(80.0), 2_000_000);
+    assert_eq!(cost.pass_pixels((1, 1), PASS_GPU_MS), 12_500_000);
+    // no time, no time, or a frame too small to tell (the preview's):
+    // nothing changes
+    let before = cost;
+    cost.note(None, 2_000_000);
+    cost.note(Some(0.0), 2_000_000);
+    cost.note(Some(f32::NAN), 2_000_000);
+    cost.note(Some(500.0), 720 * 405);
+    assert_eq!(cost, before);
+    // it falls back after a hitch: half in about 70 frames
+    for _ in 0..70 {
+        cost.note(Some(1.0), 2_000_000);
+    }
+    assert!(cost.pass_pixels((1, 1), PASS_GPU_MS) > 24_000_000);
+}
+
+#[test]
+fn a_blank_pass_splits_the_next_ones() {
+    let window = (1226, 2055);
+    let mut cost = GpuCost::default();
+    cost.note(Some(1.0), 8_000_000);
+    // 7040 x 3960 came back blank: a quarter of it at most from now on
+    assert!(cost.failed(7040 * 3960, window));
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 7040 * 3960 / 4);
+    // a larger failure does not raise it again
+    assert!(cost.failed(7680 * 4320, window));
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 7040 * 3960 / 4);
+    assert!(plan((7040, 3960), 16384, cost.pass_pixels(window, PASS_GPU_MS), TILE_GUARD).len() >= 4);
+    // down to the window's frame, then it cannot be split any more
+    assert!(cost.failed(4_000_000, window));
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 1226 * 2055);
+    assert!(!cost.failed(1226 * 2055, window));
+    // the next photo starts from the measure alone
+    cost.new_photo();
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 4_000_000_000);
+}
+
+#[test]
+fn a_photo_with_the_interface_takes_longer_passes() {
+    let window = (1920, 1080);
+    let mut cost = GpuCost::default();
+    // 20 ns a pixel: 25 Mpx a pass, 75 Mpx with the interface or the HUDs
+    cost.note(Some(50.0), 2_500_000);
+    assert_eq!(cost.pass_pixels(window, OVERLAY_PASS_GPU_MS), 75_000_000);
+    assert_eq!(
+        plan((7680, 4320), 16384, cost.pass_pixels(window, OVERLAY_PASS_GPU_MS), TILE_GUARD).len(),
+        1
+    );
+    // unmeasured: the slowest GPU's 4K either way
+    let untimed = GpuCost::default();
+    assert_eq!(untimed.pass_pixels(window, OVERLAY_PASS_GPU_MS), UNTIMED_PASS_PIXELS);
+}
+
+#[test]
+fn a_pass_the_driver_ended_reads_back_blank() {
+    // black, opaque (the render target's clear) or not
+    assert!(blank(&[0, 0, 0, 255, 0, 0, 0, 255]));
+    assert!(blank(&[0; 16]));
+    // one pixel of light is a photo
+    assert!(!blank(&[0, 0, 0, 255, 0, 0, 1, 255]));
 }

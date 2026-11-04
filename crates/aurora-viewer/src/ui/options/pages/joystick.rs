@@ -1,7 +1,468 @@
 //! LLFloaterJoystick settings, with native axis and button monitoring.
 
-use super::super::cx::{Custom, Cx, Many, Nothing, field};
+use super::super::cx::{Custom, Cx, F, Many, Nothing, field};
 use crate::ui::widgets;
+use std::time::Instant;
+
+pub(in crate::ui::options) enum JoystickCapture {
+    Button(ButtonCapture),
+    Axis(AxisCapture),
+    Zoom(ZoomCapture),
+}
+
+impl JoystickCapture {
+    pub fn hide(&mut self) {
+        match self {
+            Self::Button(capture) => capture.visible = false,
+            Self::Axis(capture) => capture.visible = false,
+            Self::Zoom(capture) => capture.button.visible = false,
+        }
+    }
+
+    pub fn visible(&self) -> bool {
+        match self {
+            Self::Button(capture) => capture.visible,
+            Self::Axis(capture) => capture.visible,
+            Self::Zoom(capture) => capture.button.visible,
+        }
+    }
+}
+
+pub(in crate::ui::options) struct ZoomCapture {
+    button: ButtonCapture,
+    axis: crate::joystick::capture::AxisCapture,
+    held_axes: u16,
+}
+
+impl ZoomCapture {
+    fn poll(&mut self, snapshot: &crate::joystick::Snapshot, settings: &crate::joystick::Settings) -> Result<Option<i8>, ()> {
+        if let Some(button) = self.button.poll(snapshot, settings)? {
+            return Ok(Some(button));
+        }
+        let device = snapshot.selected(settings).ok_or(())?;
+        let held = crate::joystick::axis_button_mask(device);
+        for (axis, &value) in device.axes.iter().take(device.axis_count.min(crate::joystick::AXES)).enumerate() {
+            let pair = 3u16 << (axis * 2);
+            if self.held_axes & pair != 0 && held & pair == 0 {
+                self.axis.rebase(axis, value);
+            }
+        }
+        self.held_axes &= held;
+        if let Some(axis) = self.axis.poll(snapshot, settings, Instant::now())? {
+            if let Some(binding) = self.axis.button(axis) {
+                let bit = 1u16 << (usize::try_from(binding).map_err(|_| ())? - crate::joystick::BUTTONS);
+                if self.held_axes & bit == 0 {
+                    return Ok(Some(binding));
+                }
+            } else {
+                self.axis.rebase(axis as usize, device.axes[axis as usize]);
+            }
+        }
+        Ok(None)
+    }
+}
+
+pub(in crate::ui::options) struct ButtonCapture {
+    path: &'static str,
+    device: String,
+    presses: [u64; crate::joystick::BUTTONS],
+    visible: bool,
+}
+
+impl ButtonCapture {
+    fn new(path: &'static str, device: &crate::joystick::Device) -> Self {
+        Self {
+            path,
+            device: device.id.clone(),
+            presses: device.presses,
+            visible: true,
+        }
+    }
+
+    /// Count edges, including a press released between UI frames. A held
+    /// button at the start of capture is not a new choice.
+    fn poll(&self, snapshot: &crate::joystick::Snapshot, settings: &crate::joystick::Settings) -> Result<Option<i8>, ()> {
+        let device = snapshot
+            .selected(settings)
+            .filter(|d| d.id == self.device && snapshot.updated.is_some_and(|at| at.elapsed().as_millis() < 250))
+            .ok_or(())?;
+        // A reconnected device with the same id can restart its counters.
+        if device.presses.iter().zip(self.presses).any(|(now, before)| *now < before) {
+            return Err(());
+        }
+        Ok(device
+            .presses
+            .iter()
+            .zip(self.presses)
+            .position(|(now, before)| *now != before)
+            .map(|n| n as i8))
+    }
+}
+
+pub(in crate::ui::options) struct AxisCapture {
+    channel: usize,
+    input: crate::joystick::capture::AxisCapture,
+    visible: bool,
+}
+
+impl AxisCapture {
+    fn new(channel: usize, device: &crate::joystick::Device) -> Self {
+        Self {
+            channel,
+            input: crate::joystick::capture::AxisCapture::new(device),
+            visible: true,
+        }
+    }
+}
+
+fn button(cx: &mut Cx, label: &str, field: F<i8>) {
+    button_hint(cx, label, aurora_i18n::tr!("joystick-button-hint"), field, false);
+}
+
+fn button_hint(cx: &mut Cx, label: &str, hint: &str, field: F<i8>, capture_axes: bool) {
+    use aurora_i18n::tr;
+    cx.row_with(label, hint, &field, |ui, s, st, _| {
+        let mut value = *(field.get)(s);
+        let mut changed = false;
+        let captured = match st.joystick_capture.as_mut() {
+            Some(JoystickCapture::Button(capture)) if capture.path == field.path => {
+                capture.visible = true;
+                Some(capture.poll(&st.joystick, &s.joystick))
+            }
+            Some(JoystickCapture::Zoom(capture)) if capture.button.path == field.path => {
+                capture.button.visible = true;
+                Some(capture.poll(&st.joystick, &s.joystick))
+            }
+            _ => None,
+        };
+        match captured {
+            Some(Ok(Some(button))) => {
+                value = button;
+                changed = true;
+                st.cancel_capture();
+            }
+            Some(Err(())) => st.cancel_capture(),
+            _ => {}
+        }
+        let capturing = match &st.joystick_capture {
+            Some(JoystickCapture::Button(capture)) => capture.path == field.path,
+            Some(JoystickCapture::Zoom(capture)) => capture.button.path == field.path,
+            _ => false,
+        };
+        let available = st.joystick.selected(&s.joystick).is_some() && st.joystick.updated.is_some_and(|at| at.elapsed().as_millis() < 250);
+        let text = if capturing {
+            if capture_axes {
+                tr!("joystick-zoom-press")
+            } else {
+                tr!("joystick-button-press")
+            }
+            .to_owned()
+        } else if value < 0 {
+            tr!("joystick-button-assign").to_owned()
+        } else if capture_axes && let Some((axis, positive)) = crate::joystick::button_axis(value) {
+            tr!(
+                "joystick-axis-button-value",
+                axis = axis,
+                direction = if positive { "+" } else { "−" }
+            )
+        } else {
+            tr!("joystick-button-value", button = value)
+        };
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(available, egui::Button::new(text).min_size(egui::vec2(126.0, 24.0)))
+                .clicked()
+            {
+                st.cancel_capture();
+                if !capturing && let Some(device) = st.joystick.selected(&s.joystick) {
+                    let button = ButtonCapture::new(field.path, device);
+                    st.joystick_capture = Some(if capture_axes && device.axis_count > 0 {
+                        JoystickCapture::Zoom(ZoomCapture {
+                            button,
+                            axis: crate::joystick::capture::AxisCapture::new(device),
+                            held_axes: crate::joystick::axis_button_mask(device),
+                        })
+                    } else {
+                        JoystickCapture::Button(button)
+                    });
+                }
+            }
+            if ui
+                .add_enabled(
+                    capturing || value >= 0,
+                    egui::Button::new(if capturing { tr!("common-cancel") } else { tr!("common-none") }),
+                )
+                .clicked()
+            {
+                st.cancel_capture();
+                if !capturing {
+                    value = -1;
+                    changed = true;
+                }
+            }
+        });
+        *(field.get_mut)(s) = value;
+        changed
+    });
+}
+
+fn axis_binding(
+    ui: &mut egui::Ui,
+    settings: &mut crate::joystick::Settings,
+    st: &mut super::super::OptionsUi,
+    channel: usize,
+    p: &crate::theme::Palette,
+) -> bool {
+    use aurora_i18n::tr;
+    let mut changed = false;
+    let captured = match st.joystick_capture.as_mut() {
+        Some(JoystickCapture::Axis(capture)) if capture.channel == channel => {
+            capture.visible = true;
+            Some(capture.input.poll(&st.joystick, settings, Instant::now()))
+        }
+        _ => None,
+    };
+    match captured {
+        Some(Ok(Some(axis))) => {
+            settings.mapping[channel] = axis;
+            if channel == 6 && settings.flycam.gain[channel] == 0.0 {
+                // Explicitly assigning zoom should produce a usable lens
+                // control, rather than retain the inactive preset's zero gain.
+                settings.flycam.gain[channel] = 1.0f32.copysign(settings.flycam.gain[channel]);
+            }
+            changed = true;
+            st.cancel_capture();
+        }
+        Some(Err(())) => st.cancel_capture(),
+        _ => {}
+    }
+    let capturing = matches!(&st.joystick_capture, Some(JoystickCapture::Axis(capture)) if capture.channel == channel);
+    let available = st.joystick.selected(settings).is_some_and(|device| device.axis_count != 0)
+        && st.joystick.updated.is_some_and(|at| at.elapsed().as_millis() < 250);
+    let text = if capturing {
+        tr!("joystick-axis-move").to_owned()
+    } else if settings.mapping[channel] < 0 {
+        tr!("joystick-button-assign").to_owned()
+    } else {
+        tr!("joystick-axis-value", axis = settings.mapping[channel])
+    };
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(available, egui::Button::new(text).min_size(egui::vec2(126.0, 24.0)))
+            .clicked()
+        {
+            st.cancel_capture();
+            if !capturing && let Some(device) = st.joystick.selected(settings) {
+                st.joystick_capture = Some(JoystickCapture::Axis(AxisCapture::new(channel, device)));
+            }
+        }
+        if ui
+            .add_enabled(
+                capturing || settings.mapping[channel] >= 0,
+                egui::Button::new(if capturing { tr!("common-cancel") } else { tr!("common-none") }),
+            )
+            .clicked()
+        {
+            st.cancel_capture();
+            if !capturing {
+                settings.mapping[channel] = -1;
+                changed = true;
+            }
+        }
+        let mut inverted = settings.axis_inverted(channel);
+        if widgets::switch_labeled(ui, p, &mut inverted, tr!("joystick-axis-invert")).changed() {
+            settings.set_axis_inverted(channel, inverted);
+            changed = true;
+        }
+    });
+    changed
+}
+
+fn tuning(ui: &mut egui::Ui, label: &str, tune: &mut crate::joystick::Tuning, channel: usize, inverted: bool) -> bool {
+    use aurora_i18n::tr;
+    let mut changed = false;
+    let mut gain = tune.gain[channel].abs();
+    let mut gain_changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        gain_changed |= ui
+            .add(
+                egui::DragValue::new(&mut gain)
+                    .speed(0.01)
+                    .range(0.0..=20.0)
+                    .prefix(tr!("joystick-gain-prefix")),
+            )
+            .changed();
+        changed |= ui
+            .add(
+                egui::DragValue::new(&mut tune.dead_zone[channel])
+                    .speed(0.01)
+                    .range(0.0..=1.0)
+                    .prefix(tr!("joystick-zone-prefix")),
+            )
+            .changed();
+    });
+    if gain_changed {
+        // Preserve the shared direction when editing a mode's magnitude.
+        tune.gain[channel] = if inverted { -gain } else { gain };
+    }
+    changed || gain_changed
+}
+
+fn axis_controls(
+    ui: &mut egui::Ui,
+    settings: &mut crate::joystick::Settings,
+    st: &mut super::super::OptionsUi,
+    p: &crate::theme::Palette,
+    channel: usize,
+) -> bool {
+    use aurora_i18n::tr;
+    let mut changed = false;
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let label_width = [tr!("joystick-avatar"), tr!("common-camera")]
+        .iter()
+        .map(|label| ui.painter().layout_no_wrap((*label).to_owned(), font.clone(), p.ink).size().x)
+        .fold(0.0, f32::max);
+    let column_width = ui.spacing().interact_size.x * 2.0 + label_width + 16.0;
+    let kinds: &[usize] = if channel == 6 { &[2] } else { &[1, 2] };
+    let columns = ((ui.available_width() + 16.0) / (column_width + 16.0))
+        .floor()
+        .clamp(1.0, kinds.len() as f32) as usize;
+    ui.vertical(|ui| {
+        changed |= axis_binding(ui, settings, st, channel, p);
+        let inverted = settings.axis_inverted(channel);
+        ui.spacing_mut().item_spacing.x = 16.0;
+        for chunk in kinds.chunks(columns) {
+            ui.columns(columns, |cells| {
+                for (offset, ui) in cells.iter_mut().enumerate() {
+                    let Some(&kind) = chunk.get(offset) else { continue };
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.push_id((channel, kind), |ui| match kind {
+                        1 if matches!(channel, 3 | 6) => {
+                            ui.horizontal(|ui| {
+                                ui.set_min_height(24.0);
+                                ui.weak(tr!("joystick-avatar"));
+                                ui.weak(tr!("joystick-axis-camera-only"));
+                            });
+                        }
+                        1 => changed |= tuning(ui, tr!("joystick-avatar"), &mut settings.avatar, channel, inverted),
+                        2 => changed |= tuning(ui, tr!("common-camera"), &mut settings.flycam, channel, inverted),
+                        _ => {}
+                    });
+                }
+            });
+        }
+        ui.add_space(4.0);
+    });
+    changed
+}
+
+fn axis_row(cx: &mut Cx, n: usize, label: &str, hint: &str) {
+    let p = cx.p;
+    let paths = [
+        "joystick.mapping[0]",
+        "joystick.mapping[1]",
+        "joystick.mapping[2]",
+        "joystick.mapping[3]",
+        "joystick.mapping[4]",
+        "joystick.mapping[5]",
+        "joystick.mapping[6]",
+    ];
+    let track = Custom {
+        path: paths[n],
+        modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
+            let (s, d) = (&s.joystick, &d.joystick);
+            s.mapping[n] != d.mapping[n]
+                || s.axis_inverted(n) != d.axis_inverted(n)
+                || s.avatar.gain[n] != d.avatar.gain[n]
+                || s.flycam.gain[n] != d.flycam.gain[n]
+                || s.avatar.dead_zone[n] != d.avatar.dead_zone[n]
+                || s.flycam.dead_zone[n] != d.flycam.dead_zone[n]
+        },
+        reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
+            let (s, d) = (&mut s.joystick, &d.joystick);
+            s.mapping[n] = d.mapping[n];
+            s.avatar.gain[n] = d.avatar.gain[n];
+            s.flycam.gain[n] = d.flycam.gain[n];
+            s.avatar.dead_zone[n] = d.avatar.dead_zone[n];
+            s.flycam.dead_zone[n] = d.flycam.dead_zone[n];
+        },
+    };
+    cx.below()
+        .row_with(label, hint, &track, |ui, s, st, _| axis_controls(ui, &mut s.joystick, st, &p, n));
+}
+
+fn zoom_settings(cx: &mut Cx) {
+    use crate::joystick::ZoomMode;
+    use aurora_i18n::tr;
+    cx.group(tr!("joystick-zoom-controls"), |cx| {
+        if cx.wide().combo(
+            tr!("joystick-zoom-mode"),
+            tr!("joystick-zoom-mode-hint"),
+            &field!(joystick.zoom_mode),
+            &[
+                (ZoomMode::Axis, tr!("joystick-zoom-mode-axis")),
+                (ZoomMode::Buttons, tr!("joystick-zoom-mode-buttons")),
+                (ZoomMode::HoldAxis, tr!("joystick-zoom-mode-hold-axis")),
+            ],
+        ) {
+            cx.st.cancel_joystick_capture();
+            if cx.s.joystick.zoom_mode != ZoomMode::Buttons && cx.s.joystick.flycam.gain[6] == 0.0 {
+                cx.s.joystick.flycam.gain[6] = 1.0f32.copysign(cx.s.joystick.flycam.gain[6]);
+            }
+        }
+        let mode = cx.s.joystick.zoom_mode;
+        cx.conditional(mode == ZoomMode::Buttons, |cx| {
+            button_hint(
+                cx,
+                tr!("joystick-zoom-in-button"),
+                tr!("joystick-zoom-button-hint"),
+                field!(joystick.zoom_in_button),
+                true,
+            );
+            button_hint(
+                cx,
+                tr!("joystick-zoom-out-button"),
+                tr!("joystick-zoom-button-hint"),
+                field!(joystick.zoom_out_button),
+                true,
+            );
+            cx.slider(
+                if cx.s.joystick.absolute_zoom() {
+                    tr!("joystick-zoom-strength")
+                } else {
+                    tr!("joystick-zoom-speed")
+                },
+                if cx.s.joystick.absolute_zoom() {
+                    tr!("joystick-zoom-strength-hint")
+                } else {
+                    tr!("joystick-zoom-speed-hint")
+                },
+                &field!(joystick.zoom_speed),
+                0.1..=5.0,
+                "",
+            );
+        });
+        cx.conditional(mode == ZoomMode::HoldAxis, |cx| {
+            button_hint(
+                cx,
+                tr!("joystick-zoom-hold-button"),
+                tr!("joystick-zoom-hold-hint"),
+                field!(joystick.zoom_hold_button),
+                true,
+            );
+        });
+        cx.toggle(
+            tr!("joystick-direct-zoom"),
+            tr!("joystick-direct-zoom-hint"),
+            &field!(joystick.direct_zoom),
+        );
+        cx.conditional(mode != ZoomMode::Buttons, |cx| {
+            let hint = format!("{} {}", tr!("joystick-axis-hint"), tr!("joystick-zoom-hint"));
+            axis_row(cx, 6, tr!("joystick-zoom"), &hint);
+        });
+    });
+}
 
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
@@ -108,20 +569,8 @@ pub fn page(cx: &mut Cx) {
             }
             false
         });
-        cx.slider(
-            tr!("joystick-flycam-button"),
-            tr!("joystick-button-hint"),
-            &field!(joystick.flycam_button),
-            -1..=31,
-            "",
-        );
-        cx.slider(
-            tr!("joystick-jump-button"),
-            tr!("joystick-button-hint"),
-            &field!(joystick.jump_button),
-            -1..=31,
-            "",
-        );
+        button(cx, tr!("joystick-flycam-button"), field!(joystick.flycam_button));
+        button(cx, tr!("joystick-jump-button"), field!(joystick.jump_button));
         cx.slider(tr!("joystick-run-threshold"), "", &field!(joystick.run_threshold), 0.1..=1.0, "");
     });
     cx.group(tr!("joystick-tuning"), |cx| {
@@ -130,20 +579,8 @@ pub fn page(cx: &mut Cx) {
             tr!("joystick-mouselook-yaw-hint"),
             &field!(joystick.mouselook_yaw),
         );
-        cx.slider(
-            tr!("joystick-rise-button"),
-            tr!("joystick-button-hint"),
-            &field!(joystick.rise_button),
-            -1..=31,
-            "",
-        );
-        cx.slider(
-            tr!("joystick-fall-button"),
-            tr!("joystick-button-hint"),
-            &field!(joystick.fall_button),
-            -1..=31,
-            "",
-        );
+        button(cx, tr!("joystick-rise-button"), field!(joystick.rise_button));
+        button(cx, tr!("joystick-fall-button"), field!(joystick.fall_button));
         cx.slider(
             tr!("joystick-avatar-feather"),
             tr!("joystick-feather-hint"),
@@ -159,7 +596,6 @@ pub fn page(cx: &mut Cx) {
             "",
         );
         cx.toggle(tr!("joystick-auto-level"), "", &field!(joystick.auto_level));
-        cx.toggle(tr!("joystick-direct-zoom"), "", &field!(joystick.direct_zoom));
     });
     cx.group(tr!("joystick-axes"), |cx| {
         let names = [
@@ -169,87 +605,499 @@ pub fn page(cx: &mut Cx) {
             tr!("joystick-roll"),
             tr!("joystick-pitch"),
             tr!("joystick-yaw"),
-            tr!("joystick-zoom"),
-        ];
-        let paths = [
-            "joystick.mapping[0]",
-            "joystick.mapping[1]",
-            "joystick.mapping[2]",
-            "joystick.mapping[3]",
-            "joystick.mapping[4]",
-            "joystick.mapping[5]",
-            "joystick.mapping[6]",
         ];
         for (n, label) in names.into_iter().enumerate() {
-            let track = Custom {
-                path: paths[n],
-                modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
-                    let (s, d) = (&s.joystick, &d.joystick);
-                    s.mapping[n] != d.mapping[n]
-                        || s.avatar.gain[n] != d.avatar.gain[n]
-                        || s.flycam.gain[n] != d.flycam.gain[n]
-                        || s.avatar.dead_zone[n] != d.avatar.dead_zone[n]
-                        || s.flycam.dead_zone[n] != d.flycam.dead_zone[n]
-                },
-                reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
-                    let (s, d) = (&mut s.joystick, &d.joystick);
-                    s.mapping[n] = d.mapping[n];
-                    s.avatar.gain[n] = d.avatar.gain[n];
-                    s.flycam.gain[n] = d.flycam.gain[n];
-                    s.avatar.dead_zone[n] = d.avatar.dead_zone[n];
-                    s.flycam.dead_zone[n] = d.flycam.dead_zone[n];
-                },
-            };
-            cx.row(label, tr!("joystick-axis-hint"), &track, |ui, s| {
-                let s = &mut s.joystick;
-                let mut changed = false;
-                ui.vertical(|ui| {
-                    ui.set_width(210.0);
-                    egui::ComboBox::from_id_salt(("joystick-axis", n))
-                        .selected_text(if s.mapping[n] < 0 {
-                            tr!("common-none").to_owned()
-                        } else {
-                            s.mapping[n].to_string()
-                        })
-                        .show_ui(ui, |ui| {
-                            changed |= ui.selectable_value(&mut s.mapping[n], -1, tr!("common-none")).changed();
-                            for a in 0..8 {
-                                changed |= ui.selectable_value(&mut s.mapping[n], a, a.to_string()).changed();
-                            }
-                        });
-                    for (avatar, label, tune) in [
-                        (true, tr!("joystick-avatar"), &mut s.avatar),
-                        (false, tr!("common-camera"), &mut s.flycam),
-                    ] {
-                        // Avatar movement has neither roll nor a lens axis.
-                        if avatar && matches!(n, 3 | 6) {
-                            continue;
-                        }
-                        ui.push_id((n, label), |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(label);
-                                changed |= ui
-                                    .add(
-                                        egui::DragValue::new(&mut tune.gain[n])
-                                            .speed(0.01)
-                                            .range(-20.0..=20.0)
-                                            .prefix(tr!("joystick-gain-prefix")),
-                                    )
-                                    .changed();
-                                changed |= ui
-                                    .add(
-                                        egui::DragValue::new(&mut tune.dead_zone[n])
-                                            .speed(0.01)
-                                            .range(0.0..=1.0)
-                                            .prefix(tr!("joystick-zone-prefix")),
-                                    )
-                                    .changed();
-                            })
-                        });
-                    }
-                });
-                changed
-            });
+            axis_row(cx, n, label, tr!("joystick-axis-hint"));
         }
     });
+    zoom_settings(cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::options::{OptionsResult, OptionsUi, Page, cx::Mode};
+    use crate::ui::widgets::elide_tests::{Frames, Text};
+    use std::time::{Duration, Instant};
+
+    type Render = fn(&mut Frames, &mut crate::settings::Settings, &mut OptionsUi, Vec<egui::Event>) -> (Vec<Text>, bool);
+
+    fn fixture() -> (crate::settings::Settings, OptionsUi) {
+        let state = OptionsUi {
+            joystick: crate::joystick::Snapshot {
+                devices: vec![crate::joystick::Device::new("test".into(), "Test controller".into(), 8)],
+                updated: Some(Instant::now()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        (crate::settings::Settings::default(), state)
+    }
+
+    fn frame(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Text>, bool) {
+        state.joystick.updated = Some(Instant::now());
+        let defaults = crate::settings::Settings::default();
+        let mut result = OptionsResult::default();
+        let mut changed = false;
+        let texts = frames.run(events, |ui| {
+            ui.set_width(700.0);
+            let mut cx = Cx::new(
+                ui,
+                crate::theme::Theme::default().palette(),
+                settings,
+                &defaults,
+                state,
+                &mut result,
+                Mode::Show,
+                "",
+            );
+            button(&mut cx, aurora_i18n::tr!("joystick-flycam-button"), field!(joystick.flycam_button));
+            changed |= cx.changed;
+        });
+        (texts, changed)
+    }
+
+    fn click(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        texts: &[Text],
+        label: &str,
+    ) -> Vec<Text> {
+        click_with(frames, settings, state, texts, label, frame)
+    }
+
+    fn zoom_modes_frame(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Text>, bool) {
+        state.joystick.updated = Some(Instant::now());
+        let defaults = crate::settings::Settings::default();
+        let mut result = OptionsResult::default();
+        let mut changed = false;
+        let texts = frames.run(events, |ui| {
+            ui.set_width(800.0);
+            let mut cx = Cx::new(
+                ui,
+                crate::theme::Theme::default().palette(),
+                settings,
+                &defaults,
+                state,
+                &mut result,
+                Mode::Show,
+                "",
+            );
+            zoom_settings(&mut cx);
+            changed |= cx.changed;
+        });
+        (texts, changed)
+    }
+
+    #[test]
+    fn joystick_zoom_mode_ui_assigns_both_buttons_and_switches_to_a_captured_modifier() {
+        use aurora_i18n::tr;
+        let (mut settings, mut state) = fixture();
+        settings.joystick.zoom_mode = crate::joystick::ZoomMode::Buttons;
+        let mut frames = Frames::new();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = zoom_modes_frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
+        }
+        assert!(
+            texts.iter().any(|text| text.source == tr!("joystick-direct-zoom")),
+            "two-buttons mode exposes absolute zoom"
+        );
+        for binding in [8, 46] {
+            click_with(
+                &mut frames,
+                &mut settings,
+                &mut state,
+                &texts,
+                tr!("joystick-button-assign"),
+                zoom_modes_frame,
+            );
+            assert!(state.joystick_capturing());
+            if binding == 8 {
+                state.joystick.devices[0].button(8, true);
+                state.joystick.devices[0].button(8, false);
+            } else {
+                state.joystick.devices[0].axes[7] = 0.8;
+                zoom_modes_frame(&mut frames, &mut settings, &mut state, Vec::new());
+                state.joystick.devices[0].axes[7] = 0.0;
+            }
+            let (next, changed) = zoom_modes_frame(&mut frames, &mut settings, &mut state, Vec::new());
+            texts = next;
+            assert!(changed && !state.joystick_capturing());
+        }
+        assert_eq!((settings.joystick.zoom_in_button, settings.joystick.zoom_out_button), (8, 46));
+        texts = click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            tr!("joystick-zoom-mode-buttons"),
+            zoom_modes_frame,
+        );
+        texts = click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            tr!("joystick-zoom-mode-hold-axis"),
+            zoom_modes_frame,
+        );
+        assert_eq!(settings.joystick.zoom_mode, crate::joystick::ZoomMode::HoldAxis);
+        assert!(
+            texts.iter().any(|text| text.source == tr!("joystick-direct-zoom")),
+            "hold-plus-axis mode exposes absolute zoom"
+        );
+        assert_eq!(settings.joystick.flycam.gain[6], 1.0);
+        assert!(!texts.iter().any(|text| text.source == tr!("joystick-zoom-in-button")));
+        state.joystick.devices[0].axes[6] = 0.8;
+        click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            tr!("joystick-button-assign"),
+            zoom_modes_frame,
+        );
+        state.joystick.devices[0].axes[6] = 0.0;
+        zoom_modes_frame(&mut frames, &mut settings, &mut state, Vec::new());
+        assert!(state.joystick_capturing(), "a trigger held before capture must be released first");
+        state.joystick.devices[0].axes[6] = 0.8;
+        zoom_modes_frame(&mut frames, &mut settings, &mut state, Vec::new());
+        state.joystick.devices[0].axes[6] = 0.0;
+        let (_, changed) = zoom_modes_frame(&mut frames, &mut settings, &mut state, Vec::new());
+        assert!(changed && !state.joystick_capturing());
+        assert_eq!(settings.joystick.zoom_hold_button, 44);
+        assert_eq!((settings.joystick.zoom_in_button, settings.joystick.zoom_out_button), (8, 46));
+    }
+
+    fn click_with(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        texts: &[Text],
+        label: &str,
+        render: Render,
+    ) -> Vec<Text> {
+        let pos = texts
+            .iter()
+            .find(|text| text.source == label)
+            .unwrap_or_else(|| {
+                panic!(
+                    "button {label:?} not found among {:?}",
+                    texts.iter().map(|text| &text.source).collect::<Vec<_>>()
+                )
+            })
+            .rect
+            .center();
+        render(frames, settings, state, vec![egui::Event::PointerMoved(pos)]);
+        for pressed in [true, false] {
+            render(
+                frames,
+                settings,
+                state,
+                vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }],
+            );
+        }
+        render(frames, settings, state, Vec::new()).0
+    }
+
+    fn axis_frame(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Text>, bool) {
+        axis_frame_for(frames, settings, state, events, 0)
+    }
+
+    fn zoom_frame(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Text>, bool) {
+        axis_frame_for(frames, settings, state, events, 6)
+    }
+
+    fn axis_frame_for(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        events: Vec<egui::Event>,
+        channel: usize,
+    ) -> (Vec<Text>, bool) {
+        state.joystick.updated = Some(Instant::now());
+        let mut changed = false;
+        let texts = frames.run(events, |ui| {
+            ui.set_width(700.0);
+            changed |= axis_binding(
+                ui,
+                &mut settings.joystick,
+                state,
+                channel,
+                &crate::theme::Theme::default().palette(),
+            );
+            let inverted = settings.joystick.axis_inverted(channel);
+            changed |= tuning(
+                ui,
+                aurora_i18n::tr!("joystick-avatar"),
+                &mut settings.joystick.avatar,
+                channel,
+                inverted,
+            );
+        });
+        (texts, changed)
+    }
+
+    #[test]
+    fn joystick_axis_assignment_click_captures_dominant_motion_and_inversion_changes_real_input() {
+        use aurora_i18n::tr;
+        let (mut settings, mut state) = fixture();
+        let mut frames = Frames::new();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = axis_frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
+        }
+        click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            &tr!("joystick-axis-value", axis = 1),
+            axis_frame,
+        );
+        assert!(state.joystick_capturing());
+        state.joystick.devices[0].axes[0] = 0.06;
+        state.joystick.devices[0].axes[7] = -0.8;
+        axis_frame(&mut frames, &mut settings, &mut state, Vec::new());
+        assert_eq!(
+            settings.joystick.mapping[0], 1,
+            "keep the previous binding while observing the gesture"
+        );
+        state.joystick.devices[0].axes = [0.0; crate::joystick::AXES];
+        let (next, changed) = axis_frame(&mut frames, &mut settings, &mut state, Vec::new());
+        texts = next;
+        assert!(changed && !state.joystick_capturing());
+        assert_eq!(settings.joystick.mapping[0], 7);
+        texts = click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            &tr!("joystick-axis-value", axis = 7),
+            axis_frame,
+        );
+        texts = click_with(&mut frames, &mut settings, &mut state, &texts, tr!("common-cancel"), axis_frame);
+        assert_eq!(settings.joystick.mapping[0], 7);
+        assert!(!state.joystick_capturing());
+        texts = click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            tr!("joystick-axis-invert"),
+            axis_frame,
+        );
+        assert_eq!(settings.joystick.avatar.gain[0], -1.0);
+        assert_eq!(
+            settings.joystick.flycam.gain[0],
+            -crate::joystick::Settings::default().flycam.gain[0]
+        );
+        let mut controller = crate::joystick::Controller::default();
+        let input_settings = crate::joystick::Settings {
+            enabled: true,
+            ..settings.joystick.clone()
+        };
+        controller.sample(&state.joystick, &input_settings, true, false, 0.1);
+        state.joystick.devices[0].axes[7] = -0.8;
+        assert!(controller.sample(&state.joystick, &input_settings, true, false, 0.1).axes[0] < 0.0);
+        state.joystick.devices[0].axes[7] = 0.0;
+        texts = click_with(&mut frames, &mut settings, &mut state, &texts, tr!("common-none"), axis_frame);
+        assert_eq!(settings.joystick.mapping[0], -1);
+        click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            tr!("joystick-button-assign"),
+            axis_frame,
+        );
+        assert!(state.joystick_capturing());
+        state.open(Page::Camera, 0);
+        assert!(!state.joystick_capturing());
+        assert_eq!(settings.joystick.mapping[0], -1);
+    }
+
+    #[test]
+    fn joystick_zoom_assignment_enables_a_zero_gain_and_changes_the_flycam_lens() {
+        use aurora_i18n::tr;
+        for previous_gain in [0.0f32, -0.0, 1.7] {
+            let (mut settings, mut state) = fixture();
+            settings.joystick.flycam.gain[6] = previous_gain;
+            let mut frames = Frames::new();
+            let mut texts = Vec::new();
+            for _ in 0..3 {
+                texts = zoom_frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
+            }
+            click_with(
+                &mut frames,
+                &mut settings,
+                &mut state,
+                &texts,
+                tr!("joystick-button-assign"),
+                zoom_frame,
+            );
+            assert!(state.joystick_capturing());
+            state.joystick.devices[0].axes[2] = 0.8;
+            zoom_frame(&mut frames, &mut settings, &mut state, Vec::new());
+            state.joystick.devices[0].axes[2] = 0.0;
+            let (_, changed) = zoom_frame(&mut frames, &mut settings, &mut state, Vec::new());
+            assert!(changed && !state.joystick_capturing());
+            assert_eq!(settings.joystick.mapping[6], 2);
+            let gain = settings.joystick.flycam.gain[6];
+            assert_eq!(
+                gain,
+                if previous_gain == 0.0 {
+                    1.0f32.copysign(previous_gain)
+                } else {
+                    previous_gain
+                }
+            );
+            let mut controller = crate::joystick::Controller::default();
+            settings.joystick.enabled = true;
+            controller.sample(&state.joystick, &settings.joystick, true, true, 0.1);
+            state.joystick.devices[0].axes[2] = 0.8;
+            let motion = controller.sample(&state.joystick, &settings.joystick, true, true, 0.1);
+            let mut camera = crate::joystick::flycam::Flycam::from_view(glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Z, 1.0);
+            camera.step(motion.axes, &settings.joystick, 0.1);
+            assert!(
+                (camera.fov - 1.0).abs() > 0.01,
+                "a new zoom assignment must change the field of view"
+            );
+            assert_eq!(camera.fov < 1.0, gain > 0.0);
+        }
+    }
+
+    #[test]
+    fn joystick_shared_axis_inversion_preserves_gain_magnitudes_and_a_disabled_axis_choice() {
+        use aurora_i18n::tr;
+        let (mut settings, mut state) = fixture();
+        settings.joystick.avatar.gain[0] = 0.0;
+        let mut frames = Frames::new();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = axis_frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
+        }
+        click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            tr!("joystick-axis-invert"),
+            axis_frame,
+        );
+        assert!(settings.joystick.avatar.gain[0].is_sign_negative());
+        assert_eq!(
+            settings.joystick.flycam.gain[0],
+            -crate::joystick::Settings::default().flycam.gain[0]
+        );
+        let json = serde_json::to_string(&settings.joystick).expect("controller settings");
+        let restored: crate::joystick::Settings = serde_json::from_str(&json).expect("restored controller settings");
+        assert!(
+            restored.avatar.gain[0].is_sign_negative(),
+            "inversion survives a restart before setting a non-zero gain"
+        );
+        assert!(restored.axis_inverted(0));
+        settings.joystick.avatar.gain[0] = -2.0;
+        texts = axis_frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
+        assert_eq!(settings.joystick.avatar.gain[0], -2.0);
+        click_with(
+            &mut frames,
+            &mut settings,
+            &mut state,
+            &texts,
+            tr!("joystick-axis-invert"),
+            axis_frame,
+        );
+        assert_eq!(settings.joystick.avatar.gain[0], 2.0);
+        assert_eq!(
+            settings.joystick.flycam.gain[0],
+            crate::joystick::Settings::default().flycam.gain[0]
+        );
+    }
+
+    #[test]
+    fn joystick_button_capture_click_assigns_native_buttons_and_cancels_without_losing_the_binding() {
+        use aurora_i18n::tr;
+        let (mut settings, mut state) = fixture();
+        assert!(
+            !settings.joystick.enabled,
+            "assignment also works with controller movement disabled"
+        );
+        state.joystick.devices[0].button(4, true);
+        let mut frames = Frames::new();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
+        }
+        for button in [8i8, 9, 31] {
+            let label = tr!("joystick-button-value", button = settings.joystick.flycam_button);
+            click(&mut frames, &mut settings, &mut state, &texts, &label);
+            assert!(state.joystick_capturing());
+            frame(&mut frames, &mut settings, &mut state, Vec::new());
+            assert!(state.joystick_capturing(), "a button already held is ignored");
+            state.joystick.devices[0].button(button as usize, true);
+            state.joystick.devices[0].button(button as usize, false);
+            let (next, changed) = frame(&mut frames, &mut settings, &mut state, Vec::new());
+            texts = next;
+            assert!(changed, "the preferences save path is notified");
+            assert_eq!(settings.joystick.flycam_button, button);
+            assert!(!state.joystick_capturing());
+        }
+        let label = tr!("joystick-button-value", button = settings.joystick.flycam_button);
+        texts = click(&mut frames, &mut settings, &mut state, &texts, &label);
+        texts = click(&mut frames, &mut settings, &mut state, &texts, tr!("common-cancel"));
+        assert_eq!(settings.joystick.flycam_button, 31);
+        assert!(!state.joystick_capturing());
+        texts = click(&mut frames, &mut settings, &mut state, &texts, tr!("common-none"));
+        assert_eq!(settings.joystick.flycam_button, -1);
+        click(&mut frames, &mut settings, &mut state, &texts, tr!("joystick-button-assign"));
+        assert!(state.joystick_capturing());
+        state.open(Page::Camera, 0);
+        assert!(!state.joystick_capturing());
+        assert_eq!(settings.joystick.flycam_button, -1);
+    }
+
+    #[test]
+    fn joystick_button_capture_rejects_changed_disconnected_stale_and_restarted_devices() {
+        for scenario in ["changed", "disconnected", "stale", "restarted"] {
+            let (settings, mut state) = fixture();
+            state.joystick.devices[0].button(2, true);
+            let capture = ButtonCapture::new("joystick.flycam_button", &state.joystick.devices[0]);
+            match scenario {
+                "changed" => state.joystick.devices[0].id = "other".into(),
+                "disconnected" => state.joystick.devices.clear(),
+                "stale" => state.joystick.updated = Some(Instant::now() - Duration::from_secs(1)),
+                "restarted" => state.joystick.devices[0].presses = [0; crate::joystick::BUTTONS],
+                _ => unreachable!(),
+            }
+            assert_eq!(capture.poll(&state.joystick, &settings.joystick), Err(()), "{scenario}");
+        }
+    }
 }

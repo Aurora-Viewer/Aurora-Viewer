@@ -176,8 +176,31 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
 /// The journal of the renderer: what the main thread records for a frame.
 pub type GpuWrites = Journal<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder>;
 
-/// Replays a journal on the queue (render thread).
+/// Replays a journal on the queue (tests).
 pub struct QueueSink<'a>(pub &'a wgpu::Queue);
+
+/// [`QueueSink`] of the render thread: its submits (the arenas' growth
+/// copies) are noted for the line of a device loss, as the frame's own
+/// submit is (device_lost.rs `submit_tracked`).
+pub struct TrackedSink<'a> {
+    pub queue: &'a wgpu::Queue,
+    pub lost: &'a crate::device_lost::DeviceLost,
+    pub frame: u64,
+}
+
+impl WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder> for TrackedSink<'_> {
+    fn write_buffer(&mut self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+        QueueSink(self.queue).write_buffer(buffer, offset, data);
+    }
+
+    fn write_texture(&mut self, texture: &wgpu::Texture, dst: TexelDst, data: &[u8]) {
+        QueueSink(self.queue).write_texture(texture, dst, data);
+    }
+
+    fn submit(&mut self, encoders: Vec<wgpu::CommandEncoder>) {
+        crate::device_lost::submit_tracked(self.lost, self.queue, self.frame, encoders.into_iter().map(|e| e.finish()));
+    }
+}
 
 impl WriteSink<wgpu::Buffer, wgpu::Texture, wgpu::CommandEncoder> for QueueSink<'_> {
     fn write_buffer(&mut self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {

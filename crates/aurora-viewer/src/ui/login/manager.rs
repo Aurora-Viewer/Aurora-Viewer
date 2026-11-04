@@ -480,6 +480,11 @@ fn apply(settings: &mut Settings, form: &mut LoginForm, pending: Confirmation, o
             } else {
                 form.accounts = crate::login_accounts::remove(&account);
             }
+            // LLFloaterForgetUser: its stored favourites go with it
+            form.favorites.forget(&account.key());
+            if form.start_favorite.as_ref().is_some_and(|(key, _)| *key == account.key()) {
+                form.start_favorite = None;
+            }
             form.pending_connect = None;
             if current {
                 settings.username.clear();

@@ -28,7 +28,7 @@ pub fn stall_seconds(packet_age: f32) -> Option<u32> {
 /// Where "Reconnect" takes the user after the link with the region was lost:
 /// the region they were in, where they stood (the login's `uri:` start,
 /// coordinates in the region's metres, LLSLURL::getLocationString).
-pub fn reconnect_place(region: &str, position: glam::Vec3) -> Option<StartLocation> {
+pub fn reconnect_place(region: &str, size: (u32, u32), position: glam::Vec3) -> Option<StartLocation> {
     let name = region.trim();
     if name.is_empty() || !position.is_finite() {
         return None;
@@ -36,8 +36,8 @@ pub fn reconnect_place(region: &str, position: glam::Vec3) -> Option<StartLocati
     let clamp = |v: f32, max: f32| v.clamp(0.0, max).round() as u32;
     Some(StartLocation::Region {
         name: name.to_owned(),
-        x: clamp(position.x, 255.0),
-        y: clamp(position.y, 255.0),
+        x: clamp(position.x, size.0.saturating_sub(1) as f32),
+        y: clamp(position.y, size.1.saturating_sub(1) as f32),
         z: clamp(position.z, 4096.0),
     })
 }
@@ -77,12 +77,15 @@ mod tests {
 
     #[test]
     fn reconnect_goes_back_to_the_region_and_the_spot() {
-        let place = reconnect_place(" Some Region ", glam::Vec3::new(127.6, 3.2, 22.9)).unwrap();
+        let place = reconnect_place(" Some Region ", (256, 256), glam::Vec3::new(127.6, 3.2, 22.9)).unwrap();
         assert_eq!(place.to_login_string(), "uri:Some Region&128&3&23");
         // a position just across the border (region crossing in flight)
-        let edge = reconnect_place("R", glam::Vec3::new(-0.4, 258.0, -3.0)).unwrap();
+        let edge = reconnect_place("R", (256, 256), glam::Vec3::new(-0.4, 258.0, -3.0)).unwrap();
         assert_eq!(edge.to_login_string(), "uri:R&0&255&0");
-        assert!(reconnect_place("", glam::Vec3::ZERO).is_none());
-        assert!(reconnect_place("R", glam::Vec3::new(f32::NAN, 0.0, 0.0)).is_none());
+        // a large region keeps the place past 256 m
+        let far = reconnect_place("R", (1024, 512), glam::Vec3::new(855.6, 668.1, 34.2));
+        assert!(matches!(far, Some(StartLocation::Region { x: 856, y: 511, .. })));
+        assert!(reconnect_place("", (256, 256), glam::Vec3::ZERO).is_none());
+        assert!(reconnect_place("R", (256, 256), glam::Vec3::new(f32::NAN, 0.0, 0.0)).is_none());
     }
 }

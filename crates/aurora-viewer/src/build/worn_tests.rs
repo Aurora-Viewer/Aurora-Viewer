@@ -144,7 +144,7 @@ fn a_worn_selection_is_kept_apart_and_cannot_be_deleted_taken_copied_or_linked()
     tool.delete(&mut world);
     tool.take(&mut world, false);
     tool.take(&mut world, true);
-    tool.duplicate(&mut world, Vec3::X, true);
+    tool.duplicate(&mut world, &s, Vec3::X, true);
     tool.link(&mut world);
     tool.unlink(&mut world);
     assert!(tool.out.is_empty(), "{:?}", tool.out);

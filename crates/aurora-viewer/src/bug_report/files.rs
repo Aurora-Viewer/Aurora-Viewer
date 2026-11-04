@@ -232,14 +232,7 @@ fn save_in(
 }
 
 pub fn open_directory(path: &Path) -> std::io::Result<()> {
-    let program = if cfg!(windows) {
-        "explorer"
-    } else if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    std::process::Command::new(program).arg(path).spawn().map(|_| ())
+    crate::open_path::open(path)
 }
 
 #[cfg(test)]

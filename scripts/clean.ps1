@@ -9,7 +9,9 @@
       - main repository: target\<profile> (debug, ci…), never target\release
         except with -IncludeRelease;
       - task folders: work\<task>\target, only with -Tasks (the task will
-        have to rebuild everything);
+        have to rebuild everything), or only their incremental\ folders
+        with -Incremental (three quarters of the space; the task's next
+        build recompiles Aurora's own crates, not the dependencies);
       - RELEASE\src\target (build-release.ps1), only with -IncludeRelease
         (the next release build will start from scratch).
     Refuses to work during a build or while a viewer is running.
@@ -18,10 +20,12 @@
     ./scripts/clean.ps1                 # shows the sizes, deletes nothing
     ./scripts/clean.ps1 -Apply          # frees target\debug, target\ci… of the repository
     ./scripts/clean.ps1 -Tasks -Apply   # also frees the target folders of the tasks
+    ./scripts/clean.ps1 -Incremental -Apply   # frees the incremental caches of the tasks
 #>
 param(
     [switch]$Apply,
     [switch]$Tasks,
+    [switch]$Incremental,
     [switch]$IncludeRelease
 )
 . "$PSScriptRoot\common.ps1"
@@ -54,7 +58,14 @@ if (Test-Path -LiteralPath $mainTarget) {
 if (Test-Path -LiteralPath $p.Work) {
     foreach ($t in Get-ChildItem -LiteralPath $p.Work -Directory -Force) {
         $tt = Join-Path $t.FullName 'target'
-        if (Test-Path -LiteralPath $tt) {
+        if (-not (Test-Path -LiteralPath $tt)) { continue }
+        if ($Incremental -and -not $Tasks) {
+            # only the incremental caches go; the rest of the target is not measured
+            foreach ($inc in Get-IncrementalDirs $tt) {
+                $rel = $inc.Substring($t.FullName.Length).TrimStart('\')
+                $items += @{ Path = $inc; What = "task: $($t.Name)\$rel"; Delete = $true; Root = $tt; Tag = $tt }
+            }
+        } else {
             $items += @{ Path = $tt; What = "task: $($t.Name)\target"; Delete = [bool]$Tasks; Root = $t.FullName; Tag = $tt }
         }
     }
@@ -77,7 +88,7 @@ foreach ($i in $items) {
 Write-Host ("{0,8} GB  in total, {1} GB can be freed" -f [math]::Round($total, 1), [math]::Round($freed, 1))
 
 if (-not $Apply) {
-    Write-Host "`nNothing was deleted. Run again with -Apply to free the space (and -Tasks for the task folders)." -ForegroundColor Yellow
+    Write-Host "`nNothing was deleted. Run again with -Apply to free the space (and -Tasks for the task folders, or -Incremental for their incremental caches only)." -ForegroundColor Yellow
     exit 0
 }
 

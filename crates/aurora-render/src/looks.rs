@@ -32,6 +32,7 @@
 //! the middle of the photo) and a 3D look-up table read from a .cube file
 //! (`cube.rs`).
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 
@@ -749,7 +750,7 @@ fn render_pipeline(
     module: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some("photo look"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -838,7 +839,7 @@ impl Looks {
             immediate_size: 0,
         });
         let compute_pipeline = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some("photo look histogram"),
                 layout: Some(&hist_pipeline_layout),
                 module: &module,

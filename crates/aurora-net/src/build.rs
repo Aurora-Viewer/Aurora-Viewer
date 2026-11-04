@@ -574,6 +574,11 @@ pub mod perm {
     pub const MODIFY: u32 = 1 << 14;
     pub const COPY: u32 = 1 << 15;
     pub const MOVE: u32 = 1 << 19;
+    /// OpenSim's export permission (PERM_EXPORT, FS:CR): Everyone's bit lets
+    /// a viewer export the object, on regions that support it.
+    pub const EXPORT: u32 = 1 << 16;
+    /// PERM_ITEM_UNRESTRICTED.
+    pub const UNRESTRICTED: u32 = MODIFY | COPY | TRANSFER;
 }
 
 /// Legacy brush size index (LLToolBrushLand::getBrushIndex, deprecated:

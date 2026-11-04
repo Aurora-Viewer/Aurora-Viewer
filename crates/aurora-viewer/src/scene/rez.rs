@@ -225,6 +225,10 @@ pub struct Rez {
     /// Avatars present, since when, and their appearance (their bakes) at
     /// the last look, to see it change.
     avatars_seen: HashMap<Uuid, (Instant, u64)>,
+    /// Avatars the world hides on purpose (derendered, or not a friend with
+    /// Show Friends Only) that were seen before: put back, they simply
+    /// reappear, they are not an arrival.
+    away: HashSet<Uuid>,
     /// Avatars shown by the grid's time limit while still loading: never a
     /// cloud again.
     revealed: HashSet<usize>,
@@ -415,6 +419,46 @@ fn next_step(
 }
 
 impl Rez {
+    /// An avatar of the world seen again: whether it starts a unit and
+    /// whether that one is an outfit change.
+    fn avatar_look(&mut self, id: Uuid, look: u64, now: Instant, watching: bool, ours: bool, lifted: bool) -> (bool, bool) {
+        let Some((since, seen)) = self.avatars_seen.get_mut(&id) else {
+            self.avatars_seen.insert(id, (now, look));
+            return (true, false);
+        };
+        if self.away.remove(&id) {
+            // put back after the world hid it: the same avatar, already on
+            // screen before, with no effect (what it wears is not "put on"
+            // either: it is not settled again for a while)
+            *since = now;
+            *seen = look;
+            return (false, false);
+        }
+        // an outfit change (its bakes), once it has been there a while: one
+        // line over it once its new look is there; ours also when the
+        // loading or teleport screen lifts (as an arrival)
+        let changed = *seen != look && watching && now.duration_since(*since) >= WORN_AFTER;
+        *seen = look;
+        if changed {
+            self.stats.outfits += 1;
+        }
+        let arrival = ours && lifted;
+        (changed || arrival, changed && !arrival)
+    }
+
+    /// The avatars gone from the world are forgotten, except those it keeps
+    /// out on purpose (`hidden`): they are `away`, and put back they are not
+    /// an arrival.
+    fn keep_away(&mut self, present: &HashSet<Uuid>, hidden: impl Fn(&Uuid) -> bool) {
+        self.avatars_seen.retain(|id, _| present.contains(id) || hidden(id));
+        for id in self.avatars_seen.keys() {
+            if !present.contains(id) {
+                self.away.insert(*id);
+            }
+        }
+        self.away.retain(|id| self.avatars_seen.contains_key(id));
+    }
+
     /// An object synced for the first time (`Scene::sync_arrivals`).
     pub fn arrived(&mut self, idx: usize) {
         if self.enabled {
@@ -1109,30 +1153,12 @@ impl Scene {
             present.insert(o.full_id);
             let look = Self::own_look(world, idx);
             let ours = o.full_id == world.agent_id;
-            let (start, outfit) = match rez.avatars_seen.get_mut(&o.full_id) {
-                None => {
-                    rez.avatars_seen.insert(o.full_id, (now, look));
-                    (true, false)
-                }
-                Some((since, seen)) => {
-                    // an outfit change (its bakes), once it has been there
-                    // a while: one line over it once its new look is
-                    // there; ours also when the loading or teleport screen
-                    // lifts (as an arrival)
-                    let changed = *seen != look && watching && now.duration_since(*since) >= WORN_AFTER;
-                    *seen = look;
-                    if changed {
-                        rez.stats.outfits += 1;
-                    }
-                    let arrival = ours && lifted;
-                    (changed || arrival, changed && !arrival)
-                }
-            };
+            let (start, outfit) = rez.avatar_look(o.full_id, look, now, watching, ours, lifted);
             if start && !rez.units.contains_key(&idx) {
                 rez.add_unit(idx, Self::avatar_unit(o.full_id, idx, now, outfit));
             }
         }
-        rez.avatars_seen.retain(|id, _| present.contains(id));
+        rez.keep_away(&present, |id| world.derender.hides_resident(id));
         let revealed: Vec<usize> = rez.revealed.iter().copied().collect();
         for idx in revealed {
             // (back in the store's avatars, or gone: the slot is someone else's)
@@ -1476,6 +1502,30 @@ mod tests {
 
     const S: Duration = Duration::from_secs(1);
     const MS100: Duration = Duration::from_millis(100);
+
+    #[test]
+    fn an_avatar_the_world_hid_on_purpose_is_not_an_arrival_when_put_back() {
+        let t0 = Instant::now();
+        let id = Uuid::from_u128(5);
+        let mut rez = Rez::default();
+        // seen for the first time: an arrival
+        assert_eq!(rez.avatar_look(id, 1, t0, true, false, false), (true, false));
+        let later = t0 + Duration::from_secs(30);
+        assert_eq!(rez.avatar_look(id, 1, later, true, false, false), (false, false));
+        // hidden on purpose: remembered while away
+        let none = HashSet::new();
+        rez.keep_away(&none, |_| true);
+        assert!(rez.avatars_seen.contains_key(&id));
+        // put back: no unit, and what it wears is not settled for a while
+        let back = later + Duration::from_secs(5);
+        assert_eq!(rez.avatar_look(id, 1, back, true, false, false), (false, false));
+        assert_eq!(rez.avatars_seen[&id].0, back);
+        // killed by the simulator (not hidden by us): forgotten, a new
+        // arrival when it comes again
+        rez.keep_away(&none, |_| false);
+        assert!(rez.avatars_seen.is_empty() && rez.away.is_empty());
+        assert_eq!(rez.avatar_look(id, 1, back, true, false, false), (true, false));
+    }
 
     #[test]
     fn the_record_value_packs_mode_and_bounds() {

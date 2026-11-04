@@ -5,8 +5,14 @@
 
 use super::super::cx::{Cx, F, Nothing, field, fields};
 use super::super::{COMBO_W, swatch, toggle};
+
 use crate::ui::fonts;
 use egui::RichText;
+
+/// Size of the system font list's rows, under its search field (about
+/// the width the list took when it sized itself to the longest name).
+const FONT_LIST_W: f32 = 360.0;
+const FONT_LIST_H: f32 = 280.0;
 
 pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
@@ -180,11 +186,15 @@ fn font(cx: &mut Cx) {
                     .find(|f| s.font == format!("system:{}", f.path.display()))
                     .map_or_else(|| tr!("ui-options-no-system-font").to_owned(), |f| f.name.clone());
                 let mut changed = false;
-                egui::ComboBox::from_id_salt(ui.scope_id().with("system-font"))
+                let salt = ui.scope_id().with("system-font");
+                if st.demo_font_list.is_some() {
+                    egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
+                }
+                egui::ComboBox::from_id_salt(salt)
                     .width(COMBO_W)
                     .selected_text(shown)
                     .truncate()
-                    .height(320.0)
+                    .height(FONT_LIST_H + 40.0)
                     .show_ui(ui, |ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut st.font_filter)
@@ -192,15 +202,71 @@ fn font(cx: &mut Cx) {
                                 .desired_width(ui.available_width()),
                         );
                         let filter = st.font_filter.to_lowercase();
-                        for f in list.iter().filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter)) {
-                            let key = format!("system:{}", f.path.display());
-                            let sel = s.font == key;
-                            if ui.selectable_label(sel, &f.name).clicked() && !sel {
-                                s.font = key;
-                                r.font_changed = true;
-                                changed = true;
-                            }
-                        }
+                        let shown: Vec<&fonts::SystemFont> = list
+                            .iter()
+                            .filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter))
+                            .collect();
+                        // only the rows on screen are laid out, at one height,
+                        // each name drawn in its own face by a thread as it
+                        // scrolls into view (`fonts::preview`)
+                        // no shorter than a button, or rows would drift from
+                        // where `show_rows` puts them
+                        let row_h = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).max(ui.spacing().interact_size.y);
+                        // one width: a wide face truncates, never widens the list
+                        let width = FONT_LIST_W;
+                        let pad = ui.spacing().button_padding.x;
+                        // the size a row's button gives its text
+                        let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
+                        let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
+                        egui::ScrollArea::vertical()
+                            .max_height(FONT_LIST_H)
+                            .show_rows(ui, row_h, shown.len(), |ui, rows| {
+                                for i in rows {
+                                    let f = shown[i];
+                                    let key = format!("system:{}", f.path.display());
+                                    let sel = s.font == key;
+                                    let drawn = previews.drawn(f);
+                                    let mut name = RichText::new(&f.name);
+                                    if drawn.is_some() {
+                                        // laid out for the row's size and its
+                                        // screen reader label, its picture
+                                        // painted in its place
+                                        name = name.color(egui::Color32::TRANSPARENT);
+                                    }
+                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+                                    let layout = egui::Layout::top_down_justified(egui::Align::Min);
+                                    // a child leaves the cursor where the row's own
+                                    // allocation put it, clipped to the row whatever
+                                    // the face's height
+                                    let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+                                    row_ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                                    let row = row_ui.add(egui::Button::selectable(sel, name).truncate().min_size(rect.size()));
+                                    if let Some(drawn) = drawn {
+                                        // the colour the row's text would take
+                                        // (hovered, selected), on whole pixels
+                                        let color = row_ui.style().interact_selectable(&row, sel).text_color();
+                                        let ppp = ui.ctx().pixels_per_point();
+                                        let top = rect.center().y - drawn.size.y / 2.0 + drawn.y_offset;
+                                        let min = egui::pos2(((rect.left() + pad) * ppp).round(), (top * ppp).round()) / ppp;
+                                        row_ui.painter().image(
+                                            drawn.texture(),
+                                            egui::Rect::from_min_size(min, drawn.size),
+                                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                            color,
+                                        );
+                                    }
+                                    previews.visible(i);
+                                    if row.clicked() && !sel {
+                                        s.font = key;
+                                        r.font_changed = true;
+                                        changed = true;
+                                    }
+                                }
+                                if st.demo_font_list == Some(true) {
+                                    ui.scroll_with_delta(egui::vec2(0.0, -6.0));
+                                }
+                            });
+                        previews.finish(ui.ctx(), &shown);
                     });
                 changed
             },

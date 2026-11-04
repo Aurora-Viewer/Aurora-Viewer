@@ -403,6 +403,8 @@ struct Period {
     gpu_contact: f32,
     /// The bloom levels alone (inside g_post).
     gpu_bloom: f32,
+    /// The rest of g_effects: planar reflections, probe, scene copy, SSR.
+    gpu_effects: [f32; 4],
     gpu_frames: u32,
     /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
     gpu_shadow: [f32; 5],
@@ -644,6 +646,9 @@ impl FrameProfile {
         p.gpu_ssao += render.gpu_ssao.unwrap_or(0.0);
         p.gpu_contact += render.gpu_contact.unwrap_or(0.0);
         p.gpu_bloom += render.gpu_bloom.unwrap_or(0.0);
+        if let Some(e) = render.gpu_effects {
+            add(&mut p.gpu_effects, &e);
+        }
         p.draws += render.draws as u64;
         p.blend_triangles += render.blend_triangles;
         p.blend_early += render.blend_early_discard as u32;
@@ -945,6 +950,10 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
         let _ = write!(out, " g_{}={:.3}", el.key(), ms / gpu_n);
+    }
+    // the rest of g_effects, beside g_ssao and g_contact
+    for (key, ms) in ["planar", "probe", "copy", "ssr"].iter().zip(p.gpu_effects) {
+        let _ = write!(out, " g_{key}={:.3}", ms / gpu_n);
     }
     // shadows and depth in detail: culling, cascades, prepass; then the
     // casters of each cascade

@@ -1,7 +1,7 @@
 //! Skin, hair, eyes and system clothing editing. Behaviour follows
 //! LLPanelEditWearable / LLViewerWearable (indra/newview): edit a worn
 //! original, preserve its complete asset and acknowledge saves before rewearing.
-mod bake;
+pub(crate) mod bake;
 pub mod catalog;
 mod masks;
 pub mod preview;

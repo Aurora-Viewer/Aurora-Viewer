@@ -952,7 +952,7 @@ pub(super) fn identity_cards(ui: &mut egui::Ui, c: &mut Ctx, info: &mut GroupInf
             if paid {
                 ui.horizontal(|ui| {
                     ui.add_space(23.0);
-                    ui.label(egui::RichText::new("L$").size(12.5).color(p.muted));
+                    ui.label(egui::RichText::new(aurora_i18n::currency()).size(12.5).color(p.muted));
                     ui.add_enabled(options, egui::DragValue::new(&mut info.membership_fee).range(1..=99_999));
                 });
             }

@@ -217,14 +217,18 @@ impl VolumeParams {
         if t.begin > t.end - MIN_CUT_DELTA {
             t.begin = (t.end - MIN_CUT_DELTA).max(0.0);
         }
-        // Scale range differs between line and circular paths.
-        let (min_s, max_s) = if t.curve_type == LL_PCODE_PATH_LINE || t.curve_type == LL_PCODE_PATH_FLEXIBLE {
-            (0.0, 2.0)
-        } else {
-            (0.0, 1.0)
-        };
-        t.scale[0] = t.scale[0].clamp(min_s, max_s);
-        t.scale[1] = t.scale[1].clamp(min_s, max_s);
+        // LLVolumeParams::setRatio (indra/llmath/llvolume.cpp): only an
+        // ordinary circular non-sphere path uses hole-size limits. Spheres
+        // and alternate paths retain ratios up to 2; clamping them to 1
+        // destroys tortured shapes before the geometry generator sees them.
+        let (min_s, max_x, max_y) =
+            if t.curve_type == LL_PCODE_PATH_CIRCLE && p.curve_type & LL_PCODE_PROFILE_MASK != LL_PCODE_PROFILE_CIRCLE_HALF {
+                (0.01, 1.0, 0.5)
+            } else {
+                (0.0, 2.0, 2.0)
+            };
+        t.scale[0] = t.scale[0].clamp(min_s, max_x);
+        t.scale[1] = t.scale[1].clamp(min_s, max_y);
         t.shear[0] = t.shear[0].clamp(-0.5, 0.5);
         t.shear[1] = t.shear[1].clamp(-0.5, 0.5);
         t.twist_begin = t.twist_begin.clamp(-1.0, 1.0);
@@ -285,6 +289,58 @@ impl VolumeParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tortured_sphere_ratios_survive_the_wire_round_trip() {
+        // LLVolumeParams::setRatio (indra/llmath/llvolume.cpp) permits
+        // sphere ratios up to 2, including spheres with a different hole.
+        for hole in [
+            LL_PCODE_HOLE_SAME,
+            LL_PCODE_HOLE_CIRCLE,
+            LL_PCODE_HOLE_SQUARE,
+            LL_PCODE_HOLE_TRIANGLE,
+        ] {
+            for (x, y) in [(0, 0), (50, 25), (100, 0), (100, 100), (200, 200)] {
+                let raw = RawShape {
+                    path_curve: LL_PCODE_PATH_CIRCLE,
+                    profile_curve: LL_PCODE_PROFILE_CIRCLE_HALF | hole,
+                    path_scale_x: x,
+                    path_scale_y: y,
+                    path_twist: -50,
+                    path_twist_begin: -50,
+                    profile_hollow: 30000,
+                    ..Default::default()
+                };
+                assert_eq!(raw.to_params().to_raw(), raw);
+            }
+        }
+    }
+
+    #[test]
+    fn tortured_prim_ratio_limits_follow_the_path_and_profile() {
+        for path in [
+            LL_PCODE_PATH_LINE,
+            LL_PCODE_PATH_FLEXIBLE,
+            LL_PCODE_PATH_CIRCLE,
+            LL_PCODE_PATH_CIRCLE_33,
+            LL_PCODE_PATH_CIRCLE2,
+        ] {
+            for profile in [LL_PCODE_PROFILE_SQUARE, LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF] {
+                let hole = path == LL_PCODE_PATH_CIRCLE && profile != LL_PCODE_PROFILE_CIRCLE_HALF;
+                for (input, expected) in [
+                    ([-1.0, -1.0], if hole { [0.01, 0.01] } else { [0.0, 0.0] }),
+                    ([3.0, 3.0], if hole { [1.0, 0.5] } else { [2.0, 2.0] }),
+                ] {
+                    let mut v = VolumeParams::default();
+                    v.path.curve_type = path;
+                    v.profile.curve_type = profile;
+                    v.path.scale = input;
+                    v.constrain();
+                    assert_eq!(v.path.scale, expected, "path {path:#x}, profile {profile:#x}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn sculpt_classification_uses_the_active_block_including_zero_subtype() {

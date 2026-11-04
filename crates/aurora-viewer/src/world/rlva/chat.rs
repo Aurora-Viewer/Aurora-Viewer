@@ -49,7 +49,7 @@ impl Rlva {
 
     /// Transform one chat line into zero or more sends. Redirection is checked
     /// before sendchat, and redirected text never returns to public chat.
-    pub fn outgoing_chat(&self, message: &str, channel: i32, mut kind: ChatType) -> Vec<NetCommand> {
+    pub fn outgoing_chat(&self, message: &str, channel: i32, kind: ChatType) -> Vec<NetCommand> {
         let make = |message: String, channel, chat_type| NetCommand::Chat {
             message,
             channel,
@@ -57,6 +57,14 @@ impl Rlva {
         };
         if !self.enabled {
             return vec![make(message.to_owned(), channel, kind)];
+        }
+        if channel == i32::MAX {
+            // CHAT_CHANNEL_DEBUG shows as public chat on viewers
+            // (send_chat_from_viewer, llfloaterimnearbychat.cpp).
+            let redirect = if is_emote(message) { "rediremote" } else { "redirchat" };
+            if self.has("sendchat") || self.has_options(redirect) {
+                return Vec::new();
+            }
         }
         if channel != 0 {
             return if self.allows_channel(channel) {
@@ -112,23 +120,22 @@ impl Rlva {
         } else {
             message.to_owned()
         };
-        if kind == ChatType::Shout && self.has("chatshout") {
-            kind = ChatType::Normal;
-        }
-        if kind == ChatType::Whisper && self.has("chatwhisper") {
-            kind = ChatType::Normal;
-        }
-        if kind == ChatType::Normal && self.has("chatnormal") {
-            kind = if self.has("chatwhisper") {
-                ChatType::Shout
-            } else {
-                ChatType::Whisper
-            };
-        }
-        if (kind == ChatType::Shout && self.has("chatshout")) || text.is_empty() {
+        if text.is_empty() {
             Vec::new()
         } else {
-            vec![make(text, 0, kind)]
+            vec![make(text, 0, self.chat_volume(kind))]
+        }
+    }
+
+    /// RlvActions::checkChatVolume (rlvactions.cpp): one step, never a drop.
+    /// `@chatnormal` turns shout and normal into a whisper, whatever else is
+    /// set; otherwise `@chatshout` and `@chatwhisper` fall back to normal.
+    fn chat_volume(&self, kind: ChatType) -> ChatType {
+        match kind {
+            ChatType::Shout | ChatType::Normal if self.has("chatnormal") => ChatType::Whisper,
+            ChatType::Shout if self.has("chatshout") => ChatType::Normal,
+            ChatType::Whisper if self.has("chatwhisper") => ChatType::Normal,
+            kind => kind,
         }
     }
 
@@ -336,6 +343,51 @@ mod tests {
         r.preferences.show_ellipsis = false;
         assert!(r.outgoing_chat("ordinary chat", 0, ChatType::Normal).is_empty());
         assert!(r.outgoing_chat("", 0, ChatType::Normal).is_empty());
+    }
+
+    #[test]
+    fn rlva_chat_volume_follows_the_legacy_table_and_never_drops_a_line() {
+        use ChatType::{Normal, Shout, Whisper};
+        let sent = |r: &Rlva, kind| match &r.outgoing_chat("hello", 0, kind)[..] {
+            [NetCommand::Chat { chat_type, .. }] => *chat_type,
+            other => panic!("one chat line expected, got {other:?}"),
+        };
+        // RlvActions::checkChatVolume: input × restrictions → sent volume
+        for (restrictions, whisper, normal, shout) in [
+            ("@chatwhisper=n", Normal, Normal, Shout),
+            ("@chatnormal=n", Whisper, Whisper, Whisper),
+            ("@chatshout=n", Whisper, Normal, Normal),
+            ("@chatnormal=n,chatwhisper=n", Normal, Whisper, Whisper),
+            ("@chatnormal=n,chatshout=n", Whisper, Whisper, Whisper),
+            ("@chatshout=n,chatwhisper=n", Normal, Normal, Normal),
+            ("@chatshout=n,chatnormal=n,chatwhisper=n", Normal, Whisper, Whisper),
+        ] {
+            let r = restricted(restrictions);
+            assert_eq!(
+                [sent(&r, Whisper), sent(&r, Normal), sent(&r, Shout)],
+                [whisper, normal, shout],
+                "{restrictions}"
+            );
+        }
+    }
+
+    #[test]
+    fn rlva_debug_channel_closes_under_sendchat_and_redirection() {
+        const DEBUG: i32 = i32::MAX;
+        let open = |r: &Rlva, text| !r.outgoing_chat(text, DEBUG, ChatType::Normal).is_empty();
+        assert!(open(&restricted("@fly=n"), "debug"));
+        assert!(!open(&restricted("@sendchat=n"), "debug"));
+        assert!(!open(&restricted("@sendchat=n"), "/me debug"));
+        let r = restricted("@redirchat:123=n");
+        assert!(!open(&r, "debug"));
+        assert!(open(&r, "/me debug"), "an emote is only closed by @rediremote");
+        let r = restricted("@rediremote:123=n");
+        assert!(open(&r, "debug"));
+        assert!(!open(&r, "/me debug"));
+        assert!(
+            !restricted("@sendchat=n").outgoing_chat("ordinary", 5, ChatType::Normal).is_empty(),
+            "other channels keep @sendchannel's rule"
+        );
     }
 
     #[test]

@@ -74,7 +74,7 @@ impl ReplaceLinks {
             self.candidates = candidates(inv, self.old);
             let order = view::picker_order(ctx, inv);
             self.candidates.par_sort_unstable_by_key(|row| order.rank(row.id));
-            self.links = links(inv, self.old, protected).len();
+            self.links = links(inv, self.old).len();
             self.generation = Some(generation);
             self.protected.clone_from(protected);
             self.built = Some(Instant::now());
@@ -163,15 +163,15 @@ fn candidates(inv: &Inventory, old: Uuid) -> Vec<Candidate> {
 }
 
 /// The links to `old` the window replaces: outside the Trash, and those of
-/// the outfits even where the inventory is otherwise protected.
-fn links<'a>(inv: &'a Inventory, old: Uuid, protected: &HashSet<Uuid>) -> Vec<&'a InvItem> {
+/// the Current Outfit too, otherwise read-only.
+fn links(inv: &Inventory, old: Uuid) -> Vec<&InvItem> {
     inv.items
         .values()
         .filter(|it| {
             it.asset_type == 24
                 && it.asset_id == old
                 && !rules::in_type(inv, it.id, 14)
-                && (rules::mutable(inv, it.id, protected) || rules::in_type(inv, it.id, 46))
+                && (rules::mutable(inv, it.id) || rules::in_type(inv, it.id, 46))
         })
         .collect()
 }
@@ -180,12 +180,12 @@ fn links<'a>(inv: &'a Inventory, old: Uuid, protected: &HashSet<Uuid>) -> Vec<&'
 /// (LLFloaterLinkReplace::processBatch and linkCreatedCallback). In an
 /// outfit, the link keeps the clothing order in its description, and the
 /// other kinds take none, so that the outfit is not dirty when worn.
-fn plan(inv: &Inventory, old: Uuid, new: Uuid, protected: &HashSet<Uuid>) -> Mutation {
+fn plan(inv: &Inventory, old: Uuid, new: Uuid) -> Mutation {
     let mut change = Mutation::default();
     let Some(replacement) = inv.items.get(&new) else {
         return change;
     };
-    for link in links(inv, old, protected) {
+    for link in links(inv, old) {
         let outfit = rules::in_type(inv, link.id, 47) || rules::in_type(inv, link.id, 46);
         let desc = if outfit {
             if replacement.asset_type == 5 {
@@ -412,7 +412,7 @@ pub(super) fn show(
                         && enabled
                         && let Some(new) = picker.selected
                     {
-                        let change = plan(inv, picker.old, new, &prefs.protected);
+                        let change = plan(inv, picker.old, new);
                         if change.operations.is_empty() {
                             st.message = aurora_i18n::tr!("ui-inventory-dialogs-no-editable-links-in-the-loaded-folders").into();
                         } else {
@@ -562,7 +562,7 @@ mod tests {
         let inv = fixture(2_000);
         let old = crate::world::inventory::demo::BIG_LINKED;
         let new = id(21_000_001);
-        let change = plan(&inv, old, new, &HashSet::new());
+        let change = plan(&inv, old, new);
         let expected: Vec<_> = inv
             .items
             .values()
@@ -574,7 +574,7 @@ mod tests {
         assert!(expected.iter().all(|link| change.removed.contains(link)));
         assert!(change.operations.iter().any(|operation| matches!(operation,
             Operation::Links { links, .. } if links.len() == 1 && links[0].target == new)));
-        assert!(plan(&inv, old, id(999), &HashSet::new()).operations.is_empty(), "a vanished target");
+        assert!(plan(&inv, old, id(999)).operations.is_empty(), "a vanished target");
     }
 
     /// The cost #1297 measured: a frame of the window over a big inventory.

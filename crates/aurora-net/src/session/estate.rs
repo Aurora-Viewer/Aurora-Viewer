@@ -529,7 +529,7 @@ async fn fetch_llsd(http: &reqwest::Client, url: &str, what: Get) -> Option<Llsd
             None
         }
         Err(e) => {
-            log::warn!("region / estate {what:?}: {e}");
+            log::warn!("region / estate {what:?}: {}", e.without_url());
             None
         }
     }

@@ -97,7 +97,7 @@ impl Row {
             Column::LandImpact => self.land_impact.map_or_else(|| "…".into(), |n| format!("{n:.1}")),
             Column::PrimCount => self.prim_count.to_string(),
             Column::Owner => self.owner.clone(),
-            Column::Price => self.price.map_or_else(String::new, |n| format!("L$ {n}")),
+            Column::Price => self.price.map_or_else(String::new, |n| format!("{} {n}", aurora_i18n::currency())),
         }
     }
     fn normalize(&mut self) {

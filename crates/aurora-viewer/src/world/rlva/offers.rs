@@ -61,6 +61,12 @@ fn path(name: &str) -> Option<Vec<String>> {
     parts[1..].iter().map(|part| actions::clean_name(part).ok()).collect()
 }
 
+#[cfg(test)]
+#[test]
+fn restricted_text_never_limits_received_rlva_offer_paths_to_ascii() {
+    assert_eq!(path("#RLV/~桜/Café"), Some(vec!["~桜".into(), "Café".into()]));
+}
+
 fn name(im: &InstantMessage, task: bool) -> Option<String> {
     let name = if task {
         let end = [" ( http://", " ( https://"]

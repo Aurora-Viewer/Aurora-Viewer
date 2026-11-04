@@ -18,6 +18,7 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("ui-options-vision"), |cx| {
         cx.borrow(Page::Layout, 0, &["ui_scale"]);
         cx.borrow(Page::Appearance, 0, &["font_scale", "font"]);
+        cx.borrow(Page::Chat, 0, &["chat_font_scale"]);
         cx.toggle(
             tr!("ui-options-high-contrast"),
             tr!("ui-options-high-contrast-help"),

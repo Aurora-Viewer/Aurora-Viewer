@@ -1,12 +1,18 @@
 //! Initial keyboard labels, movement defaults and shortcut keys from the
-//! active Windows layout, rather than the language of Windows.
+//! active keyboard layout (Windows, or the XKB keymap on Linux), rather than
+//! the language of the system.
 //!
 //! - Movement: Firestorm's key_bindings.xml uses fixed WASD letters; adapting
 //!   those to ZQSD on AZERTY is intentional (the same places under the hand).
 //! - The other shortcuts name a letter or a sign ("M", "`"). Firestorm reads
 //!   them as Windows virtual keys (LLKeyboardWin32's translate map), which
 //!   follow the layout: on AZERTY, M is the key right of L and ` is ù.
-//!   `key_for` finds that key here.
+//!   `key_for` finds that key here. On Linux the Legacy Viewer names a key by
+//!   the character it types (SDL keycodes, LLKeyboardSDL::LLKeyboardSDL,
+//!   indra/llwindow/llkeyboardsdl.cpp): see `from_typed`.
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 use std::sync::OnceLock;
 use winit::keyboard::KeyCode;
@@ -117,6 +123,24 @@ impl KeyboardLayout {
             .unwrap_or(us_key)
     }
 
+    /// A layout read from the unshifted character each key types, named the
+    /// way the Legacy Viewer's Linux build names keys: a key is "M" when it
+    /// types m, "`" when it types ` (SDLK_GRAVE). On French AZERTY M is
+    /// still the key right of L, as on Windows, but no key types ` unshifted,
+    /// so a ` shortcut keeps its US place (Windows' VK_OEM_3 is ù).
+    #[cfg(any(target_os = "linux", test))]
+    fn from_typed(typed: impl IntoIterator<Item = (KeyCode, char)>) -> Self {
+        let mut layout = KeyboardLayout::default();
+        for (key, c) in typed {
+            let label = label_char(c);
+            layout.labels.push((key, label));
+            if let Some((_, name, _)) = NAMED_KEYS.iter().find(|(_, name, _)| *name == label) {
+                layout.names.push((key, *name));
+            }
+        }
+        layout
+    }
+
     /// A layout described by the characters of its keys: `letters` gives what
     /// the 26 letter keys type (KeyA to KeyZ, at their US QWERTY places) and
     /// `others` the other keys, each with its Firestorm name if it has one.
@@ -205,6 +229,55 @@ impl KeyboardLayout {
     }
 }
 
+/// A key's label: the capital of the character it types (Ù like a learned
+/// key), or the character itself when its capital is longer (ß, not SS).
+#[cfg(any(windows, target_os = "linux", test))]
+fn label_char(c: char) -> char {
+    let mut upper = c.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(u), None) => u,
+        _ => c,
+    }
+}
+
+/// The spacing sign of an XKB dead keysym, for its label (AZERTY's ^ key
+/// types dead_circumflex), as Windows gives it.
+#[cfg(any(target_os = "linux", test))]
+fn dead_key_char(keysym: u32) -> Option<char> {
+    Some(match keysym {
+        0xfe50 => '`', // dead_grave
+        0xfe51 => '´', // dead_acute
+        0xfe52 => '^', // dead_circumflex
+        0xfe53 => '~', // dead_tilde
+        0xfe57 => '¨', // dead_diaeresis
+        0xfe58 => '°', // dead_abovering
+        0xfe5b => '¸', // dead_cedilla
+        _ => return None,
+    })
+}
+
+/// The keys whose character a detection reads: the named ones, and the
+/// extra key of ISO keyboards.
+#[cfg(any(windows, target_os = "linux"))]
+fn detected_keys() -> impl Iterator<Item = KeyCode> {
+    NAMED_KEYS.iter().map(|(key, ..)| *key).chain([KeyCode::IntlBackslash])
+}
+
+/// A detected layout, kept only when it carries the four movement letters,
+/// and logged.
+#[cfg(any(windows, target_os = "linux"))]
+fn detected(layout: KeyboardLayout) -> Option<KeyboardLayout> {
+    layout.mapped_movement()?;
+    let found = |name| layout.key_for(name).map_or_else(|| "none".to_owned(), |key| format!("{key:?}"));
+    log::info!(
+        "keyboard movement defaults: {}; shortcut keys: M on {}, ` on {}",
+        layout.letters().iter().collect::<String>(),
+        found('M'),
+        found('`')
+    );
+    Some(layout)
+}
+
 /// The named key stored as `code` (`"KeyM"`, `"Backquote"`): the only keys
 /// `KeyboardLayout::named_key` can move.
 pub(super) fn named_code(code: &str) -> Option<KeyCode> {
@@ -230,7 +303,12 @@ pub(super) fn current() -> &'static KeyboardLayout {
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn detect() -> Option<KeyboardLayout> {
+    linux::detect()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn detect() -> Option<KeyboardLayout> {
     None
 }
@@ -247,7 +325,7 @@ fn detect() -> Option<KeyboardLayout> {
         return None;
     }
     let mut layout = KeyboardLayout::default();
-    for key in NAMED_KEYS.iter().map(|(key, ..)| *key).chain([KeyCode::IntlBackslash]) {
+    for key in detected_keys() {
         let Some(scan) = key.to_scancode() else { continue };
         // SAFETY: both calls take integer key codes and the valid OS layout
         // handle above. No buffers or keyboard state are read or modified.
@@ -265,24 +343,10 @@ fn detect() -> Option<KeyboardLayout> {
         // dead keys. Mapping scan -> VK first is required for AZERTY letters:
         // https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-mapvirtualkeyexw
         if let Some(c) = char::from_u32(character & 0xffff).filter(|c| !c.is_control() && !c.is_whitespace()) {
-            // Ù like a learned key; ß stays ß rather than SS.
-            let mut upper = c.to_uppercase();
-            let label = match (upper.next(), upper.next()) {
-                (Some(u), None) => u,
-                _ => c,
-            };
-            layout.labels.push((key, label));
+            layout.labels.push((key, label_char(c)));
         }
     }
-    layout.mapped_movement()?;
-    let found = |name| layout.key_for(name).map_or_else(|| "none".to_owned(), |key| format!("{key:?}"));
-    log::info!(
-        "keyboard movement defaults: {}; shortcut keys: M on {}, ` on {}",
-        layout.letters().iter().collect::<String>(),
-        found('M'),
-        found('`')
-    );
-    Some(layout)
+    detected(layout)
 }
 
 #[cfg(test)]
@@ -387,6 +451,53 @@ mod tests {
         assert_eq!(qwertz.key_for('M'), Some(K::KeyM));
         assert_eq!(qwertz.key_for('`'), Some(K::Semicolon), "VK_OEM_3 is ö");
         assert_eq!(qwertz.named_key(K::Backquote), K::Semicolon);
+    }
+
+    #[test]
+    fn linux_layouts_name_keys_by_the_character_they_type() {
+        use KeyCode as K;
+        // French AZERTY ("fr" in XKB) as libxkbcommon reads it, level 1
+        let letters = NAMED_KEYS[..26]
+            .iter()
+            .map(|(key, ..)| *key)
+            .zip("qbcdefghijkl,noparstuvzxyw".chars());
+        let azerty = KeyboardLayout::from_typed(letters.chain([
+            (K::Semicolon, 'm'),
+            (K::Equal, '='),
+            (K::Comma, ';'),
+            (K::Minus, ')'),
+            (K::Period, ':'),
+            (K::Slash, '!'),
+            (K::Backquote, '²'),
+            (K::BracketLeft, dead_key_char(0xfe52).expect("dead_circumflex")),
+            (K::BracketRight, '$'),
+            (K::Backslash, '*'),
+            (K::Quote, 'ù'),
+            (K::IntlBackslash, '<'),
+        ]));
+        assert_eq!(azerty.movement_keys(), [K::KeyW, K::KeyS, K::KeyA, K::KeyD]);
+        assert_eq!(azerty.letters(), ['Z', 'S', 'Q', 'D']);
+        assert_eq!(azerty.label("KeyW").as_deref(), Some("Z"));
+        assert_eq!(azerty.label("Quote").as_deref(), Some("Ù"));
+        assert_eq!(azerty.label("BracketLeft").as_deref(), Some("^"));
+        assert_eq!(azerty.named_key(K::KeyM), K::Semicolon);
+        assert_eq!(azerty.key_for(','), Some(K::KeyM));
+        assert_eq!(azerty.key_for(';'), Some(K::Comma));
+        // no key types ` unshifted: the shortcut stays on the US key (²)
+        assert_eq!(azerty.key_for('`'), None);
+        assert_eq!(azerty.named_key(K::Backquote), K::Backquote);
+        assert_eq!(dead_key_char(u32::from('a')), None);
+
+        // German QWERTZ: Y and Z swap, ß keeps its label
+        let letters = NAMED_KEYS[..26]
+            .iter()
+            .map(|(key, ..)| *key)
+            .zip("abcdefghijklmnopqrstuvwxzy".chars());
+        let qwertz = KeyboardLayout::from_typed(letters.chain([(K::Minus, 'ß'), (K::Slash, '-')]));
+        assert_eq!(qwertz.movement_keys(), WASD);
+        assert_eq!(qwertz.key_for('Z'), Some(K::KeyY));
+        assert_eq!(qwertz.label("Minus").as_deref(), Some("ß"));
+        assert_eq!(qwertz.key_for('-'), Some(K::Slash));
     }
 
     #[test]

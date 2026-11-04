@@ -11,14 +11,20 @@ use egui::{RichText, Vec2};
 use model::Action;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+mod clipboard;
 mod folders;
 mod gallery;
 pub(crate) mod items;
+pub(crate) mod json;
 mod layers;
+#[cfg(test)]
+mod perf_tests;
 mod selection;
+pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
 pub struct AppearanceUi {
+    pub(crate) json: json::State,
     pub tab: usize,
     pub fill_previews: bool,
     pub editing: bool,
@@ -33,7 +39,16 @@ pub struct AppearanceUi {
     locate_frames: u8,
     /// The located outfit and the time it came into view, for its flash.
     flash: Option<(Uuid, f64)>,
+    /// The single row picked in the outfit editor, its Add more list and the
+    /// temporary attachments.
     selected_item: Option<Uuid>,
+    /// The items picked with Ctrl / Shift in one list: an outfit of My
+    /// Outfits, or the worn items (`WORN_SCOPE`), as LLWearableItemsList
+    /// and LLPanelWearing allow a multiple selection.
+    item_selection: selection::Selection,
+    item_scope: Option<Uuid>,
+    /// Ctrl+C, Ctrl+X or Ctrl+V of this frame, for the app (`take_clipboard`).
+    clipboard: Option<ClipboardRequest>,
     /// The drag of a worn clothing layer in the outfit editor.
     layers: layers::Drag,
     /// The temporary attachments counted last frame: one more opens their
@@ -50,6 +65,9 @@ pub struct AppearanceUi {
     pub pending_actor: Uuid,
     pub saved_new: bool,
     pub attachments: Vec<aurora_net::AttachRequest>,
+    /// Only objects already worn when this COF write began may be detached
+    /// by its readback; later arrivals still need registration.
+    pub worn_before: HashSet<Uuid>,
     pub favorite_pending: HashSet<Uuid>,
     profile_item: Option<Uuid>,
     pub message: String,
@@ -142,7 +160,7 @@ impl AppearanceUi {
         self.open(1, false);
         self.outfit_selection.single(id);
         self.reveal_outfit = Some(id);
-        self.selected_item = None;
+        self.clear_items();
         self.search.clear();
     }
     pub fn open(&mut self, tab: usize, editing: bool) {
@@ -170,7 +188,7 @@ impl AppearanceUi {
             self.search.clear();
         }
         self.outfit_selection.single(id);
-        self.selected_item = None;
+        self.clear_items();
         self.locate = Some(id);
         self.locate_frames = LOCATE_FRAMES;
         self.flash = None;
@@ -218,9 +236,52 @@ impl AppearanceUi {
 
     fn select_outfit(&mut self, response: &egui::Response, id: Uuid, outfits: &[Uuid]) {
         if response.clicked() || response.secondary_clicked() {
+            clipboard::request_focus(&response.ctx);
             self.outfit_selection
                 .click(id, outfits, response.ctx.input(|i| i.modifiers), response.secondary_clicked());
-            self.selected_item = None;
+            self.clear_items();
+        }
+    }
+
+    fn clear_items(&mut self) {
+        self.selected_item = None;
+        self.item_scope = None;
+    }
+
+    /// A click on the item `id` of the list `scope`, its rows in `order`: a
+    /// click in another list starts a new selection there.
+    fn select_item(&mut self, response: &egui::Response, scope: Uuid, id: Uuid, order: &[Uuid]) {
+        if !(response.clicked() || response.secondary_clicked()) {
+            return;
+        }
+        clipboard::request_focus(&response.ctx);
+        if self.item_scope != Some(scope) {
+            self.item_selection = selection::Selection::default();
+            self.item_scope = Some(scope);
+        }
+        self.selected_item = None;
+        self.item_selection
+            .click(id, order, response.ctx.input(|i| i.modifiers), response.secondary_clicked());
+    }
+
+    fn item_selected(&self, scope: Uuid, id: Uuid) -> bool {
+        self.item_scope == Some(scope) && self.item_selection.contains(id)
+    }
+
+    /// What a menu opened on `id` acts on: the selection of its list in
+    /// `order` when the row is part of it, the row alone otherwise.
+    fn selected_items(&self, scope: Uuid, id: Uuid, order: &[Uuid]) -> Vec<Uuid> {
+        if self.item_selected(scope, id) {
+            self.item_selection.ordered(order)
+        } else {
+            vec![id]
+        }
+    }
+
+    /// Drops from the selection of `scope` the rows no longer listed.
+    fn retain_items(&mut self, scope: Uuid, order: &[Uuid]) {
+        if self.item_scope == Some(scope) {
+            self.item_selection.retain(order);
         }
     }
 
@@ -268,12 +329,33 @@ impl AppearanceUi {
         self.outfit_selection.click(outfits[1], &outfits, egui::Modifiers::CTRL, false);
     }
 
+    /// `AURORA_DEMO_APPEARANCE=multi-items|multi-worn`: two items of the
+    /// second outfit, or two worn items, selected together.
+    pub fn demo_item_selection(&mut self, inv: &crate::world::inventory::Inventory, worn: bool) {
+        let scope = if worn { WORN_SCOPE } else { Uuid::from_u128(704) };
+        let folder = if worn { model::cof(inv) } else { Some(scope) };
+        let ids: Vec<_> = folder
+            .map(|id| model::folder_links(inv, id))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| matches!(it.asset_type, 5 | 6)))
+            .map(|l| l.target)
+            .take(2)
+            .collect();
+        self.item_selection = selection::Selection::default();
+        self.item_scope = Some(scope);
+        for (n, id) in ids.iter().enumerate() {
+            let modifiers = if n == 0 { egui::Modifiers::NONE } else { egui::Modifiers::CTRL };
+            self.item_selection.click(*id, &ids, modifiers, false);
+        }
+    }
+
     pub fn begin_save_as(&mut self, inv: &crate::world::inventory::Inventory) {
         let name = model::base(inv)
             .and_then(|id| inv.folders.get(&id))
             .map(|f| aurora_i18n::tr!("status-new", value0 = f.info.name.to_string()))
             .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-new-outfit").into());
-        self.save_as = Some(name.chars().take(63).collect());
+        self.save_as = Some(crate::text_validation::generated_name(&name, 63));
         self.select_name = true;
         // beside the outfit it comes from: a variant goes in the same group
         self.save_in = model::base(inv)
@@ -461,6 +543,9 @@ const FLASH_SECONDS: f64 = 1.6;
 /// layout settles (`AppearanceUi::reveal_located`).
 const LOCATE_FRAMES: u8 = 12;
 
+/// The `item_scope` of the worn items' list; an outfit's is its folder.
+const WORN_SCOPE: Uuid = Uuid::nil();
+
 /// The current outfit when the gallery and the list can show it: an
 /// outfit of My Outfits or of one of its groups, as `shown_outfits` lists them.
 fn locatable(inv: &crate::world::inventory::Inventory) -> Option<Uuid> {
@@ -600,20 +685,25 @@ fn not_worn_row(ui: &mut egui::Ui, p: &Palette, icon_name: &str, text: &str) {
     ui.painter().galley(pos, galley, p.muted_dim);
 }
 
-fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut Vec<Action>) {
+/// LLWearingContextMenu (llpanelwearing.cpp) on the worn `selected` items:
+/// Edit needs one; Take off / Detach takes them all.
+fn item_menu(
+    response: &egui::Response,
+    p: &Palette,
+    inv: &crate::world::inventory::Inventory,
+    locks: &crate::world::rlva::WearLocks,
+    selected: &[Uuid],
+    actions: &mut Vec<Action>,
+) {
     menu::context_menu(response, p, |ui| {
-        let editable = matches!(it.asset_type, 5 | 13);
-        if editable && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
+        let items: Vec<&InvItem> = selected.iter().filter_map(|id| inv.items.get(id)).collect();
+        if let [it] = items.as_slice()
+            && matches!(it.asset_type, 5 | 13)
+            && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"))
+        {
             super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(it.id));
         }
-        let label = if it.asset_type == 6 {
-            aurora_i18n::tr!("common-detach")
-        } else {
-            aurora_i18n::tr!("common-remove")
-        };
-        if it.asset_type != 13 && menu::item(ui, p, "circle-x-filled", label) {
-            actions.push(Action::Remove(it.id));
-        }
+        items::remove_item(ui, p, &items, locks, aurora_i18n::tr!("common-remove"), actions);
     });
 }
 
@@ -978,6 +1068,12 @@ fn outfit_list(
                     ui.add_space(2.0);
                     let mut links = model::folder_links(&world.inventory, *id);
                     items::sort_links(&world.inventory, &mut links, false);
+                    let order: Vec<_> = links
+                        .iter()
+                        .filter(|l| !l.folder && world.inventory.items.contains_key(&l.target))
+                        .map(|l| l.target)
+                        .collect();
+                    st.retain_items(*id, &order);
                     for link in links.iter().filter(|l| !l.folder) {
                         if let Some(it) = world.inventory.items.get(&link.target) {
                             ui.push_id(("outfit_item", id, it.id), |ui| {
@@ -986,14 +1082,16 @@ fn outfit_list(
                                     p,
                                     it,
                                     "",
-                                    st.selected_item == Some(it.id) && st.outfit_selection.focus == Some(*id),
+                                    st.item_selected(*id, it.id) && st.outfit_selection.focus == Some(*id),
                                     worn.get(&it.id).map(String::as_str),
                                 );
                                 if response.clicked() || response.secondary_clicked() {
                                     st.outfit_selection.single(*id);
-                                    st.selected_item = Some(it.id);
                                 }
-                                items::context_menu(&response, p, world, st, *id, it, actions);
+                                st.select_item(&response, *id, it.id, &order);
+                                items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
+                                let selected = st.selected_items(*id, it.id, &order);
+                                items::context_menu(&response, p, world, st, *id, it, &selected, actions);
                             });
                             row_gap(ui);
                         } else {
@@ -1063,6 +1161,9 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
     let mut links = model::cof(inv).map(|id| model::folder_links(inv, id)).unwrap_or_default();
     let worn = world.worn_attachment_items();
     let labels = items::worn_labels(world);
+    // LLPanelWearing / LLWearableItemsList: an RLVa-locked item's Take off
+    // and Detach are greyed (llpanelwearing.cpp, llwearableitemslist.cpp).
+    let locks = world.rlva_wear_locks();
     for id in &worn {
         if !links.iter().any(|l| l.target == *id)
             && let Some(it) = inv.items.get(id)
@@ -1088,11 +1189,24 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         st.layers.begin(ui.ctx());
     }
     let q = st.search.trim().to_lowercase();
+    let listed = |l: &&aurora_net::outfits::OutfitLink| !l.folder && (edit || q.is_empty() || l.name.to_lowercase().contains(&q));
+    // the worn tab's rows, for its multiple selection; the editor's rows
+    // keep one selected row, which its buttons and layer drag act on
+    let order: Vec<_> = if edit {
+        Vec::new()
+    } else {
+        links
+            .iter()
+            .filter(listed)
+            .filter(|l| inv.items.contains_key(&l.target))
+            .map(|l| l.target)
+            .collect()
+    };
+    if !edit {
+        st.retain_items(WORN_SCOPE, &order);
+    }
     let mut present = HashSet::new();
-    for link in links
-        .iter()
-        .filter(|l| !l.folder && (edit || q.is_empty() || l.name.to_lowercase().contains(&q)))
-    {
+    for link in links.iter().filter(listed) {
         let Some(it) = inv.items.get(&link.target) else {
             ui.label(
                 RichText::new(aurora_i18n::tr!("status-loading", value0 = link.name.to_string()))
@@ -1124,7 +1238,11 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 } else {
                     ""
                 },
-                st.selected_item == Some(it.id),
+                if edit {
+                    st.selected_item == Some(it.id)
+                } else {
+                    st.item_selected(WORN_SCOPE, it.id)
+                },
                 labels.get(&it.id).map(String::as_str),
                 if draggable {
                     egui::Sense::click_and_drag()
@@ -1136,24 +1254,36 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             if draggable {
                 st.layers.row(it.id, it.flags & 0xff, &resp);
             }
-            if resp.clicked() {
-                st.selected_item = Some(it.id);
+            let removable = locks.can_remove(it.id);
+            items::double_click(&resp, world, it, true, actions);
+            if edit {
+                if resp.clicked() {
+                    clipboard::request_focus(ui.ctx());
+                    st.selected_item = Some(it.id);
+                }
+                item_menu(&resp, p, inv, &locks, &[it.id], actions);
+            } else {
+                st.select_item(&resp, WORN_SCOPE, it.id, &order);
+                item_menu(&resp, p, inv, &locks, &st.selected_items(WORN_SCOPE, it.id, &order), actions);
             }
-            item_menu(&resp, p, it, actions);
             // a body part has none of these buttons: no empty row under it
             if edit && st.selected_item == Some(it.id) && it.asset_type != 13 {
                 ui.horizontal(|ui| {
-                    if icon_button(
-                        ui,
-                        p,
-                        "circle-x-filled",
-                        if it.asset_type == 6 {
-                            aurora_i18n::tr!("common-detach")
-                        } else {
-                            aurora_i18n::tr!("common-remove")
-                        },
-                    )
-                    .clicked()
+                    if ui
+                        .add_enabled_ui(removable, |ui| {
+                            icon_button(
+                                ui,
+                                p,
+                                "circle-x-filled",
+                                if it.asset_type == 6 {
+                                    aurora_i18n::tr!("common-detach")
+                                } else {
+                                    aurora_i18n::tr!("common-remove")
+                                },
+                            )
+                        })
+                        .inner
+                        .clicked()
                     {
                         actions.push(Action::Remove(it.id));
                     }
@@ -1248,7 +1378,13 @@ fn temporary_attachments(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut
                 )
                 .on_hover_text(aurora_i18n::tr!("ui-appearance-temporary-tip"));
                 if resp.clicked() || resp.secondary_clicked() {
+                    st.clear_items();
                     st.selected_item = Some(t.id);
+                }
+                // LLPanelWearing wires its temporary list to onRemoveAttachment:
+                // no inventory item exists, so detach the simulator object.
+                if items::double_clicked(&resp) && world.rlva_wear_locks().can_remove(t.id) {
+                    super::context::request(ui.ctx(), super::context::CtxAction::Detach(t.key));
                 }
                 temporary_menu(&resp, p, t);
             });
@@ -1283,6 +1419,8 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
         aurora_i18n::tr!("ui-appearance-filter-wearable-items"),
         ui.available_width(),
     );
+    // RLVa: a double click adds only what a lock lets be added.
+    let locks = world.rlva_wear_locks();
     let folders: Vec<_> = world
         .inventory
         .folders
@@ -1292,7 +1430,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
         .collect();
     for id in folders {
         if st.add_search.trim().is_empty() {
-            add_folder(ui, p, &mut world.inventory, id, st, actions, 0);
+            add_folder(ui, p, &mut world.inventory, &locks, id, st, actions, 0);
         } else {
             world.inventory.request(id);
         }
@@ -1323,7 +1461,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
         if response.clicked() {
             st.selected_item = Some(it.id);
         }
-        if response.double_clicked() {
+        if response.double_clicked() && locks.wear(&world.inventory, it.id, 0).add {
             actions.push(Action::Add(it.id));
             st.adding = false;
         }
@@ -1331,10 +1469,12 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
 }
 
 /// Lazy folder traversal keeps nested inventory available without fetching it all.
+#[allow(clippy::too_many_arguments)]
 fn add_folder(
     ui: &mut egui::Ui,
     p: &Palette,
     inv: &mut crate::world::inventory::Inventory,
+    locks: &crate::world::rlva::WearLocks,
     id: Uuid,
     st: &mut AppearanceUi,
     actions: &mut Vec<Action>,
@@ -1350,7 +1490,7 @@ fn add_folder(
     widgets::collapsing(ui, p, ("add_outfit_folder", id), name, depth == 0, |ui| {
         inv.request(id);
         for child in children {
-            add_folder(ui, p, inv, child, st, actions, depth + 1);
+            add_folder(ui, p, inv, locks, child, st, actions, depth + 1);
         }
         let worn: HashSet<_> = model::cof(inv)
             .map(|id| model::folder_links(inv, id))
@@ -1375,7 +1515,7 @@ fn add_folder(
             if response.clicked() {
                 st.selected_item = Some(it.id);
             }
-            if response.double_clicked() {
+            if response.double_clicked() && locks.wear(inv, it.id, 0).add {
                 actions.push(Action::Add(it.id));
                 st.adding = false;
             }
@@ -1558,6 +1698,7 @@ pub fn show(
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let list_width = ui.available_width();
+                clipboard::list_focus(ui, egui::Rect::from_min_size(ui.cursor().min, Vec2::new(list_width, height)));
                 egui::ScrollArea::vertical()
                     .id_salt("appearance_list")
                     .max_height(height)
@@ -1585,6 +1726,7 @@ pub fn show(
                         });
                     });
             });
+        st.clipboard_shortcuts(ui, &world.inventory, &outfits);
         if !st.editing && st.tab == 2 {
             temporary_attachments(ui, p, world, st);
         }
@@ -1604,12 +1746,13 @@ pub fn show(
                     st.adding = !st.adding;
                     st.selected_item = None;
                 }
+                // It adds the selection (Action::Add): RLVa's add mask.
+                let addable = st
+                    .selected_item
+                    .is_some_and(|id| world.rlva_wear_locks().wear(&world.inventory, id, 0).add);
                 if st.adding
                     && ui
-                        .add_enabled(
-                            st.selected_item.is_some() && st.pending.is_none(),
-                            egui::Button::new(aurora_i18n::tr!("common-wear")),
-                        )
+                        .add_enabled(addable && st.pending.is_none(), egui::Button::new(aurora_i18n::tr!("common-wear")))
                         .clicked()
                     && let Some(id) = st.selected_item
                 {
@@ -1672,6 +1815,26 @@ pub fn show(
                 if menu::item_if(ui, p, "restore", restore, base.is_some() && st.pending.is_none()) {
                     actions.push(Action::Revert);
                 }
+                let selected = st.outfit_selection.ordered(&outfits);
+                let export = if !st.editing && st.tab < 2 && !selected.is_empty() {
+                    (selected.len() == 1).then(|| selected[0])
+                } else {
+                    model::cof(&world.inventory)
+                };
+                let idle = !st.json.busy() && st.pending.is_none();
+                if menu::item_if(
+                    ui,
+                    p,
+                    "file-export",
+                    aurora_i18n::tr!("outfit-json-export"),
+                    idle && export.is_some_and(|id| model::complete(&world.inventory, id)),
+                ) && let Some(folder) = export
+                {
+                    actions.push(Action::ExportJson(folder));
+                }
+                if menu::item_if(ui, p, "file-import", aurora_i18n::tr!("outfit-json-import"), idle) {
+                    actions.push(Action::PickJson);
+                }
             });
             if !st.editing && st.tab < 2 {
                 ui.label(
@@ -1724,7 +1887,11 @@ pub fn show(
                 }
             } else if st.tab < 2 {
                 let selection = st.outfit_selection.ordered(&outfits);
-                let ready = available && st.selection_info(&world.inventory, selection).1;
+                // getCanAddToCOF / getCanReplaceCOF: no outfit under an RLVa
+                // add lock on its folder.
+                let locks = world.rlva_wear_locks();
+                let unlocked = selection.iter().all(|id| locks.folder_allows(*id, true));
+                let ready = available && unlocked && st.selection_info(&world.inventory, selection).1;
                 for (icon, label, kind, append) in [
                     ("plus", aurora_i18n::tr!("common-add"), ActionKind::Flat, true),
                     ("shirt-filled", aurora_i18n::tr!("common-wear"), ActionKind::Primary, false),
@@ -1750,7 +1917,9 @@ pub fn show(
             ui.add_space(6.0);
             ui.label(aurora_i18n::tr!("ui-appearance-save-what-i-am-wearing-as-a-new-outfit"));
             ui.add_space(8.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY).char_limit(63));
+            let r = widgets::restricted_text_field(ui, true, &mut name, widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(f32::INFINITY).char_limit(63)
+            });
             if st.select_name {
                 r.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, r.id) {
@@ -1790,6 +1959,7 @@ pub fn show(
         });
         st.save_as = if close || response.should_close() { None } else { Some(name) };
     }
+    json::confirmation(ctx, p, world, st, &mut actions);
     items::profile(ctx, p, world, st, &mut actions);
     gallery::dialogs(ctx, p, world, st, images, &mut actions);
     folders::dialogs(ctx, p, world, st, &mut actions);
@@ -2164,7 +2334,7 @@ mod tests {
         }
     }
 
-    fn draw(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, key: Option<egui::Key>) -> Vec<Action> {
+    pub(super) fn draw(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, key: Option<egui::Key>) -> Vec<Action> {
         let mut input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
             ..Default::default()
@@ -2520,7 +2690,7 @@ mod tests {
             };
             draw_input(&ctx, &mut world, &mut st, input);
         }
-        assert_eq!(st.selected_item, Some(Uuid::from_u128(723)), "clicked outfit item");
+        assert!(st.item_selected(Uuid::from_u128(704), Uuid::from_u128(723)), "clicked outfit item");
         assert!(egui::Popup::is_any_open(&ctx), "right-click menu");
         for _ in 0..4 {
             draw(&ctx, &mut world, &mut st, None);
@@ -2593,6 +2763,573 @@ mod tests {
                 "{actions:?}"
             );
         }
+    }
+
+    /// Clicks the row named `label` with `modifiers`, then lets the window settle.
+    fn click_row(
+        ctx: &egui::Context,
+        world: &mut World,
+        st: &mut AppearanceUi,
+        label: &str,
+        modifiers: egui::Modifiers,
+        button: egui::PointerButton,
+    ) {
+        let pos = label_position(ctx, world, st, label);
+        assert!(modified_click(ctx, world, st, pos, modifiers, button).is_empty(), "{label}");
+        for _ in 0..4 {
+            draw(ctx, world, st, None);
+        }
+    }
+
+    /// Clicks the entry `label` of the open menu and returns what it did.
+    fn click_menu(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, label: &str) -> Vec<Action> {
+        let pos = menu_label_position(ctx, world, st, label);
+        let mut actions = modified_click(ctx, world, st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary);
+        for _ in 0..4 {
+            actions.extend(draw(ctx, world, st, None));
+        }
+        actions
+    }
+
+    /// Real primary-button press/release pairs within egui's double-click
+    /// interval. The preceding pause separates successive gestures.
+    fn double_click_row(
+        ctx: &egui::Context,
+        world: &mut World,
+        st: &mut AppearanceUi,
+        label: &str,
+        modifiers: egui::Modifiers,
+    ) -> Vec<Action> {
+        draw_input(
+            ctx,
+            world,
+            st,
+            egui::RawInput {
+                time: Some(ctx.input(|i| i.time) + 1.0),
+                ..Default::default()
+            },
+        );
+        let pos = draw_output(
+            ctx,
+            world,
+            st,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                ..Default::default()
+            },
+        )
+        .1
+        .iter()
+        .find_map(|shape| text_position(&shape.shape, label).filter(|pos| shape.clip_rect.contains(*pos)))
+        .unwrap_or_else(|| panic!("visible double-click row: {label}"));
+        let mut actions = Vec::new();
+        for n in 0..4 {
+            actions.extend(draw_input(
+                ctx,
+                world,
+                st,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    time: Some(ctx.input(|i| i.time) + 0.04),
+                    events: vec![
+                        egui::Event::ModifiersChanged(modifiers),
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed: n % 2 == 0,
+                            modifiers,
+                        },
+                    ],
+                    ..Default::default()
+                },
+            ));
+            if n == 1 {
+                assert!(actions.is_empty(), "a single click only selects: {actions:?}");
+            }
+        }
+        actions
+    }
+
+    #[test]
+    fn outfits_double_click_adds_then_detaches_only_the_clicked_attachment_in_each_view() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        let folder = Uuid::from_u128(704);
+        let item = Uuid::from_u128(717);
+        let name = world.inventory.items[&item].name.clone();
+        assert!(!items::worn_items(&world).contains(&item));
+        // Keep both attachments visible without scrolling the accordion or
+        // the Worn list; the gesture must target a painted, unclipped row.
+        for id in [folder, model::cof(&world.inventory).expect("COF")] {
+            let links = world.inventory.folders[&id]
+                .items
+                .iter()
+                .copied()
+                .filter(|link| matches!(world.inventory.items[link].asset_id.as_u128(), 717 | 718))
+                .collect();
+            world.inventory.folders.get_mut(&id).expect("outfit").items = links;
+        }
+        world.inventory.generation += 1;
+        let saved = world.inventory.folders[&folder].items.clone();
+        let mut st = AppearanceUi::default();
+        st.open_outfit(folder);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let actions = double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE);
+        assert!(
+            matches!(actions.as_slice(), [Action::WearItem { item: id, replace: false, point: 0 }] if *id == item),
+            "{actions:?}"
+        );
+        world.objects.upsert(1, crate::demo::action_avatar(false));
+        let mut object = crate::demo::hud::object(2, false);
+        object.full_id = Uuid::from_u128(80_717);
+        object.name_values = format!("AttachItemID STRING RW SV {item}");
+        world.objects.upsert(1, object);
+        assert!(items::worn_items(&world).contains(&item));
+        for view in 0..3 {
+            let mut st = AppearanceUi::default();
+            if view == 0 {
+                st.open_outfit(folder);
+            } else {
+                st.open(2, view == 2);
+                st.edit_tab = 1;
+            }
+            for _ in 0..4 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            let actions = double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE);
+            assert!(
+                matches!(actions.as_slice(), [Action::Remove(id)] if *id == item),
+                "view {view}: {actions:?}"
+            );
+            assert_eq!(world.inventory.folders[&folder].items, saved, "saved outfit links stay intact");
+        }
+    }
+
+    #[test]
+    fn outfits_double_click_removes_clothing_but_only_replaces_body_parts() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let mut st = AppearanceUi::default();
+        st.open_outfit(Uuid::from_u128(704));
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let clothing = Uuid::from_u128(714);
+        let name = world.inventory.items[&clothing].name.clone();
+        let actions = double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE);
+        assert!(matches!(actions.as_slice(), [Action::Remove(id)] if *id == clothing), "{actions:?}");
+        let shape = Uuid::from_u128(710);
+        let name = world.inventory.items[&shape].name.clone();
+        assert!(double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE).is_empty());
+        let cof = model::cof(&world.inventory).expect("COF");
+        let links = world.inventory.folders[&cof]
+            .items
+            .iter()
+            .copied()
+            .filter(|id| world.inventory.items[id].asset_id != shape)
+            .collect();
+        world.inventory.folders.get_mut(&cof).expect("COF").items = links;
+        world.inventory.generation += 1;
+        let actions = double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE);
+        assert!(
+            matches!(actions.as_slice(), [Action::WearItem { item: id, replace: true, point: 0 }] if *id == shape),
+            "{actions:?}"
+        );
+    }
+
+    #[test]
+    fn outfits_double_click_respects_rlva_and_modifier_selection() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let folder = Uuid::from_u128(704);
+        let links = world.inventory.folders[&folder]
+            .items
+            .iter()
+            .copied()
+            .filter(|link| matches!(world.inventory.items[link].asset_id.as_u128(), 714 | 717))
+            .collect();
+        world.inventory.folders.get_mut(&folder).expect("outfit").items = links;
+        world.inventory.generation += 1;
+        let mut st = AppearanceUi::default();
+        st.open_outfit(folder);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let attachment = Uuid::from_u128(717);
+        let clothing = Uuid::from_u128(714);
+        let name = world.inventory.items[&attachment].name.clone();
+        for modifiers in [egui::Modifiers::CTRL, egui::Modifiers::SHIFT, egui::Modifiers::COMMAND] {
+            st.item_scope = Some(folder);
+            st.item_selection.single(clothing);
+            assert!(double_click_row(&ctx, &mut world, &mut st, &name, modifiers).is_empty());
+            assert!(st.item_selected(folder, clothing), "keep the existing selection");
+            if modifiers.shift {
+                assert!(st.item_selected(folder, attachment), "select the visible range");
+            }
+        }
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Test lock".into(),
+            source_id: Uuid::from_u128(99),
+            owner_id: Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@addattach=n,remattach=n,remoutfit:tattoo=n".into(),
+        }));
+        assert!(double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE).is_empty());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        world.objects.upsert(1, crate::demo::action_avatar(false));
+        let mut object = crate::demo::hud::object(2, false);
+        object.full_id = Uuid::from_u128(80_717);
+        object.name_values = format!("AttachItemID STRING RW SV {attachment}");
+        world.objects.upsert(1, object);
+        assert!(items::worn_items(&world).contains(&attachment));
+        assert!(double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE).is_empty());
+        let name = world.inventory.items[&clothing].name.clone();
+        assert!(double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE).is_empty());
+        world.rlva.configure(false);
+        let actions = double_click_row(&ctx, &mut world, &mut st, &name, egui::Modifiers::NONE);
+        assert!(matches!(actions.as_slice(), [Action::Remove(id)] if *id == clothing), "{actions:?}");
+    }
+
+    #[test]
+    fn outfits_double_click_detaches_temporary_objects_without_inventory_changes() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        world.objects.upsert(1, crate::demo::action_avatar(false));
+        let mut object = crate::demo::hud::object(2, false);
+        object.full_id = Uuid::from_u128(90_717);
+        object.name_values = format!("AttachItemID STRING RW SV {}", object.full_id);
+        world.objects.upsert(1, object);
+        let temporary = world.temp_attachments();
+        assert_eq!(temporary.len(), 1);
+        let mut st = AppearanceUi::default();
+        st.open(2, false);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert!(
+            double_click_row(
+                &ctx,
+                &mut world,
+                &mut st,
+                aurora_i18n::tr!("ui-appearance-temporary-object"),
+                egui::Modifiers::NONE
+            )
+            .is_empty()
+        );
+        let requests = super::super::context::take_requests(&ctx);
+        assert!(
+            matches!(requests.as_slice(), [super::super::context::CtxAction::Detach(key)] if *key == temporary[0].key),
+            "{requests:?}"
+        );
+    }
+
+    /// The report: items of an outfit could only be worn or removed one by
+    /// one. Ctrl-clicked rows are worn, added or deleted in one action.
+    #[test]
+    fn outfit_items_selected_together_are_added_and_deleted_in_one_action() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let folder = Uuid::from_u128(704);
+        // an object and a clothing item, neither worn
+        let targets = [Uuid::from_u128(722), Uuid::from_u128(723)];
+        let mut links = Vec::new();
+        for (n, target) in targets.into_iter().enumerate() {
+            let mut link = world.inventory.items[&world.inventory.folders[&folder].items[0]].clone();
+            link.asset_id = target;
+            link.name = world.inventory.items[&target].name.clone();
+            link.id = Uuid::from_u128(990 + n as u128);
+            world.inventory.items.insert(link.id, link.clone());
+            links.push(link.id);
+        }
+        world.inventory.folders.get_mut(&folder).expect("outfit").items = links;
+        world.inventory.generation += 1;
+        let mut st = AppearanceUi::default();
+        st.open_outfit(folder);
+        st.reveal_outfit = None;
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let names = targets.map(|id| world.inventory.items[&id].name.clone());
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[1],
+            egui::Modifiers::CTRL,
+            egui::PointerButton::Primary,
+        );
+        assert!(targets.iter().all(|id| st.item_selected(folder, *id)), "both rows selected");
+        // the menu opened on a selected row keeps the selection
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let actions = click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("common-add"));
+        let [
+            Action::WearItems {
+                items,
+                replace: false,
+                point: 0,
+            },
+        ] = actions.as_slice()
+        else {
+            panic!("{actions:?}");
+        };
+        assert_eq!(items.iter().copied().collect::<HashSet<_>>(), HashSet::from(targets));
+        assert!(model::plan(&world.inventory, actions[0].clone(), &HashMap::new()).is_ok());
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[1],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let actions = click_menu(
+            &ctx,
+            &mut world,
+            &mut st,
+            aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
+        );
+        let [Action::DeleteFromOutfit { folder: from, items }] = actions.as_slice() else {
+            panic!("{actions:?}");
+        };
+        assert_eq!(*from, folder);
+        assert_eq!(items.iter().copied().collect::<HashSet<_>>(), HashSet::from(targets));
+        // a plain click on a row selects it alone again
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[1],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        assert!(!st.item_selected(folder, targets[0]) && st.item_selected(folder, targets[1]));
+    }
+
+    /// The worn tab takes off a Ctrl-clicked selection in one action, named
+    /// by what it holds (LLWearingContextMenu's take_off / detach entries).
+    #[test]
+    fn worn_items_selected_together_are_taken_off_in_one_action() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let inv = &world.inventory;
+        let worn: Vec<_> = model::folder_links(inv, model::cof(inv).expect("COF"))
+            .into_iter()
+            .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| matches!(it.asset_type, 5 | 6)))
+            .map(|l| inv.items[&l.target].clone())
+            .take(2)
+            .collect();
+        assert_eq!(worn.len(), 2, "the demo wears two removable items");
+        let mut st = AppearanceUi::default();
+        st.open(2, false);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &worn[0].name,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &worn[1].name,
+            egui::Modifiers::CTRL,
+            egui::PointerButton::Primary,
+        );
+        assert!(worn.iter().all(|it| st.item_selected(WORN_SCOPE, it.id)), "both rows selected");
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &worn[1].name,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let label = match (worn.iter().any(|it| it.asset_type == 6), worn.iter().any(|it| it.asset_type == 5)) {
+            (true, true) => aurora_i18n::tr!("inventory-menu-editor-detach"),
+            (true, false) => aurora_i18n::tr!("common-detach"),
+            _ => aurora_i18n::tr!("common-remove"),
+        };
+        let actions = click_menu(&ctx, &mut world, &mut st, label);
+        let [Action::RemoveItems(items)] = actions.as_slice() else {
+            panic!("{actions:?}");
+        };
+        assert_eq!(
+            items.iter().copied().collect::<HashSet<_>>(),
+            worn.iter().map(|it| it.id).collect::<HashSet<_>>()
+        );
+        assert!(model::plan(&world.inventory, actions[0].clone(), &HashMap::new()).is_ok());
+    }
+
+    /// Ctrl+C, Ctrl+X and Ctrl+V, as egui-winit delivers them.
+    fn clipboard_key(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, event: egui::Event) -> Option<ClipboardRequest> {
+        draw_input(
+            ctx,
+            world,
+            st,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                events: vec![event],
+                ..Default::default()
+            },
+        );
+        st.take_clipboard()
+    }
+
+    /// The request: Ctrl+C, Ctrl+X and Ctrl+V of the Legacy Viewer's
+    /// inventory in the outfit windows too. A copy carries the outfit's
+    /// links, a paste names where it goes, and the keys do nothing while
+    /// the lists do not have the keyboard.
+    #[test]
+    fn clipboard_keys_take_the_selected_rows_of_outfits_and_worn() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let folder = Uuid::from_u128(703);
+        let mut st = AppearanceUi::default();
+        st.open_outfit(folder);
+        st.reveal_outfit = None;
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert_eq!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Copy),
+            None,
+            "no row clicked yet"
+        );
+        let inv = &world.inventory;
+        let targets: Vec<_> = model::folder_links(inv, folder).iter().take(2).map(|l| l.target).collect();
+        let names: Vec<_> = targets.iter().map(|id| inv.items[id].name.clone()).collect();
+        let link = |folder: Uuid, target: Uuid| {
+            inv.folders[&folder]
+                .items
+                .iter()
+                .copied()
+                .find(|id| inv.items[id].asset_id == target)
+                .expect("a link")
+        };
+        let mut links: Vec<_> = targets.iter().map(|target| link(folder, *target)).collect();
+        let cof = model::cof(inv).expect("COF");
+        let worn_link = link(cof, targets[0]);
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[1],
+            egui::Modifiers::CTRL,
+            egui::PointerButton::Primary,
+        );
+        let Some(ClipboardRequest::Store { mut ids, cut: false }) = clipboard_key(&ctx, &mut world, &mut st, egui::Event::Copy) else {
+            panic!("a copy of the selected items");
+        };
+        ids.sort();
+        links.sort();
+        assert_eq!(ids, links, "the outfit's links, not the originals");
+        assert!(matches!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Cut),
+            Some(ClipboardRequest::Store { cut: true, .. })
+        ));
+        assert_eq!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Paste("marker".into())),
+            Some(ClipboardRequest::Paste {
+                to: PasteTo::Outfit(Some(folder)),
+                text: "marker".into(),
+            })
+        );
+
+        // The worn tab copies the Current Outfit's links and pastes there.
+        st.open(2, false);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        assert_eq!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Copy),
+            Some(ClipboardRequest::Store {
+                ids: vec![worn_link],
+                cut: false
+            })
+        );
+        assert!(matches!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Paste("marker".into())),
+            Some(ClipboardRequest::Paste { to: PasteTo::Worn, .. })
+        ));
+
+        // The filter field keeps its own Ctrl+C.
+        let field = label_position(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-filter-outfits"));
+        modified_click(
+            &ctx,
+            &mut world,
+            &mut st,
+            field,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        draw(&ctx, &mut world, &mut st, None);
+        assert!(ctx.text_edit_focused());
+        assert_eq!(clipboard_key(&ctx, &mut world, &mut st, egui::Event::Copy), None);
     }
 
     #[test]
@@ -2697,7 +3434,7 @@ mod tests {
         assert!(st.shown_outfits(&world.inventory).contains(&worn));
     }
 
-    fn wardrobe(count: usize) -> World {
+    pub(super) fn wardrobe(count: usize) -> World {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.agent_id = crate::demo::DEMO_AGENT;
         model::seed_demo(&mut world.inventory, world.agent_id);

@@ -421,6 +421,17 @@ impl<'a> Cx<'a> {
         self.greyed = off;
     }
 
+    /// Hide an inactive branch on its page, while retaining its settings
+    /// in search, modified views, reset and declaration passes.
+    pub fn conditional(&mut self, visible: bool, body: impl FnOnce(&mut Self)) {
+        if self.mode != Mode::Show || visible {
+            let before = self.greyed;
+            self.greyed |= !visible;
+            body(self);
+            self.greyed = before;
+        }
+    }
+
     /// A search is under way: the rows' `keywords` are read (a page skips
     /// building costly ones otherwise).
     pub fn searching(&self) -> bool {
@@ -962,7 +973,8 @@ impl<'a> Cx<'a> {
             .st
             .control_sizes
             .get(&size_key)
-            .copied()
+            .filter(|(width, _)| (*width - cell.width()).abs() <= 0.5)
+            .map(|(_, size)| *size)
             .unwrap_or(vec2((cell.width() * 0.45).min(240.0), 24.0));
         let left = cell.left() + GUTTER;
         let right = cell.right() - 10.0;
@@ -1037,7 +1049,7 @@ impl<'a> Cx<'a> {
         let used = child.min_rect().size();
         let measured = vec2(used.x.ceil(), used.y.max(20.0).ceil());
         if (measured - control).abs().max_elem() > 0.5 {
-            self.st.control_sizes.insert(size_key, measured);
+            self.st.control_sizes.insert(size_key, (cell.width(), measured));
             ctx.request_discard("preferences row measured");
         }
 

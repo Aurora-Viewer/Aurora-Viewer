@@ -136,8 +136,11 @@ pub fn layout(painter: &egui::Painter, p: &Palette, world: &World, frame: &Frame
         }
         let format = TextFormat {
             color: line_color(p, new, *tone),
+            // at the chat's text size (Preferences › Chat; the human's
+            // request of 2026-11-01): the Legacy Viewer's bubbles keep the
+            // name tags' fixed font whatever ChatFontSize
             font_id: FontId::new(
-                TEXT_SIZE,
+                super::fonts::chat_size(painter.ctx(), TEXT_SIZE),
                 if line.voice == Voice::Shout {
                     semibold.clone()
                 } else {

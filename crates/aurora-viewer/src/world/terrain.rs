@@ -64,6 +64,29 @@ impl Heightmap {
         }
     }
 
+    /// Grow to a size learned late, keeping the land received. Returns
+    /// whether it grew: chunk numbers follow the width, so all change.
+    pub fn grow(&mut self, size_x: u32, size_y: u32) -> bool {
+        let (size_x, size_y) = (size_x.max(self.size_x), size_y.max(self.size_y));
+        if (size_x, size_y) == (self.size_x, self.size_y) {
+            return false;
+        }
+        let mut grown = Heightmap::new(size_x, size_y);
+        for y in 0..self.size_y {
+            let from = (y * self.size_x) as usize;
+            let to = (y * size_x) as usize;
+            grown.heights[to..to + self.size_x as usize].copy_from_slice(&self.heights[from..from + self.size_x as usize]);
+        }
+        let patches_y = self.size_y / 16;
+        for y in 0..patches_y {
+            for x in 0..self.patches_x {
+                grown.patch_received[(y * grown.patches_x + x) as usize] = self.patch_received[(y * self.patches_x + x) as usize];
+            }
+        }
+        *self = grown;
+        true
+    }
+
     /// Write a patch; returns the chunk indices that became dirty.
     pub fn apply_patch(&mut self, px: u32, py: u32, size: u32, data: &[f32]) -> Vec<u32> {
         let x0 = px * size;
@@ -397,5 +420,40 @@ mod tests {
         }
         let mean = sum / (n * n) as f64;
         assert!(mean.abs() < 0.05, "mean {mean}");
+    }
+}
+
+#[cfg(test)]
+mod region_size_tests {
+    use super::*;
+
+    #[test]
+    fn a_grown_heightmap_keeps_its_land_where_it_was() {
+        let mut map = Heightmap::new(256, 256);
+        map.apply_patch(2, 3, 16, &[7.0; 256]);
+        assert!(map.grow(1024, 512));
+        assert_eq!((map.size_x, map.size_y, map.patches_x), (1024, 512, 64));
+        assert_eq!(map.heights.len(), 1024 * 512);
+        assert_eq!(map.heights[(3 * 16 * 1024 + 2 * 16) as usize], 7.0);
+        assert_eq!(map.heights[(3 * 16 * 1024 + 2 * 16 + 15) as usize], 7.0);
+        assert!(map.patch_received[(3 * 64 + 2) as usize]);
+        assert_eq!(map.patch_received.iter().filter(|r| **r).count(), 1);
+    }
+
+    #[test]
+    fn land_past_256_m_lands_once_the_map_has_grown() {
+        let mut map = Heightmap::new(256, 256);
+        assert!(map.apply_patch(53, 41, 16, &[9.0; 256]).is_empty(), "dropped at 256 x 256");
+        map.grow(1024, 1024);
+        assert!(!map.apply_patch(53, 41, 16, &[9.0; 256]).is_empty());
+        assert_eq!(map.heights[(41 * 16 * 1024 + 53 * 16) as usize], 9.0);
+    }
+
+    #[test]
+    fn a_heightmap_never_shrinks() {
+        let mut map = Heightmap::new(1024, 1024);
+        assert!(!map.grow(256, 256));
+        assert!(!map.grow(1024, 1024));
+        assert_eq!((map.size_x, map.size_y), (1024, 1024));
     }
 }

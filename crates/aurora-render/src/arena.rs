@@ -140,6 +140,9 @@ fn grown_capacity(old: u32, need: u32, max: u32) -> Option<u32> {
 /// buffer is already that large, else `wanted` rounded up to whole
 /// megabytes of elements (a few sizes, not one per wish), within `max`.
 fn ahead_capacity(old: u32, wanted: u32, max: u32) -> Option<u32> {
+    if wanted <= old {
+        return None;
+    }
     const STEP: u32 = 1 << 20;
     let cap = wanted.div_ceil(STEP).saturating_mul(STEP).min(max);
     (cap > old).then_some(cap)
@@ -388,26 +391,31 @@ impl GeometryArena {
         indices: u32,
         allowance: Option<u64>,
     ) -> bool {
+        // Budget the actual rounded/capped buffers, not the smaller wish:
+        // rounding after the budget check could exceed its allowance by
+        // almost a million vertices plus their skin stream.
+        let vertices = ahead_capacity(self.vertices.capacity(), vertices, self.max_vertices()).unwrap_or(self.vertices.capacity());
+        let indices = ahead_capacity(self.indices.capacity(), indices & !1, self.max_indices()).unwrap_or(self.indices.capacity());
         let (vertices, indices) = match allowance {
             Some(bytes) => ahead_within((self.vertices.capacity(), vertices), (self.indices.capacity(), indices & !1), bytes),
             None => (vertices, indices & !1),
         };
         let mut grown = false;
-        if let Some(cap) = ahead_capacity(self.vertices.capacity(), vertices, self.max_vertices()) {
-            match self.grow_vertices_to(device, writes, uploads, cap) {
+        if vertices > self.vertices.capacity() {
+            match self.grow_vertices_to(device, writes, uploads, vertices) {
                 Ok(()) => grown = true,
                 Err(e) => log::warn!(
                     "vertex arena not grown ahead to {} MB ({e}): it grows on need",
-                    cap as u64 * VERTEX_SIZE / (1024 * 1024)
+                    vertices as u64 * VERTEX_SIZE / (1024 * 1024)
                 ),
             }
         }
-        if let Some(cap) = ahead_capacity(self.indices.capacity(), indices, self.max_indices()) {
-            match self.grow_indices_to(device, writes, uploads, cap) {
+        if indices > self.indices.capacity() {
+            match self.grow_indices_to(device, writes, uploads, indices) {
                 Ok(()) => grown = true,
                 Err(e) => log::warn!(
                     "index arena not grown ahead to {} MB ({e}): it grows on need",
-                    cap as u64 * 2 / (1024 * 1024)
+                    indices as u64 * 2 / (1024 * 1024)
                 ),
             }
         }
@@ -582,6 +590,15 @@ impl<T> Blocks<T> {
 /// when the record is allocated or freed: only object faces set one.
 pub struct RecordStore {
     pub buffer: wgpu::Buffer,
+    /// Each record's model matrix as the last frame drew it (one matrix per
+    /// record slot, the same capacity as `buffer`): the motion vectors
+    /// compare it with the current one. The renderer gathers it from the
+    /// records at the end of each frame (`motion_history.rs`); a record
+    /// handed out (a new slot or a freed one) starts with its own model, so
+    /// it does not seem to come from where the slot's last record was.
+    pub prev_models: wgpu::Buffer,
+    /// Records handed out since the last `flush` (their `prev_models` seed).
+    fresh: Vec<u32>,
     /// GPU culling entry of each record (its face, when it is an object's).
     pub faces: GpuTable<CullFace>,
     mirror: Blocks<DrawRecord>,
@@ -601,6 +618,8 @@ impl RecordStore {
         let cap = 16384usize;
         Self {
             buffer: Self::make(device, cap),
+            prev_models: device.create_buffer(&Self::prev_desc(cap)),
+            fresh: Vec::new(),
             faces: GpuTable::new(device, "cull faces", cap, CullFace::NONE),
             mirror: Blocks::new(),
             free: Vec::new(),
@@ -626,6 +645,42 @@ impl RecordStore {
         }
     }
 
+    fn prev_desc(cap: usize) -> wgpu::BufferDescriptor<'static> {
+        wgpu::BufferDescriptor {
+            label: Some("previous models"),
+            size: (cap * 64) as u64,
+            // COPY_SRC: a grown buffer takes over this one's matrices
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }
+    }
+
+    /// Both tables are bound in full. A successful allocation alone does
+    /// not establish that its storage binding is within the device limit.
+    /// Probe the pair before replacing either working buffer.
+    fn grown_buffers(&self, device: &wgpu::Device) -> Result<(wgpu::Buffer, wgpu::Buffer), String> {
+        let limits = device.limits();
+        let limit = limits.max_buffer_size.min(limits.max_storage_buffer_binding_size);
+        let size = std::mem::size_of::<DrawRecord>();
+        let max_cap = (limit / size.max(64) as u64).min(u32::MAX as u64) as usize;
+        let needed = self.mirror.len();
+        if needed > max_cap {
+            return Err(format!("{needed} records exceed the storage binding capacity of {max_cap}"));
+        }
+        let cap = needed.checked_next_power_of_two().unwrap_or(max_cap).min(max_cap);
+        let old = (self.buffer.size() as usize / size) as u32;
+        let mut failure = String::new();
+        for cap in fallback_capacities(old, needed as u32 - old, cap as u32, 1) {
+            match try_buffer(device, &Self::desc(cap as usize))
+                .and_then(|grown| try_buffer(device, &Self::prev_desc(cap as usize)).map(|prev| (grown, prev)))
+            {
+                Ok(pair) => return Ok(pair),
+                Err(e) => failure = e,
+            }
+        }
+        Err(failure)
+    }
+
     pub fn live(&self) -> u32 {
         self.live
     }
@@ -640,11 +695,13 @@ impl RecordStore {
         if let Some(id) = self.free.pop() {
             self.set(id, rec);
             self.faces.set(id as usize, CullFace::NONE);
+            self.fresh.push(id);
             return id;
         }
         let id = self.mirror.len() as u32;
         self.mirror.push(rec);
         self.mark(id as usize);
+        self.fresh.push(id);
         id
     }
 
@@ -751,10 +808,6 @@ impl RecordStore {
         let now = Instant::now();
         if needed as u64 > self.buffer.size() && self.backoff.ready(now) {
             let old_size = self.buffer.size();
-            let mut cap = old_size as usize / rec_size;
-            while cap * rec_size < needed {
-                cap *= 2;
-            }
             // The records the old buffer holds move on the GPU: a submit
             // recorded at this point of the frame's journal, so that the
             // writes of the frames before it are in the old buffer when it
@@ -762,22 +815,25 @@ impl RecordStore {
             // after the copy; the new records are all dirty. Writing the
             // whole mirror again through the queue copied 8 to 32 MB on
             // the main thread each time a region outgrew the buffer.
-            match try_buffer(device, &Self::desc(cap)) {
-                Ok(grown) => {
+            // (the previous models grow with them, or neither does)
+            match self.grown_buffers(device) {
+                Ok((grown, prev)) => {
                     self.backoff.succeeded();
                     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         label: Some("grow draw records"),
                     });
                     enc.copy_buffer_to_buffer(&self.buffer, 0, &grown, 0, old_size);
+                    enc.copy_buffer_to_buffer(&self.prev_models, 0, &prev, 0, self.prev_models.size());
                     writes.submit(vec![enc]);
                     self.buffer = grown;
+                    self.prev_models = prev;
                     self.generation += 1;
                 }
                 Err(e) => {
                     if !self.backoff.waiting() {
                         log::warn!(
-                            "draw records not grown to {} MB ({e}): video memory is full, the records past {} are not drawn until they fit",
-                            (cap * rec_size) >> 20,
+                            "draw records not grown to fit {} MB ({e}): the records past {} are not drawn until they fit",
+                            needed >> 20,
                             old_size as usize / rec_size
                         );
                     }
@@ -785,6 +841,7 @@ impl RecordStore {
                 }
             }
         }
+        self.seed_fresh(writes);
         if !self.dirty.any() {
             return;
         }
@@ -806,6 +863,37 @@ impl RecordStore {
             for k in r {
                 self.dirty.mark(k);
             }
+        }
+    }
+
+    /// The previous model of the records handed out since the last flush:
+    /// their model as it is now (placed since `alloc` included), neighbouring
+    /// ids in one write. Those past the buffer wait for its growth.
+    fn seed_fresh(&mut self, writes: &mut GpuWrites) {
+        if self.fresh.is_empty() {
+            return;
+        }
+        let fits = self.prev_models.size() as usize / 64;
+        let mut ids = std::mem::take(&mut self.fresh);
+        ids.sort_unstable();
+        ids.dedup();
+        let mut models: Vec<[[f32; 4]; 4]> = Vec::new();
+        let mut i = 0;
+        while i < ids.len() {
+            let first = ids[i];
+            if first as usize >= fits {
+                self.fresh.push(first);
+                i += 1;
+                continue;
+            }
+            models.clear();
+            let mut next = first;
+            while i < ids.len() && ids[i] == next && (next as usize) < fits {
+                models.push(self.mirror.get(next as usize).map_or([[0.0; 4]; 4], |r| r.model));
+                next += 1;
+                i += 1;
+            }
+            writes.write_buffer(&self.prev_models, first as u64 * 64, bytemuck::cast_slice(&models));
         }
     }
 }
@@ -952,6 +1040,133 @@ mod tests {
         }
     }
 
+    /// The budget must cover the rounded allocation and the old buffers
+    /// retained by the copy journal, not just the requested element count.
+    #[test]
+    #[ignore]
+    fn geometry_growth_ahead_budgets_the_actual_rounded_buffers() {
+        let _gpu = crate::test_gpu::lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("Vulkan adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut arena = GeometryArena::new(&device, device.limits().max_buffer_size);
+        let mut writes = GpuWrites::default();
+        let mut uploads = UploadQueue::new(&device, false);
+        let (old_vertices, old_indices) = arena.capacity();
+        let wish = old_vertices + 1;
+        let allowance = wish as u64 * (VERTEX_SIZE + SKIN_SIZE);
+        let old = arena.vertex_buffer.clone();
+        assert!(!arena.grow_ahead(&device, &mut writes, &mut uploads, wish, old_indices, Some(allowance)));
+        assert_eq!(arena.vertex_buffer, old, "the rounded wish cannot fit this allowance");
+        let allowance = 80 << 20;
+        assert!(arena.grow_ahead(&device, &mut writes, &mut uploads, wish, old_indices, Some(allowance)));
+        let (vertices, indices) = arena.capacity();
+        assert!(vertices > old_vertices && vertices < (3 << 20));
+        assert_eq!(indices, old_indices);
+        assert!(arena.vertex_buffer.size() + arena.skin_buffer.size() <= allowance);
+        // Replay while the journal still owns the previous buffers: both
+        // generations coexist until the copy is submitted and completed.
+        writes.replay(&mut crate::writes::QueueSink(&queue));
+        queue.submit([]);
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        assert!(pollster::block_on(scope.pop()).is_none());
+    }
+
+    #[test]
+    #[ignore]
+    fn record_growth_respects_the_whole_storage_binding_limit() {
+        let _gpu = crate::test_gpu::lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("Vulkan adapter");
+        let mut limits = adapter.limits();
+        limits.max_buffer_size = 32 << 20;
+        limits.max_storage_buffer_binding_size = 8 << 20;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: limits,
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut store = RecordStore::new(&device);
+        let mut writes = GpuWrites::default();
+        for i in 0..20_000 {
+            store.alloc(DrawRecord {
+                base_color: [i as f32, 1.0, 2.0, 3.0],
+                ..Default::default()
+            });
+        }
+        store.flush(&device, &mut writes);
+        writes.replay(&mut crate::writes::QueueSink(&queue));
+        queue.submit([]);
+        let size = std::mem::size_of::<DrawRecord>() as u64;
+        assert_eq!(store.buffer.size(), (8 << 20) / size * size);
+        assert_eq!(store.prev_models.size() / 64, store.buffer.size() / size);
+        assert_eq!(store.generation, 1);
+        // Read the last newly added record: growth must copy the old
+        // records and upload the new ones after that copy in the journal.
+        let out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&store.buffer, 19_999 * size, &out, 0, size);
+        queue.submit([encoder.finish()]);
+        out.map_async(wgpu::MapMode::Read, .., |r| r.expect("map"));
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        {
+            let bytes = out.get_mapped_range(..).expect("mapped");
+            assert_eq!(bytemuck::from_bytes::<DrawRecord>(&bytes).base_color[0], 19_999.0);
+        }
+        out.unmap();
+        let previous = (store.buffer.clone(), store.prev_models.clone());
+        while store.slot_count() < 30_000 {
+            store.alloc(DrawRecord::default());
+        }
+        store.flush(&device, &mut writes);
+        writes.replay(&mut crate::writes::QueueSink(&queue));
+        queue.submit([]);
+        assert_eq!((&store.buffer, &store.prev_models), (&previous.0, &previous.1));
+        assert_eq!(store.generation, 1);
+        let entries: Vec<_> = (0..2)
+            .map(|binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            })
+            .collect();
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &entries,
+        });
+        let _binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("record binding limit"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: store.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: store.prev_models.as_entire_binding(),
+                },
+            ],
+        });
+        assert!(pollster::block_on(scope.pop()).is_none());
+    }
+
     /// GPU round trip of the draw records across growths of their buffer:
     /// what the old buffer held is copied on the GPU, the records changed
     /// or added in the same frame are written after it, and every record
@@ -1082,6 +1297,7 @@ mod tests {
         let max = 64 * step;
         assert_eq!(ahead_capacity(2 * step, step, max), None);
         assert_eq!(ahead_capacity(2 * step, 2 * step, max), None);
+        assert_eq!(ahead_capacity(2 * step + step / 2, 2 * step + 1, max), None);
         assert_eq!(ahead_capacity(2 * step, 2 * step + 1, max), Some(3 * step));
         assert_eq!(ahead_capacity(2 * step, 20 * step - 7, max), Some(20 * step));
         assert_eq!(ahead_capacity(2 * step, 100 * step, max), Some(max));

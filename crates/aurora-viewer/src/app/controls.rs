@@ -14,6 +14,7 @@ impl App {
         let flight = self.snapshots.ui.free;
         let view = View {
             zoom: self.camera.zoom_fraction(),
+            roll: self.camera.roll,
             preset: self.settings.camera.preset,
             shots: &self.settings.camera_shots,
             flying: self.world.agent.flying,
@@ -46,6 +47,20 @@ impl App {
         }
     }
 
+    /// The toolbar's Move and View, the View menu, the shortcut
+    /// (`ui::controls::request`; the free camera keeps Aurora's window).
+    pub(super) fn request_controls(&mut self, movement: bool, toggle: bool) {
+        let classic = self.settings.classic_controls && self.camera.free().is_none();
+        crate::ui::controls::request(
+            &self.egui_ctx,
+            &mut self.panels.camera_controls,
+            &mut self.panels.movement_controls,
+            classic,
+            movement,
+            toggle,
+        );
+    }
+
     fn control_action(&mut self, action: ControlAction) {
         if self.world.rlva.camera_preset_locked(uuid::Uuid::nil())
             && matches!(
@@ -73,6 +88,12 @@ impl App {
                 self.reset_camera_all();
                 self.settings.save();
             }
+            ControlAction::RollBy(delta) => {
+                if self.in_world() && !self.camera.mouselook() && self.camera.free().is_none() && self.camera.flycam.is_none() {
+                    self.camera.roll += delta;
+                }
+            }
+            ControlAction::LevelRoll => self.camera.roll = 0.0,
             ControlAction::Zoom(fraction) => self.camera.set_zoom_fraction(fraction),
             ControlAction::Mouselook => self.toggle_mouselook(),
             ControlAction::ObjectView => self.object_view = !self.object_view,
@@ -108,8 +129,10 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_CONTROLS=camera | movement | compact | classic | free |
-    /// free-compact: the window open (minimized for `compact`); `free` the
+    /// AURORA_DEMO_CONTROLS=camera | movement | compact | compact-move |
+    /// classic | free | free-compact: the window open (minimized for
+    /// `compact`; `compact-move` also, then Move pressed 40 frames later as
+    /// the toolbar does, #1815); `free` the
     /// photo window's free camera on, which opens it, `free-compact` the
     /// same minimized; 40 frames later the free camera has flown 2 m to the
     /// left and 1 m up and turned toward the avatar, which stayed.
@@ -126,6 +149,10 @@ impl App {
             cam.turn(-0.35, -0.15);
             log::info!("demo free camera: flown to {:.1?}", cam.position);
         }
+        if self.frame_count == 640 && std::env::var("AURORA_DEMO_CONTROLS").as_deref() == Ok("compact-move") {
+            self.request_controls(true, true);
+            log::info!("demo controls: Move pressed on the minimized window");
+        }
         if self.frame_count != 600 {
             return;
         }
@@ -140,8 +167,12 @@ impl App {
                 }
             }
             Ok("camera") => self.panels.camera_controls = true,
+            Ok("roll") => {
+                self.panels.camera_controls = true;
+                self.camera.roll = 15.0_f32.to_radians();
+            }
             Ok("movement") => self.panels.movement_controls = true,
-            Ok("compact") => {
+            Ok("compact" | "compact-move") => {
                 self.panels.camera_controls = true;
                 crate::ui::widgets::minimize_floater(&self.egui_ctx, crate::ui::controls::WINDOW);
             }

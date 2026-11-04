@@ -284,7 +284,7 @@ fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions: &mut
         };
         text_field(ui, p, aurora_i18n::tr!("search-group-enrollment"), enrollment);
         let fee = if g.membership_fee > 0 {
-            format!("L${}", g.membership_fee)
+            format!("{}{}", aurora_i18n::currency(), g.membership_fee)
         } else {
             aurora_i18n::tr!("search-none-fee").to_owned()
         };
@@ -326,7 +326,8 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, tab: Tab, row: Option<&Ro
         },
         global,
         region_pos: global.map_or(glam::Vec3::ZERO, |g| {
-            glam::Vec3::new(g.x.rem_euclid(256.0) as f32, g.y.rem_euclid(256.0) as f32, g.z as f32)
+            let (x, y) = c.world.map.local_xy(g.x, g.y);
+            glam::Vec3::new(x as f32, y as f32, g.z as f32)
         }),
         stage: Stage::Info(parcel),
     };
@@ -357,7 +358,7 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, tab: Tab, row: Option<&Ro
             head(ui, p, name, None, None, aurora_i18n::tr!("common-loading-2"));
             return;
         };
-        let region = place_details::region_name_pos(&d.sim_name, place.region_pos, d.global);
+        let region = place_details::region_name_pos(&d.sim_name, place.region_pos, d.global, &c.world.map);
         let maturity = place_details::maturity(d.flags);
         head(ui, p, &d.name, None, Some(maturity), &region);
         stats(
@@ -503,11 +504,8 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
         );
         field(ui, p, aurora_i18n::tr!("search-event-organizer"), |ui| agent_link(ui, c, e.creator));
         // "%s (%d, %d, %d)": the region and the position in it
-        let pos = glam::Vec3::new(
-            (e.global.x.round() as i64).rem_euclid(256) as f32,
-            (e.global.y.round() as i64).rem_euclid(256) as f32,
-            e.global.z.round() as f32,
-        );
+        let (x, y) = c.world.map.local_xy(e.global.x.round(), e.global.y.round());
+        let pos = glam::Vec3::new(x.round() as f32, y.round() as f32, e.global.z.round() as f32);
         field(ui, p, aurora_i18n::tr!("ui-profile-location-2"), |ui| {
             let text = format!("{} ({}, {}, {})", e.sim_name, pos.x, pos.y, pos.z);
             let link = ui.add(egui::Link::new(
@@ -518,7 +516,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
             }
         });
         let fee = match e.cover {
-            Some(amount) => format!("L${amount}"),
+            Some(amount) => format!("{}{amount}", aurora_i18n::currency()),
             None => aurora_i18n::tr!("search-none-fee").to_owned(),
         };
         text_field(ui, p, aurora_i18n::tr!("search-event-fee"), &fee);

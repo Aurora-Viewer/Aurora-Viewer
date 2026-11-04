@@ -1,0 +1,53 @@
+name: Mac runner
+description: >
+  Prepares a job on the team's Mac mini (self-hosted, label aurora-mac):
+  checks its tools, points Cargo at the build folder it keeps between runs,
+  and gives the job an empty home, as a GitHub runner has. Run it right
+  after the checkout, on self-hosted runners only.
+
+runs:
+  using: composite
+  steps:
+    # the tools the steps below call, named in one clear error rather than a
+    # bare "command not found" midway
+    - name: Tools
+      shell: bash
+      run: |
+        missing=""
+        for tool in git cargo rustup; do
+          command -v "$tool" > /dev/null || missing="$missing $tool"
+        done
+        if [ -n "$missing" ]; then
+          echo "::error::self-hosted runner $RUNNER_NAME lacks:$missing (PATH seen by the runner: $PATH)"
+          exit 1
+        fi
+    # outside the checkout, which the next job's checkout empties; one per
+    # runner (two runners on one Mac would otherwise wait for each other's
+    # Cargo lock); emptied when the disk runs low. It takes no GitHub cache:
+    # restoring one over it would only download what it already has
+    - name: Build folder
+      shell: bash
+      run: |
+        target="$(dirname "$RUNNER_WORKSPACE")/aurora-target"
+        mkdir -p "$target"
+        free_gb=$(( $(df -k "$target" | awk 'NR == 2 { print $4 }') / 1024 / 1024 ))
+        if [ "$free_gb" -lt 40 ]; then
+          echo "Less than 40 GB free ($free_gb GB): emptying $target"
+          rm -rf "$target"
+          mkdir -p "$target"
+        fi
+        echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
+    # The viewer keeps its settings and logs in ~/Library/Application
+    # Support: on a Mac that keeps them, a run would read the settings and
+    # the demo log of the one before (the demo step greps its log), and two
+    # runners would share them. An empty home in the job's temporary folder,
+    # which the runner empties, avoids all three; Cargo and rustup keep the
+    # runner's own folders.
+    - name: Empty home
+      shell: bash
+      run: |
+        home="$RUNNER_TEMP/home"
+        mkdir -p "$home"
+        echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
+        echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
+        echo "HOME=$home" >> "$GITHUB_ENV"

@@ -9,8 +9,8 @@
 //
 // Compute: one dispatch writes the six faces of one mip (layer = face), a
 // texel per invocation, sampled at its center. The whole filtering of a probe
-// is 15 dispatches of one pass (it was 90 render passes, one per face and
-// mip, each paid for in wgpu's CommandEncoder::finish).
+// uses a separate pass per dependent mip, then shares one pass for the
+// independent radiance and irradiance outputs.
 
 @group(0) @binding(0) var src_faces: texture_2d_array<f32>;
 @group(0) @binding(1) var src_cube: texture_cube<f32>;

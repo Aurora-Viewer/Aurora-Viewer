@@ -9,8 +9,10 @@ use aurora_llsd::{Llsd, llsd_map};
 use glam::Vec3;
 use uuid::Uuid;
 
-/// COMPLAINT_REPORT (EReportType): the only kind the floater sends.
-pub const COMPLAINT_REPORT: u8 = 2;
+/// COMPLAINT_REPORT in EReportType (indra/newview/llfloaterreporter.h).
+/// These values are fixed in the server database: 2 is the retired bug
+/// report, 3 is an abuse complaint. Both HTTP and UDP must use 3.
+pub const COMPLAINT_REPORT: u8 = 3;
 /// COMPLAINT_REPORT_REQUEST: RequestFlags of the RequestObjectPropertiesFamily
 /// sent for the object the report is about (llfloaterreporter.h).
 pub const COMPLAINT_REPORT_REQUEST: u32 = 1 << 1;
@@ -121,14 +123,23 @@ pub async fn send(
         for attempt in 0..3 {
             let response = post_llsd(http, url, &body).await.map_err(|_| failed())?;
             let answer = reply(response).await.map_err(|_| failed())?;
-            if answer.has("error") {
+            if refused(&answer) {
                 return Err(failed());
             }
-            let uploader = answer["uploader"].as_str();
-            // "No upload url provided. Nothing uploaded, responding with
-            // previous result."
-            let (false, Some(data)) = (uploader.is_empty(), screenshot.as_ref()) else {
+            if answer["state"].as_str() == "complete" {
                 return Ok(());
+            }
+            let uploader = answer["uploader"].as_str();
+            // AssetInventoryUploadCoproc also preserves an explicit success
+            // reply when the server finishes without requesting a file.
+            if uploader.is_empty() && answer["state"].as_str().is_empty() && answer["success"].as_bool() {
+                return Ok(());
+            }
+            // An unfinished handshake is not acceptance of the report.
+            // Without the requested file or its upload URL, do not show
+            // the thank-you notice (nor resubmit through another cap).
+            let (false, Some(data)) = (uploader.is_empty(), screenshot.as_ref()) else {
+                return Err(failed());
             };
             let response = http
                 .post(uploader)
@@ -141,6 +152,7 @@ pub async fn send(
                 && response.status().is_success()
                 && let Ok(done) = reply(response).await
                 && done["state"].as_str() == "complete"
+                && !refused(&done)
             {
                 return Ok(());
             }
@@ -152,7 +164,14 @@ pub async fn send(
     }
     let url = plain.ok_or_else(failed)?;
     let response = post_llsd(http, url, &body).await.map_err(|_| failed())?;
-    if response.status().is_success() { Ok(()) } else { Err(failed()) }
+    let answer = reply(response).await.map_err(|_| failed())?;
+    if refused(&answer) { Err(failed()) } else { Ok(()) }
+}
+
+/// HTTP 200 alone does not rule out an application-level refusal. Keep
+/// server text out of the error: it may contain private report data.
+fn refused(answer: &Llsd) -> bool {
+    answer.has("error") || answer["state"].as_str() == "error" || (answer.has("success") && !answer["success"].as_bool())
 }
 
 async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd) -> reqwest::Result<reqwest::Response> {
@@ -200,7 +219,9 @@ mod tests {
             screenshot: None,
         };
         let body = report.body(Uuid::from_u128(3));
-        assert_eq!(body["report-type"].as_i32(), 2);
+        // EReportType is a database value: 2 is the retired bug report,
+        // 3 is COMPLAINT_REPORT (indra/newview/llfloaterreporter.h).
+        assert_eq!(body["report-type"].as_i32(), 3);
         assert_eq!(body["category"].as_i32(), 45);
         assert_eq!(body["position"].as_vec3(), [128.5, 64.0, 22.25]);
         assert_eq!(body["check-flags"].as_i32(), 0);
@@ -258,16 +279,18 @@ mod tests {
         assert!(send(&reqwest::Client::new(), Some(&url), None, body.clone(), None).await.is_ok());
         let requests = task.await.expect("server");
         assert!(requests[0].0.starts_with("POST "));
+        assert_eq!(requests[0].1["report-type"].as_i32(), 3);
         assert_eq!(requests[0].1, body);
-        // SendUserReportWithScreenshot first; no uploader given: nothing to
-        // upload, the report stands
-        let (url, task) = crate::outfits::tests::server(vec![(200, Llsd::new_map())]).await;
-        assert!(
-            send(&reqwest::Client::new(), Some("unused"), Some(&url), body.clone(), Some(vec![1]))
-                .await
-                .is_ok()
-        );
-        assert_eq!(task.await.expect("server")[0].1, body);
+        // A capability may finish immediately without asking for a file.
+        for answer in [llsd_map! { "state" => "complete" }, llsd_map! { "success" => true }] {
+            let (url, task) = crate::outfits::tests::server(vec![(200, answer)]).await;
+            assert!(
+                send(&reqwest::Client::new(), Some("unused"), Some(&url), body.clone(), Some(vec![1]))
+                    .await
+                    .is_ok()
+            );
+            assert_eq!(task.await.expect("server")[0].1, body);
+        }
         // a refusal is an error, without the capability in it
         let (url, task) = crate::outfits::tests::server(vec![(500, Llsd::new_map())]).await;
         let error = send(&reqwest::Client::new(), Some(&url), None, body, None)
@@ -275,5 +298,110 @@ mod tests {
             .expect_err("refused");
         assert!(!error.contains(&url));
         task.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn abuse_report_screenshot_upload_sends_the_file_and_retries_with_a_fresh_request() {
+        let report = AbuseReport::default().body(Uuid::from_u128(3));
+        let screenshot = vec![0xff, 0x4f, 0xff, 0x51, 0, 1, 2];
+        let (uploader, uploads) =
+            crate::outfits::tests::server(vec![(503, Llsd::new_map()), (200, llsd_map! { "state" => "complete" })]).await;
+        let (url, requests) = crate::outfits::tests::server(vec![
+            (200, llsd_map! { "state" => "upload", "uploader" => format!("{uploader}/first") }),
+            (200, llsd_map! { "state" => "upload", "uploader" => format!("{uploader}/second") }),
+        ])
+        .await;
+        assert!(
+            send(&reqwest::Client::new(), None, Some(&url), report.clone(), Some(screenshot.clone()))
+                .await
+                .is_ok()
+        );
+        for (request, body) in requests.await.expect("report requests") {
+            assert!(request.starts_with("POST "));
+            assert_eq!(body["report-type"].as_i32(), 3);
+            assert_eq!(body, report);
+        }
+        let uploads = uploads.await.expect("screenshot uploads");
+        assert_eq!(uploads.len(), 2);
+        for ((request, body), path) in uploads.into_iter().zip(["first", "second"]) {
+            assert!(request.starts_with(&format!("POST /{path} ")));
+            assert_eq!(body, Llsd::Binary(screenshot.clone()));
+        }
+    }
+
+    #[tokio::test]
+    async fn abuse_report_incomplete_upload_handshakes_are_not_success() {
+        for (answer, screenshot) in [
+            (Llsd::new_map(), Some(vec![1])),
+            (llsd_map! { "state" => "upload" }, Some(vec![1])),
+            (
+                llsd_map! { "state" => "error", "message" => "private server information" },
+                Some(vec![1]),
+            ),
+            (
+                llsd_map! { "state" => "complete", "error" => "private server information" },
+                Some(vec![1]),
+            ),
+            (llsd_map! { "state" => "complete", "success" => false }, Some(vec![1])),
+            (llsd_map! { "state" => "upload", "uploader" => "http://127.0.0.1:9/unused" }, None),
+        ] {
+            let (url, task) = crate::outfits::tests::server(vec![(200, answer)]).await;
+            let error = send(
+                &reqwest::Client::new(),
+                None,
+                Some(&url),
+                AbuseReport::default().body(Uuid::nil()),
+                screenshot,
+            )
+            .await
+            .expect_err("no completed report or file to upload");
+            assert!(!error.contains(&url));
+            assert!(!error.contains("private"));
+            task.await.expect("server");
+        }
+    }
+
+    #[tokio::test]
+    async fn abuse_report_plain_capability_refusals_are_not_success() {
+        for answer in [
+            llsd_map! { "error" => "private server information" },
+            llsd_map! { "state" => "error", "message" => "private server information" },
+            llsd_map! { "success" => false },
+        ] {
+            let (url, task) = crate::outfits::tests::server(vec![(200, answer)]).await;
+            let error = send(
+                &reqwest::Client::new(),
+                Some(&url),
+                None,
+                AbuseReport::default().body(Uuid::nil()),
+                None,
+            )
+            .await
+            .expect_err("application error despite HTTP 200");
+            assert!(!error.contains(&url));
+            assert!(!error.contains("private"));
+            task.await.expect("server");
+        }
+    }
+
+    #[tokio::test]
+    async fn abuse_report_screenshot_refusals_exhaust_retries_without_success() {
+        let answer = llsd_map! { "state" => "complete", "error" => "private server information" };
+        let (uploader, uploads) = crate::outfits::tests::server(vec![(200, answer); 3]).await;
+        let stage_one = llsd_map! { "state" => "upload", "uploader" => uploader.as_str() };
+        let (url, requests) = crate::outfits::tests::server(vec![(200, stage_one); 3]).await;
+        let error = send(
+            &reqwest::Client::new(),
+            None,
+            Some(&url),
+            AbuseReport::default().body(Uuid::nil()),
+            Some(vec![1]),
+        )
+        .await
+        .expect_err("the upload was refused on all three attempts");
+        assert!(!error.contains(&url));
+        assert!(!error.contains("private"));
+        assert_eq!(requests.await.expect("report requests").len(), 3);
+        assert_eq!(uploads.await.expect("screenshot uploads").len(), 3);
     }
 }

@@ -595,14 +595,7 @@ impl Recovery {
 }
 
 fn open_folder(dir: &Path) -> std::io::Result<()> {
-    let program = if cfg!(windows) {
-        "explorer"
-    } else if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    std::process::Command::new(program).arg(dir).spawn().map(|_| ())
+    crate::open_path::open(dir)
 }
 
 impl ApplicationHandler for Recovery {
@@ -671,6 +664,17 @@ impl ApplicationHandler for Recovery {
             self.error = Some(error.to_string());
             event_loop.exit();
         }
+    }
+
+    /// As the viewer's own window does (app.rs): egui-winit's state and the
+    /// window go while the event loop, and with it the Wayland connection,
+    /// still lives. Dropped after `run_app`, the clipboard's objects were
+    /// destroyed on a closed connection and closing this window ended in a
+    /// segmentation fault on Wayland, before `acknowledged` was written.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.input = None;
+        self.surface = None;
+        self.window = None;
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {

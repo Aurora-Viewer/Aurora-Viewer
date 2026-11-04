@@ -116,7 +116,23 @@ pub fn current_owner(ctx: &egui::Context) -> Owner {
 pub fn take(ui: &egui::Ui, own: &[Id]) -> bool {
     let ctx = ui.ctx();
     claim(ctx, ui.layer_id(), own);
-    current_owner(ctx) == Owner::FindWindow(ui.layer_id()) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
+    current_owner(ctx) == Owner::FindWindow(ui.layer_id()) && consume_find(ctx)
+}
+
+/// Consume a Ctrl/Cmd+F press, that exact chord: Ctrl+Shift+F is the viewer's
+/// Friends shortcut, which egui's logical match (extra Shift ignored) would
+/// otherwise take for a find.
+pub fn consume_find(ctx: &egui::Context) -> bool {
+    ctx.input_mut(|i| {
+        let mut found = false;
+        i.events.retain(|event| {
+            let hit = matches!(event, egui::Event::Key { key: egui::Key::F, pressed: true, modifiers, .. }
+                if modifiers.matches_exact(egui::Modifiers::COMMAND));
+            found |= hit;
+            !hit
+        });
+        found
+    })
 }
 
 /// A window keeps Ctrl+F for its own find: the viewer's shortcut on these
@@ -200,6 +216,27 @@ mod tests {
         };
         frame(&mut frames, vec![key]);
         (yields, taken)
+    }
+
+    /// Ctrl+Shift+F is the viewer's Friends shortcut: a find never takes it.
+    #[test]
+    fn a_find_takes_only_the_exact_ctrl_f_chord() {
+        let press = |modifiers: egui::Modifiers| {
+            let mut frames = Frames::new();
+            let mut taken = false;
+            let key = egui::Event::Key {
+                key: egui::Key::F,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            };
+            frames.run(vec![key], |ui| taken = consume_find(ui.ctx()));
+            taken
+        };
+        assert!(press(egui::Modifiers::COMMAND));
+        assert!(!press(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT));
+        assert!(!press(egui::Modifiers::COMMAND | egui::Modifiers::ALT));
     }
 
     #[test]

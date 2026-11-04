@@ -13,6 +13,9 @@
 //!   whole file);
 //! - `offline`: the instant messages kept while we were away, as the
 //!   request made at login returns them;
+//! - `restore`: saved private and group conversations, reopened without
+//!   an incoming message, including the old untyped file format; `restore:slow`
+//!   holds the mute reply until frame 1100 to check immediate display;
 //! - `long:<n>`: a conversation of `n` lines, nothing written (to measure
 //!   the cost of the conversation view); `long:<n>:scroll` scrolls it up
 //!   with the wheel from frame 320 to 380, through lines never laid out.
@@ -36,6 +39,7 @@ pub enum Mode {
     Find,
     History { find: bool },
     Offline,
+    Restore,
     Long { lines: usize, scroll: bool },
 }
 
@@ -46,6 +50,7 @@ pub fn mode() -> Option<Mode> {
         "find" => Mode::Find,
         "history" => Mode::History { find: arg == "find" },
         "offline" => Mode::Offline,
+        "restore" => Mode::Restore,
         "long" => {
             let (lines, scroll) = arg.split_once(':').unwrap_or((arg, ""));
             Mode::Long {
@@ -55,6 +60,47 @@ pub fn mode() -> Option<Mode> {
         }
         _ => Mode::Im,
     })
+}
+
+static DELAYED_MUTES: std::sync::Mutex<Option<NetEvent>> = std::sync::Mutex::new(None);
+
+fn slow_restore() -> bool {
+    std::env::var("AURORA_DEMO_CHATLOG").is_ok_and(|value| value == "restore:slow")
+}
+
+pub fn mute_list_reply(text: String) -> Vec<NetEvent> {
+    let event = NetEvent::MuteList(aurora_net::MuteListSource::File(text));
+    if slow_restore() {
+        if let Ok(mut held) = DELAYED_MUTES.lock() {
+            *held = Some(event);
+        }
+        Vec::new()
+    } else {
+        vec![event]
+    }
+}
+
+pub fn delayed_mute_list(frame: u64) -> Option<NetEvent> {
+    if frame < 1100 || !slow_restore() {
+        return None;
+    }
+    DELAYED_MUTES.lock().ok()?.take()
+}
+
+/// Exercise the actual account-file reader and login restoration path.
+/// The second group receives no invitation/message in the ordinary demo.
+pub fn seed_restore(world: &mut crate::world::World) {
+    use crate::world::open_ims::{self, Conversation};
+    let path = crate::settings::account_dir(&world.agent_id).join(open_ims::FILE);
+    open_ims::save(
+        &path,
+        &[
+            Conversation::Resident(PEER),
+            Conversation::Group(super::DEMO_GROUP2),
+            Conversation::Legacy(super::DEMO_GROUP3),
+        ],
+    );
+    world.reopen_ims = open_ims::load(&path);
 }
 
 /// Legacy name of the peer, as an instant message carries it.

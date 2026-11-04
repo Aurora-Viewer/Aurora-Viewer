@@ -175,7 +175,16 @@ pub(super) fn context_menu(
         let inv = &world.inventory;
         let Some(folder) = inv.folders.get(&id) else { return };
         let worn = super::items::worn_items(world);
-        let Some(rules) = menu_rules(inv, &worn, st.pending.is_some(), id) else {
+        // LLAppearanceMgr::getCanReplaceCOF / getCanAddToCOF /
+        // getCanRemoveFromCOF: an RLVa lock on the outfit folder greys them.
+        let locks = world.rlva_wear_locks();
+        let locked = |id: Uuid, mut rules: MenuRules| {
+            rules.replace &= locks.folder_allows(id, true);
+            rules.add &= locks.folder_allows(id, true);
+            rules.remove &= locks.folder_allows(id, false);
+            rules
+        };
+        let Some(rules) = menu_rules(inv, &worn, st.pending.is_some(), id).map(|rules| locked(id, rules)) else {
             return;
         };
         let outfits = st.shown_outfits(inv);
@@ -183,7 +192,7 @@ pub(super) fn context_menu(
         let multiple = selection.len() > 1;
         let all_rules: Option<Vec<_>> = selection
             .iter()
-            .map(|id| menu_rules(inv, &worn, st.pending.is_some(), *id))
+            .map(|id| menu_rules(inv, &worn, st.pending.is_some(), *id).map(|rules| locked(*id, rules)))
             .collect();
         let ready = all_rules.as_ref().is_some_and(|rules| rules.iter().all(|rule| rule.folder))
             && selection.iter().all(|id| model::complete(inv, *id));
@@ -398,7 +407,9 @@ pub(super) fn dialogs(
                     .color(p.ink),
             );
             ui.add_space(8.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut name).char_limit(63).desired_width(f32::INFINITY));
+            let r = crate::ui::widgets::restricted_text_field(ui, true, &mut name, crate::ui::widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).char_limit(63).desired_width(f32::INFINITY)
+            });
             if st.gallery.focus {
                 r.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, r.id) {

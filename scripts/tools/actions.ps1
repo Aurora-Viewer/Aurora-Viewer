@@ -144,9 +144,11 @@ function Invoke-Disk {
     $pick = Show-Menu 'Free some space?' @(
         @{ Key = '1'; Label = 'Builds of the repository'; Hint = 'keeps target\release' }
         @{ Key = '2'; Label = 'Also those of the tasks'; Hint = 'the agents will have to rebuild everything' }
+        @{ Key = '3'; Label = 'Incremental caches of the tasks'; Hint = 'three quarters of the space, dependencies kept' }
     )
     switch ($pick.Key) {
         '1' { & $clean -Apply }
+        '3' { & $clean -Apply -Incremental }
         '2' { if (Read-YesNo 'The tasks in progress will have to rebuild everything. Continue?') { & $clean -Apply -Tasks } }
     }
     if ($pick) { Wait-Back }

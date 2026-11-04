@@ -187,6 +187,9 @@ impl World {
                 self.gltf_overrides.entry(key).or_insert(sides);
             }
         }
+        // what came back while "Show Friends Only" is on goes out again,
+        // before the scene sees it (the restore bypasses the update filter)
+        self.friends_only_filter_present();
         let restored = started.elapsed();
         let events = p.events.len();
         for ev in p.events {
@@ -210,6 +213,22 @@ mod tests {
     use super::*;
 
     const SIZE: (u32, u32) = (256, 256);
+
+    #[test]
+    fn a_region_back_from_parking_is_filtered_by_show_friends_only() {
+        let (mut world, handle) = crate::world::derender::tests_support::demo_world();
+        let wolf = crate::demo::DEMO_LOUP;
+        world.park_region(handle, 1e6);
+        assert!(world.objects.index_of_uuid(&wolf).is_none(), "parked");
+        // switched on elsewhere (nothing present to take out), then the
+        // region comes back: its non-friends must not be revealed
+        world.set_friends_only(true);
+        world.unpark_region(handle);
+        assert!(world.objects.index_of_uuid(&wolf).is_none(), "hidden on return");
+        assert!(world.objects.index_of_uuid(&world.agent_id).is_some(), "we stay");
+        world.set_friends_only(false);
+        assert!(world.objects.index_of_uuid(&wolf).is_some(), "back when it is off");
+    }
 
     #[test]
     fn regions_out_of_reach_are_those_far_from_the_agent_region() {

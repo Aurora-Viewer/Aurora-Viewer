@@ -1,7 +1,10 @@
 //! Preferences › Confirmations: what Aurora asks before acting (the
 //! "ignore" boxes of the Legacy Viewer's alerts: TeleportFromLandmark,
 //! ReturnToOwner, AttachmentDrop, ConfirmScriptModify, FSConfirmPayments,
-//! ChangeObjectBonusFactor, ConfirmTextureHeights), the alerts of the
+//! ChangeObjectBonusFactor, ConfirmTextureHeights, and the Marketplace
+//! listings' ConfirmMerchantMoveInventory, ConfirmMerchantActiveChange,
+//! ConfirmMerchantClearVersion, ConfirmListingCutOrDelete,
+//! ConfirmMerchantUnlist), the alerts of the
 //! region (FSShowServerVersionChangeNotice, FSReportTotalScriptCountChanges,
 //! FSUseNewRegionRestartNotification…) and the collisions
 //! (FSCollisionMessagesInChat, FSReportCollisionMessages).
@@ -26,6 +29,11 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-confirm-teleports"),
             tr!("ui-options-ask-before-teleporting-to-a-landmark-a-history-entry"),
             &field!(confirm_teleports),
+        );
+        cx.toggle(
+            tr!("ui-options-warn-hypergrid-suitcase"),
+            tr!("ui-options-warn-hypergrid-suitcase-help"),
+            &field!(warn_hypergrid_suitcase),
         );
         cx.toggle(
             tr!("ui-options-confirm-return-to-owner"),
@@ -59,7 +67,7 @@ pub fn page(cx: &mut Cx) {
                             .custom_parser(aurora_i18n::parse_number)
                             .range(0..=i32::MAX)
                             .speed(1.0)
-                            .suffix(" L$"),
+                            .suffix(format!(" {}", aurora_i18n::currency())),
                     )
                     .changed()
                 },
@@ -74,6 +82,33 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-check-texture-heights"),
             tr!("ui-options-check-texture-heights-help"),
             &field!(region_check_texture_heights),
+        );
+    });
+    cx.group(tr!("common-marketplace-listings"), |cx| {
+        cx.toggle(
+            tr!("ui-options-confirm-merchant-move"),
+            tr!("ui-options-confirm-merchant-move-help"),
+            &field!(confirm_merchant_move),
+        );
+        cx.toggle(
+            tr!("ui-options-confirm-merchant-active-change"),
+            tr!("ui-options-confirm-merchant-active-change-help"),
+            &field!(confirm_merchant_active_change),
+        );
+        cx.toggle(
+            tr!("ui-options-confirm-merchant-clear-version"),
+            tr!("ui-options-confirm-merchant-clear-version-help"),
+            &field!(confirm_merchant_clear_version),
+        );
+        cx.toggle(
+            tr!("ui-options-confirm-merchant-listing-delete"),
+            tr!("ui-options-confirm-merchant-listing-delete-help"),
+            &field!(confirm_merchant_listing_delete),
+        );
+        cx.toggle(
+            tr!("ui-options-confirm-merchant-unlist"),
+            tr!("ui-options-confirm-merchant-unlist-help"),
+            &field!(confirm_merchant_unlist),
         );
     });
     cx.group(tr!("ui-options-region-alerts"), |cx| {

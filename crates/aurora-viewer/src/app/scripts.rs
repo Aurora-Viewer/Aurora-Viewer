@@ -191,6 +191,7 @@ impl App {
             if !matches!(
                 mode.as_str(),
                 "object"
+                    | "object-readonly"
                     | "object-save"
                     | "object-syntax"
                     | "object-indent"
@@ -239,6 +240,7 @@ impl App {
             if matches!(
                 mode.as_str(),
                 "object"
+                    | "object-readonly"
                     | "object-save"
                     | "object-syntax"
                     | "object-indent"
@@ -274,6 +276,12 @@ impl App {
                             .map(|it| it.item_id)
                     {
                         let target = ScriptTarget { object, item };
+                        if mode == "object-readonly"
+                            && let Some(inv) = self.build.contents.objects.get_mut(&object)
+                            && let Some(script) = inv.items.iter_mut().find(|it| it.item_id == item)
+                        {
+                            script.owner_mask &= !perm::MODIFY;
+                        }
                         if syntax_demo {
                             self.demo_script_sources.insert(target, SYNTAX_DEMO_SOURCE.into());
                         }
@@ -491,6 +499,7 @@ impl App {
             if let Some(e) = self.script_editors.documents.iter_mut().find(|e| e.target == target) {
                 e.can_read = info.as_ref().is_some_and(|i| i.can_read);
                 e.can_edit = info.as_ref().is_some_and(|i| i.can_edit);
+                e.can_reset = info.is_some() && !target.object.is_nil();
                 if let Some(info) = info {
                     e.name = info.name;
                 }
@@ -611,7 +620,7 @@ impl App {
                 }
             }
             Action::Reset(target) => {
-                if let Some(info) = self.script_info(target).filter(|i| i.can_edit) {
+                if let Some(info) = self.script_info(target).filter(|_| !target.object.is_nil()) {
                     self.send(NetCommand::Build(BuildCmd::ScriptReset {
                         handle: info.handle,
                         object_id: target.object,

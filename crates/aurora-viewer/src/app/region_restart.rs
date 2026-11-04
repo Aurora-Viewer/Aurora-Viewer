@@ -382,11 +382,11 @@ impl App {
             self.world.landmarks.resolve(asset);
         }
         for l in &mut list {
-            if let crate::world::landmarks::Resolved::Ready { global, region_pos, .. } = self.world.landmarks.peek(l.asset)
+            if let crate::world::landmarks::Resolved::Ready { global, .. } = self.world.landmarks.peek(l.asset)
                 && let Some((_, sim)) = self.world.map.sim_at_global(global.x, global.y)
             {
-                l.detail =
-                    crate::world::worldmap::location_label(&sim.name, f64::from(region_pos.x), f64::from(region_pos.y), region_pos.z);
+                let (x, y) = self.world.map.local_xy(global.x, global.y);
+                l.detail = crate::world::worldmap::location_label(&sim.name, x, y, global.z as f32);
             }
         }
         list

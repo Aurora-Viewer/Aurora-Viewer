@@ -122,7 +122,7 @@ enum Badge {
 pub struct BuyLandUi {
     pub open: bool,
     for_group: bool,
-    helper: Option<&'static str>,
+    helper: Option<String>,
     target: Option<Target>,
     key: Option<OfferKey>,
     offer: Offer,
@@ -164,7 +164,7 @@ fn wrapped(ui: &mut egui::Ui, text: RichText) {
 impl BuyLandUi {
     /// LLFloaterBuyLand::buyLand, once the app checked the group power.
     /// `helper` is the grid's helper page (`aurora_net::currency::helper_uri`).
-    pub fn open(&mut self, for_group: bool, helper: Option<&'static str>) {
+    pub fn open(&mut self, for_group: bool, helper: Option<String>) {
         if self.site_txn == Some(SiteTxn::Buy) {
             // the purchase in flight keeps its window
             self.open = true;
@@ -324,7 +324,7 @@ impl BuyLandUi {
         if self.site_txn == Some(ask) {
             return None;
         }
-        let Some(helper) = self.helper else {
+        let Some(helper) = self.helper.clone() else {
             self.tell_user_error(CurrencyError {
                 message: aurora_i18n::tr!("buy-land-unavailable-on-this-grid").into(),
                 uri: String::new(),
@@ -333,7 +333,7 @@ impl BuyLandUi {
         };
         self.site_txn = Some(ask);
         Some(NetCommand::LandToolPreflight {
-            helper: helper.to_owned(),
+            helper,
             billable_area,
             currency_buy: self.amount,
         })
@@ -377,7 +377,10 @@ impl BuyLandUi {
 
     /// currencyKey: digits that fit an S32.
     fn typed(&mut self, now: Instant) {
-        self.text.retain(|c| c.is_ascii_digit());
+        if !widgets::TextPolicy::Digits.accepts(&self.text) {
+            self.text = if self.amount == 0 { String::new() } else { self.amount.to_string() };
+            return;
+        }
         let value = if self.text.is_empty() {
             Some(0)
         } else {
@@ -410,10 +413,10 @@ impl BuyLandUi {
         if self.amount == 0 {
             return None;
         }
-        let helper = self.helper?;
+        let helper = self.helper.clone()?;
         self.quote_asked = Some(self.amount);
         Some(NetCommand::CurrencyQuote {
-            helper: helper.to_owned(),
+            helper,
             amount: self.amount,
         })
     }
@@ -571,7 +574,7 @@ impl BuyLandUi {
             self.bought = true;
             return buy.into_iter().map(NetCommand::Land).collect();
         }
-        let Some(helper) = self.helper else {
+        let Some(helper) = self.helper.clone() else {
             return Vec::new();
         };
         let level_id = if site.membership_upgrade {
@@ -584,7 +587,7 @@ impl BuyLandUi {
         self.pending = buy;
         self.site_txn = Some(SiteTxn::Buy);
         vec![NetCommand::LandToolBuy {
-            helper: helper.to_owned(),
+            helper,
             request: LandToolBuy {
                 level_id,
                 billable_area: if self.for_group { 0 } else { self.offer.billable_area },
@@ -971,13 +974,19 @@ impl BuyLandUi {
             if !funds.have_enough() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("buy-land-buy-additional")).size(12.0).color(p.ink));
-                    let field = crate::ui::widgets::text_field(ui, self.site_txn.is_none(), &mut self.text, |b, _| {
-                        egui::TextEdit::singleline(b)
-                            .desired_width(80.0)
-                            .char_limit(10)
-                            .align(egui::Align2::RIGHT_TOP)
-                    });
-                    ui.label(RichText::new("L$").size(12.0).color(p.muted));
+                    let field = crate::ui::widgets::restricted_text_field(
+                        ui,
+                        self.site_txn.is_none(),
+                        &mut self.text,
+                        widgets::TextPolicy::Digits,
+                        |b, _| {
+                            egui::TextEdit::singleline(b)
+                                .desired_width(80.0)
+                                .char_limit(10)
+                                .align(egui::Align2::RIGHT_TOP)
+                        },
+                    );
+                    ui.label(RichText::new(aurora_i18n::currency()).size(12.0).color(p.muted));
                     if field.changed() {
                         self.typed(Instant::now());
                     }
@@ -1273,7 +1282,7 @@ mod tests {
     fn ready(price: i32, amount: i32) -> BuyLandUi {
         BuyLandUi {
             open: true,
-            helper: Some(HELPER),
+            helper: Some(HELPER.into()),
             offer: Offer {
                 valid: true,
                 for_sale: true,

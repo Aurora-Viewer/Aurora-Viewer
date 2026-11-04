@@ -184,6 +184,9 @@ pub mod flags {
     pub const PORTAL_CLIP: u32 = 16384;
     /// Procedural Aurora portal surface; uses the ordinary sorted blend/glow.
     pub const PORTAL_EFFECT: u32 = 32768;
+    /// Bit of flags[3], above the texture animation's 24 packed bits.
+    /// World faces whose material permits Blend texture alpha only.
+    pub const WORLD_BLEND_PICK: u32 = 1 << 31;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -395,6 +398,12 @@ impl Default for DrawRecord {
 }
 
 impl DrawRecord {
+    /// Keep picking metadata out of flags[0]'s packed HUD zoom and out of
+    /// flags[3]'s texture-animation mode and dimensions.
+    pub fn set_world_blend_pick(&mut self, enabled: bool) {
+        self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
+    }
+
     /// Upper 16 bits of flags.x: visual HUD zoom in units of 1/4096.
     /// Zero means 1. The shader removes it from planar texture generation,
     /// before materials and animations, without enlarging every GPU record.
@@ -593,6 +602,11 @@ pub struct DrawLists {
     pub water_ground: crate::WaterGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
+    /// The blended faces under the water while the camera is above it, back
+    /// to front, the rigged first: drawn before the water and the scene copy
+    /// it refracts, writing depth, without glow (POOL_ALPHA_PRE_WATER). A
+    /// face crossing the surface is in both lists, clipped to each side.
+    pub blend_under_water: Vec<DrawCmd>,
     /// The first `blend_depth` entries of `blend` are rigged faces (worn
     /// rigged meshes, animesh): drawn before the other blended faces and
     /// writing depth, so that a layer in front (mesh hair) hides what is
@@ -609,6 +623,10 @@ pub struct DrawLists {
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
+    /// Per `blend` entry: select the unculled twin only for double-sided faces.
+    pub blend_double_sided: Vec<bool>,
+    /// Per `blend_under_water` entry: the same sidedness rule before water.
+    pub blend_under_double_sided: Vec<bool>,
     pub shadow_casters: Vec<ShadowCaster>,
     /// Terrain chunks casting shadows: drawn depth only like the opaque
     /// casters, else with the terrain's own alpha test (`fs_shadow_terrain`),
@@ -709,6 +727,25 @@ pub struct ImpostorSprite {
 }
 
 impl DrawLists {
+    /// Remove viewer dressing while retaining geometry, particles and required vision restrictions.
+    pub(crate) fn strip_viewer_overlays(&mut self) {
+        self.hud_view = None;
+        self.hud_opaque.clear();
+        self.hud_blend.clear();
+        self.hud_debug_red.clear();
+        self.hud_debug_blue.clear();
+        self.creation_preview.clear();
+        self.physics_shapes.clear();
+        self.debug_red.clear();
+        self.debug_blue.clear();
+        self.debug_green.clear();
+        self.debug_yellow.clear();
+        self.land_overlay.clear();
+        self.select_root.clear();
+        self.select_child.clear();
+        self.select_faces.clear();
+        self.hud_select_faces.clear();
+    }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
     pub fn copy_from(&mut self, src: &DrawLists) {
@@ -730,7 +767,10 @@ impl DrawLists {
         self.water.clone_from(&src.water);
         self.water_exclusion.clone_from(&src.water_exclusion);
         self.blend.clone_from(&src.blend);
+        self.blend_under_water.clone_from(&src.blend_under_water);
         self.blend_glow.clone_from(&src.blend_glow);
+        self.blend_double_sided.clone_from(&src.blend_double_sided);
+        self.blend_under_double_sided.clone_from(&src.blend_under_double_sided);
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
@@ -779,6 +819,7 @@ impl DrawLists {
         self.water.clear();
         self.water_exclusion.clear();
         self.blend.clear();
+        self.blend_under_water.clear();
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
         self.blend_depth_runs.clear();
@@ -794,6 +835,8 @@ impl DrawLists {
         self.water_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
+        self.blend_double_sided.clear();
+        self.blend_under_double_sided.clear();
         self.glow_alpha.clear();
         self.debug_red.clear();
         self.debug_blue.clear();
@@ -826,6 +869,7 @@ impl DrawLists {
             + self.mask_two_sided.len()
             + self.water.len()
             + self.blend.len()
+            + self.blend_under_water.len()
     }
 }
 
@@ -982,6 +1026,10 @@ pub struct SnapshotSpec {
     pub interface: bool,
     /// HUD attachments drawn (RenderHUDInSnapshot).
     pub huds: bool,
+    /// The whole photo's size, which a tile's GTAO resolution follows:
+    /// tiles of different sizes, at full and half resolution side by
+    /// side, would differ along their border.
+    pub photo: (u32, u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1118,6 +1166,11 @@ pub struct SkyParams {
     pub classic: bool,
     /// Reflection probe ambiance is 0: no tone mapping (Firestorm no_post).
     pub no_post: bool,
+    /// The sky ambient keeps its colour at full strength, as the first PBR
+    /// release lit it (an experimental setting): the classic and linear
+    /// shading paths read it (common.wgsl
+    /// `colored_sky_ambient`), the HDR one gets it in the hemisphere colours.
+    pub colored_ambient: bool,
     /// True sun / moon directions (for their discs).
     pub sun_dir: Vec3,
     pub moon_dir: Vec3,
@@ -1137,6 +1190,8 @@ pub struct SkyParams {
     /// Bindless slots (0 = none) of the rainbow and halo textures.
     pub rainbow_texture: u32,
     pub halo_texture: u32,
+    /// Night sky: which stars and how they are turned (stars.rs).
+    pub stars: crate::stars::StarFrame,
 }
 
 impl Default for SkyParams {
@@ -1169,6 +1224,7 @@ impl Default for SkyParams {
             hdr_scale: 1.0,
             classic: true,
             no_post: true,
+            colored_ambient: false,
             sun_dir: sun,
             moon_dir: -sun,
             sun_scale: 1.0,
@@ -1183,6 +1239,7 @@ impl Default for SkyParams {
             ice_level: 0.0,
             rainbow_texture: 0,
             halo_texture: 0,
+            stars: crate::stars::StarFrame::default(),
         }
     }
 }
@@ -1239,6 +1296,24 @@ pub struct OverlayEffect {
     pub texture: [u32; 4],
 }
 
+/// A photo drawn in tiles reads GTAO's depth of the whole photo beyond
+/// each tile: a tile drawn alone has no scene past its guard band, and near
+/// the camera GTAO's radius (0.73 m) spans thousands of pixels, so its
+/// horizon search read the border's depth again for a wall, light and dark
+/// steps along the seams. The farther a sample, the coarser the depth level
+/// it reads: a whole frame at a fraction of the photo's size serves them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PhotoContext {
+    /// Outside a tiled photo: a context kept from one is freed.
+    #[default]
+    None,
+    /// The whole photo, drawn small before its tiles: GTAO's depth levels
+    /// are kept.
+    Record,
+    /// A tile: GTAO's samples past it read the kept depth.
+    Use,
+}
+
 /// Camera and environment for one frame.
 #[derive(Debug, Clone)]
 pub struct FrameParams {
@@ -1265,6 +1340,13 @@ pub struct FrameParams {
     /// and their casters are fitted to the whole photo, so that every tile
     /// reads the shadow maps of one pass.
     pub photo_tile: Mat4,
+    /// How many times taller, in pixels, the image is than the viewfinder's
+    /// view of the same field: 1 in the window, the photo's height over
+    /// the viewfinder's in a photo. The screen-space effects measured in
+    /// pixels (the contact shadows) keep their size in the image with it.
+    pub photo_scale: f32,
+    /// The whole photo's depth around the tiles (`PhotoContext`).
+    pub photo_context: PhotoContext,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,
@@ -1480,6 +1562,10 @@ pub struct RenderStats {
     /// Presentation mode the swapchain is configured with (present.rs);
     /// None until the backend has answered a frame.
     pub present_mode: Option<wgpu::PresentMode>,
+    /// The settings the frame was drawn with: the MSAA samples and SSR of
+    /// the previous ones while the pipelines for new ones compile (#1746).
+    /// None until the backend has answered a frame.
+    pub settings: Option<RenderSettings>,
     pub draws: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,
@@ -1494,6 +1580,15 @@ pub struct RenderStats {
     pub index_used: u64,
     pub records: u32,
     pub gpu_ms: Option<f32>,
+    /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
+    /// the photo's).
+    pub gpu_pixels: u64,
+    /// Video memory the render targets that follow the image's size take
+    /// for each of its pixels, with the MSAA samples, the effects and the
+    /// TAA history of the current settings: measured with wgpu's counters
+    /// when they were last made. A photo pass needs as much for each of its
+    /// pixels, besides its output and readback.
+    pub target_bytes_per_pixel: Option<f32>,
     /// CPU time the main thread spent on the frame's rendering (ms): the
     /// whole encoding when the renderer runs on it, only the frame packet
     /// with a render thread.
@@ -1536,6 +1631,11 @@ pub struct RenderStats {
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
+    /// GPU time of the rest of [`GpuElement::Effects`] (ms): the planar
+    /// reflections (with the refracted water light), the reflection probe,
+    /// the scene copy (with the cut-out pass and the submerged water
+    /// particles), the SSR.
+    pub gpu_effects: Option<[f32; 4]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
@@ -1778,7 +1878,10 @@ mod tests {
         scene.creation_preview.push(cmd(25));
         scene.physics_shapes.push(cmd(26));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
+        scene.blend_under_water.push(cmd(29));
+        scene.blend_under_double_sided.push(true);
         scene.blend_glow.extend([false, true, false]);
+        scene.blend_double_sided.extend([true, false, true]);
         scene.blend_depth = 1;
         scene.glow.push(cmd(4));
         scene.select_root.push(cmd(5));
@@ -1826,7 +1929,10 @@ mod tests {
         assert_eq!(packet.creation_preview[0].record, 25);
         assert_eq!(packet.physics_shapes[0].record, 26);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
+        assert_eq!(packet.blend_under_water.iter().map(|c| c.record).collect::<Vec<_>>(), [29]);
+        assert_eq!(packet.blend_under_double_sided, [true]);
         assert_eq!(packet.blend_glow, [false, true, false]);
+        assert_eq!(packet.blend_double_sided, [true, false, true]);
         assert_eq!(packet.blend_depth, 1);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
         assert_eq!(packet.terrain_mask[0].record, 27);
@@ -1844,6 +1950,8 @@ mod tests {
         scene.blend.push(cmd(1));
         assert_eq!(packet.blend.len(), 3);
         assert!(scene.hud_view.is_none());
+        assert!(scene.blend_under_water.is_empty());
+        assert!(scene.blend_under_double_sided.is_empty());
         assert!(scene.hud_opaque.is_empty());
         assert!(scene.hud_debug_red.is_empty());
         assert!(scene.creation_preview.is_empty());
@@ -2069,5 +2177,23 @@ mod tests {
         }
         record.set_hud_zoom(1.0);
         assert_eq!(record.flags[0], 0x0fff);
+    }
+
+    #[test]
+    fn world_blend_pick_survives_zoom_packing_without_changing_texture_animation() {
+        let animation = 1 | (7 << 8) | (15 << 16);
+        let mut record = DrawRecord {
+            flags: [flags::PLANAR | flags::TEX_ANIM, 42, 128, animation],
+            ..Default::default()
+        };
+        record.set_world_blend_pick(true);
+        for zoom in [1.0, 0.1, 2.0, 8.0] {
+            record.set_hud_zoom(zoom);
+            assert_ne!(record.flags[3] & flags::WORLD_BLEND_PICK, 0);
+            assert_eq!(record.flags[3] & 0x00ff_ffff, animation);
+            assert_eq!(record.flags[0] & 0xffff, flags::PLANAR | flags::TEX_ANIM);
+        }
+        record.set_world_blend_pick(false);
+        assert_eq!(record.flags[3], animation);
     }
 }

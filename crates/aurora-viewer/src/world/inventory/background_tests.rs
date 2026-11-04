@@ -119,12 +119,17 @@ impl Server<'_> {
 
 /// Run the fetch to its end against `server`; every read, in order.
 fn run(inv: &mut Inventory, server: &Server) -> Vec<Read> {
-    let mut fetch = BackgroundFetch::default();
+    run_with(BackgroundFetch::default(), inv, server)
+}
+
+fn run_with(mut fetch: BackgroundFetch, inv: &mut Inventory, server: &Server) -> Vec<Read> {
     fetch.start(inv);
     let mut reads = Vec::new();
     for _ in 0..1000 {
         let commands = fetch.pump(inv, AGENT);
-        assert!(fetch.in_flight.len() <= MAX_IN_FLIGHT, "PoolSizeAIS bounds the reads in flight");
+        let max = if fetch.legacy[0] { LEGACY_IN_FLIGHT } else { MAX_IN_FLIGHT };
+        // the end-of-frame legacy batches may each add one read
+        assert!(fetch.in_flight.len() <= max + 2, "the pool bounds the reads in flight");
         if commands.is_empty() && fetch.is_idle() {
             return reads;
         }
@@ -145,7 +150,8 @@ fn run(inv: &mut Inventory, server: &Server) -> Vec<Read> {
                 panic!("only tree reads");
             };
             assert_eq!(owner, if library { inv.lib_owner } else { AGENT });
-            assert_eq!(library, parent == inv.lib_root);
+            assert_eq!(library, inv.folders[&parent].library);
+            assert!(children.iter().all(|c| inv.folders[c].library == library), "one tree per read");
             let read = Read { parent, children, depth };
             if let Some(contents) = server.answer(&read) {
                 inv.apply(contents);
@@ -364,4 +370,91 @@ fn a_root_already_read_at_login_still_loads_by_batches() {
     let batches: Vec<usize> = reads.iter().filter(|r| r.parent == id(1)).map(|r| r.children.len()).collect();
     assert_eq!(batches, [20, 20, 5]);
     assert_eq!(reads.len(), 4);
+}
+
+/// A grid without AIS: `FetchInventoryDescendents2` reads one level of each
+/// folder it is given, whatever the depth.
+fn legacy_server(tree: &[(u128, u128, i32)]) -> Server<'_> {
+    Server {
+        tree,
+        cap: 0,
+        fails: &|_| false,
+    }
+}
+
+fn legacy_fetch() -> BackgroundFetch {
+    let mut fetch = BackgroundFetch::default();
+    fetch.set_legacy(true, true);
+    fetch
+}
+
+#[test]
+fn without_ais_the_whole_tree_loads_level_by_level_in_batches_of_ten() {
+    let tree = wide_tree();
+    let mut inv = skeleton(&tree);
+    let reads = run_with(legacy_fetch(), &mut inv, &legacy_server(&tree));
+    assert!(unfetched(&inv).is_empty(), "{:?}", unfetched(&inv));
+    assert!(reads.iter().all(|r| r.depth == 0), "the legacy capability reads one level");
+    assert!(reads.iter().all(|r| r.children.len() <= LEGACY_BATCH));
+    // root alone, 135 + 2 folders by 10 (any parent), never one read each
+    assert_eq!((reads[0].parent, reads[0].children.len()), (id(1), 0));
+    let folders: usize = reads.iter().map(|r| r.children.len().max(1)).sum();
+    assert_eq!(folders, inv.folders.len(), "each folder read once");
+    assert!(reads.len() <= 20, "{} reads", reads.len());
+}
+
+#[test]
+fn without_ais_a_failed_batch_is_read_folder_by_folder() {
+    // folder 11 makes every read holding it fail: the others still load
+    let tree = [(10, 1, -1), (11, 1, -1), (12, 1, -1), (20, 10, -1), (21, 11, -1)];
+    let mut inv = skeleton(&tree);
+    let fails = |r: &Read| r.parent == id(11) || r.children.contains(&id(11));
+    let reads = run_with(
+        legacy_fetch(),
+        &mut inv,
+        &Server {
+            tree: &tree,
+            cap: 0,
+            fails: &fails,
+        },
+    );
+    // 21 is unknown to the viewer until 11 is read
+    assert_eq!(unfetched(&inv), [id(11)]);
+    assert_eq!(
+        reads.iter().filter(|r| fails(r)).count(),
+        2,
+        "the batch, then 11 alone, then no loop"
+    );
+}
+
+#[test]
+fn without_ais_marketplace_listings_are_left_to_their_window() {
+    let tree = [(10, 1, -1), (11, 1, MARKETPLACE_LISTINGS), (12, 11, -1)];
+    let mut inv = skeleton(&tree);
+    run_with(legacy_fetch(), &mut inv, &legacy_server(&tree));
+    assert_eq!(unfetched(&inv), [id(11), id(12)]);
+}
+
+#[test]
+fn without_ais_only_for_the_library_the_inventory_keeps_its_recursive_reads() {
+    let tree = wide_tree();
+    let mut inv = skeleton(&tree);
+    let mut fetch = BackgroundFetch::default();
+    fetch.set_legacy(false, true);
+    let reads = run_with(
+        fetch,
+        &mut inv,
+        &Server {
+            tree: &tree,
+            cap: MAX_FOLDER_DEPTH,
+            fails: &|_| false,
+        },
+    );
+    assert!(unfetched(&inv).is_empty());
+    let library: Vec<&Read> = reads.iter().filter(|r| inv.folders[&r.parent].library).collect();
+    assert!(library.iter().all(|r| r.depth == 0), "library level by level");
+    assert!(
+        reads.iter().any(|r| !inv.folders[&r.parent].library && r.depth == MAX_FOLDER_DEPTH),
+        "inventory still through AIS"
+    );
 }

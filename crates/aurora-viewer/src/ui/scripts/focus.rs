@@ -87,7 +87,7 @@ pub(super) fn find(ctx: &egui::Context, editors: &mut [Editor], search: &mut Sea
     let active = state.active;
     ctx.data_mut(|d| d.insert_temp(state_id(), state));
     if let Some(owner) = active
-        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
+        && crate::ui::find_shortcut::consume_find(ctx)
         && let Some(index) = windows.iter().position(|(_, id)| *id == owner)
         && editors[index].loaded
     {

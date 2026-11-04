@@ -31,9 +31,14 @@ pub mod water;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// AURORA_DEMO_AA_SWITCH: the anti-aliasing changed at given frames.
+#[path = "demo_aa_switch.rs"]
+pub mod aa_switch;
 /// Help › About Aurora Viewer on one of its tabs (AURORA_DEMO_ABOUT).
 #[path = "demo_about.rs"]
 pub mod about;
+#[path = "demo_alpha_mask_ab.rs"]
+pub mod alpha_mask_ab;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
@@ -112,6 +117,10 @@ pub mod grounding;
 /// The demo group server (AURORA_DEMO_GROUP_PROFILE).
 #[path = "demo_group.rs"]
 pub mod group;
+/// The Group titles window and the title worn by region
+/// (AURORA_DEMO_GROUP_REGION).
+#[path = "demo_group_region.rs"]
+pub mod group_region;
 #[path = "demo_hand_ik.rs"]
 pub mod hand_ik;
 /// Set Home to Here and Privacy's account settings (AURORA_DEMO_HOME,
@@ -123,6 +132,10 @@ pub mod home;
 pub mod hover_tips;
 #[path = "demo_hud.rs"]
 pub mod hud;
+/// IMs announced as their sender starts typing, and the unread count in
+/// the window title (AURORA_DEMO_IM_ANNOUNCE).
+#[path = "demo_im_announce.rs"]
+pub mod im_announce;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
@@ -133,6 +146,10 @@ pub mod land;
 pub mod link;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
+/// The real or the Legacy Viewer's night sky, the camera on the stars
+/// (AURORA_DEMO_NIGHT_SKY).
+#[path = "demo_night_sky.rs"]
+pub mod night_sky;
 /// The notification center's mockup scenario, in either style
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
@@ -147,6 +164,9 @@ pub mod object_im;
 /// The object menu scenario's objects (AURORA_DEMO_OBJECT_MENU).
 #[path = "demo_object_menu.rs"]
 pub mod object_menu;
+/// Boxes for the build tools' snap to objects (AURORA_DEMO_OBJECT_SNAP).
+#[path = "demo_object_snap.rs"]
+pub mod object_snap;
 /// AURORA_DEMO_OUTFIT_RESTORE: the login restore of the outfit against a
 /// region that puts part of it back by itself.
 #[path = "demo_outfit_restore.rs"]
@@ -203,8 +223,19 @@ pub mod sky;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// Sounds circling the listener and rising above it, for the 3D sound for
+/// headphones (AURORA_DEMO_SOUND_HRTF).
+#[path = "demo_sound_hrtf.rs"]
+pub mod sound_hrtf;
+/// Sounds behind a wall and in a box (AURORA_DEMO_SOUND_OCCLUSION).
+#[path = "demo_sound_occlusion.rs"]
+pub mod sound_occlusion;
 #[path = "demo_sound_parcels.rs"]
 pub mod sound_parcels;
+/// A clapper above our avatar, a small room and a large hall, for the
+/// reverb of the surroundings (AURORA_DEMO_SOUND_REVERB).
+#[path = "demo_sound_reverb.rs"]
+pub mod sound_reverb;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
 #[path = "demo_staff.rs"]
 pub mod staff;
@@ -226,13 +257,23 @@ pub mod tangents;
 /// (AURORA_DEMO_TEXREFRESH).
 #[path = "demo_tex_refresh.rs"]
 pub mod tex_refresh;
+/// Boards with 2048 px streamed textures, tinted by the level shown, for
+/// the maximum texture resolution (AURORA_DEMO_TEXTURE_RES).
+#[path = "demo_texture_res.rs"]
+pub mod texture_res;
 /// Toasts of friends and messages, and the list under the bell
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]
 pub mod toasts;
+#[path = "demo_tortured_prims.rs"]
+pub mod tortured_prims;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;
+/// The Voice controls window with residents in the nearby channel
+/// (AURORA_DEMO_VOICE_CONTROLS).
+#[path = "demo_voice_controls.rs"]
+pub mod voice_controls;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;
@@ -481,7 +522,8 @@ fn fountain_particles() -> Vec<u8> {
 
 /// Leash script (legacy block): a ribbon chain dropped at the collar that
 /// steers towards `target` and sags under gravity, two links per burst. Its
-/// y scale is long because ribbons ignore it (#1049).
+/// y scale is long because ribbons ignore it (#1049); its texture runs
+/// along the chain, like leash textures do (#1924).
 fn leash_particles(target: Uuid) -> Vec<u8> {
     use aurora_prim::particles::*;
     let mut out = fountain_particles();
@@ -491,6 +533,7 @@ fn leash_particles(target: Uuid) -> Vec<u8> {
     out[15..17].copy_from_slice(&0u16.to_le_bytes()); // burst rate (clamped)
     out[23] = 2; // particles per burst
     out[34..36].copy_from_slice(&(((-1.0f32 + 256.0) * 128.0) as u16).to_le_bytes()); // gravity
+    out[36..52].copy_from_slice(TEX_LEASH_CHAIN.as_bytes());
     out[52..68].copy_from_slice(target.as_bytes());
     let part = PS_SYS_DATA_BLOCK_SIZE;
     let flags = LL_PART_RIBBON_MASK | LL_PART_FOLLOW_SRC_MASK | LL_PART_TARGET_POS_MASK | LL_PART_EMISSIVE_MASK;
@@ -1156,7 +1199,7 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
-/// `AURORA_DEMO_CHAT_LINES=1|legacy`: nearby chat said at the arrival, to
+/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes`: nearby chat said at the arrival, to
 /// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
@@ -1167,6 +1210,14 @@ pub fn chat_lines_scenario() -> Option<bool> {
         "" | "0" => None,
         _ => Some(false),
     }
+}
+
+/// Show the same six messages in Conversations and above the bar (#1323).
+pub fn chat_volume_comparison() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode == "volumes")
+    })
 }
 
 pub fn chat_lines_events() -> Vec<NetEvent> {
@@ -1189,6 +1240,21 @@ pub fn chat_lines_events() -> Vec<NetEvent> {
         })
     };
     let normal = aurora_net::ChatType::Normal;
+    if chat_volume_comparison() {
+        return [
+            (normal, aurora_i18n::tr!("demo-bubbles-local-1")),
+            (aurora_net::ChatType::Whisper, aurora_i18n::tr!("demo-aurora-local-own-whisper")),
+            (aurora_net::ChatType::Shout, aurora_i18n::tr!("demo-aurora-local-own-shout")),
+        ]
+        .into_iter()
+        .flat_map(|(volume, text)| {
+            [
+                say(DEMO_AGENT, "Aurora Demo", text, false, volume),
+                say(object, aurora_i18n::tr!("common-demo-hud"), text, true, volume),
+            ]
+        })
+        .collect();
+    }
     vec![
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-2"), false, normal),
@@ -1542,6 +1608,9 @@ pub enum AuroraCall {
 }
 
 pub fn aurora_scenario() -> Option<AuroraScene> {
+    if chat_volume_comparison() {
+        return parse_aurora_scene("aurora:local");
+    }
     parse_aurora_scene(&std::env::var("AURORA_DEMO_CONV").ok()?)
 }
 
@@ -1757,6 +1826,9 @@ fn world_name(id: Uuid) -> String {
 /// a mention of us, after the bubbles scenario's lines; then the friend's
 /// status of `friend-away` / `friend-offline`.
 pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
+    if chat_volume_comparison() {
+        return Vec::new();
+    }
     let say = |from: Uuid, name: &str, text: String, chat_type| {
         NetEvent::Chat(aurora_net::ChatMessage {
             from_name: name.into(),
@@ -2704,6 +2776,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = hud::reply(cmd) {
         return events;
     }
+    if let Some(events) = group_region::reply(cmd) {
+        return events;
+    }
     if let Some(events) = group::reply(cmd) {
         return events;
     }
@@ -2906,6 +2981,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             // unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
                 || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
+                || std::env::var_os("AURORA_DEMO_FRIENDS_ONLY").is_some()
                 || seat_kill::on()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
                 || people::mode().is_some()
@@ -2915,8 +2991,16 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             } else {
                 text
             };
+            // The restoration fixture needs both quiet groups open; the
+            // ordinary demo deliberately blocks the second group's chat.
+            let text = if chatlog::mode() == Some(chatlog::Mode::Restore) {
+                let blocked = crate::world::mutes::group_chat_name(&DEMO_GROUP2);
+                text.lines().filter(|line| !line.contains(&blocked)).collect::<Vec<_>>().join("\n")
+            } else {
+                text
+            };
             let text = text + &tags::mute_line().unwrap_or_default();
-            vec![NetEvent::MuteList(aurora_net::MuteListSource::File(text))]
+            chatlog::mute_list_reply(text)
         }
         // two groups, and someone starts a chat in the first one
         aurora_net::NetCommand::RequestGroups => {
@@ -2950,6 +3034,14 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
                 },
             ];
+            // AURORA_DEMO_GROUPS=many: exercise the Conversations group
+            // picker with more entries than fit in its submenu.
+            if std::env::var("AURORA_DEMO_GROUPS").is_ok_and(|mode| mode == "many") {
+                groups.extend((0..64).map(|i| {
+                    let id = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_1000 + i);
+                    g(id, &format!("Demo group {:02}", i + 1), true)
+                }));
+            }
             if !group::adjust_groups(&mut groups) {
                 return vec![NetEvent::Groups(groups)];
             }
@@ -3287,19 +3379,10 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             anims: vec![(IDLE_ANIM, 1)],
         }],
         aurora_net::NetCommand::RequestObjectProperties { object, .. } if (970..=982).any(|id| action_id(id) == *object) => {
-            let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
             vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
                 object_id: *object,
                 owner_id: DEMO_NOVA,
-                sale_type: if *object == action_id(971) {
-                    match mode.as_str() {
-                        "buy-original" => 1,
-                        "buy-contents" | "buy-empty" => 3,
-                        _ => 2,
-                    }
-                } else {
-                    0
-                },
+                sale_type: action_sale_type(*object),
                 next_owner_mask: aurora_net::build::perm::TRANSFER,
                 // Nova may sell copies (for_sale_selection, the hover tips)
                 owner_mask: aurora_net::build::perm::TRANSFER | aurora_net::build::perm::COPY | aurora_net::build::perm::MODIFY,
@@ -3340,6 +3423,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 "pay-layout" => (1956, vec![1956, 3913, 5870, 7826]),
                 "pay-hidden" => (-1, vec![1956, -1, 5870, -1]),
                 "pay-large" => (i32::MAX, vec![i32::MAX, 3913, 5870, 7826]),
+                // a CasperVend-like vendor: one price, no free amount (#1869)
+                "pay-vendor" | "pay-vendor-short" => (-1, vec![180, -1, -1, -1]),
                 _ => (10, vec![1, 5, 10, 20]),
             };
             vec![NetEvent::PayPrice {
@@ -3518,6 +3603,20 @@ pub fn stand_from_prim(seat: Vec3, size: Vec3) -> Vec<NetEvent> {
     }]
 }
 
+/// The sale type of an AURORA_DEMO_ACTIONS cube (the for-sale cube only),
+/// the same in the hover / purchase reply and in the selection's
+/// properties (`build/demo_sim.rs`), which the right-click menu reads.
+pub fn action_sale_type(object: Uuid) -> u8 {
+    if object != action_id(971) {
+        return 0;
+    }
+    match std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default().as_str() {
+        "buy-original" => 1,
+        "buy-contents" | "buy-empty" => 3,
+        _ => 2,
+    }
+}
+
 pub fn action_mode_id(mode: &str) -> u32 {
     if mode.starts_with("probe-") {
         return 975;
@@ -3609,8 +3708,8 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
     }
 }
 
-/// A non-actionable face placed before Buy. Blend blocks every texel;
-/// Mask's zero-alpha texture lets the click reach Buy.
+/// A non-actionable face placed before Buy. Zero-alpha texture pixels let
+/// left clicks through; every nonzero Blend texel still blocks them.
 pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
     let texture = match mode.trim_end_matches("-ready") {
         "blend-faint" => TEX_PICK_FAINT,
@@ -3627,6 +3726,17 @@ pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
         for face in &mut Arc::make_mut(te).faces {
             face.texture = texture;
             face.material_id = material;
+        }
+        if mode.starts_with("blend-backface") {
+            // A transparent entry face followed by an opaque exit face.
+            // The latter casts a shadow but is culled from this camera.
+            object.scale.x = 0.5;
+            let cube = aurora_prim::generate_volume(&object.volume, aurora_prim::volume::DETAIL_SCALES[3]);
+            for (face, mesh) in cube.faces.iter().enumerate() {
+                if mesh.normals.first().is_some_and(|normal| normal[0] < -0.9) {
+                    Arc::make_mut(te).faces[face].texture = BLANK_TEXTURE;
+                }
+            }
         }
     }
     NetEvent::ObjectUpdates {
@@ -3787,6 +3897,12 @@ pub fn action_events() -> Vec<NetEvent> {
         object.click_action = crate::interaction::code::TOUCH;
         object.update_flags |= 1 << 7;
     }
+    // a boxed product left on the default Touch, bought from the menu (#1869)
+    if mode.starts_with("buy-touch-menu")
+        && let Some(object) = objects.iter_mut().find(|o| o.local_id == 971)
+    {
+        object.click_action = crate::interaction::code::TOUCH;
+    }
     let selected = action_mode_id(&mode);
     if selected != 0 {
         objects.retain(|o| {
@@ -3804,6 +3920,8 @@ pub fn action_events() -> Vec<NetEvent> {
     }
     let balance = if matches!(mode.as_str(), "pay-layout" | "pay-hidden" | "pay-large") {
         i32::MAX
+    } else if mode == "pay-vendor-short" {
+        100
     } else {
         250
     };
@@ -4098,6 +4216,7 @@ pub fn events() -> Vec<NetEvent> {
     for q in 0..4 {
         ev.push(NetEvent::ParcelOverlay {
             handle: HANDLE,
+            size: (256, 256),
             sequence: q as i32,
             data: cells[q * 1024..(q + 1) * 1024].to_vec(),
         });
@@ -4755,7 +4874,35 @@ pub fn events() -> Vec<NetEvent> {
     // position with the same orange emissive, opaque, alpha-masked and
     // blended: without HDR and Emissive (AURORA_HDR=0) the first two lose
     // their light, the blended one keeps it (HAS_EMISSIVE)
-    if std::env::var_os("AURORA_DEMO_PBR_EMISSIVE").is_some() {
+    if std::env::var("AURORA_DEMO_PBR_EMISSIVE").is_ok_and(|mode| mode == "sided") {
+        // Only one face of each box exists visually: compare its front/back
+        // without the opposite wall of a closed solid hiding the defect (#1727).
+        let mesh = aurora_prim::generate_volume(&boxp, 2.0);
+        if let Some(face) = mesh.faces.iter().position(|face| face.normals.first().is_some_and(|n| n[0] < -0.9)) {
+            let floor = height(cx, cy) + 0.35;
+            for k in 0..4 {
+                let mut t = TextureEntry::default();
+                for f in &mut t.faces {
+                    f.texture = BLANK_TEXTURE;
+                    f.color = [1.0, 1.0, 1.0, 0.0];
+                }
+                add(prim(
+                    id,
+                    Vec3::new(136.0, 123.0 + 2.0 * k as f32, floor + 2.6),
+                    Quat::from_rotation_z(if k % 2 == 0 { 0.0 } else { std::f32::consts::PI }),
+                    Vec3::new(0.02, 1.5, 2.0),
+                    boxp,
+                    Arc::new(t),
+                    ExtraParams {
+                        render_materials: vec![(face as u8, MAT_PBR_SIDED[k / 2])],
+                        ..Default::default()
+                    },
+                    "",
+                ));
+                id += 1;
+            }
+        }
+    } else if std::env::var_os("AURORA_DEMO_PBR_EMISSIVE").is_some() {
         let floor = height(cx, cy) + 0.35;
         for (k, mat) in MAT_PBR_EMISSIVE.into_iter().enumerate() {
             let mut t = TextureEntry::default();
@@ -5298,6 +5445,14 @@ pub fn events() -> Vec<NetEvent> {
             }),
         });
     }
+    // A large existing platform exercises opening Edit without a size change.
+    if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|spec| spec.starts_with("megaprim,"))
+        && let Some(object) = objs.iter_mut().find(|object| object.local_id == 118)
+    {
+        object.scale = Vec3::new(128.125, 96.25, 0.5);
+        object.position = Vec3::new(cx, cy, g(cx, cy) - 0.5);
+        object.rotation = Quat::IDENTITY;
+    }
     ev.push(NetEvent::ObjectUpdates {
         handle: HANDLE,
         objects: objs,
@@ -5475,20 +5630,24 @@ pub fn events() -> Vec<NetEvent> {
     // by default, above 1 in the brightest skies), what only dims the ambient
     // light shows: the ambient occlusion. With a reflection probe ambiance
     // (4th value, above 0) the sky is no longer classic: it is tone mapped.
+    // The ambient is a grey level, or a colour as r:g:b (a warm 0.9:0.6:0.5).
     // AURORA_DEMO_SKY=midday: the library Midday's values instead (World ›
     // Environment), a non-classic sky with dense haze and half the sky clouded
     let sky = std::env::var("AURORA_DEMO_SKY").ok().and_then(|v| {
         if v.trim().eq_ignore_ascii_case("midday") {
             return Some(demo_day(midday_sky()));
         }
-        let mut values = v.split(',').map(|s| s.trim().parse::<f64>().ok());
-        let gamma = values.next()??;
+        let mut fields = v.split(',').map(str::trim);
+        let gamma = fields.next()?.parse::<f64>().ok()?;
+        let haze = fields.next().and_then(|s| s.parse::<f64>().ok());
+        let ambient = fields.next().and_then(demo_ambient);
+        let probe_ambiance = fields.next().and_then(|s| s.parse::<f64>().ok());
         Some(demo_sky(
             Vec3::new(0.55, 0.35, 0.6).normalize(),
             gamma,
-            values.next().flatten(),
-            values.next().flatten(),
-            values.next().flatten(),
+            haze,
+            ambient,
+            probe_ambiance,
         ))
     });
     if let Some(environment) = sky {
@@ -5605,8 +5764,47 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(alpha_mask_ab::events());
+    ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
+    ev.extend(land_beside_events());
+    ev.extend(object_snap::events());
     ev
+}
+
+/// AURORA_DEMO_LAND_BESIDE=1: a 4 m square frame lying on the bare ground
+/// 5 m along the start view (a box prim hollowed at 85 %), with
+/// AURORA_DEMO_POS="80,100" (open land: the plaza's floor is a prim). Its
+/// box spans the ground in its middle, its surface does not: a right click
+/// there is the land's (the land menu, Edit terrain), as beside a mesh whose
+/// box covers the ground around it.
+fn land_beside_events() -> Vec<NetEvent> {
+    if !std::env::var("AURORA_DEMO_LAND_BESIDE").is_ok_and(|v| v.trim() == "1") {
+        return Vec::new();
+    }
+    let eye = std::env::var("AURORA_DEMO_POS")
+        .ok()
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+        .filter(|p| p.len() >= 2)
+        .map_or(glam::Vec2::new(80.0, 100.0), |p| glam::Vec2::new(p[0], p[1]));
+    // the start view (AURORA_DEMO_FOLIAGE's `look`)
+    let at = eye + glam::Vec2::new(0.8, 0.4).normalize() * 5.0;
+    let (x, y) = (at.x, at.y);
+    let frame = prim(
+        99700,
+        Vec3::new(x, y, height(x, y) + 0.15),
+        Quat::IDENTITY,
+        Vec3::new(4.0, 4.0, 0.3),
+        // profile_hollow in 1/50000ths: 85 %
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 42500, 0),
+        te([0.85, 0.55, 0.2, 1.0], 0, false, 0.0),
+        Default::default(),
+        "",
+    );
+    vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![frame],
+    }]
 }
 
 /// Unrelated demos stay quiet; each explicit scenario gets only its fixtures.
@@ -7798,6 +7996,28 @@ pub fn loop_animation() -> aurora_assets::Animation {
     anim
 }
 
+/// `AURORA_DEMO_PELVIS_CONSTRAINT`: the loop below, with a pelvis constraint
+/// that carries the body out of sight for the last 4 s of every 8 s.
+pub fn pelvis_constraint_animation() -> (aurora_assets::Animation, Vec<aurora_assets::anim::Constraint>) {
+    let mut anim = loop_animation();
+    anim.duration = 8.0;
+    anim.loop_out = 8.0;
+    let constraint = aurora_assets::anim::Constraint {
+        chain_length: 0,
+        constraint_type: 0,
+        source_volume: "PELVIS".into(),
+        source_offset: Vec3::new(0.0, 0.0, f32::MAX),
+        target_volume: "PELVIS".into(),
+        target_offset: Vec3::ZERO,
+        target_dir: Vec3::ZERO,
+        ease_in_start: 4.0,
+        ease_in_stop: 163_840.0,
+        ease_out_start: 163_840.0,
+        ease_out_stop: 163_840.0,
+    };
+    (anim, vec![constraint])
+}
+
 pub const SYNC_LEADER_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0021);
 pub const SYNC_DELAYED_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0022);
 
@@ -7995,6 +8215,27 @@ pub const TEX_ORM_DISC: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0
 /// Foliage of AURORA_DEMO_FOLIAGE (256 × 256, alpha a mask): thin blades
 /// and small leaves, about a sixth of the texels drawn.
 pub const TEX_FOLIAGE: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0009);
+/// Chain of the demo leash (AURORA_DEMO_PARTICLES=leash): a horizontal band
+/// of two links, transparent above and below, as leash textures are drawn.
+const TEX_LEASH_CHAIN: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_000A);
+
+/// Two metal links along x, 12 texels thick in the middle rows. A ribbon
+/// lays u along its segment: turned 90° it draws a crossbar per link.
+fn leash_chain_texture() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 64;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let across = (y as f32 + 0.5 - N as f32 * 0.5).abs() / 6.0;
+            // a darker joint where two links meet
+            let joint = (x % 32) < 3;
+            let shade = if joint { 110 } else { (235.0 - across * 90.0) as u8 };
+            let a = if across < 1.0 { 255 } else { 0 };
+            px.extend_from_slice(&[shade, shade, shade.saturating_add(12), a]);
+        }
+    }
+    (px, N, N)
+}
 
 #[cfg(test)]
 mod foliage_tests {
@@ -8099,6 +8340,9 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
 
 /// Pixels of a procedural demo texture (RGBA8, 64×64; the hair demo's 256×256).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if let Some(texture) = alpha_mask_ab::texture(id) {
+        return Some(texture);
+    }
     if let Some(pixels) = texture_library::texture(id) {
         return Some(pixels);
     }
@@ -8129,6 +8373,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if *id == TEX_FOLIAGE {
         return Some(foliage_texture());
+    }
+    if *id == TEX_LEASH_CHAIN {
+        return Some(leash_chain_texture());
     }
     if let Some(species) = plants::texture(id) {
         return Some(species);
@@ -8280,6 +8527,12 @@ const MAT_PBR_EMISSIVE: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0032),
 ];
 
+/// The same translucent material, single- and double-sided (#1727).
+const MAT_PBR_SIDED: [Uuid; 2] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0040),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0041),
+];
+
 /// PBR materials of the demo (normally fetched as assets).
 pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     let mut list = vec![(
@@ -8292,6 +8545,20 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
+        list.push((
+            mat,
+            aurora_assets::PbrMaterial {
+                base_color_factor: [0.15, 0.6, 0.9, 0.6],
+                emissive_factor: [0.05, 0.2, 0.3],
+                metallic_factor: 0.0,
+                roughness_factor: 0.5,
+                alpha_mode: aurora_assets::AlphaMode::Blend,
+                double_sided,
+                ..Default::default()
+            },
+        ));
+    }
     for (mat, roughness) in MAT_PBR_METAL.into_iter().zip([0.05, 0.3, 0.6]) {
         list.push((
             mat,
@@ -8350,6 +8617,9 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     ));
+    if bom_rezzed::pbr() {
+        list.push((bom_rezzed::MATERIAL, bom_rezzed::material()));
+    }
     list
 }
 
@@ -8531,7 +8801,18 @@ pub fn seat_animation() -> aurora_assets::Animation {
 }
 
 /// Day cycle with a single classic sky frame (see AURORA_DEMO_SKY).
-fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f64>, probe_ambiance: Option<f64>) -> Llsd {
+/// The ambient of AURORA_DEMO_SKY: a grey level (`0.25`) or a colour
+/// (`0.9:0.6:0.5`).
+fn demo_ambient(s: &str) -> Option<[f64; 3]> {
+    let parts: Vec<f64> = s.split(':').map(|c| c.trim().parse().ok()).collect::<Option<_>>()?;
+    match parts[..] {
+        [a] => Some([a, a, a]),
+        [r, g, b] => Some([r, g, b]),
+        _ => None,
+    }
+}
+
+fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<[f64; 3]>, probe_ambiance: Option<f64>) -> Llsd {
     use aurora_llsd::llsd_map;
     let q = Quat::from_rotation_arc(Vec3::X, sun);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
@@ -8546,7 +8827,7 @@ fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f
         haze.insert("distance_multiplier".into(), Llsd::Real(d));
     }
     if let Some(a) = ambient {
-        haze.insert("ambient".into(), arr(&[a, a, a]));
+        haze.insert("ambient".into(), arr(&a));
     }
     if let (false, Llsd::Map(m)) = (haze.is_empty(), &mut sky) {
         m.insert("legacy_haze".into(), Llsd::Map(haze));
@@ -8591,13 +8872,18 @@ fn midday_sky() -> Llsd {
     }
 }
 
-/// Day cycle with a single sky frame (and the default water).
+/// Day cycle with a single sky frame (and the default water, or the one
+/// `AURORA_DEMO_WATER_EEP` asks for).
 fn demo_day(sky: Llsd) -> Llsd {
     use aurora_llsd::llsd_map;
     let mut frames = aurora_llsd::Map::new();
     frames.insert("sky".into(), sky);
     // a valid day needs a water track too (Firestorm recordEnvironment)
-    frames.insert("water".into(), llsd_map! { "type" => "water" });
+    let water = std::env::var("AURORA_DEMO_WATER_EEP")
+        .ok()
+        .map(|v| demo_water_eep(&v))
+        .unwrap_or_else(|| llsd_map! { "type" => "water" });
+    frames.insert("water".into(), water);
     let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);
     llsd_map! {
         "day_length" => 14400,
@@ -8609,9 +8895,37 @@ fn demo_day(sky: Llsd) -> Llsd {
     }
 }
 
+/// AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal
+/// scale>[,<fog r>,<fog g>,<fog b>]: the water of the demo's EEP day (with
+/// AURORA_DEMO_SKY), as a region's asset carries it, out-of-range values
+/// included; a missing or unreadable value keeps the default.
+fn demo_water_eep(v: &str) -> Llsd {
+    use aurora_llsd::llsd_map;
+    let n: Vec<Option<f64>> = v.split(',').map(|s| s.trim().parse::<f64>().ok()).collect();
+    let at = |i: usize, default: f64| n.get(i).copied().flatten().unwrap_or(default);
+    let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
+    let scale = at(3, 2.0);
+    llsd_map! {
+        "type" => "water",
+        "fresnel_offset" => at(0, 0.5),
+        "fresnel_scale" => at(1, 0.3999),
+        "blur_multiplier" => at(2, 0.04),
+        "normal_scale" => arr(&[scale, scale, scale]),
+        "water_fog_color" => arr(&[at(4, 0.0156), at(5, 0.149), at(6, 0.2509), 1.0]),
+    }
+}
+
 #[cfg(test)]
 mod particle_tests {
     use super::*;
+
+    #[test]
+    fn demo_sky_ambient_is_a_grey_level_or_a_colour() {
+        assert_eq!(demo_ambient("0.25"), Some([0.25, 0.25, 0.25]));
+        assert_eq!(demo_ambient("0.9:0.6:0.5"), Some([0.9, 0.6, 0.5]));
+        assert_eq!(demo_ambient("0.9:0.6"), None);
+        assert_eq!(demo_ambient("warm"), None);
+    }
 
     #[test]
     fn particle_wind_demo_emitters_only_differ_by_the_wind_mask() {
@@ -8641,6 +8955,8 @@ mod particle_tests {
         assert_eq!(d.burst_part_count, 2);
         assert_eq!(d.part_accel, Vec3::new(0.0, 0.0, -1.0));
         assert_eq!(d.target_id, target);
+        assert_eq!(d.part_image_id, TEX_LEASH_CHAIN);
+        assert!(local_texture(&TEX_LEASH_CHAIN).is_some());
         assert_eq!(d.part.flags & ps::LL_PART_RIBBON_MASK, ps::LL_PART_RIBBON_MASK);
         assert_eq!(d.part.max_age, 3.5);
         assert_eq!(d.part.start_scale, glam::Vec2::new(0.0625, 2.5));

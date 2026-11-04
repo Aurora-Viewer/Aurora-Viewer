@@ -1,6 +1,6 @@
 //! The viewfinder's light panel: the photo's light (sky, water, day cycle,
-//! sun, exposure) left of the dock, without opening the drawer of every
-//! setting (`ui::snapshot::light_rows`).
+//! sun, exposure) left of the dock, its only place (the drawer of every
+//! setting leaves it out; `ui::snapshot::light_rows`).
 
 use super::{Out, Viewfinder, bold, widgets};
 use crate::theme::Palette;
@@ -10,7 +10,7 @@ use egui::{Align2, Id, Order, Pos2, Rect};
 const WIDTH: f32 = 360.0;
 
 impl Viewfinder {
-    /// The panel, left of the dock: the Light section of the photo panel.
+    /// The panel, left of the dock: the photo's light.
     pub(super) fn light_panel(
         &mut self,
         ctx: &egui::Context,

@@ -139,7 +139,7 @@ impl MediaManager {
                     indices: &f.indices,
                 })
             });
-            let Some(hit) = pick::ray_faces(tris, model, origin, dir) else {
+            let Some(hit) = pick::ray_faces_with_sidedness(tris, model, origin, dir, |face| scene.face_double_sided(world, o, face)) else {
                 continue;
             };
             if best.is_some_and(|b| hit.t >= b.t) {
@@ -381,5 +381,67 @@ impl MediaManager {
         self.focus = None;
         self.last_pixel = None;
         self.last_surface = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invisible_back_of_a_media_face_cannot_steal_world_clicks() {
+        let library = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(library.clone());
+        for event in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(970)).unwrap();
+        let object = world.objects.get_mut(idx).unwrap();
+        object.position = Vec3::X * 3.0;
+        object.rotation = glam::Quat::IDENTITY;
+        object.scale = Vec3::ONE;
+        let id = object.full_id;
+        let cache_key = object.visual_volume().cache_key() ^ (3u64 << 60);
+        let mut scene = Scene::new(std::path::PathBuf::new(), library);
+        let mut media = MediaManager::default();
+        media.objects.insert(
+            id,
+            ObjMedia {
+                idx,
+                data: Some(ObjectMediaData {
+                    faces: vec![Some(MediaEntry {
+                        current_url: "https://example.invalid/media".into(),
+                        ..Default::default()
+                    })],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        media.pick_cache.insert(
+            id,
+            (
+                cache_key,
+                Arc::new(vec![Some(CpuFace {
+                    positions: vec![[0.0, -0.5, -0.5], [0.0, 0.5, -0.5], [0.0, 0.5, 0.5], [0.0, -0.5, 0.5]],
+                    uvs: vec![[0.0; 2]; 4],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                })]),
+            ),
+        );
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_none());
+        world.objects.get_mut(idx).unwrap().rotation = glam::Quat::from_rotation_z(std::f32::consts::PI);
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_some());
+        world.objects.get_mut(idx).unwrap().rotation = glam::Quat::IDENTITY;
+        let material = Uuid::from_u128(8896);
+        world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(0, material)];
+        scene.materials.insert(
+            material,
+            aurora_assets::PbrMaterial {
+                double_sided: true,
+                ..Default::default()
+            },
+        );
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_some());
     }
 }

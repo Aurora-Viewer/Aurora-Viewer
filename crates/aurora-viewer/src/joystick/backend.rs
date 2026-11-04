@@ -217,7 +217,7 @@ impl Worker {
                         if let Some(n) = pad.axes().iter().position(|c| *c == code).filter(|n| *n < AXES)
                             && let Some(info) = pad.axis_info(code)
                         {
-                            state.axes[n] = normalize(value, info.min, info.max);
+                            state.axes[n] = normalize_axis(value, info.min, info.max, code);
                         }
                     }
                     E::ButtonPressed(code) | E::ButtonReleased(code) => {
@@ -385,6 +385,18 @@ fn path_ids(path: &str) -> Option<(u16, u16)> {
     ))
 }
 
+fn normalize_axis(value: i32, min: i32, max: i32, code: gilrs_core::EvCode) -> f32 {
+    use gilrs_core::native_ev_codes::{AXIS_LT2, AXIS_RT2};
+    // Windows gamepad triggers report pressure, with zero at release
+    // (gilrs-core's windows_wgi/gamepad.rs::axis_info). Treating that
+    // range as a centred stick made release -1, so relative zoom could not
+    // arm and would keep zooming after the trigger was released.
+    if cfg!(windows) && min >= 0 && max > min && matches!(code, AXIS_LT2 | AXIS_RT2) {
+        return ((f64::from(value) - f64::from(min)) / (f64::from(max) - f64::from(min))).clamp(0.0, 1.0) as f32;
+    }
+    normalize(value, min, max)
+}
+
 fn normalize(value: i32, min: i32, max: i32) -> f32 {
     if max <= min {
         return 0.0;
@@ -452,6 +464,44 @@ fn decode_hid(state: &mut Device, data: &[u8]) -> [bool; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn joystick_trigger_pressure_releases_at_zero_and_arms_relative_flycam_zoom() {
+        use crate::joystick::{Controller, Settings, Snapshot};
+        use gilrs_core::native_ev_codes::{AXIS_LSTICKX, AXIS_LT2, AXIS_RT2};
+        assert_eq!(normalize_axis(50, 0, 100, AXIS_LSTICKX), 0.0, "unsigned sticks stay centred");
+        for code in [AXIS_LT2, AXIS_RT2] {
+            assert_eq!(normalize_axis(0, 0, i32::MAX, code), 0.0);
+            assert_eq!(normalize_axis(i32::MAX, 0, i32::MAX, code), 1.0);
+            let mut settings = Settings {
+                enabled: true,
+                mapping: [-1; super::super::CHANNELS],
+                ..Default::default()
+            };
+            settings.mapping[6] = 0;
+            settings.flycam.gain[6] = 1.0;
+            settings.flycam.feather = 0.0;
+            let mut snapshot = Snapshot {
+                devices: vec![Device::new("test".into(), "Trigger".into(), 1)],
+                updated: Some(Instant::now()),
+                ..Default::default()
+            };
+            let mut controller = Controller::default();
+            let mut camera = crate::joystick::flycam::Flycam::from_view(glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Z, 1.0);
+            controller.sample(&snapshot, &settings, true, true, 0.1);
+            snapshot.devices[0].axes[0] = normalize_axis(i32::MAX, 0, i32::MAX, code);
+            camera.step(controller.sample(&snapshot, &settings, true, true, 0.1).axes, &settings, 0.1);
+            assert!(
+                camera.fov < 0.95,
+                "pressing a trigger must change the lens without crossing a false centre"
+            );
+            let held = camera.fov;
+            snapshot.devices[0].axes[0] = normalize_axis(0, 0, i32::MAX, code);
+            camera.step(controller.sample(&snapshot, &settings, true, true, 0.1).axes, &settings, 0.1);
+            assert_eq!(camera.fov, held, "release must stop relative zoom");
+        }
+    }
 
     #[test]
     fn joystick_native_ranges_do_not_overflow() {

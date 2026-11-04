@@ -262,14 +262,24 @@ pub(crate) enum Done {
     Pick(Option<Vec3>),
 }
 
-/// Where the backend runs.
+/// What the surface is made from (the window), kept alive with the
+/// backend: dropped after it, or kept by a render thread left behind in
+/// the driver, which may still be in acquire / present on its swapchain.
+pub(crate) type KeepAlive = Arc<dyn std::any::Any + Send + Sync>;
+
+/// Where the backend runs. The backend drops before its keep-alive
+/// (field order).
 pub(crate) enum Host {
     /// On the calling thread (AURORA_RENDER_THREAD=0).
-    Inline(Box<Backend>),
+    Inline(
+        Box<Backend>,
+        // only held, to drop after the backend
+        #[allow(dead_code)] KeepAlive,
+    ),
     Thread {
         owner: Owner<Job, Done>,
-        /// Gives the backend back when it ends.
-        thread: Option<std::thread::JoinHandle<Option<Backend>>>,
+        /// Gives the backend and its keep-alive back when it ends.
+        thread: Option<std::thread::JoinHandle<Option<(Backend, KeepAlive)>>>,
     },
 }
 
@@ -280,18 +290,18 @@ pub(crate) fn thread_wanted(var: Option<&str>) -> bool {
 }
 
 impl Host {
-    pub fn new(backend: Backend, threaded: bool) -> Host {
+    pub fn new(backend: Backend, keep: KeepAlive, threaded: bool) -> Host {
         if !threaded {
-            return Host::Inline(Box::new(backend));
+            return Host::Inline(Box::new(backend), keep);
         }
         let (owner, worker) = handoff();
         // the backend goes to the thread; it comes back only if the thread
         // cannot be started
-        let slot = Arc::new(Mutex::new(Some(backend)));
+        let slot = Arc::new(Mutex::new(Some((backend, keep))));
         let for_thread = slot.clone();
         let spawned = std::thread::Builder::new().name("aurora-render".into()).spawn(move || {
-            let backend = for_thread.lock().take();
-            backend.map(|backend| run(backend, worker))
+            let taken = for_thread.lock().take();
+            taken.map(|(backend, keep)| (run(backend, worker), keep))
         });
         match spawned {
             Ok(thread) => Host::Thread {
@@ -301,7 +311,7 @@ impl Host {
             Err(e) => {
                 log::warn!("render thread not started ({e}): rendering on the main thread");
                 match slot.lock().take() {
-                    Some(backend) => Host::Inline(Box::new(backend)),
+                    Some((backend, keep)) => Host::Inline(Box::new(backend), keep),
                     // the closure never ran, so the backend is still there;
                     // were it not, every hand-over would report the worker gone
                     None => Host::Thread { owner, thread: None },
@@ -333,11 +343,16 @@ impl Drop for Host {
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 if !t.is_finished() {
+                    // the window stays with it (its keep-alive)
                     log::error!("render thread still in the GPU after {LEAVE_WAIT:?}: left behind");
                     return;
                 }
                 match t.join() {
-                    Ok(backend) => drop(backend),
+                    Ok(Some((backend, keep))) => {
+                        drop(backend);
+                        drop(keep);
+                    }
+                    Ok(None) => {}
                     Err(_) => log::error!("render thread ended by a panic"),
                 }
             }

@@ -10,6 +10,7 @@
 //! post pass's uniforms, with no read back to the CPU. Classic skies (probe
 //! ambiance 0) get the exposure 1, as there.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 use std::sync::Arc;
@@ -183,7 +184,7 @@ impl Exposure {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("auto exposure"),
             layout: Some(&pipeline_layout),
             module: &module,

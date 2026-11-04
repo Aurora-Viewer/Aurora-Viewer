@@ -24,15 +24,13 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     crate::ui::widgets::section_header(ui, p, "file-info-filled", aurora_i18n::tr!("workspace-land-identity"));
     row(ui, p, aurora_i18n::tr!("common-name-2"), |ui| {
         s.name.sync(&parcel.name);
-        let r = crate::ui::widgets::text_field(ui, can_identity, &mut s.name.text, |b, _| {
-            egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
-        });
-        // validateASCIIPrintableNoPipe, on what is typed (a name set
-        // elsewhere keeps its other characters)
-        if r.changed() {
-            let base = s.name.base.clone();
-            s.name.text.retain(|c| ((' '..='~').contains(&c) && c != '|') || base.contains(c));
-        }
+        let r = crate::ui::widgets::restricted_text_field(
+            ui,
+            can_identity,
+            &mut s.name.text,
+            crate::ui::widgets::TextPolicy::PrintableNoPipe,
+            |b, _| egui::TextEdit::singleline(b).desired_width(f32::INFINITY),
+        );
         if let Some(name) = s.name.after(&r) {
             world.land.update(|u| u.name = name);
         }

@@ -1,4 +1,4 @@
-//! A folder selection keeps one draft per successfully associated mesh family.
+//! Folder imports retain mesh families and separately selectable glTF materials.
 use super::*;
 
 pub(in crate::imports) fn load(
@@ -29,7 +29,7 @@ pub(in crate::imports) fn load(
         if consumed.contains(&lods::identity(path)) {
             continue;
         }
-        let mut loaded = super::load(path, Choice::Bulk, options, sound_limit, prefs, false)
+        let mut loaded = super::load_selected(path, Choice::Bulk, options, sound_limit, prefs, false, [true; 5])
             .unwrap_or_else(|error| vec![Entry::new(path.clone(), Err(error.to_string()), options)]);
         let size = loaded
             .iter()

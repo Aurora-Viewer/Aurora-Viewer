@@ -182,6 +182,40 @@ fn sphere_one_face_outward_normals() {
 }
 
 #[test]
+fn tortured_sphere_keeps_its_lantern_body_and_collars_after_decoding() {
+    let mut intended = sphere_params();
+    intended.path.scale = [1.0, 2.0];
+    intended.path.twist_begin = -0.5;
+    intended.path.twist_end = -0.5;
+    intended.profile.hollow = 0.6;
+    let decoded = intended.to_raw().to_params();
+    for detail in DETAIL_SCALES {
+        let expected = generate_volume(&intended, detail);
+        let actual = generate_volume(&decoded, detail);
+        check_mesh(&actual);
+        assert_eq!(actual.faces.len(), expected.faces.len());
+        for (got, want) in actual.faces.iter().zip(&expected.faces) {
+            assert_eq!(got.face_id, want.face_id);
+            assert_eq!(got.indices, want.indices);
+            assert_eq!(got.positions.len(), want.positions.len());
+            for (a, b) in got.positions.iter().zip(&want.positions) {
+                assert!((Vec3::from(*a) - Vec3::from(*b)).length() < 1e-5, "detail {detail}: {a:?} != {b:?}");
+            }
+        }
+        // The reversed half-profile sweeps around a negative path radius.
+        // Its body extends beyond the ordinary sphere and the hollow's
+        // closing faces form collars instead of collapsing onto the X axis.
+        let radial = |p: &[f32; 3]| p[1].hypot(p[2]);
+        let outer = actual.faces.iter().find(|f| f.face_id == LL_FACE_OUTER_SIDE_0).unwrap();
+        assert!(outer.positions.iter().map(radial).fold(0.0, f32::max) > 1.3);
+        for id in [LL_FACE_PROFILE_BEGIN, LL_FACE_PROFILE_END] {
+            let collar = actual.faces.iter().find(|f| f.face_id == id).unwrap();
+            assert!(collar.positions.iter().all(|p| radial(p) > 0.49));
+        }
+    }
+}
+
+#[test]
 fn torus_one_face() {
     let p = torus_params();
     assert_eq!(num_faces(&p), 1);

@@ -81,6 +81,7 @@ mod tests {
                     edit_tracking: None,
                     eye_offset: None,
                     draw_distance: 128.0,
+                    region_width: REGION_WIDTH,
                     aspect,
                 };
                 camera.update(&mut world, &settings, &input);
@@ -132,6 +133,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: None,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             aspect: 1.55,
         };
         let mut camera = Camera::default();
@@ -170,6 +172,7 @@ mod tests {
                     edit_tracking: None,
                     eye_offset: None,
                     draw_distance: 128.0,
+                    region_width: REGION_WIDTH,
                     aspect: 1.55,
                 },
             );

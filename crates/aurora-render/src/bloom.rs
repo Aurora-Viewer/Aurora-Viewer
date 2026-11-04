@@ -10,6 +10,8 @@
 //! levels, [`GAIN`] times brighter. Its targets exist only while the effect
 //! is on: off, it costs nothing.
 
+use crate::pipeline_cache::CachedPipelines;
+
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The most levels: the last one, 1/64 of the image, is about as wide as
 /// the halo should reach.
@@ -179,7 +181,7 @@ impl Bloom {
                 dst_factor: wgpu::BlendFactor::One,
                 operation: wgpu::BlendOperation::Add,
             };
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pl),
                 vertex: wgpu::VertexState {

@@ -80,6 +80,19 @@ pub fn ray_faces_with_sidedness<'a>(
     dir: Vec3,
     two_sided: impl Fn(usize) -> bool,
 ) -> Option<FaceHit> {
+    ray_faces_filtered(faces, model, origin, dir, two_sided, |_| true)
+}
+
+/// Keep searching after a rejected texel, including later triangles of the
+/// same material face (a mesh can fold over itself).
+pub fn ray_faces_filtered<'a>(
+    faces: impl Iterator<Item = FaceTris<'a>>,
+    model: Mat4,
+    origin: Vec3,
+    dir: Vec3,
+    two_sided: impl Fn(usize) -> bool,
+    accepts: impl Fn(&FaceHit) -> bool,
+) -> Option<FaceHit> {
     let inv = model.inverse();
     let o = inv.transform_point3(origin);
     let d = inv.transform_vector3(dir);
@@ -109,13 +122,16 @@ pub fn ray_faces_with_sidedness<'a>(
             } else {
                 Vec3::ZERO
             };
-            best = Some(FaceHit {
+            let hit = FaceHit {
                 face: f.face,
                 t,
                 uv,
                 normal,
                 binormal,
-            });
+            };
+            if accepts(&hit) {
+                best = Some(hit);
+            }
         }
     }
     // the object-space t equals the world-space t: the direction was
@@ -229,5 +245,25 @@ mod tests {
         assert_eq!(media_pixel(Vec2::new(0.0, 0.5), (1024, 1024), (512, 512)), (0, 0));
         let st = te_transform(Vec2::new(0.25, 0.5), [1.0, 1.0], [0.0, 0.0], 0.0);
         assert!((st - Vec2::new(0.25, 0.5)).length() < 1e-5);
+    }
+
+    #[test]
+    fn rejecting_a_texel_keeps_later_triangles_of_the_same_face() {
+        let positions = [
+            [-1.0, -1.0, 1.0],
+            [1.0, -1.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [-1.0, -1.0, 2.0],
+            [1.0, -1.0, 2.0],
+            [0.0, 1.0, 2.0],
+        ];
+        let faces = std::iter::once(FaceTris {
+            face: 3,
+            positions: &positions,
+            uvs: &[],
+            indices: &[0, 1, 2, 3, 4, 5],
+        });
+        let hit = ray_faces_filtered(faces, Mat4::IDENTITY, Vec3::ZERO, Vec3::Z, |_| true, |hit| hit.t > 1.5).unwrap();
+        assert_eq!((hit.face, hit.t), (3, 2.0));
     }
 }

@@ -43,7 +43,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, catalog: &inventory::Catalo
             }
             ui.add_space(8.0);
             ui.label(aurora_i18n::tr!("ao-migrate-destination"));
-            ui.add(egui::TextEdit::singleline(&mut migration.name).desired_width(f32::INFINITY));
+            widgets::restricted_text_field(ui, true, &mut migration.name, widgets::TextPolicy::AoName, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
+            });
             if let Err(reason) = migration.validate(catalog) {
                 ui.label(RichText::new(reason).color(p.warn));
             }

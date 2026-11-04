@@ -19,7 +19,11 @@ pub struct MultiFacts {
     pub add_friends: bool,
     /// "can_delete": everyone chosen is a friend.
     pub remove_friends: bool,
-    /// "can_call": voice is on (LLAvatarActions::canCall).
+    /// "can_send_im": RLVa `@startim` allows a conference with every one of
+    /// them (FSNameListAvatarMenu, RlvActions::canStartIM).
+    pub im: bool,
+    /// "can_call": voice is on (LLAvatarActions::canCall), and the
+    /// conference may start (startAdhocCall refuses it under `@startim`).
     pub call: bool,
     /// "can_offer_teleport": every one of them can be offered one.
     pub offer_teleport: bool,
@@ -31,10 +35,12 @@ pub fn facts(world: &World, ids: &[Uuid]) -> MultiFacts {
     // LLAvatarActions::canOfferTeleport: not ourselves, and a friend who
     // is offline cannot receive one
     let reachable = |id: &Uuid| *id != me && world.social.friends.iter().find(|f| f.id == *id).is_none_or(|f| f.online);
+    let im = ids.iter().filter(|id| **id != me).all(|id| world.rlva_can_start_im(*id));
     MultiFacts {
         add_friends: ids.len() == 1 && !ids.iter().any(friend),
         remove_friends: !ids.is_empty() && ids.iter().all(friend),
-        call: world.calls.voice_enabled && !ids.is_empty(),
+        im,
+        call: world.calls.voice_enabled && !ids.is_empty() && im,
         offer_teleport: !ids.is_empty() && ids.iter().all(reachable),
     }
 }
@@ -62,7 +68,7 @@ pub fn avatars_menu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid])
     }
     menu::separator(ui, p);
     // PeopleContextMenu::startConference, LLAvatarActions::startAdhocCall
-    if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-context-multi-im")) {
+    if menu::item_if(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-context-multi-im"), f.im) {
         act(CtxAction::Conference(ids.to_vec()));
     }
     if menu::item_if(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"), f.call) {

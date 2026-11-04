@@ -233,10 +233,13 @@ fn our_own_profile_in_edit_mode() {
     let texts = body_texts(&world, &mut w, 960.0);
     let tr = aurora_i18n::text;
     assert!(texts.iter().any(|t| t == tr("ui-profile-aurora-edit")));
+    // our own notes are there too (LLPanelProfile always has
+    // panel_profile_notes, #1737); rights and friendship are not
+    assert!(texts.iter().any(|t| t == tr("common-notes")));
     assert!(
         texts
             .iter()
-            .all(|t| t != tr("common-notes") && t != tr("ui-profile-aurora-permissions") && t != tr("ui-profile-aurora-friendship"))
+            .all(|t| t != tr("ui-profile-aurora-permissions") && t != tr("ui-profile-aurora-friendship"))
     );
     w.editing = true;
     w.about.text.push_str(" !");
@@ -348,9 +351,8 @@ fn a_click_on_a_right_we_grant() {
 }
 
 #[test]
-fn no_notes_tab_on_our_own_profile() {
-    assert_eq!(tabs_of(false), [TAB_SL, TAB_PICKS, TAB_CLASSIFIEDS, TAB_RL, TAB_FEED, TAB_NOTES]);
-    assert_eq!(tabs_of(true), [TAB_SL, TAB_PICKS, TAB_CLASSIFIEDS, TAB_RL, TAB_FEED]);
+fn the_notes_tab_is_on_every_profile() {
+    assert_eq!(tabs_of(), [TAB_SL, TAB_PICKS, TAB_CLASSIFIEDS, TAB_RL, TAB_FEED, TAB_NOTES]);
 }
 
 #[test]

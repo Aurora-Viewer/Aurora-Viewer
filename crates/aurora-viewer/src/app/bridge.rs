@@ -65,6 +65,7 @@ impl App {
                     crate::ao::Account {
                         selected,
                         enabled: std::env::var("AURORA_DEMO_MOVELOCK").is_ok_and(|mode| mode != "native-missing"),
+                        ..Default::default()
                     },
                 );
             }
@@ -79,6 +80,7 @@ impl App {
         if !online {
             return;
         }
+        self.bridge_runtime.set_enabled(self.settings.use_bridge, Instant::now());
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
         let effective = self.native_anchor.bridge_preferences(*prefs);
         self.bridge_runtime.update(&mut self.world, &effective, online, Instant::now());
@@ -172,6 +174,11 @@ impl App {
                 },
                 crate::world::notice_topics::Topic::Items,
             );
+            return;
+        }
+        if !self.settings.use_bridge {
+            self.world
+                .system_notice(aurora_i18n::tr!("bridge-disabled"), crate::world::notice_topics::Topic::Items);
             return;
         }
         let _ = self.sync_bridge_queries();

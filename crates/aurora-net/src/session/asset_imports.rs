@@ -87,7 +87,11 @@ struct Pending {
 }
 
 /// LLViewerInventoryItem::updateServer(false), including the legacy checksum.
-fn permission_update(item: &InvItem, rights: crate::inventory::upload::Permissions, callback: u32) -> update_inventory_item::InventoryData {
+pub(super) fn permission_update(
+    item: &InvItem,
+    rights: crate::inventory::upload::Permissions,
+    callback: u32,
+) -> update_inventory_item::InventoryData {
     let uuid_sum = |id: Uuid| {
         id.as_bytes()
             .as_chunks::<4>()

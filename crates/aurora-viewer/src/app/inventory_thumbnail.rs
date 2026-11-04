@@ -90,9 +90,7 @@ impl App {
     }
 
     pub(super) fn inventory_image_action(&mut self, request: Uuid, item: Uuid, input: ImageInput) {
-        if self.inventory_images.requests.len() >= 4
-            || self.inventory_ui.pending.is_some()
-            || !rules::mutable(&self.world.inventory, item, &self.settings.inventory.protected)
+        if self.inventory_images.requests.len() >= 4 || self.inventory_ui.pending.is_some() || !rules::mutable(&self.world.inventory, item)
         {
             self.finish_inventory_image(
                 request,
@@ -269,7 +267,7 @@ impl App {
                         });
                         break;
                     }
-                    if !rules::mutable(&self.world.inventory, item, &self.settings.inventory.protected) {
+                    if !rules::mutable(&self.world.inventory, item) {
                         self.finish_inventory_image(
                             reply.request,
                             Some(aurora_i18n::tr!("app-inventory-thumbnail-this-item-can-no-longer-be-modified").into()),

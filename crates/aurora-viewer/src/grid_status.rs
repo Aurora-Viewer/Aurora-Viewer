@@ -292,7 +292,8 @@ fn decode_entities(s: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        let Some(end) = rest[..rest.len().min(12)].find(';') else {
+        // The byte limit may split UTF-8; only the ASCII delimiter becomes a slice boundary.
+        let Some(end) = rest.as_bytes().iter().take(12).position(|&b| b == b';') else {
             out.push('&');
             rest = &rest[1..];
             continue;

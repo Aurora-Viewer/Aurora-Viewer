@@ -45,16 +45,16 @@ pub fn reveal(folder: &Path, file: Option<&Path>) {
                 cmd.arg(folder);
             }
         }
-        cmd.spawn()
+        crate::open_path::spawn(&mut cmd)
     } else if cfg!(target_os = "macos") {
         let mut cmd = std::process::Command::new("open");
         match file {
             Some(f) => cmd.arg("-R").arg(f),
             None => cmd.arg(folder),
         };
-        cmd.spawn()
+        crate::open_path::spawn(&mut cmd)
     } else {
-        std::process::Command::new("xdg-open").arg(folder).spawn()
+        crate::open_path::open(folder)
     };
     if let Err(e) = result {
         log::warn!("photo: cannot open {}: {e}", folder.display());
@@ -78,14 +78,7 @@ fn select_arg(cmd: &mut std::process::Command, file: &Path) {
 
 /// Open a photo with the system's viewer.
 pub fn open(path: &Path) {
-    let result = if cfg!(windows) {
-        std::process::Command::new("explorer").arg(path).spawn()
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(path).spawn()
-    } else {
-        std::process::Command::new("xdg-open").arg(path).spawn()
-    };
-    if let Err(e) = result {
+    if let Err(e) = crate::open_path::open(path) {
         log::warn!("photo: cannot open {}: {e}", path.display());
     }
 }

@@ -92,18 +92,106 @@ fn cstring(r: &mut ByteReader) -> Result<String, AssetError> {
 }
 
 pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
-    parse(data, false)
+    parse(data, false).map(|(animation, _)| animation)
+}
+
+/// One joint constraint of a keyframe animation
+/// (LLKeyframeMotion::JointConstraintSharedData).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Constraint {
+    pub chain_length: u8,
+    /// `CONSTRAINT_TYPE_POINT` (0) or `CONSTRAINT_TYPE_PLANE` (1).
+    pub constraint_type: u8,
+    pub source_volume: String,
+    pub source_offset: Vec3,
+    /// A collision volume, or "GROUND".
+    pub target_volume: String,
+    pub target_offset: Vec3,
+    pub target_dir: Vec3,
+    pub ease_in_start: f32,
+    pub ease_in_stop: f32,
+    pub ease_out_start: f32,
+    pub ease_out_stop: f32,
+}
+
+/// The animation with its constraints. A file that ends before them or holds
+/// a malformed one still plays its keyframes, without constraints.
+pub fn parse_animation_with_constraints(data: &[u8]) -> Result<(Animation, Vec<Constraint>), AssetError> {
+    let (animation, length) = parse(data, false)?;
+    let constraints = data
+        .get(length..)
+        .and_then(|tail| read_constraints(tail, animation.joints.len()))
+        .unwrap_or_default();
+    Ok((animation, constraints))
+}
+
+fn read_constraints(tail: &[u8], num_joints: usize) -> Option<Vec<Constraint>> {
+    fn volume(r: &mut ByteReader, field: &'static str) -> Option<String> {
+        let name = r.take(16, field).ok()?;
+        let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
+        Some(String::from_utf8_lossy(&name[..end]).into_owned())
+    }
+    fn vector(r: &mut ByteReader, field: &'static str) -> Option<Vec3> {
+        let v = Vec3::new(r.f32(field).ok()?, r.f32(field).ok()?, r.f32(field).ok()?);
+        v.is_finite().then_some(v)
+    }
+    fn time(r: &mut ByteReader, field: &'static str) -> Option<f32> {
+        r.f32(field).ok().filter(|v| v.is_finite())
+    }
+    let mut r = ByteReader::new(tail);
+    let count = r.i32("constraints").ok()?;
+    if !(0..=10).contains(&count) {
+        return None;
+    }
+    let mut constraints = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let chain_length = r.u8("chain length").ok()?;
+        let constraint_type = r.u8("constraint type").ok()?;
+        if usize::from(chain_length) > num_joints || constraint_type > 1 {
+            return None;
+        }
+        constraints.push(Constraint {
+            chain_length,
+            constraint_type,
+            source_volume: volume(&mut r, "source volume")?,
+            source_offset: vector(&mut r, "source offset")?,
+            target_volume: volume(&mut r, "target volume")?,
+            target_offset: vector(&mut r, "target offset")?,
+            target_dir: vector(&mut r, "target direction")?,
+            ease_in_start: time(&mut r, "ease in start")?,
+            ease_in_stop: time(&mut r, "ease in stop")?,
+            ease_out_start: time(&mut r, "ease out start")?,
+            ease_out_stop: time(&mut r, "ease out stop")?,
+        });
+    }
+    Some(constraints)
 }
 
 /// Validate the entire native file before paying for its upload. Playback
 /// tolerates old files without constraints; imports retain and validate them.
 pub fn parse_animation_upload(data: &[u8]) -> Result<Animation, AssetError> {
+    parse_upload(data).map(|(animation, _)| animation)
+}
+
+/// The animation of a native file and the bytes to upload. The upload path
+/// sends what LLKeyframeMotion::deserialize read back through dumpToFile, so
+/// it never holds a priority above 6 nor anything past the last constraint.
+pub fn prepare_animation_upload(data: &[u8]) -> Result<(Animation, Vec<u8>), AssetError> {
+    let (animation, length) = parse_upload(data)?;
+    let mut bytes = data[..length].to_vec();
+    bytes[4..8].copy_from_slice(&animation.base_priority.to_le_bytes());
+    Ok((animation, bytes))
+}
+
+fn parse_upload(data: &[u8]) -> Result<(Animation, usize), AssetError> {
     if data.len() > 64 * 1024 * 1024 {
         return Err(AssetError::TooLarge("animation file"));
     }
     parse(data, true)
 }
-fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
+
+/// The animation and the number of bytes it was read from.
+fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
     let mut r = ByteReader::new(data);
     let version = r.u16("version")?;
     let sub_version = r.u16("sub_version")?;
@@ -113,7 +201,9 @@ fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
         _ => return Err(AssetError::Unsupported(format!("anim version {version}.{sub_version}"))),
     };
     let priority = r.i32("base_priority")?;
-    if upload && !(-1..=6).contains(&priority) {
+    // LLKeyframeMotion::deserialize lowers a priority above 6 and refuses only
+    // those under USE_MOTION_PRIORITY (-1).
+    if upload && priority < -1 {
         return Err(AssetError::invalid("animation priority"));
     }
     let base_priority = priority.clamp(-1, 6);
@@ -244,11 +334,8 @@ fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
                 }
             }
         }
-        if r.remaining() != 0 {
-            return Err(AssetError::invalid("trailing animation bytes"));
-        }
     }
-    Ok(Animation {
+    let animation = Animation {
         base_priority,
         duration,
         emote_name,
@@ -259,7 +346,8 @@ fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
         ease_out: ease_out.max(0.0),
         hand_pose,
         joints,
-    })
+    };
+    Ok((animation, data.len() - r.remaining()))
 }
 
 impl Animation {
@@ -446,6 +534,29 @@ mod tests {
         let last = constrained.len() - 4;
         constrained[last..].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(parse_animation_upload(&constrained).is_err());
+    }
+
+    #[test]
+    fn native_uploads_are_prepared_as_the_legacy_loader_reads_them() {
+        let valid = build();
+        let (_, bytes) = prepare_animation_upload(&valid).expect("valid file");
+        assert_eq!(bytes, valid);
+
+        let mut high = valid.clone();
+        high[4..8].copy_from_slice(&7i32.to_le_bytes());
+        high.extend([1, 2, 3, 4, 5]);
+        let (animation, bytes) = prepare_animation_upload(&high).expect("high priority and trailing bytes");
+        assert_eq!(animation.base_priority, 6);
+        let mut expected = valid.clone();
+        expected[4..8].copy_from_slice(&6i32.to_le_bytes());
+        assert_eq!(bytes, expected);
+        assert_eq!(prepare_animation_upload(&bytes).expect("stable").1, bytes);
+
+        let mut low = valid.clone();
+        low[4..8].copy_from_slice(&(-1i32).to_le_bytes());
+        assert_eq!(prepare_animation_upload(&low).expect("motion priority").1, low);
+        low[4..8].copy_from_slice(&(-2i32).to_le_bytes());
+        assert!(prepare_animation_upload(&low).is_err());
     }
 
     #[test]

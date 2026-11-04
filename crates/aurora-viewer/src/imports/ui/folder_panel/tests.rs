@@ -26,8 +26,7 @@ fn import_folder_preview_folds_without_creating_folders_or_losing_edited_paths()
     };
     imports.active = Some(imports.entries[0].id);
     imports.folders.enabled = true;
-    let prefs = crate::ui::inventory::InventoryPreferences::default();
-    imports.sync_folder_plan(&world, &prefs);
+    imports.sync_folder_plan(&world);
     let frame = |imports: &mut Imports, events| {
         let actions: Vec<Action> = Vec::new();
         let mut output = ctx.run_ui(

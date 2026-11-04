@@ -1,0 +1,77 @@
+name: Platform needed?
+description: >
+  needed=true when the change can build or behave differently on the given
+  platform (macos or linux), so that the macOS and Linux jobs only work
+  when they can find something: Windows builds and tests every change, and
+  the macOS runners (five per organisation, shared by every pull request
+  and queue entry) were the merge queue's bottleneck. A push to main gets
+  the full run whenever code changed: it is the net for what this guess
+  misses. Needs a full checkout (fetch-depth 0).
+inputs:
+  platform:
+    description: "macos or linux"
+    required: true
+outputs:
+  needed:
+    description: "'true' when the platform's jobs should run"
+    value: ${{ steps.scope.outputs.needed }}
+runs:
+  using: composite
+  steps:
+    - id: scope
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        answer() {
+          echo "needed=$1" >> "$GITHUB_OUTPUT"
+          echo "$PLATFORM jobs: $1 ($2)"
+          echo "$PLATFORM jobs: **$1** ($2)" >> "$GITHUB_STEP_SUMMARY"
+        }
+        case "$PLATFORM" in
+          # files that reach this platform's build whatever they contain,
+          # besides the dependencies, toolchain, build scripts and CI
+          # actions (below). macOS: the renderer and its shaders (Apple's
+          # Metal compiler is the one that refused a shader Vulkan took)
+          # and the app bundle. Linux: its packaging.
+          macos)
+            own='^(crates/aurora-render/|packaging/macos/|\.github/workflows/macos\.yml$)|\.wgsl$' ;;
+          linux)
+            own='^(packaging/linux/|\.github/workflows/ci\.yml$)' ;;
+          *)
+            echo "::error::unknown platform '$PLATFORM'"
+            exit 1 ;;
+        esac
+        case "${{ github.event_name }}" in
+          pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+          merge_group)  base="${{ github.event.merge_group.base_sha }}" ;;
+          *)            base="${{ github.event.before }}" ;;
+        esac
+        # three dots: the change itself, not what main gained meanwhile
+        if ! files=$(git diff --name-only "$base"...HEAD 2>/dev/null) || [ -z "$files" ]; then
+          answer true "no usable diff against $base"
+          exit 0
+        fi
+        # the same list as the code-changed action
+        docs='^(docs/|assets/|[^/]*\.md$|LICENSE$|\.github/(pull_request_template\.md|release\.yml|dependabot\.yml)$)'
+        if ! echo "$files" | grep -qvE "$docs"; then
+          answer false "documentation only"
+          exit 0
+        fi
+        if [ "${{ github.event_name }}" = push ]; then
+          answer true "main: the full run after every merge"
+          exit 0
+        fi
+        common='^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|crates/[^/]+/(Cargo\.toml|build\.rs)$|\.github/actions/)'
+        if hit=$(echo "$files" | grep -E "$common|$own" | head -n 1) && [ -n "$hit" ]; then
+          answer true "$hit"
+          exit 0
+        fi
+        # Rust lines changed in code of this platform's own: under or near
+        # its cfg, so that a big file with a few such lines (app.rs) only
+        # counts when the change is in them (platform_code.py)
+        if hit=$(python3 "$GITHUB_ACTION_PATH/platform_code.py" "$PLATFORM" "$base" HEAD); then
+          answer true "$hit changes $PLATFORM code"
+          exit 0
+        fi
+        answer false "no $PLATFORM code, dependency or build file changed"

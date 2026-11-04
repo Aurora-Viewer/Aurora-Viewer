@@ -17,9 +17,10 @@
 //!   greeter object the viewer has never seen.
 
 use super::{HANDLE, floor_at, height, prim, shape, te};
+use aurora_llsd::{Llsd, llsd_map};
 use aurora_net::NetCommand;
 use aurora_net::NetEvent;
-use aurora_net::experience::{ExperienceDetails, ExperiencePermission, ExperiencePermissionChange};
+use aurora_net::experience::{ExperienceDetails, ExperienceListKind, ExperiencePermission, ExperiencePermissionChange};
 use aurora_prim::ExtraParams;
 use aurora_prim::params::*;
 use glam::{Quat, Vec3};
@@ -112,6 +113,8 @@ pub enum Reply {
     Events(Vec<NetEvent>),
     /// A message of the object's script in the local chat.
     Say(String),
+    /// A message of the script, and the event it gave the experience log.
+    SayLogged(String, Box<NetEvent>),
     /// Nothing visible (logged).
     Nothing,
 }
@@ -221,6 +224,7 @@ impl ExperienceDemo {
             NetCommand::ExperienceInfo(ids) if ids.iter().any(|id| *id == EXPERIENCE || *id == GREETER_EXPERIENCE) => Some(Reply::Events(
                 vec![NetEvent::ExperienceInfo(ids.iter().map(|id| details(*id)).collect())],
             )),
+            NetCommand::MyExperiences => Some(Reply::Events(self.lists())),
             NetCommand::ExperiencePermission { experience, change } if *experience == EXPERIENCE || *experience == GREETER_EXPERIENCE => {
                 let permission = match change {
                     ExperiencePermissionChange::Query => self.permission(*experience),
@@ -240,6 +244,28 @@ impl ExperienceDemo {
         }
     }
 
+    /// The My Experiences tabs: Allowed and Blocked follow the agent's
+    /// choices, the club's experience is administered and the parcel's
+    /// contributed.
+    fn lists(&self) -> Vec<NetEvent> {
+        let with = |wanted: ExperiencePermission| {
+            [EXPERIENCE, GREETER_EXPERIENCE]
+                .into_iter()
+                .filter(|id| self.permission(*id) == wanted)
+                .collect::<Vec<_>>()
+        };
+        [
+            (ExperienceListKind::Allowed, with(ExperiencePermission::Allowed)),
+            (ExperienceListKind::Blocked, with(ExperiencePermission::Blocked)),
+            (ExperienceListKind::Admin, vec![EXPERIENCE]),
+            (ExperienceListKind::Contributor, vec![GREETER_EXPERIENCE]),
+            (ExperienceListKind::Owned, Vec::new()),
+        ]
+        .into_iter()
+        .map(|(kind, ids)| NetEvent::ExperienceList { kind, ids: Some(ids) })
+        .collect()
+    }
+
     /// llRequestExperiencePermissions from any event: the simulator asks
     /// only when the agent has not chosen yet.
     fn triggered(&mut self, source: Source) -> Reply {
@@ -252,10 +278,31 @@ impl ExperienceDemo {
 
     /// What the script does once allowed.
     fn act(&self, source: Source) -> Reply {
-        if source.questions & TELEPORT != 0 {
-            Reply::Events(teleport())
+        let teleports = source.questions & TELEPORT != 0;
+        let environment = source.questions & ENVIRONMENT != 0;
+        // What the simulator reports for the Events tab of My Experiences.
+        let logged = NetEvent::ExperienceLog(aurora_net::ExperienceLogEvent {
+            experience: source.experience,
+            permission: if teleports {
+                11
+            } else if environment {
+                17
+            } else {
+                3
+            },
+            owner: Uuid::nil(),
+            object_name: source.name.to_owned(),
+            parcel_name: "Plaza".into(),
+            attachment: false,
+        });
+        if teleports {
+            let mut events = teleport();
+            events.insert(0, logged);
+            Reply::Events(events)
+        } else if environment {
+            Reply::Events(vec![logged, self::environment(source.experience)])
         } else {
-            Reply::Say(aurora_i18n::tr!("demo-experience-greeter-done").into())
+            Reply::SayLogged(aurora_i18n::tr!("demo-experience-greeter-done").into(), Box::new(logged))
         }
     }
 }
@@ -308,6 +355,29 @@ fn details(id: Uuid) -> ExperienceDetails {
         owner: Uuid::from_u128(0x2222),
         group: Uuid::nil(),
         slurl: slurl.into(),
+    }
+}
+
+/// llSetEnvironment of a land experience: a violet sunset over the sky and a
+/// red water fog, over 3 s (PushPartialEnvironment).
+fn environment(experience: Uuid) -> NetEvent {
+    let rgb = |r: f64, g: f64, b: f64| Llsd::Array(vec![r.into(), g.into(), b.into()]);
+    NetEvent::ExperienceEnvironment {
+        experience,
+        message: llsd_map! {
+            "action" => "PushPartialEnvironment",
+            "action_data" => llsd_map! {
+                "transition_time" => 3.0,
+                "settings" => llsd_map! {
+                    "sky" => llsd_map! {
+                        "sunlight_color" => rgb(2.0, 0.6, 1.4),
+                        "blue_horizon" => rgb(0.9, 0.2, 0.6),
+                        "blue_density" => rgb(0.5, 0.1, 0.5),
+                    },
+                    "water" => llsd_map! { "water_fog_color" => rgb(0.6, 0.05, 0.05) },
+                },
+            },
+        },
     }
 }
 
@@ -413,9 +483,11 @@ mod tests {
             questions: TELEPORT,
             region: HANDLE,
         };
-        assert!(matches!(demo.reply(&answer), Some(Reply::Events(e)) if e.len() == 2));
+        assert!(matches!(demo.reply(&answer), Some(Reply::Events(e)) if e.len() == 3 && matches!(e[0], NetEvent::ExperienceLog(_))));
         // allowed now: the next click teleports at once
-        assert!(matches!(demo.reply(&grab()), Some(Reply::Events(e)) if matches!(e[..], [NetEvent::TeleportLocal { .. }, _])));
+        assert!(
+            matches!(demo.reply(&grab()), Some(Reply::Events(e)) if matches!(e[..], [NetEvent::ExperienceLog(_), NetEvent::TeleportLocal { .. }, _]))
+        );
         let block = NetCommand::ExperiencePermission {
             experience: EXPERIENCE,
             change: ExperiencePermissionChange::Block,
@@ -466,7 +538,10 @@ mod tests {
             questions: greeter.questions,
             region: HANDLE,
         };
-        assert!(matches!(demo.reply(&answer), Some(Reply::Say(_))));
+        assert!(matches!(
+            demo.reply(&answer),
+            Some(Reply::Events(events)) if matches!(events[..], [NetEvent::ExperienceLog(_), NetEvent::ExperienceEnvironment { experience: GREETER_EXPERIENCE, .. }])
+        ));
         assert_eq!(demo.permission(GREETER_EXPERIENCE), ExperiencePermission::Allowed);
         assert!(!details(GREETER_EXPERIENCE).invalid());
     }

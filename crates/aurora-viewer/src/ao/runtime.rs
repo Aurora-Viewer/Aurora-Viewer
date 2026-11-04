@@ -33,6 +33,7 @@ struct Cursor {
     signal: Option<Instant>,
     next: Option<Instant>,
     manual: bool,
+    choice_changed: bool,
     cycle: Option<Cycle>,
 }
 
@@ -43,6 +44,8 @@ pub struct Runtime {
     set: Uuid,
     region: Option<u64>,
     cursors: HashMap<(State, Uuid), Cursor>,
+    choices: HashMap<Uuid, Uuid>,
+    choices_changed: bool,
     active: Vec<PlayingAnimation>,
     owned: HashMap<Uuid, Instant>,
     completed: HashSet<Uuid>,
@@ -67,6 +70,8 @@ impl Default for Runtime {
             set: Uuid::nil(),
             region: None,
             cursors: HashMap::new(),
+            choices: HashMap::new(),
+            choices_changed: false,
             active: Vec::new(),
             owned: HashMap::new(),
             completed: HashSet::new(),
@@ -85,6 +90,76 @@ impl Default for Runtime {
 }
 
 impl Runtime {
+    pub fn with_choices(choices: HashMap<Uuid, Uuid>) -> Self {
+        Self {
+            choices,
+            ..Self::default()
+        }
+    }
+
+    /// Local extension of AOSet's session cursors: persist inventory identities,
+    /// so a reordered list still restores the same animation or group.
+    pub fn take_choices(&mut self, set: Option<&Set>) -> Option<HashMap<Uuid, Uuid>> {
+        if !self.choices_changed {
+            return None;
+        }
+        let set = set?;
+        self.choices_changed = false;
+        let mut changed = false;
+        for ((state, slot), cursor) in &mut self.cursors {
+            if !cursor.choice_changed {
+                continue;
+            }
+            let Some(config) = set.animation_config(*state) else { continue };
+            let id = if *slot == config.folder {
+                config.steps.get(cursor.index).map(|s| s.id)
+            } else {
+                config
+                    .tracks
+                    .iter()
+                    .find(|t| t.id == *slot)
+                    .and_then(|t| t.members.get(cursor.index))
+                    .map(|a| a.link)
+            };
+            cursor.choice_changed = false;
+            if let Some(id) = id.filter(|id| !id.is_nil())
+                && !slot.is_nil()
+            {
+                changed |= self.choices.insert(*slot, id) != Some(id);
+            }
+        }
+        changed.then(|| self.choices.clone())
+    }
+
+    fn restore_choices(&mut self, set: &Set) {
+        for state in State::ALL {
+            let Some(config) = set.animation_config(state) else { continue };
+            self.restore_slot(state, config.folder, config.steps.iter().map(|s| s.id));
+            for track in &config.tracks {
+                self.restore_slot(state, track.id, track.members.iter().map(|a| a.link));
+            }
+        }
+    }
+
+    fn restore_slot(&mut self, state: State, slot: Uuid, mut entries: impl Iterator<Item = Uuid>) {
+        let Some(saved) = self.choices.get(&slot) else { return };
+        let index = entries.position(|id| id == *saved).unwrap_or(0);
+        let cursor = self.cursors.entry((state, slot)).or_insert(Cursor {
+            index,
+            manual: true,
+            ..Default::default()
+        });
+        // An editor acknowledgement can select a newly created group before
+        // the refreshed inventory reaches this frame's persistence step.
+        if cursor.manual && cursor.choice_changed {
+            return;
+        }
+        if cursor.index != index {
+            cursor.index = index;
+            cursor.manual = true;
+        }
+    }
+
     pub fn anchor_prepared(&self, region: Option<u64>) -> bool {
         self.region == region && self.anchor_blend.prepared()
     }
@@ -99,6 +174,9 @@ impl Runtime {
         let key = set.map(|s| (s.id, revision));
         if self.preload_key != key {
             self.preload_key = key;
+            if let Some(set) = set {
+                self.restore_choices(set);
+            }
             self.preload.clear();
             let mut seen = HashSet::new();
             if let Some(set) = set {
@@ -164,6 +242,8 @@ impl Runtime {
         c.index = index;
         c.next = None;
         c.manual = true;
+        c.choice_changed = true;
+        self.choices_changed = true;
     }
     /// AOEngine::cycle(CyclePrevious / CycleNext): step the main list of
     /// `state` by hand, wrapping at both ends. Like its resetTimer, the
@@ -208,6 +288,8 @@ impl Runtime {
             c.index = if cycle.random { roll(len) % len } else { (c.index + 1) % len };
         }
         let changed = entered || timeout || c.manual;
+        self.choices_changed |= changed;
+        c.choice_changed |= changed;
         let config_changed = c.cycle.as_ref() != Some(cycle);
         if changed || config_changed {
             c.signal = Some(signal);
@@ -283,6 +365,9 @@ impl Runtime {
             self.cursors.clear();
             self.completed.clear();
             self.set = selected;
+            if let Some(set) = set {
+                self.restore_choices(set);
+            }
         }
         let reassert = frame.region != self.region;
         self.region = frame.region;

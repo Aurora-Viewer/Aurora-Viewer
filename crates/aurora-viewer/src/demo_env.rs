@@ -9,6 +9,9 @@
 //! - `lighting`: the selector and "Personal lighting" open on the region
 //!   sky; a sky is picked (2600), then edited (2900: brightness, haze, sun).
 //! - `list`: the selector with its sky list open (2500).
+//! - `search`: the sky list open (2500), "sunset" typed in its search
+//!   field (2510): the two sunsets only. `search-none`: a long text no name
+//!   contains: the no-match line, cut to the list's width.
 
 use crate::world::eep::{Settings, SkyFrame};
 use crate::world::env_select::{AT_SETTINGS, SettingsKind};
@@ -460,6 +463,8 @@ pub enum Step {
     EditLighting,
     /// Drop the list down.
     OpenList(SettingsKind),
+    /// Type into the open list's search field.
+    Search(SettingsKind, &'static str),
 }
 
 pub fn step(frame: u64) -> Option<Step> {
@@ -471,8 +476,10 @@ pub fn step(frame: u64) -> Option<Step> {
     let lighting = scenario() == "lighting";
     let s = match frame {
         30 => Step::Open { lighting },
-        2500 if scenario() == "list" => Step::OpenList(SettingsKind::Sky),
-        _ if scenario() == "list" => return None,
+        2500 if matches!(scenario(), "list" | "search" | "search-none") => Step::OpenList(SettingsKind::Sky),
+        2510 if scenario() == "search" => Step::Search(SettingsKind::Sky, "sunset"),
+        2510 if scenario() == "search-none" => Step::Search(SettingsKind::Sky, "zzz no sky has a name as long as this one"),
+        _ if matches!(scenario(), "list" | "search" | "search-none") => return None,
         2600 => Step::Pick(SettingsKind::Sky, u(0x204)),
         2900 if lighting => Step::EditLighting,
         2900 => Step::Pick(SettingsKind::Water, u(0x302)),

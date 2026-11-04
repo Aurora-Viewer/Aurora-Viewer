@@ -32,6 +32,11 @@ impl Journey {
             && self.source.live(unix)
             && !world.tp_failed
     }
+    /// Its time counted from `now`: the crossing waited for a question.
+    pub(super) fn restarted(mut self, now: Instant) -> Self {
+        self.started = now;
+        self
+    }
     fn new(world: &World, creator: uuid::Uuid, source: &Portal, now: Instant) -> Self {
         let normal = Vec3::new(source.yaw.cos(), source.yaw.sin(), 0.0);
         Self {
@@ -188,14 +193,14 @@ impl App {
             // cancellation and simulator access checks (LLAgent::teleportViaLocation).
             let journey = Journey::new(&self.world, creator, &portal, now);
             let look_at = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
-            self.teleport_to_location_looking(portal.destination, Vec3::from(portal.position), look_at, Some(journey));
+            self.teleport_to_location_looking_with_journey(portal.destination, Vec3::from(portal.position), look_at, Some(journey));
         }
         self.world.portals.departure = self
             .portal_journey
             .as_ref()
             .filter(|journey| self.world.teleporting && !journey.arrived)
             .map(|journey| journey.source.id);
-        self.update_landmark_portal();
+        self.update_place_portal();
         self.exchange_portal_demo();
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")

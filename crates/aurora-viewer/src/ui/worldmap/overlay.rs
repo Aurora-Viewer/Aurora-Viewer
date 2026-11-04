@@ -654,7 +654,7 @@ impl WorldMapUi {
         }
         let fade = if dragging { 0.55 } else { 1.0 };
         let card = self.place_card(ui, p, world, tiles, cam, pictures, map, fade, actions);
-        self.nav(ui, p, map, fade, actions);
+        self.nav(ui, p, map, fade, world.rlva_can_teleport_home(), actions);
         self.layers(ui, p, opts, map, fade);
         if let Some(tab) = self.ov.drawer {
             let top = map.top() + EDGE + self.ov.sizes.get("search").map_or(40.0, |s| s.y) + GAP;
@@ -781,10 +781,13 @@ impl WorldMapUi {
             }
             Pick::History(i) => {
                 if let Some(h) = world.tp_storage.items.get(i).cloned() {
-                    world.map.track_location(h.global.x, h.global.y, h.global.z as f32, true);
+                    // tracked here for its label; the app teleports (its grid
+                    // may be another one, LLTeleportHistoryStorage::goToItem)
+                    world.map.track_location(h.global.x, h.global.y, h.global.z as f32, false);
                     if let Some(t) = world.map.track.as_mut() {
                         t.label = h.title;
                     }
+                    actions.push(WorldMapAction::TeleportHistory(h.global));
                 }
             }
             Pick::Region(_) | Pick::Friend(..) => {}
@@ -1252,13 +1255,21 @@ impl WorldMapUi {
                 widgets::paint_elided(ui, &name, pos2(name_x, rect.top() + 14.5), w - (name_x - x), bold, p.ink);
                 let region = place.map_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned(), |p| p.1);
                 widgets::paint_elided(ui, &region, pos2(x, rect.bottom() - 12.5), w, small, p.muted);
-                if go_resp.hovered() {
+                // greyed under RLVa @tplm (LLLandmarksPanel "teleport")
+                let allowed = world.rlva_can_teleport_landmark();
+                if go_resp.hovered() && allowed {
                     ui.painter().rect_filled(go, ui.visuals().widgets.inactive.corner_radius, p.raised);
                 }
-                let go_ink = if go_resp.hovered() { p.ink } else { p.muted };
+                let go_ink = if !allowed {
+                    p.muted_dim
+                } else if go_resp.hovered() {
+                    p.ink
+                } else {
+                    p.muted
+                };
                 icon(ui.painter(), "location-filled", go.center(), 14.0, go_ink);
                 let go_resp = go_resp.on_hover_text(aurora_i18n::tr!("common-teleport-3"));
-                if go_resp.clicked() {
+                if go_resp.clicked() && allowed {
                     Some(Ask::Teleport(Pick::Landmark(*i)))
                 } else if resp.clicked() {
                     Some(Ask::Pick(Pick::Landmark(*i)))
@@ -1285,18 +1296,22 @@ impl WorldMapUi {
                     body,
                     p.ink,
                 );
-                if go_resp.hovered() {
+                // greyed when RLVa would refuse it (LLTeleportHistoryPanel:
+                // canTeleportToLocation)
+                let allowed = world.rlva_can_teleport_global(h.global);
+                if go_resp.hovered() && allowed {
                     ui.painter().rect_filled(go, ui.visuals().widgets.inactive.corner_radius, p.raised);
                 }
-                icon(
-                    ui.painter(),
-                    "location-filled",
-                    go.center(),
-                    14.0,
-                    if go_resp.hovered() { p.ink } else { p.muted },
-                );
+                let go_ink = if !allowed {
+                    p.muted_dim
+                } else if go_resp.hovered() {
+                    p.ink
+                } else {
+                    p.muted
+                };
+                icon(ui.painter(), "location-filled", go.center(), 14.0, go_ink);
                 let go_resp = go_resp.on_hover_text(aurora_i18n::tr!("common-teleport-3"));
-                if go_resp.clicked() {
+                if go_resp.clicked() && allowed {
                     Some(Ask::Teleport(Pick::History(*i)))
                 } else if resp.clicked() {
                     Some(Ask::Pick(Pick::History(*i)))
@@ -1544,7 +1559,9 @@ impl WorldMapUi {
     }
 
     /// Bottom right: zoom in and out, back to our position, home.
-    fn nav(&mut self, ui: &mut egui::Ui, p: &Palette, map: Rect, fade: f32, actions: &mut Vec<WorldMapAction>) {
+    /// `can_go_home`: RLVa leaves Teleport Home allowed (the Go Home button
+    /// of LLFloaterWorldMap).
+    fn nav(&mut self, ui: &mut egui::Ui, p: &Palette, map: Rect, fade: f32, can_go_home: bool, actions: &mut Vec<WorldMapAction>) {
         let mut panel = self.ov.open(
             ui,
             p,
@@ -1566,7 +1583,7 @@ impl WorldMapUi {
         let me = widgets::action_button(ui, p, "current-location-filled", "", ActionKind::Flat, size)
             .on_hover_text(aurora_i18n::tr!("ui-worldmap-center-map-on-my-position"))
             .clicked();
-        let home = widgets::action_button(ui, p, "home-filled", "", ActionKind::Flat, size)
+        let home = widgets::action_button_if(ui, p, "home-filled", "", ActionKind::Flat, size, can_go_home)
             .on_hover_text(aurora_i18n::tr!("common-go-home"))
             .clicked();
         self.ov.close(panel);
@@ -1684,7 +1701,15 @@ impl WorldMapUi {
             .map_or(Uuid::nil(), |i| i.thumbnail);
         let tex = self.thumbnail(tiles, pictures, thumb_id, region.as_ref().map(|r| r.0));
         // what its buttons do
-        let can_teleport = landmark.is_some() || track.as_ref().is_some_and(|t| !t.pending && !t.invalid);
+        // greyed when RLVa would refuse it: @tplm for a landmark, the
+        // position's rules for a tracked place
+        let can_teleport = if landmark.is_some() {
+            world.rlva_can_teleport_landmark()
+        } else {
+            track
+                .as_ref()
+                .is_some_and(|t| !t.pending && !t.invalid && world.rlva_can_teleport_global(glam::DVec3::new(t.x, t.y, t.z as f64)))
+        };
         let local = |t: &crate::world::worldmap::Track, (sx, sy): (u32, u32)| {
             glam::Vec3::new((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z)
         };
@@ -1840,8 +1865,8 @@ impl WorldMapUi {
                 let label = track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
                 world.map.track_location(x, y, z, false);
                 let name = world.map.sim_at_global(x, y).map(|(_, s)| s.name.clone());
+                let (lx, ly) = world.map.local_xy(x, y);
                 if let (Some(t), Some(n)) = (world.map.track.as_mut(), name) {
-                    let (lx, ly) = (x.rem_euclid(256.0), y.rem_euclid(256.0));
                     t.label = if label.starts_with(&n) {
                         location_label(&n, lx, ly, z)
                     } else {

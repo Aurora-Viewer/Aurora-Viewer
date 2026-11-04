@@ -109,11 +109,11 @@ fn pasted_native_links_preserve_console_line_height() {
         let family = crate::ui::fonts::semibold(ui.ctx());
         for look in [JobLook::Line, JobLook::Pill(&family), JobLook::Body] {
             line.text = "Salut tu vas Resident bien ?".into();
-            let plain = line_job(&line, &p, &world, &mut HashSet::new(), 1800.0, 14.0, false, look);
+            let plain = line_job(ui.ctx(), &line, &p, &world, &mut HashSet::new(), 1800.0, 14.0, false, look);
             let plain = ui.fonts_mut(|f| f.layout_job(plain.job));
             for verb in ["about", "im", "pay"] {
                 line.text = format!("Salut tu vas secondlife:///app/agent/{id}/{verb} bien ?");
-                let linked = line_job(&line, &p, &world, &mut HashSet::new(), 1800.0, 14.0, false, look);
+                let linked = line_job(ui.ctx(), &line, &p, &world, &mut HashSet::new(), 1800.0, 14.0, false, look);
                 let linked = ui.fonts_mut(|f| f.layout_job(linked.job));
                 assert_eq!(linked.rows.len(), 1);
                 assert_eq!(linked.size().y, plain.size().y, "a marker must not raise a console row");
@@ -273,7 +273,7 @@ fn native_action_markers_wrap_and_are_clickable_in_console_lines_and_bubbles() {
                         ..Default::default()
                     },
                     |ui| {
-                        let rendered = line_job(&line, &p, &world, &mut HashSet::new(), width, 14.0, false, look);
+                        let rendered = line_job(ui.ctx(), &line, &p, &world, &mut HashSet::new(), width, 14.0, false, look);
                         assert_eq!(rendered.links.len(), 3);
                         for (range, _) in &rendered.links {
                             let shown: String = rendered.job.text.chars().skip(range.start).take(range.len()).collect();

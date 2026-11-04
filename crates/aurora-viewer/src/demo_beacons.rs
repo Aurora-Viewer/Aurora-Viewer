@@ -81,6 +81,7 @@ pub fn overlay_events() -> Vec<NetEvent> {
     (0..4)
         .map(|sequence| NetEvent::ParcelOverlay {
             handle: HANDLE,
+            size: (256, 256),
             sequence: sequence as i32,
             data: cells[sequence * 1024..(sequence + 1) * 1024].to_vec(),
         })

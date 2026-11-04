@@ -279,15 +279,19 @@ const GROUPS: &[(&str, RowId)] = &[
     ("aurora-chatlog", RowId::SvcLogs),
     ("aurora-transcript", RowId::SvcLogs),
     ("aurora-notification-history", RowId::SvcLogs),
+    ("aurora-experience-log", RowId::SvcLogs),
     ("aurora-favorites", RowId::Services),
     ("aurora-web-profile", RowId::Services),
     ("aurora-cache", RowId::CacheUpkeep),
+    ("aurora-web-cache", RowId::CacheUpkeep),
+    ("aurora-web-misplaced", RowId::CacheUpkeep),
     ("aurora-monitor", RowId::UiMonitor),
     ("aurora-probe", RowId::UiMonitor),
     ("aurora-fonts", RowId::Interface),
     ("aurora-hud-scales", RowId::Interface),
     ("aurora-local-previews", RowId::Interface),
     ("aurora-photo-save", RowId::Interface),
+    ("aurora-open-wait", RowId::Interface),
     ("aurora-geometry-needs", RowId::Meshes),
     ("aurora-hover-height", RowId::Avatars),
 ];
@@ -760,5 +764,15 @@ mod tests {
         let a = attribute(&Inputs { disk, ..Inputs::default() });
         assert_eq!(a.get(RowId::MeshCache).get(Column::Disk), Some(150.0));
         assert_eq!(a.get(RowId::Services).get(Column::Disk), Some(8.0));
+    }
+
+    #[test]
+    fn every_attributed_thread_name_survives_the_linux_cut() {
+        // Linux keeps 15 bytes of a thread's name: each group this table
+        // attributes must come back whole from the cut one
+        for name in GROUPS.iter().map(|g| g.0).chain(SHARED) {
+            let cut = &name[..name.len().min(15)];
+            assert_eq!(crate::sys_probe::proc_text::full_thread_name(cut), name);
+        }
     }
 }

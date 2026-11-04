@@ -46,7 +46,13 @@ pub fn content(
             ui.add_space(10.0);
             let user = if new_account {
                 let mut options = Account::from_settings(settings, form.remember_mfa, None);
-                if super::carousel::controls(ui, &mut options, &mut form.start_slurl, &settings.grids) {
+                // the name typed so far: an account stored here offers its
+                // favourites (FSPanelLogin::onUsernameTextChanged)
+                let key = options.key();
+                let mut favorites = super::StartFavorites::of(&form.favorites, &form.start_favorite, &key);
+                let edited = super::carousel::controls(ui, &mut options, &mut form.start_slurl, &mut favorites, &settings.grids);
+                favorites.keep(&mut form.start_favorite, key);
+                if edited {
                     let changed_grid = options.uri != settings.login_uri();
                     options.apply(settings);
                     if changed_grid {

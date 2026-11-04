@@ -4,7 +4,7 @@
 //! with MoveInventoryFolder, like LLViewerInventoryCategory::updateParentOnServer:
 //! AIS refuses a `parent_id` in a category PATCH (HTTP 400).
 
-use crate::inventory::operations::InventoryMove;
+use crate::inventory::operations::{InventoryMove, UdpEdit};
 use crate::inventory::{FolderContents, InvFolder};
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
@@ -22,6 +22,9 @@ pub struct Mutation {
     pub folder: Uuid,
     pub parent: Uuid,
     pub update: Update,
+    /// The folder's type, filled by the viewer as the command leaves: a grid
+    /// without AIS keeps the one it is told.
+    pub type_default: Option<i32>,
 }
 
 impl Update {
@@ -74,7 +77,46 @@ where
     F: FnOnce(InventoryMove) -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
+    let no_udp: Option<fn(UdpEdit) -> std::future::Ready<Result<(), String>>> = None;
+    apply(http, cap, fetch_cap, owner, change, send_move, no_udp).await
+}
+
+/// The same on a grid without AIS: a rename is an UpdateInventoryFolder, and
+/// favorites and thumbnails, which only AIS stores, fail.
+pub(crate) async fn mutate_udp<F, Fut, E, EFut>(
+    http: &reqwest::Client,
+    fetch_cap: &str,
+    owner: Uuid,
+    change: Mutation,
+    send_move: F,
+    send_edit: E,
+) -> Result<Vec<FolderContents>, String>
+where
+    F: FnOnce(InventoryMove) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+    E: FnOnce(UdpEdit) -> EFut,
+    EFut: std::future::Future<Output = Result<(), String>>,
+{
+    apply(http, "", fetch_cap, owner, change, send_move, Some(send_edit)).await
+}
+
+async fn apply<F, Fut, E, EFut>(
+    http: &reqwest::Client,
+    cap: &str,
+    fetch_cap: &str,
+    owner: Uuid,
+    change: Mutation,
+    send_move: F,
+    udp: Option<E>,
+) -> Result<Vec<FolderContents>, String>
+where
+    F: FnOnce(InventoryMove) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+    E: FnOnce(UdpEdit) -> EFut,
+    EFut: std::future::Future<Output = Result<(), String>>,
+{
     let mut parents = vec![change.parent];
+    let over_udp = udp.is_some();
     if let Update::Trash(parent) = change.update {
         if change.folder.is_nil() || parent.is_nil() {
             return Err(aurora_i18n::tr!("inventory-move-invalid-target").into());
@@ -88,6 +130,17 @@ where
         if parent != change.parent {
             parents.push(parent);
         }
+    } else if let Some(send_edit) = udp {
+        let (Update::Rename(name), Some(type_default)) = (&change.update, change.type_default) else {
+            return Err(aurora_i18n::tr!("session-inventory-change-not-supported-on-this-grid").into());
+        };
+        send_edit(UdpEdit::UpdateFolder {
+            id: change.folder,
+            parent: change.parent,
+            name: name.clone(),
+            type_default: type_default as i8,
+        })
+        .await?;
     } else if let Some(body) = change.update.body() {
         let url = format!("{}/category/{}", cap.trim_end_matches('/'), change.folder);
         super::send(http.patch(url), &body).await?;
@@ -95,7 +148,11 @@ where
     let read_error = || aurora_i18n::tr!("outfits-categories-could-not-read-the-outfit-back-refresh-before-trying").to_owned();
     // A reliable UDP move can reach the fetch service after the first read,
     // as in inventory::operations: retry reads, never the move.
-    let retries = if matches!(change.update, Update::Trash(_)) { 5 } else { 0 };
+    let retries = if over_udp || matches!(change.update, Update::Trash(_)) {
+        5
+    } else {
+        0
+    };
     for attempt in 0..=retries {
         let mut contents = if matches!(change.update, Update::Favorite(_)) {
             crate::inventory::ais::fetch_folders(http, cap, owner, &parents)
@@ -174,6 +231,7 @@ mod tests {
                     folder,
                     parent,
                     update: update.clone(),
+                    type_default: None,
                 },
                 no_move,
             )
@@ -214,7 +272,12 @@ mod tests {
             &url,
             &format!("{url}/fetch"),
             Uuid::nil(),
-            Mutation { folder, parent, update },
+            Mutation {
+                folder,
+                parent,
+                update,
+                type_default: None,
+            },
             |movement| {
                 moves.lock().expect("moves").push(movement);
                 async { Ok(()) }
@@ -249,6 +312,7 @@ mod tests {
                 folder: Uuid::from_u128(47),
                 parent: Uuid::from_u128(48),
                 update: Update::Trash(Uuid::from_u128(14)),
+                type_default: None,
             },
             |_| async { Err("offline".to_owned()) },
         )
@@ -276,6 +340,7 @@ mod tests {
                 folder,
                 parent,
                 update: Update::Favorite(true),
+                type_default: None,
             },
             no_move,
         )
@@ -296,6 +361,7 @@ mod tests {
                 folder: Uuid::from_u128(47),
                 parent: Uuid::from_u128(48),
                 update: Update::Rename("Nom".into()),
+                type_default: None,
             },
             no_move,
         )

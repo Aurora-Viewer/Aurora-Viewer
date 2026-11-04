@@ -49,6 +49,27 @@ fn pick(new: Uuid, shown: Option<Uuid>, new_ready: bool, shown_ready: bool) -> U
 }
 
 impl Scene {
+    /// LLViewerObject::updateTEMaterialTextures resolves every PBR channel
+    /// per wearer. Ground objects, HUDs and animesh keep the placeholder.
+    pub(super) fn face_texture(
+        &mut self,
+        renderer: &mut Renderer,
+        world: &crate::world::World,
+        asset: Uuid,
+        wearer: Option<(Uuid, usize)>,
+    ) -> (Uuid, TexSource) {
+        if let Some((slot, bake)) = avatar::bake_slot_for(&asset)
+            && let Some((id, index)) = wearer
+        {
+            return self
+                .shown_bake(renderer, world, index, slot)
+                .map_or((Uuid::nil(), TexSource::Asset), |texture| {
+                    (texture, world.bake_source(id, bake, texture))
+                });
+        }
+        (asset, TexSource::Asset)
+    }
+
     /// The bake slot `te` of avatar `avatar_idx` as it is drawn
     /// (`World::bake_texture`, or the last one with pixels while the new
     /// one downloads).

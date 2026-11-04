@@ -69,7 +69,9 @@ impl App {
         self.world.eep.rlva_locked = self.world.rlva.has("setenv");
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
         self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
-        self.world.rlva.appearance_busy = self.appearance_ui.pending.is_some();
+        // An outfit change is over once its detaches have landed too: the
+        // COF write is acknowledged before the objects leave the avatar.
+        self.world.rlva.appearance_busy = self.appearance_ui.pending.is_some() || self.world.rlva_detach_in_flight(Instant::now());
         if !self.world.rlva.appearance_busy && self.world.rlva.appearance.is_empty() {
             self.world.rlva.self_detach = None;
         }
@@ -114,7 +116,7 @@ impl App {
         let commands = self.world.rlva_pending();
         self.rlva_environment_asset();
         self.rlva_camera_commands();
-        if self.appearance_ui.pending.is_none() && !self.world.rlva.appearance.is_empty() {
+        if !self.world.rlva.appearance_busy && self.appearance_ui.pending.is_none() && !self.world.rlva.appearance.is_empty() {
             let (actor, action) = self.world.rlva.appearance.remove(0);
             self.apply_appearance_action_from(action, actor);
         }

@@ -106,11 +106,11 @@ pub(super) fn show(
                 });
         });
         let width = ui.available_width();
-        ui.allocate_ui_with_layout(Vec2::new(width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+        bounded_column(ui, Vec2::new(width, height), |ui| {
             ui.label(RichText::new(state.state.label()).strong().color(p.violet_pale));
             egui::ScrollArea::vertical()
                 .id_salt(("ao_state_details", set.id, state.state, state.container))
-                .max_height(height - 24.0)
+                .max_height(ui.available_height())
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if state.state.swimming() {
@@ -130,6 +130,19 @@ pub(super) fn show(
                 });
         });
     });
+}
+
+fn bounded_column(ui: &mut egui::Ui, size: Vec2, body: impl FnOnce(&mut egui::Ui)) {
+    // At fractional UI scales the contents can measure a fraction wider
+    // than the remaining room. Do not feed that back into the window (#1600).
+    let (_, rect) = ui.allocate_space(size);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    body(&mut child);
 }
 
 fn select_state(state: &mut AoUi, item: State) {
@@ -331,14 +344,24 @@ impl Editor<'_> {
         ui.push_id(id, |ui| {
             ui.horizontal(|ui| {
                 let label = metadata.map_or_else(|| name.to_owned(), |m| format!("{name}\n{m}"));
+                let size = Vec2::new((ui.available_width() - 28.0).max(40.0), 28.0);
+                // Elision is single-line; groups and tracks keep their summary below the name.
+                let wrap = if metadata.is_some() {
+                    egui::TextWrapMode::Wrap
+                } else {
+                    egui::TextWrapMode::Truncate
+                };
                 let response = ui
-                    .add_enabled(
-                        !self.state.busy(),
-                        egui::Button::selectable(selected, label)
-                            .sense(egui::Sense::click_and_drag())
-                            .min_size(Vec2::new((ui.available_width() - 28.0).max(40.0), 28.0)),
-                    )
-                    .on_hover_text(aurora_i18n::tr!("ao-entry-help"));
+                    .add_enabled_ui(!self.state.busy(), |ui| {
+                        ui.add_sized(
+                            size,
+                            egui::Button::selectable(selected, label)
+                                .sense(egui::Sense::click_and_drag())
+                                .wrap_mode(wrap),
+                        )
+                    })
+                    .inner
+                    .on_hover_text(format!("{name}\n\n{}", aurora_i18n::tr!("ao-entry-help")));
                 if !self.state.busy() {
                     response.dnd_set_drag_payload(EntryDrag {
                         set: self.set.id,

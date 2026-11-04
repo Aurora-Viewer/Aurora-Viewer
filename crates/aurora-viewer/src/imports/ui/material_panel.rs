@@ -95,7 +95,7 @@ fn preview(
             let response = if let Some(model) = model {
                 aurora_render::preview::paint(
                     ui,
-                    egui::Id::unique(("material_preview", id)),
+                    ui.scope_id().with(("material_preview", id)),
                     model.clone(),
                     view,
                     Vec2::splat(176.0),
@@ -117,7 +117,7 @@ fn preview(
             if let Some(model) = model {
                 aurora_render::preview::paint(
                     ui,
-                    egui::Id::unique(("material_preview", id)),
+                    ui.scope_id().with(("material_preview", id)),
                     model.clone(),
                     view,
                     Vec2::splat(230.0),

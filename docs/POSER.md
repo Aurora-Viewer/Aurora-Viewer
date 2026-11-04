@@ -100,6 +100,17 @@ loads preserve joints already edited in the current pose. Loading finishes
 on the subject originally chosen, even if the picker changes during I/O.
 World locks are reanchored to the destination subject.
 
+Files and uploads contain what you authored, as in the Legacy Viewer
+(`FSPoserAnimator::getJointExportRotation`, `FSFloaterPoser::savePoseToXml`):
+the pose captured when posing starts is what the changes apply to, and stays
+out of them. **T-pose** clears it, so a pose built from there is saved
+complete; a hand preset or a loaded file does the same for its joints. Reset
+brings the captured pose back, and undo restores this state with the pose.
+A pose document stores complete joints as they are and the others as changes,
+which apply to the destination's own pose (the Legacy Viewer's "Save Diff").
+Files saved before this are read as complete. BVH and uploads write the same
+changes on the rest skeleton: an untouched capture exports a T-pose.
+
 BVH export writes the actual skeleton hierarchy in inches and Y-up, with
 a reference frame and two identical posed frames. The pelvis-unlock setting
 controls root rotation and translation. Native animations and BVH have no

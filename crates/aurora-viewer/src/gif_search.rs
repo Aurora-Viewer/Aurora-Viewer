@@ -571,7 +571,7 @@ pub fn client() -> Option<reqwest::Client> {
 /// The body of `url`, at most `max` bytes.
 async fn download(client: &reqwest::Client, url: &str, max: u64) -> Result<Vec<u8>, Error> {
     let mut resp = client.get(url).send().await.map_err(|e| {
-        log::debug!("GIF search: {}: {e}", without_key(url));
+        log::debug!("GIF search: {}: {}", without_key(url), e.without_url());
         Error::Unavailable
     })?;
     match resp.status().as_u16() {
@@ -668,7 +668,7 @@ pub fn ping_url(url: &str, customer: &str, now_ms: u128) -> Option<String> {
 /// Call a GIPHY analytics link (its answer is not used).
 pub async fn ping(client: &reqwest::Client, url: String) {
     if let Err(e) = client.get(&url).send().await {
-        log::debug!("GIF search: analytics: {e}");
+        log::debug!("GIF search: analytics: {}", e.without_url());
     }
 }
 
@@ -694,7 +694,7 @@ pub async fn share(client: &reqwest::Client, url: String, body: String) {
         .send()
         .await;
     if let Err(e) = sent {
-        log::debug!("GIF search: share: {e}");
+        log::debug!("GIF search: share: {}", e.without_url());
     }
 }
 

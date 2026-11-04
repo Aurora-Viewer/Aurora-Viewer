@@ -682,7 +682,7 @@ impl GroupCreateUi {
                     }
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
-                        ui.label(egui::RichText::new("L$").size(12.5).color(p.muted));
+                        ui.label(egui::RichText::new(aurora_i18n::currency()).size(12.5).color(p.muted));
                         ui.add_enabled(paid, egui::DragValue::new(&mut self.draft.info.membership_fee).range(0..=FEE_MAX));
                     });
                     let selected = match self.draft.rating {

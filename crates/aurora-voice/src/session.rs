@@ -353,12 +353,12 @@ async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd, timeout: Dura
         .body(aurora_llsd::to_xml_string(body))
         .send()
         .await
-        .map_err(|e| PostError::Transport(e.to_string()))?;
+        .map_err(|e| PostError::Transport(e.without_url().to_string()))?;
     let status = resp.status().as_u16();
     if !(200..300).contains(&status) {
         return Err(PostError::Status(status));
     }
-    let bytes = resp.bytes().await.map_err(|e| PostError::Transport(e.to_string()))?;
+    let bytes = resp.bytes().await.map_err(|e| PostError::Transport(e.without_url().to_string()))?;
     if bytes.iter().all(|b| b.is_ascii_whitespace()) {
         return Ok(Llsd::Undef);
     }

@@ -14,7 +14,19 @@ pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => {
             cx.group(tr!("common-nearby-chat"), |cx| {
-                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps));
+                // ChatFontSize (Chat › Visuals, Medium): the nearby chat's
+                // and the conversations' text on its own, apart from
+                // Appearance › Text size
+                cx.slider(
+                    tr!("ui-options-chat-text-size"),
+                    tr!("ui-options-chat-text-size-hint"),
+                    &field!(chat_font_scale),
+                    crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
+                    "×",
+                );
+                // FSShowTimestampsNearbyChat (on): the lines and the cards
+                // over the world
+                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_nearby));
                 // FSShowChatChannel: the "/0" chip of the field (off, as in
                 // the Legacy Viewer)
                 cx.toggle(
@@ -112,6 +124,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
             script_errors(cx);
             cx.group(tr!("ui-options-conversations"), |cx| {
+                // FSShowTimestampsIM (on): private and group conversations
+                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_im));
                 cx.toggle(
                     tr!("ui-options-show-contacts-tab"),
                     tr!("ui-options-show-contacts-tab-hint"),
@@ -166,6 +180,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(flash_conversations_nearby),
                     );
                 });
+                // "Show number of unread IMs in the window title"
+                // (FSShowMessageCountInWindowTitle)
+                cx.toggle(
+                    tr!("ui-options-unread-ims-in-window-title"),
+                    tr!("ui-options-unread-ims-in-window-title-hint"),
+                    &field!(unread_ims_in_window_title),
+                );
+                // "Announce incoming IMs as soon as the sender starts typing"
+                // (FSAnnounceIncomingIM)
+                cx.toggle(
+                    tr!("ui-options-announce-incoming-im"),
+                    tr!("ui-options-announce-incoming-im-hint"),
+                    &field!(announce_incoming_im),
+                );
                 // the Legacy Viewer's IM chiclets (FSDisableIMChiclets off):
                 // beside the chat bar by default, the human's choice (#1134)
                 use crate::settings::ChatThumbnails;
@@ -954,7 +982,11 @@ fn away_and_replies(cx: &mut Cx) {
     }
     cx.group(tr!("ui-options-auto-replies"), |cx| {
         cx.note(tr!("ui-options-enable-these-modes-in-communicate-online-status"));
+        // LLFloaterPreference::refreshEnabledState greys do_not_disturb_response under
+        // RLVa @sendim, and only that response.
+        cx.greyed(cx.st.rlva_sendim_locked);
         text(cx, tr!("ui-options-in-do-not-disturb-mode"), &field!(autoresponse.dnd_text));
+        cx.greyed(false);
         text(
             cx,
             tr!("ui-options-to-everyone-in-auto-reply-mode"),

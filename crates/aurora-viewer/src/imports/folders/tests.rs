@@ -26,7 +26,7 @@ pub(super) fn fixture() -> (Imports, crate::world::World, crate::ui::inventory::
         imports.entries.push(entry);
     }
     let prefs = Default::default();
-    imports.sync_folder_plan(&world, &prefs);
+    imports.sync_folder_plan(&world);
     (imports, world, prefs)
 }
 
@@ -71,7 +71,7 @@ fn import_folder_discovery_mirrors_nested_sources_filters_formats_and_reports_li
 
 #[test]
 fn import_folder_plan_edits_whole_subtrees_and_type_or_flat_layouts_keep_distinct_files() {
-    let (mut imports, world, prefs) = fixture();
+    let (mut imports, world, _) = fixture();
     let old = vec!["Project".into(), "Coat".into()];
     let new = vec!["Release".into(), "Clothing".into()];
     assert!(rename(&mut imports.entries, &old, &new));
@@ -88,17 +88,12 @@ fn import_folder_plan_edits_whole_subtrees_and_type_or_flat_layouts_keep_distinc
     }
     assert_eq!(parse_path(""), Some(Vec::new()));
     assert_eq!(parse_path("Étape"), Some(vec![folder_name("Étape")]));
-    assert!(!imports.folder_plan_ready(&world, &prefs));
+    assert!(!imports.folder_plan_ready(&world));
     assert_eq!(imports.entries.len(), 3);
 }
 
-pub(super) fn complete_one(
-    imports: &mut Imports,
-    world: &mut crate::world::World,
-    prefs: &crate::ui::inventory::InventoryPreferences,
-    remap: bool,
-) -> Option<Uuid> {
-    let command = imports.next_import_folder(world, prefs)?;
+pub(super) fn complete_one(imports: &mut Imports, world: &mut crate::world::World, remap: bool) -> Option<Uuid> {
+    let command = imports.next_import_folder(world)?;
     let aurora_net::NetCommand::EditInventory { request, mut change } = command else {
         panic!("folder command")
     };
@@ -144,9 +139,9 @@ fn type_grouping_creates_each_imported_root_above_its_types_and_keeps_loose_file
         &vec!["Other Pack".to_owned(), kind.clone()]
     );
     assert_eq!(imports.entries[2].upload_path.as_ref().unwrap(), &vec![kind.clone()]);
-    imports.prepare_import_folders(&world, &inventory);
-    while complete_one(&mut imports, &mut world, &inventory, true).is_some() {}
-    assert!(imports.folder_plan_ready(&world, &inventory));
+    imports.prepare_import_folders(&world);
+    while complete_one(&mut imports, &mut world, true).is_some() {}
+    assert!(imports.folder_plan_ready(&world));
     for entry in &imports.entries {
         let leaf = &world.inventory.folders[&entry.folder].info;
         assert_eq!(leaf.name, kind);
@@ -164,62 +159,58 @@ fn type_grouping_creates_each_imported_root_above_its_types_and_keeps_loose_file
 
 #[test]
 fn import_folder_creation_waits_for_ack_remaps_ids_and_never_starts_paid_uploads() {
-    let (mut imports, mut world, prefs) = fixture();
+    let (mut imports, mut world, _) = fixture();
     imports.entries[1].selected = false;
-    imports.prepare_import_folders(&world, &prefs);
+    imports.prepare_import_folders(&world);
     assert!(imports.busy());
-    let command = imports.next_import_folder(&world, &prefs).unwrap();
+    let command = imports.next_import_folder(&world).unwrap();
     let aurora_net::NetCommand::EditInventory { request, change } = command else {
         panic!("folder")
     };
-    assert!(imports.next_import_folder(&world, &prefs).is_none());
-    assert!(!imports.folder_plan_ready(&world, &prefs));
+    assert!(imports.next_import_folder(&world).is_none());
+    assert!(!imports.folder_plan_ready(&world));
     let reply = rules::demo_mutate(&mut world.inventory, world.agent_id, change).unwrap();
     imports.import_folder_result(request, Ok(reply), &mut world.inventory);
-    let leaf = complete_one(&mut imports, &mut world, &prefs, true).unwrap();
-    assert!(complete_one(&mut imports, &mut world, &prefs, false).is_none());
+    let leaf = complete_one(&mut imports, &mut world, true).unwrap();
+    assert!(complete_one(&mut imports, &mut world, false).is_none());
     assert!(!imports.busy());
-    assert!(imports.folder_plan_ready(&world, &prefs));
+    assert!(imports.folder_plan_ready(&world));
     assert_eq!(imports.entries[0].folder, leaf);
     assert_eq!(imports.entries[2].folder, leaf);
     assert!(world.inventory.folders.values().all(|f| f.info.name != "Hat"));
     assert!(imports.queue.is_empty() && imports.current.is_none());
     assert_eq!(imports.spent, 0);
     imports.entries[1].selected = true;
-    assert!(!imports.folder_plan_ready(&world, &prefs));
-    imports.prepare_import_folders(&world, &prefs);
-    assert!(complete_one(&mut imports, &mut world, &prefs, false).is_some());
-    assert!(complete_one(&mut imports, &mut world, &prefs, false).is_none());
-    assert!(imports.folder_plan_ready(&world, &prefs));
+    assert!(!imports.folder_plan_ready(&world));
+    imports.prepare_import_folders(&world);
+    assert!(complete_one(&mut imports, &mut world, false).is_some());
+    assert!(complete_one(&mut imports, &mut world, false).is_none());
+    assert!(imports.folder_plan_ready(&world));
 }
 
 #[test]
-fn import_folder_failure_cancel_and_protection_stop_work_without_losing_confirmed_folders() {
-    let (mut imports, mut world, mut prefs) = fixture();
-    imports.prepare_import_folders(&world, &prefs);
-    let root = complete_one(&mut imports, &mut world, &prefs, false).unwrap();
-    let aurora_net::NetCommand::EditInventory { request, .. } = imports.next_import_folder(&world, &prefs).unwrap() else {
+fn import_folder_failure_and_cancel_stop_work_without_losing_confirmed_folders() {
+    let (mut imports, mut world, _) = fixture();
+    imports.prepare_import_folders(&world);
+    let root = complete_one(&mut imports, &mut world, false).unwrap();
+    let aurora_net::NetCommand::EditInventory { request, .. } = imports.next_import_folder(&world).unwrap() else {
         panic!("folder")
     };
     imports.import_folder_result(Uuid::new_v4(), Err("stale".into()), &mut world.inventory);
     assert!(imports.busy());
     imports.import_folder_result(request, Err("failed".into()), &mut world.inventory);
     assert!(!imports.busy());
-    assert!(imports.next_import_folder(&world, &prefs).is_none());
+    assert!(imports.next_import_folder(&world).is_none());
     assert!(world.inventory.folders.contains_key(&root));
-    imports.prepare_import_folders(&world, &prefs);
-    let aurora_net::NetCommand::EditInventory { request, change } = imports.next_import_folder(&world, &prefs).unwrap() else {
+    imports.prepare_import_folders(&world);
+    let aurora_net::NetCommand::EditInventory { request, change } = imports.next_import_folder(&world).unwrap() else {
         panic!("folder")
     };
     imports.cancel_remaining();
     let reply = rules::demo_mutate(&mut world.inventory, world.agent_id, change).unwrap();
     imports.import_folder_result(request, Ok(reply), &mut world.inventory);
     assert!(!imports.busy());
-    assert!(imports.next_import_folder(&world, &prefs).is_none());
-    prefs.protected.insert(world.inventory.root);
-    imports.prepare_import_folders(&world, &prefs);
-    assert!(!imports.busy());
-    assert!(!imports.folder_plan_ready(&world, &prefs));
+    assert!(imports.next_import_folder(&world).is_none());
     assert!(imports.queue.is_empty());
 }
 
@@ -234,19 +225,19 @@ fn import_folder_external_moves_require_a_new_plan_and_defaults_preserve_edits()
         type_default: -1,
         ..Default::default()
     }]);
-    imports.prepare_import_folders(&world, &prefs);
-    while complete_one(&mut imports, &mut world, &prefs, false).is_some() {}
-    assert!(imports.folder_plan_ready(&world, &prefs));
+    imports.prepare_import_folders(&world);
+    while complete_one(&mut imports, &mut world, false).is_some() {}
+    assert!(imports.folder_plan_ready(&world));
     let destination = imports.entries[0].folder;
     world.inventory.folders.get_mut(&destination).unwrap().info.parent = original;
     assert!(
-        !imports.folder_plan_ready(&world, &prefs),
+        !imports.folder_plan_ready(&world),
         "a moved folder no longer matches the tree preview"
     );
     imports.sync_destinations(&Preferences::default(), &world, &prefs);
     assert_eq!(imports.entries[0].folder, world.inventory.root);
     assert!(imports.entries.iter().all(|e| e.upload_path.is_some()));
-    assert!(imports.folder_plan_ready(&world, &prefs));
+    assert!(imports.folder_plan_ready(&world));
 }
 
 #[test]
@@ -278,8 +269,8 @@ fn import_folder_upload_queue_keeps_the_material_and_its_dependencies_in_the_con
     };
     imports.start(&world, &prefs, &Preferences::default(), &prices);
     assert!(imports.queue.is_empty(), "unprepared paths cannot start uploads");
-    imports.prepare_import_folders(&world, &prefs);
-    while complete_one(&mut imports, &mut world, &prefs, true).is_some() {}
+    imports.prepare_import_folders(&world);
+    while complete_one(&mut imports, &mut world, true).is_some() {}
     let folder = imports.entries[0].folder;
     imports.start(&world, &prefs, &Preferences::default(), &prices);
     assert_eq!(imports.queue.len(), 2);
@@ -416,23 +407,21 @@ fn batch_routing_preserves_folder_edits_and_sends_material_dependencies_to_the_c
     };
     assert!(draft.quote.is_none());
     assert!(draft.discarded_quotes.contains(&token));
+    // a locked folder holds only itself: it still receives the batch
     inventory.protected.insert(common);
     imports.sync_destinations(&prefs, &world, &inventory);
-    assert!(
-        imports.entries.iter().all(|entry| entry.folder == common),
-        "a protected target is never silently redirected"
-    );
-    assert!(!imports.folder_plan_ready(&world, &inventory));
+    assert!(imports.entries.iter().all(|entry| entry.folder == common));
+    assert!(imports.folder_plan_ready(&world));
     inventory.protected.remove(&common);
     prefs.batch_folder = Uuid::from_u128(999);
     imports.sync_destinations(&prefs, &world, &inventory);
     assert!(
-        !imports.folder_plan_ready(&world, &inventory),
+        !imports.folder_plan_ready(&world),
         "a missing saved target requires a new selection"
     );
     prefs.batch_folder = common;
     imports.sync_destinations(&prefs, &world, &inventory);
-    assert!(imports.folder_plan_ready(&world, &inventory));
+    assert!(imports.folder_plan_ready(&world));
     prefs.include_source_folder = true;
     prefs.folder_layout = Some(Layout::Mirror);
     imports.sync_destinations(&prefs, &world, &inventory);
@@ -441,7 +430,7 @@ fn batch_routing_preserves_folder_edits_and_sends_material_dependencies_to_the_c
         paths
     );
     assert!(
-        !imports.folder_plan_ready(&world, &inventory),
+        !imports.folder_plan_ready(&world),
         "the edited source plan still needs folder creation"
     );
     prefs.include_source_folder = false;

@@ -166,6 +166,25 @@ pub enum Alert {
     VersionEmpty,
 }
 
+/// The listing folders that may neither move nor go to the Trash, kept in
+/// the inventory so that every inventory rule sees them: a listed listing
+/// and its version folder (TooltipOutboxDragActive in
+/// LLFolderBridge::dragCategoryIntoFolder, and LLFolderBridge::isItemRemovable,
+/// llinventorybridge.cpp), and every folder of the listings while the SLM
+/// data is not loaded (isSLMDataFetched).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Holds {
+    pub unloaded: bool,
+    pub active: HashSet<Uuid>,
+}
+
+impl Holds {
+    pub fn holds(&self, inv: &Inventory, id: Uuid) -> bool {
+        inv.folders.contains_key(&id)
+            && (self.active.contains(&id) || (self.unloaded && root(inv).is_some_and(|root| depth(inv, root, id) >= 1)))
+    }
+}
+
 #[derive(Default)]
 pub struct MarketplaceData {
     status: Status,
@@ -289,6 +308,20 @@ impl MarketplaceData {
 
     pub fn is_version_folder(&self, folder: Uuid) -> bool {
         self.versions.contains_key(&folder)
+    }
+
+    /// The folders the listings hold in place now (`Holds`).
+    pub fn holds(&self) -> Holds {
+        Holds {
+            unloaded: self.fetch != Fetch::Done,
+            active: self
+                .records
+                .iter()
+                .filter(|(_, r)| r.listed)
+                .flat_map(|(folder, r)| [*folder, r.version])
+                .filter(|id| !id.is_nil())
+                .collect(),
+        }
     }
 
     /// getListingURL.

@@ -66,7 +66,8 @@ pub fn paces(period: Option<Duration>) -> bool {
     }
 }
 
-/// Called once, on the thread that created the window.
+/// Called for every main window (at start and after a GPU recovery), on
+/// the thread that created it.
 pub fn install(window: &Window) {
     #[cfg(windows)]
     if std::env::var("AURORA_WINDOW_HOLD").as_deref() != Ok("0") {
@@ -97,8 +98,12 @@ mod imp {
     };
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    /// Window procedure in place before ours (winit's).
+    /// Window procedure in place before ours (winit's, the same for all of
+    /// its windows).
     static PREVIOUS: AtomicIsize = AtomicIsize::new(0);
+    /// The window the helper repaints: the last one installed (a GPU
+    /// recovery opens a new window, app/gpu_recovery.rs).
+    static TARGET: AtomicIsize = AtomicIsize::new(0);
     /// Messages being handled that Windows may follow in a loop of its own
     /// (one inside the other: a press on the title bar starts a move).
     static HOLDS: AtomicU32 = AtomicU32::new(0);
@@ -139,7 +144,9 @@ mod imp {
             return;
         };
         let hwnd = handle.hwnd.get();
+        TARGET.store(hwnd, Ordering::Release);
         if HELPER.get().is_some() {
+            subclass(hwnd);
             return;
         }
         let helper = thread::Builder::new().name("window-hold".into()).spawn(move || {
@@ -151,6 +158,7 @@ mod imp {
                     moved = None;
                 }
                 let start = Instant::now();
+                let hwnd = TARGET.load(Ordering::Acquire);
                 // SAFETY: `RedrawWindow` takes a window handle and flags; the
                 // handle of a destroyed window makes it fail, nothing more.
                 // The call returns once the window's thread has painted.
@@ -180,13 +188,31 @@ mod imp {
             return;
         };
         let _ = HELPER.set(helper.thread().clone());
-        // SAFETY: `hwnd` is the live window of this thread, and `hook` has
-        // the signature of a window procedure. The previous procedure is
-        // stored before any message can reach `hook`: the messages of this
-        // window are only delivered on this thread.
+        subclass(hwnd);
+    }
+
+    /// Our procedure in front of the window's. One previous procedure is kept
+    /// for every window hooked: a window whose own differs (not winit's) is
+    /// left as it was, without the hold.
+    fn subclass(hwnd: isize) {
+        // SAFETY: `hwnd` is a live window of this thread, and `hook` has the
+        // signature of a window procedure. The previous procedure is stored
+        // before any message can reach `hook`: the messages of this window
+        // are only delivered on this thread.
         unsafe {
             let hook: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT = hook;
             let previous = SetWindowLongPtrW(hwnd as HWND, GWLP_WNDPROC, hook as usize as isize);
+            if previous == 0 {
+                // refused: the window keeps its own procedure
+                log::warn!("window hold: the window procedure could not be replaced, left without the hold");
+                return;
+            }
+            let kept = PREVIOUS.load(Ordering::Acquire);
+            if kept != 0 && kept != previous {
+                SetWindowLongPtrW(hwnd as HWND, GWLP_WNDPROC, previous);
+                log::warn!("window hold: a window with another procedure, left without the hold");
+                return;
+            }
             PREVIOUS.store(previous, Ordering::Release);
         }
     }

@@ -342,6 +342,41 @@ pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { yoe + era * 400 + 1 } else { yoe + era * 400 }, m, d)
 }
 
+/// What AvatarPropertiesUpdate carries: the whole of our profile, which the
+/// simulator takes as it is. A grid without `AgentProfile` (OpenSim) only
+/// saves this way, so a change is laid over the profile we last received
+/// (LLAvatarPropertiesProcessor::sendAvatarPropertiesUpdate).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OwnProfile {
+    pub sl_image: Uuid,
+    pub fl_image: Uuid,
+    pub sl_about: String,
+    pub fl_about: String,
+    pub allow_publish: bool,
+    pub profile_url: String,
+}
+
+impl OwnProfile {
+    /// The profile with an `AgentProfile` change (the keys LLPanelProfile
+    /// saves) laid over it; `None` when it holds a key the message cannot
+    /// carry.
+    pub fn with_change(&self, data: &aurora_llsd::Llsd) -> Option<OwnProfile> {
+        let mut out = self.clone();
+        for key in data.as_map()?.keys() {
+            match key.as_str() {
+                "sl_image_id" => out.sl_image = data[key.as_str()].as_uuid(),
+                "fl_image_id" => out.fl_image = data[key.as_str()].as_uuid(),
+                "sl_about_text" => out.sl_about = data[key.as_str()].to_string_value(),
+                "fl_about_text" => out.fl_about = data[key.as_str()].to_string_value(),
+                "allow_publish" => out.allow_publish = data[key.as_str()].as_bool(),
+                "profile_url" => out.profile_url = data[key.as_str()].to_string_value(),
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,5 +480,48 @@ mod tests {
         assert_eq!(body["region_name"].as_str(), "Aurora");
         assert!(!body["from_search"].as_bool());
         assert_eq!(body["dest_pos_global"][0].as_f64(), 256_128.0);
+    }
+}
+
+#[cfg(test)]
+mod own_profile_tests {
+    use super::*;
+    use aurora_llsd::llsd_map;
+
+    fn own() -> OwnProfile {
+        OwnProfile {
+            sl_image: Uuid::from_u128(1),
+            fl_image: Uuid::from_u128(2),
+            sl_about: "Hello".into(),
+            fl_about: "Real life".into(),
+            allow_publish: true,
+            profile_url: "https://example.invalid/me".into(),
+        }
+    }
+
+    #[test]
+    fn a_change_keeps_every_other_field_of_the_profile() {
+        let changed = own().with_change(&llsd_map! { "sl_about_text" => "New text" }).unwrap();
+        assert_eq!(
+            changed,
+            OwnProfile {
+                sl_about: "New text".into(),
+                ..own()
+            }
+        );
+        let image = own().with_change(&llsd_map! { "fl_image_id" => Uuid::from_u128(9) }).unwrap();
+        assert_eq!((image.fl_image, image.sl_image), (Uuid::from_u128(9), Uuid::from_u128(1)));
+        let hidden = own().with_change(&llsd_map! { "allow_publish" => false }).unwrap();
+        assert!(!hidden.allow_publish);
+    }
+
+    #[test]
+    fn a_change_the_message_cannot_carry_is_refused() {
+        assert!(own().with_change(&llsd_map! { "hide_age" => true }).is_none());
+        assert!(
+            own()
+                .with_change(&llsd_map! { "sl_about_text" => "x", "hide_age" => true })
+                .is_none()
+        );
     }
 }

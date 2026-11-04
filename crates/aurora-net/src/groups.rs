@@ -570,7 +570,7 @@ pub mod name {
     /// GroupNameLengthWarning).
     pub fn checked(text: &str) -> Option<&str> {
         let name = text.trim();
-        (MIN..=MAX).contains(&name.len()).then_some(name)
+        ((MIN..=MAX).contains(&name.len()) && super::super::text_validation::Policy::Ascii.accepts(name)).then_some(name)
     }
 }
 

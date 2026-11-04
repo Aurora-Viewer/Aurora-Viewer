@@ -112,6 +112,9 @@ impl Default for WorldMapUi {
 pub enum WorldMapAction {
     TeleportHome,
     TeleportLandmark(Uuid),
+    /// A place of the history, by its global position: on another OpenSim
+    /// grid the app goes through its gatekeeper.
+    TeleportHistory(glam::DVec3),
     /// The place card's "Info": the profile of the place.
     OpenPlace(Source),
 }
@@ -779,10 +782,15 @@ impl WorldMapUi {
                 self.target_pan = Vec2::ZERO;
                 self.pan_tau = PAN_TAU_CENTER;
             }
-            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-home"))
-                .on_hover_text(aurora_i18n::tr!("common-go-home"))
-                .clicked()
-            {
+            // LLFloaterWorldMap's Go Home button: greyed under RLVa @tplm + @tploc
+            let home = ui
+                .add_enabled_ui(world.rlva_can_teleport_home(), |ui| {
+                    widgets::flat_button(ui, p, aurora_i18n::tr!("common-home"))
+                        .on_hover_text(aurora_i18n::tr!("common-go-home"))
+                        .clicked()
+                })
+                .inner;
+            if home {
                 actions.push(WorldMapAction::TeleportHome);
             }
         });
@@ -1007,10 +1015,12 @@ impl WorldMapUi {
                 .filter(|t| !t.pending && !t.invalid)
                 .map(|t| teleport_command(t.x, t.y, t.z))
         };
+        // greyed when RLVa would refuse it (the same check as the send)
+        let tp_allowed = tp_target.as_ref().is_some_and(|c| world.rlva_allows_command(c, Uuid::nil()));
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(tp_target.is_some(), egui::Button::new(aurora_i18n::tr!("common-teleport-3")))
+                .add_enabled(tp_allowed, egui::Button::new(aurora_i18n::tr!("common-teleport-3")))
                 .clicked()
                 && let Some(c) = tp_target.clone()
             {

@@ -6,7 +6,18 @@ use super::*;
 use crate::world::marketplace::{self as mp, demo};
 use crate::world::notifications::{Data, Kind};
 use ui::inventory::InvAction;
-use ui::marketplace_listings::Action;
+use ui::marketplace_listings::{Action, Prompt};
+
+/// The setting of a listing question (Preferences › Confirmations).
+fn ask_setting(s: &mut crate::settings::Settings, prompt: Prompt) -> &mut bool {
+    match prompt {
+        Prompt::MoveInventory => &mut s.confirm_merchant_move,
+        Prompt::ActiveChange => &mut s.confirm_merchant_active_change,
+        Prompt::ClearVersion => &mut s.confirm_merchant_clear_version,
+        Prompt::ListingCutOrDelete => &mut s.confirm_merchant_listing_delete,
+        Prompt::Unlist => &mut s.confirm_merchant_unlist,
+    }
+}
 
 impl App {
     pub(super) fn prepare_inventory_marketplace_commands(&mut self) {
@@ -63,9 +74,25 @@ impl App {
     }
 
     /// Every frame: the listings follow the inventory, the queued SLM
-    /// requests go to the session, the alerts to the notifications.
+    /// requests go to the session, the alerts to the notifications, the
+    /// inventory learns which listing folders stay in place, and the
+    /// listings which questions are still asked.
     pub(super) fn update_marketplace_listings(&mut self) {
         self.listings_ui.reconcile(&self.world.inventory);
+        let holds = self.listings_ui.data.holds();
+        if self.world.inventory.listing_holds != holds {
+            self.world.inventory.listing_holds = holds;
+        }
+        if let Some(prompt) = self.listings_ui.silence.take() {
+            *ask_setting(&mut self.settings, prompt) = false;
+            self.settings.save();
+        }
+        self.listings_ui.silenced.clear();
+        for prompt in Prompt::ALL {
+            if !*ask_setting(&mut self.settings, prompt) {
+                self.listings_ui.silenced.insert(prompt);
+            }
+        }
         for request in self.listings_ui.data.take_requests(std::time::Instant::now()) {
             log::info!("SLM request queued: {}", request.name());
             self.send(NetCommand::Slm(request));

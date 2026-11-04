@@ -46,6 +46,13 @@ pub const CRASHING: &[Layer] = &[
         name: "VK_LAYER_OW_OBS_HOOK",
         variable: "DISABLE_VULKAN_OW_OBS_CAPTURE",
     },
+    // Bandicam's 64-bit manifest deliberately uses a different variable
+    // from the 32-bit one. #2080 faults in bdcamvk64 during vkCreateInstance.
+    Layer {
+        program: "Bandicam",
+        name: "VK_LAYER_bandicam_helper",
+        variable: "VK_LAYER_bandicam_helper_DEBUG_1",
+    },
 ];
 
 /// The other overlays' layers: disabled unless the user allows overlays.
@@ -163,7 +170,7 @@ mod tests {
     fn allowed_overlays_still_keep_the_crashing_layers_out() {
         assert_eq!(
             names(&to_disable(None, true, |_| false)),
-            ["VK_LAYER_OW_OVERLAY", "VK_LAYER_OW_OBS_HOOK"]
+            ["VK_LAYER_OW_OVERLAY", "VK_LAYER_OW_OBS_HOOK", "VK_LAYER_bandicam_helper"]
         );
     }
 
@@ -173,9 +180,9 @@ mod tests {
             assert!(to_disable(Some("keep"), allow, |_| false).is_empty());
             assert!(to_disable(Some(" KEEP "), allow, |_| false).is_empty());
         }
-        assert_eq!(to_disable(Some("other"), true, |_| false).len(), 2);
+        assert_eq!(to_disable(Some("other"), true, |_| false).len(), CRASHING.len());
         let left = to_disable(None, true, |v| v == "DISABLE_VULKAN_OW_OVERLAY_LAYER");
-        assert_eq!(names(&left), ["VK_LAYER_OW_OBS_HOOK"]);
+        assert_eq!(names(&left), ["VK_LAYER_OW_OBS_HOOK", "VK_LAYER_bandicam_helper"]);
         let left = to_disable(None, false, |v| v == "DISABLE_RTSS_LAYER");
         assert!(!names(&left).contains(&"VK_LAYER_RTSS"));
     }

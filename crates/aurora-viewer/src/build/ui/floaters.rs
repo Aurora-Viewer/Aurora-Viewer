@@ -49,7 +49,7 @@ pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: 
     media_settings(ctx, p, tool, world, env);
     group_picker(ctx, p, tool, world, "group_picker");
     super::contents_permissions::show(ctx, p, tool, world);
-    super::item_properties::show(ctx, p, tool, world, env);
+    super::item_properties::show(ctx, p, tool, world, env.images);
     confirm(ctx, p, tool, world, env);
     super::texture_preview::show(ctx, p, tool, world, env);
     // the picker's previews are wanted images too

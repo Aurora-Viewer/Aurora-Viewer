@@ -1,0 +1,53 @@
+name: Rust cache
+description: >
+  Restores the Cargo registry and target/ that main saved for one family of
+  build outputs (see save/action.yml, which writes them). Run it after the
+  toolchain step: the key holds the rustc version. Output cache-hit is
+  'true' on an exact match only (same rustc, same manifests).
+
+# Why not Swatinem/rust-cache: when its key misses (a pull request or a queue
+# entry that changes Cargo.lock, and every queue entry built on top of it),
+# it restores main's cache and then deletes every file older than a week
+# from target/ — the dependencies, which seldom change, so all of them: the
+# test jobs compiled ~500 crates instead of ~13, 9m45 of build instead of
+# 5m18. Here a partial match is restored untouched and Cargo rebuilds only
+# what the new Cargo.lock changed.
+#
+# main restores an exact match only: on a miss it builds from nothing, so its
+# cache never piles up the outputs of dependency versions it dropped.
+inputs:
+  name:
+    description: "Cache family: one per set of build outputs (lint, tests…)"
+    required: true
+outputs:
+  cache-hit:
+    description: "'true' when the cache of these exact manifests and rustc was restored"
+    value: ${{ steps.restore.outputs.cache-hit == 'true' }}
+  key:
+    description: The key, for save/action.yml
+    value: ${{ steps.key.outputs.key }}
+runs:
+  using: composite
+  steps:
+    - id: key
+      shell: bash
+      env:
+        MANIFESTS: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/*/Cargo.toml', 'rust-toolchain.toml') }}
+      run: |
+        # "rustc 1.99.1 (58cf8f9c3 2026-10-13)" → 1.99.1-58cf8f9c3
+        rustc=$(rustc -V | awk '{ print $2 "-" substr($3, 2) }')
+        prefix="cargo-v1-${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-$rustc-"
+        echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+        echo "key=$prefix${MANIFESTS:0:16}" >> "$GITHUB_OUTPUT"
+    # the paths must stay the same as in save/action.yml: they are part of
+    # the cache's identity, a different list finds nothing
+    - id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: ${{ github.event_name != 'push' && steps.key.outputs.prefix || '' }}

@@ -4,6 +4,7 @@
 //! pyramid is built from it, then the remaining visible draws are added in a
 //! second prepass. The main passes read `instance_count` 0 for hidden draws.
 
+use crate::pipeline_cache::CachedPipelines;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -185,7 +186,7 @@ impl Occlusion {
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pl),
                 module: &module,

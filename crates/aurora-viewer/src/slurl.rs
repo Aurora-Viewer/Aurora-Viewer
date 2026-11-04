@@ -26,15 +26,45 @@ impl Location {
     }
 }
 
-/// `http://maps.secondlife.com/secondlife/Region%20Name/x/y/z`.
+/// The OpenSim grid the agent is on now (`grids::current`), set by the app
+/// as it changes; None on Second Life. A global like the Legacy Viewer's
+/// LFSimFeatureHandler, so the many place links need not carry it.
+static GRID: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Name the grid the SLURLs made from now on are for (None: Second Life).
+pub fn set_grid(grid: Option<String>) {
+    if let Ok(mut current) = GRID.write()
+        && *current != grid
+    {
+        *current = grid;
+    }
+}
+
+/// The SLURL of a place on the grid the agent is on: on Second Life
+/// `http://maps.secondlife.com/secondlife/Region%20Name/x/y/z`, on an OpenSim
+/// grid `hop://grid.example:8002/Region%20Name/x/y/z`.
 pub fn make(region: &str, pos: Vec3) -> String {
-    format!(
-        "http://maps.secondlife.com/secondlife/{}/{}/{}/{}",
-        encode(region),
+    let grid = GRID.read().ok().and_then(|g| g.clone());
+    make_on(grid.as_deref(), region, pos)
+}
+
+/// LLSLURL::getSLURLString: Second Life's maps address, or on an OpenSim
+/// grid `hop://<grid>/` (DEFAULT_HOP_BASE, fsgridhandler.cpp), the grid
+/// being the Hypergrid address of the region's grid (LLAgentUI::buildSLURL
+/// uses LFSimFeatureHandler::hyperGridURL). Deliberate difference: the
+/// Legacy Viewer gives the other place links the login grid, which is
+/// wrong while visiting another grid; here every link names the grid the
+/// agent is on, where its region was found.
+pub fn make_on(grid: Option<&str>, region: &str, pos: Vec3) -> String {
+    let (x, y, z) = (
         pos.x.round().max(0.0) as i32,
         pos.y.round().max(0.0) as i32,
-        pos.z.round().max(0.0) as i32
-    )
+        pos.z.round().max(0.0) as i32,
+    );
+    match grid.map(str::trim).filter(|g| !g.is_empty()) {
+        Some(grid) => format!("hop://{}/{}/{x}/{y}/{z}", grid.trim_end_matches('/'), encode(region)),
+        None => format!("http://maps.secondlife.com/secondlife/{}/{x}/{y}/{z}", encode(region)),
+    }
 }
 
 pub fn encode(s: &str) -> String {
@@ -298,6 +328,25 @@ pub fn place_link(url: &str) -> Option<PlaceLink> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opensim_slurls_name_their_grid_and_read_back() {
+        let pos = Vec3::new(128.4, 64.6, 22.0);
+        assert_eq!(
+            make_on(None, "Région 1", pos),
+            "http://maps.secondlife.com/secondlife/R%C3%A9gion%201/128/65/22"
+        );
+        let hop = make_on(Some("grid.example:8002"), "Région 1", pos);
+        assert_eq!(hop, "hop://grid.example:8002/R%C3%A9gion%201/128/65/22");
+        let back = parse_hypergrid(&hop).expect("a hop SLURL reads back");
+        assert_eq!(back.grid.as_deref(), Some("grid.example:8002"));
+        assert_eq!(back.region, "Région 1");
+        assert_eq!(back.pos, Vec3::new(128.0, 65.0, 22.0));
+        // the navigation bar's parser keeps the grid too
+        assert_eq!(parse(&hop).and_then(|l| l.grid).as_deref(), Some("grid.example:8002"));
+        // an empty grid is Second Life's link
+        assert!(make_on(Some(" "), "R", pos).starts_with("http://maps.secondlife.com/"));
+    }
+
     use super::*;
 
     #[test]

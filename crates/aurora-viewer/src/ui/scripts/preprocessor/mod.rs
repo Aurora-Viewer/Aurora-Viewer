@@ -381,11 +381,19 @@ where
                             self.definitions.remove(argument);
                         }
                         "include" => {
-                            let mut tokens = lex::lex(argument);
-                            for token in &mut tokens {
-                                token.line = logical_line;
-                            }
-                            let expanded = lex::join(&macros::expand(&tokens, &self.definitions)?);
+                            // A "file" or <file> header name is taken as written, like Boost.Wave
+                            // (C99 6.10.2): only the macro form `#include NAME` is expanded, so a
+                            // header that defines a path component as a macro (e.g. an empty
+                            // `#define LIB`) does not break later `<LIB/...>` includes.
+                            let expanded = if argument.starts_with('"') || argument.starts_with('<') {
+                                argument.to_owned()
+                            } else {
+                                let mut tokens = lex::lex(argument);
+                                for token in &mut tokens {
+                                    token.line = logical_line;
+                                }
+                                lex::join(&macros::expand(&tokens, &self.definitions)?)
+                            };
                             let expanded = expanded.trim();
                             let include = expanded
                                 .strip_prefix('"')
@@ -510,6 +518,36 @@ mod tests {
         assert!(!output.generated.contains("wrong branch"));
         assert_eq!(decode(&output.uploaded), source);
     }
+
+    #[test]
+    fn header_names_are_not_macro_expanded() {
+        let settings = ScriptSettings {
+            optimize: false,
+            lazy_lists: false,
+            switches: false,
+            ..Default::default()
+        };
+        // `kit/core` defines its own folder name as an empty macro, then the
+        // later <kit/...> and "kit/..." includes must still name the files.
+        let source =
+            "#include <kit/core>\n#include <kit/extra>\n#include \"kit/quoted\"\n#define HEADER \"kit/macro\"\n#include HEADER\ndefault {}";
+        let mut requested = Vec::new();
+        let output = process(source, "main", &settings, &Environment::default(), &mut |name, _| {
+            requested.push(name.to_owned());
+            let source = match name {
+                "kit/core" => "#define kit\n#define extra\nint core;",
+                _ => "int other;",
+            };
+            Ok(Include {
+                source: source.into(),
+                asset: Uuid::nil(),
+            })
+        })
+        .unwrap();
+        assert_eq!(requested, ["kit/core", "kit/extra", "kit/quoted", "kit/macro"]);
+        assert!(output.generated.contains("int core;"));
+    }
+
     #[test]
     fn malformed_conditions_and_recursive_includes_fail_without_uploading() {
         let settings = ScriptSettings::default();

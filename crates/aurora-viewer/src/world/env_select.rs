@@ -282,6 +282,16 @@ pub fn step(list: &[SettingsChoice], current: usize, forward: bool) -> Option<Uu
     }
 }
 
+/// The entries whose name contains `query`, ignoring case and the spaces
+/// around it (the lists' search field, an Aurora addition); all of them for
+/// an empty query.
+pub fn matching<'a>(list: &'a [SettingsChoice], query: &str) -> Vec<&'a SettingsChoice> {
+    let query = query.trim().to_lowercase();
+    list.iter()
+        .filter(|c| query.is_empty() || c.name.to_lowercase().contains(&query))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,5 +512,22 @@ mod tests {
         // an empty list: nothing to select (NoValidEnvSettingFound)
         assert_eq!(step(&[], 0, true), None);
         assert_eq!(step(&[], 1, false), None);
+    }
+
+    #[test]
+    fn search_matches_any_part_of_the_name_ignoring_case() {
+        let choice = |name: &str, n: u128| SettingsChoice {
+            item: Uuid::from_u128(n),
+            name: name.into(),
+            asset: Uuid::from_u128(n + 100),
+        };
+        let list = [choice("Coastal Sunset", 1), choice("A-6PM", 2), choice("Nacon's Natural Sunset", 3)];
+        let names = |q: &str| matching(&list, q).iter().map(|c| c.name.as_str()).collect::<Vec<_>>();
+        assert_eq!(names("sunset"), ["Coastal Sunset", "Nacon's Natural Sunset"]);
+        assert_eq!(names("  SUNSET "), names("sunset"));
+        assert_eq!(names("6pm"), ["A-6PM"]);
+        assert_eq!(names("").len(), 3);
+        assert_eq!(names("   ").len(), 3);
+        assert!(names("midnight").is_empty());
     }
 }

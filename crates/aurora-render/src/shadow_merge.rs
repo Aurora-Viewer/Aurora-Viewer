@@ -16,6 +16,7 @@
 //! after the copy, in every cascade as before, since a finer map cuts their
 //! texture out differently.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 
 use crate::shadow_cull::Merge;
@@ -88,7 +89,7 @@ impl ShadowMerge {
             immediate_size: 0,
         });
         let pipeline = |label, fs, compare| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {

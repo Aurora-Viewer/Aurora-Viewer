@@ -175,6 +175,7 @@ impl Default for Profile {
                             "share",
                             "asset-uuid",
                             "protect-folder",
+                            "folder-color",
                             "organize",
                             "listing",
                             "separator:image",
@@ -234,6 +235,7 @@ impl Profile {
             "copy-name",
             "new-outfit",
             "find-similar",
+            "folder-color",
         ] {
             let known = self.layout.placements.contains_key(id)
                 || self.layout.removed.contains(id)

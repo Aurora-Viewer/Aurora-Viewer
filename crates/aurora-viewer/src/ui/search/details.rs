@@ -441,7 +441,7 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
         };
         text_field(ui, p, aurora_i18n::tr!("search-group-enrollment"), enrollment);
         let fee = if g.membership_fee > 0 {
-            format!("L${}", g.membership_fee)
+            format!("{}{}", aurora_i18n::currency(), g.membership_fee)
         } else {
             aurora_i18n::tr!("search-none-fee").to_owned()
         };
@@ -491,7 +491,8 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, row: Option<&Row>, action
         },
         global,
         region_pos: global.map_or(glam::Vec3::ZERO, |g| {
-            glam::Vec3::new(g.x.rem_euclid(256.0) as f32, g.y.rem_euclid(256.0) as f32, g.z as f32)
+            let (x, y) = c.world.map.local_xy(g.x, g.y);
+            glam::Vec3::new(x as f32, y as f32, g.z as f32)
         }),
         stage: Stage::Info(parcel),
     };
@@ -512,7 +513,12 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, row: Option<&Row>, action
         let for_sale = row.is_some_and(|r| r.icon == RowIcon::ForSale);
         if let Some(d) = data.filter(|d| for_sale && d.sale_price > 0) {
             ui.add_space(4.0);
-            text_field(ui, p, aurora_i18n::tr!("search-col-price"), &format!("L${}", d.sale_price));
+            text_field(
+                ui,
+                p,
+                aurora_i18n::tr!("search-col-price"),
+                &format!("{}{}", aurora_i18n::currency(), d.sale_price),
+            );
         }
     });
     match (clicked, global) {
@@ -584,7 +590,12 @@ fn classified(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions:
             aurora_i18n::tr!("ui-profile-creation-date"),
             &profiles::slt_date(info.creation_date),
         );
-        text_field(ui, p, aurora_i18n::tr!("ui-profile-listing-cost"), &format!("L${}", info.price));
+        text_field(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-profile-listing-cost"),
+            &format!("{}{}", aurora_i18n::currency(), info.price),
+        );
         field(ui, p, aurora_i18n::tr!("search-classified-creator"), |ui| {
             agent_link(ui, c, info.creator)
         });
@@ -639,11 +650,8 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, actions: &mut 
         );
         field(ui, p, aurora_i18n::tr!("search-event-organizer"), |ui| agent_link(ui, c, e.creator));
         // "%s (%d, %d, %d)": the region and the position in it
-        let pos = glam::Vec3::new(
-            (e.global.x.round() as i64).rem_euclid(256) as f32,
-            (e.global.y.round() as i64).rem_euclid(256) as f32,
-            e.global.z.round() as f32,
-        );
+        let (x, y) = c.world.map.local_xy(e.global.x.round(), e.global.y.round());
+        let pos = glam::Vec3::new(x.round() as f32, y.round() as f32, e.global.z.round() as f32);
         field(ui, p, aurora_i18n::tr!("ui-profile-location-2"), |ui| {
             let text = format!("{} ({}, {}, {})", e.sim_name, pos.x, pos.y, pos.z);
             let link = ui.add(egui::Link::new(
@@ -654,7 +662,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, actions: &mut 
             }
         });
         let fee = match e.cover {
-            Some(amount) => format!("L${amount}"),
+            Some(amount) => format!("{}{amount}", aurora_i18n::currency()),
             None => aurora_i18n::tr!("search-none-fee").to_owned(),
         };
         text_field(ui, p, aurora_i18n::tr!("search-event-fee"), &fee);

@@ -300,7 +300,12 @@ pub(super) fn pane(
             }
             let mut th = thread::Thread {
                 compact,
-                times: st.timestamps,
+                // FSShowTimestampsNearbyChat / FSShowTimestampsIM
+                times: if st.selected.is_none() {
+                    st.timestamps_nearby
+                } else {
+                    st.timestamps_im
+                },
                 moderators,
                 me: &me,
                 out: &mut asked,

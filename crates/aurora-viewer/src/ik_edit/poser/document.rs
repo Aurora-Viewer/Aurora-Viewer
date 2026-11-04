@@ -18,6 +18,11 @@ pub(super) struct Joint {
     translation: [f32; 3],
     scale: [f32; 3],
     locked: bool,
+    /// `rotation` is a change to apply on the destination's own origin, like
+    /// the Legacy Viewer's diff; a complete rotation otherwise. Absent in
+    /// complete joints and in the files saved before it existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    change: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,12 +42,24 @@ impl Document {
                 .canonical_names
                 .iter()
                 .enumerate()
-                .map(|(bone, name)| Joint {
-                    name: name.clone(),
-                    rotation: session.pose.rotations[bone].to_array(),
-                    translation: (session.pose.positions[bone] - session.base.positions[bone]).to_array(),
-                    scale: (session.pose.scales[bone] / session.base.scales[bone]).to_array(),
-                    locked: session.pose.locks.contains_key(&bone),
+                .map(|(bone, name)| {
+                    // FSFloaterPoser::savePoseToXml: only what was authored
+                    let origin = session.pose.origin[bone];
+                    let rotation = session.pose.rotations[bone];
+                    let complete = origin.dot(rig.local_rot[bone]).abs() > 0.9999999;
+                    Joint {
+                        name: name.clone(),
+                        rotation: if complete {
+                            rotation
+                        } else {
+                            (origin.inverse() * rotation).normalize()
+                        }
+                        .to_array(),
+                        translation: (session.pose.positions[bone] - session.base.positions[bone]).to_array(),
+                        scale: (session.pose.scales[bone] / session.base.scales[bone]).to_array(),
+                        locked: session.pose.locks.contains_key(&bone),
+                        change: !complete,
+                    }
                 })
                 .collect(),
         }
@@ -82,7 +99,13 @@ impl Document {
             if selective && session.edited(bone) {
                 continue;
             }
-            pose.rotations[bone] = Quat::from_array(joint.rotation).normalize();
+            let rotation = Quat::from_array(joint.rotation).normalize();
+            if joint.change {
+                pose.rotations[bone] = (pose.origin[bone] * rotation).normalize();
+            } else {
+                pose.rotations[bone] = rotation;
+                pose.origin[bone] = rig.local_rot[bone];
+            }
             if !rotations_only {
                 pose.positions[bone] = session.base.positions[bone] + Vec3::from_array(joint.translation);
                 pose.scales[bone] = session.base.scales[bone] * Vec3::from_array(joint.scale);

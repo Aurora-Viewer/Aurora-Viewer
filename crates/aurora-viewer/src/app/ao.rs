@@ -15,7 +15,14 @@ impl App {
             self.ao_agent = self.world.agent_id;
             self.ao_catalog = Default::default();
             self.ao_bootstrap = Default::default();
-            self.ao_runtime = Default::default();
+            let choices = self
+                .settings
+                .ao
+                .accounts
+                .get(&self.ao_agent)
+                .map(|a| a.animations.clone())
+                .unwrap_or_default();
+            self.ao_runtime = runtime::Runtime::with_choices(choices);
             self.ao_ui = Default::default();
             self.ao_missing.clear();
             self.ao_default_applied = false;
@@ -117,10 +124,14 @@ impl App {
             && crate::ao::water_demo::mode().is_some()
             && let Some(selected) = crate::ao::water_demo::install(&mut self.scene, &mut self.ao_catalog)
         {
-            self.settings
-                .ao
-                .accounts
-                .insert(self.world.agent_id, crate::ao::Account { enabled: true, selected });
+            self.settings.ao.accounts.insert(
+                self.world.agent_id,
+                crate::ao::Account {
+                    enabled: true,
+                    selected,
+                    ..Default::default()
+                },
+            );
             if self.frame_count <= 720 {
                 let walking = crate::ao::water_demo::mode().is_some_and(|m| m.starts_with("water-"));
                 self.settings
@@ -261,7 +272,12 @@ impl App {
         if self.world.teleporting || !self.world.movement_complete {
             return;
         }
-        let account = self.settings.ao.accounts.get(&self.world.agent_id).cloned().unwrap_or_default();
+        let (enabled, selected) = self
+            .settings
+            .ao
+            .accounts
+            .get(&self.world.agent_id)
+            .map_or((false, Uuid::nil()), |a| (a.enabled, a.selected));
         // (with Aurora's movement, the walk or the stop of the keys first)
         let raw = self.world.own_signals();
         let preview = self
@@ -276,7 +292,7 @@ impl App {
         let set = anchor_hold
             .filter(|_| self.native_anchor.owns_sit())
             .and(self.anchor_pose.as_ref().map(|(_, set)| set))
-            .or_else(|| self.ao_catalog.selected(account.selected));
+            .or_else(|| self.ao_catalog.selected(selected));
         let on_object = self
             .world
             .objects
@@ -311,7 +327,7 @@ impl App {
                 .run_start
                 .map(|start| crate::world::PlayingAnimation::from_signal(crate::ao::State::Running.motion(), 0, start, None)),
             native_running: self.movement_runtime.native_running,
-            enabled: account.enabled,
+            enabled,
             swim_hold: preview_swim.or_else(|| self.movement_runtime.swim_signal(now, &swim_input)),
             water_walk_hold: self
                 .movement_runtime
@@ -333,7 +349,7 @@ impl App {
         };
         let anims = &mut self.scene.anims;
         self.ao_runtime.prefetch(
-            set.filter(|_| account.enabled || frame.swim_hold.is_some()),
+            set.filter(|_| enabled || frame.swim_hold.is_some()),
             self.world.inventory.generation,
             |id| {
                 anims.get(id);
@@ -384,6 +400,22 @@ impl App {
         }
         if !commands.is_empty() {
             self.send(NetCommand::AgentAnimationChanges { changes: commands });
+        }
+        self.save_ao_choices();
+    }
+
+    pub(super) fn save_ao_choices(&mut self) {
+        let selected = self
+            .settings
+            .ao
+            .accounts
+            .get(&self.world.agent_id)
+            .map_or(Uuid::nil(), |a| a.selected);
+        if let Some(choices) = self.ao_runtime.take_choices(self.ao_catalog.selected(selected)) {
+            self.settings.ao.accounts.entry(self.world.agent_id).or_default().animations = choices;
+            if !self.demo {
+                self.settings.save();
+            }
         }
     }
 

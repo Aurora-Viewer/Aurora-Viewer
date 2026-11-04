@@ -12,6 +12,7 @@ use super::invite_card::{answered, card_frame, icon, notice};
 use super::{LineEnv, chat_text_marked};
 use crate::theme::Palette;
 use crate::ui::context::{CtxAction, request};
+use crate::ui::fonts::chat_size;
 use crate::ui::widgets;
 use crate::world::ChatLine;
 use crate::world::inventory_offers::{Answer, Offer, item_label, kind_label};
@@ -49,7 +50,18 @@ fn buttons(ui: &mut egui::Ui, p: &Palette, offer: u64, size: Vec2) {
 
 fn inventory_link(ui: &mut egui::Ui, env: &mut LineEnv, offer: &Offer) {
     if let Some(link) = offer.inventory_link(aurora_i18n::tr!("ui-notifications-show-in-inventory")) {
-        chat_text_marked(ui, env.p, env.emoji, env.world, env.want_names, &link, 12.0, env.p.ink, false, None);
+        chat_text_marked(
+            ui,
+            env.p,
+            env.emoji,
+            env.world,
+            env.want_names,
+            &link,
+            chat_size(ui.ctx(), 12.0),
+            env.p.ink,
+            false,
+            None,
+        );
     }
 }
 
@@ -67,9 +79,9 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, o
         let (ink, muted) = if done.is_some() { (p.muted, p.muted_dim) } else { (p.ink, p.muted) };
         ui.horizontal(|ui| {
             icon(ui, env, ICON, if done.is_some() { p.muted_dim } else { p.teal });
-            ui.add(egui::Label::new(RichText::new(&title).size(13.0).strong().color(ink)).wrap());
+            ui.add(egui::Label::new(RichText::new(&title).size(chat_size(ui.ctx(), 13.0)).strong().color(ink)).wrap());
         });
-        ui.label(RichText::new(kind_label(v.asset_type)).size(12.0).color(muted));
+        ui.label(RichText::new(kind_label(v.asset_type)).size(chat_size(ui.ctx(), 12.0)).color(muted));
         match done {
             None => {
                 ui.add_space(5.0);
@@ -97,11 +109,26 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, o
         icon(ui, env, ICON, if done.is_some() { p.muted_dim } else { p.teal });
         let world = env.world;
         let color = if done.is_some() { p.muted } else { p.ink };
-        chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, 12.5, color, false, None);
+        chat_text_marked(
+            ui,
+            p,
+            env.emoji,
+            world,
+            env.want_names,
+            &text,
+            chat_size(ui.ctx(), 12.5),
+            color,
+            false,
+            None,
+        );
         match done {
             None => buttons(ui, p, offer, Vec2::new(80.0, 20.0)),
             Some(label) => {
-                ui.label(RichText::new(format!("· {label}")).size(12.0).color(p.muted_dim));
+                ui.label(
+                    RichText::new(format!("· {label}"))
+                        .size(chat_size(ui.ctx(), 12.0))
+                        .color(p.muted_dim),
+                );
                 inventory_link(ui, env, &v);
             }
         }

@@ -124,7 +124,7 @@ impl Input {
             out.key = hasher.finish();
             return out;
         };
-        out.hidden_bakes = Scene::bom_mask(world, index);
+        out.hidden_bakes = scene.bom_mask(world, index);
         out.hidden_bakes.hash(&mut hasher);
         for (slot, _, _) in BAKES {
             if let Some(id) = world.bake_texture(index, slot) {

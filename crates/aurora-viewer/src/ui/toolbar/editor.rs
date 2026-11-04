@@ -445,6 +445,19 @@ fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::P
 /// bar's labels. Never saved.
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
+    if matches!(mode, "empty-left" | "empty-right") {
+        let bottom = settings.buttons(layout).to_vec();
+        settings.buttons = Some(Vec::new());
+        settings.left.clear();
+        settings.right.clear();
+        if mode == "empty-left" {
+            settings.left = bottom;
+        } else {
+            settings.right = bottom;
+        }
+        settings.locked = false;
+        return;
+    }
     if !matches!(mode, "custom" | "side" | "sidemenu" | "labels" | "right") {
         return;
     }
@@ -484,7 +497,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     let Some(mode) = demo_mode() else {
         return Vec::new();
     };
-    if mode == "side" {
+    if matches!(mode, "side" | "empty-left" | "empty-right") {
         return Vec::new();
     }
     // the side toolbar's right click, without the window

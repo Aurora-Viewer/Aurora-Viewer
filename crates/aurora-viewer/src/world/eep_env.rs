@@ -22,10 +22,11 @@
 
 use super::eep::{self, DayCycle, EnvAnswer, Settings, SkyFrame, WaterFrame};
 use super::eep_photo::{PhotoChoice, PhotoLayer};
+use super::eep_push::PushLayer;
 use super::env_select::{SettingsKind, Shown as ListShown};
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -196,6 +197,8 @@ pub enum Source {
     /// The photo's own sky, water or day over what lies beneath
     /// (`eep_photo`), while the photo window is open.
     Photo(u64),
+    /// ENV_PUSH: what an experience's environment controller pushed.
+    Push(u64),
     /// ENV_PARCEL of the main region.
     Parcel(u64),
     /// ENV_REGION: the region's day, or Firestorm's default day asset when
@@ -263,6 +266,9 @@ struct Shown {
     target_water: WaterFrame,
     /// The same with the photo's layer (what "Keep this light" keeps).
     photo_sky: SkyFrame,
+    /// The sun of that sky before the photo turns it (what the photo's
+    /// sun sliders restore).
+    unturned_sun: Quat,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -291,6 +297,8 @@ pub struct EnvSelector {
     manual_transition: f32,
     /// Next local change without crossfade (TRANSITION_INSTANT).
     instant_next: bool,
+    /// The photo window closed with a light of its own (`close_photo`).
+    photo_closing: bool,
     parcel: Option<Slot>,
     region: Option<Slot>,
     /// Region track altitudes (LLEnvironment::mTrackAltitudes), from the
@@ -312,6 +320,8 @@ pub struct EnvSelector {
     edit: Option<(SkyFrame, WaterFrame)>,
     /// The photo's own light over the local environment (`eep_photo`).
     photo: PhotoLayer,
+    /// What experience environment controllers pushed (`eep_push`).
+    push: PushLayer,
     /// The selector changed the photo's choice (a change made elsewhere, a
     /// camera preset, "Keep this light"): the photo window follows.
     photo_changed: bool,
@@ -477,7 +487,7 @@ impl EnvSelector {
                 out.push(p.asset);
             }
         }
-        for id in self.photo.wanted() {
+        for id in self.photo.wanted().chain(self.push.wanted()) {
             if !out.contains(&id) {
                 out.push(id);
             }
@@ -485,9 +495,30 @@ impl EnvSelector {
         out
     }
 
+    /// A `PushExpEnvironment` message from an experience controller.
+    pub fn push_experience(&mut self, experience: Uuid, message: &Llsd) {
+        self.push.handle(experience, message);
+    }
+
+    /// The agent forgot or blocked an experience: its environment goes
+    /// (Forget fades fast, Block is instant: TRANSITION_FAST / INSTANT).
+    pub fn clear_experience(&mut self, experience: Uuid, transition: f32) {
+        self.push.clear(experience, transition);
+    }
+
+    /// Experiences with something pushed or waiting (the ExperienceQuery of
+    /// the parcel check, still to come, will need it).
+    #[cfg(test)]
+    pub fn pushing_experiences(&self) -> Vec<Uuid> {
+        self.push.experiences()
+    }
+
     /// A settings asset arrived (`None`: it could not be fetched or parsed).
     pub fn on_settings(&mut self, id: Uuid, settings: Option<Arc<Settings>>) {
         self.photo.on_settings(id, settings.as_ref());
+        // onSetEnvAssetLoaded for a pushed environment: FailedToFindSettings
+        let failed = self.push.on_settings(id, settings.as_ref());
+        self.failed_local.extend(failed);
         let mut local = false;
         for p in self.pending.iter_mut().filter(|p| p.asset == id) {
             if matches!(p.state, PendingState::Waiting) {
@@ -866,6 +897,17 @@ impl EnvSelector {
         self.photo.set(choice);
     }
 
+    /// The photo window closed: the user's own light fades back in over
+    /// TRANSITION_DEFAULT, like leaving a local environment, whatever lies
+    /// beneath and even when the photo only turned the sun (no change of
+    /// source, which alone would not fade).
+    pub fn close_photo(&mut self) {
+        if !self.photo.choice.is_empty() {
+            self.photo.set(PhotoChoice::default());
+            self.photo_closing = true;
+        }
+    }
+
     /// A camera preset's light replaces the photo's too.
     pub fn drop_photo(&mut self) {
         if !self.photo.choice.is_empty() {
@@ -884,9 +926,10 @@ impl EnvSelector {
         self.photo.loading()
     }
 
-    /// The sky shown without the crossfade, the photo's layer included.
-    pub fn shown_sky(&self) -> Option<SkyFrame> {
-        self.shown.map(|s| s.photo_sky)
+    /// The sun of the sky shown, the photo's sky included but not its own
+    /// sun: the one the photo's sun sliders start from and restore.
+    pub fn unturned_sun(&self) -> Option<Quat> {
+        self.shown.map(|s| s.unturned_sun)
     }
 
     /// A change made elsewhere (environment window, World menu, an editor's
@@ -1077,30 +1120,46 @@ impl EnvSelector {
             (Source::Local(l.generation), track, sky, water)
         } else {
             let (source, slot) = self.selected(input);
+            let pushed_day = self.push.day();
             let (track, sky, water) = match slot {
                 Some(s) => {
                     let pos = s.position(input.unix_secs);
-                    let track = s.day.track_for_altitude(&self.altitudes, input.altitude);
-                    (track, s.day.sky_at(pos, track), s.day.water_at(pos))
+                    let day = pushed_day.unwrap_or(&s.day);
+                    let track = day.track_for_altitude(&self.altitudes, input.altitude);
+                    (track, day.sky_at(pos, track), day.water_at(pos))
                 }
                 None if source == Source::Legacy => (0, SkyFrame::with_sun(input.legacy_sun), WaterFrame::default()),
                 None => (0, SkyFrame::default(), WaterFrame::default()),
             };
-            (source, track, sky, water)
+            if self.push.is_active() {
+                let (sky, water) = self.push.apply(sky, water);
+                (Source::Push(self.push.generation()), track, sky, water)
+            } else {
+                (source, track, sky, water)
+            }
         };
         // the photo's layer, under an open editor only (`eep_photo`); the
         // targets stay those beneath it, for what a local change inherits
         let (target_sky, target_water) = (sky, water);
-        let (source, track, sky, water) = if source == Source::Edit || self.photo.choice.is_empty() {
+        let (source, track, mut sky, water) = if source == Source::Edit || self.photo.choice.is_empty() {
             (source, track, sky, water)
         } else {
             let r = self.photo.resolve();
-            let (t, s, w) = r.compose(self.photo.choice.sun, &self.altitudes, input, (track, sky, water));
+            let (t, s, w) = r.compose(&self.altitudes, input, (track, sky, water));
             let source = if r.any() { Source::Photo(self.photo.generation) } else { source };
             (source, t, s, w)
         };
+        // then the photo's sun, over any sky
+        let unturned_sun = sky.sun_rotation;
+        if source != Source::Edit
+            && let Some(q) = self.photo.choice.sun
+        {
+            sky.sun_rotation = q;
+        }
+        // (an open editor hides the photo's light: nothing to fade from)
+        let closing = std::mem::take(&mut self.photo_closing) && source != Source::Edit;
         if let Some(prev) = self.shown
-            && (prev.source != source || prev.track != track)
+            && (closing || prev.source != source || prev.track != track)
         {
             // updateEnvironment: from what is shown (itself possibly mid-fade).
             // Manual local changes use FSEnvironmentManualTransitionTime
@@ -1108,7 +1167,11 @@ impl EnvSelector {
             // a live one at once: Aurora fades both, identical with the
             // default 0 s); going back to the shared environment fades over
             // TRANSITION_DEFAULT (setSelectedEnvironment's default).
-            let duration = if prev.source == source {
+            let duration = if closing {
+                // the photo window closed (`close_photo`); otherwise a local
+                // environment beneath would come back as a manual change
+                TRANSITION_DEFAULT
+            } else if prev.source == source {
                 TRANSITION_ALTITUDE
             } else if source == Source::Edit {
                 // an editor shows its settings at once (TRANSITION_INSTANT)
@@ -1125,6 +1188,8 @@ impl EnvSelector {
                 }
             } else if matches!(prev.source, Source::Local(_) | Source::Photo(_)) {
                 TRANSITION_DEFAULT
+            } else if matches!(source, Source::Push(_)) || matches!(prev.source, Source::Push(_)) {
+                self.push.transition()
             } else {
                 self.next_fade
             };
@@ -1161,6 +1226,7 @@ impl EnvSelector {
             target_sky,
             target_water,
             photo_sky,
+            unturned_sun,
         });
         (sky, water)
     }
@@ -1289,6 +1355,33 @@ mod tests {
 
     fn gamma(sel: &mut EnvSelector, now: f64) -> f32 {
         sel.frame(&input(now)).0.gamma
+    }
+
+    #[test]
+    fn an_experience_push_overrides_the_parcel_fades_and_clears() {
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        gamma(&mut sel, 0.0);
+        let experience = Uuid::from_u128(9);
+        sel.push_experience(
+            experience,
+            &llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => llsd_map! {
+                    "transition_time" => 2.0,
+                    "settings" => llsd_map! { "sky" => llsd_map! { "gamma" => 3.0 } },
+                },
+            },
+        );
+        assert!((gamma(&mut sel, 1.0) - 0.7).abs() < 1e-6, "the fade starts from the region sky");
+        assert!((gamma(&mut sel, 3.1) - 3.0).abs() < 1e-6);
+        assert!(matches!(sel.shown_source(), Some(Source::Push(_))));
+        assert_eq!(sel.pushing_experiences(), vec![experience]);
+        // Forget: back to the shared environment over the fast transition
+        sel.clear_experience(experience, 1.0);
+        gamma(&mut sel, 4.0);
+        assert!((gamma(&mut sel, 5.1) - 0.7).abs() < 1e-6);
+        assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
     }
 
     #[test]
@@ -1867,6 +1960,51 @@ mod tests {
         assert!((sky.gamma - 0.7).abs() < 1e-6);
         assert!((water.fog_density - 9.0).abs() < 1e-6);
         assert!(!sel.take_local_dirty());
+    }
+
+    #[test]
+    fn closing_the_photo_window_fades_back_to_the_users_light() {
+        let mut sel = region_selector();
+        let own = sel.frame(&input(1.0)).0.sun_rotation;
+        // the sun alone: no change of source, yet a fade
+        let sun = crate::ui::environment::rotation_from(45.0, 10.0);
+        sel.set_photo(PhotoChoice {
+            sun: Some(sun),
+            ..PhotoChoice::default()
+        });
+        assert!(sel.frame(&input(2.0)).0.sun_rotation.abs_diff_eq(sun, 1e-6));
+        let unturned = sel.unturned_sun().expect("a frame shown");
+        assert!(
+            unturned.abs_diff_eq(own, 1e-6),
+            "the sliders restore the sky's sun, not the photo's"
+        );
+        sel.close_photo();
+        sel.set_photo(PhotoChoice::default());
+        let start = 3.0;
+        assert!(
+            sel.frame(&input(start)).0.sun_rotation.abs_diff_eq(sun, 1e-6),
+            "from the photo's sun"
+        );
+        let mid = sel.frame(&input(start + f64::from(TRANSITION_DEFAULT) / 2.0)).0.sun_rotation;
+        assert!(!mid.abs_diff_eq(sun, 1e-3) && !mid.abs_diff_eq(own, 1e-3), "halfway");
+        let end = sel.frame(&input(start + f64::from(TRANSITION_DEFAULT) + 0.1)).0.sun_rotation;
+        assert!(end.abs_diff_eq(own, 1e-6));
+        // over a local sky: its fade too, not a manual change's (instant)
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(20.0));
+        sel.set_photo(photo(None, Some(WATER)));
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        assert!((sel.frame(&input(21.0)).1.fog_density - 9.0).abs() < 1e-6);
+        sel.close_photo();
+        assert!((sel.frame(&input(22.0)).1.fog_density - 9.0).abs() < 1e-6, "no instant change");
+        let water = sel.frame(&input(22.0 + f64::from(TRANSITION_DEFAULT) / 2.0)).1;
+        assert!(water.fog_density < 9.0 && water.fog_density > WaterFrame::default().fog_density);
+        // nothing of the photo's left: closing again starts no fade
+        sel.frame(&input(40.0));
+        sel.close_photo();
+        sel.frame(&input(41.0));
+        assert!(sel.fade.is_none());
     }
 
     #[test]

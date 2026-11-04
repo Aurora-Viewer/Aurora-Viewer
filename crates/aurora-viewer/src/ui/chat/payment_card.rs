@@ -9,6 +9,7 @@
 
 use super::invite_card::{card_frame, icon, notice};
 use super::{LineEnv, chat_text_marked};
+use crate::ui::fonts::chat_size;
 use crate::world::ChatLine;
 use crate::world::payments::{self, Payment};
 use egui::RichText;
@@ -33,11 +34,22 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, p
     card_frame(ui, env, line, indent, false, |ui, env| {
         ui.horizontal(|ui| {
             icon(ui, env, ICON, p.teal);
-            ui.add(egui::Label::new(RichText::new(&title).size(13.0).strong().color(p.ink)).wrap());
+            ui.add(egui::Label::new(RichText::new(&title).size(chat_size(ui.ctx(), 13.0)).strong().color(p.ink)).wrap());
         });
         if !v.message.is_empty() {
             let world = env.world;
-            chat_text_marked(ui, p, env.emoji, world, env.want_names, &v.message, 12.5, p.ink, false, None);
+            chat_text_marked(
+                ui,
+                p,
+                env.emoji,
+                world,
+                env.want_names,
+                &v.message,
+                chat_size(ui.ctx(), 12.5),
+                p.ink,
+                false,
+                None,
+            );
         }
     });
 }
@@ -52,7 +64,18 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, p
     ui.horizontal_wrapped(|ui| {
         icon(ui, env, ICON, p.teal);
         let world = env.world;
-        chat_text_marked(ui, p, env.emoji, world, env.want_names, &line.text, 12.5, p.ink, false, None);
+        chat_text_marked(
+            ui,
+            p,
+            env.emoji,
+            world,
+            env.want_names,
+            &line.text,
+            chat_size(ui.ctx(), 12.5),
+            p.ink,
+            false,
+            None,
+        );
     });
 }
 

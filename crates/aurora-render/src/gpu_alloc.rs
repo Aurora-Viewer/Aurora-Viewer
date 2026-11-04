@@ -141,6 +141,62 @@ impl Backoff {
     }
 }
 
+/// Grow a buffer whose contents the caller uploads again in full. Retain
+/// the valid allocation on failure; the caller must limit its upload and
+/// draw count to the retained size. No old contents are copied.
+pub fn grow_upload_buffer(device: &wgpu::Device, buffer: &mut wgpu::Buffer, backoff: &mut Backoff, label: &str, bytes: u64) -> bool {
+    if bytes <= buffer.size() {
+        return true;
+    }
+    let now = Instant::now();
+    if !backoff.ready(now) {
+        return false;
+    }
+    let usage = buffer.usage();
+    assert!(usage.contains(wgpu::BufferUsages::COPY_DST));
+    let limits = device.limits();
+    let limit = if usage.contains(wgpu::BufferUsages::STORAGE) {
+        limits.max_buffer_size.min(limits.max_storage_buffer_binding_size)
+    } else {
+        limits.max_buffer_size
+    } / wgpu::COPY_BUFFER_ALIGNMENT
+        * wgpu::COPY_BUFFER_ALIGNMENT;
+    let needed = bytes.checked_next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT).unwrap_or(u64::MAX);
+    let preferred = needed.checked_next_power_of_two().unwrap_or(limit).min(limit);
+    let mut failure = format!("{bytes} bytes exceed the buffer limit of {limit}");
+    if needed <= limit {
+        for size in [preferred, needed] {
+            match try_buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage,
+                    mapped_at_creation: false,
+                },
+            ) {
+                Ok(replacement) => {
+                    *buffer = replacement;
+                    backoff.succeeded();
+                    return true;
+                }
+                Err(e) => failure = e,
+            }
+            if preferred == needed {
+                break;
+            }
+        }
+    }
+    if !backoff.waiting() {
+        log::warn!(
+            "{label} buffer not grown ({failure}): keeping {} bytes until memory is available",
+            buffer.size()
+        );
+    }
+    backoff.failed(now);
+    false
+}
+
 /// Repeated log lines kept to one: the first time a message is seen it is
 /// written, then at most once per period with how many times it came back.
 #[derive(Debug)]
@@ -224,6 +280,68 @@ pub fn ahead_allowance(budget: u64, usage: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore]
+    fn upload_buffer_growth_respects_limits_and_keeps_the_previous_buffer() {
+        let _gpu = crate::test_gpu::lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("Vulkan adapter");
+        let mut limits = adapter.limits();
+        limits.max_buffer_size = 1_500_000;
+        limits.max_storage_buffer_binding_size = 1_500_000;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: limits,
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("upload growth"),
+            size: 4096,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut backoff = Backoff::default();
+        assert!(grow_upload_buffer(&device, &mut buffer, &mut backoff, "upload growth", 1_100_004));
+        assert_eq!(buffer.size(), 1_500_000, "the power-of-two growth was capped to the device limit");
+        let previous = buffer.clone();
+        assert!(!grow_upload_buffer(&device, &mut buffer, &mut backoff, "upload growth", 1_500_004));
+        assert_eq!(buffer, previous);
+        assert!(!backoff.ready(Instant::now()));
+        queue.write_buffer(&buffer, 0, &[1; 4096]);
+        assert!(pollster::block_on(scope.pop()).is_none());
+    }
+
+    /// Run in a separate process with AURORA_GPU_OOM=0.
+    #[test]
+    #[ignore]
+    fn refused_upload_buffer_growth_keeps_a_valid_buffer() {
+        assert_eq!(std::env::var("AURORA_GPU_OOM").as_deref(), Ok("0"));
+        let _gpu = crate::test_gpu::lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("Vulkan adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("upload growth"),
+            size: 4096,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let previous = buffer.clone();
+        let mut backoff = Backoff::default();
+        assert!(!grow_upload_buffer(&device, &mut buffer, &mut backoff, "upload growth", 8192));
+        assert_eq!(buffer, previous);
+        assert_eq!(buffer.size(), 4096);
+        assert!(!backoff.ready(Instant::now()));
+        queue.write_buffer(&buffer, 0, &[1; 4096]);
+        assert!(pollster::block_on(scope.pop()).is_none());
+    }
 
     #[test]
     fn a_repeated_message_is_written_once_then_counted() {

@@ -176,6 +176,9 @@ pub struct Prefs {
     /// The depth of field was turned on at the viewfinder's first opening
     /// (it used to be off by default, and every profile saved it so).
     pub dof_defaulted: bool,
+    /// Where the photo reel's tray was moved: its top left in fractions of
+    /// the screen (None: bottom left).
+    pub reel_at: Option<[f32; 2]>,
 }
 
 impl Default for Prefs {
@@ -190,6 +193,7 @@ impl Default for Prefs {
             pad: false,
             timer: 0,
             dof_defaulted: false,
+            reel_at: None,
         }
     }
 }

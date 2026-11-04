@@ -43,16 +43,16 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # short folder names: the build tree of the viewer has long paths
       - name: Legacy Viewer sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: FirestormViewer/phoenix-firestorm
           ref: ${{ env.FIRESTORM_SHA }}
           path: fs
       - name: Legacy Viewer build variables
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: FirestormViewer/fs-build-variables
           ref: ${{ env.BUILD_VARIABLES_SHA }}
@@ -67,7 +67,7 @@ jobs:
           gh release view "media-plugins-$env:PACK_VERSION" --repo "${{ github.repository }}" 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) { throw "media-plugins-$env:PACK_VERSION is already published: raise PACK_VERSION" }
           $global:LASTEXITCODE = 0
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
       - name: Autobuild
@@ -96,7 +96,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
           "PACK=$dir.zip" >> $env:GITHUB_ENV
           "SOURCE=$src" >> $env:GITHUB_ENV
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: media-plugins-windows
           path: |
@@ -109,15 +109,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Legacy Viewer sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: FirestormViewer/phoenix-firestorm
           ref: ${{ env.FIRESTORM_SHA }}
           path: fs
       - name: Legacy Viewer build variables
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: FirestormViewer/fs-build-variables
           ref: ${{ env.BUILD_VARIABLES_SHA }}
@@ -144,7 +144,7 @@ jobs:
             libxrandr-dev libpulse-dev libglu1-mesa-dev libfreetype6-dev libfontconfig1-dev
           echo "CC=gcc-14" >> $GITHUB_ENV
           echo "CXX=g++-14" >> $GITHUB_ENV
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
       - name: Autobuild
@@ -168,7 +168,7 @@ jobs:
           "$hash  $dir.zip" | Set-Content -LiteralPath "$dir.zip.sha256" -Encoding utf8NoBOM
           "{0}: {1} bytes, sha256 {2}" -f "$dir.zip", (Get-Item "$dir.zip").Length, $hash
           "PACK=$dir.zip" >> $env:GITHUB_ENV
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: media-plugins-linux
           path: |
@@ -183,15 +183,15 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Legacy Viewer sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: FirestormViewer/phoenix-firestorm
           ref: ${{ env.FIRESTORM_SHA }}
           path: fs
       - name: Legacy Viewer build variables
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: FirestormViewer/fs-build-variables
           ref: ${{ env.BUILD_VARIABLES_SHA }}
@@ -209,7 +209,7 @@ jobs:
           brew install bash gnu-sed
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix)/opt/gnu-sed/libexec/gnubin" >> "$GITHUB_PATH"
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
       - name: Autobuild
@@ -232,7 +232,7 @@ jobs:
           "$hash  $dir.zip" | Set-Content -LiteralPath "$dir.zip.sha256" -Encoding utf8NoBOM
           "{0}: {1} bytes, sha256 {2}" -f "$dir.zip", (Get-Item "$dir.zip").Length, $hash
           "PACK=$dir.zip" >> $env:GITHUB_ENV
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: media-plugins-macos
           path: |
@@ -245,7 +245,7 @@ jobs:
     needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: media-plugins-*
           merge-multiple: true

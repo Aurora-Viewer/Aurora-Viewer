@@ -65,6 +65,15 @@ pub struct MarketplaceUi {
 }
 
 impl MarketplaceUi {
+    /// The clicked Marketplace page owns native keys, like LLMediaCtrl.
+    pub fn web_has_focus(&self) -> bool {
+        self.open && self.web.focused && self.web.running()
+    }
+
+    pub fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
+        self.web_has_focus().then(|| self.web.plugin_mut()).flatten()
+    }
+
     /// The system id of the marketplace page's browser process, while one
     /// runs.
     pub fn web_process_id(&self) -> Option<u32> {
@@ -104,6 +113,12 @@ impl MarketplaceUi {
         let mut open = self.open;
         floater.show(ctx, p, &mut open, |ui| self.contents(ui, p, env));
         self.open = open;
+        if (!open || widgets::floater_minimized(ctx, WINDOW)) && self.web.focused {
+            self.web.focused = false;
+            if let Some(plugin) = self.web.plugin_mut() {
+                plugin.focus(false);
+            }
+        }
     }
 
     fn contents(&mut self, ui: &mut egui::Ui, p: &Palette, env: &MarketWeb) {

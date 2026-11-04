@@ -41,27 +41,25 @@ fn fixture() -> Inventory {
 }
 
 #[test]
-fn cached_destinations_keep_rules_and_refresh_for_inventory_and_protection() {
+fn cached_destinations_keep_rules_and_refresh_for_inventory() {
     let mut inventory = fixture();
     let mut picker = Picker::default();
     let ctx = egui::Context::default();
-    for protected in [HashSet::new(), HashSet::from([Uuid::from_u128(6)])] {
-        picker.refresh(&ctx, &inventory, &protected);
-        let expected: HashSet<_> = inventory
-            .folders
-            .keys()
-            .copied()
-            .filter(|id| rules::destination(&inventory, *id, &protected))
-            .collect();
-        assert_eq!(picker.rows.iter().map(|row| row.id).collect::<HashSet<_>>(), expected);
-    }
+    picker.refresh(&ctx, &inventory);
+    let expected: HashSet<_> = inventory
+        .folders
+        .keys()
+        .copied()
+        .filter(|id| rules::destination(&inventory, *id))
+        .collect();
+    assert_eq!(picker.rows.iter().map(|row| row.id).collect::<HashSet<_>>(), expected);
     picker.query = "  BOOTH  ".into();
     picker.filter();
     assert_eq!(picker.visible.len(), 2, "matching folders keep their inventory ancestors");
     assert_eq!(picker.rows[*picker.visible.last().unwrap()].id, Uuid::from_u128(3));
     inventory.folders.get_mut(&Uuid::from_u128(3)).unwrap().info.name = "Renamed".into();
     inventory.generation += 1;
-    picker.refresh(&ctx, &inventory, &HashSet::new());
+    picker.refresh(&ctx, &inventory);
     picker.filter();
     assert!(picker.visible.is_empty());
 }
@@ -90,7 +88,7 @@ fn typing_in_popup_filters_without_closing_or_changing_destination() {
                 if step == 0 {
                     egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new("import_folder")).with("popup"));
                 }
-                picker.show(ui, &theme.palette(), &inventory, &HashSet::new(), &mut selected);
+                picker.show(ui, &theme.palette(), &inventory, &mut selected);
             },
         );
         output.textures_delta.clear();
@@ -127,7 +125,7 @@ fn typing_in_popup_filters_without_closing_or_changing_destination() {
                 ..Default::default()
             },
             |ui| {
-                picker.show(ui, &theme.palette(), &inventory, &HashSet::new(), &mut selected);
+                picker.show(ui, &theme.palette(), &inventory, &mut selected);
             },
         );
         output.textures_delta.clear();
@@ -142,7 +140,7 @@ fn destination_tree_preserves_parentage_for_duplicate_names_and_search_context()
     let ctx = egui::Context::default();
     let inventory = fixture();
     let mut picker = Picker::default();
-    picker.refresh(&ctx, &inventory, &HashSet::new());
+    picker.refresh(&ctx, &inventory);
     picker.filter();
     assert!(
         !picker.visible.iter().any(|&index| picker.rows[index].id == Uuid::from_u128(9)),
@@ -162,16 +160,6 @@ fn destination_tree_preserves_parentage_for_duplicate_names_and_search_context()
         .filter_map(|&index| (picker.rows[index].name == "Fabric").then_some(&picker.rows[index].path))
         .collect();
     assert_ne!(paths[0], paths[1], "equal names retain their actual inventory ancestry");
-    picker.refresh(&ctx, &inventory, &HashSet::from([Uuid::from_u128(6)]));
-    picker.filter();
-    assert_eq!(
-        picker
-            .visible
-            .iter()
-            .map(|&index| picker.rows[index].id.as_u128())
-            .collect::<Vec<_>>(),
-        vec![1, 3, 9]
-    );
 }
 
 #[test]
@@ -193,7 +181,7 @@ fn destination_tree_carets_expand_without_selecting_then_choose_the_nested_folde
                 if open {
                     egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new("import_folder")).with("popup"));
                 }
-                picker.show(ui, &theme.palette(), &inventory, &HashSet::new(), selected);
+                picker.show(ui, &theme.palette(), &inventory, selected);
             },
         );
         output.textures_delta.clear();

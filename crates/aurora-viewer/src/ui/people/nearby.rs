@@ -13,7 +13,7 @@ use crate::theme::Palette;
 use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::{menu, presence, widgets};
 use crate::world::World;
-use crate::world::radar::{CHAT_RANGE, SHOUT_RANGE, WHISPER_RANGE};
+use crate::world::radar::{ChatRanges, chat_ranges};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -51,10 +51,15 @@ pub(super) enum Band {
 impl Band {
     /// An unknown range (a coarse location without altitude) is beyond.
     pub(super) fn of(range: Option<f32>) -> Band {
+        Self::within(range, chat_ranges())
+    }
+
+    /// The band of a range for these chat ranges (the region's own on OpenSim).
+    fn within(range: Option<f32>, r: ChatRanges) -> Band {
         match range {
-            Some(d) if d <= WHISPER_RANGE => Band::Whisper,
-            Some(d) if d <= CHAT_RANGE => Band::Say,
-            Some(d) if d <= SHOUT_RANGE => Band::Shout,
+            Some(d) if d <= r.whisper => Band::Whisper,
+            Some(d) if d <= r.say => Band::Say,
+            Some(d) if d <= r.shout => Band::Shout,
             _ => Band::Beyond,
         }
     }
@@ -73,10 +78,11 @@ impl Band {
     /// "Whisper · 10 m".
     pub(super) fn title(self) -> String {
         let m = |r: f32| aurora_i18n::number(f64::from(r), 0);
+        let r = chat_ranges();
         match self {
-            Band::Whisper => aurora_i18n::tr!("people-band-whisper", range = m(WHISPER_RANGE)),
-            Band::Say => aurora_i18n::tr!("people-band-say", range = m(CHAT_RANGE)),
-            Band::Shout => aurora_i18n::tr!("people-band-shout", range = m(SHOUT_RANGE)),
+            Band::Whisper => aurora_i18n::tr!("people-band-whisper", range = m(r.whisper)),
+            Band::Say => aurora_i18n::tr!("people-band-say", range = m(r.say)),
+            Band::Shout => aurora_i18n::tr!("people-band-shout", range = m(r.shout)),
             Band::Beyond => aurora_i18n::tr!("people-band-beyond").to_owned(),
         }
     }
@@ -344,7 +350,7 @@ fn list_part(
         ui,
         p,
         data.radar.total,
-        list.iter().filter(|r| r.range.is_some_and(|d| d <= CHAT_RANGE)).count(),
+        list.iter().filter(|r| r.range.is_some_and(|d| d <= chat_ranges().say)).count(),
         list.iter().filter(|r| r.friend).count(),
     );
     ui.add_space(if compact { 4.0 } else { 3.0 });
@@ -1122,6 +1128,20 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_bands_follow_the_region_s_own_chat_ranges() {
+        let far = ChatRanges {
+            whisper: 15.0,
+            say: 30.0,
+            shout: 256.0,
+        };
+        assert_eq!(Band::within(Some(12.0), far), Band::Whisper);
+        assert_eq!(Band::within(Some(25.0), far), Band::Say);
+        assert_eq!(Band::within(Some(200.0), far), Band::Shout);
+        assert_eq!(Band::within(Some(300.0), far), Band::Beyond);
+        assert_eq!(Band::within(None, far), Band::Beyond);
     }
 
     #[test]

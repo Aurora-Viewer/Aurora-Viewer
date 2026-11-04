@@ -7,6 +7,9 @@
 //! renderer cannot start: `LLUserWarningMsg::show(MBVideoDrvErr)` in
 //! LLViewerWindow's constructor (indra/newview/llviewerwindow.cpp), a native
 //! box asking to update or reinstall the video driver.
+//!
+//! A device lost during the start is no missing card but a crash, which ended
+//! in a Rust panic (#1892): the same box, and a crash report after it.
 
 /// The message box's title and text for that failure.
 pub(super) fn text(error: &str, log: &std::path::Path) -> (String, String) {

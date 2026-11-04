@@ -22,6 +22,13 @@ impl Selection {
         self.anchor = Some(id);
     }
 
+    /// Every selected id, sorted: for a list not drawn this frame.
+    pub fn all(&self) -> Vec<Uuid> {
+        let mut ids: Vec<_> = self.ids.iter().copied().collect();
+        ids.sort();
+        ids
+    }
+
     pub fn ordered(&self, order: &[Uuid]) -> Vec<Uuid> {
         order.iter().filter(|id| self.ids.contains(id)).copied().collect()
     }

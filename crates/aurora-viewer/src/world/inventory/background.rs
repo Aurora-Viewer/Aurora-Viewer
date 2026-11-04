@@ -9,6 +9,11 @@
 //! depth limit or a failure left. The library is read from its root in one
 //! recursive request. Folders opened by the user still go through
 //! [`Inventory::request`], ahead of this queue.
+//!
+//! A grid without AIS (OpenSim) has only `FetchInventoryDescendents2`, which
+//! reads one level whatever the depth asked: the walk then follows bulkFetch
+//! instead, any [`LEGACY_BATCH`] queued folders per read, whatever their
+//! parent, at most [`LEGACY_IN_FLIGHT`] reads at once.
 
 use super::{FetchState, Inventory};
 use aurora_net::NetCommand;
@@ -21,6 +26,10 @@ use uuid::Uuid;
 const MAX_IN_FLIGHT: usize = 19;
 /// BatchSizeAIS3: folders per subset read.
 const BATCH: usize = 20;
+/// bulkFetch's max_batch_size: folders per `FetchInventoryDescendents2` read.
+const LEGACY_BATCH: usize = 10;
+/// bulkFetch's max_concurrent_fetches.
+const LEGACY_IN_FLIGHT: usize = 12;
 /// LLFolderType::FT_MARKETPLACE_LISTINGS, loaded by its own window.
 const MARKETPLACE_LISTINGS: i32 = 53;
 /// Queue entries looked at per frame (bulkFetch stops after 6 ms).
@@ -60,6 +69,12 @@ pub struct BackgroundFetch {
     /// Since when the current walk sends requests, and how many (logged
     /// when it ends).
     busy: Option<(Instant, usize)>,
+    /// The agent's region lacks InventoryAPIv3 / LibraryAPIv3: that tree is
+    /// read level by level through the legacy capability.
+    legacy: [bool; 2],
+    /// The folders of each tree's next legacy read, sent when full or at the
+    /// end of the frame.
+    legacy_batch: [Vec<Uuid>; 2],
 }
 
 impl BackgroundFetch {
@@ -88,6 +103,13 @@ impl BackgroundFetch {
         }
     }
 
+    /// Which trees the agent's region can only read without AIS
+    /// (LLInventoryModelBackgroundFetch::backgroundFetch picks bulkFetch
+    /// when AISAPI::isAvailable is false).
+    pub fn set_legacy(&mut self, inventory: bool, library: bool) {
+        self.legacy = [inventory, library];
+    }
+
     pub fn is_idle(&self) -> bool {
         self.queue.is_empty() && self.in_flight.is_empty() && self.orphans_pending.is_none()
     }
@@ -106,13 +128,17 @@ impl BackgroundFetch {
             self.orphans_failed = false;
             out.push(NetCommand::FetchInventoryOrphans { request });
         }
+        let max = if self.legacy[0] { LEGACY_IN_FLIGHT } else { MAX_IN_FLIGHT };
         let mut steps = 0;
-        while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < MAX_IN_FLIGHT && steps < STEPS_PER_FRAME {
+        while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < max && steps < STEPS_PER_FRAME {
             let Some((id, kind)) = self.queue.pop_front() else {
                 break;
             };
             steps += 1;
             self.step(inv, agent, id, kind, &mut out);
+        }
+        for library in [false, true] {
+            self.send_legacy(inv, agent, library, &mut out);
         }
         self.queue.extend(self.waiting.drain(..));
         if self.is_idle()
@@ -142,6 +168,9 @@ impl BackgroundFetch {
         let Some(folder) = inv.folders.get(&id) else {
             return;
         };
+        if self.legacy[usize::from(folder.library)] {
+            return self.step_legacy(inv, agent, id, kind, out);
+        }
         match kind {
             Kind::Recursive | Kind::FolderAndContent => match folder.state {
                 FetchState::Unknown | FetchState::Failed => {
@@ -189,6 +218,48 @@ impl BackgroundFetch {
                 }
             }
         }
+    }
+
+    /// bulkFetch's queue walk: unread folders join the next read, the
+    /// folders of read ones are queued. Kinds keep their fallback meaning:
+    /// [`Kind::Recursive`] is read in a batch, [`Kind::FolderAndContent`]
+    /// alone after its batch failed, [`Kind::ContentRecursive`] only queues
+    /// the known folders of one that failed alone too.
+    fn step_legacy(&mut self, inv: &mut Inventory, agent: Uuid, id: Uuid, kind: Kind, out: &mut Vec<NetCommand>) {
+        let Some(folder) = inv.folders.get(&id) else {
+            return;
+        };
+        if folder.info.type_default == MARKETPLACE_LISTINGS {
+            return;
+        }
+        let library = usize::from(folder.library);
+        match (kind, folder.state) {
+            (Kind::ContentRecursive, _) | (_, FetchState::Fetched) => {
+                let children = folder.children.clone();
+                self.queue.extend(children.into_iter().map(|child| (child, Kind::Recursive)));
+            }
+            (_, FetchState::Fetching) if self.pending.contains(&id) => {}
+            (_, FetchState::Fetching) => self.waiting.push((id, kind)),
+            (Kind::FolderAndContent, _) => self.send(inv, agent, kind, id, Vec::new(), 0, out),
+            (Kind::Recursive, _) => {
+                if !self.legacy_batch[library].contains(&id) {
+                    self.legacy_batch[library].push(id);
+                }
+                if self.legacy_batch[library].len() >= LEGACY_BATCH {
+                    self.send_legacy(inv, agent, library == 1, out);
+                }
+            }
+        }
+    }
+
+    /// One read of the folders waiting in `library`'s legacy batch. Its
+    /// first folder stands for the read (the legacy capability ignores it).
+    fn send_legacy(&mut self, inv: &mut Inventory, agent: Uuid, library: bool, out: &mut Vec<NetCommand>) {
+        let batch = std::mem::take(&mut self.legacy_batch[usize::from(library)]);
+        let Some(&first) = batch.first() else {
+            return;
+        };
+        self.send(inv, agent, Kind::Recursive, first, batch, 0, out);
     }
 
     #[allow(clippy::too_many_arguments)]

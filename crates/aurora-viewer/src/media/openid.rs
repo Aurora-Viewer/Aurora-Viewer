@@ -49,7 +49,7 @@ impl OpenId {
                     None
                 }
                 Err(e) => {
-                    log::warn!("OpenID: {e}");
+                    log::warn!("OpenID: {}", e.without_url());
                     None
                 }
             };

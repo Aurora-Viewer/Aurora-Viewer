@@ -59,6 +59,20 @@ impl App {
         self.login_form.safe_graphics = at_start(trouble, backup_path().exists(), demo.as_deref());
     }
 
+    /// A second GPU loss within a few minutes (gpu_recovery.rs): the Potato
+    /// level, the settings before kept aside as the login card's choice does,
+    /// so it offers them back. Settings already kept aside stay as they are
+    /// (the first ones are the user's).
+    pub(super) fn safe_graphics_after_losses(&mut self) {
+        if backup_path().exists() || Preset::matching(&self.settings) == Some(Preset::Potato) {
+            Preset::Potato.apply(&mut self.settings);
+            self.settings.save();
+            log::info!("safe graphics on after GPU losses (settings kept aside already)");
+            return;
+        }
+        self.safe_graphics_choice(Choice::Use);
+    }
+
     pub(super) fn safe_graphics_choice(&mut self, choice: Choice) {
         let path = backup_path();
         match choice {

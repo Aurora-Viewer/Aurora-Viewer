@@ -279,9 +279,17 @@ fn range_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
         widgets::checkbox(ui, p, &mut f.sale, aurora_i18n::tr!("area-search-sale"));
         ui.add_enabled_ui(f.sale, |ui| {
             ui.label(aurora_i18n::tr!("area-search-min"));
-            ui.add(egui::DragValue::new(&mut f.min_price).range(0..=999999999).prefix("L$ "));
+            ui.add(
+                egui::DragValue::new(&mut f.min_price)
+                    .range(0..=999999999)
+                    .prefix(format!("{} ", aurora_i18n::currency())),
+            );
             ui.label(aurora_i18n::tr!("area-search-max"));
-            ui.add(egui::DragValue::new(&mut f.max_price).range(0..=999999999).prefix("L$ "));
+            ui.add(
+                egui::DragValue::new(&mut f.max_price)
+                    .range(0..=999999999)
+                    .prefix(format!("{} ", aurora_i18n::currency())),
+            );
         });
     });
     ui.horizontal_wrapped(|ui| {

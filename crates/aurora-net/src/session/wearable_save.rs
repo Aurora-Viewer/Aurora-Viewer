@@ -1,7 +1,9 @@
 //! LLAgentWearables::saveWearable/saveWearableAs and update_inventory_item
 //! (Firestorm indra/newview, originally LGPL 2.1). Upload the asset, preserve
 //! permissions through CopyInventoryItem, then use the transaction hash_id
-//! in AIS and read the item back before reporting a successful save.
+//! in AIS and read the item back before reporting a successful save. Without
+//! AIS (OpenSim), the transaction goes in UpdateInventoryItem over the
+//! circuit, as LLViewerInventoryItem::updateServer's [UDP-Msg] branch.
 
 use super::*;
 use crate::inventory::{InvItem, operations::CopyItem};
@@ -74,6 +76,11 @@ async fn commit_asset(http: &reqwest::Client, cap: &str, fetch: &str, owner: Uui
     let body = llsd_map! {"hash_id"=>pending.transaction};
     // Only the asset changes; no rewritten ownership, sale or masks.
     crate::outfits::send(http.patch(format!("{}/item/{}", cap.trim_end_matches('/'), pending.item.id)), &body).await?;
+    confirm(http, fetch, owner, pending).await
+}
+
+/// The item read back holds the saved asset.
+async fn confirm(http: &reqwest::Client, fetch: &str, owner: Uuid, pending: &Pending) -> Result<InvItem, String> {
     let body = crate::inventory::fetch_items_body(&[pending.item.id], owner);
     let reply = caps::post_llsd(http, fetch, &body)
         .await
@@ -82,6 +89,44 @@ async fn commit_asset(http: &reqwest::Client, cap: &str, fetch: &str, owner: Uui
         .into_iter()
         .find(|item| item.id == pending.item.id && item.owner == owner && item.asset_id == pending.asset && same_kind(item, &pending.item))
         .ok_or_else(|| failure(&pending.item, Failure::Unconfirmed))
+}
+
+/// Read-backs of an item saved over the circuit: the simulator applies the
+/// packet on its own time, so the first read may still hold the old asset.
+const UDP_CONFIRM_TRIES: u32 = 8;
+const UDP_CONFIRM_PAUSE: Duration = Duration::from_millis(750);
+
+async fn confirm_udp(http: &reqwest::Client, fetch: &str, owner: Uuid, pending: &Pending) -> Result<InvItem, String> {
+    let mut last = Err(failure(&pending.item, Failure::Unconfirmed));
+    for _ in 0..UDP_CONFIRM_TRIES {
+        tokio::time::sleep(UDP_CONFIRM_PAUSE).await;
+        last = confirm(http, fetch, owner, pending).await;
+        if last.is_ok() {
+            break;
+        }
+    }
+    last
+}
+
+/// UpdateInventoryItem for a saved wearable (updateServer without AIS): the
+/// item as it is, its new asset named by the upload's transaction, which the
+/// simulator turns into the asset id.
+fn udp_commit(agent: Uuid, session: Uuid, pending: &Pending) -> UpdateInventoryItem {
+    let mut item = pending.item.clone();
+    item.asset_id = pending.asset;
+    let rights = crate::inventory::upload::Permissions {
+        next_owner: item.next_owner_mask,
+        group: item.group_mask,
+        everyone: item.everyone_mask,
+    };
+    let mut data = super::asset_imports::permission_update(&item, rights, 0);
+    data.transaction_id = pending.transaction;
+    let mut message = UpdateInventoryItem::default();
+    message.agent_data.agent_id = agent;
+    message.agent_data.session_id = session;
+    message.agent_data.transaction_id = pending.transaction;
+    message.inventory_data.push(data);
+    message
 }
 
 impl Session<'_> {
@@ -180,6 +225,25 @@ impl Session<'_> {
     }
 
     fn commit_wearable(&mut self, pending: Pending) {
+        if self.main_cap("InventoryAPIv3").is_none()
+            && let Some(fetch) = self.main_cap("FetchInventory2")
+        {
+            let message = udp_commit(self.agent_id(), self.session_id(), &pending);
+            self.send_main(&message, true);
+            let http = self.sh.caps_http.clone();
+            let events = self.sh.events.clone();
+            let owner = self.agent_id();
+            tokio::spawn(async move {
+                let result = tokio::time::timeout(Duration::from_secs(30), confirm_udp(&http, &fetch, owner, &pending))
+                    .await
+                    .unwrap_or_else(|_| Err(failure(&pending.item, Failure::Interrupted)));
+                let _ = events.send(NetEvent::WearableSaved {
+                    request: pending.request,
+                    result,
+                });
+            });
+            return;
+        }
         let Some((cap, fetch)) = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventory2")) else {
             emit(
                 self.sh,
@@ -307,6 +371,38 @@ mod tests {
         assert_eq!(requests[0].1["hash_id"].as_uuid(), pending.transaction);
         assert_eq!(requests[1].1["items"].at(0)["item_id"].as_uuid(), pending.item.id);
     }
+    #[test]
+    fn without_ais_the_transaction_names_the_new_asset_over_the_circuit() {
+        let mut pending = pending();
+        pending.item.next_owner_mask = 0x8000;
+        pending.item.everyone_mask = 0;
+        let message = udp_commit(Uuid::from_u128(2), Uuid::from_u128(3), &pending);
+        assert_eq!(message.agent_data.transaction_id, pending.transaction);
+        let [data] = &message.inventory_data[..] else {
+            panic!("one item");
+        };
+        assert_eq!(data.item_id, pending.item.id);
+        assert_eq!(data.transaction_id, pending.transaction, "updateServer's TransactionID");
+        assert_eq!(
+            (data.owner_mask, data.next_owner_mask, data.everyone_mask),
+            (0x4000, 0, 0),
+            "masks as they are"
+        );
+        assert_eq!(data.type_, 13);
+    }
+
+    #[tokio::test]
+    async fn without_ais_the_save_waits_for_the_simulator_to_apply_it() {
+        let pending = pending();
+        // the first read still has the old asset
+        let (base, task) = server(vec![(200, saved(Uuid::from_u128(6))), (200, saved(pending.asset))]).await;
+        let item = confirm_udp(&reqwest::Client::new(), &format!("{base}/fetch"), pending.item.owner, &pending)
+            .await
+            .expect("confirmed on the second read");
+        assert_eq!(item.asset_id, pending.asset);
+        assert_eq!(task.await.expect("reads").len(), 2);
+    }
+
     #[tokio::test]
     async fn mismatched_readback_and_http_denial_never_report_a_save() {
         let pending = pending();
