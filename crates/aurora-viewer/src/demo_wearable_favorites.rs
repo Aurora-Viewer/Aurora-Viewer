@@ -7,6 +7,8 @@
 //! no favorites and no Legacy folder (no Sync button). `wear`: as `1`, with
 //! the shirt and the hair worn from the list at frame 660. `wear-refused`: the
 //! same without a current outfit folder, so the window says why it refused.
+//! `delete-real`: as `folder`, with a real item in the subfolder; its delete
+//! is asked at frame 720 and refused.
 
 use crate::world::inventory::{FetchState, Folder, Inventory};
 use aurora_net::inventory::{InvFolder, InvItem};
@@ -83,6 +85,11 @@ fn links(inv: &mut Inventory, owner: Uuid, parent: Uuid, seed: u128, targets: &[
     }
 }
 
+/// The subfolder `delete-real` tries to delete.
+pub fn evening() -> Uuid {
+    EVENING
+}
+
 /// The folders of `mode`; the subfolder to show, for `folder`.
 pub fn seed(inv: &mut Inventory, owner: Uuid, mode: &str) -> Option<Uuid> {
     // the base demo has no current outfit: nothing could be worn
@@ -121,6 +128,12 @@ pub fn seed(inv: &mut Inventory, owner: Uuid, mode: &str) -> Option<Uuid> {
         links(inv, owner, ROOT, 0x200, &[0, 1, 4, 6]);
         links(inv, owner, EVENING, 0x300, &[3, 4]);
     }
+    if mode == "delete-real"
+        && let Some(mut necklace) = inv.items.get(&item(5)).cloned()
+    {
+        necklace.parent = EVENING;
+        inv.add_items(vec![necklace]);
+    }
     inv.generation += 1;
-    (mode == "folder").then_some(EVENING)
+    matches!(mode, "folder" | "delete-real").then_some(EVENING)
 }

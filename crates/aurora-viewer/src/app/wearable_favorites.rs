@@ -53,6 +53,12 @@ impl App {
                 point: 0,
             })]);
         }
+        if self.frame_count == 720
+            && mode == "delete-real"
+            && let Err(reason) = favorites::delete_folder(&self.world.inventory, crate::demo::wearable_favorites::evening())
+        {
+            self.wearable_favorites_ui.message = reason;
+        }
         if self.frame_count == 720 && mode == "sync" {
             let mut actions = Vec::new();
             self.wearable_favorites_ui.sync(&self.world, &mut actions);
