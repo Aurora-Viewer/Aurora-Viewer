@@ -729,6 +729,7 @@ impl App {
                 let result = Ok(ScriptSaved {
                     asset,
                     compiled,
+                    checked: true,
                     errors: if compiled {
                         vec![]
                     } else {

@@ -993,6 +993,7 @@ script-load-failed = Impossible de charger le script. Actualisez pour réessayer
 script-save-unavailable = Cette région ne permet pas d’enregistrer des scripts.
 script-saving = Enregistrement et compilation en cours…
 script-saved = Script enregistré et compilé.
+script-saved-not-compiled = Script enregistré. Cette grille compile les scripts quand ils sont placés dans un objet.
 script-compile-failed = Source enregistrée, mais compilation échouée. Corrigez les erreurs ci-dessous.
 script-save-hint = Enregistrer et compiler le script (Ctrl+S).
 script-mono-hint = Compiler avec Mono. Décochez pour utiliser le compilateur LSL classique.
