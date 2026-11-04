@@ -57,6 +57,21 @@ fn inventory_asset(inv: &Inventory, id: Uuid, materials: bool) -> Option<Uuid> {
     }
 }
 
+/// LLFloaterTexturePicker::onSelectionChange reveals the asset key only
+/// when Copy, Modify and Transfer are all granted to the current agent.
+fn can_reveal_uuid(inv: &Inventory, id: Uuid, agent: Uuid) -> bool {
+    let Some(original) = actions::original(inv, id).and_then(|id| inv.items.get(&id)) else {
+        return false;
+    };
+    let mask = if original.owner == agent {
+        original.owner_mask
+    } else {
+        original.everyone_mask
+    };
+    let full = actions::COPY | actions::MODIFY | actions::TRANSFER;
+    mask & full == full
+}
+
 fn can_preview(inv: &Inventory, id: Uuid) -> bool {
     let Some(original) = actions::original(inv, id) else { return false };
     inv.items
@@ -101,6 +116,7 @@ pub struct TexturePicker {
     /// Only callers with a client-only application path expose local assets.
     pub(crate) allow_local: bool,
     uuid_text: String,
+    uuid_from_user: bool,
     /// Intentional choices, separate from OK so callers can opt into preview.
     preview: Option<Uuid>,
     /// Single-value callers share the same reversible live-edit session.
@@ -175,6 +191,7 @@ impl TexturePicker {
         self.extra_buttons = false;
         self.allow_local = false;
         self.uuid_text = current.to_string();
+        self.uuid_from_user = false;
         self.uuid_error = false;
         self.footer_height = 0.0;
         self.local_row_height = 0.0;
@@ -295,11 +312,27 @@ impl TexturePicker {
         self.reveal_selection = false;
         self.pipette_error = false;
         self.uuid_text = asset.to_string();
+        self.uuid_from_user = false;
         self.uuid_error = false;
         self.selected = Some(asset);
         self.selected_item = item;
         self.preview = preview.then_some(asset);
         self.material_model = None;
+    }
+
+    fn refresh_uuid_text(&mut self, world: &World) {
+        if self.uuid_from_user {
+            return;
+        }
+        let shown = self.selected.filter(|asset| {
+            world.local_assets.contains_key(asset)
+                || [BLANK_TEXTURE, TRANSPARENT_TEXTURE, BLANK_MATERIAL].contains(asset)
+                || crate::scene::avatar::BAKES.iter().any(|(_, _, magic)| magic == asset)
+                || self
+                    .selected_item
+                    .is_some_and(|id| can_reveal_uuid(&world.inventory, id, world.agent_id))
+        });
+        self.uuid_text = shown.unwrap_or_default().to_string();
     }
 
     /// Editing windows identify a BOM channel by its coloured BAKED_* image.
@@ -715,6 +748,7 @@ impl TexturePicker {
                                 self.selected = Some(asset);
                                 self.selected_item = (!local).then_some(id);
                                 self.uuid_text = asset.to_string();
+                                self.uuid_from_user = false;
                                 self.uuid_error = false;
                                 self.preview = (local || can_preview(&world.inventory, id)).then_some(asset);
                             }
@@ -816,6 +850,7 @@ impl TexturePicker {
                         });
                 }
                 ui.add_space(5.0);
+                self.refresh_uuid_text(world);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-uuid")).size(11.0).color(p.muted));
                     let response = ui.add_sized(
@@ -829,6 +864,8 @@ impl TexturePicker {
                             Ok(asset) if !asset.is_nil() || self.allow_none => self.select(asset, None, true),
                             _ => self.uuid_error = true,
                         }
+                        // Preserve only text the user supplied, including partial input.
+                        self.uuid_from_user = true;
                     }
                 });
             }
@@ -1647,6 +1684,68 @@ pub(crate) mod tests {
             labels = frame(&ctx, &mut picker, &mut world, 5.0, vec![]);
             assert!(!labels.contains_key(add));
         }
+    }
+
+    #[test]
+    fn texture_uuid_requires_full_effective_permissions_and_resolves_links() {
+        let mut inv = Inventory::default();
+        let agent = Uuid::from_u128(91);
+        let item = Uuid::from_u128(92);
+        let link = Uuid::from_u128(93);
+        let full = actions::COPY | actions::MODIFY | actions::TRANSFER;
+        inv.items.insert(
+            item,
+            aurora_net::inventory::InvItem {
+                id: item,
+                owner: agent,
+                owner_mask: full,
+                ..Default::default()
+            },
+        );
+        inv.items.insert(
+            link,
+            aurora_net::inventory::InvItem {
+                id: link,
+                asset_type: 24,
+                asset_id: item,
+                owner_mask: full,
+                ..Default::default()
+            },
+        );
+        assert!(can_reveal_uuid(&inv, link, agent));
+        for missing in [actions::COPY, actions::MODIFY, actions::TRANSFER] {
+            inv.items.get_mut(&item).unwrap().owner_mask = full & !missing;
+            assert!(!can_reveal_uuid(&inv, link, agent));
+        }
+        let original = inv.items.get_mut(&item).unwrap();
+        original.owner_mask = full;
+        original.owner = Uuid::from_u128(94);
+        assert!(!can_reveal_uuid(&inv, link, agent));
+        inv.items.get_mut(&item).unwrap().everyone_mask = full;
+        assert!(can_reveal_uuid(&inv, link, agent));
+        inv.items.remove(&item);
+        assert!(!can_reveal_uuid(&inv, link, agent));
+    }
+
+    #[test]
+    fn texture_uuid_masks_unknown_assets_without_changing_selection_or_user_input() {
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let hidden = Uuid::from_u128(95);
+        let mut picker = TexturePicker::default();
+        picker.open_with_defaults("test", hidden, None, true);
+        picker.refresh_uuid_text(&world);
+        assert_eq!(picker.uuid_text, Uuid::nil().to_string());
+        assert_eq!(picker.selected, Some(hidden));
+        picker.uuid_text = "user supplied".into();
+        picker.uuid_from_user = true;
+        picker.refresh_uuid_text(&world);
+        assert_eq!(picker.uuid_text, "user supplied");
+        picker.select(hidden, None, false);
+        picker.refresh_uuid_text(&world);
+        assert_eq!(picker.uuid_text, Uuid::nil().to_string());
+        picker.select(BLANK_TEXTURE, None, true);
+        picker.refresh_uuid_text(&world);
+        assert_eq!(picker.uuid_text, BLANK_TEXTURE.to_string());
     }
 
     #[test]
