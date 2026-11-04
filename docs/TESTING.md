@@ -10052,18 +10052,22 @@ What the inventory must show with these scenarios:
   average its glow dimmed by the layers in front of it, as with OIT off),
   corrected by the same ratio and added to the scene's glow (check with
   `AURORA_DEMO_GLOW_LAYERS=1` or `shell`, `AURORA_DEBUG_GLOW=1`: the same
-  glow as `AURORA_OIT=0`). MSAA
-  modes only (`AURORA_AA=2`, `3`, `4`): the targets are multisampled.
-  Without MSAA (`AURORA_AA=0` none, `1` FXAA, `5` TAA, `6` SMAA, or a
-  device without it) the method is off whatever the setting or
-  `AURORA_OIT`: the blended faces are drawn in the Legacy per-object order,
-  the same image as `AURORA_OIT=0` (the Preferences tooltip says so in the
-  three languages). The two stochastic
+  glow as `AURORA_OIT=0`). Every
+  anti-aliasing mode (`AURORA_AA`): the two stochastic
   passes run at their own sample count, the most the device takes up to 8
-  (the paper's 8 per pass), even when the scene is at 4x: their depth
-  starts as the opaque depth spread over those samples (each takes the
-  scene sample nearest to it), the total alpha and the composite stay at
-  the scene's. The log gives the configuration and the counts the device
+  (the paper's 8 per pass), whatever the scene's: their depth starts as the
+  opaque depth spread over those samples (each takes the scene sample
+  nearest to it). With MSAA (`AURORA_AA=2`, `3`, `4`) the total alpha and
+  the composite stay at the scene's samples, each dimmed by its own
+  transparency. Without (`AURORA_AA=0` none, `1` FXAA, `5` TAA, `6` SMAA)
+  the total alpha runs at the passes' samples against that spread depth,
+  the composite dims each pixel by its resolved transparency, and the
+  anti-aliasing then runs over the result as with `AURORA_OIT=0`: check
+  the edges of opaque objects in front of and behind the panes of
+  `AURORA_DEMO_ALPHA_PLANES=8,0.4,0.5` (no halo, the same edge as with
+  `AURORA_OIT=0`), and under TAA the hair fly-through
+  (`AURORA_DEMO_CAMERA=hair`; the grain is the same every frame, so TAA
+  neither averages it out nor ghosts it). The log gives the configuration and the counts the device
   takes (`oit stochastic: Config …; pass sample counts the device takes:
   [2, 4, 8]`), the route (`oit stochastic: the sample mask route` or `the
   sample index route`) and the targets (`oit stochastic: targets <w>x<h>,

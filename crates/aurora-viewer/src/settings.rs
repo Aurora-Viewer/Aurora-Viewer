@@ -1301,7 +1301,7 @@ pub struct Settings {
     /// Order-independent transparency (aurora-render oit_stochastic.rs):
     /// the blended faces drawn with depth-based stochastic transparency
     /// rather than in the per-object order. An Aurora addition, off by
-    /// default (an opt-in); without MSAA they keep the per-object order.
+    /// default (an opt-in); in every anti-aliasing mode.
     pub oit: bool,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,

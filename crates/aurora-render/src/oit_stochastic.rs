@@ -27,15 +27,20 @@
 //!
 //! The passes 3 and 4 run at their own sample count, the most the device
 //! has up to 8 (the paper's, section 4: 8 per pass, 1 + 2 S / 8 passes),
-//! even when the scene is at 4x: their depth starts as the opaque depth
-//! spread over those samples (`oit_stochastic_expand.wgsl`), the total alpha
-//! and the composite stay at the scene's samples. More samples than a pass
+//! whatever the scene's: their depth starts as the opaque depth spread over
+//! those samples (`oit_stochastic_expand.wgsl`). With MSAA the total alpha
+//! and the composite stay at the scene's samples (each scene sample dimmed by
+//! its own transparency). Without (SMAA, FXAA, TAA or none: one sample) the
+//! total alpha runs at the passes' samples against that spread depth and the
+//! composite dims each pixel by its resolved transparency; the scene's
+//! anti-aliasing then runs over the result as over the per-object order.
+//! More samples than a pass
 //! holds (`AURORA_OIT_SAMPLES`): the passes 3 and 4 run again with the next
 //! bits of one stratified mask (paper footnote 1). The masks come from a table of random S-choose-R
 //! subsets (`masks`), fixed for every launch; the seed is the pixel, the
-//! face's tie-break and the triangle. Needs MSAA (the targets are
-//! multisampled), and `PRIMITIVE_INDEX` for the triangle in the
-//! seed (without it the seed is per face: coplanar fragments of one face
+//! face's tie-break and the triangle. Needs multisampled targets of at least
+//! 2 samples (every device has 4), and `PRIMITIVE_INDEX` for the triangle in
+//! the seed (without it the seed is per face: coplanar fragments of one face
 //! then occlude instead of blending).
 
 use crate::pipeline_cache::CachedPipelines;
@@ -321,6 +326,13 @@ pub fn expand_map(scene: u32, pass: u32) -> [u32; MAX_PASS_SAMPLES as usize] {
     map
 }
 
+/// The samples of the total alpha's target: the scene's with MSAA (the
+/// composite dims each scene sample by its own), the passes' without (the
+/// composite dims the pixel by the resolved transparency).
+pub fn trans_samples(scene: u32, pass: u32) -> u32 {
+    if scene > 1 { scene } else { pass }
+}
+
 /// object.wgsl `StParams`.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -384,8 +396,10 @@ pub(crate) struct Shared {
     /// the sample counts the device takes for the stochastic passes'
     /// targets (the colour and the depth formats both)
     pass_supported: Vec<u32>,
-    /// the opaque depth spread over a pass's samples
+    /// the opaque depth spread over a pass's samples, from a multisampled
+    /// scene depth and from a single-sampled one
     expand_layout: wgpu::BindGroupLayout,
+    expand_layout_ss: wgpu::BindGroupLayout,
     expand_module: wgpu::ShaderModule,
 }
 
@@ -411,9 +425,11 @@ impl Resolve {
 struct Targets {
     width: u32,
     height: u32,
-    /// the scene's samples (the total alpha's), the stochastic passes'
+    /// the scene's samples, the stochastic passes'
     samples: u32,
     pass: u32,
+    /// the total alpha's samples (`trans_samples`)
+    trans_samples: u32,
     trans: wgpu::TextureView,
     accum: wgpu::TextureView,
     /// the glow accumulated (red), at the passes' samples
@@ -482,10 +498,9 @@ fn bind(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::BindGroupEnt
 }
 
 impl Stochastic {
-    /// `None` when the device cannot (no MSAA targets are checked here: the
-    /// frame checks the scene's samples).
-    /// `pass_supported`: the sample counts the device takes for both
-    /// formats (the stochastic passes' choice, `pass_samples`).
+    /// `pass_supported`: the sample counts the device takes for the passes'
+    /// formats (the stochastic passes' choice, `pass_samples`; `prepare`
+    /// declines a frame when it holds no multisampled count).
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -546,6 +561,21 @@ impl Stochastic {
                     },
                 ),
                 entry(1, S::FRAGMENT, buffer(wgpu::BufferBindingType::Uniform)),
+            ],
+        });
+        let expand_layout_ss = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("oit stochastic expand single sample"),
+            entries: &[
+                entry(1, S::FRAGMENT, buffer(wgpu::BufferBindingType::Uniform)),
+                entry(
+                    2,
+                    S::FRAGMENT,
+                    wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                ),
             ],
         });
         let expand_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -615,6 +645,7 @@ impl Stochastic {
                 mask_shaders: None,
                 pass_supported,
                 expand_layout,
+                expand_layout_ss,
                 expand_module,
             },
             config,
@@ -650,7 +681,9 @@ impl Stochastic {
         self.targets.as_ref().map_or(1, |t| self.iterations_for(t.pass))
     }
 
-    /// The frame's targets and parameters. `false` without MSAA. `glow`:
+    /// The frame's targets and parameters, for a scene of `samples` (1
+    /// without MSAA). `false` when the device has no multisampled pass
+    /// target (fewer than 2 samples). `glow`:
     /// glowing blended faces will be accumulated (`begin_glow`).
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
@@ -663,10 +696,10 @@ impl Stochastic {
         reproj: [[f32; 4]; 4],
         glow: bool,
     ) -> bool {
-        if samples <= 1 {
+        let pass = self.shared.pass_samples(samples);
+        if pass < 2 {
             return false;
         }
-        let pass = self.shared.pass_samples(samples);
         let stale = self
             .targets
             .as_ref()
@@ -696,11 +729,15 @@ impl Stochastic {
             height,
             samples_hw: pass,
             samples: pass * iterations,
-            flags: u32::from(c.correction) | (u32::from(c.filter > 0) << 1) | (u32::from(c.temporal > 0.0) << 2) | (u32::from(glow) << 3),
+            flags: u32::from(c.correction)
+                | (u32::from(c.filter > 0) << 1)
+                | (u32::from(c.temporal > 0.0) << 2)
+                | (u32::from(glow) << 3)
+                | (u32::from(samples == 1) << 4),
             radius: c.filter,
             sigma_alpha: c.sigma_alpha,
             temporal_weight: c.temporal,
-            trans_samples: samples,
+            trans_samples: trans_samples(samples, pass),
             _pad: [0; 3],
             reproj,
         };
@@ -715,10 +752,11 @@ impl Stochastic {
             (tex, view)
         };
         use wgpu::TextureUsages as U;
+        let trans_n = trans_samples(samples, pass);
         let (_, trans) = make(
             "oit stochastic transmittance",
             wgpu::TextureFormat::R16Float,
-            samples,
+            trans_n,
             U::RENDER_ATTACHMENT | U::TEXTURE_BINDING,
         );
         let (_, accum) = make(
@@ -819,6 +857,7 @@ impl Stochastic {
             height,
             samples,
             pass,
+            trans_samples: trans_n,
             trans,
             accum,
             glow,
@@ -844,14 +883,23 @@ impl Stochastic {
         &self.face_groups[(i as usize).min(self.face_groups.len() - 1)]
     }
 
+    /// The total alpha runs against the stochastic depth (the scene without
+    /// MSAA): the first iteration's `begin_iteration` comes before it, to
+    /// spread the opaque depth over the passes' samples.
+    pub fn alpha_on_pass_depth(&self) -> bool {
+        self.targets.as_ref().is_some_and(|t| t.trans_samples != t.samples)
+    }
+
     /// The pass of the total alpha: the target cleared to full
-    /// transmittance, the scene depth read only.
+    /// transmittance, the scene depth (or, `alpha_on_pass_depth`, the
+    /// stochastic depth holding the opaque one) read only.
     pub fn begin_alpha<'a>(
         &'a self,
         encoder: &'a mut wgpu::CommandEncoder,
         scene_depth: &'a wgpu::TextureView,
     ) -> Option<wgpu::RenderPass<'a>> {
         let t = self.targets.as_ref()?;
+        let depth = if t.trans_samples != t.samples { &t.depth } else { scene_depth };
         Some(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("oit stochastic total alpha"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -864,7 +912,7 @@ impl Stochastic {
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: scene_depth,
+                view: depth,
                 depth_ops: None,
                 stencil_ops: None,
             }),
@@ -888,11 +936,17 @@ impl Stochastic {
         let Some(t) = &self.targets else { return };
         match (&r.expand, t.pass != t.samples) {
             (Some(expand), true) => {
+                // (binding 0 the multisampled scene depth, 2 the single one)
+                let (layout, binding) = if t.samples > 1 {
+                    (&self.shared.expand_layout, 0)
+                } else {
+                    (&self.shared.expand_layout_ss, 2)
+                };
                 let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("oit stochastic expand"),
-                    layout: &self.shared.expand_layout,
+                    layout,
                     entries: &[
-                        bind(0, wgpu::BindingResource::TextureView(scene_depth.1)),
+                        bind(binding, wgpu::BindingResource::TextureView(scene_depth.1)),
                         bind(1, self.expand_params.as_entire_binding()),
                     ],
                 });
@@ -1256,9 +1310,14 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
     });
     let pass = shared.pass_samples(samples);
     let expand = (pass != samples).then(|| {
+        let (expand_layout, fs) = if samples > 1 {
+            (&shared.expand_layout, "fs_expand")
+        } else {
+            (&shared.expand_layout_ss, "fs_expand_ss")
+        };
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("oit stochastic expand"),
-            bind_group_layouts: &[Some(&shared.expand_layout)],
+            bind_group_layouts: &[Some(expand_layout)],
             immediate_size: 0,
         });
         device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
@@ -1272,7 +1331,7 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shared.expand_module,
-                entry_point: Some("fs_expand"),
+                entry_point: Some(fs),
                 compilation_options: Default::default(),
                 targets: &[],
             }),

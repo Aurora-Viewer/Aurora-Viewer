@@ -27,15 +27,17 @@ struct ResolveParams {
     samples_hw: u32,
     samples: u32,
     // bit 0 alpha correction, bit 1 filtered colour read by the composite,
-    // bit 2 temporal blend, bit 3 glowing faces accumulated (glow_ms)
+    // bit 2 temporal blend, bit 3 glowing faces accumulated (glow_ms),
+    // bit 4 the scene single-sampled: the composite dims each pixel by its
+    // resolved total alpha (the transmittance at the passes' samples)
     flags: u32,
     // the filter's radius in pixels (1 to 4) and its alpha sigma
     radius: u32,
     sigma_alpha: f32,
     // the temporal blend: weight of this frame
     temporal_weight: f32,
-    // samples per pixel of the scene (the transmittance's target; the
-    // stochastic passes may have more, samples_hw)
+    // samples per pixel of the transmittance's target: the scene's with
+    // MSAA, the stochastic passes' (samples_hw) without
     trans_samples: u32,
     _pad0: u32,
     _pad1: u32,
@@ -187,12 +189,18 @@ fn vs_full(@builtin(vertex_index) v: u32) -> @builtin(position) vec4<f32> {
 // Per sample: the colour added over the scene, and in alpha this sample's
 // total alpha, the blend's destination factor dimming the scene by its
 // transparency (One / OneMinusSrcAlpha; the scene alpha, the glow, dimmed
-// the same way).
+// the same way). A single-sampled scene: the pixel's total alpha, averaged
+// over the passes' samples.
 @fragment
 fn fs_composite(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @location(0) vec4<f32> {
     let px = vec2<i32>(p.xy);
-    let trans = textureLoad(trans_ms, px, i32(s)).x;
     let total = textureLoad(total_r, px, 0).x;
+    var trans: f32;
+    if ((rp.flags & 16u) != 0u) {
+        trans = 1.0 - total;
+    } else {
+        trans = textureLoad(trans_ms, px, i32(s)).x;
+    }
     var c: vec4<f32>;
     if ((rp.flags & 2u) != 0u) {
         c = textureLoad(filtered_r, px, 0);

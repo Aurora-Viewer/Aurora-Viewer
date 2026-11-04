@@ -3075,12 +3075,18 @@ impl Backend {
         // first frame that uses it)
         let st = Some({
             // the stochastic passes' own sample count (oit_stochastic.rs
-            // `pass_samples`): the colour and depth formats both, 2, 8 and
-            // 16 needing the adapter's own format features as the scene's
+            // `pass_samples`): the colour, depth and transmittance (R16Float)
+            // formats all, 2, 8 and 16 needing the adapter's own format
+            // features as the scene's
+            let r16_features = adapter.get_texture_format_features(wgpu::TextureFormat::R16Float);
             let pass_supported: Vec<u32> = [2u32, 4, 8, 16]
                 .into_iter()
                 .filter(|n| *n == 4 || adapter_specific)
-                .filter(|n| fmt_features.flags.sample_count_supported(*n) && depth_features.flags.sample_count_supported(*n))
+                .filter(|n| {
+                    fmt_features.flags.sample_count_supported(*n)
+                        && depth_features.flags.sample_count_supported(*n)
+                        && r16_features.flags.sample_count_supported(*n)
+                })
                 .collect();
             let mut st = crate::oit_stochastic::Stochastic::new(&device, &queue, HDR_FORMAT, DEPTH_FORMAT, pass_supported);
             // the sample mask route writes its shader against the scene's
@@ -3657,8 +3663,9 @@ impl Backend {
             };
             // the stochastic depth and the accumulation at the passes' own
             // count (oit_stochastic.rs `pass_samples`), the total alpha at
-            // the scene's
+            // the scene's with MSAA, at the passes' without
             let pass_samples = st.pass_samples(samples);
+            let alpha_samples = crate::oit_stochastic::trans_samples(samples, pass_samples);
             let alpha = std::array::from_fn(|side| {
                 make_pipeline(
                     device,
@@ -3683,6 +3690,7 @@ impl Backend {
                         depth_write: false,
                         depth_compare: wgpu::CompareFunction::Greater,
                         constants: &[("WATER_CLIP", 1.0)],
+                        samples: alpha_samples,
                         ..base("stochastic total alpha", "vs_main", "fs_st_alpha")
                     },
                 )
@@ -8010,8 +8018,8 @@ impl Backend {
         let n_depth = (lists.blend_depth as u32).min(bn);
         // Order-independent transparency (oit_stochastic.rs): the blended
         // faces, rigged or not, drawn with depth-based stochastic
-        // transparency (MSAA only: its targets are multisampled) instead of
-        // the per-object order below
+        // transparency (in every anti-aliasing mode: its passes have their
+        // own multisampled targets) instead of the per-object order below
         let method = crate::oit_stochastic::method(self.settings.oit);
         // the glowing blended faces (their glow accumulated with the
         // method, as `blended` adds it after each face in order)
@@ -8034,10 +8042,8 @@ impl Backend {
                     .as_mut()
                     .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj, !st_glow.is_empty()))
         };
-        // off, or without MSAA (FXAA, SMAA, TAA, none: the per-object order;
-        // the first frames may have drawn at the default 4x), its targets are
-        // freed (as `Bloom::release`)
-        if (method != crate::oit_stochastic::Method::Stochastic || self.targets.depth_msaa_tex.is_none())
+        // off, its targets are freed (as `Bloom::release`)
+        if method != crate::oit_stochastic::Method::Stochastic
             && let Some(s) = &mut self.st
         {
             s.release();
@@ -8156,6 +8162,13 @@ impl Backend {
             let scene_depth_tex = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
             let scene_depth = t.depth_msaa.as_ref().unwrap_or(&t.depth_ss);
             mark(&mut encoder, MARK_ST_BEGIN);
+            // without MSAA the total alpha is tested against the opaque
+            // depth spread over the passes' samples: the first iteration's
+            // copy of it comes first
+            let early = st.alpha_on_pass_depth();
+            if early {
+                st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
+            }
             // 2. the total alpha of every sample
             if let Some(mut pass) = st.begin_alpha(&mut encoder, scene_depth) {
                 bind_mesh(&mut pass, &self.groups.b);
@@ -8166,7 +8179,9 @@ impl Backend {
             // 3 and 4: the stochastic depth, then the accumulation, once per
             // run of the samples
             for i in 0..st.iterations() {
-                st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, i == 0);
+                if !(early && i == 0) {
+                    st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, i == 0);
+                }
                 if let Some(mut pass) = st.begin_depth(&mut encoder) {
                     bind_mesh(&mut pass, &self.groups.b);
                     pass.set_bind_group(3, st.face_group(i), &[]);

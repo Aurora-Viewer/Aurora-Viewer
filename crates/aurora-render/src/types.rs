@@ -1061,8 +1061,9 @@ pub struct RenderSettings {
     pub occlusion: bool,
     /// Order-independent transparency (oit_stochastic.rs): the blended
     /// faces drawn with depth-based stochastic transparency rather than in
-    /// the per-object order. Off (the default: an opt-in), or without MSAA,
-    /// they are blended in the drawing order and the targets are freed.
+    /// the per-object order, in every anti-aliasing mode. Off (the default:
+    /// an opt-in), they are blended in the drawing order and the targets are
+    /// freed.
     pub oit: bool,
 }
 
