@@ -75,6 +75,7 @@ mod gestures;
 mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
+pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
 mod graphics_start;
 mod grid_status;
 mod group_titles;
