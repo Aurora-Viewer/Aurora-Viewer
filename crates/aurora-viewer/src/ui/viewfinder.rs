@@ -117,10 +117,14 @@ pub struct Viewfinder {
     /// The reel's tray being dragged: where it is (kept once let go).
     reel_drag: Option<Pos2>,
     fly: Option<(f64, Rect)>,
+    /// When the last photo landed on the tray, while the pile pulses.
+    pulse: Option<f64>,
 }
 
 /// What the app gives the viewfinder each frame.
 pub struct Frame<'a> {
+    /// Less motion asked (Reduce motion).
+    pub still: bool,
     /// egui's clock (seconds).
     pub now: f64,
     /// The photo's size in pixels, and the window's.
@@ -1651,7 +1655,7 @@ impl Viewfinder {
     #[allow(clippy::too_many_arguments)]
     fn reel_tray(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, bottom: f32, out: &mut Vec<Out>) {
         use crate::ui::photo_reel::{TRAY_TILE, tray_fraction, tray_place, tray_slot};
-        // no surface of its own, like the dock: its tile on the world
+        // no surface of its own: the photos on the world
         let margin = egui::Margin::same(6);
         let reel = crate::ui::photo_reel::ReelView {
             arriving: (f.now < self.review_until && f.review.is_some()) || self.fly.is_some(),
@@ -1671,6 +1675,18 @@ impl Viewfinder {
         if reel.photos.len() <= usize::from(reel.arriving) {
             return;
         }
+        // the pile answers the photo that landed (not with less motion asked)
+        let since = self
+            .pulse
+            .map(|t0| (f.now - t0) as f32)
+            .filter(|t| *t < crate::ui::photo_reel::PULSE);
+        if since.is_none() {
+            self.pulse = None;
+        }
+        let since = since.filter(|_| !f.still);
+        if since.is_some() {
+            ctx.request_repaint();
+        }
         let mut asked = Vec::new();
         let area = egui::Area::new(id)
             .order(Order::Foreground)
@@ -1680,7 +1696,7 @@ impl Viewfinder {
             .show(ctx, |ui| {
                 egui::Frame::new()
                     .inner_margin(margin)
-                    .show(ui, |ui| crate::ui::photo_reel::tray(ui, p, &reel, &mut asked))
+                    .show(ui, |ui| crate::ui::photo_reel::tray(ui, p, &reel, since, &mut asked))
             });
         out.extend(asked.into_iter().map(Out::Reel));
         // moved: followed live, kept once let go (not every frame of the
@@ -1715,6 +1731,7 @@ impl Viewfinder {
         ctx.request_repaint();
         if k >= 1.0 {
             self.fly = None;
+            self.pulse = Some(f.now);
             return;
         }
         // eased in and out, the size along the way

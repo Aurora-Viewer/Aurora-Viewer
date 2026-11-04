@@ -1021,6 +1021,7 @@ impl App {
             zone,
             pitch,
             histogram: renderer.histogram.as_deref(),
+            still: self.settings.reduce_motion,
             review: review.as_ref(),
             first_person: self.camera.mouselook(),
             first_person_allowed: first_allowed,

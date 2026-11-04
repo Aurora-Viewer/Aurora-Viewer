@@ -71,9 +71,9 @@ pub fn picture(painter: &egui::Painter, p: &Palette, rect: Rect, radius: egui::C
     }
 }
 
-/// The viewfinder's tray: one tile of the dock holding the session's photos
-/// as loose prints, shuffled together: the tile, a print's picture, the edge
-/// around it, how many of the newest show.
+/// The viewfinder's tray: the session's photos as loose prints, shuffled
+/// together: the room they lie in, a print's picture, the edge around it, how
+/// many of the newest show.
 pub const TRAY_TILE: Vec2 = Vec2::new(112.0, 92.0);
 const PRINT: Vec2 = Vec2::new(78.0, 52.0);
 pub const PRINT_EDGE: f32 = 2.0;
@@ -126,15 +126,58 @@ fn tray_click(photos: &[Photo], shift: bool) -> Option<ReelAction> {
     })
 }
 
-/// The viewfinder's tray: the session's photos shuffled in one tile, the
-/// newest on top, with their count.
-pub fn tray(ui: &mut egui::Ui, p: &Palette, view: &ReelView, out: &mut Vec<ReelAction>) {
+/// How long the pile answers a photo landing on it (seconds).
+pub const PULSE: f32 = 2.0;
+
+/// The pile `t` seconds after a photo landed, a gentle, cheerful answer: its
+/// scale, a small bounce settling within a second, and the strength of its
+/// light, rising softly and fading out by `PULSE`.
+fn pulse_at(t: f32) -> (f32, f32) {
+    const RISE: f32 = 0.12;
+    const BOUNCE: f32 = 0.55;
+    let settle = (1.0 - t).max(0.0) * (-4.0 * t).exp();
+    let scale = 1.0 + (t / BOUNCE * std::f32::consts::TAU).sin() * settle * 0.1;
+    let fade = (1.0 - (t / PULSE).clamp(0.0, 1.0)).powi(3);
+    (scale, (t / RISE).min(1.0) * fade)
+}
+
+/// The viewfinder's tray: the session's photos shuffled on the world with no
+/// surface of their own, the newest on top, with their count. `since`: the
+/// seconds since a photo landed, while the pile pulses.
+pub fn tray(ui: &mut egui::Ui, p: &Palette, view: &ReelView, since: Option<f32>, out: &mut Vec<ReelAction>) {
+    use egui::epaint::RectShape;
     let photos = &view.photos[usize::from(view.arriving).min(view.photos.len())..];
     let (rect, resp) = ui.allocate_exact_size(TRAY_TILE, Sense::click());
-    dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
+    let (swell, light) = since.map_or((1.0, 0.0), pulse_at);
+    // a little larger under the pointer: no face left to light
+    let scale = swell + ui.ctx().animate_bool(resp.id.with("hover"), resp.hovered()) * 0.03;
+    let place = |id: u64| {
+        let (pic, angle) = tray_slot(rect.min, id);
+        let center = rect.center() + (pic.center() - rect.center()) * scale;
+        (Rect::from_center_size(center, pic.size() * scale), angle)
+    };
+    let radius = widgets::inner_radius(ui.visuals());
+    let top = photos.first().map(|photo| place(photo.id));
+    // the light: a soft teal glow under the pile, a faint veil over the
+    // photo on top
+    if let Some((pic, angle)) = top
+        && light > 0.0
+    {
+        ui.painter().add(
+            RectShape::filled(pic.expand(8.0), radius, p.teal.gamma_multiply(light * 0.55))
+                .with_blur_width(24.0)
+                .with_angle(angle),
+        );
+    }
     for photo in photos.iter().take(PRINTS).rev() {
-        let (pic, angle) = tray_slot(rect.min, photo.id);
+        let (pic, angle) = place(photo.id);
         print(ui.painter(), p, pic, PRINT_EDGE, angle, view.thumbs.get(&photo.id));
+    }
+    if let Some((pic, angle)) = top
+        && light > 0.0
+    {
+        ui.painter()
+            .add(RectShape::filled(pic.expand(PRINT_EDGE), radius, p.on_accent.gamma_multiply(light * 0.3)).with_angle(angle));
     }
     count_pill(ui.painter(), p, rect.right_bottom() - Vec2::splat(5.0), photos.len());
     let resp = resp.on_hover_text(aurora_i18n::tr!("photo-reel-tray-tip"));
@@ -877,7 +920,7 @@ mod tests {
             let area = egui::Area::new(Id::unique("tray"))
                 .movable(true)
                 .current_pos(Pos2::new(100.0, 100.0))
-                .show(ui.ctx(), |ui| tray(ui, &p, &view, &mut out));
+                .show(ui.ctx(), |ui| tray(ui, &p, &view, None, &mut out));
             dragged = area.response.dragged();
         });
         (out, dragged)
@@ -912,6 +955,22 @@ mod tests {
         assert!(dragged && out.is_empty());
         let (out, _) = tray_frame(&ctx, vec![press(to, false)], false, &saved);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn the_pulse_is_gentle_and_over_in_time() {
+        // no jump in size or light, the light up within a fifth of a second
+        assert_eq!(pulse_at(0.0), (1.0, 0.0));
+        assert!(pulse_at(0.2).1 > 0.6);
+        // a small bounce, settled long before the light has gone
+        for i in 0..200 {
+            let t = i as f32 / 100.0;
+            assert!((pulse_at(t).0 - 1.0).abs() < 0.06, "at {t}");
+        }
+        assert!(pulse_at(0.14).0 > 1.03);
+        assert_eq!(pulse_at(1.0).0, 1.0);
+        assert!(pulse_at(1.0).1 > 0.0 && pulse_at(1.0).1 < pulse_at(0.5).1);
+        assert_eq!(pulse_at(PULSE), (1.0, 0.0));
     }
 
     #[test]
