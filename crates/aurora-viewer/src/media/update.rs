@@ -226,6 +226,12 @@ impl MediaManager {
             forget_slot(&mut self.slot_ids, idx, &o.full_id);
             return;
         }
+        // its media shows now, or is about to (a refetch of a page on
+        // screen, its interest not measured yet the frame it started): first
+        let shown = self
+            .impls
+            .iter()
+            .any(|m| matches!(m.key, MediaKey::Prim { object, .. } if object == o.full_id) && (m.wanted || m.interest > 0.0));
         let avatar = attachment_avatar(world, idx);
         let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
         let on_own_avatar = !world.agent_id.is_nil() && avatar == Some(world.agent_id);
@@ -259,10 +265,10 @@ impl MediaManager {
         };
         if need && self.client.is_queued(&o.full_id) {
             // queued before its avatar was known: ours goes first now
-            self.client.prioritize(&o.full_id, request_priority(e));
+            self.client.prioritize(&o.full_id, request_priority(e, shown));
         } else if need && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia")) {
             e.requested_version = version;
-            self.client.request(o.full_id, cap, request_priority(e));
+            self.client.request(o.full_id, cap, request_priority(e, shown));
         }
     }
 
@@ -945,10 +951,13 @@ fn trusted_by_filter(objects: &HashMap<Uuid, ObjMedia>, key: MediaKey, settings:
 }
 
 /// Root avatar of an attachment.
-/// Where an object's ObjectMedia request goes in the queue: a HUD panel
-/// first, then our other attachments, then the world.
-fn request_priority(e: &ObjMedia) -> u8 {
-    if e.hud {
+/// Where an object's ObjectMedia request goes in the queue: media on screen
+/// first (LLMediaDataClient sorts by getMediaInterest), then a HUD, our other
+/// attachments, the world.
+fn request_priority(e: &ObjMedia, shown: bool) -> u8 {
+    if shown {
+        entry::SHOWN
+    } else if e.hud {
         entry::HUD
     } else if e.on_own_avatar {
         entry::ATTACHMENT

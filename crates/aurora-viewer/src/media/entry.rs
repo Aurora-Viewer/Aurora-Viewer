@@ -256,7 +256,10 @@ const RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_RETRIES: u32 = 4;
 const MAX_IN_FLIGHT: usize = 4;
 const BATCH: usize = 1;
-/// Request priorities (`Pending::priority`).
+/// Request priorities (`Pending::priority`): media already on screen (its
+/// interest, the score LLMediaDataClient sorts by), a HUD, an attachment of
+/// ours, the world.
+pub const SHOWN: u8 = 3;
 pub const HUD: u8 = 2;
 pub const ATTACHMENT: u8 = 1;
 pub const WORLD: u8 = 0;
@@ -287,10 +290,10 @@ impl MediaDataClient {
             return;
         }
         self.queued.insert(object, 0);
-        if priority == HUD {
-            let ahead = self.queue.iter().filter(|p| p.priority == HUD).count();
+        if priority >= HUD {
+            let ahead = self.queue.iter().filter(|p| p.priority >= priority).count();
             log::info!(
-                "media: ObjectMedia for our HUD {object} queued ({ahead} HUD requests ahead, {} in flight)",
+                "media: ObjectMedia for our HUD {object} queued (priority {priority}, {ahead} ahead at it or above, {} in flight)",
                 self.in_flight
             );
         }
@@ -311,7 +314,7 @@ impl MediaDataClient {
             && p.priority < priority
         {
             p.priority = priority;
-            if priority == HUD {
+            if priority >= HUD {
                 log::info!("media: ObjectMedia for our HUD {object} moved up ({} in flight)", self.in_flight);
             }
         }
@@ -326,7 +329,7 @@ impl MediaDataClient {
     pub fn update(&mut self, rt: &tokio::runtime::Handle, http: &reqwest::Client) -> Vec<Fetched> {
         let mut out = Vec::new();
         while let Ok((f, cap, retries, priority, queued_at)) = self.rx.try_recv() {
-            if priority == HUD {
+            if priority >= HUD {
                 log::info!(
                     "media: ObjectMedia for our HUD {} answered {:.1} s after it was queued ({})",
                     f.object,
@@ -369,7 +372,7 @@ impl MediaDataClient {
             let Some(p) = self.queue.remove(i) else {
                 break;
             };
-            if p.priority == HUD {
+            if p.priority >= HUD {
                 log::info!(
                     "media: ObjectMedia for our HUD {} sent {:.1} s after it was queued",
                     p.object,
@@ -459,6 +462,11 @@ mod tests {
         client.request(Uuid::from_u128(4), "http://127.0.0.1:9/media", WORLD);
         client.prioritize(&Uuid::from_u128(4), HUD);
         assert!(client.queue.iter().any(|p| p.object == Uuid::from_u128(4) && p.priority == HUD));
+        // a page already on screen asked again goes before every HUD prim
+        client.request(Uuid::from_u128(5), "http://127.0.0.1:9/media", SHOWN);
+        client.last_batch = Instant::now() - QUEUE_DELAY;
+        client.update(rt.handle(), &http);
+        assert!(client.queue.iter().all(|p| p.object != Uuid::from_u128(5)), "shown media first");
     }
 
     #[test]
