@@ -352,6 +352,7 @@ impl Editor {
                     egui::vec2(0.0, 28.0),
                     !self.poser.storage.busy && !self.poser.name.trim().is_empty(),
                 )
+                .on_hover_text(aurora_i18n::text("poser-export-hint"))
                 .clicked()
                 {
                     self.save_pose(rig, frame);
@@ -415,6 +416,7 @@ impl Editor {
                     egui::vec2(0.0, 28.0),
                     !self.poser.storage.busy,
                 )
+                .on_hover_text(aurora_i18n::text("poser-export-hint"))
                 .clicked()
                 {
                     self.import_pose(rig, frame);
@@ -443,14 +445,19 @@ impl Editor {
             return;
         };
         let Some(snapshot) = session.pose.snapshot(rig, frame.model) else {
+            self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
             return;
         };
         let mut capture = session.clone();
         capture.pose = Arc::new(snapshot);
         let document = document::Document::capture(rig, &capture, self.poser.name.clone(), self.poser.priority);
+        let Some(authored) = session.authored(rig, frame.model) else {
+            self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
+            return;
+        };
         self.poser.storage.job = Some(storage::Job::Save(
             document,
-            capture.pose,
+            Arc::new(authored),
             self.poser.also_bvh,
             self.poser.unlock_pelvis,
             self.poser.confirm_overwrite,
@@ -460,14 +467,15 @@ impl Editor {
         let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
             return;
         };
-        let Some(snapshot) = session.pose.snapshot(rig, frame.model) else {
+        let Some(authored) = session.authored(rig, frame.model) else {
+            self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
             return;
         };
         let translations = (0..rig.len())
-            .filter(|b| snapshot.positions[*b].distance_squared(session.base.positions[*b]) > 1e-10)
+            .filter(|b| authored.positions[*b].distance_squared(rig.local_pos[*b]) > 1e-10)
             .collect();
         self.poser.storage.job = Some(storage::Job::Import(
-            Arc::new(snapshot),
+            Arc::new(authored),
             translations,
             self.poser.name.clone(),
             self.poser.priority,

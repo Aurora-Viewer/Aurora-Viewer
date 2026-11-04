@@ -26,6 +26,22 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-04 — Aurora 0.9.0 : OpenSim et l'Hypergrid, pour de bon
+Sur les grilles OpenSim, votre avatar est maintenant cuit et se voit tel que vous l'habillez, le terrain des grandes régions va au-delà de 256 m, et l'inventaire, les tenues et les profils s'enregistrent sur les grilles sans AIS. Les achats et les prix prennent la monnaie et le symbole de la grille. Après une téléportation Hypergrid, Aurora suit la grille où vous êtes, demande avant un voyage qui laisserait des objets portés, et propose d'ajouter une grille inconnue depuis un lien.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.0)
+
+## 2026-11-04 — Accrocher aux objets, poser sur une surface, hologrammes
+La construction gagne trois aides au placement. Réglez Accrocher sur Objets et la sélection se plaque contre les objets voisins, des guides violets sur les faces qui se touchent, sans jamais les traverser. Appuyez sur P pour la poser sur une surface ou le sol, montrée en hologramme. Un hologramme peut aussi montrer l'objet déplacé, ou son point de départ (Préférences › Aurora › Comportement › Construction). Étirer les textures tient au redimensionnement, et les contrôles de caméra inclinent la vue.
+
+## 2026-11-04 — La barre d'outils Legacy, au complet
+Les boutons Préférences rapides, Navigateur web et Voix de la barre d'outils ouvrent leurs fenêtres du Legacy Viewer : les réglages les plus changés, un navigateur intégré sur une page d'accueil, les contrôles de la voix. Statistiques, Favoris du profil, Balises, Photo sur disque et Ne montrer que les amis les rejoignent, un bouton s'allume quand sa fenêtre est ouverte, et les raccourcis de menu manquants du Legacy Viewer sont là. Moi › Ignorer l'interdiction de voler (Ctrl+Alt+V) fait voler là où c'est interdit, après une mise en garde.
+
+## 2026-11-04 — Inventaire, chat et groupes
+Donnez une couleur à vous à un dossier de l'inventaire, visible de vous seul, et sauvegardez une tenue dans un fichier JSON pour la restaurer plus tard. Moi › Expériences liste vos expériences et ce que leurs scripts ont fait. Portez un titre de groupe choisi par région, et connectez-vous directement à un repère favori. Le chat a sa propre taille de texte, un long MI part en plusieurs messages au lieu d'être coupé, et l'heure du chat suit le format 12 ou 24 h de l'horloge.
+
+## 2026-11-04 — Plus stable sur votre carte graphique
+Les Intel Iris Xe redémarrent, et Aurora partage la carte graphique avec les autres viewers et programmes. La qualité photo monte autant que la mémoire vidéo le permet, sans perdre la carte, et les textures du monde se limitent à 512, 1024 ou 2048 pixels. Liens, journaux et connexions aux simulateurs sont renforcés après un audit de sécurité de Butter Roux, merci ! Merci aussi à Aznlilly, anne-skydancer, circuskid, ddagetracker, emmelinedevere, Gaalrauch, iGao, jumpinmimi, KanikaBreed, Marakiinfinity, Memekiller, Odessa-Draekavik, vexxbyte, voidel, wolfosbournesl, xWynt3r et zdub0is.
+
 ## 2026-11-02 — Aurora 0.8.5 : son immersif et VR, tous deux expérimentaux
 Les sons du monde s'assourdissent derrière un mur ou dans une boîte fermée, passent derrière votre tête au casque (HRTF), et résonnent comme le lieu où vous êtes : secs en plein air, une longue traîne douce dans une grande salle. Trois interrupteurs dans Préférences › Son ; HRTF et réverbération sont désactivés par défaut. Avec un casque OpenXR, le bouton casque de la barre du bas montre le monde en relief, depuis les yeux de l'avatar ou la caméra. Visite seulement pour l'instant : Échap ramène le bureau.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.5)
