@@ -1,6 +1,12 @@
 language-name = 日本語
 avatar-studio-title = アバタースタジオ
-avatar-studio-help = 左ドラッグで回転・右ドラッグで上下移動・中ドラッグで平行移動・ホイールでズーム
+avatar-studio-input-left = 左ドラッグ
+avatar-studio-input-right = 右ドラッグ
+avatar-studio-input-middle = 中ドラッグ
+avatar-studio-input-wheel = ホイール
+avatar-studio-action-focus = 注視点の高さ
+avatar-studio-action-pan = 視点を移動
+avatar-studio-action-zoom = ズーム
 avatar-studio-exit = スタジオを閉じる
 joystick-title = ジョイスティックと３Ｄマウス
 joystick-enabled = ジョイスティック入力を有効にする
