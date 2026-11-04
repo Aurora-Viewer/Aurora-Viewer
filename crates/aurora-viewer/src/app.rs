@@ -400,6 +400,12 @@ pub struct App {
     /// Seconds since frame 600, for the demo camera scenarios that move by
     /// time (camera/demo.rs `steps_at`).
     demo_camera_clock: f32,
+    /// AURORA_CAPTURE_TIMES: the captures still to take at those seconds of
+    /// the camera's clock, in order (`<name>-t<seconds>.png`).
+    capture_times: Vec<(f32, std::path::PathBuf)>,
+    /// The time capture registered and not yet saved: the camera's clock
+    /// stays at its time until then.
+    capture_held: Option<std::path::PathBuf>,
     start: Instant,
     right_drag: bool,
     /// The camera's vertical angle last sent in AgentFOV.
@@ -1347,6 +1353,10 @@ impl App {
             last_frame: Instant::now(),
             prev_dt: 0.0,
             demo_camera_clock: 0.0,
+            capture_times: std::env::var_os("AURORA_CAPTURE")
+                .map(|p| capture_time_files(std::path::Path::new(&p), &std::env::var("AURORA_CAPTURE_TIMES").unwrap_or_default()))
+                .unwrap_or_default(),
+            capture_held: None,
             start: Instant::now(),
             right_drag: false,
             sent_fov: crate::camera::DEFAULT_FOV,
@@ -1689,8 +1699,14 @@ impl App {
             stream_list: Default::default(),
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
                 let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
+                // (with capture times alone, no frame is captured by number)
+                let by_time = std::env::var("AURORA_CAPTURE_TIMES").is_ok_and(|t| !t.trim().is_empty());
                 (
-                    capture_files(std::path::Path::new(&p), &frames),
+                    if by_time && frames.trim().is_empty() {
+                        Vec::new()
+                    } else {
+                        capture_files(std::path::Path::new(&p), &frames)
+                    },
                     std::env::var_os("AURORA_CAPTURE_EXIT").is_some(),
                 )
             }),
@@ -3942,11 +3958,35 @@ impl App {
             });
         }
         // (the scenarios that move by time count from frame 600)
-        let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
+        let mut dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
+        if !self.capture_times.is_empty() || self.capture_held.is_some() {
+            // AURORA_CAPTURE_TIMES: every skeleton holds still (as in the
+            // photo mode's frozen world), so that what the path's camera
+            // sees at a time (the hair on the head) is the same in every run
+            self.scene.pause_all_skeletons = true;
+        }
         if self.frame_count <= 600 {
             self.demo_camera_clock = 0.0;
+        } else if self.capture_held.is_some() {
+            // AURORA_CAPTURE_TIMES: the clock held at the capture's time
+            // until the picture is saved (it is taken a frame or two later)
+            dt = 0.0;
         } else {
             self.demo_camera_clock += dt;
+            if let Some(&(t, _)) = self.capture_times.first()
+                && self.demo_camera_clock >= t
+            {
+                // the camera exactly where the path is at `t`, whatever the
+                // frame rate: every run captures the same place
+                dt = (dt - (self.demo_camera_clock - t)).max(0.0);
+                self.demo_camera_clock = t;
+                let (_, file) = self.capture_times.remove(0);
+                if let Some((files, _)) = &mut self.capture {
+                    let at = files.partition_point(|(f, _)| *f <= self.frame_count);
+                    files.insert(at, (self.frame_count, file.clone()));
+                    self.capture_held = Some(file);
+                }
+            }
         }
         for step in crate::camera::demo::steps_at(spec, self.frame_count, self.demo_camera_clock, dt) {
             match step {
@@ -11415,10 +11455,17 @@ impl App {
                 self.inventory_images.auto_capture_pending = false;
                 let (at, file) = files.remove(0);
                 match image::save_buffer(&file, &px, w, h, image::ExtendedColorType::Rgba8) {
-                    Ok(()) => log::info!("frame {at} captured to {}", file.display()),
+                    Ok(()) => log::info!(
+                        "frame {at} captured to {} (camera clock {:.4} s)",
+                        file.display(),
+                        self.demo_camera_clock
+                    ),
                     Err(e) => log::warn!("capture failed: {e}"),
                 }
-                if *exit && files.is_empty() {
+                if self.capture_held.as_ref() == Some(&file) {
+                    self.capture_held = None;
+                }
+                if *exit && files.is_empty() && self.capture_times.is_empty() {
                     self.quit_at = Some(Instant::now());
                 }
             }
@@ -20258,6 +20305,27 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
         .collect()
 }
 
+/// AURORA_CAPTURE files for AURORA_CAPTURE_TIMES (seconds of the clock of
+/// a demo camera that moves by time, comma separated): one per time, in
+/// order, named `<name>-t<seconds>.<ext>`.
+fn capture_time_files(path: &std::path::Path, times: &str) -> Vec<(f32, std::path::PathBuf)> {
+    let mut at: Vec<f32> = times
+        .split(',')
+        .filter_map(|v| v.trim().parse::<f32>().ok())
+        .filter(|t| t.is_finite() && *t >= 0.0)
+        .collect();
+    at.sort_by(f32::total_cmp);
+    at.dedup();
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "png".into());
+    at.into_iter()
+        .map(|t| (t, path.with_file_name(format!("{stem}-t{t}.{ext}"))))
+        .collect()
+}
+
 /// Start this viewer again with `--vr`, as the process ends: the identity
 /// of this instance is kept (title, frame cap, language, grid), not the
 /// one-time login or start place.
@@ -20286,7 +20354,7 @@ fn restart_with_vr() {
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, UiActions, capture_files, frame_cap};
+    use super::{RightGesture, UiActions, capture_files, capture_time_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
 
@@ -20511,6 +20579,16 @@ mod tests {
             capture_files(Path::new("c/a.png"), "2560, 2500"),
             vec![(2500, PathBuf::from("c/a-2500.png")), (2560, PathBuf::from("c/a-2560.png"))]
         );
+    }
+
+    #[test]
+    fn capture_files_by_time() {
+        assert!(capture_time_files(Path::new("c/a.png"), "").is_empty());
+        assert_eq!(
+            capture_time_files(Path::new("c/a.png"), "5.0167, 1.5,x,-2, 1.5"),
+            vec![(1.5, PathBuf::from("c/a-t1.5.png")), (5.0167, PathBuf::from("c/a-t5.0167.png"))]
+        );
+        assert_eq!(capture_time_files(Path::new("c/a"), "3"), vec![(3.0, PathBuf::from("c/a-t3.png"))]);
     }
 
     #[test]

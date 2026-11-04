@@ -356,6 +356,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic joystick input, preferences, lens reset gestures or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
+| `AURORA_CAPTURE_TIMES=<s>[,<s>…]` | Captures at those seconds of a camera path run by time (`AURORA_DEMO_CAMERA=hair`), the same place in every run |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_EXIT_AFTER=<seconds>` | Quits cleanly after that many seconds of frames (measurement runs of a camera that moves by time) |
 | `AURORA_DEMO_RENDER_TEXTURE=1` | Captures the demo world through a caller-owned render target |
@@ -810,6 +811,21 @@ photo window brings the camera back (`free camera: back to the avatar`).
 Several frames separated by commas (`2500,2600`) save one file each,
 `<file>-<frame>.png`. The frames-per-second cap in the background ("Limit
 when unfocused") is ignored during a screenshot.
+
+`AURORA_CAPTURE_TIMES`: with a demo camera that moves by time from frame
+600 (`AURORA_DEMO_CAMERA=hair`), one capture per time, `<file>-t<s>.png`
+(`1.5,5,5.0167` gives `-t1.5`, `-t5`, `-t5.0167`). When the camera's clock
+reaches a time, it is set to exactly that time and held there until the
+picture is saved, then the path goes on: whatever the frame rate, every run
+captures the camera at the same point of the path, so that the methods of a
+setting can be compared there (`AURORA_OIT=0` and `1`, `AURORA_OIT_SAMPLES`;
+two times 1/60 s apart give a frame pair, the flicker of a 60 fps step). The
+avatars hold still from the start (their skeletons paused, as in the photo
+mode's frozen world): the idle sway, a degree of the torso, would otherwise
+move the hair on the head by several pixels between runs. Without
+`AURORA_CAPTURE_FRAMES`, no frame is captured by number;
+`AURORA_CAPTURE_EXIT=1` quits after the last one. The log gives `frame <n>
+captured to <file> (camera clock <s> s)`.
 
 ## Camera, movement and pointer
 
