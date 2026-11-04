@@ -9384,6 +9384,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_FLEXI_CULL=0` or `alt` | Every flexible prim's mesh swept again each frame, as before, even when no view shows it; `alt`: one second in three |
+| `AURORA_WRITE_STAGING=0` or `alt` | The journal's buffer writes made one by one through the queue, as before, instead of one staging buffer per frame; `alt`: one second in three |
 | `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, not their avatar's, as before |
 | `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), whatever Preferences › Network and cache › Download connections says |
 | `AURORA_DEMO_NET_ADAPTER=<description>` | This network adapter instead of the computer's, for the download connections (e.g. `Marvell AQtion 10Gbit Network Adapter`: always limited, "Follow the connection" greyed) |
@@ -10183,6 +10184,21 @@ What the inventory must show with these scenarios:
   `s_sync_flexibles` and `r_resources`. Turn the camera away from a place
   full of flexible prims (hair, skirts, flags) and back: no shape should
   jump when they come into view.
+  `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
+  end of the `perf summary` line.
+- **`AURORA_WRITE_STAGING=0`**: the render thread replays the journal of
+  the frame (`writes.rs`) through `Queue::write_buffer`, one call per
+  write, as before; wgpu makes, maps and frees a staging buffer for each of
+  them. By default the bytes of the frame's buffer writes are copied into
+  one staging buffer kept mapped, and one GPU copy per run of writes that
+  follow each other is submitted before the frame (`write_staging.rs`).
+  Texture writes still go through the queue. Up to three staging buffers
+  take turns; a frame that writes more than any of them holds goes through
+  the queue while a larger one is made on a thread of its own (the
+  arrival in a region), and one that writes more than 32 MB always does.
+  To read in `perf summary`: `r_resources` (render thread) and
+  `journal_kb`; a slow frame's line `frame writes took` gives how many
+  writes were staged. Nothing should change on screen.
   `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
   end of the `perf summary` line.
 - **`AURORA_MATERIAL_REBUILD=all`**: each material that arrives (or is given
