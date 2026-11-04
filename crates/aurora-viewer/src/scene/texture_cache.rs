@@ -444,6 +444,7 @@ mod tests {
     fn old_opaque_chains_survive_but_old_alpha_masks_are_decoded_again() {
         let opaque_meta = Meta {
             alpha: AlphaKind::Opaque,
+            alpha_channel: false,
             ..meta(0)
         };
         let mut opaque = encode(&opaque_meta, None, &chain()).unwrap();
