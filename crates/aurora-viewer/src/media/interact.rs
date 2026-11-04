@@ -97,12 +97,23 @@ impl MediaManager {
     /// The nearest media face along a ray (objects with media data only),
     /// unless something drawn is in front (`depth_t`: distance of the
     /// picked depth).
-    pub fn hit_test(&mut self, world: &World, scene: &Scene, origin: Vec3, dir: Vec3, depth_t: Option<f32>, hud: bool) -> Option<MediaHit> {
+    /// `picked`: the object the click's own pick found (a HUD's): only its
+    /// faces count, as LLToolPie::handleMediaClick looks at mPick's face.
+    pub fn hit_test(
+        &mut self,
+        world: &World,
+        scene: &Scene,
+        origin: Vec3,
+        dir: Vec3,
+        depth_t: Option<f32>,
+        hud: bool,
+        picked: Option<usize>,
+    ) -> Option<MediaHit> {
         let now = Instant::now();
         let candidates: Vec<(Uuid, usize, Vec<bool>)> = self
             .objects
             .iter()
-            .filter(|(_, om)| om.hud == hud)
+            .filter(|(_, om)| om.hud == hud && picked.is_none_or(|p| p == om.idx))
             .filter(|(_, om)| {
                 !hud || scene
                     .gpu
@@ -215,11 +226,12 @@ impl MediaManager {
         settings: &MediaSettings,
         mods: Modifiers,
         hud: bool,
+        picked: Option<usize>,
     ) -> bool {
         if !settings.enabled || !settings.prim_media {
             return false;
         }
-        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud) else {
+        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud, picked) else {
             self.unfocus();
             return false;
         };
@@ -294,7 +306,9 @@ impl MediaManager {
         hud: bool,
     ) -> Option<String> {
         let focus = self.focus?;
-        let hit = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud).filter(|h| h.key == focus)?;
+        let hit = self
+            .hit_test(world, scene, ray.0, ray.1, depth_t, hud, None)
+            .filter(|h| h.key == focus)?;
         let position = Some(ray.0 + ray.1 * hit.t);
         if !self.may_touch(world, &focus, position) {
             self.unfocus();
@@ -325,7 +339,10 @@ impl MediaManager {
         let Some(focus) = self.focus else {
             return false;
         };
-        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud).filter(|h| h.key == focus) else {
+        let Some(hit) = self
+            .hit_test(world, scene, ray.0, ray.1, depth_t, hud, None)
+            .filter(|h| h.key == focus)
+        else {
             return false;
         };
         let position = Some(ray.0 + ray.1 * hit.t);
@@ -451,13 +468,25 @@ mod tests {
             o.te = Some(Arc::new(te));
         };
         set_alpha(&mut world, 1.0);
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_some());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
+        // a click whose own pick found another object in front (a HUD button
+        // with a partly transparent texture) is not the media's
+        assert!(
+            media
+                .hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, Some(idx))
+                .is_some()
+        );
+        assert!(
+            media
+                .hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, Some(idx + 1))
+                .is_none()
+        );
         // the BB HUD's collapsed panel: hidden in front of the root button
         set_alpha(&mut world, 0.0);
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_none());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_none());
         // a prim with its own touch handler still takes it (specialHoverCursor)
         world.objects.get_mut(idx).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_some());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
     }
 
     #[test]
@@ -501,9 +530,9 @@ mod tests {
                 })]),
             ),
         );
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_none());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_none());
         world.objects.get_mut(idx).unwrap().rotation = glam::Quat::from_rotation_z(std::f32::consts::PI);
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_some());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
         world.objects.get_mut(idx).unwrap().rotation = glam::Quat::IDENTITY;
         let material = Uuid::from_u128(8896);
         world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(0, material)];
@@ -514,6 +543,6 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_some());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
     }
 }
