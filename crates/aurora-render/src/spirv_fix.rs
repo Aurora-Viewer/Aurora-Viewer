@@ -33,8 +33,9 @@
 //! back to `device.create_shader_module`, and `naga` and `spirv` leave
 //! `Cargo.toml`.
 //!
-//! Nothing on `main` uses `sample_mask` yet: the order-independent
-//! transparency and stochastic work will call [`SampleMaskShaders`].
+//! Its user is the stochastic transparency's depth pass
+//! (`oit_stochastic.rs`, `Shared::mask_module`), which takes the sample
+//! index route instead when no module can be made here.
 //!
 //! Upstream: the bug is in `naga/src/back/spv/writer.rs`
 //! (`write_varying`, the `BuiltIn::SampleMask` arm takes the varying's
