@@ -1092,13 +1092,28 @@ when unfocused") is ignored during a screenshot.
   trigger plain G (snap / guide). Releasing a key first pressed without
   AltGr must always release it, even if AltGr was held in the meantime.
 
-- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|orbit,x,y[,px]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|hair|drift,x,y[,n]|orbit,x,y[,px]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
   winit reports it (neither Ctrl nor Alt), so its `demo camera` lines match
   those of `alt` frame for frame; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
-  fixed camera, to compare consecutive screenshots); `drift`: the same
+  fixed camera, to compare consecutive screenshots; the drag is per frame
+  and the focus animation per second, so the depth reached depends on the
+  frame rate: use `hair` to compare runs); `hair`: the fly-through of the 400 strand cards
+  (`AURORA_DEMO_HAIR_CARDS=400`) by the scripted camera, locked on a path
+  fixed in our avatar's head frame (it follows the avatar as it stands and
+  turns) and run by time from frame 600, 15 s in all: 0 to 3 s straight in
+  from 0.5 m outside the cards to 0.16 m from the head's centre, inside
+  their shell (cards in front, behind and around, the near plane, 0.1 m,
+  crossing the nearest); 3 to 6 s a full turn on the spot there; 6 to 12 s an orbit inside
+  the shell along the cards' arc, looking ahead along it; 12 to 15 s
+  straight back out; then the scripted camera is released. The camera is
+  logged once a second. Every run follows the same path whatever the frame
+  rate; with `AURORA_FPS_LIMIT=60` a second is 60 frames, so a capture at
+  frame 870 is 4.5 s into the path (inside, mid-turn). The headline run of
+  the transparency measurements (`AURORA_OIT`, `AURORA_PROFILE_FRAMES=1` for
+  the GPU time of every frame); `drift`: the same
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
   until frame 1200; `orbit,x,y[,px]`: Alt+click at (x, y) at frame 600,
   then an orbit of `px` mouse pixels per frame (0.5 by default) that never
