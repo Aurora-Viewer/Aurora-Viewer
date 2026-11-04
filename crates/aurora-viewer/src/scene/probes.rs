@@ -467,9 +467,13 @@ impl ProbeManager {
             let half = (hi - lo) * 0.5;
             // radius encompasses all objects, at least 8 m
             let radius = half.length().max(8.0);
-            // over the ground, and the near clip (half the radius) too
+            // over the ground, and the near clip (half the radius, at most
+            // MAX_AUTO_NEAR) too: lifted by half the radius of a large cell,
+            // a probe floated over the canopy or a tunnel's roof and saw
+            // the open sky
+            let near = (radius * 0.5).clamp(0.1, MAX_AUTO_NEAR);
             let ground = world.ground_height(origin).unwrap_or(f32::MIN) + 2.0;
-            origin.z = origin.z.max(ground).max(ground + radius * 0.5);
+            origin.z = origin.z.max(ground).max(ground + near);
             found.insert(
                 Key::Cell(cell.0, cell.1),
                 Probe {
@@ -478,7 +482,7 @@ impl ProbeManager {
                     kind: 0.0,
                     box_inv: Mat4::IDENTITY,
                     ambiance: 0.0,
-                    near: (radius * 0.5).clamp(0.1, MAX_AUTO_NEAR),
+                    near,
                     slot: None,
                     complete: false,
                     last_update: None,
