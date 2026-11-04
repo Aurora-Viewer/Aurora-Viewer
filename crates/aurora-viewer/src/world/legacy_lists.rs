@@ -74,7 +74,11 @@ pub struct Folder {
 impl Found {
     /// What the import window shows of it.
     pub fn folder(&self) -> Folder {
-        Folder { dir: self.dir.clone(), counts: self.counts, unreadable: self.lists.unreadable.clone() }
+        Folder {
+            dir: self.dir.clone(),
+            counts: self.counts,
+            unreadable: self.lists.unreadable.clone(),
+        }
     }
 }
 
