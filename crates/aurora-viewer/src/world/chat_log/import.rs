@@ -50,7 +50,7 @@ impl Account {
     /// Whether a folder in an application's folder is this account's.
     /// Another grid's label is unknown (`LLGridManager::getGridLabel`
     /// comes from the viewer's grid list), so any label will do there.
-    fn owns(&self, name: &str) -> bool {
+    pub fn owns(&self, name: &str) -> bool {
         let base = self.folder();
         match self.grid.as_str() {
             "aditi" => name == format!("{base}{BETA_SUFFIX}"),

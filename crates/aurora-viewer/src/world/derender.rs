@@ -127,6 +127,10 @@ pub struct FileEntries {
 }
 
 impl FileEntries {
+    pub fn len(&self) -> usize {
+        self.entries.len() + self.other.len()
+    }
+
     pub fn from_xml(bytes: &[u8]) -> Result<Self, String> {
         let data = aurora_llsd::from_xml(bytes).map_err(|e| format!("{e:?}"))?;
         let mut file = FileEntries::default();

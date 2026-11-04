@@ -59,6 +59,7 @@ mod derender;
 mod describe;
 mod dev_toolbox;
 mod chat_import;
+mod legacy_lists;
 mod folders;
 use folders::chat_log_root;
 mod contents_drop_demo;
@@ -943,6 +944,7 @@ pub struct App {
     /// The cache and transcript folders being chosen (app/folders.rs).
     folders: folders::Folders,
     chat_import: chat_import::ChatImport,
+    legacy_lists: legacy_lists::LegacyLists,
     /// The settings backup being written or read (app/settings_backup.rs).
     settings_backup: settings_backup::Job,
     /// The stream list being exported or imported (app/stream_list.rs).
@@ -1315,6 +1317,7 @@ impl App {
             favorite_images: Default::default(),
             history_ui: Default::default(),
             chat_import: Default::default(),
+            legacy_lists: Default::default(),
             perf: PerfData::default(),
             monitor: ui::monitor::Monitor::default(),
             monitor_feed: monitor::MonitorFeed::default(),
@@ -2591,7 +2594,9 @@ impl App {
         };
         // the demo keeps no transcripts unless its scenario asks for them:
         // a run must not change what the next one shows
-        let off = self.demo && !matches!(crate::demo::chatlog::mode(), Some(m) if !matches!(m, crate::demo::chatlog::Mode::Long { .. }));
+        let off = self.demo
+            && crate::demo::legacy_lists::mode().is_none()
+            && !matches!(crate::demo::chatlog::mode(), Some(m) if !matches!(m, crate::demo::chatlog::Mode::Long { .. }));
         log.set_grid(if off {
             String::new()
         } else {
@@ -8460,6 +8465,7 @@ impl App {
         }
         self.world.poll_transcripts();
         self.poll_chat_import();
+        self.poll_legacy_lists();
         self.update_hover_height();
         self.update_avatar_health();
         if self.demo {
@@ -14197,6 +14203,12 @@ impl App {
         }
         if let Some(folders) = res.import_legacy_logs.take() {
             self.chat_import_start(folders);
+        }
+        if res.find_legacy_lists {
+            self.legacy_lists_opened();
+        }
+        if let Some((index, parts)) = res.import_legacy_lists.take() {
+            self.legacy_lists_start(index, parts);
         }
         if res.erase_chat_logs {
             self.options_ui.chat_log_status.clear();

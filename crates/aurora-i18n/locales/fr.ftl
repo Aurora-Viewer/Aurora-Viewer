@@ -13135,3 +13135,19 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+
+ui-options-legacy-lists = Importer les listes du Legacy Viewer
+ui-options-legacy-lists-help = Ajoute l'historique des téléportations, la liste noire des ressources, la liste du filtre média et les cercles de ce compte. Les fichiers du Legacy Viewer sont seulement lus.
+ui-options-legacy-lists-button = Importer depuis le Legacy Viewer…
+ui-options-legacy-lists-title = Importer depuis le Legacy Viewer
+ui-options-legacy-lists-text = Tout est ajouté aux listes de ce compte et rien n'est remplacé ici. Ce que nomme la liste noire des ressources quitte le monde aussitôt. Importer à nouveau ramène ce que vous avez retiré ici.
+ui-options-legacy-lists-searching = Recherche des dossiers du Legacy Viewer…
+ui-options-legacy-lists-none = Aucun dossier du Legacy Viewer contenant des listes n'a été trouvé pour ce compte.
+ui-options-legacy-lists-teleports = Historique des téléportations ({ $count })
+ui-options-legacy-lists-derender = Liste noire des ressources ({ $count })
+ui-options-legacy-lists-media = Liste du filtre média ({ $count })
+ui-options-legacy-lists-contact-sets = Cercles ({ $count })
+ui-options-legacy-lists-confirm = Importer
+ui-options-legacy-lists-imported = Ajouté ou mis à jour : { $teleports } historique, { $derender } liste noire, { $media } filtre média, { $sets } cercles.
+ui-options-legacy-lists-nothing = Rien de nouveau : ce compte a déjà ces listes.
+ui-options-legacy-lists-failed = Illisible : { $files }.

@@ -9,19 +9,62 @@
 //! `read` runs away from the frame; `World::merge_legacy_lists` then
 //! applies what it found.
 
+use super::chat_log::import::Account;
 use super::contact_sets::CONTACT_SETS_FILE;
 use super::contact_sets::importing::{EMPTY_MAP, ImportData};
 use super::derender::{self, FileEntries};
 use super::tphistory::{self, HistoryItem};
 use crate::media::filter::{self, Rule};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Teleport history file (LLTeleportHistoryStorage::mFilename).
 const HISTORY_FILE: &str = "teleport_history.txt";
 
 /// Large enough for years of history, bounded before parsing.
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The lists to take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parts {
+    pub teleports: bool,
+    pub derender: bool,
+    pub media: bool,
+    pub contact_sets: bool,
+}
+
+impl Default for Parts {
+    fn default() -> Self {
+        Parts {
+            teleports: true,
+            derender: true,
+            media: true,
+            contact_sets: true,
+        }
+    }
+}
+
+/// How much each file holds, shown before importing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub teleports: usize,
+    pub derender: usize,
+    pub media: usize,
+    pub contact_sets: usize,
+}
+
+impl Counts {
+    fn any(&self) -> bool {
+        *self != Counts::default()
+    }
+}
+
+/// An account's folder of a Legacy Viewer.
+pub struct Found {
+    pub dir: PathBuf,
+    pub counts: Counts,
+    pub lists: Lists,
+}
 
 /// What a Legacy Viewer's account folder holds.
 #[derive(Default)]
@@ -32,6 +75,33 @@ pub struct Lists {
     contact_sets: Option<ImportData>,
     /// Files that exist and could not be read.
     unreadable: Vec<&'static str>,
+}
+
+impl Lists {
+    fn counts(&self) -> Counts {
+        Counts {
+            teleports: self.history.len(),
+            derender: self.derender.as_ref().map_or(0, FileEntries::len),
+            media: self.media.len(),
+            contact_sets: self.contact_sets.as_ref().map_or(0, ImportData::sets),
+        }
+    }
+
+    /// Drop the lists not asked for.
+    pub fn keep(&mut self, parts: Parts) {
+        if !parts.teleports {
+            self.history.clear();
+        }
+        if !parts.derender {
+            self.derender = None;
+        }
+        if !parts.media {
+            self.media.clear();
+        }
+        if !parts.contact_sets {
+            self.contact_sets = None;
+        }
+    }
 }
 
 /// What an import changed.
@@ -66,6 +136,35 @@ fn bytes(folder: &Path, name: &'static str, unreadable: &mut Vec<&'static str>) 
             None
         }
     }
+}
+
+/// The account's folders under the viewers' folders that hold a list, read,
+/// a folder shared by two viewers once.
+pub fn find(apps: &[PathBuf], account: &Account) -> Vec<Found> {
+    let mut seen = Vec::new();
+    let mut found = Vec::new();
+    for app in apps {
+        let Ok(entries) = std::fs::read_dir(app) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !entry.file_name().to_str().is_some_and(|n| account.owns(n)) || !dir.is_dir() {
+                continue;
+            }
+            let real = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            if seen.contains(&real) {
+                continue;
+            }
+            seen.push(real);
+            let lists = read(&dir);
+            let counts = lists.counts();
+            if counts.any() || !lists.unreadable.is_empty() {
+                found.push(Found { dir, counts, lists });
+            }
+        }
+    }
+    found
 }
 
 /// Read the lists of an account folder.
@@ -140,7 +239,6 @@ impl super::World {
 mod tests {
     use super::super::derender::tests_support::demo_world;
     use super::*;
-    use std::path::PathBuf;
 
     fn folder(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("aurora-legacy-lists-{name}-{}", std::process::id()));
@@ -173,6 +271,44 @@ mod tests {
              <key>friends</key><map><key>00000000-0000-0000-0000-000000000042</key><string></string></map></map></map></llsd>",
         )
         .expect("contact sets");
+    }
+
+    #[test]
+    fn find_takes_the_account_s_folder_once_and_the_ticked_lists() {
+        let root = folder("find");
+        let dir = root.join("mira_resident");
+        std::fs::create_dir_all(&dir).expect("account");
+        std::fs::create_dir_all(root.join("someone_else")).expect("other");
+        write_lists(&dir);
+        write_lists(&root.join("someone_else"));
+        let account = Account {
+            first: "Mira".into(),
+            last: "Resident".into(),
+            grid: "agni".into(),
+        };
+        let mut found = find(&[root.clone(), root.clone()], &account);
+        assert_eq!(found.len(), 1);
+        let Found { dir: at, counts, mut lists } = found.remove(0);
+        assert_eq!(at, dir);
+        assert_eq!(
+            counts,
+            Counts {
+                teleports: 1,
+                derender: 1,
+                media: 1,
+                contact_sets: 1
+            }
+        );
+        lists.keep(Parts {
+            media: false,
+            contact_sets: false,
+            derender: false,
+            ..Parts::default()
+        });
+        let (mut world, _) = demo_world();
+        let report = world.merge_legacy_lists(lists);
+        assert_eq!((report.teleports, report.total()), (1, 1));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
