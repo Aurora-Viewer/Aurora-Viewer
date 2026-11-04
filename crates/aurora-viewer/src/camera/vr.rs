@@ -334,7 +334,9 @@ impl BodyFollow {
         }
         if let Some(previous) = self.last_root {
             let delta = root - previous;
-            let distance = delta.length();
+            // Falling and landing move the rig vertically with the avatar.
+            // Only a horizontal discontinuity invalidates its horizontal offset.
+            let distance = delta.truncate().length();
             if !distance.is_finite() || distance > MAX_ACCEPTED_STEP {
                 // A teleport/correction is not an accepted walking step. A region
                 // coordinate change is handled separately by `reference`.
@@ -423,6 +425,18 @@ pub fn constrained_distance(position: Vec3, previous: Vec3, origin: Vec3, min: f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vr_vertical_drop_preserves_horizontal_compensation() {
+        let offset = Vec3::X * 0.4;
+        let mut follow = BodyFollow {
+            offset,
+            last_root: Some(Vec3::Z * 3.0),
+            ..Default::default()
+        };
+        assert_eq!(follow.accepted_root(Vec3::ZERO), offset);
+    }
+
     #[test]
     fn vr_arrival_budget_brakes_delayed_authority_without_reversal_or_camera_motion() {
         use std::collections::VecDeque;

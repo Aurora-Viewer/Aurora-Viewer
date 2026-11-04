@@ -158,12 +158,15 @@ Flycam follows the headset's physical movement at 1:1 scale. Its steering pivot
 moves with the head, and forward travel follows full physical gaze, including
 looking up or down. Artificial stick pitch and roll remain disabled.
 
-First-person walking follows horizontal gaze. Physical head movement remains
+First-person entry aligns the current tracked headset height with the avatar’s
+eye height. Walking follows horizontal gaze. Physical head movement remains
 1:1 and excludes animated eye offsets and camera shake. The avatar follows
 the head's ground-plane projection through the normal walking controls: it
 starts outside a 0.18 m horizontal offset and aims to stop inside 0.05 m. The separate
 thresholds prevent repeated starts and stops from small head motions. Manual
 locomotion takes priority; following does not enable running, flight or jumping.
+Flight and falls suspend automatic walking. Vertical avatar movement carries the
+headset rig without clearing its horizontal compensation.
 Body catch-up does not push the camera farther away from the avatar. Its
 arrival controller latches the physical world goal, brakes before delayed
 movement overshoots, and waits for the stopping response before retrying a
@@ -193,9 +196,9 @@ Mouse look is off by default. When enabled it turns horizontally only, and its
 warning icon explains that it may cause discomfort.
 
 Gamma (0.5–2.5) and Colour vibrancy (0–2) adjust the headset image live.
-Both default to 1.0. The desktop mirror uses the unadjusted eye image.
+Gamma defaults to 0.80 and vibrancy to 1.10. The desktop mirror uses the unadjusted eye image.
 
-Resolution is specified per eye: 1600 × 1600 (default), 2160 × 2160,
+Resolution is specified per eye: 1600 × 1600, 2160 × 2160 (default),
 2560 × 2560, or custom width and height. Restart the viewer after changing it.
 The runtime and GPU texture limits may reduce the requested dimensions.
 
