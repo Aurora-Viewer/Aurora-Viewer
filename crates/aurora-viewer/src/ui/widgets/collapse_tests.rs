@@ -222,6 +222,69 @@ fn toggling_a_minimized_floater_expands_it_and_a_shown_one_closes() {
     assert!(!f.open, "a window shown closes");
 }
 
+/// The toolbar button of a window the app opens itself (issue #2143):
+/// closed, it asks the app to open it; minimized, it expands; shown, it
+/// closes through the window's own close, as its cross would.
+#[test]
+fn toggling_a_floater_the_app_opens_closes_it_as_its_cross_does() {
+    let mut f = Fixture::new(false);
+    f.double_click(f.title());
+    assert!(floater_minimized(&f.ctx, "collapse_fixture"));
+    assert!(!toggle_floater_closing(&f.ctx, "collapse_fixture", f.open));
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    assert!(f.open, "a minimized window stays open");
+    assert!(!floater_minimized(&f.ctx, "collapse_fixture"));
+    assert!(!toggle_floater_closing(&f.ctx, "collapse_fixture", f.open));
+    assert!(f.open, "the window closes itself, when it is drawn");
+    f.show(vec![]);
+    assert!(!f.open, "a window shown closes");
+    assert!(
+        toggle_floater_closing(&f.ctx, "collapse_fixture", f.open),
+        "a closed one asks to be opened"
+    );
+}
+
+/// A close asked for a window not drawn on that frame nor the next is
+/// dropped: it does not close the window when it opens later.
+#[test]
+fn a_close_asked_of_a_window_not_drawn_is_forgotten() {
+    let mut f = Fixture::new(false);
+    f.open = false;
+    f.show(vec![]);
+    close_floater(&f.ctx, "collapse_fixture");
+    f.show(vec![]);
+    f.show(vec![]);
+    f.open = true;
+    f.show(vec![]);
+    f.show(vec![]);
+    assert!(f.open);
+    // drawn on the next frame, it closes
+    close_floater(&f.ctx, "collapse_fixture");
+    f.show(vec![]);
+    assert!(!f.open);
+}
+
+/// With the interface hidden, the toolbar button still closes the window,
+/// as it does the windows it toggles itself.
+#[test]
+fn a_close_asked_of_a_hidden_window_closes_it() {
+    let mut f = Fixture::new(false);
+    hide_windows(&f.ctx, true, false);
+    f.show(vec![]);
+    let bodies = f.bodies;
+    f.show(vec![]);
+    assert_eq!(f.bodies, bodies, "the window is hidden");
+    assert!(f.open);
+    close_floater(&f.ctx, "collapse_fixture");
+    f.show(vec![]);
+    assert!(!f.open);
+    hide_windows(&f.ctx, false, false);
+    f.show(vec![]);
+    assert!(!f.open, "it does not come back with the interface");
+}
+
 /// A window closed while minimized, by its close button or from outside,
 /// opens again expanded (LLFloater::closeFloater and openFloater unminimize).
 #[test]

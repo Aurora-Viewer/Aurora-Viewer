@@ -687,7 +687,10 @@ fn names_are_trimmed_bounded_and_cannot_inject_legacy_asset_headers() {
     assert_eq!(clean_name("  Chemise  ").expect("name"), "Chemise");
     assert!(clean_name("Chemise\ntype 0").is_err());
     assert!(clean_name("A|B").is_err());
-    assert_eq!(clean_name(&"é".repeat(90)).expect("bounded name").chars().count(), 63);
+    assert_eq!(clean_name(&"a".repeat(90)).expect("bounded name").len(), 63);
+    for name in ["Café", "桜", "龙", "Name 桜龙"] {
+        assert_eq!(clean_name(name).expect("received name"), name);
+    }
 }
 
 #[test]

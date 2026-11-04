@@ -802,10 +802,10 @@ fn objects(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
             ui.label(RichText::new("min").size(12.0).color(p.muted));
             s.clean_time.sync(&parcel.other_clean_time.to_string());
             let r = editable(ui, any, |ui| {
-                ui.add(egui::TextEdit::singleline(&mut s.clean_time.text).desired_width(50.0))
+                widgets::restricted_text_field(ui, true, &mut s.clean_time.text, widgets::TextPolicy::Digits, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(50.0)
+                })
             });
-            // validateNonNegativeS32
-            s.clean_time.text.retain(|c| c.is_ascii_digit());
             if let Some(t) = s.clean_time.after(&r) {
                 // onCommitClean: only a changed value is sent
                 let minutes: i32 = t.parse().unwrap_or(0);
@@ -984,13 +984,10 @@ fn visibility(
     srow(ui, p, aurora_i18n::tr!("ui-land-manage-name"), "", 340.0, |ui| {
         s.name.sync(&parcel.name);
         let r = editable(ui, can_identity, |ui| {
-            ui.add(egui::TextEdit::singleline(&mut s.name.text).desired_width(330.0))
+            widgets::restricted_text_field(ui, true, &mut s.name.text, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(330.0)
+            })
         });
-        // validateASCIIPrintableNoPipe, on what is typed
-        if r.changed() {
-            let base = s.name.base.clone();
-            s.name.text.retain(|c| ((' '..='~').contains(&c) && c != '|') || base.contains(c));
-        }
         if let Some(name) = s.name.after(&r) {
             world.land.update(|u| u.name = name);
         }

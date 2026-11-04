@@ -363,9 +363,13 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 };
                 let width = ui.available_width();
                 // read only without the modify right, still selectable
-                let r = crate::ui::widgets::text_field(ui, modify, &mut v, |b, _| {
-                    egui::TextEdit::singleline(b).desired_width(width).char_limit(limit).hint_text(hint)
-                });
+                let r = crate::ui::widgets::restricted_text_field(
+                    ui,
+                    modify,
+                    &mut v,
+                    crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                    |b, _| egui::TextEdit::singleline(b).desired_width(width).char_limit(limit).hint_text(hint),
+                );
                 if description {
                     r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
                 } else {
@@ -373,8 +377,6 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                         .on_hover_text(aurora_i18n::tr!("build-ui-general-63-characters-maximum-printable-ascii-excluding"));
                 }
                 if r.changed() {
-                    // validateASCIIPrintableNoPipe
-                    v.retain(|c| (' '..='~').contains(&c) && c != '|');
                     tool.ui.edits.insert(field, v.clone());
                 }
                 if r.lost_focus() {

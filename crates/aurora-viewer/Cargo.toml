@@ -71,6 +71,9 @@ sha2 = "0.11.0"
 # spell checking of the text fields with Hunspell dictionaries (spelling.rs);
 # pure Rust, MPL-2.0
 spellbook = "0.4.2"
+# A photo of the reel deleted goes to the Recycle Bin / Trash (snapshot::reel,
+# app/photo_reel.rs), recoverable; Windows, macOS and freedesktop. MIT.
+trash = "5.2.9"
 ttf-parser = "0.25.1"
 # Right-to-left text in reading order (ui/bidi.rs): the Unicode Bidirectional
 # Algorithm (unicode-rs, already in the tree through url) and its mirrored

@@ -49,6 +49,7 @@ pub mod task_inventory;
 pub mod terrain;
 #[cfg(test)]
 mod test_http;
+pub mod text_validation;
 pub mod throttle;
 pub mod transition;
 pub mod types;

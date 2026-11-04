@@ -12,6 +12,7 @@ pub mod banlines;
 pub mod blend_order;
 mod blender_live;
 pub mod body_physics;
+pub mod build_hologram;
 pub mod complexity;
 pub mod creation_preview;
 pub(crate) mod default_motions;
@@ -697,7 +698,7 @@ pub struct SceneStats {
     /// Skeletons built again this frame (a shape, an attachment or their
     /// age changed), out of `posed` (AURORA_PROFILE).
     pub skeletons_rebuilt: usize,
-    /// How the avatars of the last lists are drawn (AURORA_PROFILE).
+    /// How the avatars of the last lists are drawn.
     pub avatars: AvatarCounts,
 }
 
@@ -965,6 +966,7 @@ pub struct Scene {
     rlva_render_state: (Option<Uuid>, bool, bool),
     pub lists: DrawLists,
     pub creation_preview: creation_preview::CreationPreview,
+    pub build_hologram: build_hologram::BuildHologram,
     pub physics_shapes: physics_shapes::PhysicsShapes,
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
@@ -1523,6 +1525,7 @@ impl Scene {
             rlva_render_state: (None, false, false),
             lists: DrawLists::default(),
             creation_preview: creation_preview::CreationPreview::default(),
+            build_hologram: build_hologram::BuildHologram::default(),
             physics_shapes: physics_shapes::PhysicsShapes::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
@@ -2068,6 +2071,7 @@ impl Scene {
         self.banlines.clear(renderer);
         self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
+        self.build_hologram.clear(renderer);
         self.physics_shapes.clear(renderer);
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
@@ -4347,26 +4351,25 @@ impl Scene {
             }
         }
         self.stats.avatars_hidden = imp_avatars.len();
-        if aurora_net::probe::enabled() {
-            let full: Vec<usize> = avatars.iter().filter(|(_, i)| avatar_ok[*i]).map(|(_, i)| *i).collect();
-            self.stats.avatars = AvatarCounts {
-                total: avatars.len(),
-                full: full.len(),
-                full_in_view: full
-                    .iter()
-                    .filter(|&&i| self.gpu.get(i).is_some_and(|g| view.sphere_visible(g.center, 1.6)))
-                    .count(),
-                impostors: imp_avatars.len(),
-                impostors_in_view: imp_avatars.iter().filter(|a| a.in_view).count(),
-                pictured: plan.capture.len(),
-                silhouettes: avatars.iter().filter(|(_, i)| self.too_complex.contains(i)).count(),
-                loading: if self.hide_loading {
-                    avatars.iter().filter(|(_, i)| self.loading.indices.contains(i)).count()
-                } else {
-                    0
-                },
-            };
-        }
+        // every frame, not only with the probes: the crash report's last state
+        // and the grid's viewer statistics read these too
+        self.stats.avatars = AvatarCounts {
+            total: avatars.len(),
+            full: avatars.iter().filter(|(_, i)| avatar_ok[*i]).count(),
+            full_in_view: avatars
+                .iter()
+                .filter(|(_, i)| avatar_ok[*i] && self.gpu.get(*i).is_some_and(|g| view.sphere_visible(g.center, 1.6)))
+                .count(),
+            impostors: imp_avatars.len(),
+            impostors_in_view: imp_avatars.iter().filter(|a| a.in_view).count(),
+            pictured: plan.capture.len(),
+            silhouettes: avatars.iter().filter(|(_, i)| self.too_complex.contains(i)).count(),
+            loading: if self.hide_loading {
+                avatars.iter().filter(|(_, i)| self.loading.indices.contains(i)).count()
+            } else {
+                0
+            },
+        };
         // avatar states of the GPU object table (few avatars: every frame)
         for &(_, i) in &avatars {
             let mut st = 0;
