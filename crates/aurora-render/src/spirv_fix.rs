@@ -524,6 +524,7 @@ impl SampleMaskShaders {
     }
 
     /// The rewritten SPIR-V, `None` when naga already writes the array.
+    #[cfg(test)]
     fn fixed_words(
         &self,
         facts: &VulkanFacts,

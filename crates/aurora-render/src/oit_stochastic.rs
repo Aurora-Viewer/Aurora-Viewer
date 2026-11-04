@@ -883,7 +883,7 @@ pub fn constants_for_overrides(src: &str, values: &[(&str, &str)]) -> String {
             && let Some(semi) = rest.find(';')
         {
             let name = name.trim();
-            let ty = rest[name.len()..ty_end].trim_start_matches(|c: char| c == ':' || c == ' ').trim();
+            let ty = rest[name.len()..ty_end].trim_start_matches([':', ' ']).trim();
             let value = values
                 .iter()
                 .find(|(n, _)| *n == name)
