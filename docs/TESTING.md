@@ -821,6 +821,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
+| `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
@@ -1189,6 +1190,10 @@ when unfocused") is ignored during a screenshot.
   0.4 s have passed, its bar finishing in 0.15 s
   (`app/teleport_screen.rs`). With `AURORA_PROFILE=1` the teleport
   timeline ends `arrived (teleport screen hidden)`, or `…, old screen)`.
+- **`AURORA_DEMO_TP_NO_ARRIVAL=1`**: with `AURORA_DEMO_TP=remote`, the bar
+  stops at 50 % and no arrival comes. After 15 s + 3 s per attachment the
+  screen closes on the world, a notice says the region did not confirm the
+  arrival, and the session goes on.
 - **`AURORA_DEMO_TP_AWAY=1`**: at frame 760, our avatar arrives in a region
   25 km from the demo one, as after a teleport; at frame 960, it comes back
   there, before the demo region's simulator has closed it. The objects of
@@ -11003,8 +11008,8 @@ their grid coordinates (`1000,1003`).
   kept as a neighbour or its circuit closed, the appearance or outfit
   version asked, corrections of our avatar's position. It ends `arrived
   (teleport screen hidden)` (`…, old screen)` with `AURORA_TP_SCREEN`),
-  `failed (TeleportFailed: <reason>)`, `failed (no
-  arrival 90 s after the teleport screen was shown)`, `arrived` 20 s after
+  `failed (TeleportFailed: <reason>)`, `failed (the
+  region did not confirm the arrival in time)`, `arrived` 20 s after
   AgentMovementComplete without a screen, `timed out` after 90 s, or
   `interrupted by the next one`. A teleport inside the region ends 2 s after
   its TeleportLocal.
