@@ -4965,7 +4965,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
-| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|environment|pose-cycle|pose-menu|lighting-menu` | Studio backdrop, transitions, inspection poses, lighting and menu previews |
+| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|environment|pose-cycle|pose-menu|lighting-menu` | Studio backdrop, transitions, grounded poses, lighting and menu previews |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -8254,6 +8254,11 @@ Pose defaults to AO / In-world. T-Pose uses the shaped rest skeleton; A-Pose
 lowers both straight arms 45 degrees. `t-pose` and `a-pose` show those states;
 `pose-cycle` selects T until frame 800, A until frame 960, then returns to the
 current animation. Its clock, signals and worn attachments must keep working.
+Both presets normalize the displayed feet to the fixed podium, including mesh
+pelvis offsets. `grounding` puts the entry floor 1.25 m lower before selecting
+A-Pose: the avatar must still stand on the podium. The camera and podium remain
+fixed while switching poses. The bar keeps 10-point side padding, the top bars'
+vertical inset, and an optically centred title.
 `pose-menu` and `lighting-menu` open those menus at frame 800 for captures.
 Lighting defaults to Studio. `environment` instead uses the current sky,
 sun/moon, ambient and water settings, without the studio lights or aurora.
@@ -8266,6 +8271,17 @@ limits. Drag above/below the avatar, pan several body lengths, and zoom beyond
 the initial distance or in closer than 35 cm. Reset must restore the composition
 while retaining the selected pose and lighting. Only finite camera values and
 a numerical eye/target separation are required.
+Opening Photo mode / the viewfinder hands its camera the current Studio view.
+Its autofocus clicks, right-drag/Alt framing, wheel lens/exposure controls,
+camera pad, depth of field and shutter take priority. The Studio guide hides
+while the viewfinder shows; the ocean/stage, pose and lighting choices remain.
+Closing Photo mode restores Studio's controls and the saved world camera/aim;
+the temporary photo camera is not sent to the simulator. Combine `grounding`
+with `AURORA_DEMO_SNAPSHOT=viewfinder-focus` and
+`AURORA_DEMO_SNAPSHOT_FRAME=1000`, then capture after frame 1100: the AF face
+marker should follow the grounded preset head. The human checks native photo
+capture, tilt, lens/aperture/exposure changes, free-camera controls, Photo-mode
+exit, and subsequent Studio framing/Reset with their live avatar.
 The water should reflect the sky; distant ridgelines stay near the horizon.
 `pedestal` lowers the focus to the feet and zooms in one wheel step for a
 repeatable close-up; capture at frame 850. Rounded upper/lower shoulders should catch

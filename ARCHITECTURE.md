@@ -4069,6 +4069,17 @@ parallel pose workers. Animation
 signals and controller clocks continue, so releasing the override restores the
 current phase. The shaped rest skeleton is retained, with A-Pose lowering each
 straight arm 45 degrees. Leaving the studio releases the local override.
+Each preset's final matrices are translated as one unit so the lowest foot
+joint, less the shared sole-height approximation, meets the entry floor. The
+conversion uses the actual skeleton model, including mesh pelvis offsets and
+root rotation; the stage and camera do not move. Body attachments consume the
+same grounded palette, and photo face/eye focus reads those displayed joints.
+Photo mode temporarily replaces the ordinary camera with a native camera
+seeded from the Studio view (`PhotoSession`), while the Studio scene remains
+active. Its pointer/keyboard controls, lens projection, exposure and depth of
+field take precedence and the Studio guide hides. Simulator controls retain
+the saved world camera and aim. Closing Photo mode restores that camera and
+Studio's input ownership; regional origin shifts also move the saved camera.
 Studio lighting remains the default. Current environment skips the neutral
 environment, studio lights and aurora overrides, reusing the ordinary resolved
 local/parcel/region EEP frame, its sky/water textures and live changes. It never
