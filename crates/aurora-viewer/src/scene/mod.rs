@@ -700,6 +700,8 @@ pub struct SceneStats {
     /// (flexible.rs).
     pub flexies: usize,
     pub flexies_held: usize,
+    /// Objects that move by themselves placed from a mover (anchors.rs).
+    pub movers: usize,
     /// Skeletons built again this frame (a shape, an attachment or their
     /// age changed), out of `posed` (AURORA_PROFILE).
     pub skeletons_rebuilt: usize,
@@ -4354,8 +4356,9 @@ impl Scene {
             if since.elapsed().as_secs() >= 10 {
                 let (kept, wrong) = std::mem::take(&mut self.anchors.kept_centres);
                 let (anchors, wrong_anchors) = std::mem::take(&mut self.anchors.kept_anchors);
+                let (moved, wrong_moved) = std::mem::take(&mut self.anchors.mover_placed);
                 log::info!(
-                    "impostor pictures: {taken} taken, {stale} with the pose of an earlier frame | anchored centres kept: {kept}, {wrong} not where their anchor puts them | anchors kept: {anchors}, {wrong_anchors} not what their wearer gives"
+                    "impostor pictures: {taken} taken, {stale} with the pose of an earlier frame | anchored centres kept: {kept}, {wrong} not where their anchor puts them | anchors kept: {anchors}, {wrong_anchors} not what their wearer gives | placed from a mover: {moved}, {wrong_moved} not where the sync would put them"
                 );
                 self.picture_check = (0, 0, Some(Instant::now()));
             }
@@ -7059,7 +7062,7 @@ mod tests {
             &[aurora_render::shadow_cull::CASTER_PLANES_ALL; 3],
             0.0,
             [Mat4::IDENTITY; 3],
-            [None; 2],
+            [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS],
             flags,
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];

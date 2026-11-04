@@ -535,7 +535,7 @@ impl Object {
 
     /// The simulator reported a motion the object follows (velocity,
     /// acceleration or spin).
-    fn extrapolates(&self) -> bool {
+    pub fn extrapolates(&self) -> bool {
         let (velocity, acceleration) = self.linear_motion();
         velocity != Vec3::ZERO || acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
     }

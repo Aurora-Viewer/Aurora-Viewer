@@ -81,8 +81,8 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 16;
-pub const BIN_WATER_EXCLUSION: usize = 15;
+pub const BINS: usize = 30;
+pub const BIN_WATER_EXCLUSION: usize = 29;
 pub const MAIN_BINS: usize = 4;
 /// Shadow casters of each cascade drawn depth only: opaque faces, which
 /// `fs_shadow` never discards.
@@ -93,29 +93,29 @@ pub const BIN_PROBE: usize = 9;
 /// Shadow casters of each cascade drawn with the alpha test of `fs_shadow`
 /// (masked faces, blended rigged faces).
 pub const BIN_SHADOW_ALPHA: usize = 10;
-/// Shadow casters of the two projectors that cast shadows, drawn with the
+/// Shadow casters of the projectors within the configured budget, drawn with the
 /// alpha test.
 pub const BIN_SPOT: usize = 13;
 /// Projector shadow maps of a frame.
-pub const SPOT_SHADOWS: usize = 2;
+pub const SPOT_SHADOWS: usize = crate::projector_shadows::MAX_PROJECTOR_SHADOWS;
 /// Argument regions: the bins, then the occlusion's phase 1 and phase 2
 /// prepass lists of the main bins (depth only, in no particular order).
-pub const REGION_PRE1: usize = 16;
-pub const REGION_PRE2: usize = 20;
-const REGIONS: usize = 24;
+pub const REGION_PRE1: usize = BINS;
+pub const REGION_PRE2: usize = REGION_PRE1 + MAIN_BINS;
+const REGIONS: usize = REGION_PRE2 + MAIN_BINS;
 
-const COUNT_VISIBLE: usize = 16;
-const COUNT_TRIANGLES: usize = 17;
-const COUNT_HIDDEN: usize = 18;
+const COUNT_VISIBLE: usize = BINS;
+const COUNT_TRIANGLES: usize = COUNT_VISIBLE + 1;
+const COUNT_HIDDEN: usize = COUNT_VISIBLE + 2;
 /// Counts of the phase 1 and phase 2 prepass lists of each main bin.
-pub const COUNT_PRE1: usize = 19;
-pub const COUNT_PRE2: usize = 23;
+pub const COUNT_PRE1: usize = COUNT_VISIBLE + 3;
+pub const COUNT_PRE2: usize = COUNT_PRE1 + MAIN_BINS;
 /// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
 /// casters, then its rigged casters, then their triangles.
-const COUNT_SHADOW: usize = 27;
+const COUNT_SHADOW: usize = COUNT_PRE2 + MAIN_BINS;
 #[cfg(test)]
 const SHADOW_STATS: usize = 9;
-const COUNTS: usize = 40;
+const COUNTS: usize = 52;
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -132,7 +132,7 @@ pub mod frame_flags {
     /// (AURORA_SHADOW_LEGACY).
     pub const SHADOW_ALPHA_ALL: u32 = 128;
     /// Projector shadow map 0 is drawn (map 1: the next bit).
-    pub const SPOT: u32 = 256;
+    pub const SPOT: u32 = 1 << 16;
     /// Exterior refraction shares the water bin, with a union of frustums.
     pub const WATER_AIR: u32 = 1024;
     /// Blended faces that are not rigged cast too
@@ -540,8 +540,8 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
 }
 
 /// `pack_bins` of cull.wgsl: one 8-bit counter per bin, four per lane.
-pub fn pack_bins(m: u32) -> [u32; 4] {
-    let mut v = [0u32; 4];
+pub fn pack_bins(m: u32) -> [u32; 8] {
+    let mut v = [0u32; 8];
     for b in 0..BINS {
         if (m >> b) & 1 != 0 {
             v[b >> 2] += 1 << ((b & 3) * 8);
@@ -554,12 +554,12 @@ pub fn pack_bins(m: u32) -> [u32; 4] {
 /// scatter pass, as cull.wgsl computes it (inclusive prefix sum of the
 /// packed counters minus the face's own): reference for the tests.
 pub fn workgroup_ranks(masks: &[u32]) -> Vec<[u32; BINS]> {
-    let mut acc = [0u32; 4];
+    let mut acc = [0u32; 8];
     masks
         .iter()
         .map(|&m| {
             let own = pack_bins(m);
-            for k in 0..4 {
+            for k in 0..8 {
                 acc[k] += own[k];
             }
             let mut r = [0u32; BINS];
@@ -1341,10 +1341,10 @@ mod tests {
             max_storage_buffer_binding_size: 2 << 20,
             ..Default::default()
         };
-        assert_eq!(face_capacity(&limits), 4352);
+        assert_eq!(face_capacity(&limits), 2688);
         assert_eq!(sphere_capacity(&limits), 32768);
         limits.max_storage_buffer_binding_size = 1 << 20;
-        assert_eq!(face_capacity(&limits), 2176);
+        assert_eq!(face_capacity(&limits), 1280);
         assert_eq!(sphere_capacity(&limits), 16384);
         limits.max_compute_workgroups_per_dimension = 16;
         assert_eq!(face_capacity(&limits), 1024);
@@ -2218,13 +2218,19 @@ mod tests {
             | frame_flags::OCCLUSION
             | frame_flags::SHADOW_STATS
             | frame_flags::BLEND_CASTS;
+        // Exercise every projector bin, including the upper packed-counter
+        // words and the highest frame-flag bit.
+        for k in 0..SPOT_SHADOWS {
+            frame.sizes[3] |= frame_flags::SPOT << k;
+        }
         // caster volumes: the east half in the second cascade, a slanted slab in the third
         frame.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
         frame.shadow_planes[2][3] = [0.6, 0.0, 0.8, 10.0];
         frame.shadow_planes[2][SHADOW_PLANES - 1] = [-0.6, 0.0, -0.8, 30.0];
-        // merged cascades: squares of 10, 25 and 50 m, the opaque casters
-        // of a finer one left out of the next
-        frame.cascades = [0.1, 0.04, 0.02].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
+        // merged cascades: squares of 8, 32 and 64 m, the opaque casters
+        // of a finer one left out of the next. Binary scales keep a sphere
+        // exactly on a plane from rounding to opposite sides on CPU/GPU.
+        frame.cascades = [0.125, 0.03125, 0.015625].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
         frame.dist[3] = 2048.0;
         // Exterior and reflection share one draw bin but retain independent
         // frusta. Include objects behind the main/reflection camera as well.
@@ -2292,6 +2298,10 @@ mod tests {
             }
         }
         assert!(expect.iter().take(MAIN_BINS + 3).all(|e| !e.is_empty()), "every bin used");
+        assert!(
+            expect[BIN_SPOT..BIN_SPOT + SPOT_SHADOWS].iter().all(|e| !e.is_empty()),
+            "every projector shadow bin used"
+        );
         assert!(
             expect[BIN_SHADOW_ALPHA..BIN_SHADOW_ALPHA + 3].iter().all(|e| !e.is_empty()),
             "alpha tested casters in every cascade"
