@@ -472,8 +472,16 @@ impl SampleMaskShaders {
         wgsl: &str,
         groups: &[&[wgpu::BindGroupLayoutEntry]],
     ) -> wgpu::ShaderModule {
+        self.create_shader_module_mapped(device, label, wgsl, binding_map(groups))
+    }
+
+    /// [`SampleMaskShaders::create_shader_module`] with the binding map
+    /// given: a module that declares resources outside its pipeline's
+    /// layouts (a large shared source) maps those too, naga refuses to
+    /// write a resource without a mapping.
+    pub fn create_shader_module_mapped(&self, device: &wgpu::Device, label: &str, wgsl: &str, map: spv::BindingMap) -> wgpu::ShaderModule {
         if let Some(facts) = &self.facts {
-            match self.fixed_words(facts, label, wgsl, groups) {
+            match self.fixed_words(facts, label, wgsl, map) {
                 Ok(Some(words)) => {
                     let entry_points: Vec<wgpu::PassthroughShaderEntryPoint<'static>> = words
                         .entry_points
@@ -516,13 +524,7 @@ impl SampleMaskShaders {
     }
 
     /// The rewritten SPIR-V, `None` when naga already writes the array.
-    fn fixed_words(
-        &self,
-        facts: &VulkanFacts,
-        label: &str,
-        wgsl: &str,
-        groups: &[&[wgpu::BindGroupLayoutEntry]],
-    ) -> Result<Option<FixedWords>, FixError> {
+    fn fixed_words(&self, facts: &VulkanFacts, label: &str, wgsl: &str, map: spv::BindingMap) -> Result<Option<FixedWords>, FixError> {
         if !self.passthrough {
             return Err(FixError::NoPassthrough);
         }
@@ -541,7 +543,7 @@ impl SampleMaskShaders {
             file_name: label,
             language: spv::SourceLanguage::WGSL,
         });
-        let options = writer_options(facts, binding_map(groups), debug_info);
+        let options = writer_options(facts, map, debug_info);
         let spirv = spv::write_vec(&module, &info, &options, None).map_err(|e| FixError::Write(e.to_string()))?;
         let spirv = match rewrite(&spirv)? {
             Outcome::Rewritten(words) => {

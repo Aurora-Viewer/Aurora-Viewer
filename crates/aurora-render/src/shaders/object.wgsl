@@ -295,6 +295,11 @@ struct VsOut {
     // zero for the per-pixel one
     @location(9) tangent: vec3<f32>,
     @location(10) @interpolate(flat) tangent_sign: f32,
+    // the face's identity for the order-independent transparency: 24 bits
+    // of its record's identity (types.rs `oit_tie`: the object's id and
+    // the face's index hashed), the same on every frame and every launch;
+    // the stochastic masks are seeded by it (fs_st_depth_*)
+    @location(11) @interpolate(flat) tie: u32,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -528,6 +533,7 @@ fn vs_land_overlay(in: VsIn) -> VsOut {
     var out: VsOut;
     out.world_pos = (rec.model * vec4<f32>(in.pos, 1.0)).xyz;
     out.record = in.instance;
+    out.tie = rec.identity.x & 0xffffffu;
     if (rec.params.x > 0.5) {
         out.world_pos.z = max(out.world_pos.z, rec.params.y);
     }
@@ -610,6 +616,7 @@ fn vs_main(in: VsIn) -> VsOut {
         }
     }
     out.record = in.instance;
+    out.tie = rec.identity.x & 0xffffffu;
     out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
     return out;
 }
@@ -1611,6 +1618,182 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     }
     // premultiplied alpha
     return vec4<f32>(c.rgb * c.a, c.a);
+}
+
+// ---- depth-based stochastic transparency: the three passes over the
+// blended faces (oit_stochastic.rs, oit_stochastic.wgsl). An experiment,
+// `AURORA_OIT=stochastic`: Enderton, Sintorn, Shirley, Luebke, "Stochastic
+// Transparency", I3D 2010, section 3.4, the anti-aliased depth-based form.
+//
+// 1. fs_st_alpha: the exact total alpha of every pixel sample, order
+//    independent (the target holds the product of the transparencies,
+//    blended Zero / OneMinusSrcAlpha); alpha-only shading.
+// 2. fs_st_depth_*: each fragment covers a random subset of its samples,
+//    R = floor(alpha S + xi) of them (stratified: one S-choose-R subset from
+//    a table), depth only, into a copy of the opaque depth; alpha-only
+//    shading. Two routes to the per-sample coverage: `_index` runs once per
+//    sample (`@builtin(sample_index)`) and discards the samples off the
+//    mask; `_mask` writes the mask through `@builtin(sample_mask)`.
+// 3. The accumulation: fs_blend itself, blended additively into the samples
+//    the stochastic depth lets through (GreaterEqual, reverse-Z: the
+//    fragment is at or in front of the sample's winner).
+// The seed of a fragment's mask: its pixel, its face's tie-break and its
+// triangle (paper section 5: one seed per object would make the fragments
+// of a curved object occlude instead of blend), so the noise is a field
+// fixed in screen space while the object moves through it. With more
+// samples than the target has, the passes 2 and 3 are run again with the
+// next bits of one stratified mask (paper footnote 1).
+struct StParams {
+    // the target's samples, and the samples wanted in all (8, 16 or 32)
+    samples_hw: u32,
+    samples: u32,
+    // which run of the passes 2 and 3 this is (its bits of the mask)
+    iteration: u32,
+    // bit 0 stratified masks (else one coin per sample), bit 1 the seed
+    // changes every frame (temporal), bit 2 the seed ignores the triangle
+    flags: u32,
+    // added to every seed when temporal
+    frame_seed: u32,
+    // the per-pixel part of the seed: 0 white noise, 1 the R2 sequence,
+    // 2 the blue-noise tile
+    seed_mode: u32,
+    _pad2: u32,
+    _pad3: u32,
+};
+// masks[R * ST_SEEDS + seed]: a random R-subset of the S sample bits
+@group(3) @binding(30) var<storage, read> st_masks: array<u32>;
+@group(3) @binding(31) var<uniform> st: StParams;
+// a 64 x 64 blue-noise tile, ranks 0..4095 (oit_stochastic_blue.rs)
+@group(3) @binding(32) var<storage, read> st_blue: array<u32>;
+const ST_SEEDS: u32 = 2048u;
+
+// Two per-pixel values in [0, 1): the dither of R and the choice of the
+// subset. White noise, or spatially even ones (R2, blue noise) that a
+// per-primitive rotation keeps uncorrelated between fragments.
+fn st_pixel_values(px: vec2<u32>) -> vec2<f32> {
+    if (st.seed_mode == 1u) {
+        let p = vec2<f32>(px);
+        return fract(vec2<f32>(0.7548776662 * p.x + 0.56984029 * p.y, 0.4656 * p.x + 0.8215 * p.y));
+    }
+    if (st.seed_mode == 2u) {
+        let a = st_blue[(px.y % 64u) * 64u + (px.x % 64u)];
+        let b = st_blue[((px.y + 32u) % 64u) * 64u + ((px.x + 32u) % 64u)];
+        return vec2<f32>(f32(a), f32(b)) / 4096.0;
+    }
+    let h = st_hash(px.x | (px.y << 16u));
+    return vec2<f32>(f32(h >> 8u), f32(st_hash(h) >> 8u)) / 16777216.0;
+}
+
+fn st_hash(v: u32) -> u32 {
+    var x = v * 747796405u + 2891336453u;
+    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
+    return (x >> 22u) ^ x;
+}
+
+// The whole S-bit mask of a fragment of alpha `a`.
+fn st_mask(px: vec2<u32>, tie: u32, prim: u32, a: f32) -> u32 {
+    // the primitive's own seed (and the frame's when temporal)...
+    var seed = st_hash(tie * 0x9e3779b9u + 0x7f4a7c15u);
+    if ((st.flags & 4u) == 0u) {
+        seed = st_hash(seed ^ st_hash(prim + 0x632be5abu));
+    }
+    if ((st.flags & 2u) != 0u) {
+        seed = st_hash(seed + st.frame_seed);
+    }
+    // ...rotates the pixel's two values (white noise: a plain mix)
+    let pv = st_pixel_values(px);
+    let rot = vec2<f32>(f32(seed >> 8u), f32(st_hash(seed) >> 8u)) / 16777216.0;
+    let v = fract(pv + rot);
+    let s = st.samples;
+    if ((st.flags & 1u) == 0u) {
+        // naive: one alpha-weighted coin per sample
+        let base = st_hash(seed ^ st_hash(px.x | (px.y << 16u)));
+        var m = 0u;
+        for (var i = 0u; i < 32u; i += 1u) {
+            if (i < s && f32(st_hash(base + i * 0x9e3779b9u) >> 8u) / 16777216.0 < a) {
+                m |= 1u << i;
+            }
+        }
+        return m;
+    }
+    let r = min(u32(floor(a * f32(s) + v.x)), s);
+    return st_masks[r * ST_SEEDS + min(u32(v.y * f32(ST_SEEDS)), ST_SEEDS - 1u)];
+}
+
+// This iteration's bits of the mask, as the target's samples.
+fn st_sub_mask(mask: u32) -> u32 {
+    let n = st.samples_hw;
+    let shift = (st.iteration * n) % 32u;
+    return (mask >> shift) & select((1u << n) - 1u, 0xffffffffu, n >= 32u);
+}
+
+// A blended fragment's alpha, as blend_color computes it, without the
+// shading (the alpha-only passes); -1 where blend_color discards.
+fn blend_alpha(in: VsOut, front: bool) -> f32 {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) {
+        return -1.0;
+    }
+    let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+    if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
+        let surface = portal_surface(records[in.record], in.uv, portal_aa);
+        if (surface.alpha < 0.004) {
+            return -1.0;
+        }
+        return surface.alpha;
+    }
+    if (water_clipped(in.world_pos)) {
+        return -1.0;
+    }
+    let m = eval_material(in, front);
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+        return -1.0;
+    }
+    let a = m.color.a * rez_alpha(rec, in);
+    if (a < 0.004) {
+        return -1.0;
+    }
+    return a;
+}
+
+@fragment
+fn fs_st_alpha(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let a = blend_alpha(in, front);
+    if (a < 0.0) {
+        discard;
+    }
+    // (the target keeps the product of (1 - alpha): Zero / OneMinusSrcAlpha)
+    return vec4<f32>(0.0, 0.0, 0.0, a);
+}
+
+// Route (a): one invocation per sample, the samples off the mask discarded.
+@fragment
+fn fs_st_depth_index(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_index) s: u32, /*ST_PRIM_PARAM*/) {
+    let a = blend_alpha(in, front);
+    if (a < 0.0) {
+        discard;
+    }
+    let prim = /*ST_PRIM*/0u;
+    let m = st_sub_mask(st_mask(vec2<u32>(in.clip.xy), in.tie, prim, a));
+    if ((m & (1u << s)) == 0u) {
+        discard;
+    }
+}
+
+struct StMaskOut {
+    @builtin(sample_mask) mask: u32,
+};
+
+// Route (b): the mask written once per fragment (the hardware ands it with
+// the fragment's coverage).
+@fragment
+fn fs_st_depth_mask(in: VsOut, @builtin(front_facing) front: bool, /*ST_PRIM_PARAM*/) -> StMaskOut {
+    let a = blend_alpha(in, front);
+    if (a < 0.0) {
+        discard;
+    }
+    let prim = /*ST_PRIM*/0u;
+    return StMaskOut(st_sub_mask(st_mask(vec2<u32>(in.clip.xy), in.tie, prim, a)));
 }
 
 // Glow amount into the scene alpha (additive, alpha channel only), drawn

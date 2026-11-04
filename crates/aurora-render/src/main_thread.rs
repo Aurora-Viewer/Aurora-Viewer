@@ -71,6 +71,9 @@ pub struct GpuInfo {
     /// Why the dedicated GPU may not be the one drawing (shown under that
     /// choice too).
     pub notice: Option<crate::adapter_choice::Notice>,
+    /// Blended faces can be drawn with stochastic transparency
+    /// (oit_stochastic.rs): the scene can be multisampled.
+    pub oit: bool,
 }
 
 /// The part of a range of skin bindings to send that is in a list of `len`.
@@ -456,6 +459,7 @@ impl Renderer {
             max_texture_size: alim.max_texture_dimension_2d,
             adapters,
             notice,
+            oit: true,
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -520,6 +524,7 @@ impl Renderer {
             adapter_specific,
             gpu_cull,
             tex_layout: textures.layout.clone(),
+            tex_layout_entries: textures.layout_entries.clone(),
             scene: scene_gpu(
                 &records,
                 &cull,
@@ -1728,6 +1733,11 @@ fn open_device(
     // RGBA8 for the streamed textures; without it they stay RGBA8
     if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
         features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    }
+    // depth-based stochastic transparency (oit_stochastic.rs): the triangle
+    // in the seed of a fragment's mask
+    if afeat.contains(wgpu::Features::PRIMITIVE_INDEX) {
+        features |= wgpu::Features::PRIMITIVE_INDEX;
     }
     // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
