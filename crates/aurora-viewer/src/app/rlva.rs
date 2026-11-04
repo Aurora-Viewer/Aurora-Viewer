@@ -118,7 +118,9 @@ impl App {
         self.rlva_camera_commands();
         if !self.world.rlva.appearance_busy && self.appearance_ui.pending.is_none() && !self.world.rlva.appearance.is_empty() {
             let (actor, action) = self.world.rlva.appearance.remove(0);
-            self.apply_appearance_action_from(action, actor);
+            if !self.world.rlva_force_settled(&action, Instant::now()) {
+                self.apply_appearance_action_from(action, actor);
+            }
         }
         for (actor, command) in commands {
             self.send_rlva(command, actor);
