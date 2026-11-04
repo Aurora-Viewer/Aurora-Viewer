@@ -370,6 +370,9 @@ impl App {
             }
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
+            InvAction::PreviewMany(ids) => {
+                self.texture_library.open_group(&self.egui_ctx, &self.world, ids);
+            }
             InvAction::Preview(id) => {
                 if self
                     .world

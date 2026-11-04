@@ -4606,7 +4606,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
-| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
+| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails; `tabs` opens a material batch. |
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
 the agent's parcel, `sale` shows sale entries, `filters` opens Filters (required/excluded properties, permissions, click action and scope), and
@@ -4716,6 +4716,11 @@ an explicit Drag handle. `material-preview-rotate` left-drags the scene at frame
 handle onto the surface at frame 760. Check that rotation changes only the
 preview camera, that the handle does not rotate the scene, and that dropping
 it applies the material. Its permission/retention checks match other sources.
+`tabs` opens six material items in one scrollable tabbed preview at frame 620.
+Switch tabs and edit each material independently; an asterisk marks unsaved edits.
+The tab strip’s close button closes the current item. Closing the whole host
+checks each material for unsaved edits before removing it; Cancel keeps the
+remaining tabs open. Capture at frame 850. A single-item Open stays independent.
 `multi-preview` opens two textures and two materials in separate resizable
 windows at frames 620–680, then reopens the first texture at frame 720: four
 windows remain, with no replacement or duplicate. `multi-preview-closed` also

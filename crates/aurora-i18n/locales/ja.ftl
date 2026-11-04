@@ -13108,3 +13108,6 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+resource-preview-tabs-title = インベントリのプレビュー
+resource-preview-close-tab = このタブを閉じる

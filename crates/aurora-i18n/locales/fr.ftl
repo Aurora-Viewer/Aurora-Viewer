@@ -13131,3 +13131,6 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+
+resource-preview-tabs-title = Aperçus de l’inventaire
+resource-preview-close-tab = Fermer cet onglet

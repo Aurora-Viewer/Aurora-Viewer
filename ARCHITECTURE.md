@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+Bulk inventory resource opens use `InvAction::PreviewMany` and the texture
+library’s tab hosts. Membership and selection belong to the host, while each
+material/texture keeps its existing preview state, draft, save routing and
+close confirmation. Only the selected tab renders; background save replies
+still reach the original item. Single-item opens retain their own windows.
+
 `aurora-prim::params::VolumeParams::constrain` preserves the path-ratio
 limits of `LLVolumeParams::setRatio` (indra/llmath/llvolume.cpp): spheres
 and alternate paths accept 0..2; ordinary circular non-sphere paths use

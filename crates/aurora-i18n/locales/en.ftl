@@ -13135,3 +13135,6 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
+
+resource-preview-tabs-title = Inventory previews
+resource-preview-close-tab = Close this tab

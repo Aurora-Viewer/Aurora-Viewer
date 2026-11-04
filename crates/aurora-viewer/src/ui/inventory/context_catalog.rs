@@ -1194,8 +1194,31 @@ pub(super) fn execute(
         }
         Command::Open(id) => super::context::open(inv, id, st, actions),
         Command::OpenMany(ids) => {
+            let start = actions.len();
             for id in ids {
                 super::context::open(inv, id, st, actions);
+            }
+            // LLInventoryAction::doToSelected hosts bulk previews together.
+            // Keep non-resource actions on their existing editor/open path.
+            let mut previews = Vec::new();
+            let other: Vec<_> = actions
+                .drain(start..)
+                .filter_map(|action| {
+                    if let InvAction::Preview(id) = &action
+                        && crate::ui::texture_library::catalogue::resource(inv, *id).is_some()
+                    {
+                        previews.push(*id);
+                        None
+                    } else {
+                        Some(action)
+                    }
+                })
+                .collect();
+            actions.extend(other);
+            if previews.len() > 1 {
+                actions.push(InvAction::PreviewMany(previews));
+            } else {
+                actions.extend(previews.into_iter().map(InvAction::Preview));
             }
         }
         Command::Batch(batch) => actions.extend(batch),
@@ -1284,6 +1307,48 @@ mod tests {
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         inv
     }
+    #[test]
+    fn bulk_open_groups_resources_but_keeps_other_item_actions() {
+        let mut inv = inventory();
+        let ids = [9101, 9102, 9103].map(Uuid::from_u128);
+        inv.add_items(
+            ids.into_iter()
+                .zip([57, 0, 7])
+                .map(|(id, kind)| aurora_net::inventory::InvItem {
+                    id,
+                    asset_type: kind,
+                    asset_id: Uuid::from_u128(9200 + kind as u128),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let ctx = egui::Context::default();
+        let mut st = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let mut actions = Vec::new();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            execute(
+                Command::OpenMany(ids.to_vec()),
+                ui,
+                &inv,
+                &mut st,
+                &mut prefs,
+                &facts(),
+                &mut actions,
+            );
+        });
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, InvAction::Preview(id) if *id == ids[2]))
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, InvAction::PreviewMany(items) if items == &ids[..2]))
+        );
+    }
+
     #[test]
     fn landmark_destination_actions_use_link_targets_and_require_one_available_asset() {
         let mut inv = inventory();

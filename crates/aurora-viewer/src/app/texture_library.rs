@@ -358,6 +358,15 @@ impl App {
         }
         if self.demo
             && self.library_demo_seeded
+            && self.frame_count == 620
+            && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("tabs")
+        {
+            self.apply_inventory_action(crate::ui::inventory::InvAction::PreviewMany(
+                crate::demo::texture_library::cascade_items(57).to_vec(),
+            ));
+        }
+        if self.demo
+            && self.library_demo_seeded
             && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").is_ok_and(|mode| mode.starts_with("multi-preview"))
         {
             let items = crate::demo::texture_library::preview_items();
