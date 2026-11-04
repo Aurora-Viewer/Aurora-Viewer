@@ -870,7 +870,7 @@ mod tests {
             assert!(v.shadow_quality <= 4 && v.ssao <= 2 && v.reflection_probes <= 3);
             assert!(v.ao_method <= 1 && v.gtao_quality <= 3);
             assert!(v.water_reflections <= 4 && v.mirrors <= 4);
-            assert!((8..=64).contains(&v.probe_count) && v.probe_count % 8 == 0);
+            assert!((8..=256).contains(&v.probe_count) && v.probe_count % 8 == 0);
             assert!(v.antialiasing <= 6);
             assert!([1, 2, 4, 8, 16].contains(&v.anisotropy));
             assert!(crate::settings::MAX_TEXTURE_RESOLUTIONS.contains(&v.max_texture_resolution));

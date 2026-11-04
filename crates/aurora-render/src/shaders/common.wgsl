@@ -188,6 +188,13 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 @group(0) @binding(14) var il_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
+// The probes of the frame's list at most (probes::MAX_PROBES).
+const MAX_PROBES: u32 = 256u;
+// A set of probes: bit i of word i / 32 for probe i of the list
+// (probes::ProbeSets; the lights' sets hold 64 and are two words).
+struct ProbeMask {
+    w: array<u32, 8>,
+};
 struct Probe {
     center_radius: vec4<f32>,
     // x ambiance scale, y radiance scale, z fade in, w kind (0 auto, 1 sphere, -1 box)
@@ -200,20 +207,17 @@ struct ProbeSet {
     max_lod: f32,
     enabled: u32,
     _pad: u32,
-    // the box probes (x: probes 0..31, y: 32..63), which sample_probes_pair
-    // looks through first
-    boxes: vec4<u32>,
+    // the box probes, which sample_probes_pair looks through first
+    boxes: ProbeMask,
     // the probes that cover each screen column, each screen row and each
-    // slice of depth of the main view (probes::tiles), laid out as the
-    // lights' sets of the frame: two sets per element, each its low then
-    // its high 32 probes
+    // slice of depth of the main view (probes::tiles): one set per element
     tile_grid: vec4<f32>,       // x, y: columns and rows per pixel
     tile_forward: vec4<f32>,    // camera forward axis (fragment depth)
     tile_mode: vec4<u32>,
-    tile_columns: array<vec4<u32>, 16>,
-    tile_rows: array<vec4<u32>, 16>,
-    tile_slices: array<vec4<u32>, 16>,
-    probes: array<Probe, 64>,
+    tile_columns: array<ProbeMask, 32>,
+    tile_rows: array<ProbeMask, 32>,
+    tile_slices: array<ProbeMask, 32>,
+    probes: array<Probe, MAX_PROBES>,
 };
 @group(0) @binding(9) var<storage, read> probe_set: ProbeSet;
 @group(0) @binding(10) var probe_tex: texture_cube_array<f32>;
@@ -271,21 +275,6 @@ fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
     return light_table_set(frame.light_columns[cell.x >> 1u], cell.x)
         & light_table_set(frame.light_rows[cell.y >> 1u], cell.y)
         & light_table_set(frame.light_slices[cell.z >> 1u], cell.z);
-}
-
-// Next member of a set, lowest first; -1 once it is empty.
-fn next_member(members: ptr<function, vec2<u32>>) -> i32 {
-    let lo = (*members).x;
-    if (lo != 0u) {
-        (*members).x = lo & (lo - 1u);
-        return i32(firstTrailingBit(lo));
-    }
-    let hi = (*members).y;
-    if (hi != 0u) {
-        (*members).y = hi & (hi - 1u);
-        return i32(32u + firstTrailingBit(hi));
-    }
-    return -1;
 }
 
 // The lights a fragment walks: the point lights left in `held` (bit i for
@@ -440,14 +429,44 @@ const PROBE_TILES_NEAREST: f32 = 0.01;
 // triangle seen edge-on is shaded where the triangle's plane meets the
 // centre of its pixel, which can be behind the camera. The probes that
 // cover that point are those the whole list gives.
-fn probe_tiles(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
+fn probe_tiles(world_pos: vec3<f32>, frag: vec2<f32>) -> array<u32, 8> {
     let forward = probe_set.tile_forward.xyz;
     let cell = tile_cell(world_pos, frag, probe_set.tile_grid.xy, forward);
-    let held = light_table_set(probe_set.tile_columns[cell.x >> 1u], cell.x)
-        & light_table_set(probe_set.tile_rows[cell.y >> 1u], cell.y)
-        & light_table_set(probe_set.tile_slices[cell.z >> 1u], cell.z);
     let in_front = dot(world_pos - frame.camera_pos.xyz, forward) >= PROBE_TILES_NEAREST;
-    return select(vec2<u32>(0xffffffffu), held, in_front);
+    var held: array<u32, 8>;
+    for (var k = 0u; k < 8u; k++) {
+        let bits = probe_set.tile_columns[cell.x].w[k] & probe_set.tile_rows[cell.y].w[k] & probe_set.tile_slices[cell.z].w[k];
+        held[k] = select(0xffffffffu, bits, in_front);
+    }
+    return held;
+}
+
+// The first `n` probes of the list.
+fn probe_first(n: u32) -> array<u32, 8> {
+    var held: array<u32, 8>;
+    for (var k = 0u; k < 8u; k++) {
+        let first = k * 32u;
+        if (n >= first + 32u) {
+            held[k] = 0xffffffffu;
+        } else if (n > first) {
+            held[k] = (1u << (n - first)) - 1u;
+        } else {
+            held[k] = 0u;
+        }
+    }
+    return held;
+}
+
+// Next probe of a set, lowest first; -1 once it is empty.
+fn next_probe(members: ptr<function, array<u32, 8>>) -> i32 {
+    for (var k = 0u; k < 8u; k++) {
+        let word = (*members)[k];
+        if (word != 0u) {
+            (*members)[k] = word & (word - 1u);
+            return i32(k * 32u + firstTrailingBit(word));
+        }
+    }
+    return -1;
 }
 
 // AURORA_PROBE_WALK=check: whether a probe of the list covers `pos` without
@@ -455,13 +474,9 @@ fn probe_tiles(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
 // the whole list gives.
 fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
     let held = probe_tiles(pos, frag);
-    let count = min(probe_set.count, 64u);
+    let count = min(probe_set.count, MAX_PROBES);
     for (var i = 1u; i < count; i++) {
-        var bit = held.x >> (i & 31u);
-        if (i >= 32u) {
-            bit = held.y >> (i & 31u);
-        }
-        if ((bit & 1u) != 0u) {
+        if (((held[i >> 5u] >> (i & 31u)) & 1u) != 0u) {
             continue;
         }
         if (probe_set.probes[i].params.w < 0.0) {
@@ -478,11 +493,11 @@ fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
         }
     }
     // (the default probe is in every set)
-    return count > 0u && (held.x & 1u) == 0u;
+    return count > 0u && (held[0] & 1u) == 0u;
 }
 
 fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool) -> vec4<f32> {
-    let count = min(probe_set.count, 64u);
+    let count = min(probe_set.count, MAX_PROBES);
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
     for (var i = 1u; i < count; i++) {
@@ -669,19 +684,25 @@ fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeL
         return out;
     }
     // the probes of the fragment's sets or, without the sets, the list
-    var held = light_first(min(probe_set.count, 64u));
+    var held = probe_first(min(probe_set.count, MAX_PROBES));
     if (walk >= PROBE_WALK_TILES) {
         if (walk == PROBE_WALK_CHECK && probe_tiles_miss(pos, frag)) {
             out.a = vec4<f32>(4.0, 0.0, 4.0, 1.0);
             out.b = out.a;
             return out;
         }
-        held &= probe_tiles(pos, frag);
+        let tiles = probe_tiles(pos, frag);
+        for (var k = 0u; k < 8u; k++) {
+            held[k] &= tiles[k];
+        }
     }
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
-    var boxes = probe_set.boxes.xy & held;
-    for (var n = next_member(&boxes); n >= 0; n = next_member(&boxes)) {
+    var boxes: array<u32, 8>;
+    for (var k = 0u; k < 8u; k++) {
+        boxes[k] = probe_set.boxes.w[k] & held[k];
+    }
+    for (var n = next_probe(&boxes); n >= 0; n = next_probe(&boxes)) {
         let lp = (probe_set.probes[n].box_inv * vec4<f32>(pos, 1.0)).xyz;
         if (all(abs(lp) <= vec3<f32>(1.0))) {
             sample_automatic = false;
@@ -694,7 +715,7 @@ fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeL
     var w0 = 0.0;
     var w1 = 0.0;
     var dw1 = 0.0;
-    for (var n = next_member(&held); n >= 0; n = next_member(&held)) {
+    for (var n = next_probe(&held); n >= 0; n = next_probe(&held)) {
         let i = u32(n);
         let kind = probe_set.probes[i].params.w;
         let manual = kind != 0.0;

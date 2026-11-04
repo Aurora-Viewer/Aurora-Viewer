@@ -671,7 +671,7 @@ fn reflections_and_water(cx: &mut Cx) {
             &field!(probe_count),
             |ui, s| {
                 ui.add(
-                    egui::Slider::new(&mut s.probe_count, 8..=64)
+                    egui::Slider::new(&mut s.probe_count, 8..=256)
                         .custom_parser(aurora_i18n::parse_number)
                         .step_by(8.0)
                         .trailing_fill(true),
