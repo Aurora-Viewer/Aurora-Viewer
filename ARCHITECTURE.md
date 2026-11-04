@@ -4051,13 +4051,29 @@ Avatar Studio (`avatar_studio.rs`, `app/avatar_studio.rs`,
 toggled by the configurable `avatar_studio` toolbar command or the wolf menu's
 Build > Avatar Studio entry, before Poser and IK Edit. Both share the same
 toggle and active indication. Left-drag orbits;
-right-drag adjusts the bounded avatar-relative focus height.
+right-drag adjusts the avatar-relative focus height without avatar-height bounds.
 Middle-button dragging translates eye and target together in the viewing
 plane, with a separate smoothed two-dimensional offset. The offset uses
 the camera's right/up axes so orbiting preserves screen composition; Reset
 clears it. Captured button releases remain owned over UI, and focus loss or
 transitions cancel the drag. Native UI and worn HUDs retain pointer ownership.
 The wheel changes distance to that focus independently of pointer position.
+Studio has no framing zoom bounds or view-plane pan radius; finite-value guards
+and a 1 mm numerical eye/target separation keep the camera valid. Reset restores
+the initial composition and retains the selected pose and lighting.
+The studio bar uses the top islands' shared glass surface and 36-point height,
+smaller mouse hints, and Pose / Lighting dropdowns. AO / In-world is the default
+pose; T-Pose and A-Pose override only our final joint palette, including worn
+attachment anchors, after the ordinary motion and physics update on the same
+parallel pose workers. Animation
+signals and controller clocks continue, so releasing the override restores the
+current phase. The shaped rest skeleton is retained, with A-Pose lowering each
+straight arm 45 degrees. Leaving the studio releases the local override.
+Studio lighting remains the default. Current environment skips the neutral
+environment, studio lights and aurora overrides, reusing the ordinary resolved
+local/parcel/region EEP frame, its sky/water textures and live changes. It never
+changes the environment selection. The reveal radiance is independent of the
+aurora enable flag so it also works with the current environment.
 Focus height, view-plane pan and distance ease towards their targets with a frame-rate
 independent exponential response. These use a separate render camera; the agent transform and
 camera sent to the simulator retain their ordinary ownership. A circular

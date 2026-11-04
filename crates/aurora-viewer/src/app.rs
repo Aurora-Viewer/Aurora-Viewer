@@ -10080,7 +10080,7 @@ impl App {
                 &sky_frame,
                 crate::world::env::colored_ambient_now(self.settings.colored_sky_ambient),
             );
-        if studio_view.is_some() {
+        if studio_view.is_some() && self.avatar_studio.lighting == crate::avatar_studio::Lighting::Studio {
             env = Environment::from_eep(
                 &crate::world::eep::SkyFrame::with_sun(
                     glam::Quat::from_rotation_z(self.avatar_studio.yaw) * Vec3::new(0.3, -0.4, 0.86).normalize(),

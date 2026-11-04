@@ -4965,7 +4965,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
-| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal` | Ocean studio, reveal previews, transitions and pedestal close-up |
+| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|environment|pose-cycle|pose-menu|lighting-menu` | Studio backdrop, transitions, inspection poses, lighting and menu previews |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -8244,12 +8244,28 @@ Toggle quickly during either fade, press Escape during entry, and repeat
 at 30/120 FPS: no uncovered camera cut, stuck black frame or repeated burst.
 Avatar and attachment animations must continue, and HUD textures must retain
 their normal colours throughout the reveal. No worn material is modified.
-The controls overlay is one short row: title on the left, four mouse diagrams
-with highlighted buttons, movement symbols and inline captions in the middle,
-and Reset/Leave studio on the right. Subtle dividers separate the hints. The
+The controls overlay uses the top bars' glass island surface and 36-point height,
+with smaller mouse diagrams, inline captions and subtle dividers. Pose and
+Lighting dropdowns precede Reset/Leave studio on the right. The
 wheel diagram also has scroll arrows. Hover each hint for the full instruction.
 Inspect English, French and Japanese: captions should align, remain readable
 at ordinary UI scale, and avoid the avatar's head.
+Pose defaults to AO / In-world. T-Pose uses the shaped rest skeleton; A-Pose
+lowers both straight arms 45 degrees. `t-pose` and `a-pose` show those states;
+`pose-cycle` selects T until frame 800, A until frame 960, then returns to the
+current animation. Its clock, signals and worn attachments must keep working.
+`pose-menu` and `lighting-menu` open those menus at frame 800 for captures.
+Lighting defaults to Studio. `environment` instead uses the current sky,
+sun/moon, ambient and water settings, without the studio lights or aurora.
+Combine with `AURORA_DEMO_SKY=midday` to inspect a region environment. On the
+grid, the human checks that local overrides and Shared environment are both
+respected, including later changes while Studio stays open. The selector must
+not alter the saved environment, and returning to Studio restores its backdrop.
+Studio framing has no avatar-height focus bounds, pan radius or framing zoom
+limits. Drag above/below the avatar, pan several body lengths, and zoom beyond
+the initial distance or in closer than 35 cm. Reset must restore the composition
+while retaining the selected pose and lighting. Only finite camera values and
+a numerical eye/target separation are required.
 The water should reflect the sky; distant ridgelines stay near the horizon.
 `pedestal` lowers the focus to the feet and zooms in one wheel step for a
 repeatable close-up; capture at frame 850. Rounded upper/lower shoulders should catch

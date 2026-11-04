@@ -1,5 +1,12 @@
 language-name = English
 avatar-studio-title = Avatar Studio
+avatar-studio-pose = Pose
+avatar-studio-pose-animated = AO / In-world
+avatar-studio-pose-t = T-Pose
+avatar-studio-pose-a = A-Pose
+avatar-studio-lighting = Lighting
+avatar-studio-lighting-studio = Studio
+avatar-studio-lighting-environment = Current environment
 avatar-studio-rotate-tip = Hold the left mouse button and drag to rotate around your avatar.
 avatar-studio-focus-tip = Hold the right mouse button and drag up or down to adjust the focus height.
 avatar-studio-pan-tip = Hold the middle mouse button and drag to pan the view.
