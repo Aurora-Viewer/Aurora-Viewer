@@ -562,6 +562,7 @@ impl Snapshot {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Motion {
+    pub yaw_input: bool,
     pub axes: [f32; CHANNELS],
     pub toggle_flycam: bool,
     pub reset_zoom: bool,
@@ -577,6 +578,14 @@ pub struct Motion {
 }
 
 impl Motion {
+    pub fn keep_vr_forward(&mut self) {
+        // Digital simulator controls turn any side input into a diagonal step.
+        // Keep a modest forward cone after applying the device's dead zone.
+        if self.axes[0] > 0.0 && self.axes[1].abs() <= self.axes[0] * 0.35 {
+            self.axes[1] = 0.0;
+        }
+    }
+
     /// Intent to translate the player, excluding camera sticks and triggers.
     pub fn player_movement_input(&self) -> bool {
         self.axes[..3].iter().any(|value| value.abs() > 0.0001) || self.jump || self.rise || self.fall
@@ -982,6 +991,7 @@ impl Controller {
             }
         }
         Motion {
+            yaw_input: target[5] != 0.0,
             axes: self.filtered,
             toggle_flycam,
             reset_zoom,
@@ -1024,6 +1034,17 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vr_forward_zone_keeps_small_side_input_out_of_digital_walk() {
+        for (side, expected) in [(-0.2, 0.0), (0.2, 0.0), (0.5, 0.5)] {
+            let mut motion = Motion::default();
+            motion.axes[0] = 0.8;
+            motion.axes[1] = side;
+            motion.keep_vr_forward();
+            assert_eq!(motion.axes[1], expected);
+        }
+    }
 
     fn fixture() -> (Snapshot, Settings, Controller) {
         let snapshot = Snapshot {

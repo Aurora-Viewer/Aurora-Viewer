@@ -3,6 +3,18 @@
 
 use glam::{Mat3, Quat, Vec3};
 
+/// Physical headset orientation rotates travel only; artificial yaw stays on the rig.
+pub fn vr_axes(mut axes: [f32; 7], head_rotation: Quat) -> [f32; 7] {
+    // Aurora: +X forward, +Y left, +Z up. OpenXR: +X right, +Y up, -Z forward.
+    let travel = head_rotation * Vec3::new(-axes[1], axes[2], -axes[0]);
+    axes[0] = -travel.z;
+    axes[1] = -travel.x;
+    axes[2] = travel.y;
+    axes[3] = 0.0;
+    axes[4] = 0.0;
+    axes
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Flycam {
     pub position: Vec3,
@@ -14,7 +26,12 @@ pub struct Flycam {
 
 impl Flycam {
     pub fn from_view(position: Vec3, target: Vec3, up: Vec3, fov: f32) -> Self {
-        let forward = (target - position).normalize_or(Vec3::X);
+        Self::from_direction(position, target - position, up, fov)
+    }
+
+    /// Construct from a direction without adding/subtracting world coordinates.
+    pub fn from_direction(position: Vec3, forward: Vec3, up: Vec3, fov: f32) -> Self {
+        let forward = forward.normalize_or(Vec3::X);
         let left = up.cross(forward).normalize_or(Vec3::Y);
         let up = forward.cross(left).normalize_or(Vec3::Z);
         Self {
@@ -80,6 +97,58 @@ impl Flycam {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vr_flycam_forward_follows_full_rendered_head_pose_without_tilting_rig() {
+        use aurora_render::stereo_view::{Anchor, Fov, Pose};
+        for rig_yaw in [0.0_f32, 0.73] {
+            for initial_yaw in [0.0, 1.2] {
+                for head_yaw in [0.0, std::f32::consts::FRAC_PI_2, -std::f32::consts::FRAC_PI_2, std::f32::consts::PI] {
+                    for pitch in [-0.6, 0.0, 0.6] {
+                        let direction = Vec3::new(rig_yaw.cos(), rig_yaw.sin(), 0.0);
+                        let mut camera = Flycam::from_view(Vec3::ZERO, direction, Vec3::Z, 1.0);
+                        let view = glam::camera::rh::view::look_to_mat4(camera.position, camera.forward(), camera.up());
+                        let mut anchor = Anchor::new(
+                            view,
+                            Pose {
+                                position: Vec3::ZERO,
+                                orientation: Quat::from_rotation_y(initial_yaw),
+                            },
+                        )
+                        .expect("entry");
+                        let head = Pose {
+                            position: Vec3::ZERO,
+                            orientation: Quat::from_rotation_y(initial_yaw + head_yaw) * Quat::from_rotation_x(pitch),
+                        };
+                        let rotation = anchor.relative_head_rotation(head).expect("head");
+                        let axes = vr_axes([1.0, 0.0, 0.0, 0.9, -0.7, 0.0, 0.0], rotation);
+                        for _ in 0..10 {
+                            let before = camera.position;
+                            camera.step(axes, &super::super::Settings::default(), 0.016);
+                            let view = glam::camera::rh::view::look_to_mat4(camera.position, camera.forward(), camera.up());
+                            anchor.follow(view).expect("follow");
+                            let eye = anchor
+                                .eye(
+                                    head,
+                                    Fov {
+                                        left: -0.6,
+                                        right: 0.6,
+                                        down: -0.6,
+                                        up: 0.6,
+                                    },
+                                    0.1,
+                                )
+                                .expect("eye");
+                            let gaze = eye.view.inverse().transform_vector3(Vec3::NEG_Z).normalize();
+                            assert!((camera.position - before).normalize().dot(gaze) > 0.999);
+                            assert!(camera.forward().abs_diff_eq(direction, 1e-5));
+                            assert!(camera.up().abs_diff_eq(Vec3::Z, 1e-5));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn joystick_flycam_travel_endpoints_survive_axis_limits() {

@@ -13403,14 +13403,9 @@ vr-restart-body = Your headset was connected after Aurora started. Aurora sets u
 vr-restart-body-set-up = Aurora sets up VR when it starts, and only once you have used VR: restart it to use VR. It will enter VR on its own once you are back in the world, and will be ready for VR at every start from now on.
 vr-restart-confirm = Restart in VR
 ui-options-camera-vr = VR
-ui-options-camera-vr-view = Headset view
-ui-options-camera-vr-view-help = Where the view starts when you enter VR: at your avatar's eyes, or where the camera was.
-ui-options-camera-vr-view-first-person = First person
-ui-options-camera-vr-view-desktop-camera = Camera position
 ui-options-camera-vr-at-start = Set up VR at startup
 ui-options-camera-vr-at-start-help = The VR button then enters VR at once. Off, Aurora does not load your VR software at startup, and the VR button offers a restart. Applies at the next start.
 
-app-vr-leave = Press { $key } to return to desktop mode
 
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 
@@ -13419,3 +13414,20 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+ui-options-camera-vr-view-first-person = First Person
+
+app-vr-leave = Press { $key } to return to desktop mode
+
+vr-preferences-title = VR
+vr-preferences-about = Headset movement, comfort and rendering.
+vr-mode-flycam = Flycam
+vr-mode-avatar = Avatar Mode
+vr-mouse-look = First person mouse look
+vr-discomfort = May cause discomfort
+vr-gamma = Gamma
+vr-gamma-help = Adjust VR brightness. Higher values lighten the image. The default is 1.0.
+vr-vibrancy = Colour vibrancy
+vr-vibrancy-help = Adjust headset colour intensity. The default is 1.0.
+vr-resolution = Resolution per eye
+vr-resolution-help = Restart the viewer to apply resolution changes. Dimensions are limited by the headset runtime.
+vr-custom = Custom

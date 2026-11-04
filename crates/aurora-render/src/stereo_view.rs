@@ -11,7 +11,7 @@ pub struct Pose {
 impl Pose {
     fn matrix(self) -> Option<Mat4> {
         let length = self.orientation.length_squared();
-        (self.position.is_finite() && self.orientation.is_finite() && length > 1e-8)
+        (self.position.is_finite() && self.orientation.is_finite() && length.is_finite() && length > 1e-8)
             .then(|| Mat4::from_rotation_translation(self.orientation.normalize(), self.position))
     }
 }
@@ -45,10 +45,24 @@ impl Fov {
     }
 }
 
-/// Level heading and position captured once on VR entry. A later desktop-camera change
-/// cannot move the VR anchor. Runtime recentering requires a new anchor.
+/// Artificial camera motion differs between a head pivot and an avatar orbit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RigMode {
+    FirstPerson,
+    Avatar,
+    Flycam,
+}
+
+/// Headset reference captured on entry, with a level world rig updated for locomotion.
+/// Runtime recentering requires a new headset reference.
 #[derive(Debug, Clone, Copy)]
-pub struct Anchor(Mat4);
+pub struct Anchor {
+    tracking: Mat4,
+    rig: Mat4,
+    /// World translation accumulated only by artificial rig changes.
+    correction: Vec3,
+    mode: Option<RigMode>,
+}
 #[derive(Debug, Clone, Copy)]
 pub struct EyeView {
     pub view: Mat4,
@@ -85,10 +99,85 @@ impl Anchor {
             .normalize_or(Vec3::NEG_Z);
         let yaw = if flat.length_squared() > 1e-8 { flat.normalize() } else { fallback };
         let initial_level_view = glam::camera::rh::view::look_to_mat4(initial_head.position, yaw, Vec3::Y);
-        Some(Self(level_view.inverse() * initial_level_view))
+        Some(Self {
+            tracking: initial_level_view,
+            rig: level_view.inverse(),
+            correction: Vec3::ZERO,
+            mode: None,
+        })
     }
+    /// Follow artificial translation/yaw without cancelling physical head motion.
+    pub fn follow(&mut self, view: Mat4) -> Option<()> {
+        let determinant = view.determinant();
+        if !view.is_finite() || !determinant.is_finite() || determinant.abs() < 1e-8 {
+            return None;
+        }
+        let world = view.inverse();
+        let forward = world.transform_vector3(Vec3::NEG_Z);
+        let heading = Vec3::new(forward.x, forward.y, 0.0).normalize_or(Vec3::Y);
+        let position = world.w_axis.truncate();
+        if !position.is_finite() || !heading.is_finite() {
+            return None;
+        }
+        self.rig = glam::camera::rh::view::look_to_mat4(position, heading, Vec3::Z).inverse();
+        Some(())
+    }
+
+    /// Relocate the cyclopean head, then apply each eye's unchanged relative pose.
+    /// Free rigs turn at the tracked head; Avatar offsets turn with its rig.
+    pub fn follow_head(&mut self, view: Mat4, head: Pose, mode: RigMode) -> Option<()> {
+        head.matrix()?;
+        let tracked_head = self.tracking.transform_point3(head.position);
+        if !tracked_head.is_finite() {
+            return None;
+        }
+        let old_rig = self.rig;
+        let mut next = *self;
+        next.follow(view)?;
+        let changed_mode = self.mode.is_some_and(|previous| previous != mode);
+        if !changed_mode && next.rig == old_rig {
+            // No artificial move: retain the correction bit-for-bit. Recomputing
+            // it from a moving tracked head would introduce cancellation jitter.
+            next.mode = Some(mode);
+            *self = next;
+            return Some(());
+        }
+        if changed_mode && !matches!(mode, RigMode::Flycam) {
+            // Returning to the avatar/eyes chooses a new viewpoint. A previous
+            // dolly/turn correction belongs to the old rig, not to room-scale lean.
+            next.correction = Vec3::ZERO;
+            if matches!(mode, RigMode::Avatar) {
+                // Avatar starts at its normal desktop camera height even if the
+                // wearer stood/crouched after entering VR. Future tracking is 1:1.
+                next.correction.z = -next.rig.transform_vector3(tracked_head).z;
+            }
+        } else if matches!(mode, RigMode::Avatar) {
+            // The tracked head and its offset orbit with the Avatar rig.
+            next.correction = next.rig.transform_vector3(old_rig.inverse().transform_vector3(self.correction));
+        } else {
+            next.correction = self.correction + (old_rig.transform_vector3(tracked_head) - next.rig.transform_vector3(tracked_head));
+        }
+        if !next.correction.is_finite() {
+            return None;
+        }
+        next.mode = Some(mode);
+        *self = next;
+        Some(())
+    }
+
+    pub fn head_position(&self, pose: Pose) -> Option<Vec3> {
+        pose.matrix()?;
+        let position = (self.rig * self.tracking).transform_point3(pose.position) + self.correction;
+        position.is_finite().then_some(position)
+    }
+
+    /// Physical VIEW-space head orientation after entry-yaw cancellation.
+    pub fn relative_head_rotation(self, pose: Pose) -> Option<Quat> {
+        Some(Quat::from_mat4(&(self.tracking * pose.matrix()?)).normalize())
+    }
+
     pub fn eye(self, pose: Pose, fov: Fov, near: f32) -> Option<EyeView> {
-        let world = self.0 * pose.matrix()?;
+        let world = Mat4::from_translation(self.correction) * self.rig * self.tracking * pose.matrix()?;
         Some(EyeView {
             view: world.inverse(),
             projection: fov.projection(near)?,
@@ -114,6 +203,149 @@ mod tests {
             up: 0.7,
         }
     }
+    fn rig_view(position: Vec3, yaw: f32) -> Mat4 {
+        glam::camera::rh::view::look_to_mat4(position, Vec3::new(yaw.cos(), yaw.sin(), 0.0), Vec3::Z)
+    }
+    fn eye_pose(head: Pose, offset: f32, cant: f32) -> Pose {
+        Pose {
+            position: head.position + head.orientation * Vec3::X * offset,
+            orientation: head.orientation * Quat::from_rotation_y(cant),
+        }
+    }
+
+    #[test]
+    fn vr_artificial_yaw_pivots_at_current_head_preserving_lean_and_ipd() {
+        let initial = Pose {
+            position: Vec3::new(0.8, 1.65, -0.45),
+            orientation: Quat::from_rotation_y(0.85),
+        };
+        let head = Pose {
+            position: initial.position + initial.orientation * Vec3::new(0.28, -0.07, -0.12),
+            orientation: initial.orientation * Quat::from_rotation_x(0.2),
+        };
+        let position = Vec3::new(20.0, 30.0, 2.0);
+        let mut anchor = Anchor::new(rig_view(position, 0.3), initial).expect("anchor");
+        anchor
+            .follow_head(rig_view(position, 0.3), head, RigMode::FirstPerson)
+            .expect("lean");
+        let before = anchor.eye(head, fov(), 0.1).expect("head").position;
+        for i in 1..=30 {
+            anchor
+                .follow_head(rig_view(position, 0.3 + i as f32 * 0.04), head, RigMode::FirstPerson)
+                .expect("turn");
+            let left = anchor.eye(eye_pose(head, -0.032, 0.09), fov(), 0.1).expect("left");
+            let right = anchor.eye(eye_pose(head, 0.032, -0.09), fov(), 0.1).expect("right");
+            assert!(
+                ((left.position + right.position) * 0.5).distance(before) < 2e-5,
+                "artificial turn translated the current head"
+            );
+            assert!((left.position.distance(right.position) - 0.064).abs() < 1e-5);
+        }
+        let delta = Vec3::new(0.4, -0.2, 0.1);
+        anchor
+            .follow_head(rig_view(position + delta, 1.9), head, RigMode::FirstPerson)
+            .expect("turn and translate");
+        let translated = anchor.eye(head, fov(), 0.1).expect("head").position;
+        assert!(translated.abs_diff_eq(before + delta, 2e-5));
+        let leaned = Pose {
+            position: head.position + Vec3::X * 0.1,
+            ..head
+        };
+        anchor
+            .follow_head(rig_view(position + delta, 1.9), leaned, RigMode::FirstPerson)
+            .expect("physical lean");
+        let after = anchor.eye(leaned, fov(), 0.1).expect("lean").position;
+        assert!(
+            (after.distance(translated) - 0.1).abs() < 2e-5,
+            "physical lean must remain one-to-one"
+        );
+    }
+
+    #[test]
+    fn vr_avatar_entry_matches_normal_height_then_tracks_physically_one_to_one() {
+        let initial = Pose {
+            position: Vec3::new(0.8, 1.65, -0.4),
+            orientation: Quat::from_rotation_y(0.9),
+        };
+        let head = Pose {
+            position: initial.position + initial.orientation * Vec3::new(0.3, 0.4, -0.1),
+            orientation: initial.orientation,
+        };
+        let first = rig_view(Vec3::new(20.0, 30.0, 2.0), 0.3);
+        let mut anchor = Anchor::new(first, initial).expect("anchor");
+        anchor.follow_head(first, head, RigMode::FirstPerson).expect("first");
+        let avatar_position = Vec3::new(17.0, 29.0, 4.0);
+        let avatar_view = rig_view(avatar_position, 0.3);
+        let mode = RigMode::Avatar;
+        anchor.follow_head(avatar_view, head, mode).expect("avatar");
+        let before = anchor.head_position(head).expect("head");
+        assert!(
+            (before.z - avatar_position.z).abs() < 1e-5,
+            "actual head starts at normal camera height"
+        );
+        let moved = Pose {
+            position: head.position + Vec3::new(0.1, 0.2, -0.3),
+            ..head
+        };
+        anchor.follow_head(avatar_view, moved, mode).expect("physical");
+        let actual = anchor.head_position(moved).expect("head") - before;
+        assert!((actual.length() - Vec3::new(0.1, 0.2, -0.3).length()).abs() < 1e-5);
+        let shift = Vec3::new(0.4, 0.2, 0.0);
+        let before = anchor.head_position(moved).expect("head");
+        anchor
+            .follow_head(rig_view(avatar_position + shift, 0.3), moved, mode)
+            .expect("horizontal zoom/pan");
+        assert!((anchor.head_position(moved).expect("head") - before).abs_diff_eq(shift, 2e-5));
+        let before = anchor.head_position(moved).expect("head");
+        anchor
+            .follow_head(rig_view(avatar_position + shift, 0.3), moved, RigMode::Flycam)
+            .expect("flycam");
+        assert!(anchor.head_position(moved).expect("head").abs_diff_eq(before, 2e-5));
+    }
+
+    #[test]
+    fn vr_pivot_rejects_invalid_frames_without_poisoning_the_previous_anchor() {
+        let view = rig_view(Vec3::new(20.0, 30.0, 2.0), 0.0);
+        let head = pose(Vec3::new(0.2, 1.6, -0.3));
+        let mut anchor = Anchor::new(view, head).expect("anchor");
+        anchor.follow_head(view, head, RigMode::FirstPerson).expect("start");
+        let before = anchor.eye(head, fov(), 0.1).expect("eye");
+        assert!(anchor.follow_head(Mat4::ZERO, head, RigMode::FirstPerson).is_none());
+        let invalid_head = Pose {
+            position: Vec3::splat(f32::NAN),
+            ..head
+        };
+        assert!(anchor.follow_head(view, invalid_head, RigMode::Avatar).is_none());
+        assert_eq!(anchor.eye(head, fov(), 0.1).expect("eye").position, before.position);
+        assert_eq!(anchor.eye(head, fov(), 0.1).expect("eye").view, before.view);
+        anchor.follow_head(view, head, RigMode::Avatar).expect("mode change is safe");
+        anchor.follow_head(view, head, RigMode::Avatar).expect("repeated mode is safe");
+        assert!(anchor.eye(head, fov(), 0.1).expect("eye").view.is_finite());
+    }
+
+    #[test]
+    fn stereo_rejects_overflowing_runtime_quaternion_norm() {
+        let pose = Pose {
+            position: Vec3::ZERO,
+            orientation: Quat::from_xyzw(f32::MAX, 0.0, 0.0, 1.0),
+        };
+        assert!(pose.matrix().is_none());
+    }
+    #[test]
+    fn stereo_locomotion_preserves_physical_lean_and_ignores_artificial_pitch() {
+        let initial = glam::camera::rh::view::look_to_mat4(Vec3::ZERO, Vec3::X, Vec3::Z);
+        let mut anchor = Anchor::new(initial, pose(Vec3::ZERO)).expect("anchor");
+        let position = Vec3::new(4.0, 2.0, 1.5);
+        let moved = glam::camera::rh::view::look_to_mat4(position, Vec3::Y + Vec3::Z, Vec3::Z);
+        anchor.follow(moved).expect("follow");
+        let eye = anchor.eye(pose(Vec3::ZERO), fov(), 0.1).expect("eye");
+        assert!(eye.position.distance(position) < 1e-5);
+        let direction = eye.view.inverse().transform_vector3(Vec3::NEG_Z);
+        assert!(direction.distance(Vec3::Y) < 1e-5);
+        let leaned = anchor.eye(pose(Vec3::new(0.1, 0.0, 0.0)), fov(), 0.1).expect("lean");
+        assert!((leaned.position.distance(position) - 0.1).abs() < 1e-5);
+    }
+
     #[test]
     fn stereo_asymmetric_edges_and_reverse_depth() {
         let f = fov();

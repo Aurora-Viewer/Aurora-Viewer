@@ -13399,14 +13399,10 @@ vr-restart-body = Votre casque a été connecté après le démarrage d'Aurora. 
 vr-restart-body-set-up = Aurora prépare la VR à son démarrage, et seulement une fois que vous l'avez utilisée : redémarrez-le pour utiliser la VR. Il passera en VR tout seul une fois de retour dans le monde, et sera prêt pour la VR à chaque démarrage désormais.
 vr-restart-confirm = Redémarrer en VR
 ui-options-camera-vr = VR
-ui-options-camera-vr-view = Vue du casque
-ui-options-camera-vr-view-help = Où commence la vue quand vous passez en VR : dans les yeux de votre avatar, ou là où était la caméra.
 ui-options-camera-vr-view-first-person = Première personne
-ui-options-camera-vr-view-desktop-camera = Position de la caméra
 ui-options-camera-vr-at-start = Préparer la VR au démarrage
 ui-options-camera-vr-at-start-help = Le bouton VR passe alors en VR tout de suite. Désactivé, Aurora ne charge pas votre logiciel de VR au démarrage, et le bouton VR propose un redémarrage. S'applique au prochain démarrage.
 
-app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
 
 picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
 
@@ -13415,3 +13411,19 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+
+vr-preferences-title = VR
+vr-preferences-about = Déplacement, confort et rendu du casque.
+vr-mode-flycam = Caméra libre
+vr-mode-avatar = Mode avatar
+vr-mouse-look = Vue à la souris en première personne
+vr-discomfort = Peut provoquer une gêne
+vr-gamma = Gamma
+vr-gamma-help = Ajuste la luminosité en VR. Une valeur plus élevée éclaircit l’image. La valeur par défaut est 1,0.
+vr-vibrancy = Intensité des couleurs
+vr-vibrancy-help = Ajuste l’intensité des couleurs dans le casque. La valeur par défaut est 1,0.
+vr-resolution = Résolution par œil
+vr-resolution-help = Redémarrez le viewer pour appliquer la résolution. Les dimensions sont limitées par le système VR.
+vr-custom = Personnalisée

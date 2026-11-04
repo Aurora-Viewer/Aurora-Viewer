@@ -16,6 +16,9 @@ cargo run -p aurora-viewer -- --title "Test my-task"
 
 The logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
 
+The VR preferences can be inspected offline with `AURORA_DEMO_OPTIONS=vr`.
+Headset movement and resolution checks are listed in [VR.md](VR.md#movement-and-camera-preferences).
+
 For localisation, launch the same scenario with `--language en`, then
 `--language fr`. `AURORA_DEMO_OPTIONS=1` opens the interface preferences,
 with the language selector. Remove the argument to check the immediate

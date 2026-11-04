@@ -386,6 +386,7 @@ impl App {
             self.movement_runtime.cancel_water_gesture();
         }
         let was_water_walking = self.movement_runtime.water_walk.active();
+        self.vr_walk_override.apply_frame(&mut frame);
         let step = self.movement_runtime.update(&prefs, &frame, &input, now);
         let set = self.ao_catalog.selected(selected);
         let mut loaded = |state| {
