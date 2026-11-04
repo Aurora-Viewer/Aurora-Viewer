@@ -213,6 +213,9 @@ impl BanLines {
                             aurora_render::textures::WHITE,
                         ],
                         flags: [flags::FULLBRIGHT | flags::ALPHA_BLEND, 0, 0, 0],
+                        // the OIT tie-break: a namespace of their own and the
+                        // line's rank in the parcels' order
+                        identity: [aurora_render::oit_tie(*b"aurora-ban-line!", used as u32), 0, 0, 0],
                         ..Default::default()
                     };
                     let record = match self.records.get(used) {

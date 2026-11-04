@@ -9914,9 +9914,11 @@ What the inventory must show with these scenarios:
   skybox panes of a club, `n` blended layers over nearly every pixel. A
   spacing of `0` puts them all in the same place, exactly coplanar
   (`2,0.5,0`: two panes of the same depth on every pixel): with
-  `AURORA_OIT=1` their order is decided by the tie-break of the sort, so
-  consecutive captures (`AURORA_CAPTURE_FRAMES=2000,2001,2002`) must be
-  identical over the panes, frame after frame. The load of the order-independent transparency
+  `AURORA_OIT=1` their order is decided by the tie-break of the sort (the
+  object's id and the face's index hashed), so consecutive captures
+  (`AURORA_CAPTURE_FRAMES=2000,2001,2002`) must be identical over the
+  panes, frame after frame, and the same again in another session, with
+  other content loaded first (`AURORA_DEMO_HAIR_CARDS`, `AURORA_DEMO_CROWD`). The load of the order-independent transparency
   (`AURORA_OIT=1`): `8` fits its default pool, `20` and more overflow it at
   1600 × 900 and the frame is drawn again in the object order (the image
   stays the same as with `AURORA_OIT=0`). In `perf summary`, compare

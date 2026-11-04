@@ -27,9 +27,10 @@
 //! read copies of their arguments, oit_gate.rs, no wait on the CPU); past
 //! `max_layers` layers in one pixel, the nearest are kept and sorted, the
 //! farthest folded into a weighted average behind them. Layers are sorted
-//! by depth then by a tie-break stored with each (a hash of the draw
-//! record and the provoking vertex), so coplanar faces keep one order from
-//! frame to frame, whatever order their fragments arrive in. Off, or when the
+//! by depth then by a tie-break stored with each (24 bits of the face
+//! record's identity, `types::oit_tie`: the object's id and the face's
+//! index hashed), so coplanar faces keep one order from frame to frame and
+//! from launch to launch, whatever order their fragments arrive in. Off, or when the
 //! pool cannot be allocated, the renderer draws exactly as before; turning
 //! it off frees the pool ([`Oit::release`]).
 //!
@@ -62,7 +63,8 @@ const TILE_LIST_BYTES: u64 = 4;
 const SLOT_BYTES: u64 = 16;
 /// Slots per pixel at most: past that the array costs more than it saves.
 const MAX_SLOTS: u32 = 8;
-/// A node: premultiplied colour (rgb9e5), alpha and tie-break, depth, next.
+/// A node: premultiplied colour (rgb9e5), alpha and 24-bit tie-break, depth,
+/// next.
 const NODE_BYTES: u64 = 16;
 /// Per node, the stamp of the frame that claimed it (object.wgsl
 /// `oit_claims`).

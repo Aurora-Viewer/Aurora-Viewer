@@ -295,8 +295,9 @@ struct VsOut {
     // zero for the per-pixel one
     @location(9) tangent: vec3<f32>,
     @location(10) @interpolate(flat) tangent_sign: f32,
-    // the order-independent transparency's tie-break: a hash of the draw
-    // record and the provoking vertex (`oit_tie`), the same on every frame
+    // the order-independent transparency's tie-break of the face: 24 bits
+    // of its record's identity (types.rs `oit_tie`: the object's id and
+    // the face's index hashed), the same on every frame and every launch
     @location(11) @interpolate(flat) tie: u32,
 };
 
@@ -531,7 +532,7 @@ fn vs_land_overlay(in: VsIn) -> VsOut {
     var out: VsOut;
     out.world_pos = (rec.model * vec4<f32>(in.pos, 1.0)).xyz;
     out.record = in.instance;
-    out.tie = oit_tie(in.instance, in.vertex);
+    out.tie = rec.identity.x & 0xffffffu;
     if (rec.params.x > 0.5) {
         out.world_pos.z = max(out.world_pos.z, rec.params.y);
     }
@@ -614,7 +615,7 @@ fn vs_main(in: VsIn) -> VsOut {
         }
     }
     out.record = in.instance;
-    out.tie = oit_tie(in.instance, in.vertex);
+    out.tie = rec.identity.x & 0xffffffu;
     out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
     return out;
 }
@@ -1674,8 +1675,9 @@ fn blend_color_kept(in: VsOut, front: bool) -> vec4<f32> {
 //
 // Each blended fragment in front of the opaque scene is stored instead of
 // being blended: premultiplied colour (rgb9e5), alpha (8 bits), its
-// tie-break (16 bits, `oit_tie`: layers of one depth are sorted by it, so
-// two coplanar faces keep their order from one frame to the next whatever
+// tie-break (24 bits of the face record's identity, VsOut `tie`: layers
+// of one depth are sorted by it, so two coplanar faces keep their order
+// from one frame to the next and from one launch to the next, whatever
 // the order their fragments came in) and its depth; no coverage (the
 // capture reads no sample mask): the resolve is per pixel, oit.wgsl. A pixel's first
 // `slots` fragments go to its slots of a texture array (layer k holding
@@ -1732,14 +1734,6 @@ struct OitParams {
 // that one depth would hide a layer that some samples of an edge still
 // show.
 override OIT_EARLY_DEPTH: bool = false;
-
-// The tie-break of a face's fragments (VsOut `tie`): 16 bits of a hash of
-// the draw record and the provoking vertex of the triangle, so that two
-// coplanar layers of a pixel sort the same way on every frame, and two
-// triangles of one face too.
-fn oit_tie(instance: u32, vertex: u32) -> u32 {
-    return ((instance * 0x9E3779B1u) ^ (vertex * 0x85EBCA6Bu)) >> 16u;
-}
 
 // rgb9e5: three 9-bit mantissas under a shared 5-bit exponent (oit.wgsl
 // `unpack_rgb9e5` reads it): HDR-safe up to 65408
@@ -1819,7 +1813,7 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) v
     }
     let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
     let rg = pack_rgb9e5(c.rgb);
-    let rest = a8 | (in.tie << 16u);
+    let rest = a8 | (in.tie << 8u);
     let slot = atomicAdd(&oit_heads[pixel], 1u);
     if (slot < oit_params.slots) {
         textureStore(oit_slots_w, px, slot, vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), 0u));

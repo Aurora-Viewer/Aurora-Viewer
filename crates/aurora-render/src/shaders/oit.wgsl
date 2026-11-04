@@ -29,9 +29,10 @@
 //
 // Sorting: the `max_layers` nearest layers of a pixel, whatever their draw
 // order, back to front, by depth then by the tie-break the capture stored
-// (object.wgsl `oit_tie`: two coplanar layers, which arrive in an order
-// the GPU decides, sort the same way on every frame; nothing depends on
-// the order of a list); the others folded first, behind them, as a weighted
+// (24 bits of the face's identity, types.rs `oit_tie`: two coplanar
+// layers, which arrive in an order the GPU decides, sort the same way on
+// every frame and every launch; nothing depends on the order of a list);
+// the others folded first, behind them, as a weighted
 // average whose coverage is exact (the product of their transparencies), so
 // a deep stack fades instead of popping. The arrays of a sort must stay in
 // registers: a pixel first tries the 8-layer sort (resolve_8) and only a
@@ -180,7 +181,7 @@ fn resolve___N__(px: vec2<u32>, count: u32, first: u32, dmed: f32, keep: u32) ->
         near_z = max(near_z, z);
         // (a visible depth is positive: its bits order like it)
         let k = n.z;
-        let t = n.y >> 16u;
+        let t = n.y >> 8u;
         if (cnt < keep) {
             if (cnt == __N__u) {
                 return Resolved(3u, vec4<f32>(0.0), 0.0);
