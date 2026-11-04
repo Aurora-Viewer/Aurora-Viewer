@@ -110,12 +110,14 @@ impl App {
     /// AURORA_DEMO_CHATLOG=import:<stage>: a second run, then the History
     /// window on the merged file.
     fn demo_chat_import_done(&mut self) {
-        use crate::demo::chatlog::{ImportStage, Mode, PEER, mode};
+        use crate::demo::chatlog::{ImportStage, Mode, mode, peer_name};
         match mode() {
             Some(Mode::Import(ImportStage::Run | ImportStage::Login)) if self.demo => {
                 self.panels.settings = false;
-                let (title, file) = self.world.transcript_of(Some(PEER));
-                self.history_ui.show_file(title, file);
+                // by file: the import can end before the peer's name is known
+                let name = peer_name();
+                let file = self.world.chat_log.history_file_of(&name);
+                self.history_ui.show_file(name, file);
             }
             Some(Mode::Import(ImportStage::Again)) if self.demo && !self.chat_import.again => {
                 self.chat_import.again = true;
