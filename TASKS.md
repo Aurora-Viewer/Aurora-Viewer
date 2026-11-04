@@ -1498,7 +1498,9 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
   - ✅ sampling (sampleProbes: sphere / box weights, automatic + manual, smoothing probe 0): classic and HDR PBR (pbrIbl), legacy specular and environment (applyGlossEnv / applyLegacyEnv)
   - ✅ options: Reflection probes (sky only / manual / manual + terrain / entire scene) and count (8 to 64, 32 by default); counter in the performance panel
   - 🟡 probe irradiance (irradianceGenF, 16², 32 cosine samples) for the PBR / legacy ambient of non-classic skies, ambiance = max(sky, probe) (sampleProbeAmbient, tapIrradianceMap) — verified in demo
-  - ⬜ ambiance pass then radiance pass (12 faces per probe at LL, one irradiance bounce); us: a single capture
+  - 🔧 irradiance capture like the Legacy Viewer's (#2217; task `probe-capture-parity`): direct light only, the hemisphere colours off as well as the sky ambient (LLSettingsVOSky::applySpecial), and the local lights scaled down above an ambiance of 4 (mLightScale, RenderReflectionProbeMaxLocalLightAmbiance). Demo: `AURORA_DEMO_PROBE_ROOM`
+  - ⬜ the radiance capture lit by the probes' irradiance (one bounce, LLReflectionMapManager's second six faces); us: both captures per face, the radiance one without probes
+  - ⬜ sun shadows in the captures (display_cube_face calls generateSunShadow); us: none, so that the sun crosses roofs and walls in a probe's image. Left out on purpose for now: it makes closed rooms much darker
   - ⬜ "terrain" probes of level 2 (for now identical to the manual ones), ray casts of autoAdjustOrigin
   - ⬜ HDR calibration: the old fallback sky reflection was divided by π, the probes are not (level of the rendered scene)
   - 🟡 water: without planar reflection, the water reflects the default probe and the manual probes (sampleReflectionProbesWater); transparent objects: same lighting functions, so probes included

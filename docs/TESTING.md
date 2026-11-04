@@ -4206,6 +4206,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
+| `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 | `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
