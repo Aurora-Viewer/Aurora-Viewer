@@ -7833,7 +7833,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the crown away with "Leaving god mode, level 200". Outside the demo the
   request goes to the region (RequestGodlikePowers), which answers with
   GrantGodlikePowers or not at all. On an OpenSim grid, test as the region
-  owner: the crown and the notice on Ctrl+Alt+G, then gone on Leave.
+  owner: the crown and the notice on Ctrl+Alt+G, then gone on Leave. With the
+  level, Advanced › Admin appears: Object (its entries need a selection),
+  Parcel and, outside OpenSim, Region. In the demo they are only logged
+  ("admin: …").
 - **`AURORA_DEMO_LAND_MODERATION=menu|none|freeze|eject|eject-ban`**: the
   violet wolf stands on our land (the ParcelOverlay cell under it becomes
   ours), then at frame 600 `menu` opens its world menu from its name plate

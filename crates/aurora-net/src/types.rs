@@ -1969,6 +1969,8 @@ pub enum NetCommand {
     RequestGodlikePowers {
         godlike: bool,
     },
+    /// Advanced › Admin (god.rs), with the god level the region granted.
+    God(crate::god::GodCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
     GrantUserRights {
         friend: Uuid,

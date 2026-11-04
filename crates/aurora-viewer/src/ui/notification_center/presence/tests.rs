@@ -168,6 +168,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         release_notes: false,
         region_console: false,
         god_level: 0,
+        admin_objects: false,
+        admin_requests: true,
         motd: false,
         grid_help: None,
         classic_bars: classic,

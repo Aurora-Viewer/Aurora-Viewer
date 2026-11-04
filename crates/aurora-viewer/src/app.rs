@@ -13090,6 +13090,7 @@ impl App {
                 log::info!("quickjump: {}", self.settings.quickjump);
             }
             BarAction::AdminStatus(godlike) => self.request_admin_status(godlike),
+            BarAction::Admin(a) => self.admin_action(a),
             BarAction::ToggleQuietSnapshots => {
                 self.settings.snapshot.sound = !self.settings.snapshot.sound;
                 self.settings.save();
@@ -14647,6 +14648,8 @@ impl App {
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
                     god_level: self.world.god_level,
+                    admin_objects: !self.build.selection.is_empty(),
+                    admin_requests: self.world.opensim_extras().is_none(),
                     motd: !self.world.motd.is_empty(),
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()

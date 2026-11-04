@@ -446,6 +446,14 @@ impl Selection {
 }
 
 /// Context of the agent the selection logic needs from the world.
+impl Selection {
+    /// The rectangle asked (west, south, east, north), region metres:
+    /// Admin › Parcel › Claim Public Land claims it.
+    pub fn rect(&self) -> (f32, f32, f32, f32) {
+        self.rect
+    }
+}
+
 pub struct SelectionContext {
     /// Region the agent is in.
     pub agent_region: Option<RegionHandle>,
