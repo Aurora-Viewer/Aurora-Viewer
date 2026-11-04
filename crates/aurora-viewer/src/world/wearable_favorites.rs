@@ -13,7 +13,9 @@
 //!   most recent sort keeps reading the dates of the links it copied;
 //! - dropping a favorite a folder already holds adds nothing;
 //! - removing from the root view removes every link to the item, so that
-//!   its row does not come straight back from a subfolder.
+//!   its row does not come straight back from a subfolder;
+//! - a folder holding a real item moved in by hand is not deleted, as the
+//!   delete would take the item with it.
 
 use super::inventory::{FetchState, Inventory, actions};
 use crate::ao::inventory::child;
@@ -63,8 +65,25 @@ pub fn legacy_root(inv: &Inventory) -> Option<Uuid> {
     child(inv, child(inv, inv.root, LEGACY_BRAND)?, LEGACY_FOLDER)
 }
 
-/// The folders that decide whether a folder exists are read: asking for
-/// `#Aurora/Wearable Favorites` before that would make a second one.
+/// Every folder of `tree` is read.
+fn tree_read(inv: &Inventory, tree: Uuid) -> bool {
+    let mut todo = vec![tree];
+    let mut seen = HashSet::new();
+    while let Some(id) = todo.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        match inv.folders.get(&id) {
+            Some(f) if f.state == FetchState::Fetched => todo.extend(f.children.iter().copied()),
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// The folders a change depends on are read: asking for `#Aurora/Wearable
+/// Favorites` before that would make a second one, and a favorite an unread
+/// folder holds would be linked twice.
 fn loaded(inv: &Inventory) -> bool {
     let fetched = |id: Uuid| inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched);
     fetched(inv.root)
@@ -72,6 +91,7 @@ fn loaded(inv: &Inventory) -> bool {
             .iter()
             .filter_map(|name| child(inv, inv.root, name))
             .all(fetched)
+        && [root(inv), legacy_root(inv)].into_iter().flatten().all(|tree| tree_read(inv, tree))
 }
 
 /// Ask for the folders the window reads, in bounded batches; true once all
@@ -176,8 +196,9 @@ pub fn entries(inv: &Inventory, folder: Uuid, root: Uuid) -> Vec<Entry> {
 }
 
 /// LLWearableItemNameComparator, LLWearableItemCreationDateComparator
-/// (newest first) and LLWearableItemTypeNameComparator's grouping as
-/// `ui/appearance/items.rs::sort_links` has it.
+/// (newest first) and LLWearableItemTypeNameComparator as E_SORT_BY_TYPE_NAME
+/// sets it: clothing by wearable type, then objects, then body parts by
+/// wearable type, by name within each.
 pub fn sort(entries: &mut [Entry], order: Sort) {
     let name = |e: &Entry| (e.name.to_lowercase(), e.link);
     match order {
@@ -185,9 +206,9 @@ pub fn sort(entries: &mut [Entry], order: Sort) {
         Sort::Recent => entries.sort_by_cached_key(|e| (std::cmp::Reverse(e.linked_at), name(e))),
         Sort::Type => entries.sort_by_cached_key(|e| {
             let group = match e.asset_type {
-                13 => (0, e.flags & 0xff),
-                5 => (1, e.flags & 0xff),
-                _ => (2, 0),
+                5 => (0, e.flags & 0xff),
+                13 => (2, e.flags & 0xff),
+                _ => (1, 0),
             };
             (group, name(e))
         }),
@@ -270,6 +291,9 @@ fn finish(mut change: Mutation) -> Mutation {
 /// Links `ids` into `folder` (None: the root, made if needed), without those
 /// it already holds. No operation: nothing to add.
 pub fn add(inv: &Inventory, folder: Option<Uuid>, ids: &[Uuid]) -> Result<Mutation, String> {
+    if !loaded(inv) {
+        return Err(aurora_i18n::tr!("wearable-favorites-loading").into());
+    }
     let mut have = folder
         .map(|f| originals(inv, f))
         .or_else(|| root(inv).map(|r| originals(inv, r)))
@@ -337,6 +361,15 @@ pub fn rename(inv: &Inventory, folder: Uuid, name: &str) -> Result<Mutation, Str
 
 /// onDeleteFolderCallback: the subfolder goes, and with it only links.
 pub fn delete_folder(inv: &Inventory, folder: Uuid) -> Result<Mutation, String> {
+    if !tree_read(inv, folder) {
+        return Err(aurora_i18n::tr!("wearable-favorites-loading").into());
+    }
+    if items_under(inv, folder)
+        .iter()
+        .any(|id| inv.items.get(id).is_none_or(|it| !matches!(it.asset_type, 24 | 25)))
+    {
+        return Err(aurora_i18n::tr!("wearable-favorites-delete-real-items").into());
+    }
     let parent = inv
         .folders
         .get(&folder)
@@ -362,7 +395,7 @@ pub struct Sync {
 /// holds already, wherever a link came from, is left alone; nothing is
 /// removed, and every write lands under `#Aurora`.
 pub fn sync(inv: &Inventory) -> Result<Sync, String> {
-    if !loaded(inv) {
+    if !loaded(inv) || !missing(inv).is_empty() {
         return Err(aurora_i18n::tr!("wearable-favorites-loading").into());
     }
     let legacy = legacy_root(inv).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
@@ -592,7 +625,7 @@ mod tests {
         sort(&mut rows, Sort::Recent);
         assert_eq!(order(&rows), ["c shirt", "a shape", "b hair"]);
         sort(&mut rows, Sort::Type);
-        assert_eq!(order(&rows), ["a shape", "c shirt", "b hair"]);
+        assert_eq!(order(&rows), ["c shirt", "b hair", "a shape"]);
     }
 
     #[test]
@@ -704,6 +737,54 @@ mod tests {
         folder(&mut inv, ROOT, Uuid::from_u128(60), BRAND);
         inv.folders.get_mut(&Uuid::from_u128(60)).unwrap().state = FetchState::Fetching;
         assert!(add(&inv, None, &[SHIRT]).is_err(), "#Aurora may hold the folder already");
+    }
+
+    #[test]
+    fn nothing_is_written_before_both_favorites_folders_are_read() {
+        let mut inv = inventory();
+        let legacy = with_legacy(&mut inv);
+        apply(&mut inv, |inv| sync(inv).expect("sync").change);
+        let top = root(&inv).expect("made");
+        let evening = child(&inv, top, "Evening").expect("copied");
+        let read = |inv: &mut Inventory, id: Uuid, state| inv.folders.get_mut(&id).unwrap().state = state;
+
+        for folder in [top, evening, legacy, Uuid::from_u128(22)] {
+            read(&mut inv, folder, FetchState::Fetching);
+            assert!(sync(&inv).is_err(), "an unread folder would be linked twice");
+            assert!(add(&inv, None, &[SHAPE]).is_err());
+            read(&mut inv, folder, FetchState::Fetched);
+        }
+        assert!(sync(&inv).is_ok());
+        assert!(add(&inv, None, &[SHAPE]).is_ok());
+    }
+
+    #[test]
+    fn sync_waits_for_the_originals_of_the_legacy_links() {
+        let mut inv = inventory();
+        let legacy = with_legacy(&mut inv);
+        let unread = Uuid::from_u128(70);
+        link(&mut inv, 71, legacy, unread);
+        assert!(sync(&inv).is_err(), "a favorite would be skipped unseen");
+        inv.missing_items.insert(unread);
+        assert_eq!(sync(&inv).expect("a broken link stops the wait").added, 3);
+    }
+
+    #[test]
+    fn a_folder_holding_a_real_item_is_not_deleted() {
+        let mut inv = inventory();
+        apply(&mut inv, |inv| new_folder(inv, "Evening").expect("folder").0);
+        let top = root(&inv).expect("made");
+        let evening = child(&inv, top, "Evening").expect("made");
+        apply(&mut inv, |inv| add(inv, Some(evening), &[SHIRT]).expect("add"));
+        assert!(delete_folder(&inv, evening).is_ok(), "only links");
+
+        let mut hair = inv.items[&HAIR].clone();
+        hair.parent = evening;
+        inv.add_items(vec![hair]);
+        assert!(delete_folder(&inv, evening).is_err(), "the item would go with it");
+
+        inv.folders.get_mut(&evening).unwrap().state = FetchState::Fetching;
+        assert!(delete_folder(&inv, evening).is_err(), "its contents are unknown");
     }
 
     #[test]

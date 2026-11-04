@@ -50,11 +50,13 @@ enum Dialog {
 }
 
 /// An inventory change on its way.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Pending {
     pub request: Uuid,
     pub select: Option<Uuid>,
     pub synced: Option<usize>,
+    /// The folders to read again if the change stops half way.
+    pub refresh: Vec<Uuid>,
 }
 
 #[derive(Default)]
@@ -291,7 +293,7 @@ impl WearableFavoritesUi {
                 p,
                 "folder-filled",
                 aurora_i18n::tr!("wearable-favorites-assign"),
-                !subfolders.is_empty(),
+                !subfolders.is_empty() && self.pending.is_none(),
                 |ui| {
                     egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
                         for (folder, name) in &subfolders {

@@ -2856,6 +2856,7 @@ impl App {
         self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
+        self.wearable_favorites_ui = Default::default();
         self.shape_ui = Default::default();
         self.shape_camera = None;
         self.physics_ui = Default::default();
@@ -3170,7 +3171,7 @@ impl App {
                 self.ao_inventory_result(result);
                 return;
             }
-            if self.wearable_favorites_ui.pending.is_some_and(|p| p.request == request) {
+            if self.wearable_favorites_ui.pending.as_ref().is_some_and(|p| p.request == request) {
                 self.wearable_favorites_result(result);
                 return;
             }

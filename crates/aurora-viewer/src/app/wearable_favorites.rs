@@ -93,17 +93,24 @@ impl App {
         select: Option<Uuid>,
         synced: Option<usize>,
     ) {
-        if change.operations.is_empty() {
+        // one at a time: a second request would take the first one's reply
+        if change.operations.is_empty() || self.wearable_favorites_ui.pending.is_some() {
             return;
         }
         let request = Uuid::new_v4();
+        let refresh = change.refresh.clone();
         let command = NetCommand::EditInventory { request, change };
         // `send` drops what RLVa refuses: no reply would free the window
         if !self.world.rlva_allows_command(&command, Uuid::nil()) {
             self.wearable_favorites_ui.message = aurora_i18n::tr!("rlva-blocked").into();
             return;
         }
-        self.wearable_favorites_ui.pending = Some(Pending { request, select, synced });
+        self.wearable_favorites_ui.pending = Some(Pending {
+            request,
+            select,
+            synced,
+            refresh,
+        });
         self.wearable_favorites_ui.message.clear();
         self.send(command);
     }
@@ -127,6 +134,13 @@ impl App {
             Err(reason) => {
                 log::warn!("favorite wearables not saved: {reason}");
                 self.wearable_favorites_ui.message = reason;
+                // a change can stop half way (inventory_result)
+                for id in &pending.refresh {
+                    if let Some(f) = self.world.inventory.folders.get_mut(id) {
+                        f.state = crate::world::inventory::FetchState::Unknown;
+                    }
+                    self.world.inventory.request(*id);
+                }
             }
         }
     }

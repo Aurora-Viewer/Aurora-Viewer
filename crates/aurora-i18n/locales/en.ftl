@@ -13128,6 +13128,7 @@ wearable-favorites-remove = Remove from favorites
 wearable-favorites-empty = No favorites yet. Drag clothing, body parts or objects here from your inventory.
 wearable-favorites-no-match = No favorite matches this filter.
 wearable-favorites-assign = Assign to folder
+wearable-favorites-delete-real-items = This folder holds items of your own, not only favorites. Move them out first.
 wearable-favorites-loading = Your inventory is still loading.
 wearable-favorites-sync = Sync from Legacy Viewer
 wearable-favorites-sync-tip = Adds the favorites of #Firestorm/#Wearable Favorites to this list. Subfolders are matched by name. Nothing is removed, and the Legacy Viewer's folder is not changed.

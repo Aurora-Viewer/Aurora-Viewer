@@ -13098,6 +13098,7 @@ wearable-favorites-remove = お気に入りから外す
 wearable-favorites-empty = お気に入りはまだありません。インベントリから衣類、身体部位、オブジェクトをここにドラッグしてください。
 wearable-favorites-no-match = この絞り込みに一致するお気に入りはありません。
 wearable-favorites-assign = フォルダに割り当て
+wearable-favorites-delete-real-items = このフォルダーにはお気に入り以外のアイテムが入っています。先に移動してください。
 wearable-favorites-loading = インベントリを読み込んでいます。
 wearable-favorites-sync = Legacy Viewerから同期
 wearable-favorites-sync-tip = #Firestorm/#Wearable Favorites のお気に入りをこの一覧に追加します。サブフォルダは名前で照合します。削除は行わず、Legacy Viewer のフォルダも変更しません。
