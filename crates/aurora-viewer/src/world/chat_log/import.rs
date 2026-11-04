@@ -167,7 +167,23 @@ pub fn undated(stem: &str) -> &str {
 fn target_of(dir: &Path, source: &Path, dated: bool) -> Option<PathBuf> {
     let stem = source.file_stem()?.to_str()?;
     let stem = once_group(if dated { stem } else { undated(stem) });
-    names::file_path(dir, &stem, None)
+    names::file_path(dir, &resident_name(&stem), None)
+}
+
+/// `jane_doe` as Aurora names that resident's file, `Jane Doe`: the official
+/// viewer, and the others with UseLegacyIMLogNames off, name it from
+/// LLCacheName::buildUsername, then cleanFileName turns its dot into '_'.
+/// The name's capitals are lost there: those of a word's start come back.
+fn resident_name(stem: &str) -> String {
+    let base = undated(stem);
+    let word = |w: &str| !w.is_empty() && w.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    let capital = |w: &str| w[..1].to_ascii_uppercase() + &w[1..];
+    match base.split_once('_') {
+        Some((first, last)) if word(first) && word(last) => {
+            format!("{} {}{}", capital(first), capital(last), &stem[base.len()..])
+        }
+        _ => stem.to_owned(),
+    }
 }
 
 /// A group's file with one " (group)": Legacy Viewers leave many as
@@ -311,31 +327,13 @@ pub fn merge_file(source: &Path, target: &Path) -> std::io::Result<u64> {
         if let Some(dir) = target.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let temporary = target.with_extension("txt.import");
-        let done = replace(target, &temporary, &text, ours.len() as u64);
-        if !matches!(done, Ok(true)) {
-            let _ = std::fs::remove_file(&temporary);
-        }
-        if done? {
+        let still = || target.metadata().map_or(0, |m| m.len()) == ours.len() as u64;
+        if crate::atomic_file::write_if(target, &text, still)? {
             crate::disk_io::written(crate::disk_io::Origin::Logs, text.len());
             return Ok(added);
         }
     }
     Err(std::io::Error::other("the transcript keeps changing"))
-}
-
-/// False when `target` is no longer `len` bytes long: nothing was replaced.
-fn replace(target: &Path, temporary: &Path, text: &[u8], len: u64) -> std::io::Result<bool> {
-    use std::io::Write;
-    let mut file = std::fs::File::create(temporary)?;
-    file.write_all(text)?;
-    file.sync_all()?;
-    drop(file);
-    if target.metadata().map_or(0, |m| m.len()) != len {
-        return Ok(false);
-    }
-    std::fs::rename(temporary, target)?;
-    Ok(true)
 }
 
 /// Where to read from.
@@ -667,6 +665,19 @@ mod tests {
     }
 
     #[test]
+    fn a_username_file_is_the_residents_file() {
+        assert_eq!(resident_name("jane_doe"), "Jane Doe");
+        assert_eq!(resident_name("jane_doe-2026-10"), "Jane Doe-2026-10");
+        assert_eq!(resident_name("janedoe"), "janedoe");
+        assert_eq!(resident_name("Jane Doe"), "Jane Doe");
+        assert_eq!(resident_name("chat"), "chat");
+        assert_eq!(resident_name("a_b_c"), "a_b_c");
+        assert_eq!(resident_name("foo_bar (group)"), "foo_bar (group)");
+        let target = target_of(Path::new("d"), Path::new("jane_doe.txt"), false);
+        assert_eq!(target.unwrap(), Path::new("d/Jane Doe.txt"));
+    }
+
+    #[test]
     fn a_groups_doubled_name_is_the_groups_file() {
         assert_eq!(once_group("Club (group) (group)"), "Club (group)");
         assert_eq!(once_group("Club (group) (group) (group)"), "Club (group)");
@@ -777,7 +788,7 @@ mod tests {
         assert_eq!(merge_file(&source, &target).unwrap(), 0);
         assert_eq!(text(&std::fs::read(&target).unwrap()), "[2026/10/12 14:05]  Bob: a\n");
         assert_eq!(std::fs::read(&source).unwrap(), b"[2026/10/12 14:05]  Bob: a\n");
-        assert!(!target.with_extension("txt.import").exists());
+        assert_eq!(std::fs::read_dir(target.parent().unwrap()).unwrap().count(), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -796,16 +807,21 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_failure_leaves_the_file_as_it_was() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = temp();
-        let target = dir.join("Bob.txt");
+        let (source, aurora) = (dir.join("legacy.txt"), dir.join("aurora"));
+        std::fs::create_dir_all(&aurora).unwrap();
+        let target = aurora.join("Bob.txt");
         std::fs::write(&target, "[2026/10/14 09:00]  Bob: mine\n").unwrap();
-        // a folder in the temporary file's place: it cannot be created
-        std::fs::create_dir_all(target.with_extension("txt.import")).unwrap();
-        let source = dir.join("legacy.txt");
         std::fs::write(&source, "[2026/10/12 14:05]  Bob: a\n").unwrap();
-        assert!(merge_file(&source, &target).is_err());
+        // no temporary file can be created in a read-only folder
+        std::fs::set_permissions(&aurora, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let merged = merge_file(&source, &target);
+        std::fs::set_permissions(&aurora, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(merged.is_err());
         assert_eq!(std::fs::read(&target).unwrap(), b"[2026/10/14 09:00]  Bob: mine\n");
         std::fs::remove_dir_all(dir).unwrap();
     }
