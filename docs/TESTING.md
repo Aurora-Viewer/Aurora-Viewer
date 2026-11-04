@@ -4489,15 +4489,18 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_AA=3`, `AURORA_DEMO_AA_SWITCH=700:4,1000:2,1300:3` and captures at
   650, 900, 1200 and 1500 (MSAA 4x, 8x, 2x, 4x).
 
-- **`AURORA_DEMO_PARCEL_ENV=save|left|back|personal|manual`**: the four parcels
+- **`AURORA_DEMO_PARCEL_ENV=save|left|back|personal|update|manual`**: the four parcels
   of `AURORA_DEMO_PARCEL_VISIBILITY`; `manual` scripts nothing, to walk them by
   hand. Otherwise sunrise is chosen at frame 240 and carried
   to the next parcel at frame 260, Midnight (`personal`: a Personal lighting
   edit) is saved there at frame 420, the agent walks off at frame 560 (the
   sunrise returns) and back at frame 700 (the saved light returns). `save`
-  stops after the save and `left` after walking off. Lines
-  `parcel environment demo` in the log give the state at frames 380, 540, 680
-  and 840. Add `AURORA_DEMO_ENV_SELECT=1` for the window's lit pin button and
+  stops after the save and `left` after walking off. `update` goes on: the
+  saved parcel's light changes at frame 860 (the pin saves again), is saved
+  over at frame 900, and the agent walks off at frame 1040 and back at frame
+  1180. Lines `parcel environment demo` in the log give the state at frames
+  380, 540, 680 and 840, then 880, 1020, 1160 and 1320 for `update`. Add
+  `AURORA_DEMO_ENV_SELECT=1` for the window's lit pin button and
   `AURORA_DEMO_OPTIONS=graphics/6` for the list in Graphics > Parcels.
 
 - **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible|lists|crossings`**:

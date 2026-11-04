@@ -913,8 +913,10 @@ impl Land {
                     c.text = Some(text.unwrap_or_else(|| aurora_i18n::tr!("world-land-could-not-load-this-estate-s-covenant").into()));
                 }
             }
-            LandEvent::ParcelId { local_id, id, .. } => {
-                if let Some(sel) = self.sel.as_mut().filter(|s| s.local_id() == Some(local_id)) {
+            // the agent's own parcel asks too (`parcel_env.rs`), and a local
+            // id only means something within its region
+            LandEvent::ParcelId { handle, local_id, id } => {
+                if let Some(sel) = self.sel.as_mut().filter(|s| s.handle == handle && s.local_id() == Some(local_id)) {
                     if id.is_none() {
                         // setErrorStatus: asked again on the next refresh
                         sel.uuid_local_id = 0;

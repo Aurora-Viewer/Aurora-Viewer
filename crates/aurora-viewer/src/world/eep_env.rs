@@ -911,8 +911,10 @@ impl EnvSelector {
         }
     }
 
+    /// A preset whose sky is still loading stands: a day restored with it
+    /// comes first (`restore_local`), and must not clear it on the way.
     fn drop_preset(&mut self) {
-        if self.local_preset != 0 {
+        if self.local_preset != 0 && !self.pending.iter().any(|p| p.preset == self.local_preset) {
             self.local_preset = 0;
             self.preset_dropped = true;
         }
@@ -1098,6 +1100,16 @@ impl EnvSelector {
             self.preset_moved = true;
         }
         self.local_dirty = dirty;
+    }
+
+    /// Changes with the local environment or its preset.
+    pub fn local_stamp(&self) -> (u64, u8) {
+        (self.local.as_ref().map_or(0, |l| l.generation), self.local_preset)
+    }
+
+    /// What a save for a parcel would keep.
+    pub fn parcel_form(&self) -> (Option<Llsd>, u8) {
+        (self.saved_local(), self.local_preset)
     }
 
     /// A save for a parcel is asked: what fails from now on fails it.
@@ -1599,7 +1611,7 @@ impl super::World {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use aurora_llsd::{Llsd, llsd_map};
 
@@ -1886,7 +1898,7 @@ mod tests {
     const WATER: Uuid = Uuid::from_u128(0x52);
     const DAY: Uuid = Uuid::from_u128(0x53);
 
-    fn sky_asset(gamma: f32) -> Arc<Settings> {
+    pub(in crate::world) fn sky_asset(gamma: f32) -> Arc<Settings> {
         Arc::new(Settings::Sky(SkyFrame {
             gamma,
             ..Default::default()
@@ -2225,6 +2237,23 @@ mod tests {
         assert_eq!(sel.wanted_settings(), vec![DAY], "the first parcel's load is dropped");
         sel.settle_parcel();
         assert_eq!(sel.local_view().sky, ListShown::Item(SKY));
+    }
+
+    #[test]
+    fn a_day_restored_with_a_preset_leaves_the_preset_standing() {
+        let mut sel = region_selector();
+        sel.hold_parcel(Some(&llsd_map! {"day_id" => DAY}), 4);
+        let sky = crate::world::env::time_of_day_sky(4).expect("a library sky");
+        // the day is first in the queue, and the sky comes in a later frame
+        sel.on_settings(DAY, Some(day_asset(1.1, 8.0)));
+        assert_eq!(sel.parcel_form().1, 4);
+        // the panels follow, and their value comes back next frame
+        let shown = sel.take_preset_change().expect("the panels hear of it");
+        sel.set_time_of_day(shown);
+        assert!(sel.has_local(), "the day stays");
+        sel.on_settings(sky, Some(sky_asset(1.1)));
+        assert_eq!(sel.parcel_form().1, 4);
+        assert_eq!(sel.local_view().sky, ListShown::Preset(4));
     }
 
     #[test]

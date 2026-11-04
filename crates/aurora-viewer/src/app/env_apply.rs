@@ -258,9 +258,11 @@ impl App {
             ),
             Outcome::Left => self.env_alert(aurora_i18n::tr!("common-environment"), aurora_i18n::tr!("parcel-environment-left")),
         }
-        self.env_ui.parcel_choice = if self.world.parcel_env.saved_here(&self.settings.parcel_environments).is_some() {
+        let saved_here = self.world.parcel_env.saved_here(&self.settings.parcel_environments).is_some();
+        let savable = self.world.parcel.is_some() && (self.world.eep.has_local() || self.panels.time_of_day != 0);
+        self.env_ui.parcel_choice = if saved_here && !(savable && self.world.parcel_environment_changed()) {
             ParcelChoice::Saved
-        } else if self.world.parcel.is_some() && (self.world.eep.has_local() || self.panels.time_of_day != 0) {
+        } else if savable {
             ParcelChoice::Save
         } else {
             ParcelChoice::Nothing
