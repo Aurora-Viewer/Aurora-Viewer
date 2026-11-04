@@ -4605,7 +4605,10 @@ both open states and the selection count. Capture at frame 620.
   skin), each with its texture: `avatars=30,worn=6` is a busy place. With
   `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
   the folder's `mat` subfolder), whose textures are served from `tex`
-  when it holds them, else one of the others in their place. Every asset is
+  when it holds them, else one of the others in their place. `<folder>`
+  holds plain asset files, or is this installation's cache store
+  (`cache/store`, read through `crate::cache`; an earlier build cannot
+  serve it). Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to
   this machine only), which answers each request after `net` milliseconds
   (200 by default; about 70 for the asset hosts on a good link); with
