@@ -866,6 +866,7 @@ struct Material {
     // Actual rasterized triangle plane, distinct from its smooth vertex normals.
     plane_n: vec3<f32>,
     shadow_offset: vec3<f32>,
+    shadow_curvature: f32,
 };
 
 // The normal that moves a fragment's shadow lookup off its surface. The
@@ -904,8 +905,10 @@ fn eval_material(in: VsOut, front: bool) -> Material {
     m.geo_n = n;
     let shadow_surface = select(-in.shadow_surface, in.shadow_surface, front);
     m.shadow_offset = vec3<f32>(0.0);
+    m.shadow_curvature = 0.0;
     if ((frame.light_mode.z & SHADOW_FILTER_PCF) == 0u) {
         m.shadow_offset = smooth_receiver_offset(shadow_surface.xyz, in.world_pos - frame.eye.xyz, shadow_surface.w);
+        m.shadow_curvature = receiver_curvature(dpdx(in.world_pos), dpdy(in.world_pos), dpdx(n), dpdy(n));
     }
     // Receiver-plane depth is affine on the triangle, not on the smoothed
     // normal field. Compute before any alpha discard in shade_material.
@@ -1396,6 +1399,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     surface_occlusion = m.occlusion;
     surface_base_normal = m.geo_n;
     shadow_receiver_offset = m.shadow_offset;
+    shadow_receiver_curvature = m.shadow_curvature;
     shadow_receiver_plane = select(m.plane_n, m.geo_n, dot(m.shadow_offset, m.shadow_offset) > 1e-12);
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what

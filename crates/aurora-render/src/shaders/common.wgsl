@@ -1228,12 +1228,36 @@ fn smooth_receiver_offset(raw: vec3<f32>, position: vec3<f32>, moment: f32) -> v
 // SMOOTH RECEIVER END
 
 var<private> shadow_receiver_offset: vec3<f32> = vec3<f32>(0.0);
+var<private> shadow_receiver_curvature: f32 = 0.0;
 
 fn shadow_plane(n: vec3<f32>) -> vec3<f32> {
     return select(n, shadow_receiver_plane, dot(shadow_receiver_plane, shadow_receiver_plane) > 0.5);
 }
 
 // PCSS BEGIN
+// RECEIVER PLANE BEGIN
+// A tangent plane cannot be extrapolated across a tightly curved receiver.
+// Estimate normal rotation per metre from matching position/normal derivatives;
+// their ratio is independent of render resolution and camera magnification.
+fn receiver_curvature(px: vec3<f32>, py: vec3<f32>, nx: vec3<f32>, ny: vec3<f32>) -> f32 {
+    let h = vec3<f32>(dot(nx, nx), dot(nx, ny), dot(ny, ny));
+    if (h.x + h.z <= 1e-20) { return 0.0; }
+    let g = vec3<f32>(dot(px, px), dot(px, py), dot(py, py));
+    let determinant = g.x * g.z - g.y * g.y;
+    if (determinant <= max(1e-30, 1e-6 * g.x * g.z)) { return 1e6; }
+    // Largest generalized eigenvalue of the normal/position metrics.
+    // Unlike a ratio of their traces, this is invariant when camera motion
+    // shears or stretches the screen derivatives of a cylindrical surface.
+    let trace = max((g.z * h.x + g.x * h.z - 2.0 * g.y * h.y) / determinant, 0.0);
+    let product = max((h.x * h.z - h.y * h.y) / determinant, 0.0);
+    return sqrt(0.5 * (trace + sqrt(max(trace * trace - 4.0 * product, 0.0))));
+}
+fn receiver_plane_confidence(curvature: f32, footprint: f32, bias_metres: f32) -> f32 {
+    let departure = 0.5 * curvature * footprint * footprint;
+    let tolerance = max(bias_metres, 1e-6);
+    return 1.0 - smoothstep(tolerance, 2.0 * tolerance, departure);
+}
+// RECEIVER PLANE END
 // Directional PCSS: parallel-plane blocker search and distance-dependent
 // percentage-closer filtering (Fernando, NVIDIA, 2005). The angular source
 // radius is an artistic effective sun/moon size; the footprint is in metres
@@ -1536,6 +1560,8 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     if (plane_filter) {
         gradient = vec2<f32>(-dot(plane_n, axis_x), dot(plane_n, axis_y))
             * (2.0 * radius * depth_per_metre / denominator);
+        gradient *= receiver_plane_confidence(shadow_receiver_curvature, PCSS_MAX_RADIUS,
+            receiver_bias / max(depth_per_metre, 1e-8));
         // Wide searches on a grazing receiver are ill-conditioned, but its
         // dense fallback still needs the plane-corrected comparisons.
         if (abs(denominator) > 0.15) {
@@ -1637,21 +1663,53 @@ var<private> contact_area_normal: vec3<f32>;
 var<private> contact_area_x: vec3<f32>;
 var<private> contact_area_y: vec3<f32>;
 var<private> contact_area_z: vec3<f32>;
+var<private> contact_area_depth_gradient: vec2<f32>;
+
+// Continuous reconstruction on the receiver plane. Invalid neighbours contribute
+// lit visibility rather than borrowing a foreground surface's shadow. Opacity
+// and blocker distance are reconstructed together from the same valid samples.
+fn contact_area_sample(uv: vec2<f32>, receiver_depth: f32) -> vec2<f32> {
+    let size = vec2<i32>(textureDimensions(contact_tex));
+    let point = uv * vec2<f32>(size) - 0.5;
+    let base = vec2<i32>(floor(point));
+    let fraction = fract(point);
+    var opacity = 0.0;
+    var gap_sum = 0.0;
+    var gap_weight = 0.0;
+    for (var y = 0; y < 2; y++) {
+        for (var x = 0; x < 2; x++) {
+            let pixel = base + vec2<i32>(x, y);
+            if (any(pixel < vec2<i32>(0)) || any(pixel >= size)) { continue; }
+            let delta = ((vec2<f32>(pixel) + 0.5) / vec2<f32>(size) - uv) * vec2<f32>(2.0, -2.0);
+            let expected = receiver_depth + dot(contact_area_depth_gradient, delta);
+            let depth = textureLoad(depth_tex, pixel, 0);
+            let error = abs(depth - expected) / max(abs(expected), 1e-6);
+            let confidence = select(0.0, 1.0 - smoothstep(0.005, 0.01, error), depth > 0.0 && expected > 0.0);
+            let weight = select(1.0 - fraction.x, fraction.x, x == 1)
+                * select(1.0 - fraction.y, fraction.y, y == 1) * confidence;
+            let mask = textureLoad(contact_tex, pixel, 0);
+            opacity += weight * mask.r;
+            if (mask.g > 0.0) {
+                let contribution = weight * mask.r;
+                gap_sum += contribution * ((exp2(round(mask.g * 255.0) / 16.0) - 1.0) * 0.01);
+                gap_weight += contribution;
+            }
+        }
+    }
+    return vec2<f32>(1.0 - opacity, select(-1.0, gap_sum / max(gap_weight, 1e-8), gap_weight > 1e-8));
+}
 
 fn contact_area_centre() -> vec2<f32> {
     let q = frame.view_proj * vec4<f32>(contact_area_world, 1.0);
     let uv = q.xy / q.w * vec2<f32>(0.5, -0.5) + 0.5;
-    let size = vec2<i32>(textureDimensions(contact_tex));
-    let pixel = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - 1);
-    let mask = textureLoad(contact_tex, pixel, 0);
-    return vec2<f32>(1.0 - mask.r, mask.g);
+    return contact_area_sample(uv, q.z / q.w);
 }
 
 fn pcss_contact_gap() -> f32 {
     if (!contact_area_active) { return -1.0; }
     let centre = contact_area_centre();
     if (centre.x >= 0.999 || centre.y <= 0.0) { return -1.0; }
-    return (exp2(round(centre.y * 255.0) / 16.0) - 1.0) * 0.01;
+    return centre.y;
 }
 
 fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 {
@@ -1663,13 +1721,7 @@ fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 {
     let ndc = q.xyz / q.w;
     let uv = ndc.xy * vec2<f32>(0.5, -0.5) + 0.5;
     if (any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return 1.0; }
-    let size = vec2<i32>(textureDimensions(contact_tex));
-    let pixel = vec2<i32>(uv * vec2<f32>(size));
-    let depth = textureLoad(depth_tex, pixel, 0);
-    // A projected tap may land on another surface or a silhouette. It cannot
-    // borrow that surface's contact shadow; the shadow map still contributes.
-    if (depth <= 0.0 || abs(depth - ndc.z) > max(1e-6, ndc.z * 0.01)) { return 1.0; }
-    return 1.0 - textureLoad(contact_tex, pixel, 0).r;
+    return contact_area_sample(uv, ndc.z).x;
 }
 
 fn pcss_contact_complete() {
@@ -1703,6 +1755,14 @@ fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<
     contact_area_combined = false;
     contact_area_world = world_pos;
     contact_area_normal = shadow_plane(n);
+    if (contact_area_active) {
+        let plane = transpose(frame.inv_view_proj) * vec4<f32>(contact_area_normal, -dot(contact_area_normal, world_pos));
+        if (abs(plane.z) > 1e-8) {
+            contact_area_depth_gradient = -plane.xy / plane.z;
+        } else {
+            contact_area_active = false;
+        }
+    }
     let s = shadow_factor(world_pos, n, vertex_depth);
     contact_area_active = false;
     if (contact_area_combined || frame.params.z < 0.5) {
@@ -2371,6 +2431,8 @@ fn projector_shadow(i: i32, surface_pos: vec3<f32>, n: vec3<f32>) -> f32 {
         if (plane_filter) {
             gradient = b * vec2<f32>(2.0 * dot(plane_n, row_x) / (projection.x * projection.x),
                 -2.0 * dot(plane_n, row_y) / (projection.y * projection.y)) / plane;
+            let bias_metres = 0.0002 * lp.w * lp.w / max(abs(b), 1e-8);
+            gradient *= receiver_plane_confidence(shadow_receiver_curvature, PCSS_MAX_RADIUS, bias_metres);
             if (abs(plane) > 0.15 * length(relative)) {
                 let soft = spot_pcss(uv, origin, texel, ndc.z, gradient, lp.w,
                     vec2<f32>(a, b), projection * 0.5);

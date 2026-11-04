@@ -11,6 +11,7 @@ pub mod bc7;
 #[cfg(test)]
 mod blend_tests;
 mod bloom;
+mod contact_history;
 mod contact_shadows;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
@@ -1048,6 +1049,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
 
     #[test]
     fn contact_shadows_shader_is_valid() {
+        validate(include_str!("shaders/contact_history.wgsl"));
         validate(include_str!("shaders/contact_shadows.wgsl"));
         validate(include_str!("shaders/contact_shadows_filter.wgsl"));
         validate(include_str!("shaders/contact_shadows_filter_legacy.wgsl"));

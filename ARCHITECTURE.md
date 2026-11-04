@@ -1,5 +1,22 @@
 # Aurora Viewer architecture
 
+`aurora-render/contact_history.rs` owns the experimental contact-shadow history
+resolve (`shaders/contact_history.wgsl`). It keeps two masks and depth/normal
+metadata, reprojects with skinned-object motion, and rejects changed surfaces,
+coverage and blocker distances before a short accumulation. Contact history can
+supply its own normal/motion prepass target when GTAO is unavailable, so its
+lifetime does not depend on the ambient-occlusion setting. Target generation,
+skipped frames, camera cuts, light changes and photo exports invalidate history;
+images above 3840×2160 pixels use current-frame reconstruction without allocating
+history. The path remains opt-in through the joint contact/PCSS experiment.
+
+PCSS receiver-plane correction is confidence-weighted on curved object surfaces.
+`object.wgsl` estimates geometric-normal rotation per world metre before material
+discard; `common.wgsl` compares the estimated departure across the bounded
+footprint with the existing world-space bias and fades invalid extrapolation.
+Directional and projector filters keep plane correction on flat receivers and
+retain their blocker search and distance-dependent penumbrae.
+
 Avatar gait playback resolves standard walk/run signals to the modern male or
 female assets selected by LLVOAvatar::remapMotionID with its default settings
 (#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the

@@ -424,7 +424,9 @@ pub(crate) fn variant_source(variant: Variant) -> String {
             } else {
                 source
             };
-            format!("{source}\n{}", include_str!("shaders/contact_shadows_no_shared.wgsl"))
+            let samples =
+                include_str!("shaders/contact_shadows_no_shared.wgsl").replace("if (CONTINUOUS_DEPTH)", "if (params.area_light.w > 0.5)");
+            format!("{source}\n{samples}")
         }
         Variant::Bend | Variant::Skip => bend.to_owned(),
         Variant::Short => shader_source(16, 1),
@@ -505,6 +507,7 @@ pub(crate) struct ContactShadows {
     /// `AURORA_CONTACT_VARIANT`: `Skip` dispatches no wavefront.
     variant: Variant,
     area_geometry: Option<(Mat4, Vec3)>,
+    history: crate::contact_history::History,
 }
 
 /// A normalized footprint: 3.5 pixels of tent support at 1080 render lines.
@@ -701,6 +704,7 @@ pub(crate) struct Targets {
     /// The shadow in `.r`, 0 lit, 1 in contact shadow, softened; read by the
     /// shading.
     pub result: wgpu::TextureView,
+    pub history: Option<crate::contact_history::Targets>,
     /// The pass's mask before the filter (the variants' test).
     #[cfg(test)]
     raw: wgpu::TextureView,
@@ -826,6 +830,7 @@ impl ContactShadows {
             filter,
             variant,
             area_geometry: None,
+            history: crate::contact_history::History::new(device),
         }
     }
 
@@ -868,6 +873,7 @@ impl ContactShadows {
 
     /// The mask for a window of `width` x `height` reading `depth` (the
     /// single-sample depth prepass).
+    #[cfg(test)]
     pub(crate) fn targets(
         &self,
         device: &wgpu::Device,
@@ -875,6 +881,18 @@ impl ContactShadows {
         depth_format: wgpu::TextureFormat,
         width: u32,
         height: u32,
+    ) -> Targets {
+        self.targets_with_motion(device, depth, depth_format, width, height, None)
+    }
+
+    pub(crate) fn targets_with_motion(
+        &self,
+        device: &wgpu::Device,
+        depth: &wgpu::TextureView,
+        depth_format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        motion: Option<&wgpu::TextureView>,
     ) -> Targets {
         let size = (width.max(1), height.max(1));
         let mask = |label: &str| {
@@ -898,6 +916,10 @@ impl ContactShadows {
         };
         // the pass writes `raw`, the filter `result`
         let (raw, result) = (mask("contact shadows raw"), mask("contact shadows"));
+        // Photo captures use current-frame reconstruction, without a history
+        // from a different tile or a large allocation at export resolution.
+        let temporal = area_mode(0) && crate::contact_history::needed() && u64::from(size.0) * u64::from(size.1) <= 3840 * 2160;
+        let filtered = if temporal { mask("contact current frame") } else { result.clone() };
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("contact shadows depth"),
             size: wgpu::Extent3d {
@@ -979,16 +1001,18 @@ impl ContactShadows {
         let filter_passes = (FilterMode::from_env() == FilterMode::Separable).then(|| {
             let work = mask("contact shadows filter work");
             [
-                [filter_group(depth, &raw, &work), filter_group(depth, &work, &result)],
-                [filter_group(&own_depth, &raw, &work), filter_group(&own_depth, &work, &result)],
+                [filter_group(depth, &raw, &work), filter_group(depth, &work, &filtered)],
+                [filter_group(&own_depth, &raw, &work), filter_group(&own_depth, &work, &filtered)],
             ]
         });
+        let history = temporal.then(|| self.history.targets(device, size, [depth, &own_depth], &filtered, &result, motion));
         Targets {
+            history,
             size,
             group: group(depth),
             group_more: group(&own_depth),
-            filter_group: filter_group(depth, &raw, &result),
-            filter_group_more: filter_group(&own_depth, &raw, &result),
+            filter_group: filter_group(depth, &raw, &filtered),
+            filter_group_more: filter_group(&own_depth, &raw, &filtered),
             filter_passes,
             depth_texture,
             depth: own_depth,
@@ -1108,6 +1132,16 @@ impl ContactShadows {
             });
             pass.set_bind_group(0, filter_group, &[]);
             pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        }
+        drop(pass);
+        if let Some(history) = &t.history {
+            self.history.encode(encoder, history, more);
+        }
+    }
+
+    pub(crate) fn write_history(&mut self, queue: &wgpu::Queue, t: &Targets, frame: crate::contact_history::Frame) {
+        if let Some(history) = &t.history {
+            self.history.write(queue, history, frame);
         }
     }
 }

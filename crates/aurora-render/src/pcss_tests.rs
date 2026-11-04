@@ -98,6 +98,71 @@ fn pcss_penumbra_grows_in_metres_and_stays_inside_its_cascade() {
         pass.draw(0..3, 0..1);
     }
     queue.submit([encoder.finish()]);
+    contact_history_contract(&device, &queue, &depth);
+    // Exercise the production reconstruction across a texel boundary, with
+    // a synthetic contact edge over the real constant-depth GPU fixture.
+    let reconstruction = crate::COMMON_SHADER
+        .split("fn contact_area_sample(")
+        .nth(1)
+        .expect("contact reconstruction")
+        .split("fn contact_area_centre()")
+        .next()
+        .expect("contact reconstruction end");
+    let reconstruction = format!("fn contact_area_sample({reconstruction}")
+        .replace("textureDimensions(contact_tex)", "textureDimensions(shadow_map)")
+        .replace("textureLoad(depth_tex, pixel, 0)", "textureLoad(shadow_map, pixel, 0)")
+        .replace(
+            "textureLoad(contact_tex, pixel, 0)",
+            "vec4<f32>(select(0.0, 1.0, pixel.x >= 128), 32.0 / 255.0, 0.0, 0.0)",
+        );
+    let reconstruction_source = format!(
+        r#"
+@group(0) @binding(0) var shadow_map: texture_depth_2d;
+@group(0) @binding(1) var shadow_sampler: sampler_comparison;
+var<private> contact_area_depth_gradient: vec2<f32>;
+{reconstruction}
+struct Query {{ a: vec4<f32>, b: vec4<f32> }};
+@group(0) @binding(2) var<storage, read> queries: array<Query>;
+@group(0) @binding(3) var<storage, read_write> results: array<vec4<f32>>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
+    if (id.x >= arrayLength(&queries)) {{ return; }}
+    let q = queries[id.x];
+    contact_area_depth_gradient = q.b.xy;
+    let sample = contact_area_sample(q.a.xy, q.a.z);
+    results[id.x] = vec4<f32>(sample, 0.0, textureSampleCompareLevel(shadow_map, shadow_sampler, q.a.xy, q.a.z));
+}}
+"#
+    );
+    let reconstruction_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("continuous contact reconstruction"),
+        source: wgpu::ShaderSource::Wgsl(reconstruction_source.into()),
+    });
+    let reconstruction_pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("continuous contact reconstruction"),
+        layout: None,
+        module: &reconstruction_module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut reconstruction_queries: Vec<[f32; 8]> = [-0.49, -0.001, 0.0, 0.001, 0.49]
+        .into_iter()
+        .map(|delta| [(128.0 + delta) / 512.0, 128.0 / 512.0, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0])
+        .collect();
+    reconstruction_queries.push([128.0 / 512.0, 128.0 / 512.0, 0.8, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    let reconstructed = run_queries(&device, &queue, &reconstruction_pipeline, &depth, &reconstruction_queries);
+    for (sample, expected) in reconstructed[..5].iter().zip([0.99, 0.501, 0.5, 0.499, 0.01]) {
+        assert!(
+            (sample[0] - expected).abs() < 0.0001,
+            "subpixel contact reconstruction: {reconstructed:?}"
+        );
+        assert!((sample[1] - 0.03).abs() < 0.0001, "distance must use the opacity's valid samples");
+    }
+    assert!(
+        reconstructed[5][0] > 0.999 && reconstructed[5][1] < 0.0,
+        "another surface must not lend its shadow or blocker distance: {reconstructed:?}"
+    );
     let body = crate::COMMON_SHADER
         .split("// PCSS BEGIN")
         .nth(1)
@@ -124,7 +189,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     let bias = q.b.w * 0.001;
     let soft = pcss_shadow(q.a.xy, q.b.xy, texel, q.a.w, q.a.z, bias, vec2<f32>(q.b.z, 0.0), q.b.w);
     let fallback = pcss_compare(q.a.xy, vec2<f32>(0.0), q.b.xy, texel, q.a.z, bias, vec2<f32>(q.b.z, 0.0));
-    results[id.x] = vec4<f32>(select(soft, fallback, soft < 0.0), soft, 0.0, 0.0);
+    let curvature = receiver_curvature(vec3<f32>(q.a.w, 0.0, 0.0), vec3<f32>(0.6 * q.a.w, 0.2 * q.a.w, 0.0),
+        vec3<f32>(q.a.w * q.b.z, 0.0, 0.0), vec3<f32>(0.6 * q.a.w * q.b.z, 0.0, 0.0));
+    results[id.x] = vec4<f32>(select(soft, fallback, soft < 0.0), soft,
+        receiver_plane_confidence(curvature, PCSS_MAX_RADIUS, q.b.w), curvature);
 }}
 "#
     );
@@ -140,6 +208,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
         compilation_options: Default::default(),
         cache: None,
     });
+    // A tangent plane is valid on a sloping flat receiver, but extrapolating
+    // it across a face-sized curved surface creates false triangular blockers.
+    // Camera zoom / active resolution scale both derivative pairs together;
+    // the sheared cylindrical probe also checks anisotropic camera footprints.
+    for scale in [0.0001, 0.01, 1.0, 10.0] {
+        let probes: Vec<[f32; 8]> = [0.0, 0.01, 0.5, 5.0, 10.0]
+            .into_iter()
+            .map(|curvature| [0.25, 0.25, 0.4, scale, 0.0, 0.0, curvature, 0.005])
+            .collect();
+        let results = run_queries(&device, &queue, &pipeline, &depth, &probes);
+        for (i, result) in results.iter().enumerate() {
+            let curvature = probes[i][6];
+            assert!(
+                (result[3] - curvature).abs() < 0.0001,
+                "curvature must not change with magnification: {results:?}"
+            );
+            if i < 2 {
+                assert!(result[2] > 0.999, "flat/gently curved receivers retain plane correction");
+            } else {
+                assert!(result[2] < 0.001, "strongly curved receivers reject plane extrapolation");
+            }
+        }
+    }
     let mut queries = Vec::<[f32; 8]>::new();
     for scale in [0.01, 0.001] {
         for cascade in 0..3u32 {
@@ -907,4 +998,197 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
             assert_eq!(got[0], 1.0, "no normal perturbation must preserve the original response");
         }
     }
+}
+
+// Real multi-frame GPU history, including a stationary receiver whose caster
+// disappears. A receiver-only motion test would miss that trailing-shadow bug.
+fn contact_history_contract(device: &wgpu::Device, queue: &wgpu::Queue, depth: &wgpu::TextureView) {
+    use crate::contact_history::{Frame, History};
+    use glam::{Mat4, Vec2, Vec3};
+    let make = |format, usage| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("contact history contract"),
+            size: wgpu::Extent3d {
+                width: 512,
+                height: 512,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let current = make(
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    );
+    let motion = make(
+        wgpu::TextureFormat::Rgba32Float,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    );
+    let output = make(
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
+    let mut history = History::new(device);
+    let targets = history.targets(
+        device,
+        (512, 512),
+        [depth, depth],
+        &current.create_view(&Default::default()),
+        &output.create_view(&Default::default()),
+        Some(&motion.create_view(&Default::default())),
+    );
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("contact history readback"),
+        size: 256,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut step = |index, opacity: u8, gap: u8, normal: [f32; 4], reset, view| {
+        let pixels = [opacity, gap, 0, 0].repeat(512 * 512);
+        queue.write_texture(
+            current.as_image_copy(),
+            &pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(512 * 4),
+                rows_per_image: Some(512),
+            },
+            wgpu::Extent3d {
+                width: 512,
+                height: 512,
+                depth_or_array_layers: 1,
+            },
+        );
+        let normals = normal.repeat(512 * 512);
+        queue.write_texture(
+            motion.as_image_copy(),
+            bytemuck::cast_slice(&normals),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(512 * 16),
+                rows_per_image: Some(512),
+            },
+            wgpu::Extent3d {
+                width: 512,
+                height: 512,
+                depth_or_array_layers: 1,
+            },
+        );
+        history.write(
+            queue,
+            &targets,
+            Frame {
+                index,
+                projection: Mat4::IDENTITY,
+                view,
+                jitter: Vec2::ZERO,
+                sun: Vec3::Z,
+                reset,
+            },
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        history.encode(&mut encoder, &targets, false);
+        let mut src = output.as_image_copy();
+        src.origin = wgpu::Origin3d { x: 128, y: 128, z: 0 };
+        encoder.copy_texture_to_buffer(
+            src,
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: Some(1),
+                },
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("history map"));
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("history GPU");
+        let data = buffer.slice(..).get_mapped_range().expect("history result");
+        let value = data[0];
+        drop(data);
+        buffer.unmap();
+        value
+    };
+    let still = [0.0; 4];
+    assert_eq!(
+        step(1, 192, 32, still, false, Mat4::IDENTITY),
+        192,
+        "first frame cannot read uninitialized history"
+    );
+    assert!(
+        (186..=190).contains(&step(2, 176, 32, still, false, Mat4::IDENTITY)),
+        "stable surface should accumulate"
+    );
+    assert_eq!(
+        step(3, 0, 0, still, false, Mat4::IDENTITY),
+        0,
+        "a disappearing caster must clear in the same frame"
+    );
+    assert_eq!(
+        step(4, 200, 64, still, false, Mat4::IDENTITY),
+        200,
+        "a newly arriving caster must appear immediately"
+    );
+    assert_eq!(
+        step(5, 184, 96, still, false, Mat4::IDENTITY),
+        184,
+        "changed blocker distance must reject history"
+    );
+    let turned = [1.0, 0.0, 0.0, 0.0];
+    assert_eq!(
+        step(6, 168, 96, turned, false, Mat4::IDENTITY),
+        168,
+        "changed surface normal must reject history"
+    );
+    assert_eq!(
+        step(7, 152, 96, turned, true, Mat4::IDENTITY),
+        152,
+        "photo/camera reset must use the current frame"
+    );
+    assert_eq!(
+        step(8, 136, 96, turned, false, Mat4::IDENTITY),
+        136,
+        "reset must invalidate history for the next frame"
+    );
+    assert_eq!(
+        step(10, 120, 96, turned, false, Mat4::IDENTITY),
+        120,
+        "a skipped contact frame must invalidate history"
+    );
+    assert!(
+        (113..=118).contains(&step(11, 104, 96, turned, false, Mat4::IDENTITY)),
+        "history should recover after a reset"
+    );
+    assert_eq!(
+        step(12, 88, 96, turned, false, Mat4::from_translation(Vec3::new(0.0, 0.0, 0.1))),
+        88,
+        "newly exposed depth must reject history"
+    );
+    let mut settled = Vec::new();
+    for index in 20..36 {
+        let value = step(index, if index % 2 == 0 { 192 } else { 176 }, 96, still, false, Mat4::IDENTITY);
+        if index >= 28 {
+            settled.push(value);
+        }
+    }
+    let lo = *settled.iter().min().expect("settled frames");
+    let hi = *settled.iter().max().expect("settled frames");
+    assert!(hi - lo <= 5, "stable-surface variation should shrink from 16 levels: {settled:?}");
+    let moving = [0.0, 0.0, 0.005, 0.0];
+    let moved = step(36, 168, 96, moving, false, Mat4::from_translation(Vec3::new(0.01, 0.0, 0.0)));
+    assert!(
+        (172..=182).contains(&moved),
+        "correctly reprojected motion should retain valid history: {moved}"
+    );
 }
