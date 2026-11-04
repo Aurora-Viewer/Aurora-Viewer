@@ -19922,7 +19922,32 @@ impl ApplicationHandler for App {
                     return;
                 }
                 let pressed = *state == ElementState::Pressed;
-                let over_ui = self.ui_takes_pointer();
+                let mut over_ui = self.ui_takes_pointer();
+                if *button == MouseButton::Right
+                    && let Some(menu) = self.context_menu.as_ref()
+                {
+                    let use_pie = if self.demo {
+                        match std::env::var("AURORA_DEMO_PIE").as_deref() {
+                            Ok("1") => true,
+                            Ok("0") => false,
+                            _ => self.settings.use_pie_menu,
+                        }
+                    } else {
+                        self.settings.use_pie_menu
+                    };
+                    let ppp = self.egui_ctx.pixels_per_point().max(0.1);
+                    let pointer = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
+                    if ui::context::right_click_reopens_world(
+                        &self.egui_ctx,
+                        menu,
+                        &self.context_facts(),
+                        use_pie,
+                        &self.context_customization,
+                        pointer,
+                    ) {
+                        over_ui = false;
+                    }
+                }
                 // shortcut being captured: middle / side buttons bind, left / right cancel
                 if self.options_ui.capture.is_some() {
                     if pressed {
