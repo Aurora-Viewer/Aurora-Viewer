@@ -3147,6 +3147,13 @@ impl TextureStreamer {
         self.card_sharing = on;
     }
 
+    /// Bytes of the card's memory every program holds, from the counters
+    /// of gpu_load.rs (Windows, once read); None while the card is not read
+    /// as shared (demo and timed runs) or elsewhere.
+    pub fn card_used(&self) -> Option<u64> {
+        self.card_sharing.then(|| self.gpu.get().adapter_used).flatten()
+    }
+
     /// Bytes of video memory the driver counts for this viewer, as of the
     /// last budget pass (what the other viewers are told).
     pub fn video_usage(&self) -> u64 {

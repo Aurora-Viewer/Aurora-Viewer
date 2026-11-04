@@ -952,17 +952,17 @@ fn shape_column(
                 let width = (ui.available_width() - 125.0).max(70.0);
                 row(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"), width, hollow_shape);
             }
-            if !legacy || matches!(ty, 4..=6) {
-                e = e.or(shape_scalar(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("build-ui-object-bias"),
-                    &mut u.skew,
-                    0.05,
-                    -0.95..=0.95,
-                    2,
-                ));
-            }
+            // LLPanelObject::getState exposes all transforms for parametric prims,
+            // including the extended path types, in both presentations.
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-bias"),
+                &mut u.skew,
+                0.05,
+                -0.95..=0.95,
+                2,
+            ));
             let (tw, ti) = if circular_basic(ty) { (360.0, 18.0) } else { (180.0, 9.0) };
             e = e.or(shape_pair(
                 ui,
@@ -1035,26 +1035,24 @@ fn shape_column(
                     3,
                 ));
             }
-            if !legacy || matches!(ty, 4..=6) {
-                e = e.or(shape_scalar(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("build-ui-object-radius"),
-                    &mut u.radius,
-                    0.05,
-                    -1.0..=1.0,
-                    3,
-                ));
-                e = e.or(shape_scalar(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("build-ui-object-revolutions"),
-                    &mut u.revolutions,
-                    0.1,
-                    1.0..=4.0,
-                    2,
-                ));
-            }
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-radius"),
+                &mut u.radius,
+                0.05,
+                -1.0..=1.0,
+                3,
+            ));
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-revolutions"),
+                &mut u.revolutions,
+                0.1,
+                1.0..=4.0,
+                2,
+            ));
         });
     }
     if e.changed && u != ui_now {

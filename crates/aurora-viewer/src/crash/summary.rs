@@ -285,14 +285,65 @@ const STATE_ROWS: &[(&str, &str)] = &[
     ("avatars", "Avatars"),
     ("regions", "Regions"),
     ("swapchain_10s", "Swapchain recreations in 10 s (up to a GPU loss)"),
+    ("window_state", "Window state"),
+    ("effects", "Effects on (graphics switches)"),
+    ("gpu_ms", "Last GPU frame time (ms)"),
+    ("gpu_peak_ms", "Longest GPU frame in 10 s (ms, up to a GPU loss)"),
+    ("gpu_peak_pass", "Heaviest pass of that frame"),
+    ("gpu_last_pass", "Heaviest pass of the last frame"),
+    ("uploads", "Texture uploads since the previous note (count / MB)"),
+    ("upload_peak_mb", "Largest upload of one frame (MB)"),
+    ("session_s", "Seconds since the login began"),
+    ("world_s", "Seconds in the world (absent while loading)"),
+    ("region_s", "Seconds since the region changed"),
+    ("layers", "Vulkan layers on offer"),
+    ("loss_reason", "GPU loss: reason given by wgpu"),
+    ("loss_cause", "GPU loss: what the message is about"),
+    ("loss_seen_by", "GPU loss: first seen by"),
+    ("stall_ms", "GPU stalled before the loss (ms, 0 = no stall of 2 s)"),
+    ("other_viewers", "Other Aurora viewers on this card (count / in front)"),
+    ("card_used_mb", "Card memory in use by all programs (MB)"),
+    ("card_others_mb", "Card memory in use by other programs (MB)"),
+    ("loading", "Still loading (textures in flight / awaiting upload / geometry)"),
 ];
 
-/// A state value as the watchdog writes it: a number, `n/m`, `WxH` or one
-/// of the fixed names; anything else is not published.
-fn state_value(value: &str) -> Option<String> {
-    let names = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
+/// A state value as the watchdog writes it: a number, numbers joined by
+/// `/` or `x`, a list of the effect words, or one of the fixed names;
+/// anything else is not published.
+pub(crate) fn state_value(value: &str) -> Option<String> {
+    use super::watchdog::{EFFECT_WORDS, WINDOW_STATES};
+    let names = [
+        "yes",
+        "no",
+        "unknown",
+        "other",
+        "none",
+        "device-lost",
+        "out-of-memory",
+        "timeout",
+        "callback",
+        "wait",
+        "start",
+        "demo",
+    ];
+    let screens = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
+    // the passes of `GpuElement::key`
+    let passes = ["shadows_depth", "effects", "terrain_sky", "objects", "water", "transparent", "post"];
     let numeric = |v: &str| !v.is_empty() && v.len() <= 12 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.');
-    let ok = names.contains(&value) || numeric(value) || value.split_once(['/', 'x']).is_some_and(|(a, b)| numeric(a) && numeric(b));
+    let effect = |token: &str| {
+        let word = token.trim_end_matches(|c: char| c.is_ascii_digit());
+        EFFECT_WORDS.contains(&word) && token.len() <= 24
+    };
+    let layer =
+        |token: &str| token.len() <= 48 && token.starts_with("VK_LAYER_") && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    let ok = names.contains(&value)
+        || screens.contains(&value)
+        || passes.contains(&value)
+        || WINDOW_STATES.contains(&value)
+        || numeric(value)
+        || (value.contains(['/', 'x']) && value.split(['/', 'x']).count() <= 3 && value.split(['/', 'x']).all(numeric))
+        || (value.len() <= 400 && value.split(',').all(effect))
+        || (value.len() <= 900 && value.split(',').all(layer));
     ok.then(|| value.to_owned())
 }
 
@@ -963,6 +1014,22 @@ mod tests {
     }
 
     #[test]
+    fn state_values_outside_the_fixed_words_are_not_published() {
+        for private in [
+            "Private Place",
+            "/home/someone",
+            "shadows3,secret",
+            "VK_LAYER_x y",
+            "VK_LAYER_ok,/home/x",
+            "",
+            "ao-gtao2,",
+        ] {
+            assert_eq!(state_value(private), None, "{private:?}");
+        }
+        assert!(state_value("VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus").is_some());
+    }
+
+    #[test]
     fn a_session_ended_frozen_publishes_both_threads_and_its_last_state() {
         let (dir, record) = session();
         std::fs::write(dir.join("freeze.txt"), FREEZE).unwrap();
@@ -970,7 +1037,7 @@ mod tests {
         std::fs::write(dir.join("stopped-unix.txt"), "1100").unwrap();
         std::fs::write(
             dir.join("alive.txt"),
-            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\n",
+            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\neffects=shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100,draw192\nwindow_state=background\ngpu_ms=12.5\ngpu_peak_ms=2400.0\ngpu_peak_pass=effects\nuploads=12/34.5\nsession_s=45\nregion_s=20\nloading=12/3/40\nlayers=VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus\nloss_reason=unknown\nloss_cause=device-lost\nloss_seen_by=callback\nstall_ms=2300\nother_viewers=2/1\ncard_used_mb=6100\ncard_others_mb=3200\nlayers_note=/home/someone\n",
         )
         .unwrap();
         let summary = build_at(&record, &dir, Some(10));
@@ -988,13 +1055,25 @@ mod tests {
             "| Window size | 1920x1080 |",
             "| Screen | world |",
             "| Swapchain recreations in 10 s (up to a GPU loss) | 37 |",
+            "| Effects on (graphics switches) | shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100,draw192 |",
+            "| Window state | background |",
+            "| Longest GPU frame in 10 s (ms, up to a GPU loss) | 2400.0 |",
+            "| Heaviest pass of that frame | effects |",
+            "| Seconds since the login began | 45 |",
+            "| Still loading (textures in flight / awaiting upload / geometry) | 12/3/40 |",
+            "| Vulkan layers on offer | VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus |",
+            "| GPU loss: first seen by | callback |",
+            "| GPU stalled before the loss (ms, 0 = no stall of 2 s) | 2300 |",
+            "| Other Aurora viewers on this card (count / in front) | 2/1 |",
+            "| Card memory in use by all programs (MB) | 6100 |",
+            "| Card memory in use by other programs (MB) | 3200 |",
         ] {
             assert!(body.contains(expected), "missing {expected:?} in\n{body}");
         }
         // One module list, each module once.
         assert_eq!(body.matches("aurora_viewer id=").count(), 1, "{body}");
         assert!(!body.contains("End of session"), "{body}");
-        for private in ["Private", "secret", "region_name"] {
+        for private in ["Private", "secret", "region_name", "someone", "layers_note"] {
             assert!(!body.contains(private), "leaked {private}:\n{body}");
         }
         std::fs::remove_dir_all(dir).unwrap();

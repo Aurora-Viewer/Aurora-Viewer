@@ -104,7 +104,18 @@ What each part tells the one who fixes it:
   preset, memory, video memory used / budget, texture memory pressure,
   objects, avatars, regions, as noted every 2 seconds, and the swapchain
   recreations of the last 10 seconds (window resizes among them), frozen
-  when the graphics card is lost.
+  when the graphics card is lost. It also tells the cause of a GPU loss
+  apart from another: the graphics switches on (shadows level, contact
+  shadows, ambient occlusion, SSR, anti-aliasing, bloom, indirect light,
+  probes, render scale, draw distance, photo, VR), the window state
+  (focused, background, minimized, occluded), the latest GPU frame time,
+  the longest one of the last 10 seconds and the pass that took most of it,
+  the texture uploads (count, MB), the seconds since the login began, in
+  the world and since the region changed, what was still loading, the
+  Vulkan layers on offer (`VK_LAYER_*` names), how the loss was seen (the
+  reason wgpu gave, the class of its message, the first place that saw it),
+  how long the GPU had held the render thread, the other Aurora viewers on the card (from the viewer registry, not in demo),
+  and the card's memory in use by all programs and by the others (Windows). Fixed words and numbers only.
 - **Recent warnings and errors**: the last 20, as
   `-<seconds before the end> s | level | Rust module | kind`, repeats folded
   (`(x3)`); the messages themselves stay in the local log.
