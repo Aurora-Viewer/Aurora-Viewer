@@ -118,7 +118,7 @@ fn list_files(dir: &Path, ext: &str, bytes: std::ops::Range<u64>, most: usize, k
 
 /// A mesh whose header reads, rigged (with a skin) or not.
 fn mesh_with_skin(path: &Path, skin: bool) -> bool {
-    std::fs::read(path)
+    crate::cache::read(path)
         .ok()
         .and_then(|d| aurora_assets::parse_mesh_header(&d).ok())
         .is_some_and(|h| h.skin.is_some() == skin && h.lods.iter().any(Option::is_some))

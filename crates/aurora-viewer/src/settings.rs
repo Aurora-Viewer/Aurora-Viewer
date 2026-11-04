@@ -2178,6 +2178,15 @@ pub fn cache_dir() -> PathBuf {
     for_mode(default_cache_root())
 }
 
+/// The folder of the sealed asset cache (cache.rs), inside [`cache_dir`].
+/// A folder of its own: the earlier versions keep files of another format
+/// right in [`cache_dir`], so that one never reads the other's files.
+pub const ASSET_STORE: &str = "store";
+
+pub fn asset_cache_dir() -> PathBuf {
+    cache_dir().join(ASSET_STORE)
+}
+
 pub(crate) fn default_cache_root() -> PathBuf {
     directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
         .map(|d| d.cache_dir().to_path_buf())

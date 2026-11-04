@@ -20,6 +20,7 @@ mod blender_live;
 // mod bug_report;
 mod build;
 mod cache;
+mod cache_key;
 mod cache_location;
 mod camera;
 mod cli;
