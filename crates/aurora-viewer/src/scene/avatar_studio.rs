@@ -14,6 +14,47 @@ const PODIUM_RADIUS: f32 = 1.15;
 const PODIUM_DEPTH: f32 = 0.35;
 const PODIUM_BEVEL: f32 = 0.055;
 
+/// T-pose follows the shaped rest skeleton, as reset-joint posing does
+/// (FSPoserAnimator::resetJoint, indra/newview/fsposeranimator.cpp).
+/// Aurora's A-pose lowers each straight arm 45 degrees. Apply only to the
+/// final displayed palette, never to animation signals or held blend state.
+pub(super) fn inspection_pose(
+    rig: &super::anim::Rig,
+    base: &super::anim::SkeletonBase,
+    pose: crate::avatar_studio::Pose,
+) -> Option<Vec<Mat4>> {
+    use crate::avatar_studio::Pose;
+    if pose == Pose::Animated {
+        return None;
+    }
+    let mut rotations = rig.local_rot.clone();
+    if pose == Pose::A {
+        for (name, angle) in [
+            ("mShoulderLeft", -std::f32::consts::FRAC_PI_4),
+            ("mShoulderRight", std::f32::consts::FRAC_PI_4),
+        ] {
+            if let Some(&joint) = rig.names.get(name) {
+                rotations[joint] *= Quat::from_rotation_x(angle);
+            }
+        }
+    }
+    Some(rig.world_with(&rotations, Vec3::ZERO, &base.local_pos, &base.scale))
+}
+
+/// Applied on the existing pose worker, after ordinary animation and physics.
+pub(super) fn write_inspection_pose(
+    rig: &super::anim::Rig,
+    base: &super::anim::SkeletonBase,
+    pose: crate::avatar_studio::Pose,
+    out: &mut [[[f32; 4]; 4]],
+) {
+    if let Some(pose) = inspection_pose(rig, base, pose) {
+        for (dst, matrix) in out.iter_mut().zip(pose) {
+            *dst = matrix.to_cols_array_2d();
+        }
+    }
+}
+
 /// The water passes use separate terrain lists, including chunks outside
 /// the main camera's frustum. Hide them with the main-view terrain so the
 /// local ocean cannot reflect or refract the region's invisible land.
@@ -186,6 +227,32 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspection_poses_keep_shaped_feet_and_lower_both_arms_symmetrically() {
+        use crate::avatar_studio::Pose;
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig = &lib.rig;
+        let mut base = super::super::anim::SkeletonBase {
+            local_pos: rig.local_pos.clone(),
+            scale: rig.scale.clone(),
+        };
+        base.local_pos[rig.names["mShoulderLeft"]].y += 0.03;
+        base.local_pos[rig.names["mShoulderRight"]].y -= 0.03;
+        let t = inspection_pose(rig, &base, Pose::T).expect("T-pose");
+        let a = inspection_pose(rig, &base, Pose::A).expect("A-pose");
+        assert!(inspection_pose(rig, &base, Pose::Animated).is_none());
+        for side in ["Left", "Right"] {
+            let shoulder = rig.names[&format!("mShoulder{side}")];
+            let wrist = rig.names[&format!("mWrist{side}")];
+            let t_arm = t[wrist].w_axis.truncate() - t[shoulder].w_axis.truncate();
+            let a_arm = a[wrist].w_axis.truncate() - a[shoulder].w_axis.truncate();
+            assert!(a_arm.z < t_arm.z - 0.2, "{side} arm points down");
+            assert!((t_arm.length() - a_arm.length()).abs() < 1e-5);
+            let foot = rig.names[&format!("mFoot{side}")];
+            assert!(a[foot].abs_diff_eq(t[foot], 1e-6));
+        }
+    }
 
     fn first_hit(vertices: &[Vertex], indices: &[u16], origin: Vec3, direction: Vec3) -> Option<f32> {
         indices

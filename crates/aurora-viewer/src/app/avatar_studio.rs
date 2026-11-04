@@ -2,7 +2,7 @@
 
 use super::App;
 use crate::{
-    avatar_studio::{Studio, Transition, View},
+    avatar_studio::{Lighting, Pose, Studio, Transition, View},
     scene::Scene,
 };
 use aurora_render::{FrameParams, PointLight, Renderer};
@@ -72,8 +72,7 @@ impl App {
                 self.avatar_studio.enter(self.world.agent.yaw, height);
                 self.avatar_studio.floor_offset = floor.z - self.studio_root().z;
                 if self.demo && std::env::var("AURORA_DEMO_AVATAR_STUDIO").is_ok_and(|mode| mode == "pedestal") {
-                    self.avatar_studio.pan_vertical(100000.0, 900.0);
-                    self.avatar_studio.zoom(1.0);
+                    self.avatar_studio.inspect_feet();
                 }
             } else {
                 self.avatar_studio = Studio::default();
@@ -83,7 +82,26 @@ impl App {
             log::info!("avatar studio: {}", if active { "entered" } else { "left" });
         }
         let active = self.avatar_studio.active;
+        if self.demo
+            && active
+            && let Ok(mode) = std::env::var("AURORA_DEMO_AVATAR_STUDIO")
+        {
+            match mode.as_str() {
+                "t-pose" => self.avatar_studio.pose = Pose::T,
+                "a-pose" => self.avatar_studio.pose = Pose::A,
+                "environment" => self.avatar_studio.lighting = Lighting::Environment,
+                "pose-cycle" => {
+                    self.avatar_studio.pose = match self.frame_count {
+                        0..800 => Pose::T,
+                        800..960 => Pose::A,
+                        _ => Pose::Animated,
+                    }
+                }
+                _ => {}
+            }
+        }
         self.world.avatar_studio = active;
+        self.scene.studio_pose = if active { self.avatar_studio.pose } else { Pose::Animated };
         if !self.focused || self.studio_transition.busy() {
             self.avatar_studio.rotating = false;
             self.avatar_studio.panning = false;
@@ -160,47 +178,52 @@ impl App {
     }
 
     pub(super) fn studio_render(&mut self, renderer: &mut Renderer, fp: &mut FrameParams, view: View) {
-        let rotation = Quat::from_rotation_z(self.avatar_studio.yaw);
-        let lights = [
-            (Vec3::new(2.8, -2.5, 3.5), Vec3::splat(2.8)),
-            (Vec3::new(1.5, 3.0, 2.8), Vec3::new(1.2, 1.3, 1.5)),
-            (Vec3::new(-2.0, 0.5, 3.5), Vec3::splat(1.8)),
-        ];
-        fp.lights = lights
-            .into_iter()
-            .map(|(position, color)| PointLight {
-                position: view.floor + rotation * position,
-                color,
-                radius: 12.0,
-                falloff: 0.5,
-                projector: None,
-            })
-            .collect();
+        let studio_lighting = self.avatar_studio.lighting == Lighting::Studio;
+        if studio_lighting {
+            let rotation = Quat::from_rotation_z(self.avatar_studio.yaw);
+            let lights = [
+                (Vec3::new(2.8, -2.5, 3.5), Vec3::splat(2.8)),
+                (Vec3::new(1.5, 3.0, 2.8), Vec3::new(1.2, 1.3, 1.5)),
+                (Vec3::new(-2.0, 0.5, 3.5), Vec3::splat(1.8)),
+            ];
+            fp.lights = lights
+                .into_iter()
+                .map(|(position, color)| PointLight {
+                    position: view.floor + rotation * position,
+                    color,
+                    radius: 12.0,
+                    falloff: 0.5,
+                    projector: None,
+                })
+                .collect();
+        }
         fp.spot_shadows = [None; 2];
         fp.probes = Default::default();
         fp.mirror = None;
         fp.shadows = false;
         fp.water_height = view.floor.z + crate::scene::avatar_studio::WATER_OFFSET;
-        fp.water.fog_color = Vec3::new(0.025, 0.04, 0.075);
-        fp.water.fog_density = 2.0;
-        // Same palette and curtain motion as the login illustration, rendered
-        // in 3D so the existing water path can reflect it.
-        fp.sky.studio_aurora = [self.palette.navy, self.palette.teal, self.palette.violet, self.palette.indigo]
-            .map(|c| [f32::from(c.r()) / 255.0, f32::from(c.g()) / 255.0, f32::from(c.b()) / 255.0, 0.0]);
-        fp.sky.studio_aurora[0][3] = 1.0;
-        fp.sky.studio_aurora[1][3] = self.avatar_studio.yaw;
-        fp.sky.studio_aurora[2][3] = if self.settings.reduce_motion {
-            0.0
-        } else {
-            self.start.elapsed().as_secs_f32()
-        };
         let effect_age = self.studio_effect_age();
+        if studio_lighting {
+            fp.water.fog_color = Vec3::new(0.025, 0.04, 0.075);
+            fp.water.fog_density = 2.0;
+            // Same palette and curtain motion as the login illustration, rendered
+            // in 3D so the existing water path can reflect it.
+            fp.sky.studio_aurora = [self.palette.navy, self.palette.teal, self.palette.violet, self.palette.indigo]
+                .map(|c| [f32::from(c.r()) / 255.0, f32::from(c.g()) / 255.0, f32::from(c.b()) / 255.0, 0.0]);
+            fp.sky.studio_aurora[0][3] = 1.0;
+            fp.sky.studio_aurora[1][3] = self.avatar_studio.yaw;
+            fp.sky.studio_aurora[2][3] = if self.settings.reduce_motion {
+                0.0
+            } else {
+                self.start.elapsed().as_secs_f32()
+            };
+            fp.sky.star_brightness = 250.0;
+            fp.fog_density = 0.0;
+            fp.exposure = 1.0;
+            fp.exposure_lock = true;
+            fp.bloom = 0.0;
+        }
         fp.sky.studio_aurora[3][3] = effect_age.map_or(0.0, Transition::white);
-        fp.sky.star_brightness = 250.0;
-        fp.fog_density = 0.0;
-        fp.exposure = 1.0;
-        fp.exposure_lock = true;
-        fp.bloom = 0.0;
         fp.dof = None;
         fp.cutout = false;
         let lists = &mut self.scene.lists;
@@ -237,7 +260,7 @@ impl App {
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
             .order(egui::Order::Middle)
             .show(ctx, |ui| {
-                crate::ui::widgets::overlay(ui, &self.palette, egui::Margin::same(10), |ui| {
+                crate::ui::widgets::island(ui, &self.palette, |ui| {
                     let controls = [
                         (
                             "rotate-360",
@@ -269,16 +292,16 @@ impl App {
                     };
                     let gap = ui.spacing().item_spacing.x;
                     let legend_width =
-                        controls.iter().map(|(_, label, _)| 60.0 + gap + width(label)).sum::<f32>() + 3.0 * (6.0 + 2.0 * gap);
+                        controls.iter().map(|(_, label, _)| 45.0 + gap + width(label)).sum::<f32>() + 3.0 * (6.0 + 2.0 * gap);
                     let title = aurora_i18n::tr!("avatar-studio-title");
                     let reset_label = aurora_i18n::tr!("common-reset");
                     let exit_label = aurora_i18n::tr!("avatar-studio-exit");
                     ui.horizontal(|ui| {
-                        ui.set_height(32.0);
+                        ui.set_height(crate::ui::bars::islands::SLOT);
                         ui.strong(title);
                         ui.add_space(8.0);
                         ui.allocate_ui_with_layout(
-                            egui::vec2(legend_width, 32.0),
+                            egui::vec2(legend_width, crate::ui::bars::islands::SLOT),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
                                 for (i, (icon, label, tip)) in controls.into_iter().enumerate() {
@@ -287,13 +310,26 @@ impl App {
                                         // passive hints; use the shared divider treatment.
                                         crate::ui::widgets::divider(ui, &self.palette);
                                     }
-                                    let (rect, response) = ui.allocate_exact_size(egui::vec2(60.0, 32.0), egui::Sense::hover());
+                                    let (rect, response) = ui.allocate_exact_size(egui::vec2(45.0, 24.0), egui::Sense::hover());
                                     studio_mouse_hint(ui.painter(), rect, i, icon, &self.palette);
                                     response.union(ui.label(label)).on_hover_text(tip);
                                 }
                             },
                         );
                         ui.add_space(8.0);
+                        let demo_menu = self.demo.then(|| std::env::var("AURORA_DEMO_AVATAR_STUDIO").unwrap_or_default());
+                        studio_pose_menu(
+                            ui,
+                            &self.palette,
+                            &mut self.avatar_studio.pose,
+                            demo_menu.as_deref() == Some("pose-menu") && self.frame_count == 800,
+                        );
+                        studio_lighting_menu(
+                            ui,
+                            &self.palette,
+                            &mut self.avatar_studio.lighting,
+                            demo_menu.as_deref() == Some("lighting-menu") && self.frame_count == 800,
+                        );
                         reset = ui.button(reset_label).clicked();
                         if ui.button(exit_label).clicked() {
                             self.panels.avatar_studio = false;
@@ -303,8 +339,12 @@ impl App {
             });
         if reset {
             let offset = self.avatar_studio.floor_offset;
+            let pose = self.avatar_studio.pose;
+            let lighting = self.avatar_studio.lighting;
             self.avatar_studio.enter(self.avatar_studio.facing, self.studio_subject().1);
             self.avatar_studio.floor_offset = offset;
+            self.avatar_studio.pose = pose;
+            self.avatar_studio.lighting = lighting;
         }
     }
 }
@@ -312,7 +352,8 @@ impl App {
 /// Button highlights reuse clipped Tabler masks, keeping the mouse silhouette
 /// and movement glyphs consistent with the viewer's camera controls.
 fn studio_mouse_hint(painter: &egui::Painter, rect: egui::Rect, button: usize, action: &str, p: &crate::theme::Palette) {
-    let mouse = egui::Rect::from_min_size(rect.min, egui::Vec2::splat(32.0));
+    let scale = rect.height() / 32.0;
+    let mouse = egui::Rect::from_min_size(rect.min, egui::Vec2::splat(32.0 * scale));
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     let paint = |painter: &egui::Painter, name: &str, rect, tint| {
         if let Some(texture) = crate::ui::icons::global(name) {
@@ -340,10 +381,65 @@ fn studio_mouse_hint(painter: &egui::Painter, rect: egui::Rect, button: usize, a
             p.violet_light,
         );
         if button == 3 {
-            let scroll = egui::Rect::from_center_size(mouse.right_center() - egui::vec2(2.0, 0.0), egui::vec2(10.0, 22.0));
+            let scroll = egui::Rect::from_center_size(mouse.right_center() - egui::vec2(2.0, 0.0) * scale, egui::vec2(10.0, 22.0) * scale);
             paint(painter, "arrows-vertical", scroll, p.violet_light);
         }
     }
-    let movement = egui::Rect::from_center_size(rect.right_center() - egui::vec2(10.0, 0.0), egui::Vec2::splat(20.0));
+    let movement = egui::Rect::from_center_size(rect.right_center() - egui::vec2(10.0, 0.0) * scale, egui::Vec2::splat(20.0 * scale));
     paint(painter, action, movement, p.ink);
+}
+
+fn studio_pose_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, pose: &mut Pose, open: bool) {
+    use crate::ui::{menu, widgets};
+    let response = widgets::action_button(
+        ui,
+        p,
+        "chevron-down",
+        aurora_i18n::tr!("avatar-studio-pose"),
+        widgets::ActionKind::Flat,
+        egui::vec2(0.0, crate::ui::bars::islands::SLOT),
+    );
+    if open {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
+    menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        for (value, icon, label) in [
+            (Pose::Animated, "walk", aurora_i18n::tr!("avatar-studio-pose-animated")),
+            (Pose::T, "man-filled", aurora_i18n::tr!("avatar-studio-pose-t")),
+            (Pose::A, "man-filled", aurora_i18n::tr!("avatar-studio-pose-a")),
+        ] {
+            if menu::check(ui, p, icon, label, *pose == value, true) {
+                *pose = value;
+            }
+        }
+    });
+}
+
+fn studio_lighting_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, lighting: &mut Lighting, open: bool) {
+    use crate::ui::{menu, widgets};
+    let response = widgets::action_button(
+        ui,
+        p,
+        "chevron-down",
+        aurora_i18n::tr!("avatar-studio-lighting"),
+        widgets::ActionKind::Flat,
+        egui::vec2(0.0, crate::ui::bars::islands::SLOT),
+    );
+    if open {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
+    menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        for (value, icon, label) in [
+            (Lighting::Studio, "bulb-filled", aurora_i18n::tr!("avatar-studio-lighting-studio")),
+            (
+                Lighting::Environment,
+                "sun-filled",
+                aurora_i18n::tr!("avatar-studio-lighting-environment"),
+            ),
+        ] {
+            if menu::check(ui, p, icon, label, *lighting == value, true) {
+                *lighting = value;
+            }
+        }
+    });
 }

@@ -6,13 +6,29 @@ use glam::{Mat4, Quat, Vec2, Vec3};
 
 pub const FOV: f32 = 0.65;
 pub const NEAR: f32 = 0.025;
-const MIN_DISTANCE: f32 = 0.35;
+// Numerical separation only: no avatar-framing zoom limit.
+const MIN_DISTANCE: f32 = 0.001;
 const RESPONSE: f32 = 0.09;
 
 const FADE_OUT: f32 = 0.12;
 const FADE_IN: f32 = 0.18;
 const WHITE_HOLD: f32 = FADE_IN + 0.08;
 const WHITE_REVEAL: f32 = 0.85;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pose {
+    #[default]
+    Animated,
+    T,
+    A,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lighting {
+    #[default]
+    Studio,
+    Environment,
+}
 
 #[derive(Default)]
 enum Fade {
@@ -93,6 +109,8 @@ impl Transition {
 
 #[derive(Default)]
 pub struct Studio {
+    pub pose: Pose,
+    pub lighting: Lighting,
     pub rotating: bool,
     pub panning: bool,
     pub panning_plane: bool,
@@ -151,12 +169,13 @@ impl Studio {
         let right = rotation * Vec3::Y;
         let up = rotation * Vec3::new(-0.08, 0.0, 1.0).normalize();
         let target = floor + Vec3::Z * self.focus_height + right * self.pan.x + up * self.pan.y;
-        let eye = target + rotation * Vec3::new(self.distance, 0.0, self.distance * 0.08);
+        let offset = rotation * Vec3::new(self.distance, 0.0, self.distance * 0.08);
+        let eye = target + offset;
         View {
             floor,
             eye,
             target,
-            view: glam::camera::rh::view::look_to_mat4(eye, (target - eye).normalize(), Vec3::Z),
+            view: glam::camera::rh::view::look_to_mat4(eye, -offset.normalize(), Vec3::Z),
             proj: glam::camera::rh::proj::directx::perspective_infinite_reverse(FOV, aspect.max(0.1), NEAR),
         }
     }
@@ -167,7 +186,10 @@ impl Studio {
     pub fn pan_vertical(&mut self, dy: f32, viewport_height: f32) {
         if dy.is_finite() && viewport_height.is_finite() && viewport_height >= 1.0 {
             let metres_per_pixel = 2.0 * self.distance * (FOV * 0.5).tan() / viewport_height;
-            self.target_height = (self.target_height - dy * metres_per_pixel).clamp(0.05, self.height);
+            let next = self.target_height - dy * metres_per_pixel;
+            if next.is_finite() {
+                self.target_height = next;
+            }
         }
     }
 
@@ -177,16 +199,26 @@ impl Studio {
     pub fn pan_view(&mut self, dx: f32, dy: f32, viewport_height: f32) {
         if dx.is_finite() && dy.is_finite() && viewport_height.is_finite() && viewport_height >= 1.0 {
             let metres_per_pixel = 2.0 * self.distance * (FOV * 0.5).tan() / viewport_height;
-            self.target_pan = (self.target_pan + Vec2::new(-dx, dy) * metres_per_pixel).clamp_length_max(self.height * 2.0);
+            let next = self.target_pan + Vec2::new(-dx, dy) * metres_per_pixel;
+            if next.is_finite() {
+                self.target_pan = next;
+            }
         }
     }
 
     /// The wheel changes distance alone, regardless of the pointer location.
     pub fn zoom(&mut self, steps: f32) {
         if steps.is_finite() {
-            self.target_distance =
-                (self.target_distance * (-steps.clamp(-10.0, 10.0) * 0.15).exp()).clamp(MIN_DISTANCE, self.full_distance);
+            let next = (f64::from(self.target_distance) * (-f64::from(steps) * 0.15).exp()) as f32;
+            if next.is_finite() {
+                self.target_distance = next.max(MIN_DISTANCE);
+            }
         }
+    }
+
+    pub fn inspect_feet(&mut self) {
+        self.target_height = 0.08;
+        self.zoom(1.0);
     }
 
     pub fn update(&mut self, dt: f32) {
@@ -342,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn inspection_is_bounded_and_reset_is_repeatable() {
+    fn inspection_has_no_framing_limits_and_reset_is_repeatable() {
         let mut studio = Studio::default();
         studio.enter(0.0, 1.8);
         let original = studio.view(Vec3::ZERO, 1.5);
@@ -355,12 +387,20 @@ mod tests {
         }
         assert!(studio.view(Vec3::ZERO, 1.5).eye.is_finite());
         assert!(studio.distance >= MIN_DISTANCE);
-        assert!(studio.focus_height >= 0.05);
+        assert!(studio.distance < 0.01, "zoom reaches beyond the former 35 cm limit");
+        assert!(studio.focus_height < -1.8, "focus can move below the avatar");
+        studio.enter(0.0, 1.8);
+        studio.pan_vertical(-100000.0, 900.0);
+        studio.pan_view(100000.0, 100000.0, 900.0);
+        assert!(studio.target_height > studio.height);
+        assert!(studio.target_pan.length() > studio.height * 2.0);
         let focus = studio.target_height;
-        for _ in 0..100 {
+        for _ in 0..5 {
             studio.zoom(-10.0);
             studio.update(1.0 / 60.0);
         }
+        assert!(studio.target_distance > studio.full_distance);
+        assert!(studio.view(Vec3::ZERO, 1.5).view.is_finite());
         assert_eq!(studio.target_height, focus, "zoom out does not change the chosen focus");
         studio.enter(0.0, 1.8);
         assert_eq!(studio.view(Vec3::ZERO, 1.5).eye, original.eye);

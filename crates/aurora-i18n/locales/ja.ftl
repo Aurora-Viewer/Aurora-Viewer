@@ -1,5 +1,12 @@
 language-name = 日本語
 avatar-studio-title = アバタースタジオ
+avatar-studio-pose = ポーズ
+avatar-studio-pose-animated = ＡＯ／インワールド
+avatar-studio-pose-t = Ｔポーズ
+avatar-studio-pose-a = Ａポーズ
+avatar-studio-lighting = 照明
+avatar-studio-lighting-studio = スタジオ
+avatar-studio-lighting-environment = 現在の環境
 avatar-studio-rotate-tip = マウスの左ボタンを押したままドラッグすると、アバターの周りを回転します。
 avatar-studio-focus-tip = マウスの右ボタンを押したまま上下にドラッグすると、注視点の高さを調整できます。
 avatar-studio-pan-tip = マウスの中央ボタンを押したままドラッグすると、視点を移動できます。

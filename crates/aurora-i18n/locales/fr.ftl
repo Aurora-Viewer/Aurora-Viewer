@@ -1,5 +1,12 @@
 language-name = Français
 avatar-studio-title = Studio avatar
+avatar-studio-pose = Pose
+avatar-studio-pose-animated = AO / En monde
+avatar-studio-pose-t = Pose en T
+avatar-studio-pose-a = Pose en A
+avatar-studio-lighting = Éclairage
+avatar-studio-lighting-studio = Studio
+avatar-studio-lighting-environment = Environnement actuel
 avatar-studio-rotate-tip = Maintenez le bouton gauche de la souris et faites glisser pour tourner autour de votre avatar.
 avatar-studio-focus-tip = Maintenez le bouton droit de la souris et faites glisser vers le haut ou le bas pour régler la hauteur du regard.
 avatar-studio-pan-tip = Maintenez le bouton du milieu de la souris et faites glisser pour déplacer la vue.

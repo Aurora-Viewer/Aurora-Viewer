@@ -846,6 +846,7 @@ pub struct Scene {
     photo_isolation_version: u64,
     studio_visible: bool,
     pub studio_stage: avatar_studio::Stage,
+    pub studio_pose: crate::avatar_studio::Pose,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
     /// not at the clock's.
@@ -1524,6 +1525,7 @@ impl Scene {
             photo_isolation_version: 0,
             studio_visible: false,
             studio_stage: Default::default(),
+            studio_pose: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
             give_marks: Default::default(),
@@ -5538,6 +5540,11 @@ impl Scene {
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
         let neutral_owner = (self.neutral_pose_test == Some(true)).then_some(world.agent_id);
+        let studio_pose = if world.avatar_studio {
+            self.studio_pose
+        } else {
+            crate::avatar_studio::Pose::Animated
+        };
         let physics_rig = self.physics_rig.clone();
         frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
             // (the anchors after the joints are the sync's)
@@ -5565,6 +5572,9 @@ impl Scene {
                 for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                     *dst = matrix.to_cols_array_2d();
                 }
+            }
+            if *owner == world.agent_id {
+                avatar_studio::write_inspection_pose(&rig, base, studio_pose, chunk);
             }
         });
         drop(jobs);
@@ -5616,6 +5626,9 @@ impl Scene {
                     for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                         *dst = matrix.to_cols_array_2d();
                     }
+                }
+                if *owner == world.agent_id {
+                    avatar_studio::write_inspection_pose(&rig, base, studio_pose, chunk);
                 }
             });
         }
@@ -6381,6 +6394,83 @@ mod tests {
             Scene::object_geom_key(&Object::from_update(1, update), 3),
             Some(GeomKey::Mesh { id: map, lod: 3 })
         );
+    }
+
+    #[test]
+    fn studio_pose_is_local_and_releasing_it_restores_the_running_animation() {
+        use crate::avatar_studio::Pose;
+        let lib = Arc::new(AvatarLibrary::load());
+        let rig = lib.rig.clone();
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        let mut other = crate::demo::action_avatar(false);
+        other.local_id = 9001;
+        other.full_id = crate::demo::DEMO_LOUP;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false), other],
+        });
+        let animation_id = Uuid::from_u128(0xaaaa1235);
+        let mut animation = crate::demo::deform::animation(&rig);
+        animation.joints = vec![aurora_assets::anim::JointMotion {
+            joint_name: "mPelvis".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: vec![
+                aurora_assets::anim::PosKey {
+                    time: 0.0,
+                    position: Vec3::Z * 0.1,
+                },
+                aurora_assets::anim::PosKey {
+                    time: 2.0,
+                    position: Vec3::Z * 0.5,
+                },
+            ],
+        }];
+        animation.looping = true;
+        animation.ease_in = 0.0;
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.anims.insert(animation_id, Arc::new(anim::BoundAnim::bind(animation, &rig)));
+        for avatar in [world.agent_id, crate::demo::DEMO_LOUP] {
+            scene.palette_base(avatar);
+            world.apply(NetEvent::AvatarAnimations {
+                sources: Vec::new(),
+                avatar,
+                anims: vec![(animation_id, 1)],
+            });
+        }
+        let now = Instant::now();
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        let signals = world.animations_of(&world.agent_id).to_vec();
+        let foot = rig.names["mFootLeft"];
+        let before = world.avatar_poses[&world.agent_id][foot];
+        world.avatar_studio = true;
+        for (i, pose) in [Pose::T, Pose::A].into_iter().enumerate() {
+            scene.studio_pose = pose;
+            scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(300 + i as u64 * 300));
+            let base = &scene.skeletons[&world.agent_id].base;
+            let expected = avatar_studio::inspection_pose(&rig, base, pose).expect("inspection pose");
+            assert!(world.avatar_poses[&world.agent_id][foot].abs_diff_eq(expected[foot] * rig.default_world_inv[foot], 1e-5));
+            assert!(!world.avatar_poses[&crate::demo::DEMO_LOUP][foot].abs_diff_eq(world.avatar_poses[&world.agent_id][foot], 1e-4));
+            assert_eq!(world.animations_of(&world.agent_id), signals);
+        }
+        scene.studio_pose = Pose::Animated;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(900));
+        let resumed = world.avatar_poses[&world.agent_id][foot];
+        assert!(resumed.abs_diff_eq(world.avatar_poses[&crate::demo::DEMO_LOUP][foot], 1e-5));
+        assert!(
+            !resumed.abs_diff_eq(before, 1e-4),
+            "animation progressed while the studio pose was displayed"
+        );
+        assert_eq!(world.animations_of(&world.agent_id), signals);
+        scene.studio_pose = Pose::T;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(1200));
+        // Leaving releases the override even if the saved menu still says T.
+        world.avatar_studio = false;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(1500));
+        assert!(world.avatar_poses[&world.agent_id][foot].abs_diff_eq(world.avatar_poses[&crate::demo::DEMO_LOUP][foot], 1e-5));
+        assert_eq!(world.animations_of(&world.agent_id), signals);
     }
 
     #[test]
