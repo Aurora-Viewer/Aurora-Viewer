@@ -24,7 +24,7 @@ impl App {
         let id = &self.world.agent_id;
         let root = self.studio_root();
         let feet = ["mFootLeft", "mFootRight"].map(|name| self.scene.joint_world(&self.world, id, name, now));
-        let bottom = feet.into_iter().flatten().map(|p| p.z).reduce(f32::min).unwrap_or(root.z - 0.9) - 0.06;
+        let bottom = feet.into_iter().flatten().map(|p| p.z).reduce(f32::min).unwrap_or(root.z - 0.9) - crate::avatar_studio::SOLE_HEIGHT;
         let top = self.scene.joint_world(&self.world, id, "mHead", now).map_or(root.z + 0.85, |p| p.z) + 0.2;
         (root.with_z(bottom), (top - bottom).clamp(0.5, 6.0))
     }
@@ -71,6 +71,9 @@ impl App {
                 let (floor, height) = self.studio_subject();
                 self.avatar_studio.enter(self.world.agent.yaw, height);
                 self.avatar_studio.floor_offset = floor.z - self.studio_root().z;
+                if self.demo && std::env::var("AURORA_DEMO_AVATAR_STUDIO").is_ok_and(|mode| mode == "grounding") {
+                    self.avatar_studio.floor_offset -= 1.25;
+                }
                 if self.demo && std::env::var("AURORA_DEMO_AVATAR_STUDIO").is_ok_and(|mode| mode == "pedestal") {
                     self.avatar_studio.inspect_feet();
                 }
@@ -89,6 +92,7 @@ impl App {
             match mode.as_str() {
                 "t-pose" => self.avatar_studio.pose = Pose::T,
                 "a-pose" => self.avatar_studio.pose = Pose::A,
+                "grounding" => self.avatar_studio.pose = Pose::A,
                 "environment" => self.avatar_studio.lighting = Lighting::Environment,
                 "pose-cycle" => {
                     self.avatar_studio.pose = match self.frame_count {
@@ -102,22 +106,69 @@ impl App {
         }
         self.world.avatar_studio = active;
         self.scene.studio_pose = if active { self.avatar_studio.pose } else { Pose::Animated };
+        self.scene.studio_floor_offset = self.avatar_studio.floor_offset;
         if !self.focused || self.studio_transition.busy() {
             self.avatar_studio.rotating = false;
             self.avatar_studio.panning = false;
             self.avatar_studio.panning_plane = false;
         }
         self.avatar_studio.update(dt);
+        self.studio_photo_frame(renderer);
+    }
+
+    pub(super) fn studio_photo_frame(&mut self, renderer: &mut Renderer) {
+        let wanted = self.avatar_studio.active && self.viewfinder_on() && self.in_world() && !self.world.teleporting;
+        if wanted && self.studio_photo_session.is_none() {
+            if let Some(view) = self.studio_view(1.0) {
+                self.studio_photo_session = Some(crate::avatar_studio::PhotoSession::enter(
+                    &mut self.camera,
+                    &self.world.agent,
+                    &self.settings.camera,
+                    view,
+                ));
+            }
+        } else if !wanted && let Some(session) = self.studio_photo_session.take() {
+            session.restore(&mut self.camera, &mut self.world.agent);
+            if self.world.teleporting || !self.in_world() {
+                self.camera.snap();
+            }
+        } else {
+            return;
+        }
+        self.avatar_studio.rotating = false;
+        self.avatar_studio.panning = false;
+        self.avatar_studio.panning_plane = false;
+        self.right_drag = false;
+        self.mouse_mode = super::MouseMode::None;
+        self.set_mouselook_grab(self.camera.mouselook());
+        renderer.cut_motion_history();
+    }
+
+    pub(super) fn studio_agent_controls(&self) -> aurora_net::AgentControls {
+        self.studio_photo_session.as_ref().map_or_else(
+            || self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance),
+            |session| session.controls(&self.world.agent, &self.input, self.settings.draw_distance),
+        )
     }
 
     pub(super) fn studio_view(&self, aspect: f32) -> Option<View> {
         self.avatar_studio.active.then(|| {
             let root = self.studio_root();
-            self.avatar_studio.view(root + Vec3::Z * self.avatar_studio.floor_offset, aspect)
+            let mut view = self.avatar_studio.view(root + Vec3::Z * self.avatar_studio.floor_offset, aspect);
+            if self.studio_photo_session.is_some() {
+                view.eye = self.camera.position;
+                view.target = self.camera.target;
+                view.view = self.camera.view();
+                view.proj = self.camera.proj(aspect);
+            }
+            view
         })
     }
 
     pub(super) fn studio_mouse(&mut self, button: MouseButton, pressed: bool, over_ui: bool) -> bool {
+        if self.viewfinder_on() {
+            return false;
+        }
         if self.studio_transition.busy() && !over_ui && matches!(button, MouseButton::Left | MouseButton::Right | MouseButton::Middle) {
             return true;
         }
@@ -141,6 +192,9 @@ impl App {
     }
 
     pub(super) fn studio_scroll(&mut self, steps: f32) -> bool {
+        if self.viewfinder_on() {
+            return false;
+        }
         if self.studio_transition.busy() {
             return true;
         }
@@ -219,13 +273,17 @@ impl App {
             };
             fp.sky.star_brightness = 250.0;
             fp.fog_density = 0.0;
-            fp.exposure = 1.0;
-            fp.exposure_lock = true;
-            fp.bloom = 0.0;
+            if !self.viewfinder_on() {
+                fp.exposure = 1.0;
+                fp.exposure_lock = true;
+                fp.bloom = 0.0;
+            }
         }
         fp.sky.studio_aurora[3][3] = effect_age.map_or(0.0, Transition::white);
-        fp.dof = None;
-        fp.cutout = false;
+        if !self.viewfinder_on() {
+            fp.dof = None;
+            fp.cutout = false;
+        }
         let lists = &mut self.scene.lists;
         crate::scene::avatar_studio::hide_region_terrain(lists);
         lists.water.clear();
@@ -248,11 +306,13 @@ impl App {
                 self.settings.max_particles.min(96) as usize,
             );
         }
-        self.scene.studio_stage.append(renderer, lists, view.floor, self.avatar_studio.yaw);
+        if !fp.cutout {
+            self.scene.studio_stage.append(renderer, lists, view.floor, self.avatar_studio.yaw);
+        }
     }
 
     pub(super) fn studio_overlay(&mut self, ctx: &egui::Context) {
-        if !self.avatar_studio.active {
+        if !self.avatar_studio.active || self.viewfinder_on() {
             return;
         }
         let mut reset = false;
@@ -298,7 +358,13 @@ impl App {
                     let exit_label = aurora_i18n::tr!("avatar-studio-exit");
                     ui.horizontal(|ui| {
                         ui.set_height(crate::ui::bars::islands::SLOT);
-                        ui.strong(title);
+                        let title_font = egui::TextStyle::Body.resolve(ui.style());
+                        let title_galley = ui.painter().layout_no_wrap(title.to_owned(), title_font, self.palette.ink);
+                        let (title_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(title_galley.size().x, crate::ui::bars::islands::SLOT),
+                            egui::Sense::hover(),
+                        );
+                        crate::ui::widgets::paint_ink_centered(ui.painter(), title_galley, title_rect.center(), self.palette.ink);
                         ui.add_space(8.0);
                         ui.allocate_ui_with_layout(
                             egui::vec2(legend_width, crate::ui::bars::islands::SLOT),

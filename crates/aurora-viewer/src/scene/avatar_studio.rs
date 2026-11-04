@@ -46,11 +46,39 @@ pub(super) fn write_inspection_pose(
     rig: &super::anim::Rig,
     base: &super::anim::SkeletonBase,
     pose: crate::avatar_studio::Pose,
+    ground: Option<(Mat4, f32)>,
     out: &mut [[[f32; 4]; 4]],
 ) {
-    if let Some(pose) = inspection_pose(rig, base, pose) {
+    if let Some(mut pose) = inspection_pose(rig, base, pose) {
+        if let Some((model, floor)) = ground {
+            ground_inspection_pose(rig, &mut pose, model, floor);
+        }
         for (dst, matrix) in out.iter_mut().zip(pose) {
             *dst = matrix.to_cols_array_2d();
+        }
+    }
+}
+
+/// Normalize only the displayed preset, including attachment joints. A mesh
+/// pelvis offset or the AO's entry pose must not lift it above the fixed stage.
+fn ground_inspection_pose(rig: &super::anim::Rig, pose: &mut [Mat4], model: Mat4, floor: f32) {
+    let feet = ["mFootLeft", "mFootRight"]
+        .into_iter()
+        .filter_map(|name| rig.names.get(name).and_then(|&j| pose.get(j)))
+        .map(|joint| model.transform_point3(joint.w_axis.truncate()).z)
+        .reduce(f32::min);
+    if let Some(feet) = feet.filter(|z| z.is_finite())
+        && floor.is_finite()
+        && model.is_finite()
+        && model.determinant().abs() > 1e-8
+    {
+        let shift = model
+            .inverse()
+            .transform_vector3(Vec3::Z * (floor + crate::avatar_studio::SOLE_HEIGHT - feet));
+        if shift.is_finite() {
+            for joint in pose {
+                joint.w_axis += shift.extend(0.0);
+            }
         }
     }
 }
@@ -227,6 +255,37 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mesh_pelvis_offsets_and_entry_height_do_not_float_inspection_poses() {
+        use crate::avatar_studio::{Pose, SOLE_HEIGHT};
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig = &lib.rig;
+        for pelvis_offset in [-1.5, 0.0, 2.3] {
+            let mut base = super::super::anim::SkeletonBase {
+                local_pos: rig.local_pos.clone(),
+                scale: rig.scale.clone(),
+            };
+            base.local_pos[rig.pelvis].z += pelvis_offset;
+            let model = Mat4::from_rotation_translation(Quat::from_euler(glam::EulerRot::XYZ, 0.1, -0.2, 0.7), Vec3::new(12.0, 20.0, 30.0))
+                * Mat4::from_translation(-lib.pelvis);
+            let floor = 28.4;
+            for selected in [Pose::T, Pose::A] {
+                let mut pose = inspection_pose(rig, &base, selected).expect("preset");
+                let before = pose.clone();
+                ground_inspection_pose(rig, &mut pose, model, floor);
+                let feet = ["mFootLeft", "mFootRight"].map(|name| model.transform_point3(pose[rig.names[name]].w_axis.truncate()).z);
+                assert!((feet[0].min(feet[1]) - SOLE_HEIGHT - floor).abs() < 1e-5);
+                let shift = pose[rig.pelvis].w_axis - before[rig.pelvis].w_axis;
+                for (original, grounded) in before.iter().zip(&pose) {
+                    assert!((grounded.w_axis - original.w_axis).abs_diff_eq(shift, 1e-5));
+                    assert_eq!(grounded.x_axis, original.x_axis);
+                    assert_eq!(grounded.y_axis, original.y_axis);
+                    assert_eq!(grounded.z_axis, original.z_axis);
+                }
+            }
+        }
+    }
 
     #[test]
     fn inspection_poses_keep_shaped_feet_and_lower_both_arms_symmetrically() {

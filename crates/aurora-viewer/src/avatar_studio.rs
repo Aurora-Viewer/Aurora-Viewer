@@ -6,6 +6,8 @@ use glam::{Mat4, Quat, Vec2, Vec3};
 
 pub const FOV: f32 = 0.65;
 pub const NEAR: f32 = 0.025;
+/// Existing approximation from the foot joint to the studio's sole plane.
+pub const SOLE_HEIGHT: f32 = 0.06;
 // Numerical separation only: no avatar-framing zoom limit.
 const MIN_DISTANCE: f32 = 0.001;
 const RESPONSE: f32 = 0.09;
@@ -28,6 +30,52 @@ pub enum Lighting {
     #[default]
     Studio,
     Environment,
+}
+
+/// Temporary photography camera; the ordinary world camera and agent aim
+/// stay available for simulator updates and are restored on exit.
+pub struct PhotoSession {
+    pub camera: crate::camera::Camera,
+    yaw: f32,
+    pitch: f32,
+}
+
+impl PhotoSession {
+    pub fn enter(
+        camera: &mut crate::camera::Camera,
+        agent: &crate::agent::AgentState,
+        settings: &crate::camera::CameraSettings,
+        view: View,
+    ) -> Self {
+        let mut local = crate::camera::Camera::default();
+        local.set_view(view.eye, view.target, &mut agent.clone(), settings);
+        local.position = view.eye;
+        local.target = view.target;
+        local.near = NEAR;
+        local.fov_y = FOV;
+        if camera.free().is_some() {
+            local.start_free(&mut agent.clone(), settings);
+        }
+        local.snap();
+        Self {
+            camera: std::mem::replace(camera, local),
+            yaw: agent.yaw,
+            pitch: agent.pitch,
+        }
+    }
+
+    pub fn controls(&self, agent: &crate::agent::AgentState, input: &crate::agent::MoveInput, far: f32) -> aurora_net::AgentControls {
+        let mut agent = agent.clone();
+        agent.yaw = self.yaw;
+        agent.pitch = self.pitch;
+        agent.controls(input, &self.camera, far)
+    }
+
+    pub fn restore(self, camera: &mut crate::camera::Camera, agent: &mut crate::agent::AgentState) {
+        *camera = self.camera;
+        agent.yaw = self.yaw;
+        agent.pitch = self.pitch;
+    }
 }
 
 #[derive(Default)]
@@ -235,6 +283,56 @@ impl Studio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn photo_handoff_frames_the_studio_and_restores_the_world_camera_and_aim() {
+        let lib = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = crate::world::World::new(lib);
+        let mut camera = crate::camera::Camera::default();
+        camera.roll = 0.15;
+        let original = camera.describe();
+        let original_position = camera.position;
+        let yaw = world.agent.yaw;
+        let pitch = world.agent.pitch;
+        let settings = crate::camera::CameraSettings::default();
+        let mut studio = Studio::default();
+        studio.enter(0.7, 1.8);
+        let view = studio.view(world.agent.position - Vec3::Z * 0.9, 1.5);
+        let session = PhotoSession::enter(&mut camera, &world.agent, &settings, view);
+        assert!(camera.position.abs_diff_eq(view.eye, 1e-6));
+        assert!(camera.target.abs_diff_eq(view.target, 1e-6));
+        camera.update(
+            &mut world,
+            &settings,
+            &crate::camera::FrameInput {
+                dt: 1.0 / 60.0,
+                now: std::time::Instant::now(),
+                steering: false,
+                build_mode: false,
+                edit_tracking: None,
+                eye_offset: None,
+                draw_distance: 128.0,
+                region_width: 256.0,
+                aspect: 1.5,
+            },
+        );
+        assert!(
+            camera.position.abs_diff_eq(view.eye, 1e-4),
+            "photo mode must start at the displayed studio camera"
+        );
+        camera.position += Vec3::X * 2.0;
+        camera.roll = 0.8;
+        world.agent.yaw += 0.3;
+        world.agent.pitch += 0.2;
+        let controls = session.controls(&world.agent, &crate::agent::MoveInput::default(), 128.0);
+        assert_eq!(controls.camera_center, original_position);
+        assert!(controls.body_rotation.abs_diff_eq(glam::Quat::from_rotation_z(yaw), 1e-6));
+        session.restore(&mut camera, &mut world.agent);
+        assert_eq!(camera.describe(), original);
+        assert_eq!(camera.roll, 0.15);
+        assert_eq!(world.agent.yaw, yaw);
+        assert_eq!(world.agent.pitch, pitch);
+    }
 
     #[test]
     fn middle_drag_translates_eye_and_target_in_the_view_plane_at_any_orbit_angle() {

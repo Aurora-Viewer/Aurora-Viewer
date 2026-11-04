@@ -417,6 +417,7 @@ pub struct App {
     camera: Camera,
     avatar_studio: crate::avatar_studio::Studio,
     studio_transition: crate::avatar_studio::Transition,
+    studio_photo_session: Option<crate::avatar_studio::PhotoSession>,
     /// The desktop camera, and our avatar's yaw and pitch, before VR: put
     /// back when VR ends (the first-person entry turns the avatar to the
     /// view, as mouselook does).
@@ -1511,6 +1512,7 @@ impl App {
             camera: Camera::default(),
             avatar_studio: Default::default(),
             studio_transition: Default::default(),
+            studio_photo_session: None,
             vr_camera: None,
             vr_toggle: false,
             vr_start_in: 0,
@@ -4120,7 +4122,7 @@ impl App {
         if self.studio_transition.busy() {
             return;
         }
-        if self.avatar_studio.active {
+        if self.avatar_studio.active && !self.viewfinder_on() {
             if self.avatar_studio.panning_plane {
                 let height = self.gfx.as_ref().map_or(900.0, |g| g.renderer.size().1 as f32);
                 self.avatar_studio.pan_view(dx, dy, height);
@@ -4513,7 +4515,10 @@ impl App {
 
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
-        if (self.avatar_studio.active || self.studio_transition.busy()) && pressed && input == Input::key(winit::keyboard::KeyCode::Escape)
+        if (self.avatar_studio.active || self.studio_transition.busy())
+            && !self.viewfinder_on()
+            && pressed
+            && input == Input::key(winit::keyboard::KeyCode::Escape)
         {
             self.panels.avatar_studio = false;
             return;
@@ -7163,7 +7168,7 @@ impl App {
     /// Wheel clicks on the world (SL sign: positive zooms out): the held
     /// mouselook zoom's angle, or the camera's own use of the wheel.
     fn camera_wheel(&mut self, clicks: f32) {
-        if self.avatar_studio.active {
+        if self.avatar_studio.active && !self.viewfinder_on() {
             return;
         }
         let aspect = self.view_aspect();
@@ -7654,7 +7659,7 @@ impl App {
     }
 
     fn update_move_input(&mut self, typing: bool, dt: f32) {
-        if self.avatar_studio.active || self.studio_transition.busy() {
+        if (self.avatar_studio.active && !self.viewfinder_on()) || self.studio_transition.busy() {
             self.input = MoveInput::default();
             return;
         }
@@ -7738,6 +7743,9 @@ impl App {
             i.up || joystick_up,
         );
         self.joystick_avatar(&mut i);
+        if self.avatar_studio.active && self.camera.free().is_none() {
+            i = MoveInput::default();
+        }
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start).
@@ -8987,6 +8995,9 @@ impl App {
         let shift = self.world.take_origin_shift();
         if shift != Vec3::ZERO {
             self.camera.shift(shift);
+            if let Some(session) = &mut self.studio_photo_session {
+                session.camera.shift(shift);
+            }
             if let Some(ap) = &mut self.autopilot {
                 ap.shift(shift);
             }
@@ -9223,6 +9234,7 @@ impl App {
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
         self.photo_update(&gfx.renderer);
+        self.studio_photo_frame(&mut gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
         self.photo_isolate_frame(&mut gfx.renderer);
         self.studio_frame(&mut gfx.renderer, dt);
@@ -9262,7 +9274,10 @@ impl App {
             self.update_attention();
         }
         if self.in_world() {
-            let ml = self.camera.mouselook();
+            let ml = self
+                .studio_photo_session
+                .as_ref()
+                .map_or_else(|| self.camera.mouselook(), |session| session.camera.mouselook());
             // the clocks the other avatars and the objects move along
             // (world/motion.rs); offline there is no simulator to slow them
             let build = &self.build;
@@ -9343,7 +9358,10 @@ impl App {
                 self.camera.target = target;
                 self.interface.set_hidden(&self.egui_ctx, true);
             }
-            let at = self.camera.forward();
+            let at = self
+                .studio_photo_session
+                .as_ref()
+                .map_or_else(|| self.camera.forward(), |session| session.camera.forward());
             let step_back = self.settings.walk_backwards_without_turning;
             // (Body::update turns a little even without time: held apart)
             if !frozen {
@@ -9355,7 +9373,7 @@ impl App {
             self.trace_own_motion();
             self.update_pointing();
             self.update_look_at(w as f32, h as f32);
-            let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+            let mut c = self.studio_agent_controls();
             // the walk to a double-clicked point (src/autopilot.rs)
             c.control_flags = self.autopilot_controls(c.control_flags);
             c.control_flags = crate::movement::controls(
@@ -9597,13 +9615,17 @@ impl App {
         }
         let studio_view = self.studio_view(aspect);
         let render_eye = studio_view.map_or(self.camera.position, |v| v.eye);
-        let render_fov = if studio_view.is_some() {
+        let render_fov = if studio_view.is_some() && self.studio_photo_session.is_none() {
             crate::avatar_studio::FOV
         } else {
             self.camera.fov_y
         };
         let mut view = studio_view.map_or_else(|| self.camera.view(), |v| v.view);
-        let mut proj = studio_view.map_or_else(|| frame_proj(&self.camera), |v| photo_tile * v.proj);
+        let mut proj = if self.studio_photo_session.is_some() {
+            frame_proj(&self.camera)
+        } else {
+            studio_view.map_or_else(|| frame_proj(&self.camera), |v| photo_tile * v.proj)
+        };
         let mut vp = proj * view;
         let camera_fast = self.texture_motion.update(self.camera.position, self.camera.forward(), dt);
         let mut cull = CullView::new(vp, render_eye, lod_height as f32, render_fov).with_texture_camera(
@@ -9908,7 +9930,7 @@ impl App {
                 if let Some(controls) = late_controls {
                     // AgentUpdate must describe the displayed eye and aim,
                     // keeping the movement, script and RLVa flags prepared above.
-                    let current = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+                    let current = self.studio_agent_controls();
                     self.net.set_controls(aurora_net::AgentControls {
                         control_flags: (controls.control_flags & !control::MOUSELOOK) | (current.control_flags & control::MOUSELOOK),
                         state: controls.state,
@@ -9920,11 +9942,11 @@ impl App {
             }
             // every change of the viewing angle goes to the simulator, as
             // LLViewerCamera::setView (the end of a zoom's easing excepted)
-            if (self.camera.fov_y - self.sent_fov).abs() > FOV_SEND_EPSILON {
+            if self.studio_photo_session.is_none() && (self.camera.fov_y - self.sent_fov).abs() > FOV_SEND_EPSILON {
                 self.sent_fov = self.camera.fov_y;
                 self.net.send(NetCommand::SetFov(self.sent_fov));
             }
-            if camera_changed && studio_view.is_none() {
+            if camera_changed && (studio_view.is_none() || self.studio_photo_session.is_some()) {
                 view = self.camera.view();
                 proj = frame_proj(&self.camera);
                 vp = proj * view;

@@ -847,6 +847,7 @@ pub struct Scene {
     studio_visible: bool,
     pub studio_stage: avatar_studio::Stage,
     pub studio_pose: crate::avatar_studio::Pose,
+    pub studio_floor_offset: f32,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
     /// not at the clock's.
@@ -1526,6 +1527,7 @@ impl Scene {
             studio_visible: false,
             studio_stage: Default::default(),
             studio_pose: Default::default(),
+            studio_floor_offset: 0.0,
             held_at: None,
             photo_marks: Default::default(),
             give_marks: Default::default(),
@@ -5545,6 +5547,11 @@ impl Scene {
         } else {
             crate::avatar_studio::Pose::Animated
         };
+        let studio_ground = world
+            .avatar_models
+            .get(&world.agent_id)
+            .copied()
+            .map(|model| (model, model.transform_point3(world.avatar_lib.pelvis).z + self.studio_floor_offset));
         let physics_rig = self.physics_rig.clone();
         frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
             // (the anchors after the joints are the sync's)
@@ -5574,7 +5581,7 @@ impl Scene {
                 }
             }
             if *owner == world.agent_id {
-                avatar_studio::write_inspection_pose(&rig, base, studio_pose, chunk);
+                avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
             }
         });
         drop(jobs);
@@ -5628,7 +5635,7 @@ impl Scene {
                     }
                 }
                 if *owner == world.agent_id {
-                    avatar_studio::write_inspection_pose(&rig, base, studio_pose, chunk);
+                    avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
                 }
             });
         }
@@ -5687,6 +5694,9 @@ impl Scene {
 impl Scene {
     /// World position of an avatar's head as posed last frame.
     pub fn head_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
+        if world.avatar_studio && *id == world.agent_id && self.studio_pose != crate::avatar_studio::Pose::Animated {
+            return self.joint_world(world, id, "mHead", now);
+        }
         let idx = world.objects.index_of_uuid(id)?;
         let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
         Some(match self.motions.get(id).and_then(|c| c.head_pos()) {
@@ -5698,6 +5708,13 @@ impl Scene {
     /// The point between an avatar's eyes, animated (`anim::Controller::eyes_pos`),
     /// else its head (`head_world`).
     pub fn eyes_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
+        if world.avatar_studio && *id == world.agent_id && self.studio_pose != crate::avatar_studio::Pose::Animated {
+            return self
+                .joint_world(world, id, "mEyeLeft", now)
+                .zip(self.joint_world(world, id, "mEyeRight", now))
+                .map(|(left, right)| (left + right) * 0.5)
+                .or_else(|| self.head_world(world, id, now));
+        }
         let idx = world.objects.index_of_uuid(id)?;
         let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
         match self.motions.get(id).and_then(|c| c.eyes_pos()) {
@@ -6445,13 +6462,21 @@ mod tests {
         let signals = world.animations_of(&world.agent_id).to_vec();
         let foot = rig.names["mFootLeft"];
         let before = world.avatar_poses[&world.agent_id][foot];
+        let original_foot = scene.joint_world(&world, &world.agent_id, "mFootLeft", now).expect("foot");
+        let own_index = world.objects.index_of_uuid(&world.agent_id).expect("own avatar");
+        let root = Scene::object_transform(&world, own_index, now, 0).expect("root").0;
+        scene.studio_floor_offset = original_foot.z - crate::avatar_studio::SOLE_HEIGHT - root.z;
         world.avatar_studio = true;
         for (i, pose) in [Pose::T, Pose::A].into_iter().enumerate() {
             scene.studio_pose = pose;
             scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(300 + i as u64 * 300));
-            let base = &scene.skeletons[&world.agent_id].base;
-            let expected = avatar_studio::inspection_pose(&rig, base, pose).expect("inspection pose");
-            assert!(world.avatar_poses[&world.agent_id][foot].abs_diff_eq(expected[foot] * rig.default_world_inv[foot], 1e-5));
+            let foot_now = scene.joint_world(&world, &world.agent_id, "mFootLeft", now).expect("posed foot");
+            assert!((foot_now.z - original_foot.z).abs() < 1e-5, "preset feet remain at the pedestal");
+            assert_eq!(
+                scene.head_world(&world, &world.agent_id, now),
+                scene.joint_world(&world, &world.agent_id, "mHead", now),
+                "photo autofocus follows the grounded preset head"
+            );
             assert!(!world.avatar_poses[&crate::demo::DEMO_LOUP][foot].abs_diff_eq(world.avatar_poses[&world.agent_id][foot], 1e-4));
             assert_eq!(world.animations_of(&world.agent_id), signals);
         }

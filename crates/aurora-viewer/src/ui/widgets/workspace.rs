@@ -565,10 +565,13 @@ pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -
 /// The islands' tint against the bars' (0.80 / 0.90).
 const ISLAND_TINT: f32 = 0.8 / 0.9;
 
-/// Content-sized island sharing the top bars' glass and four-point inset.
+/// Content-sized island sharing the top bars' glass and vertical inset,
+/// with room for the first and last labels at its sides.
 pub(crate) fn island<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
     let slot = ui.painter().add(egui::Shape::Noop);
-    let response = egui::Frame::new().inner_margin(super::super::bars::islands::PAD).show(ui, body);
+    let response = egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(10, super::super::bars::islands::PAD as i8))
+        .show(ui, body);
     ui.painter().set(slot, island_shape(ui.ctx(), p, response.response.rect));
     response
 }
