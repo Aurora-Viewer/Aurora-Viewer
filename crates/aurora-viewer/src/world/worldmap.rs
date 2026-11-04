@@ -137,10 +137,13 @@ impl super::World {
     /// Loaded or coarse avatar position in render space. Remote friends
     /// require FindAgent instead; map rights alone cannot enable a camera zoom.
     pub fn avatar_map_position(&self, id: Uuid) -> Option<glam::Vec3> {
+        // a seated avatar's position is relative to its seat: resolve the
+        // chain, as LLVOAvatar::getPositionGlobal does, or a radar Teleport
+        // To lands near the region's corner, or in the tile next to it
         if let Some(o) = self.objects.index_of_uuid(&id).and_then(|i| self.objects.get(i))
-            && let Some(off) = self.region_offset(o.key.region)
+            && let Some(position) = super::radar::native_position(self, o)
         {
-            return Some(off + o.position);
+            return Some(position);
         }
         self.coarse
             .iter()
@@ -1075,6 +1078,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A friend sitting 30 m away: the avatar's position is relative to its
+    /// seat. Resolved through the seat (LLVOAvatar::getPositionGlobal), the
+    /// radar teleport stays in our region; read as a region position it went
+    /// to the tile west of the region's corner, in another region.
+    #[test]
+    fn radar_teleport_to_a_seated_friend_goes_to_the_seat_not_the_corner() {
+        let (mut w, id) = remote_friend();
+        let mut block = yiff();
+        block.size_x = 1024;
+        block.size_y = 1024;
+        let main = aurora_net::origin_to_handle(u32::from(block.x) * 256, u32::from(block.y) * 256);
+        w.main_region = Some(main);
+        w.ensure_region(main, (1024, 1024));
+        w.map.apply_blocks(vec![block]);
+        let mut seat = crate::demo::action_avatar(false);
+        seat.local_id = 970;
+        seat.full_id = Uuid::from_u128(970);
+        seat.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        seat.position = glam::Vec3::new(650.0, 400.0, 30.0);
+        seat.rotation = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        w.objects.upsert_at(main, seat.clone(), Some(Instant::now()));
+        let mut avatar = crate::demo::action_avatar(true);
+        avatar.full_id = id;
+        avatar.position = glam::Vec3::new(-0.4, 0.2, 1.2);
+        w.objects.upsert_at(main, avatar.clone(), Some(Instant::now()));
+        let expected = seat.position + seat.rotation * avatar.position;
+        let found = w.avatar_map_position(id).expect("seated friend");
+        assert!(found.distance(expected) < 1e-3, "{found:?} != {expected:?}");
+        assert!(w.locate_avatar(id, true));
+        let mut commands = w.take_map_commands();
+        let command = commands
+            .iter_mut()
+            .find(|c| matches!(c, NetCommand::TeleportTo { .. }))
+            .expect("teleport");
+        w.normalize_map_teleport(command);
+        let NetCommand::TeleportTo { handle, position, .. } = command else {
+            unreachable!();
+        };
+        assert_eq!(*handle, main, "our own region, not the one west of its corner");
+        assert!(position.distance(expected) < 1e-2, "{position:?} != {expected:?}");
     }
 
     #[test]
