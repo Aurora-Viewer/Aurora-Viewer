@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+`scene/avatar.rs::AttachPoint` retains the parent bone for IK and the
+point's own rig joint/rest matrix for placement. `anchors::attach_frame`
+reads the latter's pose, so animation keys on an attachment point move
+rigid worn linksets as well as meshes skinned to that point (#1694).
+CPU transforms and GPU anchors share this frame; missing poses use the
+existing bone/rest fallback, and HUD points stay in screen space.
+
 `aurora-prim::params::VolumeParams::constrain` preserves the path-ratio
 limits of `LLVolumeParams::setRatio` (indra/llmath/llvolume.cpp): spheres
 and alternate paths accept 0..2; ordinary circular non-sphere paths use

@@ -2755,7 +2755,7 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
 
@@ -2849,13 +2849,19 @@ The lock applies to the whole linkset, survives reattachment/relogin for
 ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
 Temporary attachments without a stable inventory item keep an instance lock.
 
-**`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
 
 - `1`: worn object only, to test by hand the right click on the object,
   in the inventory and in Appearance › Current outfit.
+- `animated`: at frame 600 the object becomes a small purple book with
+  teal pages on Right Hand. A four-second animation moves and turns that
+  attachment point independently of the wrist: the whole book must float
+  away from the hand and return, with its pages following. The ordinary
+  placement (`AURORA_CPU_ATTACH=1`) and GPU anchors must agree. This is a
+  synthetic reproduction of #1694, with no external assets.
 - `temporary`: at frame 600 an experience attaches a temporary object
   ("Arena wristband") to the left hand, its AttachItemID its own object id,
   and Appearance opens on Worn: the "Temporary attachments (1)" section
