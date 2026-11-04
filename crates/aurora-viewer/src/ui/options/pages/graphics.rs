@@ -1229,7 +1229,7 @@ fn parcel_environments(cx: &mut Cx) {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         for (i, entry) in entries.iter().enumerate() {
-                            ui.push_id(entry.parcel, |ui| {
+                            ui.push_id((&entry.grid, entry.parcel), |ui| {
                                 ui.horizontal_top(|ui| {
                                     let width = (ui.available_width() - 20.0 - ui.spacing().item_spacing.x).max(1.0);
                                     ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
