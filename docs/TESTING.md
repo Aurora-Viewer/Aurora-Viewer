@@ -9801,9 +9801,10 @@ What the inventory must show with these scenarios:
   back show between the shuffled strand cards, with `1` the cards cover them
   in their depth order. Check each antialiasing (`AURORA_AA=0`, `3`, `5`,
   `6`): the lists are resolved per pixel, without the strands' MSAA
-  coverage, so with MSAA (`3`) their edges are aliased like a post
-  effect's and with SMAA (`6`) smoothed over the final image like the
-  opaque edges; an opaque edge seen through a layer (the head behind the
+  coverage, so with MSAA (`3`) the frame also gets the SMAA mode's passes
+  over the resolved image (only while OIT is on; `g_post` then holds them
+  too) and the strands' edges are smoothed as with SMAA (`6`); an opaque
+  edge seen through a layer (the head behind the
   strands, a pillar behind a pane) keeps its anti-aliasing where the
   layer is in front of every sample of the pixel, and is decided for
   the pixel's majority of samples otherwise. Deep stacks keep their

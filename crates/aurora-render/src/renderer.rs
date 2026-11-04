@@ -2052,6 +2052,17 @@ fn tex(binding: u32, v: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
     }
 }
 
+/// Whether the SMAA passes run on the frame: in the SMAA mode, and in the
+/// MSAA modes while the order-independent transparency is on (`oit` its
+/// effective setting, on a device that has it). Its lists are resolved per
+/// pixel, without the MSAA coverage of the transparent faces, so their
+/// edges and the hair's wisps take their anti-aliasing from the SMAA pass
+/// over the resolved image, the SMAA mode's own pass at its own place;
+/// every other combination keeps its passes.
+fn smaa_wanted(aa: AntiAliasing, oit: bool) -> bool {
+    aa == AntiAliasing::Smaa || (matches!(aa, AntiAliasing::Msaa(_)) && oit)
+}
+
 fn float_tex(binding: u32) -> wgpu::BindGroupLayoutEntry {
     tex_entry(binding, wgpu::TextureSampleType::Float { filterable: true })
 }
@@ -4849,7 +4860,7 @@ impl Backend {
             self.msaa_samples,
             &self.settings,
         );
-        let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
+        let smaa = smaa_wanted(self.settings.aa, self.oit_wanted(&self.settings)).then(|| {
             self.smaa
                 .make_targets(&self.device, &self.queue, &self.dummies.white, size.0, size.1, self.surface_srgb)
         });
@@ -5018,13 +5029,19 @@ impl Backend {
         }
     }
 
+    /// The order-independent transparency `s` asks for, on a device that
+    /// has it (`AURORA_OIT` over the setting, as the frame decides).
+    fn oit_wanted(&self, s: &RenderSettings) -> bool {
+        crate::oit::env_override().unwrap_or(s.oit) && self.oit.is_some()
+    }
+
     /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
     /// set compiled for other samples or SSR, `None` when they stay.
     fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
         let pipelines_dirty = rebuilt.is_some();
         let targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
-            || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
+            || smaa_wanted(s.aa, self.oit_wanted(&s)) != smaa_wanted(self.settings.aa, self.oit_wanted(&self.settings))
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
             || s.screen_indirect != self.settings.screen_indirect
@@ -9065,6 +9082,20 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smaa_runs_in_its_mode_and_in_the_msaa_modes_with_oit_only() {
+        for oit in [false, true] {
+            assert!(smaa_wanted(AntiAliasing::Smaa, oit));
+            assert!(!smaa_wanted(AntiAliasing::None, oit));
+            assert!(!smaa_wanted(AntiAliasing::Fxaa, oit));
+            assert!(!smaa_wanted(AntiAliasing::Taa, oit));
+        }
+        for samples in [2, 4, 8] {
+            assert!(smaa_wanted(AntiAliasing::Msaa(samples), true));
+            assert!(!smaa_wanted(AntiAliasing::Msaa(samples), false));
+        }
+    }
 
     #[test]
     fn blend_runs_preserve_order_and_subranges_and_keep_single_sided_faces_culled() {
