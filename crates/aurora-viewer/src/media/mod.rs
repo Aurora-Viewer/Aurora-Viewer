@@ -395,6 +395,9 @@ struct ObjMedia {
     /// The version asked for by the request in flight: a failed request
     /// waits for a newer one (LLMediaDataClient drops it after its retries).
     requested_version: Option<u32>,
+    /// The texture entry lost its media flags while the fetched data still
+    /// has media: asked again once, the answer decides (MEDIA_FLAGS_CHANGED).
+    flags_lost: bool,
     data: Option<ObjectMediaData>,
     hud: bool,
     on_other_avatar: bool,

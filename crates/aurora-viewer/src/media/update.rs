@@ -192,7 +192,24 @@ impl MediaManager {
         let has_media =
             o.te.as_ref()
                 .is_some_and(|te| local.is_some() || te.faces.iter().any(|f| f.media_flags & 1 != 0));
-        if !has_media {
+        // LLVOVolume::processUpdateMessage: media flags that change ask the
+        // media data again (requestMediaDataUpdate), and only that answer
+        // removes a face's media (updateObjectMediaData / syncMediaData). A
+        // HUD that clears then sets its media at attach sends a texture entry
+        // without the flag in between.
+        let fetched_media = self
+            .objects
+            .get(&o.full_id)
+            .is_some_and(|e| e.data.as_ref().is_some_and(|d| d.faces.iter().any(Option::is_some)));
+        if !has_media && fetched_media && o.te.is_some() {
+            if let Some(e) = self.objects.get_mut(&o.full_id)
+                && !e.flags_lost
+            {
+                e.flags_lost = true;
+                e.fetched_version = None;
+                log::info!("media: {} media flags cleared, asking its media again", o.full_id);
+            }
+        } else if !has_media {
             if let Some(e) = self.objects.remove(&o.full_id) {
                 log::info!(
                     "media: {} has no media face any more ({}, hud {})",
@@ -222,6 +239,9 @@ impl MediaManager {
         e.on_other_avatar = on_other_avatar;
         e.on_own_avatar = on_own_avatar;
         e.changed_by = entry::media_version_agent(&o.media_url);
+        if has_media {
+            e.flags_lost = false;
+        }
         if let Some(local) = local {
             if e.data.is_none() {
                 e.fetched_version = Some(local.version);
@@ -1180,6 +1200,42 @@ mod tests {
         m.clear();
         track(&mut m, &mut w);
         assert!(m.objects.contains_key(&id) && m.objects.contains_key(&screen));
+    }
+
+    #[test]
+    fn cleared_media_flags_ask_the_media_again_before_dropping_it() {
+        let (mut w, _) = world();
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        let (idx, id) = plain(&w);
+        set_media_flag(&mut w, idx, true, true);
+        track(&mut m, &mut w);
+        // its media arrived
+        let e = m.objects.get_mut(&id).expect("media object");
+        e.fetched_version = Some(1);
+        e.data = Some(ObjectMediaData {
+            version: 1,
+            faces: vec![Some(MediaEntry {
+                current_url: "https://example.invalid/hud".into(),
+                ..Default::default()
+            })],
+        });
+        m.client.clear();
+        // a texture entry without the flag (the HUD clears then sets its media)
+        set_media_flag(&mut w, idx, false, true);
+        track(&mut m, &mut w);
+        assert!(m.objects.get(&id).is_some_and(|e| e.data.is_some()), "kept until the answer");
+        assert!(m.client.is_queued(&id), "asked again, MEDIA_FLAGS_CHANGED");
+        // the answer has no media on that face any more: dropped
+        m.client.clear();
+        let e = m.objects.get_mut(&id).expect("media object");
+        e.data = Some(ObjectMediaData {
+            version: 2,
+            faces: vec![None],
+        });
+        set_media_flag(&mut w, idx, false, true);
+        track(&mut m, &mut w);
+        assert!(!m.objects.contains_key(&id));
     }
 
     #[test]
