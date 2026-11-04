@@ -7447,13 +7447,26 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|import[:run|again|login|same|none]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
   the folder of a real account, and the scenario rewrites them at each launch
   (without this variable, the demo writes and reads back no history). The
   windows are placed at a known size.
+  - `import`: the import of a Legacy Viewer's chat history over a synthetic
+    folder, `chat_logs\demo-legacy-viewer\<demo account>\`, rewritten at each
+    launch. It holds Nova's conversation (a month older, with one message
+    Aurora's file has too), a group, a dated nearby chat file and a
+    `search_history.txt` that must stay out. `import`: Preferences › Chat,
+    History, with the import window listing that folder, its file count and
+    size. `import:run`: the import runs, then the History window shows Nova's
+    merged file by time, without the shared message twice, and the open
+    conversation shows the added lines. `import:again`: two runs, the result
+    line ends on "Nothing new to import". `import:login`: what Import at login
+    does, no window. `import:same`: the list also has the folder Aurora writes
+    to, unticked and greyed. `import:none`: no folder found, the window says so
+    and offers the folder dialog.
   - `restore` (#1683): write and read back the demo account's `open_ims.xml`
     with a resident, a typed group and an older untyped group entry. Both
     quiet groups must show their names and group controls without receiving

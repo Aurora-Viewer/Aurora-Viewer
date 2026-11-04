@@ -34,7 +34,10 @@ impl App {
                 }
                 let (tx, rx) = std::sync::mpsc::channel();
                 self.folders.pick = Some((folder, rx));
-                let title = aurora_i18n::tr!("ui-options-change-folder");
+                let title = match folder {
+                    Folder::LegacyLogs => aurora_i18n::tr!("ui-options-chat-logs-import-choose"),
+                    _ => aurora_i18n::tr!("ui-options-change-folder"),
+                };
                 let _ = std::thread::Builder::new().name("aurora-folder-dialog".into()).spawn(move || {
                     let _ = tx.send(rfd::FileDialog::new().set_title(title).pick_folder());
                 });
@@ -69,6 +72,7 @@ impl App {
                     self.folders.settings_changed = true;
                 }
             }
+            Folder::LegacyLogs => self.chat_import_chosen(PathBuf::from(location)),
             Folder::ChatLogs => {
                 if self.settings.chat_log_location == location {
                     return;

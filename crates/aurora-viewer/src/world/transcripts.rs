@@ -328,6 +328,25 @@ impl World {
         for loaded in self.chat_log.take_loaded() {
             self.apply_history(loaded);
         }
+        if let Some(report) = self.chat_log.take_imported() {
+            self.history_imported(&report.changed);
+            self.import_report = Some(report);
+        }
+    }
+
+    /// An import changed these files: a conversation that shows nothing but
+    /// its history reads it again, with what was added. One with lines of
+    /// this session keeps what it shows until it is opened again, or the
+    /// file's end would repeat those lines.
+    fn history_imported(&mut self, changed: &std::collections::BTreeSet<String>) {
+        for s in &mut self.social.ims {
+            let imported = s.log.stem().is_some_and(|stem| changed.contains(&names::clean_file_name(stem.trim())));
+            if imported && s.log.history == HistoryState::Done && s.lines.iter().all(|l| l.origin == Origin::Log) {
+                s.lines.clear();
+                s.clock.renumbered();
+                s.log.history = HistoryState::NotAsked;
+            }
+        }
     }
 
     /// Our names as a transcript may have them.
