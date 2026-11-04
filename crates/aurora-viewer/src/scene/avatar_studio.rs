@@ -1,7 +1,7 @@
 //! Local circular podium and an ocean plane beneath the inspection avatar.
 //! Private GPU allocations, never simulator objects or inventory assets.
 
-use aurora_render::{DrawCmd, DrawLists, DrawRecord, MeshAlloc, ParticleInstance, Renderer, Vertex, flags, particle_flags};
+use aurora_render::{DrawCmd, DrawLists, DrawRecord, MeshAlloc, ParticleInstance, Renderer, ShadowCaster, Vertex, flags, particle_flags};
 use glam::{Mat4, Quat, Vec3};
 
 #[derive(Default)]
@@ -10,6 +10,9 @@ pub struct Stage {
 }
 
 pub const WATER_OFFSET: f32 = -0.18;
+const PODIUM_RADIUS: f32 = 1.15;
+const PODIUM_DEPTH: f32 = 0.35;
+const PODIUM_BEVEL: f32 = 0.055;
 
 /// The water passes use separate terrain lists, including chunks outside
 /// the main camera's frustum. Hide them with the main-view terrain so the
@@ -58,34 +61,69 @@ pub fn reveal_particles(out: &mut Vec<ParticleInstance>, floor: Vec3, height: f3
 }
 
 fn podium() -> (Vec<Vertex>, Vec<u16>) {
-    const SEGMENTS: u16 = 64;
-    let mut vertices = vec![Vertex::new([0.0; 3], Vec3::Z.to_array(), [0.5; 2])];
-    let mut indices = Vec::with_capacity(SEGMENTS as usize * 9);
-    for i in 0..=SEGMENTS {
-        let angle = f32::from(i) / f32::from(SEGMENTS) * std::f32::consts::TAU;
-        let normal = Vec3::new(angle.cos(), angle.sin(), 0.0);
-        let top = normal * 1.15;
-        vertices.push(Vertex::new(
-            top.to_array(),
-            Vec3::Z.to_array(),
-            [normal.x * 0.5 + 0.5, normal.y * 0.5 + 0.5],
-        ));
-        vertices.push(Vertex::new(
-            top.to_array(),
-            normal.to_array(),
-            [f32::from(i) / f32::from(SEGMENTS), 0.0],
-        ));
-        vertices.push(Vertex::new(
-            (top - Vec3::Z * 0.35).to_array(),
-            normal.to_array(),
-            [f32::from(i) / f32::from(SEGMENTS), 1.0],
-        ));
-        if i < SEGMENTS {
-            let a = 1 + i * 3;
-            indices.extend([0, a, a + 3, a + 1, a + 2, a + 5, a + 1, a + 5, a + 4]);
+    const SEGMENTS: u16 = 96;
+    const STRIDE: u16 = SEGMENTS + 1;
+    let mut vertices = Vec::with_capacity(10 * usize::from(STRIDE) + 2);
+    let mut indices = Vec::with_capacity(usize::from(SEGMENTS) * 48);
+    // Quarter-circle shoulders carry real curved normals: the existing PBR
+    // lights catch the edges without a painted highlight or a new texture.
+    for ring in 0..8u16 {
+        let angle = if ring < 4 { f32::from(ring) } else { f32::from(ring - 1) } * std::f32::consts::FRAC_PI_6;
+        let radius = PODIUM_RADIUS - PODIUM_BEVEL + PODIUM_BEVEL * angle.sin();
+        let z = if ring < 4 { -PODIUM_BEVEL } else { -PODIUM_DEPTH + PODIUM_BEVEL } + PODIUM_BEVEL * angle.cos();
+        for i in 0..=SEGMENTS {
+            let u = f32::from(i) / f32::from(SEGMENTS);
+            let theta = u * std::f32::consts::TAU;
+            let radial = Vec3::new(theta.cos(), theta.sin(), 0.0);
+            vertices.push(Vertex::new(
+                (radial * radius + Vec3::Z * z).to_array(),
+                (radial * angle.sin() + Vec3::Z * angle.cos()).to_array(),
+                [u, -z / PODIUM_DEPTH],
+            ));
+            if ring < 7 && i < SEGMENTS {
+                let a = ring * STRIDE + i;
+                let b = a + STRIDE;
+                indices.extend([a, b, b + 1, a, b + 1, a + 1]);
+            }
+        }
+    }
+    // Separate planar cap UVs and a closed underside, including when the
+    // pedestal is seen by the water's virtual camera or refraction pass.
+    for bottom in [false, true] {
+        let center = vertices.len() as u16;
+        let z = if bottom { -PODIUM_DEPTH } else { 0.0 };
+        let normal = if bottom { -Vec3::Z } else { Vec3::Z };
+        vertices.push(Vertex::new([0.0, 0.0, z], normal.to_array(), [0.5; 2]));
+        for i in 0..=SEGMENTS {
+            let theta = f32::from(i) / f32::from(SEGMENTS) * std::f32::consts::TAU;
+            let radial = Vec3::new(theta.cos(), theta.sin(), 0.0);
+            vertices.push(Vertex::new(
+                (radial * (PODIUM_RADIUS - PODIUM_BEVEL) + Vec3::Z * z).to_array(),
+                normal.to_array(),
+                [radial.x * 0.5 + 0.5, radial.y * 0.5 + 0.5],
+            ));
+            if i < SEGMENTS {
+                let a = center + 1 + i;
+                indices.extend(if bottom { [center, a + 1, a] } else { [center, a, a + 1] });
+            }
         }
     }
     (vertices, indices)
+}
+
+fn append_podium(lists: &mut DrawLists, cmd: DrawCmd, floor: Vec3) {
+    let center = floor - Vec3::Z * (PODIUM_DEPTH * 0.5);
+    let radius = PODIUM_RADIUS.hypot(PODIUM_DEPTH * 0.5);
+    let cmd = cmd.with_bounds(center, radius);
+    lists.opaque.push(cmd);
+    // CPU supplemental draws are consumed alongside the GPU avatar draws in
+    // both water captures. Omitting the solid here exposes reflected soles.
+    lists.reflection.push(ShadowCaster {
+        cmd,
+        center,
+        radius,
+        alpha: false,
+    });
 }
 
 fn ocean() -> (Vec<Vertex>, Vec<u16>) {
@@ -116,19 +154,24 @@ impl Stage {
                 *record,
                 DrawRecord {
                     model: Mat4::from_scale_rotation_translation(scale, rotation, center).to_cols_array_2d(),
-                    base_color: [0.18, 0.18, 0.2, 1.0],
-                    flags: [0, 0, 0, flags::STUDIO_STAGE],
+                    base_color: [0.22, 0.24, 0.28, 1.0],
+                    params: [0.0, 0.65, 0.38, 0.5],
+                    flags: [if i == 0 { flags::PBR } else { 0 }, 0, 0, flags::STUDIO_STAGE],
                     ..Default::default()
                 },
             );
-            let draws = if i == 0 { &mut lists.opaque } else { &mut lists.water };
-            draws.push(DrawCmd {
+            let cmd = DrawCmd {
                 index_count: mesh.index_count,
                 first_index: mesh.index_offset,
                 base_vertex: mesh.vertex_offset as i32,
                 record: *record,
                 bounds: [0.0; 4],
-            });
+            };
+            if i == 0 {
+                append_podium(lists, cmd, floor);
+            } else {
+                lists.water.push(cmd);
+            }
         }
     }
 
@@ -143,6 +186,62 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn first_hit(vertices: &[Vertex], indices: &[u16], origin: Vec3, direction: Vec3) -> Option<f32> {
+        indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter_map(|triangle| {
+                let [a, b, c] = triangle.map(|i| Vec3::from_array(vertices[usize::from(i)].pos));
+                let edge1 = b - a;
+                let edge2 = c - a;
+                let p = direction.cross(edge2);
+                let determinant = edge1.dot(p);
+                if determinant.abs() < 0.000001 {
+                    return None;
+                }
+                let delta = origin - a;
+                let u = delta.dot(p) / determinant;
+                let q = delta.cross(edge1);
+                let v = direction.dot(q) / determinant;
+                let distance = edge2.dot(q) / determinant;
+                (u >= 0.0 && v >= 0.0 && u + v <= 1.0 && distance > 0.0).then_some(distance)
+            })
+            .reduce(f32::min)
+    }
+
+    #[test]
+    fn solid_podium_blocks_water_rays_to_the_soles_and_is_in_reflection_draws() {
+        let (vertices, indices) = podium();
+        let below = Vec3::new(0.1, 0.0, -1.0);
+        let hit = first_hit(&vertices, &indices, below, Vec3::Z).expect("closed bottom cap");
+        assert!((below.z + hit + PODIUM_DEPTH).abs() < 0.00001);
+        let sole = Vec3::new(0.0, 0.0, 0.03);
+        for x in [1.25, 1.6, 2.0, 3.0] {
+            let surface = Vec3::new(x, 0.0, WATER_OFFSET);
+            let ray = sole - surface;
+            let hit = first_hit(&vertices, &indices, surface, ray.normalize()).expect("pedestal occludes sole");
+            assert!(hit < ray.length());
+        }
+        let mut lists = DrawLists::default();
+        let cmd = DrawCmd {
+            index_count: indices.len() as u32,
+            first_index: 0,
+            base_vertex: 0,
+            record: 17,
+            bounds: [0.0; 4],
+        };
+        let floor = Vec3::new(10.0, 20.0, 30.0);
+        append_podium(&mut lists, cmd, floor);
+        assert_eq!(lists.opaque[0].record, cmd.record);
+        let reflected = &lists.reflection[0];
+        assert_eq!(reflected.cmd.record, cmd.record);
+        assert!(!reflected.alpha);
+        for vertex in &vertices {
+            assert!((floor + Vec3::from_array(vertex.pos)).distance(reflected.center) <= reflected.radius + 0.00001);
+        }
+    }
 
     #[test]
     fn reveal_burst_is_bounded_fades_and_ends_without_retained_particles() {

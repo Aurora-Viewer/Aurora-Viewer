@@ -4965,7 +4965,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
-| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle` | Ocean studio, reveal previews and entry/exit transitions |
+| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal` | Ocean studio, reveal previews, transitions and pedestal close-up |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -8245,6 +8245,13 @@ at 30/120 FPS: no uncovered camera cut, stuck black frame or repeated burst.
 Avatar and attachment animations must continue, and HUD textures must retain
 their normal colours throughout the reveal. No worn material is modified.
 The water should reflect the sky; distant ridgelines stay near the horizon.
+`pedestal` lowers the focus to the feet and zooms in one wheel step for a
+repeatable close-up; capture at frame 850. Rounded upper/lower shoulders should catch
+the studio lights with a satin-metal finish, and the underside must be closed.
+The pedestal also participates in planar water reflection/refraction captures;
+its near wall must occlude reflections of the soles rather than showing the
+avatar through the plinth. Check GPU culling and `AURORA_CPU_CULL=1` at
+high and low focal heights, and compare planar reflections enabled/disabled.
 Region terrain must appear neither directly nor through water reflections or
 refraction, including classic and PBR terrain outside the main camera view.
 Reduced motion holds the aurora still. Left-drag the exposed view horizontally to turn. Right-drag up/down

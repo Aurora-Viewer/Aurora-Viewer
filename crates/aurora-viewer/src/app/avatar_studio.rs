@@ -71,6 +71,10 @@ impl App {
                 let (floor, height) = self.studio_subject();
                 self.avatar_studio.enter(self.world.agent.yaw, height);
                 self.avatar_studio.floor_offset = floor.z - self.studio_root().z;
+                if self.demo && std::env::var("AURORA_DEMO_AVATAR_STUDIO").is_ok_and(|mode| mode == "pedestal") {
+                    self.avatar_studio.pan_vertical(100000.0, 900.0);
+                    self.avatar_studio.zoom(1.0);
+                }
             } else {
                 self.avatar_studio = Studio::default();
                 self.scene.studio_stage.clear(renderer);
