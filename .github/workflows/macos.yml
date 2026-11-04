@@ -30,8 +30,10 @@ on:
   push:
     branches: [main]
 
-# a push to main is never cancelled: its cache build takes a quarter of an
-# hour, and the next merge would otherwise cancel it again and again
+# a push to main that has started is never cancelled: its cache build takes
+# a quarter of an hour, and the next merge would otherwise cancel it again
+# and again. A push still waiting is replaced by the next one all the same
+# (one pending run per group): see the timeouts in ci.yml
 concurrency:
   group: macos-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
@@ -171,6 +173,7 @@ jobs:
           cargo build --profile ci --locked -p aurora-viewer
       - name: Save the Rust cache
         if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}

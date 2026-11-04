@@ -17,9 +17,13 @@ on:
   push:
     branches: [main]
 
-# a push to main is never cancelled (as in macos.yml): when the cache key
-# changed, its jobs build the cache from nothing for about ten minutes, and
-# the next merge would otherwise cancel them before they save it
+# a push to main that has started is never cancelled (as in macos.yml): when
+# the cache key changed, its jobs build the cache from nothing for about ten
+# minutes, and the next merge would otherwise cancel them before they save
+# it. A push still waiting is replaced by the next one all the same: GitHub
+# keeps one pending run per group. So a hung run of main holds every later
+# push back until it ends, hence the timeouts of the jobs and of the cache
+# saves below (a save hung 6 hours on 2026-11-04)
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
@@ -36,6 +40,7 @@ jobs:
     # skipped when only documentation or assets changed.
     name: fmt, clippy (Windows)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       # the whole history (the version is read from the last tag, and the
       # changed files from the base), without the files of other commits:
@@ -76,8 +81,10 @@ jobs:
       - name: Clippy (warnings are errors)
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
+      # a few seconds to a minute; hung for hours once (see concurrency)
       - name: Save the Rust cache
         if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}
@@ -93,6 +100,7 @@ jobs:
     # the net for what that guess misses.
     name: clippy (Linux)
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -141,6 +149,7 @@ jobs:
         run: cargo test --profile ci --workspace --locked --no-run
       - name: Save the Rust cache
         if: steps.changes.outputs.needed == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}
@@ -269,6 +278,7 @@ jobs:
         run: cargo test --profile ci --workspace --locked --no-run
       - name: Save the Rust cache
         if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && matrix.part == 'interface' && steps.cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}
