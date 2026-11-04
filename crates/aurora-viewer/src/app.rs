@@ -101,6 +101,7 @@ mod object_menu_demo;
 mod own_motion;
 mod pay;
 mod photo_isolate;
+mod photo_reel;
 mod physics_editor;
 mod plate_click;
 mod pointing;
@@ -2768,6 +2769,8 @@ impl App {
         }
         self.scene.jobs.discard(imports);
         self.record_inventory_logout();
+        // the session's photo reel and its copies
+        self.photo_reel_end();
         if !self.demo {
             self.settings.release_hover_account();
         }
@@ -7228,7 +7231,11 @@ impl App {
         if self.joystick_flycam_step(dt) {
             return;
         }
-        let web_or_popup = self.media.focus.is_some() || self.web_has_focus() || egui::Popup::is_any_open(&self.egui_ctx);
+        // (the photo reel's quick view holds the keys like a popup)
+        let web_or_popup = self.media.focus.is_some()
+            || self.web_has_focus()
+            || egui::Popup::is_any_open(&self.egui_ctx)
+            || self.snapshots.reel.quick.is_open();
         let typing = typing || web_or_popup;
         let (kb, m) = (&self.settings.keybinds, self.mods());
         // typing in the chat bar, only the keys it hands to the avatar move
@@ -13013,6 +13020,7 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
+            BarAction::PhotoRoll => self.photo_reel_show_newest(),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
             BarAction::PlaceBar { stretch, rights_text } => {
                 self.settings.place_bar_stretch = stretch;
@@ -16449,6 +16457,8 @@ impl App {
                     self.settings.profile_rights,
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
+                self.toolbar_ui.photo_roll_empty = self.snapshots.reel.reel.is_empty();
+                self.toolbar_ui.photo_roll_active = self.snapshots.reel.quick.is_open();
                 self.toolbar_ui.shown = ui::toolbar::Shown {
                     profile: self.profile_ui.mine_shown(self.world.agent_id),
                     build: self.build.open,
@@ -19738,6 +19748,13 @@ impl ApplicationHandler for App {
                     // keep it held.
                     if pressed && ui::close_key::take_native_key(&ke.logical_key, code, mods, &mut self.down) {
                         self.check_temp_run();
+                        return;
+                    }
+                    // the photo reel's quick view reads its keys through egui
+                    // (arrows, Delete, Escape): none moves the avatar, the
+                    // camera or the viewfinder meanwhile
+                    if self.snapshots.reel.quick.is_open() {
+                        self.down.remove(&Input::key(code));
                         return;
                     }
                     // the photo viewfinder's keys (the shutter, its menu…)
