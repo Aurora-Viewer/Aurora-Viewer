@@ -191,7 +191,13 @@ where
         let complete = refresh
             .iter()
             .all(|id| contents.iter().any(|c| c.folder_id == *id && c.version >= 0));
-        if linked && gone && complete {
+        // a visitor's home grid may refuse every removal
+        // (HGSuitcaseInventoryService::DeleteItems): the change stands once
+        // the retries are spent
+        if linked && complete && (gone || attempt == RETRIES) {
+            if !gone {
+                log::warn!("outfit: the server kept links it was asked to remove");
+            }
             contents.sort_by_key(|c| refresh.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
             return Ok(contents);
         }
@@ -444,6 +450,41 @@ pub(crate) mod tests {
         task.abort();
         let contents = result.expect("confirmed");
         assert_eq!(contents[0].items.iter().map(|i| i.id).collect::<Vec<_>>(), [new_kept]);
+    }
+
+    #[tokio::test]
+    async fn links_the_server_keeps_do_not_fail_the_change() {
+        let (folder, kept, removed) = (Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(4));
+        let (old_kept, old_removed, new_kept) = (Uuid::from_u128(5), Uuid::from_u128(6), Uuid::from_u128(7));
+        let link = |id: Uuid, target: Uuid| {
+            llsd_map! { "item_id" => id, "parent_id" => folder, "asset_id" => target, "name" => "Hair", "type" => 24, "inv_type" => 18 }
+        };
+        let reply = |items: Vec<Llsd>| {
+            llsd_map! { "folders" => Llsd::Array(vec![llsd_map! {
+                "folder_id" => folder, "version" => 3, "categories" => Llsd::Array(Vec::new()), "items" => Llsd::Array(items),
+            }]) }
+        };
+        let kept_by_server = reply(vec![link(old_kept, kept), link(old_removed, removed), link(new_kept, kept)]);
+        let mut replies = vec![(200, reply(vec![link(old_kept, kept), link(old_removed, removed)]))];
+        // the first read and each retry
+        replies.resize(7, (200, kept_by_server));
+        let (url, task) = server(replies).await;
+        let (_, send) = recorder();
+        let mut change = new_outfit(folder, Uuid::nil(), kept);
+        change.create = None;
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            change,
+            send,
+            &|_| {},
+        )
+        .await;
+        let requests = task.await.expect("requests");
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(requests.len(), 7, "every retry is spent before giving up on the removal");
     }
 
     #[tokio::test]
