@@ -3,6 +3,9 @@
 //! replacing existing sets; local appearance and nicknames take precedence.
 use super::*;
 
+/// `from_xml`'s answer to a file with no set in it.
+pub const EMPTY_MAP: &str = "empty contact sets map";
+
 pub struct ImportData(ContactSets);
 
 impl ImportData {
@@ -40,7 +43,7 @@ impl ImportData {
         }
         let map = data.as_map().ok_or("expected a contact sets map")?;
         if map.is_empty() {
-            return Err("empty contact sets map");
+            return Err(EMPTY_MAP);
         }
         for (name, value) in map {
             if name.trim().is_empty() || !value.is_map() {

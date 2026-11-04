@@ -265,10 +265,13 @@ impl HistoryStorage {
         let mut changed = 0;
         for item in items.into_iter().filter(|item| !item.title.is_empty()) {
             let same = by_title.entry(item.title.clone()).or_default();
+            // the latest of the entries in range: several can be, and any
+            // other choice would move a visit again at the next import
             let found = same
                 .iter()
                 .copied()
-                .find(|&i| (self.items[i].global - item.global).length() < MAX_GLOBAL_POS_OFFSET);
+                .filter(|&i| (self.items[i].global - item.global).length() < MAX_GLOBAL_POS_OFFSET)
+                .max_by(|&a, &b| self.items[a].date.total_cmp(&self.items[b].date));
             match found {
                 Some(i) if self.items[i].date < item.date => {
                     self.items[i].date = item.date;
@@ -467,6 +470,14 @@ mod tests {
                 ("Shop", 10.0, 300.0),
             ]
         );
+        assert_eq!(history.merge(legacy), 0);
+    }
+
+    #[test]
+    fn merge_settles_at_once_when_a_place_is_in_range_of_two_entries() {
+        let legacy = vec![place("Shop", 0.0, 10.0), place("Shop", 6.0, 20.0), place("Shop", 3.0, 30.0)];
+        let mut history = HistoryStorage::default();
+        assert_eq!(history.merge(legacy.clone()), 3);
         assert_eq!(history.merge(legacy), 0);
     }
 
