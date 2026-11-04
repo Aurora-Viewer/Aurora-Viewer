@@ -1,4 +1,7 @@
 language-name = English
+avatar-studio-title = Avatar Studio
+avatar-studio-help = Left-drag to turn • Right-drag up/down • Wheel to zoom
+avatar-studio-exit = Leave studio
 joystick-title = Joystick and 3D mouse
 joystick-enabled = Enable joystick input
 joystick-enable-hint = Move the avatar or the flycam with a joystick, gamepad or SpaceMouse.

@@ -4044,6 +4044,44 @@ IK Edit suspends automatic foot placement before capturing its frozen source.
 Cross-avatar target refresh retains terrain evaluation and advances body
 physics once from the final constrained pose, within the parallel pose jobs.
 
+## Avatar Studio
+
+Avatar Studio (`avatar_studio.rs`, `app/avatar_studio.rs`,
+`scene/avatar_studio.rs`) is a session-local dressing-room presentation,
+toggled by the configurable `avatar_studio` toolbar command. Left-drag orbits;
+right-drag moves a bounded focus along the avatar's vertical centre line.
+The wheel changes distance to that focus independently of pointer position.
+Focus height and distance ease towards their targets with a frame-rate
+independent exponential response. These use a separate render camera; the agent transform and
+camera sent to the simulator retain their ordinary ownership. A circular
+podium and ocean plane use private meshes and draw records, released on
+exit or GPU cleanup. The sky lifts the login illustration's four aurora
+curtains and distant ridgelines (`ui/aurora_bg.rs`) onto sky directions in
+`common.wgsl`, using the same palette and motion. The normal water and
+material reflection paths see that sky too. It is disabled by default in
+`SkyParams`, enabled only in the studio frame, and respects reduced motion.
+The backdrop and three neutral local lights follow the inspection angle.
+The existing isolation visibility path selects the live avatar and its
+attachments without replacing photo choices. Terrain isolation also clears
+the separate classic/PBR terrain lists used by water reflection and refraction,
+including offscreen land. Region terrain, water and
+particles are replaced by the local stage; native windows and worn HUDs
+remain active. Camera restrictions, VR, logout and teleport close the mode.
+No simulator object, asset upload or avatar relocation is involved.
+
+`avatar_studio::Transition` delays the camera change until a fully black
+frame has been drawn, holds black on the switched frame, then uncovers it.
+The final UI shape covers scene, HUDs and windows together for 120 ms out /
+180 ms in. A separate visual age holds the avatar white through that fade
+and 80 ms beyond it, then linearly restores normal radiance over 850 ms.
+`studio_aurora[3].w` carries this temporary white amount; material alpha and
+animation clocks remain untouched, HUD shaders bypass it, and the stage's
+private records opt out with `flags[3]::STUDIO_STAGE`. Up to 96 analytically
+aged, additive GPU billboards drift outwards and fade within 1.2 seconds,
+without world emitters or asset loading. Reduced motion skips both reveal
+effects; the ordinary particle budget also bounds the burst. Teleport,
+logout, VR and camera restrictions cancel pending transitions immediately.
+
 ## Local interactive water
 
 AO quick controls (2026-10-18): `ui/ao/quick.rs` opens above the toolbar AO

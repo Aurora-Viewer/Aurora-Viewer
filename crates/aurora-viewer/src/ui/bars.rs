@@ -2097,6 +2097,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "texture_library" => toggle(panels.texture_library_presentation.window(), &mut panels.texture_library),
         "gestures" => toggle("gestures", &mut panels.gestures),
         "appearance" => toggle("appearance", &mut panels.appearance),
+        "avatar_studio" => panels.avatar_studio = !panels.avatar_studio,
         "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => toggle("worldmap", &mut panels.world_map),
@@ -2198,6 +2199,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "texture_library" => panels.texture_library,
         "gestures" => panels.gestures,
         "appearance" => panels.appearance,
+        "avatar_studio" => panels.avatar_studio,
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
         "places" => panels.places,
@@ -3676,6 +3678,24 @@ mod tests {
         assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
         assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
         assert!(!panels.ao);
+    }
+
+    #[test]
+    fn avatar_studio_toolbar_toggles_and_lights_without_changing_windows() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        let before = (panels.appearance, panels.inventory, panels.snapshot);
+        let command = super::super::toolbar::COMMANDS
+            .iter()
+            .find(|c| c.id == "avatar_studio")
+            .expect("configurable command");
+        assert!(command.ready);
+        assert_eq!(command.key, "avatar-studio-title");
+        for active in [true, false] {
+            run_command(&ctx, command.id, &mut panels);
+            assert_eq!(command_active(command.id, &panels, false, false, false), active);
+            assert_eq!((panels.appearance, panels.inventory, panels.snapshot), before);
+        }
     }
 
     #[test]

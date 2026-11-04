@@ -4965,6 +4965,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
+| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle` | Ocean studio, reveal previews and entry/exit transitions |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -8225,6 +8226,41 @@ hand would (log: `demo physics edit: sliders at the lively layer`); the
 `demo physics: frame …` offsets of `own` go from zero to a bounce while those
 of `other` keep bouncing. Save stores the asset and applies it as the
 appearance, as a simulator bake would.
+
+**Avatar Studio.** `AURORA_DEMO_AVATAR_STUDIO=1` opens the studio at frame 640.
+Capture after frame 850. Inspect the circular podium, neutrally lit avatar,
+surrounding water, stars and animated aurora in the login screen's colours.
+Entry and exit fade to black before switching the scene, then uncover it:
+120 ms out, a covered switch, 180 ms in. The entering avatar initially has
+fullbright white radiance, preserving alpha/cutouts, holds white through
+the fade plus 80 ms, then blends linearly into its normal appearance over
+850 ms. A single small burst of sparks drifts away and fades within 1.2 s.
+`white` and `reveal` hold the visual effect at 0.22 and 0.65 seconds for
+captures at frame 850; the actual scene transition still runs normally.
+`cycle` also leaves the studio at frame 960; capture after frame 1050 to
+check the restored world. Reduced motion skips white/particles, while the
+short black fade remains; a particle budget of zero also suppresses sparks.
+Toggle quickly during either fade, press Escape during entry, and repeat
+at 30/120 FPS: no uncovered camera cut, stuck black frame or repeated burst.
+Avatar and attachment animations must continue, and HUD textures must retain
+their normal colours throughout the reveal. No worn material is modified.
+The water should reflect the sky; distant ridgelines stay near the horizon.
+Region terrain must appear neither directly nor through water reflections or
+refraction, including classic and PBR terrain outside the main camera view.
+Reduced motion holds the aurora still. Left-drag the exposed view horizontally to turn. Right-drag up/down
+to move the focus vertically through the avatar's centre; horizontal motion
+must not move the focus sideways. Wheel zoom must ease in/out about that
+focus even with the pointer over the sky or water, and must not change its height.
+Compare 30 and 120 FPS for the same smooth response. Reset restores full-body framing; Leave
+studio, Escape and the toolbar toggle restore the ordinary world. Add Avatar
+Studio through Toolbar buttons and verify its active indication and removal
+from any of the three bars. Combine with `AURORA_DEMO_SHAPE=body|mesh-head`
+and `AURORA_DEMO_APPEARANCE=worn`: the windows remain usable, edits appear
+on the studio avatar and Cancel restores the draft. Compare the ordinary
+scene before and after leaving, including SMAA and MSAA. Human grid checks:
+a worn mesh body/head, rigid and flexible attachments, creator HUD clicks,
+shape edits and outfit changes. The stage is local; no teleport, rezzed object,
+agent relocation or inspection-driven heading change should occur.
 
 **`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head|t-pose`**
 opens the editor with a synthetic worn shape, without reading a real inventory or

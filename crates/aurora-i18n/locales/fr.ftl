@@ -1,4 +1,7 @@
 language-name = Français
+avatar-studio-title = Studio avatar
+avatar-studio-help = Glisser avec le bouton gauche : tourner • Bouton droit : haut/bas • Molette : zoom
+avatar-studio-exit = Quitter le studio
 joystick-title = Joystick et souris 3D
 joystick-enabled = Activer le joystick
 joystick-enable-hint = Déplacez l’avatar ou la caméra libre avec un joystick, une manette ou une SpaceMouse.
