@@ -420,3 +420,144 @@ fn legacy_pbr_keeps_all_maps_left_of_live_inline_factors() {
     click(&mut inspector, maps[1].center());
     assert_eq!(inspector.tool.ui.pick_target, Some(super::super::super::PickTarget::PbrMap(0)));
 }
+
+fn scroll_shape(inspector: &mut Inspector, delta: f32) {
+    let (window, _) = inspector.show(vec![]);
+    inspector.show(vec![
+        egui::Event::PointerMoved(egui::pos2(window.center().x, window.bottom() - 80.0)),
+        egui::Event::MouseWheel {
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, delta),
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    for _ in 0..20 {
+        inspector.show(vec![]);
+    }
+}
+
+#[test]
+fn legacy_shape_exposes_all_parametric_controls_at_minimum_size() {
+    let mut inspector = legacy();
+    inspector.tool.tab = 5;
+    resize_inspector(&mut inspector, crate::build::ui::legacy::MIN_SIZE);
+    let index = inspector.tool.sel_prims(&inspector.world)[0];
+    for (ty, (name, path, profile)) in super::super::object::types().into_iter().enumerate() {
+        if ty == 7 {
+            continue; // Sculpties have their own texture/stitching controls.
+        }
+        let volume = &mut inspector.world.objects.get_mut(index).unwrap().volume;
+        *volume = aurora_prim::params::VolumeParams::default();
+        volume.path.curve_type = path;
+        volume.profile.curve_type = profile;
+        let before = *volume;
+        inspector.tool.out.clear();
+        scroll_shape(&mut inspector, 2000.0);
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..7 {
+            let (window, texts) = inspector.show(vec![]);
+            let tab = texts
+                .iter()
+                .find(|(text, _)| text == aurora_i18n::tr!("build-legacy-object"))
+                .unwrap()
+                .1;
+            for (text, rect) in texts {
+                if window.contains_rect(rect) && rect.top() > tab.bottom() && rect.bottom() < window.bottom() - 25.0 {
+                    seen.insert(text);
+                }
+            }
+            scroll_shape(&mut inspector, -100.0);
+        }
+        for label in [
+            aurora_i18n::tr!("build-compact-path-cut"),
+            aurora_i18n::tr!("build-ui-object-hollow"),
+            aurora_i18n::tr!("build-ui-object-hollow-shape"),
+            aurora_i18n::tr!("build-ui-object-bias"),
+            aurora_i18n::tr!("build-compact-twist"),
+            aurora_i18n::tr!("build-ui-object-tilt"),
+            aurora_i18n::tr!("build-ui-object-radius"),
+            aurora_i18n::tr!("build-ui-object-revolutions"),
+        ] {
+            assert!(seen.contains(label), "{name}: {label} must be reachable by scrolling");
+        }
+        assert_eq!(inspector.world.objects.get(index).unwrap().volume, before);
+        assert!(
+            !inspector
+                .tool
+                .out
+                .iter()
+                .any(|cmd| matches!(cmd, aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::SetShape { .. })))
+        );
+    }
+}
+
+#[test]
+fn legacy_shape_restored_fields_commit_typed_values_for_extended_prims() {
+    let mut inspector = legacy();
+    inspector.tool.tab = 5;
+    resize_inspector(&mut inspector, crate::build::ui::legacy::MIN_SIZE);
+    let index = inspector.tool.sel_prims(&inspector.world)[0];
+    let volume = &mut inspector.world.objects.get_mut(index).unwrap().volume;
+    volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_CIRCLE2;
+    volume.profile.curve_type = aurora_prim::params::LL_PCODE_PROFILE_SQUARE;
+    for (label, value) in [
+        (aurora_i18n::tr!("build-ui-object-bias"), "0.25"),
+        (aurora_i18n::tr!("build-ui-object-radius"), "0.30"),
+        (aurora_i18n::tr!("build-ui-object-revolutions"), "2.50"),
+    ] {
+        scroll_shape(&mut inspector, 2000.0);
+        let mut field = None;
+        for _ in 0..7 {
+            let (window, texts) = inspector.show(vec![]);
+            if let Some((_, caption)) = texts.iter().find(|(text, rect)| text == label && window.contains_rect(*rect)) {
+                field = texts
+                    .iter()
+                    .find(|(text, rect)| {
+                        aurora_i18n::parse_number(text).is_some()
+                            && rect.top() >= caption.bottom()
+                            && rect.top() < caption.bottom() + 30.0
+                            && rect.left() >= caption.left()
+                            && rect.left() < caption.left() + 160.0
+                            && rect.bottom() < window.bottom() - 30.0
+                    })
+                    .map(|(_, rect)| *rect);
+            }
+            if field.is_some() {
+                break;
+            }
+            scroll_shape(&mut inspector, -100.0);
+        }
+        let field = field.unwrap_or_else(|| panic!("Missing editable field: {label}"));
+        inspector.tool.out.clear();
+        click(&mut inspector, field.center());
+        inspector.show(vec![egui::Event::Text(value.into())]);
+        inspector.show(vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        let sent = inspector
+            .tool
+            .out
+            .iter()
+            .filter_map(|cmd| match cmd {
+                aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::SetShape { shape, .. }) => Some(shape.to_params()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(sent.len(), 1, "{label} must send exactly one committed shape");
+        let actual = super::super::object::ui_from_volume(&sent[0]);
+        let got = if label == aurora_i18n::tr!("build-ui-object-bias") {
+            actual.skew
+        } else if label == aurora_i18n::tr!("build-ui-object-radius") {
+            actual.radius
+        } else {
+            actual.revolutions
+        };
+        assert!((got - value.parse::<f32>().unwrap()).abs() < 0.001, "{label}: {got}");
+    }
+}
