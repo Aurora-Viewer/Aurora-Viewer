@@ -11423,6 +11423,16 @@ impl App {
                 }
             }
         }
+        // AURORA_EXIT_AFTER=<seconds>: a clean exit once that long has run
+        // (the unattended measurement runs of a camera that moves by time,
+        // whatever the frame rate; docs/TESTING.md)
+        if let Some(after) = exit_after()
+            && self.quit_at.is_none()
+            && EXIT_AFTER_START.get_or_init(Instant::now).elapsed().as_secs_f32() >= after
+        {
+            log::info!("exit after {after} s");
+            self.quit_at = Some(Instant::now());
+        }
         let mut net = self.net.stats.snapshot();
         if self.demo {
             ui::perf::demo_traffic(&mut net);
@@ -20216,6 +20226,14 @@ fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now:
 fn present_mode_name(mode: Option<aurora_render::wgpu::PresentMode>) -> &'static str {
     mode.map_or("unknown", aurora_render::present::name)
 }
+
+/// `AURORA_EXIT_AFTER=<seconds>`: a clean exit after that many seconds of
+/// frames (read once).
+fn exit_after() -> Option<f32> {
+    static AFTER: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *AFTER.get_or_init(|| std::env::var("AURORA_EXIT_AFTER").ok()?.trim().parse().ok())
+}
+static EXIT_AFTER_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// AURORA_CAPTURE files: one per frame of AURORA_CAPTURE_FRAMES (comma
 /// separated, default 240), in frame order; with several frames each file is

@@ -357,6 +357,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
+| `AURORA_EXIT_AFTER=<seconds>` | Quits cleanly after that many seconds of frames (measurement runs of a camera that moves by time) |
 | `AURORA_DEMO_RENDER_TEXTURE=1` | Captures the demo world through a caller-owned render target |
 | `AURORA_DEMO_XR_DEVICE=1` | Uses OpenXR-compatible Vulkan initialization for the Linux demo |
 | `AURORA_OPENXR_LOADER=<path>` | Explicit macOS OpenXR loader dylib for runtime tests |
