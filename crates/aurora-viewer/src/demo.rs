@@ -267,6 +267,8 @@ pub mod texture_res;
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]
 pub mod toasts;
+#[path = "demo_tortured_prims.rs"]
+pub mod tortured_prims;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;
@@ -5765,6 +5767,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
     ev.extend(alpha_mask_ab::events());
+    ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
     ev.extend(land_beside_events());
     ev.extend(object_snap::events());

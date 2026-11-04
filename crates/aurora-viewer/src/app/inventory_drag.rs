@@ -482,7 +482,10 @@ impl App {
             self.inventory_drag.candidates.len()
         );
         match result {
-            Ok(drop) => Some(drop),
+            Ok(drop) => {
+                self.inventory_ui.release_world_drag_focus(ctx);
+                Some(drop)
+            }
             Err(reason) => {
                 self.inventory_ui.message = reason_text(reason).into();
                 self.world
@@ -550,8 +553,7 @@ impl App {
 
     pub(super) fn apply_inventory_drop(&mut self, drop: InventoryDrop) {
         if drop.selected {
-            self.build.deselect_all(&self.world);
-            self.build.expect_created(&self.world);
+            self.build.edit_inventory_rez(&self.world);
         }
         let rez = matches!(drop.command, BuildCmd::RezInventory(_));
         if let BuildCmd::RezInventory(item) = &drop.command {

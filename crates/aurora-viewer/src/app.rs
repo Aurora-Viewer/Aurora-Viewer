@@ -2641,7 +2641,7 @@ impl App {
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
-            } else if mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty() {
+            } else if mode == "mfa-refused" || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty()) {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
                 self.demo_mfa_challenge = Some(std::time::Instant::now() + std::time::Duration::from_millis(1200));
@@ -3439,6 +3439,12 @@ impl App {
                 bad_credentials,
                 previous_session,
             } => {
+                // A refused login spends its code, whatever the reason: the next
+                // attempt sends none, so the server can ask for a new one
+                // (LLLoginInstance::constructAuthParams starts with an empty
+                // token). Resent, an expired code is refused for ever, as a wrong
+                // password and with no code field to replace it.
+                self.login_form.mfa_token.clear();
                 // the grid still logs out a previous session: try again in a
                 // minute, the countdown on the login screen
                 if previous_session && self.retry_after_refusal(&error) {
@@ -3460,7 +3466,6 @@ impl App {
                 if mfa_required {
                     // A server challenge invalidates this account's authorization only.
                     self.login_form.mfa_authorization = None;
-                    self.login_form.mfa_token.clear();
                     if !self.demo {
                         crate::credentials::forget_mfa(&self.settings.login_uri(), &self.settings.username);
                     }
@@ -9856,6 +9861,7 @@ impl App {
         } else {
             None
         };
+        self.scene.mirror_plane = mirror.as_ref().map(|m| (m.point, m.normal));
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
         if in_world {
             self.scene.update_water_effects(
@@ -10268,7 +10274,7 @@ impl App {
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
-            let point = if matches!(mode, "object" | "contents") {
+            let point = if matches!(mode, "object" | "contents" | "build-object") {
                 self.world
                     .objects
                     .index_of_uuid(&crate::demo::action_id(970))
@@ -12509,6 +12515,8 @@ impl App {
             geom_pending: st.geom_pending,
             sync_backlog: if in_world { st.sync_backlog } else { 0 },
             anchored: if in_world { st.anchored } else { 0 },
+            flexies: if in_world { st.flexies } else { 0 },
+            flexies_held: if in_world { st.flexies_held } else { 0 },
         };
         let mut parts = std::mem::take(&mut self.scene.parts);
         parts.merge(&std::mem::take(&mut self.ui_parts));
@@ -12524,6 +12532,10 @@ impl App {
             // AURORA_MATERIAL_REBUILD=alt: every material user rebuilt at a
             // material change one second in three
             if let Some(old) = crate::scene::mat_changes::alternate(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_FLEXI_CULL=alt: every flexible prim swept one second in three
+            if let Some(old) = crate::scene::flexible::alternate(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_IMPOSTOR_POSES=alt: impostors posed at every frame in the
@@ -14323,25 +14335,35 @@ impl App {
                     a.exit = self.exit_prompt.show(&ctx, &p, false);
                     return a;
                 }
-                // `AURORA_DEMO_LOGIN_SUBMIT=<frame>`: press the open form's
-                // Log in at that frame, as its button does (the editor
-                // closes, an Add stays an Add while the request runs).
+                // `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]`: press the open
+                // form's Log in at those frames, as its button does (the
+                // editor closes, the code field and the last error go, an Add
+                // stays an Add while the request runs).
                 if self.demo
                     && std::env::var("AURORA_DEMO_LOGIN_SUBMIT")
-                        .ok()
-                        .and_then(|frame| frame.parse::<u64>().ok())
-                        .is_some_and(|frame| frame == self.frame_count)
+                        .is_ok_and(|frames| frames.split(',').any(|frame| frame.parse::<u64>().ok() == Some(self.frame_count)))
                 {
                     self.login_form.editing = false;
+                    self.login_form.show_mfa = false;
+                    self.login_form.error = None;
                     self.start_login();
                 }
                 if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
+                    // A request that carried a code is refused the way the grid
+                    // refuses a wrong one (reason "key", message id
+                    // LoginFailedAuthenticationFailed); one without is challenged.
+                    let refused = !self.login_form.mfa_token.trim().is_empty();
                     self.on_app_event(NetEvent::LoginFailed {
-                        error: String::new(),
-                        mfa_required: true,
+                        error: if refused {
+                            "login refused (key): Sorry! We couldn't log you in. Please check your username, password and second factor token."
+                                .to_owned()
+                        } else {
+                            String::new()
+                        },
+                        mfa_required: !refused,
                         tos_required: false,
-                        bad_credentials: false,
+                        bad_credentials: refused,
                         previous_session: false,
                     });
                 } else if self.demo_mfa_challenge.is_some() {
@@ -17237,6 +17259,7 @@ impl ApplicationHandler for App {
                         | "manage-confirm"
                         | "first"
                         | "first-mfa"
+                        | "mfa-refused"
                         | "add"
                         | "password"
                         | "connecting"
@@ -17246,7 +17269,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -17282,7 +17305,10 @@ impl ApplicationHandler for App {
                         .first()
                         .map_or_else(String::new, |account| account.username.clone());
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
-                    if matches!(mode.as_str(), "first" | "first-mfa" | "add" | "add-mfa" | "password") {
+                    if matches!(
+                        mode.as_str(),
+                        "first" | "first-mfa" | "mfa-refused" | "add" | "add-mfa" | "password"
+                    ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
                         self.login_form.adding = matches!(mode.as_str(), "add" | "add-mfa");
@@ -17298,6 +17324,13 @@ impl ApplicationHandler for App {
                         }
                         if mode == "first-mfa" {
                             self.settings.username = "Example new account".into();
+                            self.login_form.show_mfa = true;
+                        }
+                        if mode == "mfa-refused" {
+                            // a code about to be refused (no real credential)
+                            self.settings.username = "Example new account".into();
+                            self.login_form.password = "demo-placeholder".into();
+                            self.login_form.mfa_token = "000000".into();
                             self.login_form.show_mfa = true;
                         }
                         if mode == "password" {
@@ -18579,6 +18612,9 @@ impl ApplicationHandler for App {
             self.demo_shape_editor();
             self.demo_wearable_editor();
             if let Some(mode) = ui::widgets::demo::rez_mode() {
+                if matches!(mode, "build" | "build-object" | "build-delete") {
+                    self.build.open_build(crate::build::Tool::Create);
+                }
                 if mode != "1" && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                     self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
                 }
@@ -18589,7 +18625,7 @@ impl ApplicationHandler for App {
                     uuid::Uuid::from_u128(if mode == "nocopy" { 8109 } else { 8100 }),
                 );
                 self.inventory_ui.expand_all = Some(true);
-                if matches!(mode, "object" | "contents") {
+                if matches!(mode, "object" | "contents" | "build-object") {
                     for ev in crate::demo::action_events() {
                         self.world.apply(ev);
                     }
