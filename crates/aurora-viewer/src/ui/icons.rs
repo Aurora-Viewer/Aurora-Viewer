@@ -241,6 +241,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "bookmark",
     "bookmarks",
     "bounce-right",
+    "box-align-bottom",
     "brand-discord",
     "brand-github",
     "brand-youtube",
@@ -540,6 +541,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_LinkItem", "link-filled"),
     ("Inv_LinkFolder", "link-filled"),
     ("Inv_TrashClosed", "trash-filled"),
+    ("Inv_SuitcaseClosed", "briefcase-filled"),
+    ("Inv_SuitcaseOpen", "briefcase-filled"),
     ("Inv_SysClosed", "folder-filled"),
     ("Inv_Invalid", "help-circle-filled"),
 ];

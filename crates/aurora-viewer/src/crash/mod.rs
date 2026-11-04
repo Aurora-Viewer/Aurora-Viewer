@@ -6,6 +6,8 @@
 //! asked for by default; the full diagnostics stay in the session folder.
 
 pub mod github;
+#[cfg(target_os = "linux")]
+mod linux;
 mod native;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
@@ -16,7 +18,7 @@ mod threads;
 mod watchdog;
 mod window;
 
-pub use watchdog::{State, note as note_state, watch_window};
+pub use watchdog::{State, note as note_state, pumped, watch_window};
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -301,7 +303,7 @@ pub fn failure(message: &str) {
 }
 
 /// The GPU has kept a frame for `seconds` while the window still answers:
-/// `gpu-stall.txt` (with the render thread's stack on Windows), so a
+/// `gpu-stall.txt` (with the render thread's stack on Windows and Linux), so a
 /// session ended now is reported as such. [`gpu_answered`] takes it back.
 pub fn gpu_stalled(seconds: u64) {
     if let Some(session) = SESSION.get() {
@@ -313,6 +315,27 @@ pub fn gpu_stalled(seconds: u64) {
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
     mark_gpu_lost(b"");
+}
+
+/// A GPU device loss the viewer recovered from (app/gpu_recovery.rs), `ms`
+/// to its new window and renderer, `safe` with the safe graphics level: one
+/// line each in `gpu-recoveries.txt`, which the session's report counts if
+/// it ends badly later. The session goes on: nothing marks it failed.
+pub fn gpu_recovered(ms: u128, safe: bool) {
+    use std::io::Write;
+    let Some(session) = SESSION.get() else {
+        return;
+    };
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(session.dir.join("gpu-recoveries.txt"));
+    if let Ok(mut file) = file {
+        let _ = writeln!(file, "{unix} {ms} {}", if safe { "safe" } else { "same" });
+    }
 }
 
 /// The text of `gpu-lost.txt` for a device lost before the first frame.
@@ -357,6 +380,10 @@ pub fn gpu_closed() {
 }
 
 pub fn gpu_answered() {
+    // first, so that a stall's stacks still being read do not bring the
+    // file back once it is removed
+    #[cfg(target_os = "linux")]
+    watchdog::gpu_answered();
     if let Some(session) = SESSION.get() {
         let _ = std::fs::remove_file(session.dir.join("gpu-stall.txt"));
     }

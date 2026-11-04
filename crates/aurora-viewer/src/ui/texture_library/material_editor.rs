@@ -219,7 +219,9 @@ impl Editor {
             let mut submit = false;
             let mut cancel = false;
             ui.horizontal_wrapped(|ui| {
-                ui.add(egui::TextEdit::singleline(name).desired_width((ui.available_width() - 130.0).max(0.0)));
+                widgets::restricted_text_field(ui, true, name, widgets::TextPolicy::Ascii, |b, ui| {
+                    egui::TextEdit::singleline(b).desired_width((ui.available_width() - 130.0).max(0.0))
+                });
                 submit = ui
                     .add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
                     .clicked();

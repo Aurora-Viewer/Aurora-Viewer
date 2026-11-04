@@ -186,6 +186,8 @@ pub enum Action {
     Confirm(bool),
     /// The "cannot afford" message was closed.
     CloseAfford,
+    /// The first "Photo quality" warning was answered: go on (true) or not.
+    QualityWarning(bool),
     /// Choose a .cube file to add to the tables of the photo's look.
     ImportLut,
     /// Delete one of the tables (its file name).
@@ -760,6 +762,39 @@ impl SnapshotUi {
                 widgets::switch(ui, p, &mut s.sound);
             });
         });
+    }
+
+    /// The warning before "Photo quality" is first turned on: it raises
+    /// every graphics setting, which a modest PC or graphics card may not
+    /// survive (a frozen window or a crash). Some(true): go on.
+    pub fn quality_warning(&self, ctx: &egui::Context, p: &Palette) -> Option<bool> {
+        use widgets::{Modal, action_button};
+        let size = Vec2::new(0.0, 26.0);
+        let mut answer = None;
+        let response = Modal::new(egui::Id::unique("photo_quality_warning")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("photo-quality-warning-title"))
+                    .size(17.0)
+                    .color(p.ink),
+            );
+            ui.add_space(8.0);
+            ui.label(aurora_i18n::tr!("photo-quality-warning-text"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let ok = aurora_i18n::tr!("photo-quality-warning-ok");
+                if action_button(ui, p, "sparkles-filled", ok, ActionKind::Primary, size).clicked() {
+                    answer = Some(true);
+                }
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if answer.is_none() && response.should_close() {
+            answer = Some(false);
+        }
+        answer
     }
 
     /// The price to confirm before a paid upload (`confirm`), or the price

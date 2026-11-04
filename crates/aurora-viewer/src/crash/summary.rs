@@ -59,6 +59,8 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         .and_then(hex32)
     {
         (format!("Native exception 0x{code:08X}"), format!("native exception 0x{code:08X}"))
+    } else if let Some((number, name)) = native_text.lines().next().and_then(native_signal) {
+        (format!("Native signal {name} ({number})"), format!("native signal {name}"))
     } else if dir.join("failure.txt").exists() {
         // Its text is an error chain with paths: the kind alone is public.
         (
@@ -146,6 +148,11 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     // aurora-render's device lost callback (main_thread.rs).
     if device_lost_in(&tail) {
         rows.push(("GPU device lost", "yes (driver reset or GPU removed)".into()));
+        // the work the GPU had in hand: a hang or a fault (aurora-render
+        // device_lost.rs), rebuilt from the renderer's own newest line
+        if let Some(work) = gpu_work_in(&tail) {
+            rows.push(("GPU work at the loss", work));
+        }
     }
     if let Some(seconds) = text("gpu-stall.txt").lines().next().and_then(|line| {
         line.strip_prefix("GPU stall: no frame for ")?
@@ -157,6 +164,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             "GPU not responding",
             format!("no frame for {seconds} s, the window still answering"),
         ));
+    }
+    if let Some(recoveries) = gpu_recoveries(&text("gpu-recoveries.txt"), record.started_unix) {
+        rows.push(("GPU recoveries", recoveries));
     }
     if let Some(hooks) = overlay_hooks(&text("overlay-hooks.txt")) {
         rows.push(("Overlay hooks", hooks));
@@ -230,6 +240,37 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     Summary { title, body, gpu }
 }
 
+/// The GPU device losses the session recovered from (`gpu-recoveries.txt`:
+/// `<unix> <ms> same|safe` a line), as numbers and fixed words: how many,
+/// and for the first ones when in the session, how long the recovery took
+/// and whether it fell back on the safe graphics. None without any.
+fn gpu_recoveries(text: &str, started_unix: u64) -> Option<String> {
+    let recoveries: Vec<(u64, u64, bool)> = text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split(' ');
+            let unix: u64 = parts.next()?.parse().ok()?;
+            let ms: u64 = parts.next()?.parse().ok()?;
+            let safe = match parts.next()? {
+                "safe" => true,
+                "same" => false,
+                _ => return None,
+            };
+            Some((unix.saturating_sub(started_unix), ms, safe))
+        })
+        .collect();
+    if recoveries.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = recoveries
+        .iter()
+        .take(5)
+        .map(|(at, ms, safe)| format!("at {at} s ({ms} ms{})", if *safe { ", safe graphics" } else { "" }))
+        .collect();
+    let more = if recoveries.len() > shown.len() { ", …" } else { "" };
+    Some(format!("{}: {}{more}", recoveries.len(), shown.join(", ")))
+}
+
 /// The keys of `alive.txt` published, with their labels.
 const STATE_ROWS: &[(&str, &str)] = &[
     ("screen", "Screen"),
@@ -276,6 +317,16 @@ fn out_of_memory(text: &str) -> Option<(u64, Stack)> {
     let (first, rest) = last.split_once('\n')?;
     let size = first.strip_suffix(" bytes")?.parse().ok()?;
     Some((size, Stack::parse(rest)))
+}
+
+/// `Native signal 11 (SIGSEGV)`, the first line of a Linux `native.txt`
+/// (crash/linux.rs): the number and a name of the fixed list only.
+fn native_signal(line: &str) -> Option<(u8, &'static str)> {
+    let (number, name) = line.strip_prefix("Native signal ")?.split_once(' ')?;
+    let name = ["SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT"]
+        .into_iter()
+        .find(|known| name.strip_prefix('(').and_then(|n| n.strip_suffix(')')) == Some(*known))?;
+    Some((number.parse().ok()?, name))
 }
 
 /// The usual meaning of an exit code, for the reader of the report.
@@ -395,7 +446,8 @@ fn module(line: &str) -> Option<String> {
         if !matches!(key, "id" | "code") {
             return None;
         }
-        result.push_str(&format!(" {key}={}", hex(value, 48)?));
+        // A GNU build ID can be 32 bytes (crash/linux.rs).
+        result.push_str(&format!(" {key}={}", hex(value, 64)?));
     }
     Some(result)
 }
@@ -513,6 +565,59 @@ fn gpu_notice_in(log: &str) -> Option<&str> {
 
 fn device_lost_in(tail: &str) -> bool {
     tail.lines().any(|line| line.contains("] GPU device lost ("))
+}
+
+/// The "GPU work at the loss" row: the newest line the device-lost
+/// callback logged (`[… ERROR aurora_render::main_thread] GPU work at the
+/// loss: …`; the last one when a recovered session was lost again),
+/// rebuilt by [`gpu_work_row`]. A line of any other module or level is
+/// left out: a name logged elsewhere could carry the marker.
+fn gpu_work_in(tail: &str) -> Option<String> {
+    tail.lines().rev().find_map(|line| {
+        let (head, text) = line.split_once("] GPU work at the loss: ")?;
+        if !head.ends_with(" ERROR aurora_render::main_thread") {
+            return None;
+        }
+        gpu_work_row(text)
+    })
+}
+
+/// The row rebuilt from the line's frame numbers, ages (`d.ddd`) and one
+/// of the fixed endings of aurora-render's `hang_or_fault`; a line that
+/// does not parse whole gives nothing, so that no text of the log is
+/// published as it is.
+fn gpu_work_row(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text == aurora_render::GPU_WORK_NONE {
+        return Some(text.to_owned());
+    }
+    let rest = text.strip_prefix("last submission frame ")?;
+    let (frame, rest) = rest.split_once(", ")?;
+    let frame: u64 = frame.parse().ok()?;
+    let (age, rest) = rest.split_once(" s before, ")?;
+    let age = seconds(age)?;
+    let (state, rest) = ["not finished", "finished"]
+        .iter()
+        .find_map(|state| rest.strip_prefix(&format!("{state}, ")).map(|rest| (*state, rest)))?;
+    let (last, verdict) = match rest.strip_prefix("none finished yet, ") {
+        Some(verdict) => ("none finished yet".to_owned(), verdict),
+        None => {
+            let rest = rest.strip_prefix("frame ")?;
+            let (finished, rest) = rest.split_once(" finished ")?;
+            let finished: u64 = finished.parse().ok()?;
+            let (finished_age, verdict) = rest.split_once(" s before, ")?;
+            (format!("frame {finished} finished {} s before", seconds(finished_age)?), verdict)
+        }
+    };
+    let verdict = aurora_render::GPU_WORK_VERDICTS.iter().find(|v| **v == verdict)?;
+    Some(format!("last submission frame {frame}, {age} s before, {state}, {last}, {verdict}"))
+}
+
+/// An age as the line writes it: digits, a point, three digits.
+fn seconds(text: &str) -> Option<&str> {
+    let (whole, frac) = text.split_once('.')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(whole) && frac.len() == 3 && digits(frac)).then_some(text)
 }
 
 /// The session's log says its GPU device was lost.
@@ -635,6 +740,64 @@ mod tests {
         // a loss in a running session stays the plain kind
         std::fs::write(dir.join("gpu-lost.txt"), "").unwrap();
         assert_eq!(build(&record, &dir).title, "Crash: GPU device lost (0.7.1+3.gabcdef)");
+        // the work the GPU had in hand (aurora-render device_lost.rs): a row
+        std::fs::write(
+            dir.join("session.log"),
+            format!(
+                "{NOTICE}\n[t ERROR aurora_render::main_thread] GPU device lost (Unknown): reset\n[t ERROR aurora_render::main_thread] GPU work at the loss: last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran)\n"
+            ),
+        )
+        .unwrap();
+        let body = build(&record, &dir).body;
+        assert!(
+            body.contains("| GPU work at the loss | last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran) |"),
+            "{body}"
+        );
+    }
+
+    /// The row comes from the renderer's own line only, rebuilt from its
+    /// numbers and fixed words: a name logged by another module that
+    /// carries the marker publishes nothing, a line that does not parse
+    /// whole neither; of a session recovered then lost again, the last
+    /// loss's line is the row.
+    #[test]
+    fn the_gpu_work_row_is_rebuilt_from_the_renderer_s_newest_line() {
+        const HANG: &str = "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran)";
+        const FAULT: &str = "last submission frame 12, 0.008 s before, not finished, frame 11 finished 0.009 s before, a fault in the work of that frame (not a hang)";
+        let own = |text: &str| format!("[t ERROR aurora_render::main_thread] GPU work at the loss: {text}\n");
+        // another module's line carrying the marker in a name: nothing
+        let injected = format!(
+            "[t WARN  aurora_viewer::world::object_im_filtered] object named \"x] GPU work at the loss: {HANG}\" in a private region\n"
+        );
+        assert_eq!(gpu_work_in(&injected), None);
+        assert_eq!(
+            gpu_work_in(&format!("[t INFO  aurora_render::main_thread] GPU work at the loss: {HANG}\n")),
+            None
+        );
+        // the renderer's line, rebuilt as it is
+        assert_eq!(gpu_work_in(&own(HANG)).as_deref(), Some(HANG));
+        assert_eq!(gpu_work_in(&own(FAULT)).as_deref(), Some(FAULT));
+        assert_eq!(
+            gpu_work_in(&own("last submission frame 0, 3.000 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)")).as_deref(),
+            Some("last submission frame 0, 3.000 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)")
+        );
+        assert_eq!(
+            gpu_work_in(&own("nothing submitted yet (lost while starting)")).as_deref(),
+            Some("nothing submitted yet (lost while starting)")
+        );
+        // anything else in the line: nothing published
+        for bad in [
+            "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang in a private region",
+            "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran) at a private region",
+            "last submission frame six, 1.101 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)",
+            "last submission frame 601, 1.1 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)",
+            "a private region",
+        ] {
+            assert_eq!(gpu_work_in(&own(bad)), None, "{bad}");
+        }
+        // a recovered loss, then the fatal one: the last line
+        let twice = format!("{}{}", own(FAULT), own(HANG));
+        assert_eq!(gpu_work_in(&twice).as_deref(), Some(HANG));
     }
 
     #[test]
@@ -673,6 +836,42 @@ mod tests {
         for private in ["0x00007", "PRIVATE_LOG_PATH", "SECRET", "Alice", "Demo session"] {
             assert!(!body.contains(private), "leaked {private}:\n{body}");
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A Linux `native.txt` (crash/linux.rs): the handler's frames and the
+    /// signal trampoline above the fault, build IDs as module identities.
+    const SIGNAL: &str = "Native signal 11 (SIGSEGV)\nSignal code: 1\nFault address: 0x7f0012345000\nNative stack (addresses):\n00: 0x5612aa001000\n01: 0x7f00aa0451d0\n02: 0x5612aa1b2c3d\nFault: aurora-viewer+0x1b2c3d\nNative stack (modules):\n00: aurora-viewer+0x1000\n01: libc.so.6+0x451d0\n02: aurora-viewer+0x1b2c3d\n03: libvulkan_radeon.so+0x9abc\nModules:\naurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314\nlibc.so.6 id=AABBCCDD11223344556677889900AABB0 code=ddccbbaa443322116677889900aabbccddeeff00\nlibvulkan_radeon.so id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20\n";
+
+    #[test]
+    fn a_linux_signal_publishes_its_name_and_module_offsets_from_the_fault() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("native.txt"), SIGNAL).unwrap();
+        let summary = build(&record, &dir);
+        assert_eq!(
+            summary.title,
+            "Crash: native signal SIGSEGV at aurora-viewer+0x1b2c3d (0.7.1+3.gabcdef)"
+        );
+        let body = &summary.body;
+        for expected in [
+            "| Crash | Native signal SIGSEGV (11) |",
+            "00 aurora-viewer+0x1b2c3d\n01 libvulkan_radeon.so+0x9abc\n",
+            "aurora-viewer id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f1011121314",
+            // A 32-byte build ID.
+            "libvulkan_radeon.so id=0403020106050807090A0B0C0D0E0F100 code=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20\n",
+        ] {
+            assert!(body.contains(expected), "missing {expected:?} in\n{body}");
+        }
+        // The handler's frames above the fault, and every raw address, stay out.
+        for private in ["libc.so.6+0x451d0", "0x7f00", "0x5612"] {
+            assert!(!body.contains(private), "leaked {private}:\n{body}");
+        }
+        // Only the fixed signal names are published.
+        assert_eq!(native_signal("Native signal 11 (SIGSEGV)"), Some((11, "SIGSEGV")));
+        assert_eq!(native_signal("Native signal 6 (SIGABRT)"), Some((6, "SIGABRT")));
+        assert_eq!(native_signal("Native signal 11 (Alice)"), None);
+        assert_eq!(native_signal("Native signal x (SIGSEGV)"), None);
+        assert_eq!(native_signal("Native signal 11 (?)"), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -746,6 +945,22 @@ mod tests {
     }
 
     const FREEZE: &str = "Freeze: no answer for 20 s\nThread: main\nNative stack (modules):\n00: ntdll+0x9d0e4\n01: aurora_viewer+0x5000\nModules:\nntdll id=0123456789ABCDEF0123456789ABCDEF1 code=1234ABCD1f8000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: aurora-render\nNative stack (modules):\n00: nvoglv64+0x9abc\n01: aurora_viewer+0x7000\nModules:\nnvoglv64 code=65000000200000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: Private Name\nNative stack (modules):\n00: secret+0x1\n";
+
+    #[test]
+    fn recoveries_are_counted_with_when_and_how_and_nothing_else() {
+        assert_eq!(gpu_recoveries("", 1000), None);
+        assert_eq!(
+            gpu_recoveries("1120 812 same\n1300 790 safe\n", 1000).as_deref(),
+            Some("2: at 120 s (812 ms), at 300 s (790 ms, safe graphics)")
+        );
+        // a line that is not the viewer's is left out, never published
+        assert_eq!(
+            gpu_recoveries("1120 812 same\nC:\\Users\\someone 1 safe\n1130 800 other\n", 1000).as_deref(),
+            Some("1: at 120 s (812 ms)")
+        );
+        let many = "1100 800 same\n".repeat(7);
+        assert!(gpu_recoveries(&many, 1000).is_some_and(|s| s.starts_with("7: ") && s.ends_with(", …")));
+    }
 
     #[test]
     fn a_session_ended_frozen_publishes_both_threads_and_its_last_state() {

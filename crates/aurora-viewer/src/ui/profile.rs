@@ -340,7 +340,7 @@ impl ProfileUi {
                     .map_or(520.0, |rect| rect.size().max_elem())
                     * ctx.pixels_per_point()
             };
-            scene.textures.note_usage(&asset, pixels);
+            scene.textures.note_usage_boosted(&asset, pixels);
             photo.view.prepare(ctx, asset, scene);
             if let Some(size) = scene.textures.full_size(&asset) {
                 photo.view.dimensions = Some(size);
@@ -370,6 +370,31 @@ impl ProfileUi {
             }
             None => self.windows.push(Window::new(id)),
         }
+    }
+
+    /// The toolbar's Profile (Avatar.ToggleMyProfile, llviewermenu.cpp): our
+    /// profile opens; a minimized one expands, and a second press closes it
+    /// (unsaved edits still ask).
+    pub fn toggle_mine(&mut self, ctx: &egui::Context, world: &mut World, classic: bool) {
+        let me = world.agent_id;
+        let win_id = if classic { format!("profile-{me}") } else { aurora::window_id(me) };
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == me && w.open) {
+            if widgets::floater_minimized(ctx, &win_id) {
+                widgets::expand_floater(ctx, &win_id);
+            } else {
+                close_or_confirm(w, false);
+                // unsaved edits: the profile comes forward with its question
+                w.raise |= w.confirm_close;
+            }
+            return;
+        }
+        self.open(world, me);
+    }
+
+    /// Our profile is open (Avatar.IsMyProfileOpen,
+    /// LLAvatarActions::myProfileVisible).
+    pub fn mine_shown(&self, me: Uuid) -> bool {
+        self.windows.iter().any(|w| w.id == me && w.open)
     }
 
     /// The toolbar's Picks (Avatar.TogglePicks, llviewermenu.cpp): our
@@ -2148,7 +2173,11 @@ fn classified_detail(
         aurora_i18n::tr!("ui-profile-creation-date"),
         &profiles::slt_date(info.creation_date),
     );
-    row(ui, aurora_i18n::tr!("ui-profile-listing-cost"), &format!("L${}", info.price));
+    row(
+        ui,
+        aurora_i18n::tr!("ui-profile-listing-cost"),
+        &format!("{}{}", aurora_i18n::currency(), info.price),
+    );
     if c.own {
         let renew = info.flags & aurora_net::profile::classified_flags::AUTO_RENEW != 0;
         row(

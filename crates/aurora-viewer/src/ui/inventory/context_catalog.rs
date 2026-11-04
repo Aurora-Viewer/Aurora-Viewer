@@ -24,6 +24,7 @@ pub(super) enum Command {
     Rename(Uuid),
     Image(Uuid),
     Protect(Uuid),
+    FolderColor(Vec<Uuid>),
     Reload(Uuid),
     Window(Uuid),
     Asset(Uuid),
@@ -507,7 +508,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     } else {
                         aurora_i18n::tr!("common-open")
                     },
-                    opens,
+                    opens && !(kind == 3 && facts.landmark_blocked),
                     if single {
                         Command::Open(id)
                     } else {
@@ -761,6 +762,17 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 },
                 true,
                 Command::Protect(id),
+            );
+        }
+        if prefs.folder_colors_enabled && (all || folder.is_some()) {
+            let folders = super::folder_colors::folders(inv, &ids);
+            c.add(
+                "folder-color",
+                TEXT,
+                "palette-filled",
+                aurora_i18n::tr!("inventory-folder-color"),
+                !folders.is_empty(),
+                Command::FolderColor(folders),
             );
         }
     }
@@ -1221,6 +1233,7 @@ pub(super) fn execute(
                 prefs.protected.insert(id);
             }
         }
+        Command::FolderColor(ids) => st.folder_color = Some(super::folder_colors::Picker::new(prefs, ids)),
         Command::Reload(id) => {
             st.message.clear();
             actions.push(InvAction::Preview(id));

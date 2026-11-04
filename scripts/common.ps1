@@ -36,6 +36,17 @@ function Test-InUse([string]$Dir) {
     })
 }
 
+# The incremental\ folders of a Cargo target directory (one per profile:
+# debug, ci, debugging…), when it holds the CACHEDIR.TAG Cargo creates. They
+# are three quarters of a task's target\ and only speed up its next small
+# rebuild; the compiled dependencies are in deps\ next to them.
+function Get-IncrementalDirs([string]$Target) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Target 'CACHEDIR.TAG'))) { return }
+    Get-ChildItem -LiteralPath $Target -Directory -Force -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName 'incremental' } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+}
+
 # --- Shared compiler cache (sccache) ------------------------------------------
 # Every worktree builds the same dependencies. When sccache is installed (the
 # Aurora tools install it), their compiled crates are kept in one folder next

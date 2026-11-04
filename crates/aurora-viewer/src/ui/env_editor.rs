@@ -145,7 +145,7 @@ impl EnvEditorUi {
 
     /// "SaveSettingAs": the name prompt, filled with the settings' name.
     pub fn ask_save_as(&mut self) {
-        self.save_as = Some(self.name.clone());
+        self.save_as = Some(crate::text_validation::generated_name(&self.name, 63));
     }
 
     /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon).
@@ -326,9 +326,10 @@ impl EnvEditorUi {
             // a fixed width: a field following the window would grow it
             let w = 280.0;
             let enabled = self.rights.modify && self.doc.is_some();
-            let r = crate::ui::widgets::text_field(ui, enabled, &mut self.name, |b, _| {
-                egui::TextEdit::singleline(b).desired_width(w).char_limit(63)
-            });
+            let r =
+                crate::ui::widgets::restricted_text_field(ui, enabled, &mut self.name, crate::ui::widgets::TextPolicy::Ascii, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(w).char_limit(63)
+                });
             // setCommitOnFocusLost: the name is committed when the field is left
             if (r.lost_focus() || r.changed() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                 && let Some(doc) = &mut self.doc
@@ -492,7 +493,9 @@ impl EnvEditorUi {
                 ui.add_space(6.0);
                 ui.label(aurora_i18n::tr!("ui-env-editor-save-as-prompt"));
                 ui.add_space(8.0);
-                ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY).char_limit(63));
+                crate::ui::widgets::restricted_text_field(ui, true, &mut name, crate::ui::widgets::TextPolicy::Ascii, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(f32::INFINITY).char_limit(63)
+                });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let size = Vec2::new(0.0, 26.0);
@@ -990,22 +993,24 @@ fn xy_pad(ui: &mut egui::Ui, p: &Palette, salt: &str, v: &mut V2, range: f32, lo
         ui.spacing_mut().interact_size.x = 50.0;
         ui.push_id(salt, |ui| {
             changed |= ui
-                .add(
+                .add(widgets::restricted_number(
                     egui::DragValue::new(&mut v.x)
                         .range(-range..=range)
                         .speed(0.01)
                         .max_decimals(2)
                         .prefix("X "),
-                )
+                    widgets::TextPolicy::Decimal,
+                ))
                 .changed();
             changed |= ui
-                .add(
+                .add(widgets::restricted_number(
                     egui::DragValue::new(&mut v.y)
                         .range(-range..=range)
                         .speed(0.01)
                         .max_decimals(2)
                         .prefix("Y "),
-                )
+                    widgets::TextPolicy::Decimal,
+                ))
                 .changed();
         });
     });

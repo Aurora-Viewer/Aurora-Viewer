@@ -276,18 +276,14 @@ fn rating_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool, name: &str, allo
 /// A digits-only field of the land filters, its name as its hint; true
 /// when its value is committed (Enter, or the field left).
 fn number_field(ui: &mut egui::Ui, label: &str, text: &mut String) -> bool {
-    let field = ui
-        .add(
-            egui::TextEdit::singleline(text)
-                .hint_text(label)
-                .desired_width(90.0)
-                .char_limit(9)
-                .align(egui::Align2::LEFT_CENTER),
-        )
-        .on_hover_text(label);
-    if field.changed() {
-        text.retain(|ch| ch.is_ascii_digit());
-    }
+    let field = widgets::restricted_text_field(ui, true, text, widgets::TextPolicy::Digits, |b, _| {
+        egui::TextEdit::singleline(b)
+            .hint_text(label)
+            .desired_width(90.0)
+            .char_limit(9)
+            .align(egui::Align2::LEFT_CENTER)
+    })
+    .on_hover_text(label);
     field.lost_focus()
 }
 

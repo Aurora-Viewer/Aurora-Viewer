@@ -360,6 +360,71 @@ pub struct MeanCollision {
     pub kind: u8,
 }
 
+/// What an OpenSim region says about its own grid in SimulatorFeatures'
+/// "OpenSimExtras" (LFSimFeatureHandler::setSupportedFeatures). Each is empty
+/// when the region does not give it, always on Second Life. After a
+/// Hypergrid teleport they name the grid the agent is on now, not the one
+/// it logged in to.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OpenSimExtras {
+    /// "GridURL": the grid's Hypergrid address (`host:port`, any scheme
+    /// stripped), LFSimFeatureHandler::hyperGridURL.
+    pub grid_url: String,
+    /// "search-server-url": the grid's web search page.
+    pub search_url: String,
+    /// "map-server-url": the grid's map tile server.
+    pub map_url: String,
+    /// "whisper-range", "say-range", "shout-range": how far the region's
+    /// chat carries, in meters (None: the usual 10, 20 and 100 m).
+    pub whisper_range: Option<f32>,
+    pub say_range: Option<f32>,
+    pub shout_range: Option<f32>,
+    /// "MinPrimScale", "MaxPrimScale": the sizes a prim may take on this
+    /// region (None: the usual 0.01 and 64 m).
+    pub min_prim_scale: Option<f32>,
+    pub max_prim_scale: Option<f32>,
+}
+
+/// The largest chat range or prim size a region may give: the Legacy
+/// Viewer's OS_MAX_PRIM_SCALE (indra/llmath/xform.h).
+const MAX_REGION_FIGURE: f32 = 65536.0;
+
+impl OpenSimExtras {
+    /// Read from SimulatorFeatures' "OpenSimExtras" map.
+    pub fn from_llsd(extras: &aurora_llsd::Llsd) -> Self {
+        let grid_url = extras["GridURL"].to_string_value();
+        // Only the scheme is stripped, the port and any path stay, as
+        // LFSimFeatureHandler does.
+        let grid_url = match grid_url.split_once("://") {
+            Some((_, rest)) => rest.to_owned(),
+            None => grid_url,
+        };
+        // a positive, finite figure, or nothing (a region's own word on
+        // these is trusted no further), capped like OS_MAX_PRIM_SCALE so a
+        // ring or a size stays drawable
+        let figure = |key: &str| {
+            let v = &extras[key];
+            match v {
+                aurora_llsd::Llsd::Integer(_) | aurora_llsd::Llsd::Real(_) | aurora_llsd::Llsd::String(_) => {
+                    let n = v.as_f64() as f32;
+                    (n.is_finite() && n > 0.0).then_some(n.min(MAX_REGION_FIGURE))
+                }
+                _ => None,
+            }
+        };
+        Self {
+            grid_url: grid_url.trim().to_owned(),
+            search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
+            map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            whisper_range: figure("whisper-range"),
+            say_range: figure("say-range"),
+            shout_range: figure("shout-range"),
+            min_prim_scale: figure("MinPrimScale"),
+            max_prim_scale: figure("MaxPrimScale"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum NetEvent {
     /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
@@ -552,6 +617,18 @@ pub enum NetEvent {
         /// not given, always on Second Life.
         grid_status_feed: String,
         grid_status_page: String,
+        /// "OpenSimExtras" "currency-base-uri": the region's own currency
+        /// helper, ahead of the grid's (LFSimFeatureHandler's
+        /// mHelperUriOverride); empty when not given.
+        currency_base_uri: String,
+        /// The rest of an OpenSim region's "OpenSimExtras" this viewer uses.
+        opensim: OpenSimExtras,
+        /// "OpenSimExtras" "currency": the region's own money symbol
+        /// (mCurrencySymbolOverride); empty when not given.
+        currency_symbol: String,
+        /// "OpenSimExtras" "ExportSupported": the region honours the export
+        /// permission (LFSimFeatureHandler::simSupportsExport).
+        export_supported: bool,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -2318,4 +2395,59 @@ pub struct ExperienceLogEvent {
     pub object_name: String,
     pub parcel_name: String,
     pub attachment: bool,
+}
+
+#[cfg(test)]
+mod opensim_extras_tests {
+    use super::{MAX_REGION_FIGURE, OpenSimExtras};
+    use aurora_llsd::Llsd;
+
+    #[test]
+    fn opensim_extras_strip_only_the_scheme_of_the_grid_url() {
+        let extras = Llsd::Map(
+            [
+                ("GridURL", "http://hg.osgrid.org:80/"),
+                ("search-server-url", " https://search.example/?q=[QUERY] "),
+                ("map-server-url", "https://maps.example/"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), Llsd::String(v.to_owned())))
+            .collect(),
+        );
+        let read = OpenSimExtras::from_llsd(&extras);
+        assert_eq!(read.grid_url, "hg.osgrid.org:80/");
+        assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
+        assert_eq!(read.map_url, "https://maps.example/");
+        // a GridURL given without a scheme, as most grids do
+        let bare = Llsd::Map(
+            [("GridURL".to_owned(), Llsd::String("grid.example:8002".to_owned()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&bare).grid_url, "grid.example:8002");
+        // chat ranges and prim sizes, as integers or reals; nonsense ignored
+        let limits = Llsd::Map(
+            [
+                ("say-range", Llsd::Integer(30)),
+                ("shout-range", Llsd::Real(256.0)),
+                ("whisper-range", Llsd::Integer(-5)),
+                ("MinPrimScale", Llsd::Real(0.001)),
+                ("MaxPrimScale", Llsd::String("256".into())),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect(),
+        );
+        let read = OpenSimExtras::from_llsd(&limits);
+        assert_eq!(
+            (read.whisper_range, read.say_range, read.shout_range),
+            (None, Some(30.0), Some(256.0))
+        );
+        assert_eq!((read.min_prim_scale, read.max_prim_scale), (Some(0.001), Some(256.0)));
+        // a huge but finite figure is capped, so a ring or a size stays drawable
+        let huge = Llsd::Map([("say-range".to_owned(), Llsd::Real(1e38))].into_iter().collect());
+        assert_eq!(OpenSimExtras::from_llsd(&huge).say_range, Some(MAX_REGION_FIGURE));
+        // Second Life: no OpenSimExtras at all
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::Undef), OpenSimExtras::default());
+    }
 }
