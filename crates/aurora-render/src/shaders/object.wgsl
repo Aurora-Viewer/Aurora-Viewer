@@ -797,6 +797,16 @@ fn water_clip(world_pos: vec3<f32>) {
     }
 }
 
+// water_clip's decision without the discard (the stochastic passes'
+// alpha-only shading, blend_alpha).
+fn water_clipped(world_pos: vec3<f32>) -> bool {
+    let h = frame.params.y;
+    if (WATER_CLIP == 0u || frame.camera_pos.z < h) {
+        return false;
+    }
+    return (WATER_CLIP == 1u) != (world_pos.z >= h);
+}
+
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).

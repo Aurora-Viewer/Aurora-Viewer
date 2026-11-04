@@ -481,7 +481,7 @@ impl SampleMaskShaders {
     /// write a resource without a mapping.
     pub fn create_shader_module_mapped(&self, device: &wgpu::Device, label: &str, wgsl: &str, map: spv::BindingMap) -> wgpu::ShaderModule {
         if let Some(facts) = &self.facts {
-            match self.fixed_words(facts, label, wgsl, map) {
+            match self.fixed_words_mapped(facts, label, wgsl, map) {
                 Ok(Some(words)) => {
                     let entry_points: Vec<wgpu::PassthroughShaderEntryPoint<'static>> = words
                         .entry_points
@@ -524,7 +524,17 @@ impl SampleMaskShaders {
     }
 
     /// The rewritten SPIR-V, `None` when naga already writes the array.
-    fn fixed_words(&self, facts: &VulkanFacts, label: &str, wgsl: &str, map: spv::BindingMap) -> Result<Option<FixedWords>, FixError> {
+    fn fixed_words(
+        &self,
+        facts: &VulkanFacts,
+        label: &str,
+        wgsl: &str,
+        groups: &[&[wgpu::BindGroupLayoutEntry]],
+    ) -> Result<Option<FixedWords>, FixError> {
+        self.fixed_words_mapped(facts, label, wgsl, binding_map(groups))
+    }
+
+    fn fixed_words_mapped(&self, facts: &VulkanFacts, label: &str, wgsl: &str, map: spv::BindingMap) -> Result<Option<FixedWords>, FixError> {
         if !self.passthrough {
             return Err(FixError::NoPassthrough);
         }
