@@ -1397,6 +1397,30 @@ impl Camera {
         }
     }
 
+    /// Left-drag on our avatar with ClickOnAvatarKeepsCamera: orbit the view
+    /// without turning the agent (Legacy Viewer while stationary). Uses the
+    /// same full-window 360° scale as [`Self::drag`].
+    pub fn avatar_keep_orbit_drag(&mut self, dx: f32, dy: f32, width: f32, agent: &mut AgentState) {
+        let Some(t) = &mut self.tool else {
+            return;
+        };
+        t.accum_x += dx.abs();
+        t.accum_y += dy.abs();
+        t.outside_x |= t.accum_x >= SLOP_RANGE;
+        t.outside_y |= t.accum_y >= SLOP_RANGE;
+        if !t.outside_x && !t.outside_y {
+            return;
+        }
+        let k = TAU / width.max(1.0);
+        if self.focus_on_avatar && self.third_person() {
+            self.orbit_yaw -= dx * k;
+            self.pitch_by(dy * k);
+        } else {
+            self.orbit_around(-dx * k, agent);
+            self.orbit_over(dy * k);
+        }
+    }
+
     /// Mouselook: the mouse turns the avatar and tilts its view.
     pub fn look(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
         let k = DRAG_RATE * sensitivity;
@@ -3475,6 +3499,54 @@ mod tests {
                 assert!((w.agent.yaw - expected).abs() < 1e-5, "release ends steering");
             }
         }
+    }
+
+    #[test]
+    fn avatar_keep_orbit_drag_does_not_turn_the_avatar_while_stationary() {
+        // ClickOnAvatarKeepsCamera while still on follow: left-drag orbits
+        // (orbit_yaw) without mouse-steer turning the agent.
+        let (mut w, mut cam, s, _) = focused_object();
+        cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        w.agent.yaw = 0.0;
+        let heading = w.agent.yaw;
+        let focus = (cam.focus_point(), cam.focus_object_id());
+        cam.begin_drag(false);
+        cam.avatar_keep_orbit_drag(2.0, 0.0, 1280.0, &mut w.agent);
+        assert_eq!(w.agent.yaw, heading, "inside the drag threshold");
+        cam.avatar_keep_orbit_drag(256.0, 0.0, 1280.0, &mut w.agent);
+        assert_eq!(w.agent.yaw, heading, "stationary keep-camera orbit must not steer");
+        assert_eq!((cam.focus_point(), cam.focus_object_id()), focus);
+        assert!(cam.orbit_yaw.abs() > 0.1, "the follow camera orbited");
+        cam.fold_orbit(&mut w.agent);
+        assert!(
+            (w.agent.yaw - (-256.0 * TAU / 1280.0)).abs() < 1e-5,
+            "movement folds the orbit into heading"
+        );
+    }
+
+    #[test]
+    fn keep_camera_click_aims_at_the_hit_without_snapping_behind() {
+        // Legacy Viewer: pickCallback always, setFocusOnAvatar only when the
+        // option is off. Keep position/lens; focus moves to the body hit.
+        let (mut w, mut cam, s, _) = focused_object();
+        cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        let eye = cam.position;
+        let fov = cam.fov_y;
+        let hit = cam.avatar.position + Vec3::new(0.15, 0.2, 0.9);
+        let ray = (eye, (hit - eye).normalize_or(Vec3::X));
+        cam.alt_focus(hit, None, ray, &mut w.agent, &s);
+        assert!(!cam.focus_on_avatar, "keep-camera skips setFocusOnAvatar");
+        assert!((cam.focus_target - hit).length() < 1e-3, "aim at the touched spot");
+        assert!((cam.position - eye).length() < 0.05, "camera position kept");
+        assert!((cam.fov_y - fov).abs() < 1e-5, "lens kept");
+        w.agent.yaw = 0.0;
+        let heading = w.agent.yaw;
+        cam.begin_drag(false);
+        cam.avatar_keep_orbit_drag(256.0, 0.0, 1280.0, &mut w.agent);
+        assert_eq!(w.agent.yaw, heading, "orbit around the hit must not steer");
+        assert!((cam.focus_target - hit).length() < 1e-3, "focus stays on the hit");
     }
 
     #[test]
