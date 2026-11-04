@@ -13134,3 +13134,8 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+
+appearance-xml-export = Exporter mon apparence en XML…
+appearance-xml-file-type = Apparence XML (*.xml)
+appearance-xml-saved = Apparence enregistrée dans { $file }.
+appearance-xml-failed = Impossible d’enregistrer l’apparence XML.

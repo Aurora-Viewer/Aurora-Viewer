@@ -13111,3 +13111,8 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+appearance-xml-export = 自分のアピアランスをXMLにエクスポート…
+appearance-xml-file-type = アピアランス XML (*.xml)
+appearance-xml-saved = アピアランスを { $file } に保存しました。
+appearance-xml-failed = アピアランスXMLを保存できませんでした。
