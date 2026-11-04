@@ -196,8 +196,11 @@ fn obb(p: &Painter3d, pos: Vec3, rot: Quat, half: Vec3, c: Color32) {
     }
 }
 
+type PreviewKey = (u64, [u32; 4]);
+type PreviewEdges = Arc<Vec<(Vec3, Vec3)>>;
+
 thread_local! {
-    static PREVIEWS: std::cell::RefCell<HashMap<(u64, [u32; 4]), Arc<Vec<(Vec3, Vec3)>>>> = std::cell::RefCell::new(HashMap::new());
+    static PREVIEWS: std::cell::RefCell<HashMap<PreviewKey, PreviewEdges>> = std::cell::RefCell::new(HashMap::new());
 }
 
 /// Outline segments of a shape for the Create palette icons.
