@@ -105,6 +105,27 @@ pub(super) fn icon_slot(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rec
     resp
 }
 
+/// `icon_slot` whose left click may be greyed (an RLVa restriction) while
+/// its right-click menu stays: the response, and whether it was clicked
+/// while enabled.
+pub(super) fn icon_slot_greyable(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    rect: Rect,
+    id: Id,
+    icon: &str,
+    enabled: bool,
+) -> (egui::Response, bool) {
+    let resp = ui.interact(rect, id, Sense::click());
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    let hot = resp.hovered() || open;
+    slot_face(ui, p, rect, hot, false);
+    paint_icon(ui, icons, icon, rect, ICON, slot_ink(p, hot && enabled, enabled));
+    let clicked = enabled && resp.clicked();
+    (resp, clicked)
+}
+
 /// A text laid out in the font of the islands' readouts.
 fn text(ui: &egui::Ui, s: String, size: f32, color: Color32) -> std::sync::Arc<egui::Galley> {
     ui.painter().layout_no_wrap(s, FontId::proportional(size), color)
@@ -385,8 +406,11 @@ const DISC: f32 = 22.0;
 fn balance_galley(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> Option<std::sync::Arc<egui::Galley>> {
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     st.balance.filter(|_| st.show_balance).map(|b| {
-        ui.painter()
-            .layout_no_wrap(format!("{} L$", aurora_i18n::integer(i64::from(b))), font, p.ink)
+        ui.painter().layout_no_wrap(
+            format!("{} {}", aurora_i18n::integer(i64::from(b)), aurora_i18n::currency()),
+            font,
+            p.ink,
+        )
     })
 }
 
@@ -754,7 +778,10 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "video-filled", aurora_i18n::tr!("ui-bars-camera-controls")) {
-            *action = BarAction::CameraControls;
+            *action = BarAction::Controls {
+                movement: false,
+                toggle: false,
+            };
         }
     });
     menu::separator(ui, p);
@@ -1114,10 +1141,13 @@ mod tests {
             env_keys: Default::default(),
             double_click: Default::default(),
             quickjump: false,
+            friends_only: false,
+            fly_override: false,
             quiet_snapshots: false,
             marketplace: false,
             parcel_landmark: None,
             can_set_home: false,
+            can_go_home: true,
             release_notes: false,
             region_console: false,
             motd: false,

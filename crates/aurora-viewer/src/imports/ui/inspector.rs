@@ -133,6 +133,12 @@ pub(super) fn show(
                                         if entry.local {
                                             checkbox(ui, p, &mut entry.local_live, aurora_i18n::tr!("import-local-live"));
                                         }
+                                        // The footer only says that a file has an error: its reason is here.
+                                        if let Status::Error(error) = &entry.status
+                                            && *error != imports.message
+                                        {
+                                            ui.add(egui::Label::new(egui::RichText::new(error).small().color(p.danger)).wrap());
+                                        }
                                         if let Status::Done(item) = entry.status
                                             && flat_button(ui, p, aurora_i18n::tr!("import-open-inventory")).clicked()
                                         {
@@ -412,7 +418,7 @@ pub(super) fn show(
                         let footer_rect = egui::Rect::from_min_max(egui::pos2(remaining.left(), content.bottom()), remaining.max);
                         let mut footer_ui = ui.new_child(egui::UiBuilder::new().id_salt("import_tab_footer").max_rect(footer_rect));
                         footer_ui.set_clip_rect(footer_rect.intersect(ui.clip_rect()));
-                        let measured = footer::show(&mut footer_ui, p, imports, prefs, world, inventory_prefs, prices, actions);
+                        let measured = footer::show(&mut footer_ui, p, imports, prefs, world, prices, actions);
                         ctx.data_mut(|data| data.insert_temp(footer_key, measured));
                     }
                 },

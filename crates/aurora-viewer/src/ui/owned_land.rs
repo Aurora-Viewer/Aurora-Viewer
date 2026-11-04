@@ -49,8 +49,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - 72.0).max(120.0));
                             ui.label(egui::RichText::new(&parcel.name).strong());
-                            let x = parcel.global_x.rem_euclid(256.0);
-                            let y = parcel.global_y.rem_euclid(256.0);
+                            let (x, y) = world.map.local_xy(f64::from(parcel.global_x), f64::from(parcel.global_y));
                             ui.label(format!("{} ({x:.0}, {y:.0})", parcel.sim_name));
                             ui.label(aurora_i18n::tr!(
                                 "owned-land-area",
@@ -66,11 +65,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool
                             show_map = true;
                         }
                         if widgets::icon_button(ui, p, "world-filled", aurora_i18n::tr!("common-teleport"), true) {
-                            let pos = glam::Vec3::new(
-                                parcel.global_x.rem_euclid(256.0),
-                                parcel.global_y.rem_euclid(256.0),
-                                parcel.global_z,
-                            );
+                            let (x, y) = world.map.local_xy(f64::from(parcel.global_x), f64::from(parcel.global_y));
+                            let pos = glam::Vec3::new(x as f32, y as f32, parcel.global_z);
                             super::context::request(ctx, super::context::CtxAction::TeleportToPlace(parcel.sim_name.clone(), pos));
                         }
                     });

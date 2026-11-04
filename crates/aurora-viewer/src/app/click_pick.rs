@@ -199,6 +199,12 @@ pub(super) struct ClickWait {
 }
 
 impl ClickWait {
+    /// After a GPU recovery: the lost renderer will never answer the
+    /// waiting click's picks (gpu_recovery.rs).
+    pub(super) fn forget_pending(&mut self) {
+        self.pending = None;
+    }
+
     /// A click waits for its depth: what comes now goes behind it.
     pub(super) fn waiting(&self) -> bool {
         self.pending.is_some()

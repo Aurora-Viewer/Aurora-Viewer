@@ -80,7 +80,7 @@ impl ThumbnailUi {
             return;
         }
         let asset = image(&world.inventory, item);
-        let ready = self.pending.is_none() && !mutation_pending && rules::mutable(&world.inventory, item, &prefs.protected);
+        let ready = self.pending.is_none() && !mutation_pending && rules::mutable(&world.inventory, item);
         let position = ctx.content_rect().center() - egui::vec2(360.0, 200.0);
         let mut open = true;
         let mut caption = String::new();
@@ -280,7 +280,7 @@ impl ThumbnailUi {
                                 let query = self.filter.trim().to_lowercase();
                                 if query.is_empty() {
                                     let root = world.inventory.root;
-                                    picker_folder(ui, p, icons, &mut world.inventory, &order, root, 0, &mut self.selected);
+                                    picker_folder(ui, p, icons, &mut world.inventory, &order, root, 0, &mut self.selected, prefs);
                                 } else {
                                     let mut items: Vec<_> = world
                                         .inventory
@@ -411,6 +411,7 @@ fn picker_folder(
     id: Uuid,
     depth: usize,
     selected: &mut Option<Uuid>,
+    prefs: &InventoryPreferences,
 ) {
     if depth > 24 {
         return;
@@ -439,7 +440,8 @@ fn picker_folder(
         .show_header(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                icon(ui, icons, folder_icon(folder.info.type_default, folder_open), p);
+                let tint = super::folder_colors::tint(prefs, id);
+                tree::icon(ui, icons, folder_icon(folder.info.type_default, folder_open), p, tint);
                 ui.label(RichText::new(name).color(p.ink));
             });
         })
@@ -447,7 +449,7 @@ fn picker_folder(
             inv.request(id);
             for &item in order.children(id) {
                 if inv.folders.contains_key(&item) {
-                    picker_folder(ui, p, icons, inv, order, item, depth + 1, selected);
+                    picker_folder(ui, p, icons, inv, order, item, depth + 1, selected, prefs);
                 } else if let Some(it) = inv.items.get(&item)
                     && usable(inv, it)
                 {

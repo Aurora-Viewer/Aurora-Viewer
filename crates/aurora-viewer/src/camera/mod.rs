@@ -50,6 +50,8 @@ const CAMERA_LAG_HALF_LIFE: f32 = 0.25;
 const MIN_CAMERA_LAG: f32 = 0.5;
 const MAX_CAMERA_LAG: f32 = 5.0;
 const CAMERA_COLLIDE_EPSILON: f32 = 0.1;
+/// FLAGS_CAMERA_DECOUPLED (indra/llprimitive/object_flags.h).
+const FLAGS_CAMERA_DECOUPLED: u32 = 1 << 20;
 const MIN_CAMERA_DISTANCE: f32 = 0.1;
 const MAX_CAMERA_DISTANCE_FROM_OBJECT: f32 = 496.0;
 const CAMERA_FUDGE_FROM_OBJECT: f32 = 16.0;
@@ -170,6 +172,8 @@ pub struct FrameInput {
     /// Sitting and optional eye following consume it after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
     pub draw_distance: f32,
+    /// The main region's width (LLWorld::mWidth, which follows the region).
+    pub region_width: f32,
     pub aspect: f32,
 }
 
@@ -191,6 +195,9 @@ struct AvatarFrame {
     render_rotation: Quat,
     /// Rotation of the object we sit on.
     seat: Option<Quat>,
+    /// The vehicle's FLAGS_CAMERA_DECOUPLED (VEHICLE_FLAG_CAMERA_DECOUPLED):
+    /// the mouselook aim stays in the world instead of the seat.
+    camera_decoupled: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -307,6 +314,7 @@ pub struct Camera {
     avatar: AvatarFrame,
     head: Vec3,
     draw_distance: f32,
+    region_width: f32,
     /// DisableCameraConstraints, as of the last frame.
     unconstrained: bool,
     /// Our avatar's id (the alt-camera focus object of unlockView).
@@ -378,9 +386,11 @@ impl Default for Camera {
                 render_root: start,
                 render_rotation: Quat::IDENTITY,
                 seat: None,
+                camera_decoupled: false,
             },
             head: start + Vec3::Z * 0.7,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             unconstrained: false,
             own: Uuid::nil(),
             dt: 0.0,
@@ -786,6 +796,32 @@ impl Camera {
         self.set_camera_pos_and_focus(camera, focus, object, s);
     }
 
+    /// Build › Focus on Selection (H) and Zoom to Selection (Shift+H).
+    /// Port of handle_look_at_selection (indra/newview/llviewermenu.cpp,
+    /// originally LGPL 2.1): focus moves the focus point to the selection's
+    /// centre; zoom also brings the camera to the distance that frames its
+    /// box, never farther than it already is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn look_at_selection(
+        &mut self,
+        center: Vec3,
+        extent: f32,
+        object: Option<(Uuid, FocusObject)>,
+        zoom: bool,
+        aspect: f32,
+        agent: &mut AgentState,
+        s: &CameraSettings,
+    ) {
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        if zoom {
+            let distance = selection_distance(extent, s.fov, aspect).min((self.position - center).length());
+            let dir = (self.position - center).normalize_or(-self.forward());
+            self.set_camera_pos_and_focus(center + dir * distance, center, object, s);
+        } else {
+            self.set_focus_global(Some(center), object.map(|o| o.0), object.map(|o| o.1), s);
+        }
+    }
+
     /// Context menu "Zoom" (handle_look_at_selection "zoom"): the focus stays
     /// attached to `object` when there is one, so the camera follows it as
     /// it moves (TrackFocusObject).
@@ -858,6 +894,8 @@ impl Camera {
             self.change_to_default(agent, s);
         }
         if reset_camera {
+            // LLAgentCamera::resetView resets the camera roll too.
+            self.roll = 0.0;
             if !steering && self.third_person() {
                 // leaving mouse steering: the pitch fades out
                 self.pitch *= 1.0 - interpolant(0.3, self.dt);
@@ -1098,7 +1136,7 @@ impl Camera {
         }
         MAX_CAMERA_DISTANCE_FROM_OBJECT
             .min(self.draw_distance - 1.0)
-            .min(REGION_WIDTH - CAMERA_FUDGE_FROM_OBJECT)
+            .min(self.region_width - CAMERA_FUDGE_FROM_OBJECT)
     }
 
     /// Distance limits of the alt camera for its focus (min, max).
@@ -1460,6 +1498,7 @@ impl Camera {
         let dt = f.dt.max(0.0);
         self.dt = dt;
         self.draw_distance = f.draw_distance;
+        self.region_width = f.region_width;
         self.unconstrained = s.disable_constraints;
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
@@ -1799,17 +1838,33 @@ impl Camera {
         camera - self.lag
     }
 
+    /// The mouselook view direction. LLAgentCamera::calcFocusPositionTargetGlobal
+    /// (indra/newview/llagentcamera.cpp, originally LGPL 2.1): seated, the
+    /// agent frame is the seat's, turned by the seat's render rotation unless
+    /// the vehicle decouples the camera; LLAgent::yaw / pitch turn it about
+    /// the seat's up and left axes. The mouse's heading and pitch are then
+    /// the seat's, so the aim pitches and banks with the vehicle.
+    fn mouselook_aim(&self, agent: &AgentState) -> Vec3 {
+        let p = agent.pitch;
+        match (self.avatar.seat, self.seat) {
+            (Some(seat), Some(s)) if !self.avatar.camera_decoupled => {
+                seat * Quat::from_rotation_z(s.local_yaw) * Quat::from_rotation_y(-p) * Vec3::X
+            }
+            _ => {
+                let y = agent.yaw;
+                Vec3::new(y.cos() * p.cos(), y.sin() * p.cos(), p.sin())
+            }
+        }
+    }
+
     /// LLAgentCamera::calcFocusPositionTargetGlobal.
     fn calc_focus_target(&self, world: &World, s: &CameraSettings, now: Instant, camera_target: Vec3) -> Vec3 {
         let agent = &world.agent;
         match self.mode {
             CameraMode::Follow if self.focus_on_avatar => self.follow.at,
-            CameraMode::Mouselook => {
-                let (y, p) = (agent.yaw, agent.pitch);
-                // Keep the mouse's aim even if terrain or range constraints
-                // move the eye away from its requested position.
-                camera_target + Vec3::new(y.cos() * p.cos(), y.sin() * p.cos(), p.sin())
-            }
+            // Keep the mouse's aim even if terrain or range constraints
+            // move the eye away from its requested position.
+            CameraMode::Mouselook => camera_target + self.mouselook_aim(agent),
             CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => self.focus_target,
             CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, now, false) {
                 Some(p) => p,
@@ -1946,6 +2001,7 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
         render_root: agent.position,
         render_rotation: Quat::from_rotation_z(agent.yaw),
         seat: None,
+        camera_decoupled: false,
     };
     let id = world.agent_id;
     let Some(idx) = world.objects.index_of_uuid(&id) else {
@@ -1954,13 +2010,18 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     let Some((position, rotation, _)) = Scene::object_transform_unshifted(world, idx, now) else {
         return fallback;
     };
-    let seat = world
+    let parent = world
         .objects
         .get(idx)
         .filter(|o| o.parent_id != 0)
-        .and_then(|o| world.objects.parent_of(o))
+        .and_then(|o| world.objects.parent_of(o));
+    let seat = parent
         .and_then(|parent| Scene::object_transform(world, parent, now, 0))
         .map(|(_, r, _)| r);
+    // flagCameraDecoupled is read on the avatar's root, the linkset it sits on
+    let camera_decoupled = parent
+        .and_then(|parent| world.objects.get(parent))
+        .is_some_and(|o| o.update_flags & FLAGS_CAMERA_DECOUPLED != 0);
     // LLAgentCamera::getAvatarRootPosition, computed without ever adding
     // hover when disabled. Camera updates run before the pose cache, so a
     // cached rendered root minus the current hover would jump for one frame.
@@ -1977,6 +2038,7 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
         render_root: position + axis * (shape + world.appearance_hover(&id)),
         render_rotation: rotation,
         seat,
+        camera_decoupled,
     }
 }
 
@@ -1996,6 +2058,15 @@ pub fn focus_object_geom(world: &World, id: &Uuid, now: Instant) -> Option<Focus
         avatar: o.is_avatar(),
         mesh: o.volume.is_mesh(),
     })
+}
+
+/// The camera distance that frames a selection whose box diagonal is
+/// `extent` (handle_look_at_selection: PADDING_FACTOR 1.75 over the wider
+/// angle of view, at least 0.1 radian).
+pub fn selection_distance(extent: f32, fov: f32, aspect: f32) -> f32 {
+    const PADDING_FACTOR: f32 = 1.75;
+    let angle = if aspect > 1.0 { fov * aspect } else { fov }.max(0.1);
+    extent * PADDING_FACTOR / angle.atan()
 }
 
 /// The alt-camera focus object of a clicked object: an attachment focuses
@@ -2190,6 +2261,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: None,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             aspect: 1.0,
         }
     }
@@ -2770,6 +2842,69 @@ mod tests {
         assert!(camera.view_up().abs_diff_eq(Vec3::Z, 1e-5), "back in third person");
     }
 
+    /// LLAgentCamera::calcFocusPositionTargetGlobal and LLAgent::yaw / pitch:
+    /// seated in mouselook the aim is in the vehicle's frame, so the mouse
+    /// turns and tilts the view about the vehicle's axes and the aim pitches
+    /// with it; a vehicle that decouples the camera keeps the world's aim.
+    #[test]
+    fn seated_mouselook_aims_in_the_vehicle_frame() {
+        let mut world = hover_world(true);
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let seat = world
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.parent_id == 0)
+            .map(|(idx, _)| idx)
+            .unwrap();
+        let set_rotation = |world: &mut World, rotation: Quat| {
+            world.objects.get_mut(seat).unwrap().rotation = rotation;
+            world.objects.settle(seat);
+        };
+        let vehicle_up = |world: &World| Scene::object_transform(world, seat, Instant::now(), 0).unwrap().1 * Vec3::Z;
+        // nose up and banked
+        set_rotation(
+            &mut world,
+            Quat::from_rotation_z(0.6) * Quat::from_rotation_y(-0.5) * Quat::from_rotation_x(0.3),
+        );
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        world.agent.pitch = 0.0;
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let up = vehicle_up(&world);
+        assert!(up.angle_between(Vec3::Z) > 0.4, "the vehicle is tilted");
+        assert!(
+            camera.forward().dot(up).abs() < 1e-4,
+            "level in the vehicle: {:?}",
+            camera.forward()
+        );
+        for (dx, dy) in [(80.0, 0.0), (-200.0, 0.0), (0.0, -60.0), (150.0, 90.0)] {
+            camera.look(dx, dy, 1.0, &mut world.agent);
+            camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+            let elevation = camera.forward().dot(up).asin();
+            assert!(
+                (elevation - world.agent.pitch).abs() < 1e-3,
+                "pitch about the vehicle's left axis: {elevation} vs {}",
+                world.agent.pitch
+            );
+        }
+        // the vehicle pitches and banks the other way: the aim goes with it
+        let pitch = world.agent.pitch;
+        set_rotation(
+            &mut world,
+            Quat::from_rotation_z(-0.4) * Quat::from_rotation_y(0.4) * Quat::from_rotation_x(-0.5),
+        );
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let elevation = camera.forward().dot(vehicle_up(&world)).asin();
+        assert!((elevation - pitch).abs() < 1e-3, "{elevation} vs {pitch}");
+        // VEHICLE_FLAG_CAMERA_DECOUPLED: the world's heading and pitch
+        world.objects.get_mut(seat).unwrap().update_flags |= FLAGS_CAMERA_DECOUPLED;
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
+        let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+        assert!(camera.forward().abs_diff_eq(aim, 1e-4), "{:?} vs {aim:?}", camera.forward());
+    }
+
     #[test]
     fn seated_mouselook_tracks_animated_eyes_without_moving_them_when_looking() {
         let mut world = hover_world(true);
@@ -2802,8 +2937,7 @@ mod tests {
                         camera.look(dx, dy, 1.0, &mut world.agent);
                         camera.update(&mut world, &settings, &input);
                         assert!(camera.position.abs_diff_eq(expected, 2e-5), "{:?} vs {expected:?}", camera.position);
-                        let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
-                        let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+                        let aim = camera.mouselook_aim(&world.agent);
                         assert!(camera.forward().abs_diff_eq(aim, 2e-5));
                     }
                 }
@@ -2844,8 +2978,7 @@ mod tests {
             camera.look(dx, dy, 1.0, &mut world.agent);
             camera.update(&mut world, &settings, &input);
             assert_eq!(camera.position.z, floor);
-            let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
-            let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+            let aim = camera.mouselook_aim(&world.agent);
             assert!(camera.forward().abs_diff_eq(aim, 2e-5), "{:?} vs {aim:?}", camera.forward());
             assert!((camera.target.distance(camera.position) - 1.0).abs() < 2e-5);
         }
@@ -3075,9 +3208,11 @@ mod tests {
         cam.orbit_drag(-200.0, 60.0, 1.0, &mut agent);
         cam.zoom_fraction = 0.4;
         cam.fov_zoom = 0.3;
+        cam.roll = 0.4;
         let heading = agent.yaw;
         cam.reset_to_defaults(&mut agent, &s);
         assert_eq!((cam.orbit_yaw, cam.pitch, cam.zoom_fraction, cam.fov_zoom), (0.0, 0.0, 1.0, 0.0));
+        assert_eq!(cam.roll, 0.0, "reset levels the camera");
         assert_eq!(agent.yaw, heading, "the avatar keeps its heading");
         w.agent = agent;
         settle(&mut cam, &mut w, &s);
@@ -3196,8 +3331,7 @@ mod tests {
                 let (root, rotation, _) = Scene::object_transform(&world, index, input.now, 0).unwrap();
                 let expected = root + rotation * eyes;
                 assert!(camera.position.abs_diff_eq(expected, 2e-5));
-                let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
-                let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+                let aim = camera.mouselook_aim(&world.agent);
                 assert!(camera.forward().abs_diff_eq(aim, 2e-5));
                 if let Some(previous) = previous {
                     assert!(camera.position.distance(previous) > 0.1);
@@ -3540,7 +3674,7 @@ mod tests {
                 assert!(pan.cross(Vec3::Y).length() < 1e-6);
                 camera.pan_edit(pan, &mut w.agent, &s);
                 tool.cam = projection(&camera);
-                tool.update(&mut w, &settings, cursor, false, Mods::default());
+                tool.update(&mut w, &settings, None, cursor, false, Mods::default());
                 camera.update(&mut w, &s, &f);
                 tool.cam = projection(&camera);
                 let position = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;

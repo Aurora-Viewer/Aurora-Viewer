@@ -401,7 +401,9 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
         )
         .fixed()
         .show(ctx, p, &mut open, |ui| {
-            ui.text_edit_singleline(&mut state.name);
+            widgets::restricted_text_field(ui, true, &mut state.name, widgets::TextPolicy::AoName, |b, _| {
+                egui::TextEdit::singleline(b)
+            });
             if widgets::flat_button(ui, p, aurora_i18n::tr!("common-save")).clicked() {
                 match inventory::valid_name(&state.name) {
                     Ok(name) => {

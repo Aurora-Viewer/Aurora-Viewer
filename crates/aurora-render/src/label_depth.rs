@@ -14,6 +14,7 @@
 //! its pixel. Nothing is read back and nothing is copied: the labels the
 //! scene hides entirely cost their vertices, as before.
 
+use crate::gpu_alloc::{Backoff, grow_upload_buffer};
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use egui::epaint::{ClippedPrimitive, Primitive};
@@ -229,6 +230,8 @@ pub(crate) struct LabelDepth {
     locals: wgpu::Buffer,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+    vertex_backoff: Backoff,
+    index_backoff: Backoff,
     /// This frame's meshes; the vectors keep their memory.
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
@@ -391,6 +394,8 @@ impl LabelDepth {
             ),
             vertex_buffer: buffer(device, "labels vertices", 64 * 1024, wgpu::BufferUsages::VERTEX),
             index_buffer: buffer(device, "labels indices", 16 * 1024, wgpu::BufferUsages::INDEX),
+            vertex_backoff: Backoff::default(),
+            index_backoff: Backoff::default(),
             vertices: Vec::new(),
             indices: Vec::new(),
             draws: Vec::new(),
@@ -424,26 +429,26 @@ impl LabelDepth {
         if self.draws.is_empty() {
             return;
         }
-        let grow = |device: &wgpu::Device, buffer: &mut wgpu::Buffer, label: &str, bytes: u64, usage| {
-            if bytes > buffer.size() {
-                *buffer = self::buffer(device, label, bytes.next_power_of_two(), usage);
-            }
-        };
         let (vertices, indices): (&[u8], &[u8]) = (bytemuck::cast_slice(&self.vertices), bytemuck::cast_slice(&self.indices));
-        grow(
+        if !grow_upload_buffer(
             device,
             &mut self.vertex_buffer,
+            &mut self.vertex_backoff,
             "labels vertices",
             vertices.len() as u64,
-            wgpu::BufferUsages::VERTEX,
-        );
-        grow(
+        ) || !grow_upload_buffer(
             device,
             &mut self.index_buffer,
+            &mut self.index_backoff,
             "labels indices",
             indices.len() as u64,
-            wgpu::BufferUsages::INDEX,
-        );
+        ) {
+            // These meshes have already left egui's list. Omit this
+            // frame's labels while their uploads cannot fit, rather than
+            // writing or drawing beyond the retained valid buffers.
+            self.draws.clear();
+            return;
+        }
         queue.write_buffer(&self.vertex_buffer, 0, vertices);
         queue.write_buffer(&self.index_buffer, 0, indices);
         let [w, h] = view.size.map(|side| side.max(1) as f32);
@@ -511,6 +516,100 @@ impl LabelDepth {
 mod tests {
     use super::*;
     use egui::{Color32, Rect, pos2, vec2};
+
+    fn gpu_upload_growth(refused: bool) {
+        let _gpu = crate::test_gpu::lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("Vulkan adapter");
+        let mut limits = adapter.limits();
+        limits.max_buffer_size = 100_000;
+        limits.max_storage_buffer_binding_size = 100_000;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: limits,
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let mut labels = LabelDepth::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+        let depth = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: 8,
+                    height: 8,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let view = LabelView {
+            view_proj: Mat4::IDENTITY,
+            pixels_per_point: 1.0,
+            size: [8, 8],
+            jitter: Vec2::ZERO,
+        };
+        let mesh = |vertices| {
+            vec![ClippedPrimitive {
+                clip_rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(8.0, 8.0)),
+                primitive: Primitive::Mesh(egui::Mesh {
+                    indices: vec![0, 1, 2],
+                    vertices: vec![
+                        egui::epaint::Vertex {
+                            pos: pos2(1.0, 1.0),
+                            uv: pos2(0.0, 0.0),
+                            color: Color32::WHITE
+                        };
+                        vertices
+                    ],
+                    texture_id: egui::TextureId::Managed(0),
+                }),
+            }]
+        };
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let original = labels.vertex_buffer.clone();
+        labels.prepare(&device, &queue, &depth, &mut mesh(4000), &view);
+        if refused {
+            assert_eq!(labels.vertex_buffer, original);
+            assert!(!labels.any());
+        } else {
+            assert_eq!(labels.vertex_buffer.size(), 100_000);
+            assert!(labels.any());
+            let valid = labels.vertex_buffer.clone();
+            labels.prepare(&device, &queue, &depth, &mut mesh(8000), &view);
+            assert_eq!(labels.vertex_buffer, valid);
+            assert!(
+                !labels.any(),
+                "labels exceeding the device limit are not drawn from the retained buffer"
+            );
+        }
+        // The retry delay must not suppress a later frame whose labels
+        // already fit the retained buffer.
+        labels.prepare(&device, &queue, &depth, &mut mesh(4), &view);
+        assert!(labels.any());
+        queue.submit([]);
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        assert!(pollster::block_on(scope.pop()).is_none());
+    }
+
+    #[test]
+    #[ignore]
+    fn label_upload_growth_respects_limits_and_recovers_with_smaller_labels() {
+        gpu_upload_growth(false);
+    }
+
+    /// Run in a separate process with AURORA_GPU_OOM=0.
+    #[test]
+    #[ignore]
+    fn refused_label_upload_growth_keeps_valid_buffers() {
+        assert_eq!(std::env::var("AURORA_GPU_OOM").as_deref(), Ok("0"));
+        gpu_upload_growth(true);
+    }
 
     fn view() -> LabelView {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 800.0 / 600.0, 0.1);

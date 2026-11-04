@@ -772,30 +772,40 @@ pub(crate) fn can_fly_for_join(world: &crate::world::World) -> bool {
         !world.agent.is_sitting()
             && !world.rlva.has("fly")
             && world.main_region.is_some()
-            && world
-                .main()
-                .and_then(|r| r.info.as_ref())
-                .is_none_or(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
+            && (world.fly_override
+                || world
+                    .main()
+                    .and_then(|r| r.info.as_ref())
+                    .is_none_or(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0))
     } else {
         world.main_region.is_some() && can_takeoff_with_unknown_policy(world, true)
     }
 }
 
 fn can_takeoff_with_unknown_policy(world: &crate::world::World, allow_unknown: bool) -> bool {
+    !world.agent.is_sitting() && !world.rlva.has("fly") && land_allows_flight(world, allow_unknown, allow_unknown)
+}
+
+/// The land part of LLAgent::canFly (indra/newview/llagent.cpp): the fly
+/// override first, then the region's no-fly, then the parcel's, which its
+/// owner and the owning group's flight managers may ignore. RLVa @fly and
+/// sitting are the callers' (they come before the override there too).
+/// `unknown_region` / `unknown_parcel`: the answer while that policy has
+/// not arrived yet.
+pub(crate) fn land_allows_flight(world: &crate::world::World, unknown_region: bool, unknown_parcel: bool) -> bool {
     use crate::world::land::{AgentRights, owned_by_agent, powers};
-    // LLAgent::canFly: parcel owners and the owning group's flight managers
-    // may fly despite ALLOW_FLY, but region and restraint rules still apply.
+    if world.fly_override {
+        return true;
+    }
     let rights = AgentRights {
         id: world.agent_id,
         groups: &world.groups.groups,
     };
-    !world.agent.is_sitting()
-        && !world.rlva.has("fly")
-        && world
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .map_or(allow_unknown, |r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
-        && world.parcel.as_ref().map_or(allow_unknown, |p| {
+    world
+        .main()
+        .and_then(|r| r.info.as_ref())
+        .map_or(unknown_region, |r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
+        && world.parcel.as_ref().map_or(unknown_parcel, |p| {
             p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0
                 || (!world.agent_id.is_nil() && owned_by_agent(p, &rights, powers::LAND_ALLOW_FLY))
         })
@@ -825,9 +835,9 @@ pub fn land_near_target(world: &mut crate::world::World, pilot: &mut AutoPilot) 
 /// region (`size` metres wide, its south-west corner at `origin`) stays in
 /// it; a point beyond goes to the 256 m slot under it, which a variable
 /// region's simulator accepts as its own.
-pub fn teleport_destination(origin: (u32, u32), size: f32, point: Vec3, pelvis_to_foot: f32) -> ((u32, u32), Vec3) {
+pub fn teleport_destination(origin: (u32, u32), size: (f32, f32), point: Vec3, pelvis_to_foot: f32) -> ((u32, u32), Vec3) {
     let p = point + Vec3::Z * pelvis_to_foot;
-    if (0.0..size).contains(&p.x) && (0.0..size).contains(&p.y) {
+    if (0.0..size.0).contains(&p.x) && (0.0..size.1).contains(&p.y) {
         return (origin, p);
     }
     let gx = (origin.0 as f64 + p.x as f64).max(0.0);
@@ -1096,7 +1106,7 @@ mod tests {
         };
         let p = follow_recovery_position(Vec3::new(240.0, 20.0, 1.0), &target, settings).expect("precise target");
         assert!(p.abs_diff_eq(Vec3::new(254.1, 20.0, 49.5), 0.001));
-        let (slot, local) = teleport_destination((256_000, 256_000), 256.0, p, 0.0);
+        let (slot, local) = teleport_destination((256_000, 256_000), (256.0, 256.0), p, 0.0);
         assert_eq!(slot, (256_000, 256_000));
         assert_eq!(local.z, 49.5, "the centre is not raised twice");
         target.flight.flying = Some(true);
@@ -1708,6 +1718,58 @@ mod tests {
         assert!(!can_takeoff(&world));
     }
 
+    /// FSAlwaysFly in LLAgent::canFly: no-fly land no longer stops a takeoff
+    /// nor lands a flight (setFlying(canFly()) on RegionInfo), RLVa @fly and
+    /// sitting still do, and the switch outlives a relog but not a launch.
+    #[test]
+    fn fly_override_ignores_no_fly_land_but_not_restraints_or_sitting() {
+        use crate::{demo, scene::avatar::AvatarLibrary, world::World};
+        use aurora_net::NetEvent;
+        let mut world = World::new(std::sync::Arc::new(AvatarLibrary::load()));
+        assert!(!world.fly_override, "off at every launch");
+        world.agent_id = demo::DEMO_AGENT;
+        let mut info = demo::events()
+            .into_iter()
+            .find_map(|e| match e {
+                NetEvent::RegionHandshake(info) => Some((*info).clone()),
+                _ => None,
+            })
+            .unwrap();
+        info.region_flags |= aurora_net::region_flags::BLOCK_FLY;
+        let handle = info.handle;
+        world.main_region = Some(handle);
+        world.apply(NetEvent::RegionHandshake(std::sync::Arc::new(info.clone())));
+        world.parcel = Some(std::sync::Arc::new(aurora_net::ParcelInfo::default()));
+        assert!(!can_takeoff(&world) && !land_allows_flight(&world, false, true));
+        world.fly_override = true;
+        assert!(can_takeoff(&world), "region and parcel no-fly ignored");
+        assert!(land_allows_flight(&world, false, true), "the movement frame agrees");
+        world.agent.flying = true;
+        assert!(can_fly_for_join(&world), "a flight goes on in a no-fly region");
+        world.apply(NetEvent::RegionFlags {
+            handle,
+            flags: info.region_flags,
+            max_tasks: 0,
+        });
+        assert!(world.agent.flying, "the region's no-fly does not land the avatar");
+        world.fly_override = false;
+        world.apply(NetEvent::RegionFlags {
+            handle,
+            flags: info.region_flags,
+            max_tasks: 0,
+        });
+        assert!(!world.agent.flying, "without the override it lands");
+        world.fly_override = true;
+        world.agent.seated = true;
+        assert!(!can_takeoff(&world), "no takeoff while seated");
+        world.agent.seated = false;
+        world.rlva.configure(true);
+        world.rlva_console_input("@fly=n");
+        assert!(!can_takeoff(&world), "RLVa @fly comes first");
+        world.reset();
+        assert!(world.fly_override, "kept across a relog");
+    }
+
     #[test]
     fn avatar_target_uses_seat_and_region_transforms_and_rejects_coarse_or_missing_objects() {
         use crate::{demo, scene::avatar::AvatarLibrary, world::World};
@@ -1751,15 +1813,15 @@ mod tests {
     #[test]
     fn a_teleport_stays_in_the_region_or_goes_to_the_slot_under_the_point() {
         // in the region: the same point, raised to the avatar's centre
-        let (slot, p) = teleport_destination((256_000, 256_512), 256.0, Vec3::new(10.0, 20.0, 30.0), 1.0);
+        let (slot, p) = teleport_destination((256_000, 256_512), (256.0, 256.0), Vec3::new(10.0, 20.0, 30.0), 1.0);
         assert_eq!(slot, (256_000, 256_512));
         assert_eq!(p, Vec3::new(10.0, 20.0, 31.0));
         // east of it: the neighbour's slot
-        let (slot, p) = teleport_destination((256_000, 256_512), 256.0, Vec3::new(260.0, 20.0, 30.0), 1.0);
+        let (slot, p) = teleport_destination((256_000, 256_512), (256.0, 256.0), Vec3::new(260.0, 20.0, 30.0), 1.0);
         assert_eq!(slot, (256_256, 256_512));
         assert!((p.x - 4.0).abs() < 1e-3 && (p.y - 20.0).abs() < 1e-3);
         // a variable region keeps a point of its own
-        let (slot, _) = teleport_destination((256_000, 256_512), 512.0, Vec3::new(300.0, 20.0, 30.0), 1.0);
+        let (slot, _) = teleport_destination((256_000, 256_512), (512.0, 512.0), Vec3::new(300.0, 20.0, 30.0), 1.0);
         assert_eq!(slot, (256_000, 256_512));
     }
 }

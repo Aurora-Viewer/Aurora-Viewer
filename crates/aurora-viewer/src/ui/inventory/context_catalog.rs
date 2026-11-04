@@ -24,6 +24,7 @@ pub(super) enum Command {
     Rename(Uuid),
     Image(Uuid),
     Protect(Uuid),
+    FolderColor(Vec<Uuid>),
     Reload(Uuid),
     Window(Uuid),
     Asset(Uuid),
@@ -336,9 +337,8 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     let ids = st.selected_ids(id);
     let single = ids.len() == 1;
     let ready = st.pending.is_none();
-    let writable = rules::mutable(inv, id, &prefs.protected);
+    let writable = rules::mutable(inv, id);
     let movable = ids.iter().all(|id| rules::relocatable(inv, *id, &prefs.protected));
-    let moveable = ids.iter().all(|id| rules::move_relocatable(inv, *id, &prefs.protected));
     let worn = target.is_some_and(|id| facts.worn.contains(&id));
     let trash = rules::in_type(inv, id, 14);
     let linked = item.is_some_and(|it| matches!(it.asset_type, 24 | 25));
@@ -347,9 +347,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     let can_create = ready
         && single
         && !trash
-        && to.is_some_and(|to| {
-            rules::destination(inv, to, &prefs.protected) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16)
-        });
+        && to.is_some_and(|to| rules::destination(inv, to) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16));
     let new = c.group(
         "new",
         "top",
@@ -397,7 +395,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         "top",
         "cut",
         aurora_i18n::tr!("common-cut"),
-        ready && moveable,
+        ready && movable,
         Command::Copy(ids.clone(), true),
     );
     let paste = ready && single && to.is_some_and(|to| clipboard::paste_allowed(inv, st, to, prefs, facts));
@@ -510,7 +508,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     } else {
                         aurora_i18n::tr!("common-open")
                     },
-                    opens,
+                    opens && !(kind == 3 && facts.landmark_blocked),
                     if single {
                         Command::Open(id)
                     } else {
@@ -729,7 +727,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 TEXT,
                 "lock-filled",
                 aurora_i18n::tr!("inventory-bulk-permissions"),
-                ready && ids.iter().any(|id| bulk_permissions::eligible(inv, *id, prefs, facts.agent)),
+                ready && ids.iter().any(|id| bulk_permissions::eligible(inv, *id, facts.agent)),
                 Command::BulkPermissions(ids.clone()),
             );
         }
@@ -738,10 +736,10 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             TEXT,
             "pencil-filled",
             aurora_i18n::tr!("common-rename"),
-            ready && single && rules::renameable(inv, id, &prefs.protected),
+            ready && single && rules::renameable(inv, id),
             Command::Rename(id),
         );
-        let share = ready && writable && ids.iter().all(|id| rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok());
+        let share = ready && writable && ids.iter().all(|id| rules::offer(inv, *id, &facts.worn).is_ok());
         c.add(
             "share",
             TEXT,
@@ -766,6 +764,17 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 Command::Protect(id),
             );
         }
+        if prefs.folder_colors_enabled && (all || folder.is_some()) {
+            let folders = super::folder_colors::folders(inv, &ids);
+            c.add(
+                "folder-color",
+                TEXT,
+                "palette-filled",
+                aurora_i18n::tr!("inventory-folder-color"),
+                !folders.is_empty(),
+                Command::FolderColor(folders),
+            );
+        }
     }
     let organize = c.group(
         "organize",
@@ -781,7 +790,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         &organize,
         "folder-filled",
         aurora_i18n::tr!("inventory-move-to"),
-        ready && moveable,
+        ready && movable,
         Command::Move(id),
     );
     if !trash || all {
@@ -791,7 +800,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 &organize,
                 "folder-filled",
                 aurora_i18n::tr!("ui-inventory-context-move-to-default-folder"),
-                ready && moveable,
+                ready && movable,
                 Command::DefaultFolder(ids.clone()),
             );
         }
@@ -973,7 +982,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
     if !all {
-        super::listings::restrict(&mut c, inv, id, st);
+        super::listings::restrict(&mut c, inv, id);
     }
     c
 }
@@ -1224,6 +1233,7 @@ pub(super) fn execute(
                 prefs.protected.insert(id);
             }
         }
+        Command::FolderColor(ids) => st.folder_color = Some(super::folder_colors::Picker::new(prefs, ids)),
         Command::Reload(id) => {
             st.message.clear();
             actions.push(InvAction::Preview(id));

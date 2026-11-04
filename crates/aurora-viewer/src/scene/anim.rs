@@ -262,9 +262,80 @@ pub struct BoundAnim {
     /// LLMotion::addJointState's mJointSignature: per joint driven, its
     /// position and rotation bits, `0xff >> (7 - priority)` when keyed.
     signature: Vec<(usize, [u8; 2])>,
+    constraints: Vec<PelvisConstraint>,
+}
+
+/// How far a pelvis constraint may carry the body. The Legacy Viewer's sum has
+/// no such limit and reaches 1e38 m; past any draw distance the result looks
+/// the same, and this keeps the skin matrices usable.
+const PELVIS_CONSTRAINT_REACH: f32 = 1.0e6;
+
+/// The simple positional constraint of LLKeyframeMotion::applyConstraint: no
+/// chain, on a pelvis with position keys. Its step each frame is resolved
+/// when loading; both volumes hang from the pelvis, so it never changes.
+#[derive(Clone, Copy)]
+struct PelvisConstraint {
+    step: Vec3,
+    ease_in: (f32, f32),
+    ease_out: (f32, f32),
+}
+
+/// `clamp_rescale` (indra/llmath/llmath.h).
+fn clamp_rescale(t: f32, from: (f32, f32), to: (f32, f32)) -> f32 {
+    if t <= from.0 {
+        to.0
+    } else if t >= from.1 {
+        to.1
+    } else {
+        to.0 + (t - from.0) / (from.1 - from.0) * (to.1 - to.0)
+    }
+}
+
+impl PelvisConstraint {
+    /// Only what the pelvis-only branch of LLKeyframeMotion::applyConstraint
+    /// handles with both volumes on the pelvis. Later: IK chains, plane and
+    /// ground constraints.
+    fn resolve(c: &aurora_assets::anim::Constraint, anim: &Animation, rig: &Rig) -> Option<Self> {
+        let keyed = anim.joints.iter().any(|j| j.joint_name == "mPelvis" && !j.pos_keys.is_empty());
+        if c.chain_length != 0 || c.constraint_type != 0 || !keyed {
+            return None;
+        }
+        // LLAvatarJointCollisionVolume::getVolumePos below the pelvis.
+        let point = |volume: &str, offset: Vec3| {
+            let j = *rig.names.get(volume)?;
+            (rig.parent[j] == Some(rig.pelvis)).then(|| rig.local_pos[j] + rig.local_rot[j] * (offset * rig.scale[j]))
+        };
+        let step = point(&c.target_volume, c.target_offset)? - point(&c.source_volume, c.source_offset)?;
+        step.is_finite().then_some(Self {
+            step,
+            ease_in: (c.ease_in_start, c.ease_in_stop),
+            ease_out: (c.ease_out_start, c.ease_out_stop),
+        })
+    }
+
+    /// The constraint's own weight at a motion time, None outside its span.
+    fn weight(&self, t: f32) -> Option<f32> {
+        if t < self.ease_in.0 || t > self.ease_out.1 {
+            return None;
+        }
+        Some(if self.ease_out.1 == 0.0 {
+            1.0
+        } else {
+            clamp_rescale(t, self.ease_in, (0.0, 1.0)).min(clamp_rescale(t, self.ease_out, (1.0, 0.0)))
+        })
+    }
 }
 
 impl BoundAnim {
+    /// With the constraints read from the file (`parse_animation_with_constraints`).
+    pub fn with_constraints(mut self, constraints: &[aurora_assets::anim::Constraint], rig: &Rig) -> Self {
+        self.constraints = constraints
+            .iter()
+            .filter_map(|c| PelvisConstraint::resolve(c, &self.anim, rig))
+            .collect();
+        self
+    }
+
     pub fn bind(anim: Animation, rig: &Rig) -> BoundAnim {
         let joints: Vec<Option<usize>> = anim.joints.iter().map(|j| rig.names.get(&j.joint_name).copied()).collect();
         let max_priority = anim.joints.iter().map(|j| j.priority).fold(anim.base_priority, i32::max);
@@ -296,6 +367,7 @@ impl BoundAnim {
             position_top,
             max_priority,
             signature,
+            constraints: Vec::new(),
         }
     }
 }
@@ -422,6 +494,10 @@ pub struct Controller {
     /// stable upright height. Rotations and sampled bobbing never enter it.
     tag_pos_delta: Vec<f32>,
     tag_pelvis_offset: f32,
+    /// What pelvis constraints added up to, under the root. Only the skin
+    /// matrices receive it: the head, the eyes and the camera stay where the
+    /// avatar stands, and the held pose comes back with the last constraint.
+    constraint_pelvis: Vec3,
     pub name_tag_height: Option<f32>,
     /// Look-at point (LookAtPoint): from the head to the target, in the
     /// avatar's root frame; None = look forward.
@@ -753,6 +829,7 @@ impl Controller {
         self.tag_pos_delta.clear();
         self.pelvis_offset = None;
         self.tag_pelvis_offset = 0.0;
+        self.constraint_pelvis = Vec3::ZERO;
         self.last_eval = None;
         self.placement = grounding::Placement::default();
         self.legacy_rot.clear();
@@ -953,6 +1030,29 @@ impl Controller {
             self.signals.retain(|id, _| target.is_some_and(|target| *id != target));
         }
         self.preview_start = clock;
+    }
+
+    /// Avatar playback follows LLVOAvatar::remapMotionID while retaining the
+    /// original signal identities for AO state, stops and diagnostics.
+    pub(super) fn sync_avatar(
+        &mut self,
+        playing: &[PlayingAnimation],
+        male: bool,
+        now: Instant,
+        mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>,
+    ) -> Vec<Uuid> {
+        // A shape's sex may change while its gait stays signalled. Swap the
+        // loaded asset without restarting its clock or easing; while the new
+        // variant downloads, retain the previous modern variant.
+        for motion in &mut self.motions {
+            let asset = default_motions::walk_run_asset(motion.id, male);
+            if asset != motion.id
+                && let Some(anim) = get(&asset)
+            {
+                motion.anim = anim;
+            }
+        }
+        self.sync(playing, now, |id| get(&default_motions::walk_run_asset(*id, male)))
     }
 
     /// Follow the server's animation list (LLVOAvatar::processAnimationStateChanges).
@@ -1172,6 +1272,7 @@ impl Controller {
         if blend_native && self.legacy_rot.len() != rig.len() {
             self.legacy_rot.clone_from(&self.rot);
         }
+        let mut pelvis_steps: Vec<(i32, Vec3)> = Vec::new();
         for m in self.motions.iter_mut().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
                 continue;
@@ -1185,6 +1286,19 @@ impl Controller {
             }
             let a = &m.anim.anim;
             let t = m.local_time(now) as f32;
+            if !m.anim.constraints.is_empty()
+                && let Some(jm) = a.joints.iter().find(|j| j.joint_name == "mPelvis")
+            {
+                let prio = if jm.priority >= 0 { jm.priority } else { a.base_priority };
+                // The pelvis takes its keyframe rotation for the measure, or
+                // the identity without one (applyConstraint: "nominal kinematic").
+                let rotation = jm.rotation_at_loop(t, a.loop_range()).unwrap_or(Quat::IDENTITY);
+                for c in &m.anim.constraints {
+                    if let Some(weight) = c.weight(t) {
+                        pelvis_steps.push((prio, rotation * (c.step * weight)));
+                    }
+                }
+            }
             for ((jm, j), top) in a.joints.iter().zip(&m.anim.joints).zip(&m.anim.position_top) {
                 let Some(j) = *j else {
                     continue;
@@ -1253,6 +1367,34 @@ impl Controller {
                 if at < JOINT_STATES {
                     s.insert(at, (prio, w, Some(r), None, additive, false, None));
                     s.truncate(JOINT_STATES);
+                }
+            }
+        }
+        // LLKeyframeMotion::applyConstraint adds its step to the joint's position
+        // of the last frame, every frame. A stronger position at full weight
+        // leaves it no share of the blend (LLJointStateBlender::blendJointStates).
+        if !hold_pose {
+            if pelvis_steps.is_empty() {
+                self.constraint_pelvis = Vec3::ZERO;
+            }
+            for (prio, step) in pelvis_steps {
+                let stronger: f32 = states
+                    .get(rig.pelvis)
+                    .into_iter()
+                    .flatten()
+                    .filter(|state| state.0 > prio && state.3.is_some())
+                    .map(|state| state.1)
+                    .sum();
+                let sum = self.constraint_pelvis + step;
+                if stronger < 1.0 && sum.is_finite() {
+                    // By its largest component: the squared length of such a
+                    // step overflows, and clamp_length_max then gives zero.
+                    let largest = sum.abs().max_element();
+                    self.constraint_pelvis = if largest > PELVIS_CONSTRAINT_REACH {
+                        sum / largest * PELVIS_CONSTRAINT_REACH
+                    } else {
+                        sum
+                    };
                 }
             }
         }
@@ -1476,6 +1618,19 @@ impl Controller {
         for j in 0..n {
             out[j] = world[j].to_cols_array_2d();
         }
+        if self.constraint_pelvis != Vec3::ZERO {
+            // `order` has parents first: the pelvis and all that hangs from it.
+            let mut moved = vec![false; rig.len()];
+            for &j in &rig.order {
+                moved[j] = j == rig.pelvis || rig.parent[j].is_some_and(|p| moved[p]);
+                if moved[j] && j < n {
+                    let t = &mut out[j][3];
+                    t[0] += self.constraint_pelvis.x;
+                    t[1] += self.constraint_pelvis.y;
+                    t[2] += self.constraint_pelvis.z;
+                }
+            }
+        }
         let pose = |j: Option<usize>| {
             let m = world.get(j?)?;
             let (_, r, t) = m.to_scale_rotation_translation();
@@ -1661,8 +1816,8 @@ impl AnimStreamer {
                 jobs.spawn(move || {
                     let a = crate::cache::read_touch(&path)
                         .ok()
-                        .and_then(|d| aurora_assets::parse_animation(&d).ok())
-                        .map(|a| Arc::new(BoundAnim::bind(a, &rig)));
+                        .and_then(|d| aurora_assets::anim::parse_animation_with_constraints(&d).ok())
+                        .map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)));
                     let _ = tx.send((id, a, true));
                     super::jobs::JobResult::Done
                 });
@@ -1697,13 +1852,14 @@ impl AnimStreamer {
                 let tx = self.tx.clone();
                 let rig = rig.clone();
                 jobs.spawn(move || {
-                    let a = aurora_assets::parse_animation(&d).ok();
+                    let a = aurora_assets::anim::parse_animation_with_constraints(&d).ok();
                     if a.is_some() {
                         let _ = crate::cache::write(path, &d);
                     } else {
                         log::debug!("animation {id} failed to parse");
                     }
-                    let _ = tx.send((id, a.map(|a| Arc::new(BoundAnim::bind(a, &rig))), false));
+                    let a = a.map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)));
+                    let _ = tx.send((id, a, false));
                     super::jobs::JobResult::Done
                 });
             }
@@ -2093,6 +2249,166 @@ mod tests {
         Rig::new(&Skeleton::parse(&xml).expect("parse"))
     }
 
+    fn gait_clip(rig: &Rig, priority: i32, angle: f32) -> Arc<BoundAnim> {
+        let mut animation = bend(rig, angle, 0.0).anim.clone();
+        animation.base_priority = 0;
+        animation.joints[0].joint_name = "mKneeLeft".into();
+        animation.joints[0].priority = priority;
+        Arc::new(BoundAnim::bind(animation, rig))
+    }
+
+    #[test]
+    fn native_gaits_do_not_cover_low_priority_hud_animations_on_start_or_restart() {
+        use crate::own_motion::{ANIM_RUN, ANIM_WALK};
+        let rig = rig();
+        let knee = rig.names["mKneeLeft"];
+        let old = gait_clip(&rig, 3, -0.7);
+        let modern = gait_clip(&rig, 0, -0.7);
+        let epoch = Instant::now();
+        let at = |seconds| epoch + Duration::from_secs(seconds);
+        let hud_id = Uuid::from_u128(99001);
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        for (stock, male, asset) in [
+            (ANIM_WALK, false, uuid::uuid!("d60c41d2-7c24-7074-d3fa-6101cea22a51")),
+            (ANIM_WALK, true, uuid::uuid!("33339176-7ddc-9397-94a4-bf3403cbc8f5")),
+            (ANIM_RUN, false, uuid::uuid!("85995026-eade-5d78-d364-94a64512cb66")),
+            (ANIM_RUN, true, uuid::uuid!("1ab1b236-cd08-21e6-0cbc-0d923fc6eca2")),
+        ] {
+            for priority in [1, 2, 3] {
+                let hud = gait_clip(&rig, priority, 0.4);
+                let get = |id: &Uuid| {
+                    Some(if *id == stock {
+                        old.clone()
+                    } else if *id == asset {
+                        modern.clone()
+                    } else {
+                        assert_eq!(*id, hud_id);
+                        hud.clone()
+                    })
+                };
+                let hud_signal = signal(hud_id, 1, epoch);
+                // The old priority-three gait reproduces the loss of the HUD
+                // pose, including an equal-priority HUD when stock starts last.
+                let mut baseline = synchronized_controller();
+                baseline.sync(&[hud_signal], epoch, get);
+                baseline.sync(&[hud_signal, signal(stock, 2, at(1))], at(1), get);
+                baseline.evaluate(&rig, at(1), None, &mut out);
+                assert!(baseline.rot[knee].angle_between(Quat::from_rotation_z(-0.7)) < 1e-5);
+
+                let mut controller = synchronized_controller();
+                controller.sync_avatar(&[hud_signal], male, epoch, get);
+                for sequence in 2..=4 {
+                    let now = at(sequence as u64);
+                    let native = signal(stock, sequence, now);
+                    assert!(controller.sync_avatar(&[hud_signal, native], male, now, get).is_empty());
+                    controller.evaluate(&rig, now, None, &mut out);
+                    assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+                    assert_eq!(controller.signals[&stock], native, "keep the protocol UUID and clocks");
+                    assert!(
+                        controller
+                            .motions
+                            .iter()
+                            .any(|motion| motion.id == stock && Arc::ptr_eq(&motion.anim, &modern))
+                    );
+                    controller.sync_avatar(&[hud_signal], male, now + Duration::from_millis(100), get);
+                }
+                // Cycling the HUD does not allow the native gait to return.
+                let next_hud = signal(Uuid::from_u128(99002), 5, at(5));
+                controller.sync_avatar(&[signal(stock, 6, at(5)), next_hud], male, at(5), |id| {
+                    assert_ne!(*id, stock, "never fetch the old priority-three asset");
+                    Some(if *id == asset { modern.clone() } else { hud.clone() })
+                });
+                controller.evaluate(&rig, at(5), None, &mut out);
+                assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_native_gaits_are_ready_offline_and_leave_hud_legs_in_charge() {
+        use crate::own_motion::{ANIM_RUN, ANIM_WALK};
+        let rig = rig();
+        let knee = rig.names["mKneeLeft"];
+        let mut streamer = AnimStreamer::new(PathBuf::new());
+        default_motions::register(&mut streamer, &rig);
+        let hud_id = Uuid::from_u128(99003);
+        streamer.insert(hud_id, gait_clip(&rig, 1, 0.4));
+        let epoch = Instant::now();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        for stock in [ANIM_WALK, ANIM_RUN] {
+            for male in [false, true] {
+                let asset = default_motions::walk_run_asset(stock, male);
+                assert!(streamer.asset_settled(&asset), "native motion ready before any fetch");
+                let clip = streamer.peek(&asset).expect("bundled gait");
+                assert!(clip.anim.looping);
+                assert_eq!(clip.anim.base_priority, 0);
+                for joint in [
+                    "mPelvis",
+                    "mHipLeft",
+                    "mKneeLeft",
+                    "mAnkleLeft",
+                    "mHipRight",
+                    "mKneeRight",
+                    "mAnkleRight",
+                ] {
+                    let track = clip.anim.joints.iter().find(|track| track.joint_name == joint).expect("leg track");
+                    assert_eq!(track.priority, 0, "{asset}: {joint}");
+                    assert!(!track.rot_keys.is_empty());
+                }
+                let mut controller = synchronized_controller();
+                let signals = [signal(hud_id, 1, epoch), signal(stock, 2, epoch)];
+                controller.sync_avatar(&signals, male, epoch, |id| streamer.get(id));
+                let now = epoch + Duration::from_secs(1);
+                controller.sync_avatar(&signals, male, now, |id| streamer.get(id));
+                controller.evaluate(&rig, now, None, &mut out);
+                assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn native_gaits_wait_for_modern_assets_and_change_sex_without_restarting() {
+        use crate::own_motion::ANIM_RUN;
+        let rig = rig();
+        let female = default_motions::walk_run_asset(ANIM_RUN, false);
+        let male = default_motions::walk_run_asset(ANIM_RUN, true);
+        let female_clip = gait_clip(&rig, 0, 0.3);
+        let male_clip = gait_clip(&rig, 0, -0.3);
+        let epoch = Instant::now();
+        let at = |seconds| epoch + Duration::from_secs(seconds);
+        let playing = [signal(ANIM_RUN, 7, epoch)];
+        let mut controller = synchronized_controller();
+        controller.sync_avatar(&playing, false, epoch, |id| {
+            assert_eq!(*id, female, "no old-asset fallback while loading");
+            None
+        });
+        assert!(controller.motions.is_empty());
+        controller.sync_avatar(&playing, false, at(1), |_| Some(female_clip.clone()));
+        let activation = controller.motions[0].continuous_activation;
+        controller.sync_avatar(&playing, true, at(2), |id| {
+            assert_eq!(*id, male);
+            None
+        });
+        assert!(Arc::ptr_eq(&controller.motions[0].anim, &female_clip));
+        controller.sync_avatar(&playing, true, at(3), |id| {
+            assert_eq!(*id, male);
+            Some(male_clip.clone())
+        });
+        assert_eq!(controller.motions.len(), 1);
+        assert!(Arc::ptr_eq(&controller.motions[0].anim, &male_clip));
+        assert_eq!(controller.motions[0].continuous_activation, activation);
+        assert_eq!(controller.motions[0].weight, 1.0);
+        assert_eq!(controller.signals[&ANIM_RUN], playing[0]);
+        // Control avatars keep the exact animation requested, even when it is
+        // a stock UUID. Their caller uses sync, not avatar remapping.
+        let mut control = Controller::for_control_avatar();
+        control.sync(&playing, at(3), |id| {
+            assert_eq!(*id, ANIM_RUN);
+            Some(female_clip.clone())
+        });
+        assert_eq!(control.motions[0].id, ANIM_RUN);
+    }
+
     /// The elbow swings from 0 to 1 rad and back over 2 s, in a loop.
     fn swing(rig: &Rig) -> Arc<BoundAnim> {
         let key = |time: f32, angle: f32| aurora_assets::anim::RotKey {
@@ -2193,6 +2509,138 @@ mod tests {
         let m = &c.motions[0];
         assert_eq!(m.activation, at(1.0));
         assert!((m.local_time(at(4.5)) - 1.5).abs() < 1e-6);
+    }
+
+    /// A file built like the hiding animations: a pelvis barely keyed, and a
+    /// constraint on PELVIS whose source offset is the largest finite value,
+    /// eased in over a time the loop never reaches.
+    fn pelvis_constraint_file() -> Vec<u8> {
+        let mut file = Vec::new();
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&0u16.to_le_bytes());
+        file.extend_from_slice(&6i32.to_le_bytes());
+        file.extend_from_slice(&0.25f32.to_le_bytes());
+        file.push(0);
+        file.extend_from_slice(&0.0f32.to_le_bytes());
+        file.extend_from_slice(&0.1f32.to_le_bytes());
+        file.extend_from_slice(&1i32.to_le_bytes());
+        file.extend_from_slice(&0.1f32.to_le_bytes());
+        file.extend_from_slice(&0.1f32.to_le_bytes());
+        file.extend_from_slice(&1u32.to_le_bytes());
+        file.extend_from_slice(&1u32.to_le_bytes());
+        file.extend_from_slice(b"mPelvis\0");
+        file.extend_from_slice(&4i32.to_le_bytes());
+        file.extend_from_slice(&0i32.to_le_bytes());
+        file.extend_from_slice(&1i32.to_le_bytes());
+        for value in [0u16, 32800, 32767, 32800] {
+            file.extend_from_slice(&value.to_le_bytes());
+        }
+        file.extend_from_slice(&1i32.to_le_bytes());
+        file.extend_from_slice(&[0, 0]);
+        let volume = *b"PELVIS\0\0\0\0\0\0\0\0\0\0";
+        file.extend_from_slice(&volume);
+        for value in [0.0, 0.0, f32::MAX] {
+            file.extend_from_slice(&value.to_le_bytes());
+        }
+        file.extend_from_slice(&volume);
+        for value in [0.0f32; 6] {
+            file.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [0.0, 163_840.0, 163_840.0, 163_840.0] {
+            file.extend_from_slice(&f32::to_le_bytes(value));
+        }
+        file
+    }
+
+    /// LLKeyframeMotion::applyConstraint's pelvis-only branch: the body goes
+    /// out of sight while the head, the eyes and the root stay, and it comes
+    /// back with the stop.
+    #[test]
+    fn pelvis_constraint_carries_the_body_away_until_it_stops() {
+        let rig = rig();
+        let (animation, constraints) = aurora_assets::anim::parse_animation_with_constraints(&pelvis_constraint_file()).expect("parse");
+        assert_eq!(constraints.len(), 1);
+        assert_eq!(constraints[0].source_offset.z, f32::MAX);
+        let hide = Arc::new(BoundAnim::bind(animation, &rig).with_constraints(&constraints, &rig));
+        assert_eq!(hide.constraints.len(), 1);
+        let epoch = Instant::now();
+        let playing = [signal(Uuid::from_u128(1), 1, epoch)];
+        let mut controller = synchronized_controller();
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let translation = |pose: &[[[f32; 4]; 4]], j: usize| Mat4::from_cols_array_2d(&pose[j]).w_axis.truncate();
+        controller.evaluate(&rig, epoch, None, &mut pose);
+        let rest = translation(&pose, rig.pelvis);
+        let head = controller.head_pos().expect("head");
+        controller.sync(&playing, epoch, |_| Some(hide.clone()));
+        // Mid-loop: at the loop's start the constraint's weight is 0.
+        let at = epoch + Duration::from_millis(550);
+        controller.sync(&playing, at, |_| Some(hide.clone()));
+        controller.evaluate(&rig, at, None, &mut pose);
+        let hidden = translation(&pose, rig.pelvis);
+        assert!(hidden.is_finite() && hidden.distance(rest) > 1.0e5, "the pelvis left: {hidden}");
+        assert!(
+            translation(&pose, rig.names["mElbowLeft"]).distance(rest) > 1.0e5,
+            "and what hangs from it"
+        );
+        assert!(
+            controller.head_pos().expect("head").distance(head) < 1.0,
+            "the head of the camera stays"
+        );
+        let stopped = at + Duration::from_secs(1);
+        controller.sync(&[], stopped, |_| Some(hide.clone()));
+        let done = stopped + Duration::from_secs(1);
+        controller.sync(&[], done, |_| Some(hide.clone()));
+        controller.evaluate(&rig, done, None, &mut pose);
+        assert!(translation(&pose, rig.pelvis).distance(rest) < 1.0, "it comes back");
+    }
+
+    /// A stronger position at full weight takes the whole blend.
+    #[test]
+    fn pelvis_constraint_yields_to_a_stronger_full_position() {
+        let rig = rig();
+        let (animation, constraints) = aurora_assets::anim::parse_animation_with_constraints(&pelvis_constraint_file()).expect("parse");
+        let hide = Arc::new(BoundAnim::bind(animation, &rig).with_constraints(&constraints, &rig));
+        let strong = Arc::new(BoundAnim::bind(
+            Animation {
+                base_priority: 5,
+                duration: 1.0,
+                emote_name: String::new(),
+                loop_in: 0.0,
+                loop_out: 1.0,
+                looping: true,
+                ease_in: 0.0,
+                ease_out: 0.0,
+                hand_pose: 0,
+                joints: vec![aurora_assets::JointMotion {
+                    joint_name: "mPelvis".into(),
+                    priority: -1,
+                    rot_keys: Vec::new(),
+                    pos_keys: vec![aurora_assets::anim::PosKey {
+                        time: 0.0,
+                        position: Vec3::ZERO,
+                    }],
+                }],
+            },
+            &rig,
+        ));
+        let epoch = Instant::now();
+        let (hide_id, strong_id) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let playing = [signal(hide_id, 1, epoch), signal(strong_id, 1, epoch)];
+        let mut controller = synchronized_controller();
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let get = |id: &Uuid| Some(if *id == hide_id { hide.clone() } else { strong.clone() });
+        let at = epoch + Duration::from_millis(550);
+        let mut alone = synchronized_controller();
+        alone.sync(&playing[..1], epoch, get);
+        alone.sync(&playing[..1], at, get);
+        alone.evaluate(&rig, at, None, &mut pose);
+        let pelvis = Mat4::from_cols_array_2d(&pose[rig.pelvis]).w_axis.truncate();
+        assert!(pelvis.length() > 1.0e5, "alone, it does carry the pelvis away: {pelvis}");
+        controller.sync(&playing, epoch, get);
+        controller.sync(&playing, at, get);
+        controller.evaluate(&rig, at, None, &mut pose);
+        let pelvis = Mat4::from_cols_array_2d(&pose[rig.pelvis]).w_axis.truncate();
+        assert!(pelvis.length() < 10.0, "the stronger animation keeps the pelvis: {pelvis}");
     }
 
     #[test]

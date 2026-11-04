@@ -22,11 +22,11 @@ impl Imports {
         if self.busy() || self.pending_files.is_some() {
             return;
         }
-        if !self.folder_plan_valid(world, inventory) {
+        if !self.folder_plan_valid(world) {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
             return;
         }
-        if self.folder_plan_ready(world, inventory) {
+        if self.folder_plan_ready(world) {
             self.start(world, inventory, permissions, prices);
             return;
         }
@@ -40,6 +40,8 @@ impl Imports {
                     || entry.description.len() > 127
                     || entry.name.contains('\0')
                     || entry.description.contains('\0')
+                    || !crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.name)
+                    || !crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.description)
             })
         {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
@@ -62,7 +64,7 @@ impl Imports {
                 _ => None,
             })
             .collect();
-        self.prepare_import_folders(world, inventory);
+        self.prepare_import_folders(world);
         if self.folders.busy() {
             self.confirm = false;
             self.message.clear();
@@ -99,7 +101,7 @@ impl Imports {
             self.pending_confirmed = Some(confirmed);
             return Vec::new();
         }
-        if !self.folder_plan_ready(world, inventory) {
+        if !self.folder_plan_ready(world) {
             if self.message.is_empty() {
                 self.message = aurora_i18n::tr!("import-folders-failed").into();
             }

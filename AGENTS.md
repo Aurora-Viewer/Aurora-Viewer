@@ -138,8 +138,10 @@ worktree, branch, `target` folder and logs.
   `--release` only to measure performance: it rebuilds everything a second
   time (about 3 GB more). For a `--release` exe of `main`, the human has
   `scripts/build-release.ps1`.
-- `new-task.ps1` frees, on its way, the `target/` of the tasks whose PR is
-  merged or that have built nothing for 7 days (the code stays).
+- `new-task.ps1` frees, on its way, the `incremental/` caches of the tasks
+  that have built nothing for 24 hours, and the whole `target/` of the tasks
+  whose PR is merged or that have built nothing for 2 days (the code stays).
+  A task that resumes rebuilds: its dependencies come from sccache.
 - To see the space taken by builds and free some: `./scripts/clean.ps1`
   (deletes nothing without `-Apply`).
 - `aurora-tools.cmd` (repository root) is the humans' menu: do not launch it,
@@ -212,11 +214,15 @@ Before each significant commit, and always before the PR:
 - **macOS code is built on GitHub only.** The agents' PCs build Windows;
   the Linux and macOS paths (`cfg(unix)`, `cfg(target_os = "macos")`, the
   Metal ones in `aurora-render`) are built by the `clippy (Linux)` job and
-  the macOS workflow (`macos.yml`), on every pull request. Keep such code
-  small and behind its `cfg`, give it pure helpers that the tests run on
-  every system, and read the macOS job of your PR before the review. A
-  shader change can break Metal alone: the merge queue draws a demo frame on
-  an Apple GPU.
+  the macOS workflow (`macos.yml`), on the pull requests that touch them:
+  code under or near such a `cfg`, the renderer and its shaders for macOS,
+  a dependency or a build file (`.github/actions/platform-needed`; the job
+  summary says why). Keep such code small and behind its `cfg`, give it
+  pure helpers that the tests run on every system, and read the macOS job
+  of your PR before the review. A shader change can break Metal alone: the
+  merge queue draws a demo frame on an Apple GPU. Every merge runs the
+  macOS and Linux jobs in full on `main`: a red one there is fixed before
+  anything else.
 
 - **Zero clippy warnings** (`-D warnings`), formatted code (`rustfmt.toml`).
 - **No `unwrap()` / `expect()` on external data** (network, files, assets,
@@ -537,7 +543,7 @@ in `.scratch/`, never committed: the review lives in the PR comment, not in
 the repository. When you ask the author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
-commit. Structure of your review (keep the `## Review` heading and the
+commit of its own (a merge of main does not count). Structure of your review (keep the `## Review` heading and the
 `Verdict:` line as they are: the PR tracking of `aurora-tools.cmd` reads
 them):
 

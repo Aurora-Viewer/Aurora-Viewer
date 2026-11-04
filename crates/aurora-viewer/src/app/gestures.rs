@@ -324,7 +324,12 @@ impl App {
                 Effect::Sound(asset) => self.send_sound_trigger(asset),
                 Effect::Chat(text) => {
                     let (channel, message) = crate::ui::chat::parse_channel(&text);
-                    if !message.is_empty() && (channel != 0 || !self.chat_command(&message)) {
+                    // LLGestureMgr::runStep: a step that is not a chat bar
+                    // command is said as it is, an empty one included; a bare
+                    // "/-1234" says an empty line to the scripts on that
+                    // channel (#2095, send_chat_from_viewer: "Don't break
+                    // null messages", fsnearbychathub.cpp).
+                    if channel != 0 || !self.chat_command(&message) {
                         self.send(NetCommand::Chat {
                             message: crate::ui::emoji::expand_shortcodes(&message),
                             channel,
@@ -536,6 +541,14 @@ impl App {
                 chat_type: ChatType::Normal,
             });
         }
+        // `channel-replace`: the replacement itself says "/5capture" (#1916)
+        if self.demo && self.frame_count == 650 && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "channel-replace") {
+            self.send_local_chat(crate::ui::chat::OutgoingChat {
+                message: "/hudreplace".into(),
+                channel: 0,
+                chat_type: ChatType::Normal,
+            });
+        }
         self.tick_gestures();
     }
 
@@ -620,6 +633,10 @@ impl App {
         let Some(editor) = self.gesture_state.ui.editors.get_mut(&item) else {
             return;
         };
+        if crate::text_validation::require_edit(crate::text_validation::Policy::PrintableNoPipe, &it.desc, &description).is_err() {
+            editor.message = crate::text_validation::reason(crate::text_validation::Policy::PrintableNoPipe).into();
+            return;
+        }
         if editor.saving.is_some() || rules::library(&self.world.inventory, item) {
             return;
         }
@@ -948,6 +965,15 @@ impl App {
                     true,
                 );
             }
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "channel-replace") {
+                self.seed_demo_gesture(
+                    &template,
+                    951008,
+                    aurora_i18n::tr!("gesture-demo-channel-replace-name"),
+                    demo_channel_replace_gesture(),
+                    true,
+                );
+            }
             if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "list") {
                 let hug = Gesture {
                     trigger: "/hug".into(),
@@ -1027,7 +1053,17 @@ fn demo_channel_gesture() -> Gesture {
     };
     Gesture {
         trigger: "/hudping".into(),
-        steps: vec![chat("/-4242 ping"), chat("/5 test"), chat("/5test")],
+        steps: vec![chat("/-4242 ping"), chat("/5 test"), chat("/5test"), chat("/-4242")],
+        ..Default::default()
+    }
+}
+
+/// The `channel-replace` scenario's gesture: a replacement opening with a
+/// channel, as a gesture made in the Legacy Viewer may have (#1916).
+fn demo_channel_replace_gesture() -> Gesture {
+    Gesture {
+        trigger: "/hudreplace".into(),
+        replacement: "/5capture".into(),
         ..Default::default()
     }
 }
@@ -1105,7 +1141,15 @@ mod tests {
                 other => panic!("unexpected {other:?}"),
             })
             .collect();
-        assert_eq!(sent, [(-4242, "ping".into()), (5, "test".into()), (5, "test".into())]);
+        assert_eq!(
+            sent,
+            [
+                (-4242, "ping".into()),
+                (5, "test".into()),
+                (5, "test".into()),
+                (-4242, String::new())
+            ]
+        );
         assert!(!manager.is_playing(id));
     }
 

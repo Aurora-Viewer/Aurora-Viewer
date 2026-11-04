@@ -1496,7 +1496,12 @@ fn fs_opaque(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4
 @fragment
 fn fs_mask(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    return mask_color(rec, shade(in, front).color);
+    let m = eval_material(in, front);
+    // Evaluate derivatives before rejection, but do not light uncovered pixels.
+    // Zero alpha-to-coverage contributes neither colour nor depth, just as discard.
+    let alpha = mask_color(rec, m.color).a;
+    if (ALPHA_TO_COVERAGE && alpha <= 0.0) { discard; }
+    return vec4<f32>(shade_material(in, m).color.rgb, alpha);
 }
 
 struct GOut {
@@ -1517,9 +1522,12 @@ fn fs_opaque_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
     let rec = records[in.record];
-    let s = shade(in, front);
+    let m = eval_material(in, front);
+    let alpha = mask_color(rec, m.color).a;
+    if (ALPHA_TO_COVERAGE && alpha <= 0.0) { discard; }
+    let s = shade_material(in, m);
     var o: GOut;
-    o.color = mask_color(rec, s.color);
+    o.color = vec4<f32>(s.color.rgb, alpha);
     o.gbuf = gbuffer(s);
     return o;
 }
@@ -1904,6 +1912,7 @@ fn vs_particle(in: PartIn) -> PartOut {
     var right = frame.cam_right.xyz;
     var up = frame.cam_up.xyz;
     var offset: vec3<f32>;
+    var uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
     if ((in.flags & PART_FOLLOW_VELOCITY) != 0u) {
         // LLVOPartGroup::getGeometry projects velocity into the billboard
         // plane, then rotates it without shortening the requested scale.
@@ -1930,13 +1939,18 @@ fn vs_particle(in: PartIn) -> PartOut {
         let side = cross(to_cam, normalize(in.axis));
         right = select(frame.cam_right.xyz, normalize(side), dot(side, side) > 1e-6);
         offset = right * c.x * in.size.x * 0.5 + up * c.y;
+        // LLVOPartGroup lays the texture along the segment: u from the
+        // parent end (c.y = 1) to this particle, v across the width. With
+        // the billboard mapping a leash's lengthwise texture turned into a
+        // crossbar on every link, a dashed line (#1924).
+        uv = vec2<f32>(0.5 - c.y * 0.5, 0.5 - c.x * 0.5);
     } else {
         offset = right * c.x * in.size.x * 0.5 + up * c.y * in.size.y * 0.5;
     }
     let wp = in.pos + offset;
     var out: PartOut;
     out.clip = frame.view_proj * vec4<f32>(wp, 1.0);
-    out.uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
+    out.uv = uv;
     out.color = vec4<f32>(srgb_to_linear(in.color.rgb), in.color.a);
     // glow brightens the particle (no bloom pass)
     out.color = vec4<f32>(out.color.rgb * (1.0 + in.glow * 2.0), out.color.a);

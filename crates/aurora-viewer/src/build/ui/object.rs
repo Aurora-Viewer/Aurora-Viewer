@@ -5,7 +5,7 @@
 
 use super::common::{Edit, check, combo, label, row, spin};
 use super::{Env, Request, ShapeClip};
-use crate::build::{BuildSettings, BuildTool, EditMode, MAX_PRIM_SCALE, MIN_PRIM_SCALE};
+use crate::build::{BuildSettings, BuildTool, EditMode};
 use crate::scene::Scene;
 use crate::theme::Palette;
 use crate::ui::menu;
@@ -602,6 +602,7 @@ pub fn show_transform(
         tool.set_transform(world, s, Some(Vec3::from_array(pos)), None, None, e.commit);
     }
     let mut size = scale.to_array();
+    let limits = world.prim_limits();
     let (e, paste, copy) = vec_block(
         ui,
         p,
@@ -610,11 +611,7 @@ pub fn show_transform(
         aurora_i18n::tr!("build-compact-size"),
         &mut size,
         0.01,
-        [
-            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-            MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
-        ],
+        [limits.min..=limits.max, limits.min..=limits.max, limits.min..=limits.max],
         decimals,
         can_scale,
         mixed[1],
@@ -1209,6 +1206,22 @@ mod tests {
         assert!((u.top_size[0]).abs() < 1e-5);
         let back = volume_from_ui(&u, u.ty, false);
         assert_eq!(back.to_raw(), v.to_raw());
+    }
+
+    #[test]
+    fn tortured_sphere_keeps_its_ratios_when_another_shape_field_changes() {
+        let mut v = box_params();
+        v.path.curve_type = LL_PCODE_PATH_CIRCLE;
+        v.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+        v.path.scale = [1.0, 2.0];
+        v.path.twist_begin = -0.5;
+        v.path.twist_end = -0.5;
+        v.profile.hollow = 0.6;
+        let mut u = ui_from_volume(&v);
+        assert_eq!(u.ty, 3);
+        u.hollow = 50.0;
+        v.profile.hollow = 0.5;
+        assert_eq!(volume_from_ui(&u, u.ty, false).to_raw(), v.to_raw());
     }
 
     #[test]

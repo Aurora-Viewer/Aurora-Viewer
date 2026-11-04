@@ -262,6 +262,12 @@ struct Entry {
     /// Pixels in view `want` was last computed from (0 before the first
     /// time): unlike `need_px`, it does not decay between two computations.
     seen_px: f32,
+    /// The maximum resolution of Preferences, in pixels (512..2048), that
+    /// its sizes on screen are capped to (`capped`).
+    max_px: f32,
+    /// Noted through `note_usage_boosted` since the last computation: not
+    /// capped.
+    boosted: bool,
     /// Its first request, until its first pixels are shown (the wait the
     /// `texture load:` line tells).
     asked_at: Option<Instant>,
@@ -343,6 +349,22 @@ impl Counts {
 }
 
 impl Entry {
+    /// A size on screen under the maximum resolution:
+    /// LLViewerFetchedTexture::processTextureStats and
+    /// LLViewerLODTexture::processTextureStats (indra/newview/llviewertexture.cpp)
+    /// clamp the virtual size of every texture boosted under BOOST_HIGH to
+    /// RenderMaxTextureResolution², clamped to 512..2048, once the memory
+    /// bias divided it (LLViewerTextureList::updateImageDecodePriority): the
+    /// sizes noted stay whole, capped as they are read, after the pressure
+    /// divisor (`wanted`). Those boosted above it keep their size: our own
+    /// bakes and the images of the interface (the urgent lane), and what
+    /// goes through `note_usage_boosted` or `note_usage_fixed` (HUDs, sky,
+    /// previews); the terrain is capped where it is noted, BOOST_TERRAIN
+    /// being under BOOST_HIGH.
+    fn capped(&self, px: f32) -> f32 {
+        if self.urgent || self.boosted { px } else { px.min(self.max_px) }
+    }
+
     fn needs_sculpt_pixels(&self) -> bool {
         self.keep_pixels && self.sculpt.is_none()
     }
@@ -356,7 +378,7 @@ impl Entry {
     /// computed from, or what was noted since if that is more (a texture
     /// just arrived has only that). 0: not seen yet.
     fn px_now(&self) -> f32 {
-        self.seen_px.max(self.need_px).max(self.fixed_px)
+        self.seen_px.max(self.capped(self.need_px)).max(self.fixed_px)
     }
 
     /// A texture used for the first time has its size on screen noted in
@@ -365,7 +387,7 @@ impl Entry {
     /// once, for a file of unknown size as that pass would compute it,
     /// instead of the level of a new entry.
     fn want_before_the_first_pass(&mut self) {
-        let px = self.need_px.max(self.fixed_px);
+        let px = self.capped(self.need_px).max(self.fixed_px);
         if self.seen_px <= 0.0 && px > 0.0 && !self.keep_pixels {
             self.want = discard_for(
                 full_size(self).map_or(512, |(w, h)| w.max(h)) as f32,
@@ -790,15 +812,29 @@ fn discard_for(full: f32, px: f32, levels: Option<u8>) -> u8 {
     levels.map_or(d, |l| d.min(l.min(5)))
 }
 
+/// The maximum resolution in pixels, clamped to 512..2048 as
+/// RenderMaxTextureResolution.
+fn cap_px(max_resolution: u32) -> f32 {
+    max_resolution.clamp(512, 2048) as f32
+}
+
+/// The discard level the maximum resolution leaves a texture of `full`
+/// pixels at the finest: 1 for a 2048 texture under 1024.
+fn capped_discard(full: f32, max_resolution: u32, levels: Option<u8>) -> u8 {
+    discard_for(full, cap_px(max_resolution), levels)
+}
+
 /// The discard level a texture is loaded to, and the one it is lowered to
 /// under memory pressure when it holds more, the sizes on screen divided
 /// by what the pressure step takes (`texture_budget::dropped`: in view,
 /// out of view). Loading follows what is in view; lowering stops at what
 /// the texture would need from where the camera is, half a level finer, so
-/// the two never chase each other (`keep <= want`).
+/// the two never chase each other (`keep <= want`). The maximum resolution
+/// caps what is left once divided, as in the Legacy Viewer (`capped`): at
+/// 2048 a texture seen close keeps its level under pressure.
 fn wanted(full: f32, levels: Option<u8>, e: &Entry, (in_view, away): (f32, f32)) -> (u8, u8) {
-    let seen = e.fixed_px.max(e.need_px / in_view);
-    let near = seen.max(e.away_px / away);
+    let seen = e.fixed_px.max(e.capped(e.need_px / in_view));
+    let near = seen.max(e.capped(e.away_px / away));
     (
         discard_for(full, seen, levels),
         discard_for(full, near * std::f32::consts::SQRT_2, levels),
@@ -944,12 +980,28 @@ pub struct TextureStreamer {
     background: texture_budget::Background,
     in_front: bool,
     minimized: bool,
+    /// The other viewers on this PC (instances.rs): the budget is shared
+    /// with them. And what the driver counts for this one, for them.
+    peers: crate::instances::Peers,
+    video_usage: u64,
+    /// The card as every program uses it (gpu_load.rs), its total memory
+    /// (read with the first budget pass), and the target eased on its rise.
+    gpu: crate::gpu_load::GpuLoad,
+    card_total: Option<u64>,
+    /// The card's identity, 0 until known (instances.rs).
+    card_luid: u64,
+    /// The card was asked for: not asked again when it has no answer.
+    card_asked: bool,
+    card_sharing: bool,
+    relief: texture_budget::Relief,
+    target_ramp: texture_budget::TargetRamp,
     last_budget: Instant,
     /// Passes of `recompute_wants` since the step last changed.
     passes_at_step: u32,
     /// Loaded textures to lower to a discard level, listed by the last
-    /// pass under pressure and done a few per frame, the largest (the
-    /// bytes they hold, last of the tuple) first: taken from the end.
+    /// pass (under pressure, or finer than the maximum resolution) and done
+    /// a few per frame, the largest (the bytes they hold, last of the
+    /// tuple) first: taken from the end.
     reductions: Vec<(Uuid, u8, u64)>,
     /// Bytes of textures the reductions should give back, from the last
     /// budget reading (texture_budget::lowering_goal); no limit until the
@@ -960,6 +1012,10 @@ pub struct TextureStreamer {
     bytes_below: u64,
     /// The photo quality: the textures in view at full resolution.
     pub full_resolution: bool,
+    /// Preferences › Graphics › Maximum texture resolution (the Legacy
+    /// Viewer's RenderMaxTextureResolution): the largest side ordinary
+    /// textures are loaded at, see `note_usage`.
+    max_resolution: u32,
     /// Textures in view still loading, from the last pass.
     pending_in_view: usize,
     /// The last `update` had somewhere to download textures from.
@@ -1228,12 +1284,22 @@ impl TextureStreamer {
             background: texture_budget::Background::default(),
             in_front: true,
             minimized: false,
+            peers: Default::default(),
+            video_usage: 0,
+            gpu: crate::gpu_load::GpuLoad::new(),
+            card_total: None,
+            card_luid: 0,
+            card_asked: false,
+            card_sharing: false,
+            relief: Default::default(),
+            target_ramp: Default::default(),
             last_budget: Instant::now(),
             passes_at_step: 0,
             reductions: Vec::new(),
             to_lower: u64::MAX,
             bytes_below: 0,
             full_resolution: false,
+            max_resolution: crate::settings::MAX_TEXTURE_RESOLUTION,
             pending_in_view: 0,
             can_fetch: false,
             demo_source: None,
@@ -1504,6 +1570,8 @@ impl TextureStreamer {
             away_px: 0.0,
             fixed_px: 0.0,
             seen_px: 0.0,
+            max_px: cap_px(self.max_resolution),
+            boosted: false,
             asked_at: None,
             gpu_size: (0, 0),
             fetching: false,
@@ -1576,6 +1644,58 @@ impl TextureStreamer {
             None => self.forgotten.push(*id),
         }
         true
+    }
+
+    /// The GPU device is lost (app/gpu_recovery.rs): the slots of the old
+    /// renderer are gone. Every texture keeps its bytes, its cache state and
+    /// its users, gets a slot of `new` and is uploaded again as it was: from
+    /// the JPEG 2000 data in memory, or read again from the transcoded or the
+    /// disk cache. Nothing is downloaded again and the disk cache stays
+    /// (unlike `refresh`).
+    pub fn gpu_reset(&mut self, new: &mut Renderer) {
+        self.gpu_reset_into(new);
+    }
+
+    fn gpu_reset_into(&mut self, new: &mut impl SlotTable) {
+        // their staged data is in the old device's pool
+        self.uploads = Default::default();
+        self.alpha_by_slot.clear();
+        self.alpha_channel_by_slot.clear();
+        self.alpha_changes.clear();
+        self.first_texels.clear();
+        self.reductions.clear();
+        self.local_slots.clear();
+        self.slotless = 0;
+        self.slotless_unreported = 0;
+        self.staging = None;
+        self.generation = self.generation.wrapping_add(1);
+        let ids: Vec<Uuid> = self.entries.keys().copied().collect();
+        for id in ids {
+            let slot = self.new_slot(new);
+            set_slot_alpha(
+                &mut self.alpha_by_slot,
+                &mut self.generation,
+                &mut self.alpha_changes,
+                slot,
+                AlphaKind::Opaque,
+            );
+            let Some(e) = self.entries.get_mut(&id) else {
+                continue;
+            };
+            e.slot = slot;
+            e.decoded = None;
+            e.gpu_size = (0, 0);
+            e.alpha = AlphaKind::Opaque;
+            if !e.busy() {
+                // 3: shown from the transcoded cache, read it again; 2 with
+                // the data in memory: decoded again from it
+                e.cache_state = if e.cache_state == 3 || e.data.is_empty() { 0 } else { 2 };
+            }
+            if e.unavailable() {
+                self.unavailable.push(id);
+            }
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
+        }
     }
 
     /// The slot of a texture met for the first time. With the table full,
@@ -1871,13 +1991,27 @@ impl TextureStreamer {
         self.local_slots.contains_key(id)
     }
 
-    /// Record that a texture covers about `px` pixels on screen.
+    /// Record that a texture covers about `px` pixels on screen (capped to
+    /// the maximum resolution as it is read, `Entry::capped`).
     #[inline]
     pub fn note_usage(&mut self, id: &Uuid, px: f32) {
         if let Some(e) = self.entries.get_mut(id)
             && px > e.need_px
         {
             e.need_px = px;
+        }
+    }
+
+    /// Like `note_usage`, beyond the maximum resolution: what the Legacy
+    /// Viewer boosts over BOOST_HIGH (BOOST_PREVIEW: the texture and profile
+    /// picture windows, the wearable editor's preview).
+    #[inline]
+    pub fn note_usage_boosted(&mut self, id: &Uuid, px: f32) {
+        if let Some(e) = self.entries.get_mut(id) {
+            e.boosted = true;
+            if px > e.need_px {
+                e.need_px = px;
+            }
         }
     }
 
@@ -1911,7 +2045,8 @@ impl TextureStreamer {
     /// list the loaded textures to lower, done a few per frame by
     /// `maintain`: those clearly finer than their size on screen (half a
     /// level of margin, so that a texture at the edge of a level is not
-    /// lowered then loaded again as the camera sways).
+    /// lowered then loaded again as the camera sways). Those loaded finer
+    /// than the maximum resolution are listed too, pressure or not.
     pub fn recompute_wants(&mut self) {
         let step = self.pressure.step();
         // (the 3D drawing paused behind: nothing is drawn, every texture
@@ -1928,6 +2063,9 @@ impl TextureStreamer {
         // the memory allows it (under pressure the budget decides, as always)
         let full = self.full_resolution && step == 0;
         let can_fetch = self.can_fetch;
+        let max_resolution = self.max_resolution;
+        // (loaded finer than the maximum resolution allows)
+        let mut over_max = Vec::new();
         let TextureStreamer {
             entries,
             reductions,
@@ -1967,7 +2105,27 @@ impl TextureStreamer {
             {
                 pending += 1;
             }
-            e.seen_px = e.fixed_px.max(e.need_px / dropped.0);
+            e.seen_px = e.fixed_px.max(e.capped(e.need_px / dropped.0));
+            // Lowered to the maximum resolution, under memory pressure or
+            // not, as LLViewerLODTexture::processTextureStats scales a
+            // texture down once it holds a finer level than it wants (the
+            // maximum lowered in Preferences, a preview closed). Only what
+            // the maximum takes off: a level finer than the size on screen
+            // asks stays until the memory needs it (below), so nothing
+            // chases the camera. Bakes are left alone, as there.
+            if let Some(d) = e.decoded
+                && e.source == TexSource::Asset
+                && !e.urgent
+                && e.refs > 0
+                && !e.decoding
+                && !ui_wanted.contains(id)
+                && full_size(e).is_some()
+            {
+                let keep = capped_discard(full_px, max_resolution, levels).min(e.want);
+                if keep > d {
+                    over_max.push((*id, keep, bytes_at(e, d)));
+                }
+            }
             if step > 0 {
                 let (want_below, keep_below) = wanted(full_px, levels, e, below);
                 // (there it would be lowered to `keep`, or loaded up to `want`)
@@ -2009,6 +2167,8 @@ impl TextureStreamer {
             e.need_px *= 0.5;
             e.away_px *= 0.5;
             e.fixed_px *= 0.5;
+            // (a preview closed: what it noted is capped from now on)
+            e.boosted = false;
             // (a finer level wanted: `update` hears of it)
             Self::settle(todo, counts, *id, e);
         }
@@ -2028,9 +2188,29 @@ impl TextureStreamer {
             freed += held - (held >> (2 * levels as u32).min(63));
         }
         reductions.drain(..first);
+        // what the maximum resolution takes off, whatever the memory: the
+        // largest first, done before the rest
+        over_max.sort_unstable_by_key(|&(id, _, bytes)| (bytes, id));
+        reductions.extend(over_max);
         self.bytes_below = bytes_below;
         self.pending_in_view = pending;
         self.passes_at_step = self.passes_at_step.saturating_add(1);
+    }
+
+    /// The maximum texture resolution of Preferences, each frame; a change
+    /// is logged.
+    pub fn set_max_resolution(&mut self, px: u32) {
+        if px != self.max_resolution {
+            log::info!("textures: maximum resolution {} -> {px} px", self.max_resolution);
+            self.max_resolution = px;
+            for e in self.entries.values_mut() {
+                e.max_px = cap_px(px);
+            }
+        }
+    }
+
+    pub fn max_resolution(&self) -> u32 {
+        self.max_resolution
     }
 
     /// Textures in view still loading towards the level they want (the
@@ -2528,10 +2708,23 @@ impl TextureStreamer {
                 sculpt,
             } => {
                 self.decodes = self.decodes.saturating_sub(1);
+                // staged in the pool of a GPU device lost since (`gpu_reset`):
+                // decoded again into the new one
+                let stale = staged
+                    .as_ref()
+                    .is_some_and(|s| self.staging.as_ref().is_none_or(|pool| !s.data.is_from(pool)));
                 let Some(e) = self.entries.get_mut(&id) else {
                     return;
                 };
                 e.decoding = false;
+                if stale {
+                    if e.cache_state == 3 {
+                        // (a transcoded result: read again)
+                        e.cache_state = 0;
+                    }
+                    Self::settle(&mut self.todo, &mut self.counts, id, e);
+                    return;
+                }
                 if sculpt.is_some() {
                     e.sculpt = sculpt;
                     self.generation += 1;
@@ -2551,7 +2744,7 @@ impl TextureStreamer {
                         held: false,
                     },
                     e.decoded.is_none(),
-                    e.need_px.max(e.fixed_px),
+                    e.capped(e.need_px).max(e.fixed_px),
                 );
                 Self::settle(&mut self.todo, &mut self.counts, id, e);
             }
@@ -2899,9 +3092,10 @@ impl TextureStreamer {
         });
     }
 
-    /// Lower a few of the textures listed by the last pass under memory
-    /// pressure: the levels they keep are copied on the GPU to a smaller
-    /// layer (`TextureTable::shrink`), nothing is decoded. Each is checked
+    /// Lower a few of the textures listed by the last pass (memory
+    /// pressure, maximum resolution): the levels they keep are copied on
+    /// the GPU to a smaller layer (`TextureTable::shrink`), nothing is
+    /// decoded. Each is checked
     /// again, the list may be a few frames old.
     fn reduce(&mut self, renderer: &mut Renderer, frame: Duration) {
         let most = if self.background.paused() {
@@ -2939,6 +3133,31 @@ impl TextureStreamer {
         self.minimized = minimized;
     }
 
+    /// The other viewers running now (instances.rs).
+    pub fn set_peers(&mut self, peers: &crate::instances::Peers) {
+        if self.peers != *peers {
+            self.peers = peers.clone();
+        }
+    }
+
+    /// Whether the card is read as every program uses it (gpu_load.rs): off
+    /// in demo and timed runs, whose textures must not follow what other
+    /// programs do on the PC.
+    pub fn set_card_sharing(&mut self, on: bool) {
+        self.card_sharing = on;
+    }
+
+    /// Bytes of video memory the driver counts for this viewer, as of the
+    /// last budget pass (what the other viewers are told).
+    pub fn video_usage(&self) -> u64 {
+        self.video_usage
+    }
+
+    /// The card this viewer draws on, 0 until known (instances.rs).
+    pub fn card_luid(&self) -> u64 {
+        self.card_luid
+    }
+
     /// The window is behind and the viewer was past the driver's budget
     /// there: the 3D drawing pauses (texture_budget::Background::paused).
     pub fn drawing_paused(&self) -> bool {
@@ -2954,7 +3173,34 @@ impl TextureStreamer {
         self.last_budget = now;
         let (used, live) = (renderer.textures.page_bytes(), renderer.textures.bytes());
         let video = renderer.video_memory.read(&renderer.device);
-        let target = texture_budget::forced_target().unwrap_or_else(|| texture_budget::texture_target(setting, used, video));
+        self.video_usage = video.map_or(0, |v| v.usage);
+        if self.card_sharing && !self.card_asked {
+            self.card_asked = true;
+            if let Some((luid, total, dedicated)) = renderer.video_memory.card() {
+                self.card_luid = luid;
+                // (an integrated GPU has no memory of its own to measure
+                // the counters against, but its engines are read all the same)
+                self.card_total = dedicated.then_some(total);
+                self.gpu.start(luid);
+            }
+        }
+        // (the viewers on this PC share the budget, instances.rs, and the
+        // card is shared with every program that uses it, gpu_load.rs;
+        // "crowded" below stays on the driver's own figure)
+        let shared = video.map(|v| aurora_render::vram::VideoMemory {
+            budget: crate::instances::share_cap(v.budget, &self.peers),
+            ..v
+        });
+        let load = self.gpu.get();
+        let over = match (self.card_total, load.adapter_used) {
+            (Some(total), Some(held)) if self.card_sharing => crate::gpu_load::oversubscribed(total, held, self.video_usage),
+            _ => 0,
+        };
+        let target = texture_budget::forced_target().unwrap_or_else(|| {
+            let target = texture_budget::texture_target(setting, used, shared);
+            let cap = self.relief.update(load.seq, used, over);
+            self.target_ramp.update(texture_budget::relieve(target, cap), now)
+        });
         let before = self.pressure.step();
         // a window behind for a minute or minimised for a second gives its
         // textures back, at once while the memory is short, and takes up
@@ -3519,6 +3765,8 @@ mod tests {
             away_px: 0.0,
             fixed_px: 0.0,
             seen_px: 0.0,
+            max_px: cap_px(crate::settings::MAX_TEXTURE_RESOLUTION),
+            boosted: false,
             asked_at: None,
             gpu_size: decoded.map_or((0, 0), |d| (1024 >> d, 1024 >> d)),
             fetching: false,
@@ -3655,6 +3903,161 @@ mod tests {
         assert_eq!(discard_for(1024.0, 0.0, None), 5);
         assert_eq!(discard_for(1024.0, 0.0, Some(3)), 3);
         assert_eq!(discard_for(64.0, 8.0, Some(5)), 3);
+    }
+
+    #[test]
+    fn the_maximum_resolution_is_the_finest_level_left() {
+        assert_eq!(capped_discard(2048.0, 2048, None), 0);
+        assert_eq!(capped_discard(2048.0, 1024, None), 1);
+        assert_eq!(capped_discard(2048.0, 512, None), 2);
+        assert_eq!(capped_discard(1024.0, 1024, None), 0);
+        assert_eq!(capped_discard(512.0, 512, None), 0);
+        // clamped to 512..2048, as RenderMaxTextureResolution
+        assert_eq!(capped_discard(2048.0, 64, None), 2);
+        assert_eq!(capped_discard(4096.0, 8192, None), 1);
+        // never past the levels of the file
+        assert_eq!(capped_discard(2048.0, 512, Some(1)), 1);
+    }
+
+    /// A 2048 texture, its file known, in use.
+    fn large(decoded: Option<u8>) -> Entry {
+        Entry {
+            info: Some(file(2048)),
+            gpu_size: decoded.map_or((0, 0), |d| (2048 >> d, 2048 >> d)),
+            ..entry(decoded, 0.0)
+        }
+    }
+
+    /// The level each texture wants under a maximum resolution once each
+    /// was noted at 4000 px on screen through `note`.
+    fn wants_under(max_resolution: u32, note: fn(&mut TextureStreamer, &Uuid), urgent: bool) -> u8 {
+        let mut s = pressed(0, vec![(1, Entry { urgent, ..large(None) })]);
+        s.set_max_resolution(max_resolution);
+        let id = Uuid::from_u128(1);
+        note(&mut s, &id);
+        s.recompute_wants();
+        s.entries[&id].want
+    }
+
+    #[test]
+    fn the_maximum_resolution_caps_ordinary_textures_and_no_boosted_one() {
+        let world = |s: &mut TextureStreamer, id: &Uuid| s.note_usage(id, 4000.0);
+        // LLViewerLODTexture::processTextureStats: a 2048 texture right in
+        // front of the camera loads at 1024 under 1024, 512 under 512
+        assert_eq!(wants_under(2048, world, false), 0);
+        assert_eq!(wants_under(1024, world, false), 1);
+        assert_eq!(wants_under(512, world, false), 2);
+        // out of view too (what memory pressure lowers it to)
+        let mut s = pressed(0, vec![(1, large(Some(0)))]);
+        s.set_max_resolution(512);
+        s.note_usage_away(&Uuid::from_u128(1), 4000.0);
+        let e = &s.entries[&Uuid::from_u128(1)];
+        assert_eq!(
+            wanted(2048.0, None, e, (1.0, 1.0)).1,
+            discard_for(2048.0, 512.0 * std::f32::consts::SQRT_2, None)
+        );
+        // smaller on screen than the maximum: as before
+        let small = |s: &mut TextureStreamer, id: &Uuid| s.note_usage(id, 300.0);
+        assert_eq!(wants_under(512, small, false), 2);
+        assert_eq!(wants_under(2048, small, false), 2);
+        // boosted over BOOST_HIGH: our own bakes and the interface's images
+        // (the urgent lane), the previews, HUDs and sky
+        assert_eq!(wants_under(512, world, true), 0);
+        let preview = |s: &mut TextureStreamer, id: &Uuid| s.note_usage_boosted(id, 4000.0);
+        assert_eq!(wants_under(512, preview, false), 0);
+        let hud = |s: &mut TextureStreamer, id: &Uuid| s.note_usage_fixed(id, 4000.0);
+        assert_eq!(wants_under(512, hud, false), 0);
+    }
+
+    #[test]
+    fn the_maximum_resolution_caps_after_the_memory_pressure() {
+        // LLViewerTextureList::updateImageDecodePriority divides the size
+        // by the memory bias, then processTextureStats clamps it: a 2048
+        // texture seen close (8192 px) under pressure step 5 (in view
+        // halved) wants what it wanted without the maximum resolution
+        let at = |max_resolution: u32, step: u8| {
+            let mut s = pressed(step, vec![(1, large(Some(0)))]);
+            s.set_max_resolution(max_resolution);
+            let id = Uuid::from_u128(1);
+            s.note_usage(&id, 8192.0);
+            s.note_usage_away(&id, 8192.0);
+            let e = &s.entries[&id];
+            wanted(2048.0, None, e, texture_budget::dropped(step))
+        };
+        let uncapped = |step: u8| {
+            let (in_view, away) = texture_budget::dropped(step);
+            let near = (8192.0 / in_view).max(8192.0 / away);
+            (
+                discard_for(2048.0, 8192.0 / in_view, None),
+                discard_for(2048.0, near * std::f32::consts::SQRT_2, None),
+            )
+        };
+        assert_eq!(at(2048, 5), uncapped(5));
+        assert_eq!(at(2048, 5), (0, 0));
+        for step in 0..=texture_budget::MAX_PRESSURE {
+            assert_eq!(at(2048, step), uncapped(step), "step {step}");
+        }
+        // under a lower maximum, the cap or the pressure, whichever is less
+        assert_eq!(at(1024, 0).0, 1);
+        assert_eq!(at(512, 5).0, 2);
+        assert_eq!(
+            at(1024, texture_budget::MAX_PRESSURE).0,
+            uncapped(texture_budget::MAX_PRESSURE).0.max(1)
+        );
+        // what was noted stays whole
+        let mut s = pressed(0, vec![(1, large(None))]);
+        s.set_max_resolution(512);
+        s.note_usage(&Uuid::from_u128(1), 8192.0);
+        assert_eq!(s.entries[&Uuid::from_u128(1)].need_px, 8192.0);
+        // a preview closed: what it noted is capped from the next pass
+        s.note_usage_boosted(&Uuid::from_u128(1), 8192.0);
+        s.recompute_wants();
+        assert_eq!(s.entries[&Uuid::from_u128(1)].want, 0);
+        s.recompute_wants();
+        assert_eq!(s.entries[&Uuid::from_u128(1)].want, 2);
+    }
+
+    #[test]
+    fn textures_finer_than_the_maximum_are_lowered_without_memory_pressure() {
+        let id = |n| Uuid::from_u128(n);
+        let mut s = pressed(
+            0,
+            vec![
+                // loaded in full, right in front of the camera
+                (1, large(Some(0))),
+                // already at 1024
+                (2, large(Some(1))),
+                // our own bake, and an image of the interface
+                (
+                    3,
+                    Entry {
+                        urgent: true,
+                        ..large(Some(0))
+                    },
+                ),
+                (4, large(Some(0))),
+                // a 1024 texture, small on screen: never lowered for that
+                (5, entry(Some(0), 20.0)),
+            ],
+        );
+        s.ui_wanted.insert(id(4));
+        s.set_max_resolution(1024);
+        for n in 1..=4 {
+            s.note_usage(&id(n), 4000.0);
+        }
+        s.recompute_wants();
+        assert_eq!(s.reductions.iter().map(|&(i, keep, _)| (i, keep)).collect::<Vec<_>>(), [(id(1), 1)]);
+        // the photo quality keeps the textures in view in full
+        s.full_resolution = true;
+        s.note_usage(&id(1), 4000.0);
+        s.recompute_wants();
+        assert!(s.reductions.is_empty());
+        // under 2048 nothing is lowered
+        s.full_resolution = false;
+        s.set_max_resolution(2048);
+        s.note_usage(&id(1), 4000.0);
+        s.recompute_wants();
+        assert!(s.reductions.is_empty());
     }
 
     #[test]

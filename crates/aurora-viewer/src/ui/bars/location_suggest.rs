@@ -362,6 +362,7 @@ mod tests {
             position: Vec3::new(10.0, 20.0, 30.0),
             parcel: parcel.into(),
             at: 0,
+            grid: None,
         }
     }
 

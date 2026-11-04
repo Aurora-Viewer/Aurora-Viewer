@@ -71,6 +71,9 @@ sha2 = "0.11.0"
 # spell checking of the text fields with Hunspell dictionaries (spelling.rs);
 # pure Rust, MPL-2.0
 spellbook = "0.4.2"
+# A photo of the reel deleted goes to the Recycle Bin / Trash (snapshot::reel,
+# app/photo_reel.rs), recoverable; Windows, macOS and freedesktop. MIT.
+trash = "5.2.9"
 ttf-parser = "0.25.1"
 # Right-to-left text in reading order (ui/bidi.rs): the Unicode Bidirectional
 # Algorithm (unicode-rs, already in the tree through url) and its mirrored
@@ -149,6 +152,10 @@ zbus = "5.19.0"
 wayland-client = "0.31.15"
 x11rb = { version = "0.13.2", features = ["allow-unsafe-code", "dl-libxcb"] }
 xkbcommon-dl = { version = "0.4.2", features = ["x11"] }
+# The font directories fontconfig is configured with (ui/fonts.rs), for the
+# fonts of NixOS and of any other set-up found only there; pure Rust, already
+# in the tree through resvg's fontdb (MIT)
+fontconfig-parser = { version = "0.5.8", default-features = false }
 
 # icon and version block of aurora-viewer.exe (build.rs; runs rc.exe of the
 # Windows SDK). Without `toml`: nothing is read from Cargo.toml.
