@@ -6824,7 +6824,8 @@ pub const BUSY_SPINNERS: u32 = 60;
 
 /// What a busy place has besides worn prims and meshes, for `n` crowd
 /// avatars: on each of them a flexible ribbon and a spinning ornament with
-/// two prims linked below it (none of which the GPU places from an anchor);
+/// two prims linked below it (the ribbon left to the sync, the ornament
+/// placed by the GPU from a mover, `AURORA_MOVING_ANCHORS`);
 /// on our avatar a HUD of [`BUSY_HUD_PRIMS`] prims; and
 /// [`BUSY_SPINNERS`] spinning objects on the ground.
 pub fn crowd_busy_events(n: u32) -> Vec<NetEvent> {
