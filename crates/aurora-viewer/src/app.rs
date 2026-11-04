@@ -4465,7 +4465,7 @@ impl App {
             && !(self.alt && self.world.hud_move_locked(idx))
         {
             self.media.build_mode = self.build.open;
-            if !self.alt && !self.ctrl && !self.shift && !self.build.open {
+            if !self.alt && !self.ctrl && !self.build.open {
                 let mods = aurora_media::Modifiers {
                     control: false,
                     alt: false,
@@ -11452,16 +11452,19 @@ impl App {
         self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
-        if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
+        if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| matches!(m.as_str(), "touch" | "touch-shift")) {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
             {
                 self.cursor_pos = view.pixel(Vec3::new(0.0, 0.18, 0.028)).into();
+                self.shift = std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch-shift");
+                log::info!("demo HUD touch: shift={}", self.shift);
                 self.on_left_press();
             } else if self.frame_count == 800 {
                 self.cursor_pos.0 += 12.0;
             } else if self.frame_count == 900 {
                 self.on_left_release();
+                self.shift = false;
             }
         }
         if self.demo
