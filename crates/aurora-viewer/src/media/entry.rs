@@ -229,6 +229,8 @@ struct Pending {
     cap: String,
     retries: u32,
     not_before: Instant,
+    /// When it was first queued (the logs of our own requests).
+    queued_at: Instant,
     /// Sent first: our HUDs and attachments, which LLMediaDataClient's
     /// sorted queue (by getMediaInterest) puts ahead of the world's media.
     first: bool,
@@ -243,8 +245,8 @@ pub struct MediaDataClient {
     queue: VecDeque<Pending>,
     queued: HashMap<Uuid, u32>,
     in_flight: usize,
-    tx: crossbeam_channel::Sender<(Fetched, String, u32, bool)>,
-    rx: crossbeam_channel::Receiver<(Fetched, String, u32, bool)>,
+    tx: crossbeam_channel::Sender<(Fetched, String, u32, bool, Instant)>,
+    rx: crossbeam_channel::Receiver<(Fetched, String, u32, bool, Instant)>,
     last_batch: Instant,
 }
 
@@ -280,11 +282,19 @@ impl MediaDataClient {
             return;
         }
         self.queued.insert(object, 0);
+        if first {
+            log::info!(
+                "media: ObjectMedia for our {object} queued ({} ahead, {} in flight)",
+                self.queue.len(),
+                self.in_flight
+            );
+        }
         self.queue.push_back(Pending {
             object,
             cap: cap.to_string(),
             retries: 0,
             not_before: Instant::now(),
+            queued_at: Instant::now(),
             first,
         });
     }
@@ -292,8 +302,11 @@ impl MediaDataClient {
     /// A queued request turns out to be ours (its avatar arrived after it
     /// was queued): it goes first.
     pub fn prioritize(&mut self, object: &Uuid) {
-        if let Some(p) = self.queue.iter_mut().find(|p| p.object == *object) {
+        if let Some(p) = self.queue.iter_mut().find(|p| p.object == *object)
+            && !p.first
+        {
             p.first = true;
+            log::info!("media: ObjectMedia for our {object} moved first ({} in flight)", self.in_flight);
         }
     }
 
@@ -305,7 +318,15 @@ impl MediaDataClient {
     /// Send due requests, return the answers that arrived.
     pub fn update(&mut self, rt: &tokio::runtime::Handle, http: &reqwest::Client) -> Vec<Fetched> {
         let mut out = Vec::new();
-        while let Ok((f, cap, retries, first)) = self.rx.try_recv() {
+        while let Ok((f, cap, retries, first, queued_at)) = self.rx.try_recv() {
+            if first {
+                log::info!(
+                    "media: ObjectMedia for our {} answered {:.1} s after it was queued ({})",
+                    f.object,
+                    queued_at.elapsed().as_secs_f32(),
+                    if f.data.is_ok() { "ok" } else { "failed" }
+                );
+            }
             self.in_flight = self.in_flight.saturating_sub(1);
             match &f.data {
                 Err(e) if retries < MAX_RETRIES && !e.starts_with("error 8002") => {
@@ -315,6 +336,7 @@ impl MediaDataClient {
                         cap,
                         retries: retries + 1,
                         not_before: Instant::now() + RETRY_DELAY,
+                        queued_at,
                         first,
                     });
                 }
@@ -343,12 +365,19 @@ impl MediaDataClient {
             let Some(p) = self.queue.remove(i) else {
                 break;
             };
+            if p.first {
+                log::info!(
+                    "media: ObjectMedia for our {} sent {:.1} s after it was queued",
+                    p.object,
+                    p.queued_at.elapsed().as_secs_f32()
+                );
+            }
             sent += 1;
             self.in_flight += 1;
             let (tx, http) = (self.tx.clone(), http.clone());
             rt.spawn(async move {
                 let data = get(&http, &p.cap, p.object).await;
-                let _ = tx.send((Fetched { object: p.object, data }, p.cap, p.retries, p.first));
+                let _ = tx.send((Fetched { object: p.object, data }, p.cap, p.retries, p.first, p.queued_at));
             });
         }
         if sent > 0 {
