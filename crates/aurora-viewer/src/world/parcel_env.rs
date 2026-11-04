@@ -41,6 +41,13 @@ struct Here {
     settled: bool,
     /// The saved environment shown here.
     shown: Option<Uuid>,
+    /// That environment as it stands once loaded (`saved_local` form, preset):
+    /// a save read back need not compare equal to what was saved.
+    baseline: Option<(Option<aurora_llsd::Llsd>, u8)>,
+    /// `EnvSelector::local_stamp` of the last comparison with it.
+    stamp: Option<(u64, u8)>,
+    /// The user changed the environment shown.
+    changed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -94,6 +101,9 @@ impl ParcelEnv {
                 asked: None,
                 settled: false,
                 shown: None,
+                baseline: None,
+                stamp: None,
+                changed: false,
             });
         }
         let Some(here) = self.here.as_mut().filter(|h| wanted && h.id.is_none()) else {
@@ -109,6 +119,23 @@ impl ParcelEnv {
         here.asked = Some(now);
         Ok(true)
     }
+
+    /// A new save: requests that ran out get another chance.
+    fn ask_again(&mut self) {
+        if let Some(here) = self.here.as_mut().filter(|h| h.id.is_none()) {
+            here.asks = 0;
+            here.asked = None;
+        }
+    }
+}
+
+impl Here {
+    /// The saved environment was put on, or replaced: compare with it anew.
+    fn forget_baseline(&mut self) {
+        self.baseline = None;
+        self.stamp = None;
+        self.changed = false;
+    }
 }
 
 impl World {
@@ -116,6 +143,7 @@ impl World {
     /// has loaded.
     pub fn save_parcel_environment(&mut self) {
         self.eep.arm_parcel_save();
+        self.parcel_env.ask_again();
         self.parcel_env.saving = self.main_region.zip(self.parcel.as_ref()).map(|(handle, p)| (handle, p.local_id));
     }
 
@@ -161,7 +189,9 @@ impl World {
             return (Outcome::Nothing, ask);
         }
         let target = here.id.and_then(|id| saved.iter().find(|e| e.parcel == id));
-        if !here.settled || here.shown != target.map(|e| e.parcel) {
+        // a save takes what is shown: putting the parcel's own on now would
+        // replace the pick it waits for
+        if self.parcel_env.saving.is_none() && (!here.settled || here.shown != target.map(|e| e.parcel)) {
             match target {
                 Some(entry) => {
                     let data = entry
@@ -174,6 +204,7 @@ impl World {
             }
             here.settled = true;
             here.shown = target.map(|e| e.parcel);
+            here.forget_baseline();
         }
         if self.parcel_env.saving.is_none() || self.eep.local_loading() {
             return (Outcome::Nothing, ask);
@@ -186,7 +217,9 @@ impl World {
         let Some((environment, time_of_day)) = self.eep.capture_parcel() else {
             return (Outcome::Nothing, ask);
         };
+        here.settled = true;
         here.shown = Some(id);
+        here.forget_baseline();
         let entry = Entry {
             parcel: id,
             name: parcel.name.clone(),
@@ -195,6 +228,26 @@ impl World {
             time_of_day,
         };
         (Outcome::Saved(entry), ask)
+    }
+
+    /// The environment shown here is no longer the parcel's saved one, so
+    /// that saving would change something. Compared only when the local
+    /// environment changes.
+    pub fn parcel_environment_changed(&mut self) -> bool {
+        let Some(here) = self.parcel_env.here.as_mut() else {
+            return false;
+        };
+        if here.shown.is_none() || self.eep.local_loading() {
+            return here.changed;
+        }
+        let stamp = self.eep.local_stamp();
+        if here.stamp != Some(stamp) {
+            here.stamp = Some(stamp);
+            let now = self.eep.parcel_form();
+            here.changed = here.baseline.as_ref().is_some_and(|b| *b != now);
+            here.baseline.get_or_insert(now);
+        }
+        here.changed
     }
 }
 
@@ -295,6 +348,78 @@ mod tests {
             now += ASK_EVERY;
         }
         assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::NotSaved);
+    }
+
+    #[test]
+    fn a_new_save_asks_again_after_the_requests_ran_out() {
+        let mut world = a_world_on(3);
+        let mut now = Instant::now();
+        world.save_parcel_environment();
+        for _ in 0..MAX_ASKS {
+            let _ = world.parcel_environment_frame(&[], now);
+            now += ASK_EVERY;
+        }
+        assert_eq!(world.parcel_environment_frame(&[], now).0, Outcome::NotSaved);
+        world.save_parcel_environment();
+        let (outcome, ask) = world.parcel_environment_frame(&[], now);
+        assert_eq!(outcome, Outcome::Nothing);
+        assert!(ask.is_some());
+    }
+
+    fn entry(parcel: Uuid, time_of_day: u8) -> Entry {
+        Entry {
+            parcel,
+            name: String::new(),
+            region_name: String::new(),
+            environment: None,
+            time_of_day,
+        }
+    }
+
+    #[test]
+    fn a_save_on_a_saved_parcel_keeps_what_was_picked_before_its_id_came() {
+        let mut world = a_world_on(3);
+        let now = Instant::now();
+        let id = Uuid::from_u128(9);
+        let saved = [entry(id, 2)];
+        // the parcel is not named yet, and its saved light not on
+        let _ = world.parcel_environment_frame(&saved, now);
+        world.eep.set_time_of_day(4);
+        let sky = crate::world::env::time_of_day_sky(4).expect("a library sky");
+        world.eep.on_settings(sky, Some(crate::world::eep_env::tests::sky_asset(1.1)));
+        world.save_parcel_environment();
+        world.parcel_env.on_parcel_id(7, 3, Some(id));
+        let (Outcome::Saved(new), _) = world.parcel_environment_frame(&saved, now) else {
+            panic!("saved");
+        };
+        assert_eq!((new.parcel, new.time_of_day), (id, 4));
+        assert_eq!(world.parcel_environment_frame(std::slice::from_ref(&new), now).0, Outcome::Nothing);
+        assert_eq!(world.eep.parcel_form().1, 4, "the pick stays on");
+    }
+
+    #[test]
+    fn a_saved_environment_reads_as_changed_after_a_change_only() {
+        let mut world = a_world_on(3);
+        let now = Instant::now();
+        let id = Uuid::from_u128(9);
+        let saved = [entry(id, 2)];
+        let _ = world.parcel_environment_frame(&saved, now);
+        world.parcel_env.on_parcel_id(7, 3, Some(id));
+        let _ = world.parcel_environment_frame(&saved, now);
+        assert!(!world.parcel_environment_changed(), "still loading");
+        let sky = crate::world::env::time_of_day_sky(2).expect("a library sky");
+        world.eep.on_settings(sky, Some(crate::world::eep_env::tests::sky_asset(1.1)));
+        assert!(!world.parcel_environment_changed(), "as saved");
+        world.eep.set_time_of_day(4);
+        let other = crate::world::env::time_of_day_sky(4).expect("a library sky");
+        world.eep.on_settings(other, Some(crate::world::eep_env::tests::sky_asset(1.2)));
+        assert!(world.parcel_environment_changed());
+        world.save_parcel_environment();
+        let (Outcome::Saved(new), _) = world.parcel_environment_frame(&saved, now) else {
+            panic!("saved");
+        };
+        let _ = world.parcel_environment_frame(std::slice::from_ref(&new), now);
+        assert!(!world.parcel_environment_changed(), "saved over");
     }
 
     #[test]
