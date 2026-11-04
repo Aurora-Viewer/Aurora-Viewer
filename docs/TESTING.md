@@ -8559,7 +8559,13 @@ Region terrain must appear neither directly nor through water reflections or
 refraction, including classic and PBR terrain outside the main camera view.
 Reduced motion holds the aurora still. Left-drag the exposed view horizontally to turn. Right-drag up/down
 to move the focus vertically through the avatar's centre; horizontal motion
-must not move the focus sideways. Wheel zoom must ease in/out about that
+must not move that height control sideways. Hold the middle mouse button and
+drag horizontally/vertically to pan in the current viewing plane: eye and
+focus translate together, without rotation or zoom. Orbit after panning;
+the avatar should retain its screen position. Release over an editor/HUD
+and move the pointer again: panning must stop. Starting over UI/HUDs must
+leave their controls usable; losing window focus must cancel the drag.
+Reset restores avatar-centred framing and clears pan. Wheel zoom must ease in/out about that
 focus even with the pointer over the sky or water, and must not change its height.
 Compare 30 and 120 FPS for the same smooth response. Reset restores full-body framing; Leave
 studio, Escape and the toolbar toggle restore the ordinary world. Add Avatar

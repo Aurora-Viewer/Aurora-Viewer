@@ -4121,6 +4121,11 @@ impl App {
             return;
         }
         if self.avatar_studio.active {
+            if self.avatar_studio.panning_plane {
+                let height = self.gfx.as_ref().map_or(900.0, |g| g.renderer.size().1 as f32);
+                self.avatar_studio.pan_view(dx, dy, height);
+                return;
+            }
             if self.avatar_studio.rotating {
                 self.avatar_studio.rotate(dx);
             }

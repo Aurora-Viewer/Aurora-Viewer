@@ -87,6 +87,7 @@ impl App {
         if !self.focused || self.studio_transition.busy() {
             self.avatar_studio.rotating = false;
             self.avatar_studio.panning = false;
+            self.avatar_studio.panning_plane = false;
         }
         self.avatar_studio.update(dt);
     }
@@ -99,14 +100,15 @@ impl App {
     }
 
     pub(super) fn studio_mouse(&mut self, button: MouseButton, pressed: bool, over_ui: bool) -> bool {
-        if self.studio_transition.busy() && !over_ui && matches!(button, MouseButton::Left | MouseButton::Right) {
+        if self.studio_transition.busy() && !over_ui && matches!(button, MouseButton::Left | MouseButton::Right | MouseButton::Middle) {
             return true;
         }
-        if !self.avatar_studio.active || !matches!(button, MouseButton::Left | MouseButton::Right) {
+        if !self.avatar_studio.active || !matches!(button, MouseButton::Left | MouseButton::Right | MouseButton::Middle) {
             return false;
         }
         let held = match button {
             MouseButton::Right => &mut self.avatar_studio.panning,
+            MouseButton::Middle => &mut self.avatar_studio.panning_plane,
             _ => &mut self.avatar_studio.rotating,
         };
         if !pressed && *held {

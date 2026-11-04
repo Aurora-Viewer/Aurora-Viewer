@@ -4237,9 +4237,14 @@ Avatar Studio (`avatar_studio.rs`, `app/avatar_studio.rs`,
 toggled by the configurable `avatar_studio` toolbar command or the wolf menu's
 Build > Avatar Studio entry, before Poser and IK Edit. Both share the same
 toggle and active indication. Left-drag orbits;
-right-drag moves a bounded focus along the avatar's vertical centre line.
+right-drag adjusts the bounded avatar-relative focus height.
+Middle-button dragging translates eye and target together in the viewing
+plane, with a separate smoothed two-dimensional offset. The offset uses
+the camera's right/up axes so orbiting preserves screen composition; Reset
+clears it. Captured button releases remain owned over UI, and focus loss or
+transitions cancel the drag. Native UI and worn HUDs retain pointer ownership.
 The wheel changes distance to that focus independently of pointer position.
-Focus height and distance ease towards their targets with a frame-rate
+Focus height, view-plane pan and distance ease towards their targets with a frame-rate
 independent exponential response. These use a separate render camera; the agent transform and
 camera sent to the simulator retain their ordinary ownership. A circular
 podium and ocean plane use private meshes and draw records, released on

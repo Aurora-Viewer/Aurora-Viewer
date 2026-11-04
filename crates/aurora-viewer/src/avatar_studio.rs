@@ -2,7 +2,7 @@
 //! camera sent to the simulator are never changed by studio inspection.
 //! Aurora addition; the existing wearable editors retain their normal saves.
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 
 pub const FOV: f32 = 0.65;
 pub const NEAR: f32 = 0.025;
@@ -95,6 +95,7 @@ impl Transition {
 pub struct Studio {
     pub rotating: bool,
     pub panning: bool,
+    pub panning_plane: bool,
     pub active: bool,
     pub yaw: f32,
     pub facing: f32,
@@ -105,6 +106,8 @@ pub struct Studio {
     distance: f32,
     target_distance: f32,
     full_distance: f32,
+    pan: Vec2,
+    target_pan: Vec2,
 }
 
 #[derive(Clone, Copy)]
@@ -144,8 +147,11 @@ impl Studio {
     }
 
     pub fn view(&self, floor: Vec3, aspect: f32) -> View {
-        let target = floor + Vec3::Z * self.focus_height;
-        let eye = target + Quat::from_rotation_z(self.yaw) * Vec3::new(self.distance, 0.0, self.distance * 0.08);
+        let rotation = Quat::from_rotation_z(self.yaw);
+        let right = rotation * Vec3::Y;
+        let up = rotation * Vec3::new(-0.08, 0.0, 1.0).normalize();
+        let target = floor + Vec3::Z * self.focus_height + right * self.pan.x + up * self.pan.y;
+        let eye = target + rotation * Vec3::new(self.distance, 0.0, self.distance * 0.08);
         View {
             floor,
             eye,
@@ -155,12 +161,23 @@ impl Studio {
         }
     }
 
-    /// Only right-drag moves the focus, along the avatar's centre line.
+    /// Right-drag adjusts the avatar-relative focus height. Middle-drag
+    /// keeps a separate offset in the current viewing plane.
     /// Scale motion to the visible height so close inspection stays precise.
     pub fn pan_vertical(&mut self, dy: f32, viewport_height: f32) {
         if dy.is_finite() && viewport_height.is_finite() && viewport_height >= 1.0 {
             let metres_per_pixel = 2.0 * self.distance * (FOV * 0.5).tan() / viewport_height;
             self.target_height = (self.target_height - dy * metres_per_pixel).clamp(0.05, self.height);
+        }
+    }
+
+    /// Grab the view: translate eye and target together, with no dolly or
+    /// orbit. Screen-space offsets rotate with the camera so a later orbit
+    /// preserves the chosen composition around the avatar.
+    pub fn pan_view(&mut self, dx: f32, dy: f32, viewport_height: f32) {
+        if dx.is_finite() && dy.is_finite() && viewport_height.is_finite() && viewport_height >= 1.0 {
+            let metres_per_pixel = 2.0 * self.distance * (FOV * 0.5).tan() / viewport_height;
+            self.target_pan = (self.target_pan + Vec2::new(-dx, dy) * metres_per_pixel).clamp_length_max(self.height * 2.0);
         }
     }
 
@@ -179,12 +196,68 @@ impl Studio {
         let weight = 1.0 - (-dt.min(0.1) / RESPONSE).exp();
         self.focus_height += (self.target_height - self.focus_height) * weight;
         self.distance += (self.target_distance - self.distance) * weight;
+        self.pan += (self.target_pan - self.pan) * weight;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn middle_drag_translates_eye_and_target_in_the_view_plane_at_any_orbit_angle() {
+        for yaw in [0.0, 0.7, 1.8, 3.5] {
+            let mut studio = Studio::default();
+            studio.enter(yaw, 1.8);
+            let before = studio.view(Vec3::ZERO, 1.5);
+            studio.pan_view(100.0, 80.0, 900.0);
+            assert_eq!(studio.view(Vec3::ZERO, 1.5).eye, before.eye, "pan eases from a target");
+            studio.update(1.0 / 60.0);
+            let after = studio.view(Vec3::ZERO, 1.5);
+            let delta = after.eye - before.eye;
+            assert!(delta.length() > 0.0);
+            assert!((delta - (after.target - before.target)).length() < 0.00001);
+            let forward = (before.target - before.eye).normalize();
+            let right = forward.cross(Vec3::Z).normalize();
+            let up = right.cross(forward);
+            assert!(delta.dot(forward).abs() < 0.00001);
+            assert!(delta.dot(right) < 0.0);
+            assert!(delta.dot(up) > 0.0);
+            assert_eq!(studio.focus_height, 0.9);
+            assert_eq!(studio.distance, studio.full_distance);
+            studio.enter(yaw, 1.8);
+            assert_eq!(studio.view(Vec3::ZERO, 1.5).eye, before.eye, "reset recentres");
+        }
+    }
+
+    #[test]
+    fn view_pan_is_frame_rate_independent_and_preserves_composition_when_orbiting() {
+        let mut a = Studio::default();
+        let mut b = Studio::default();
+        for studio in [&mut a, &mut b] {
+            studio.enter(0.0, 1.8);
+            studio.pan_view(120.0, -80.0, 900.0);
+            let target = studio.target_pan;
+            for (dx, dy, height) in [(f32::NAN, 0.0, 900.0), (0.0, f32::INFINITY, 900.0), (1.0, 1.0, 0.0)] {
+                studio.pan_view(dx, dy, height);
+                assert_eq!(studio.target_pan, target);
+            }
+        }
+        for _ in 0..30 {
+            a.update(1.0 / 30.0);
+        }
+        for _ in 0..120 {
+            b.update(1.0 / 120.0);
+        }
+        assert!((a.pan - b.pan).length() < 0.00001);
+        let before = a.view(Vec3::ZERO, 1.5);
+        a.rotate(-80.0);
+        let after = a.view(Vec3::ZERO, 1.5);
+        let project = |v: View| v.proj * v.view * Vec3::ZERO.extend(1.0);
+        let p = project(before);
+        let q = project(after);
+        assert!((p.truncate() / p.w - q.truncate() / q.w).length() < 0.00001);
+    }
 
     #[test]
     fn camera_switches_only_between_fully_black_frames_in_both_directions() {

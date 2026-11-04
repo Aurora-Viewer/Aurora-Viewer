@@ -1,6 +1,6 @@
 language-name = English
 avatar-studio-title = Avatar Studio
-avatar-studio-help = Left-drag to turn • Right-drag up/down • Wheel to zoom
+avatar-studio-help = Left-drag to turn • Right-drag up/down • Middle-drag to pan • Wheel to zoom
 avatar-studio-exit = Leave studio
 joystick-title = Joystick and 3D mouse
 joystick-enabled = Enable joystick input
