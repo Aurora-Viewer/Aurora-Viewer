@@ -317,8 +317,12 @@ impl ChatLog {
     }
 
     /// Import from everything found for the account, without the files that
-    /// did not change since the last import (at login).
+    /// did not change since the last import (at login). Not on a grid whose
+    /// folders cannot be told apart: nobody would see which were read.
     pub fn import_found(&mut self, account: import::Account) -> bool {
+        if !account.grid_known() {
+            return false;
+        }
         let apps = self.legacy_apps();
         self.start_import(import::Sources::Find { apps, account }, true)
     }

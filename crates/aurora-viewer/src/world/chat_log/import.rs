@@ -16,7 +16,7 @@ use super::{format, names, store};
 pub use crate::legacy_profile::Account;
 use crate::legacy_profile::account_folders;
 use crossbeam_channel::{Receiver, Sender};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -139,7 +139,7 @@ fn is_transcript(path: &Path) -> bool {
 
 /// A file's name without the date of LogFileNamewithDate, which only says
 /// how the viewer cut the conversation: `chat-2026-10-12`, `Jane Doe-2026-10`.
-fn undated(stem: &str) -> &str {
+pub fn undated(stem: &str) -> &str {
     let date = |s: &str, pattern: &str| {
         s.bytes()
             .zip(pattern.bytes())
@@ -164,10 +164,56 @@ fn undated(stem: &str) -> &str {
 /// The file in Aurora's folder that receives a Legacy file. With dated names
 /// off a conversation is one file, as it is here, or the months Aurora
 /// does not read back would stay out of its history.
-fn target_of(dir: &Path, source: &Path, dated: bool) -> Option<PathBuf> {
+fn target_of(dir: &Path, source: &Path, dated: bool, spelled: &Spellings) -> Option<PathBuf> {
     let stem = source.file_stem()?.to_str()?;
     let stem = once_group(if dated { stem } else { undated(stem) });
-    names::file_path(dir, &stem, None)
+    names::file_path(dir, &resident_name(&stem, spelled), None)
+}
+
+/// The files' names with their capitals, by their name in lower case.
+type Spellings = HashMap<String, String>;
+
+/// What Aurora's folder and the sources say of the capitals of a name that
+/// lost them. Aurora's come first: that file is the one it reads.
+fn spellings(dir: &Path, sources: &[PathBuf]) -> Spellings {
+    let mut spelled = Spellings::new();
+    let mut add = |file: &Path| {
+        let Some(stem) = file.file_stem().and_then(|s| s.to_str()) else {
+            return;
+        };
+        let base = undated(stem);
+        if base != base.to_lowercase() && !base.ends_with(names::GROUP_SUFFIX) {
+            spelled.entry(base.to_lowercase()).or_insert_with(|| base.to_owned());
+        }
+    };
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        add(&entry.path());
+    }
+    sources.iter().for_each(|source| add(source));
+    spelled
+}
+
+/// `jane_doe` as Aurora names that resident's file, `Jane Doe`: the official
+/// viewer, and the others with UseLegacyIMLogNames off, name it from
+/// LLCacheName::buildUsername, then cleanFileName turns its dot into '_'.
+/// That leaves the name in lower case, and Aurora's file of `JaneDoe` or
+/// `Jane McDoe` keeps its capitals: taken from `spelled`, or each word's
+/// first one comes back when nothing says more.
+fn resident_name(stem: &str, spelled: &Spellings) -> String {
+    let base = undated(stem);
+    if base != base.to_lowercase() || base == names::NEARBY {
+        return stem.to_owned();
+    }
+    let tail = &stem[base.len()..];
+    if let Some(known) = spelled.get(&base.replacen('_', " ", 1)) {
+        return format!("{known}{tail}");
+    }
+    let word = |w: &str| !w.is_empty() && w.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    let capital = |w: &str| w[..1].to_ascii_uppercase() + &w[1..];
+    match base.split_once('_') {
+        Some((first, last)) if word(first) && word(last) => format!("{} {}{tail}", capital(first), capital(last)),
+        _ => stem.to_owned(),
+    }
 }
 
 /// A group's file with one " (group)": Legacy Viewers leave many as
@@ -311,31 +357,13 @@ pub fn merge_file(source: &Path, target: &Path) -> std::io::Result<u64> {
         if let Some(dir) = target.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let temporary = target.with_extension("txt.import");
-        let done = replace(target, &temporary, &text, ours.len() as u64);
-        if !matches!(done, Ok(true)) {
-            let _ = std::fs::remove_file(&temporary);
-        }
-        if done? {
+        let still = || target.metadata().map_or(0, |m| m.len()) == ours.len() as u64;
+        if crate::atomic_file::write_if(target, &text, still)? {
             crate::disk_io::written(crate::disk_io::Origin::Logs, text.len());
             return Ok(added);
         }
     }
     Err(std::io::Error::other("the transcript keeps changing"))
-}
-
-/// False when `target` is no longer `len` bytes long: nothing was replaced.
-fn replace(target: &Path, temporary: &Path, text: &[u8], len: u64) -> std::io::Result<bool> {
-    use std::io::Write;
-    let mut file = std::fs::File::create(temporary)?;
-    file.write_all(text)?;
-    file.sync_all()?;
-    drop(file);
-    if target.metadata().map_or(0, |m| m.len()) != len {
-        return Ok(false);
-    }
-    std::fs::rename(temporary, target)?;
-    Ok(true)
 }
 
 /// Where to read from.
@@ -442,23 +470,27 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
             .map(|found| found.dir)
             .collect(),
     };
-    let plan: Vec<(PathBuf, PathBuf)> = folders
-        .iter()
-        .flat_map(|folder| transcripts(folder))
-        .filter_map(|source| Some((target_of(&request.dir, &source, request.dated)?, source)))
+    let sources: Vec<PathBuf> = folders.iter().flat_map(|folder| transcripts(folder)).collect();
+    let spelled = spellings(&request.dir, &sources);
+    let plan: Vec<(PathBuf, PathBuf)> = sources
+        .into_iter()
+        .filter_map(|source| Some((target_of(&request.dir, &source, request.dated, &spelled)?, source)))
         .map(|(target, source)| (source, target))
         .collect();
     total.store(plan.len(), Ordering::Relaxed);
     let mut state = load_state(&request.state);
+    // files a source of this run creates: the others meant for them are due
+    let missing: HashSet<PathBuf> = plan.iter().map(|(_, target)| target).filter(|t| !t.is_file()).cloned().collect();
     let mut out = Report::default();
     let mut first_error = None;
     for (source, target) in plan {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let key = source.to_string_lossy().into_owned();
+        // with its target: Dated files moves where a source goes
+        let key = format!("{}\n{}", source.display(), target.display());
         let seen = signature(&source);
-        if request.skip_unchanged && seen.is_some() && state.get(&key) == seen.as_ref() && target.is_file() {
+        if request.skip_unchanged && seen.is_some() && state.get(&key) == seen.as_ref() && !missing.contains(&target) {
             done.fetch_add(1, Ordering::Relaxed);
             continue;
         }
@@ -624,10 +656,78 @@ mod tests {
             "Jane Doe Conference 2010_11_19 03_43 f0f4"
         );
         assert_eq!(undated("ジェーン-2026-10"), "ジェーン");
-        let target = |name: &str, dated| target_of(Path::new("d"), Path::new(name), dated).unwrap();
+        let target = |name: &str, dated| target_of(Path::new("d"), Path::new(name), dated, &Spellings::new()).unwrap();
         assert_eq!(target("Jane-2026-10.txt", false), Path::new("d/Jane.txt"));
         assert_eq!(target("Jane-2026-10.txt", true), Path::new("d/Jane-2026-10.txt"));
         assert_eq!(target("Jane.txt", true), Path::new("d/Jane.txt"));
+    }
+
+    /// Runs an import of `from` at login to its end.
+    fn import_at_login(from: &Path, to: &Path, dated: bool) -> Report {
+        let worker = store::Worker::start().unwrap();
+        let request = Request {
+            sources: Sources::Folders(vec![from.to_path_buf()]),
+            dir: to.to_path_buf(),
+            dated,
+            state: to.join("state.json"),
+            skip_unchanged: true,
+        };
+        let running = start(worker.merge_port(), request).unwrap();
+        running.report.recv().unwrap()
+    }
+
+    #[test]
+    fn at_login_a_source_is_read_again_when_its_target_is_not_the_same() {
+        let (from, to) = (temp(), temp());
+        let line = |day| format!("[2026/10/{day:02} 12:00]  Jane Doe: hello {day}\n");
+        std::fs::write(from.join("Bob-2026-09.txt"), line(1)).unwrap();
+        std::fs::write(from.join("Bob-2026-10.txt"), line(2)).unwrap();
+
+        assert_eq!(import_at_login(&from, &to, true).added, 2);
+        assert_eq!(import_at_login(&from, &to, true).added, 0);
+        // Dated files turned off: both join Bob.txt
+        assert_eq!(import_at_login(&from, &to, false).added, 2);
+        assert_eq!(import_at_login(&from, &to, false).added, 0);
+        // the file deleted: the first source to create it does not end the run
+        std::fs::remove_file(to.join("Bob.txt")).unwrap();
+        assert_eq!(import_at_login(&from, &to, false).added, 2);
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    #[test]
+    fn a_username_file_is_the_residents_file() {
+        let none = Spellings::new();
+        assert_eq!(resident_name("jane_doe", &none), "Jane Doe");
+        assert_eq!(resident_name("jane_doe-2026-10", &none), "Jane Doe-2026-10");
+        assert_eq!(resident_name("janedoe", &none), "janedoe");
+        assert_eq!(resident_name("Jane Doe", &none), "Jane Doe");
+        assert_eq!(resident_name("chat", &none), "chat");
+        assert_eq!(resident_name("a_b_c", &none), "a_b_c");
+        assert_eq!(resident_name("foo_bar (group)", &none), "foo_bar (group)");
+        let target = target_of(Path::new("d"), Path::new("jane_doe.txt"), false, &none);
+        assert_eq!(target.unwrap(), Path::new("d/Jane Doe.txt"));
+    }
+
+    #[test]
+    fn a_username_takes_the_capitals_known_for_it() {
+        let dir = temp();
+        std::fs::write(dir.join("JaneDoe.txt"), "").unwrap();
+        std::fs::write(dir.join("Club (group).txt"), "").unwrap();
+        let sources = [
+            PathBuf::from("legacy/Jane McDoe-2026-10.txt"),
+            PathBuf::from("legacy/janedoe.txt"),
+            PathBuf::from("legacy/JANEDOE.txt"),
+        ];
+        let spelled = spellings(&dir, &sources);
+        assert_eq!(resident_name("janedoe", &spelled), "JaneDoe");
+        assert_eq!(resident_name("janedoe-2026-10", &spelled), "JaneDoe-2026-10");
+        assert_eq!(resident_name("jane_mcdoe", &spelled), "Jane McDoe");
+        // written with capitals, or not a resident's: as it is
+        assert_eq!(resident_name("JANEDOE", &spelled), "JANEDOE");
+        assert_eq!(resident_name("club (group)", &spelled), "club (group)");
+        assert_eq!(resident_name("chat", &[("chat".to_owned(), "Chat".to_owned())].into()), "chat");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -637,7 +737,12 @@ mod tests {
         assert_eq!(once_group("Club (group)"), "Club (group)");
         assert_eq!(once_group("Club (group) (group)-2026-10"), "Club (group)-2026-10");
         assert_eq!(once_group("Jane Doe"), "Jane Doe");
-        let target = target_of(Path::new("d"), Path::new("Club (group) (group)-2026-10.txt"), false);
+        let target = target_of(
+            Path::new("d"),
+            Path::new("Club (group) (group)-2026-10.txt"),
+            false,
+            &Spellings::new(),
+        );
         assert_eq!(target.unwrap(), Path::new("d/Club (group).txt"));
     }
 
@@ -741,7 +846,7 @@ mod tests {
         assert_eq!(merge_file(&source, &target).unwrap(), 0);
         assert_eq!(text(&std::fs::read(&target).unwrap()), "[2026/10/12 14:05]  Bob: a\n");
         assert_eq!(std::fs::read(&source).unwrap(), b"[2026/10/12 14:05]  Bob: a\n");
-        assert!(!target.with_extension("txt.import").exists());
+        assert_eq!(std::fs::read_dir(target.parent().unwrap()).unwrap().count(), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -760,16 +865,21 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_failure_leaves_the_file_as_it_was() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = temp();
-        let target = dir.join("Bob.txt");
+        let (source, aurora) = (dir.join("legacy.txt"), dir.join("aurora"));
+        std::fs::create_dir_all(&aurora).unwrap();
+        let target = aurora.join("Bob.txt");
         std::fs::write(&target, "[2026/10/14 09:00]  Bob: mine\n").unwrap();
-        // a folder in the temporary file's place: it cannot be created
-        std::fs::create_dir_all(target.with_extension("txt.import")).unwrap();
-        let source = dir.join("legacy.txt");
         std::fs::write(&source, "[2026/10/12 14:05]  Bob: a\n").unwrap();
-        assert!(merge_file(&source, &target).is_err());
+        // no temporary file can be created in a read-only folder
+        std::fs::set_permissions(&aurora, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let merged = merge_file(&source, &target);
+        std::fs::set_permissions(&aurora, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(merged.is_err());
         assert_eq!(std::fs::read(&target).unwrap(), b"[2026/10/14 09:00]  Bob: mine\n");
         std::fs::remove_dir_all(dir).unwrap();
     }

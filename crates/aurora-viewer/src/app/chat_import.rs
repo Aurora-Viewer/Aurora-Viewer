@@ -9,7 +9,8 @@ use std::sync::mpsc::{Receiver, channel};
 #[derive(Default)]
 pub(super) struct ChatImport {
     /// The searches under way: a folder chosen does not stop the first one.
-    looking: Vec<Receiver<Vec<Found>>>,
+    /// Their folders, and whether to tick them.
+    looking: Vec<Receiver<(Vec<Found>, bool)>>,
     /// AURORA_DEMO_CHATLOG=import:again: its second run started.
     again: bool,
 }
@@ -35,8 +36,8 @@ impl App {
         self.chat_import.looking.push(rx);
         let _ = std::thread::Builder::new().name("aurora-chatlog-find".into()).spawn(move || {
             let found = match chosen {
-                Some(dir) => vec![import::inspect_chosen(&dir, &account, &target)],
-                None => import::find(&apps, &account, &target),
+                Some(dir) => (vec![import::inspect_chosen(&dir, &account, &target)], true),
+                None => (import::find(&apps, &account, &target), account.grid_known()),
             };
             let _ = tx.send(found);
         });
@@ -50,7 +51,15 @@ impl App {
 
     /// A folder chosen by hand joins the list.
     pub(super) fn chat_import_chosen(&mut self, dir: PathBuf) {
-        self.look_for_chat_logs(Some(dir));
+        if self.options_ui.chat_import.open {
+            self.look_for_chat_logs(Some(dir));
+        }
+    }
+
+    /// The account is gone: what was found was found for it.
+    pub(super) fn chat_import_closed(&mut self) {
+        self.options_ui.chat_import = Default::default();
+        self.chat_import.looking.clear();
     }
 
     pub(super) fn chat_import_start(&mut self, folders: Vec<PathBuf>) {
@@ -61,15 +70,19 @@ impl App {
 
     /// Every frame: what was found, how far the import is, how it ended.
     pub(super) fn poll_chat_import(&mut self) {
-        let answers: Vec<_> = self.chat_import.looking.iter().filter_map(|rx| rx.try_recv().ok()).collect();
-        self.chat_import
-            .looking
-            .retain(|rx| !matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
-        for found in answers {
+        let mut answers = Vec::new();
+        self.chat_import.looking.retain(|rx| match rx.try_recv() {
+            Ok(found) => {
+                answers.push(found);
+                false
+            }
+            Err(e) => e == std::sync::mpsc::TryRecvError::Empty,
+        });
+        for (found, tick) in answers {
             let list = self.options_ui.chat_import.found.get_or_insert_default();
             for f in found {
                 if !list.iter().any(|(known, _)| known.dir == f.dir) {
-                    let ticked = f.files > 0 && !f.same;
+                    let ticked = tick && f.files > 0 && !f.same;
                     list.push((f, ticked));
                 }
             }
@@ -98,12 +111,14 @@ impl App {
     /// AURORA_DEMO_CHATLOG=import:<stage>: a second run, then the History
     /// window on the merged file.
     fn demo_chat_import_done(&mut self) {
-        use crate::demo::chatlog::{ImportStage, Mode, PEER, mode};
+        use crate::demo::chatlog::{ImportStage, Mode, mode, peer_name};
         match mode() {
             Some(Mode::Import(ImportStage::Run | ImportStage::Login)) if self.demo => {
                 self.panels.settings = false;
-                let (title, file) = self.world.transcript_of(Some(PEER));
-                self.history_ui.show_file(title, file);
+                // by file: the import can end before the peer's name is known
+                let name = peer_name();
+                let file = self.world.chat_log.history_file_of(&name);
+                self.history_ui.show_file(name, file);
             }
             Some(Mode::Import(ImportStage::Again)) if self.demo && !self.chat_import.again => {
                 self.chat_import.again = true;
