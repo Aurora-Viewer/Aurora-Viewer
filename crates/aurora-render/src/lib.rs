@@ -46,6 +46,7 @@ mod portal_tests;
 pub mod present;
 pub mod preview;
 pub mod probes;
+pub mod projector_shadows;
 mod render_thread;
 mod renderer;
 mod rlva;

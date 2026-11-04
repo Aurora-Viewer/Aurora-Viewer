@@ -97,6 +97,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
+| `AURORA_PROJECTOR_SHADOW_LIMIT=1..16` | Override the projector shadow budget (default 2) |
 | `AURORA_HDR=0\|1` | Overrides "HDR and Emissive" (Graphics › Image) |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
@@ -3761,7 +3762,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
-| `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
+| `AURORA_DEMO_PROJECTOR=1`, `point`, `cluster`, `cluster-orbit`, `cluster-scan` or `cluster-bench` | Projectors and overlapping shadow-map transitions |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
@@ -3943,6 +3944,24 @@ both open states and the selection count. Capture at frame 620.
   the pool light then lights in cyan our avatar from below and
   the sides of the slab's relief turned towards it. The orange light is
   the same in both modes.
+  `cluster`, `cluster-orbit`, `cluster-scan` and `cluster-bench` add twelve adjacent ceiling
+  projectors, an opaque floor and twelve shadow-casting posts (#1494). They
+  supply a fixed camera, a slow orbit after frame 700 or a repeating
+  reversing orbit after frame 700. Captures hide the interface. Use Deluxe
+  and compare with `AURORA_PROJECTOR_SHADOWS=0`; the projectors stay lit and
+  only their shadows change. `AURORA_DEMO_ALTITUDE=807` places the floor
+  near 839 m. Shadow-map retention requires a 20% apparent-area advantage
+  to replace a current projector, and moving-camera fades accelerate by at
+  most four times (0.25 s per fade). A camera turn must not abruptly blink
+  a fully visible shadow off. `cluster-bench` keeps the fixed camera and
+  exits after 50 seconds. For a same-quality budget A/B, use
+  `AURORA_PROJECTOR_SHADOW_LIMIT=2` then `10`, `AURORA_PROFILE=1`, disabled
+  vertical sync and the same resolution and preset. Discard the first
+  15 seconds for loading and warm-up; compare seconds 15–45. Check the
+  `projector shadow maps active` log for actual occupancy, and the
+  `projector shadow budget` line for map and atlas dimensions. Increasing
+  the budget grows the atlas without reducing the per-map resolution;
+  the device texture-size limit may reduce the effective budget.
 - **`AURORA_DEMO_GLOW_LAYERS=1|shell`**: two "skin" panels (the first
   with a glow of 0.02, the second without) and, 1 cm in front of their lower
   half, a transparent pink layer (alpha from 0 to 1) with a glow of 0.02, like
@@ -6866,8 +6885,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
   with the safe graphics level, then close.
   The report's "Last state" table then shows the new device-lost fields
-  (effects on, GPU frame times, session and region seconds, Vulkan layers,
-  `GPU loss: first seen by` = `demo`, stall 0): read it in the session's
+  (effects on, GPU frame times, session and region seconds,
+  `GPU loss: first seen by` = `demo`), and its first table the
+  `Vulkan layers on offer`: read it in the session's
   `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
@@ -9486,6 +9506,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
+| `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
@@ -9840,6 +9861,12 @@ What the inventory must show with these scenarios:
   4, default 1.5; 1 is one physical bounce, which hardly shows);
   `AURORA_SSIL_INTENSITY=<0-8>` replaces it for a launch, to compare (at
   2 a glow starts around the foot of objects, at 4 it is grainy).
+- **`AURORA_PROJECTOR_TRACE=1`**: writes `projector trace:` lines with the
+  camera position, selected projector object indices, shadow-map
+  owners, their fade values and candidate priorities. It requires an info
+  log filter (`RUST_LOG=warn,aurora_viewer::scene::lights=info` is enough).
+  Use a separately named test log and unset the variable after diagnosis;
+  these per-frame lines are intended for local investigation.
 - **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell`**: the sun's contact shadows
   (Preferences › Graphics › Contact shadows, `contact_shadows.rs`, after
   Bend Studio's screen space shadows) for this launch, without changing the
