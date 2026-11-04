@@ -12515,6 +12515,7 @@ impl App {
             anchored: if in_world { st.anchored } else { 0 },
             flexies: if in_world { st.flexies } else { 0 },
             flexies_held: if in_world { st.flexies_held } else { 0 },
+            movers: if in_world { st.movers } else { 0 },
         };
         let mut parts = std::mem::take(&mut self.scene.parts);
         parts.merge(&std::mem::take(&mut self.ui_parts));
@@ -12534,6 +12535,11 @@ impl App {
             }
             // AURORA_FLEXI_CULL=alt: every flexible prim swept one second in three
             if let Some(old) = crate::scene::flexible::alternate(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_MOVING_ANCHORS=alt: what moves by itself placed by the
+            // sync one second in three
+            if let Some(old) = crate::scene::anchors::alternate_movers(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_IMPOSTOR_POSES=alt: impostors posed at every frame in the
