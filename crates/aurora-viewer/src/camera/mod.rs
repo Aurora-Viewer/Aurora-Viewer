@@ -21,7 +21,7 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, VrView, zoom_lens};
+pub use settings::{CameraFollowJoint, CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, VrView, zoom_lens};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -171,6 +171,8 @@ pub struct FrameInput {
     /// Animated point between the eyes relative to the rendered avatar root.
     /// Sitting and optional eye following consume it after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
+    /// Selected skeleton joint's displacement from rest, after pose evaluation.
+    pub follow_joint_offset: Option<Vec3>,
     pub draw_distance: f32,
     /// The main region's width (LLWorld::mWidth, which follows the region).
     pub region_width: f32,
@@ -404,6 +406,10 @@ impl Default for Camera {
     }
 }
 
+fn follow_joint_intensity_scale(percent: u8) -> f32 {
+    f32::from(percent.min(200)) / 100.0
+}
+
 impl Camera {
     pub fn mouselook(&self) -> bool {
         self.mode == CameraMode::Mouselook
@@ -417,6 +423,13 @@ impl Camera {
 
     pub fn needs_animated_eyes(&self, agent: &AgentState, s: &CameraSettings) -> bool {
         self.mouselook() && (agent.is_sitting() || s.mouselook_follow_eyes)
+    }
+
+    /// Head tracking needs the current skeleton pose before computing the shot.
+    pub fn needs_animated_joint(&self, s: &CameraSettings) -> bool {
+        self.third_person()
+            && s.third_person_follow_joint.is_some()
+            && (self.focus_on_avatar || self.focus_object.is_none() || self.focus_object == Some(self.own))
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -1555,7 +1568,7 @@ impl Camera {
 
         let mut camera_target = self.calc_camera_target(world, s, f);
         self.virtual_position = camera_target;
-        let focus_target = self.calc_focus_target(world, s, f.now, camera_target);
+        let focus_target = self.calc_focus_target(world, s, f, camera_target);
         // field of view correction: the camera backs off, the view narrows
         // An edited object's growing extents must not move a frozen camera.
         if f.edit_tracking != Some(false) || offset_changed {
@@ -1752,7 +1765,7 @@ impl Camera {
                 Some(p) => p,
                 None => self.third_person_camera(agent, s, f),
             },
-            CameraMode::ThirdPerson | CameraMode::Follow => self.focus_target + self.focus_offset,
+            CameraMode::ThirdPerson | CameraMode::Follow => self.focus_target + self.focus_offset + self.third_person_joint_delta(s, f),
         };
         if !s.disable_constraints {
             let offset = camera - self.avatar.position;
@@ -1783,7 +1796,7 @@ impl Camera {
         let frame = self.frame_rotation(agent);
         // mThirdPersonHeadOffset: none when seated
         let head_offset = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
-        let base = self.avatar.root + head_offset;
+        let base = self.avatar.root + head_offset + self.third_person_joint_delta(s, f);
         let offset = frame * (s.camera_offset() * self.zoom_fraction * s.offset_scale);
         let dir = offset.normalize_or_zero();
         let mut distance = offset.length();
@@ -1838,6 +1851,18 @@ impl Camera {
         camera - self.lag
     }
 
+    /// Keep camera and focus offsets unchanged while translating the shot with
+    /// the selected joint's movement from its neutral position.
+    fn third_person_joint_delta(&self, s: &CameraSettings, f: &FrameInput) -> Vec3 {
+        if !self.needs_animated_joint(s) {
+            return Vec3::ZERO;
+        }
+        f.follow_joint_offset
+            .filter(|offset| offset.is_finite())
+            .map(|offset| self.avatar.render_rotation * offset * follow_joint_intensity_scale(s.third_person_follow_intensity))
+            .unwrap_or(Vec3::ZERO)
+    }
+
     /// The mouselook view direction. LLAgentCamera::calcFocusPositionTargetGlobal
     /// (indra/newview/llagentcamera.cpp, originally LGPL 2.1): seated, the
     /// agent frame is the seat's, turned by the seat's render rotation unless
@@ -1858,17 +1883,19 @@ impl Camera {
     }
 
     /// LLAgentCamera::calcFocusPositionTargetGlobal.
-    fn calc_focus_target(&self, world: &World, s: &CameraSettings, now: Instant, camera_target: Vec3) -> Vec3 {
+    fn calc_focus_target(&self, world: &World, s: &CameraSettings, f: &FrameInput, camera_target: Vec3) -> Vec3 {
         let agent = &world.agent;
         match self.mode {
             CameraMode::Follow if self.focus_on_avatar => self.follow.at,
             // Keep the mouse's aim even if terrain or range constraints
             // move the eye away from its requested position.
             CameraMode::Mouselook => camera_target + self.mouselook_aim(agent),
-            CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => self.focus_target,
-            CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, now, false) {
+            CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => {
+                self.focus_target + self.third_person_joint_delta(s, f)
+            }
+            CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, f.now, false) {
                 Some(p) => p,
-                None => self.avatar.position + self.frame_rotation(agent) * s.focus_offset(),
+                None => self.avatar.position + self.frame_rotation(agent) * s.focus_offset() + self.third_person_joint_delta(s, f),
             },
         }
     }
@@ -2097,6 +2124,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn third_person_joint_intensity_scales_and_caps_translation() {
+        assert_eq!(follow_joint_intensity_scale(0), 0.0);
+        assert_eq!(follow_joint_intensity_scale(50), 0.5);
+        assert_eq!(follow_joint_intensity_scale(100), 1.0);
+        assert_eq!(follow_joint_intensity_scale(200), 2.0);
+        assert_eq!(follow_joint_intensity_scale(u8::MAX), 2.0);
+    }
+
+    #[test]
+    fn follow_joint_choices_exist_in_the_avatar_rig() {
+        let rig = crate::scene::avatar::AvatarLibrary::load().rig;
+        for joint in CameraFollowJoint::ALL {
+            assert!(rig.names.contains_key(joint.rig_name()), "missing {}", joint.rig_name());
+        }
+    }
+
+    #[test]
     fn a_photo_frames_exactly_the_clear_part_of_the_window() {
         let cam = Camera::default();
         let window = 16.0 / 9.0;
@@ -2246,6 +2290,74 @@ mod tests {
         }
     }
 
+    #[test]
+    fn third_person_joint_tracking_moves_the_camera_and_focus_together() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let mut settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+        let before_position = camera.position;
+        let before_target = camera.target;
+        let before_forward = camera.forward();
+
+        input.follow_joint_offset = Some(Vec3::new(0.0, 0.0, 0.25));
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.position.abs_diff_eq(before_position + Vec3::Z * 0.25, 1e-4));
+        assert!(camera.target.abs_diff_eq(before_target + Vec3::Z * 0.25, 1e-4));
+        assert!(camera.forward().abs_diff_eq(before_forward, 1e-5));
+
+        settings.third_person_follow_joint = None;
+        let tracked_position = camera.position;
+        camera.update(&mut world, &settings, &input);
+        assert!(
+            camera.position.z < tracked_position.z,
+            "disabling tracking returns to the standard anchor"
+        );
+    }
+
+    #[test]
+    fn third_person_joint_tracking_survives_controls_reframing() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        world.agent_id = uuid::Uuid::from_u128(0x1015);
+        let mut camera = Camera::default();
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+
+        // The Controls window uses these same keys. They unlock the view from
+        // the avatar so a hand-placed shot can be panned and kept.
+        camera.apply_keys(
+            CameraKeys {
+                pan_right: 1.0,
+                ..Default::default()
+            },
+            &mut world.agent,
+            &settings,
+            input.dt,
+        );
+        assert!(camera.needs_animated_joint(&settings));
+
+        let camera_before = camera.calc_camera_target(&world, &settings, &input);
+        let focus_before = camera.calc_focus_target(&world, &settings, &input, camera_before);
+        input.follow_joint_offset = Some(Vec3::new(0.0, 0.0, 0.25));
+        let camera_after = camera.calc_camera_target(&world, &settings, &input);
+        let focus_after = camera.calc_focus_target(&world, &settings, &input, camera_after);
+        assert!(camera_after.abs_diff_eq(camera_before + Vec3::Z * 0.25, 1e-4));
+        assert!(focus_after.abs_diff_eq(focus_before + Vec3::Z * 0.25, 1e-4));
+        assert!((camera_after.distance(focus_after) - camera_before.distance(focus_before)).abs() < 1e-4);
+    }
+
     fn world_at(pos: Vec3) -> World {
         let mut w = World::new(std::sync::Arc::new(AvatarLibrary::load()));
         w.agent.position = pos;
@@ -2260,6 +2372,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             eye_offset: None,
+            follow_joint_offset: None,
             draw_distance: 128.0,
             region_width: REGION_WIDTH,
             aspect: 1.0,

@@ -5420,6 +5420,14 @@ impl Scene {
         Some(self.motions.get(id)?.eyes_pos()? - world.avatar_lib.pelvis)
     }
 
+    /// A posed skeleton joint's displacement from rest, in avatar-local space.
+    pub fn joint_offset(&self, world: &World, id: &Uuid, name: &str) -> Option<Vec3> {
+        let joint = *world.avatar_lib.rig.names.get(name)?;
+        let rest = world.avatar_lib.rig.default_world_inv[joint].inverse().w_axis.truncate();
+        let pose = world.avatar_poses.get(id)?.get(joint)?;
+        Some(pose.transform_point3(rest) - rest)
+    }
+
     /// Stable name tag above the avatar root, also used for click depth.
     /// Its height includes shape, mesh offsets and translation deformers;
     /// neither body/head rotations nor animation bobbing move the anchor.
@@ -6214,6 +6222,7 @@ mod tests {
                 build_mode: false,
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
+                follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
                 draw_distance: 128.0,
                 region_width: 256.0,
                 aspect: 1.0,
@@ -6278,6 +6287,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
+            follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
             draw_distance: 128.0,
             region_width: 256.0,
             aspect: 1.0,
