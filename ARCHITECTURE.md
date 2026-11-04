@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+PCSS receiver-plane correction is confidence-weighted on curved object surfaces.
+`object.wgsl` estimates geometric-normal rotation per world metre before material
+discard; `common.wgsl` compares the estimated departure across the bounded
+footprint with the existing world-space bias and fades invalid extrapolation.
+Directional and projector filters keep plane correction on flat receivers and
+retain their blocker search and distance-dependent penumbrae.
+
 `aurora-prim::params::VolumeParams::constrain` preserves the path-ratio
 limits of `LLVolumeParams::setRatio` (indra/llmath/llvolume.cpp): spheres
 and alternate paths accept 0..2; ordinary circular non-sphere paths use
@@ -4293,3 +4300,11 @@ array atlas from one to four 64-tile pages (32 to 128 MiB), preserving existing
 pictures by GPU copy. The two-capture frame budget and full-avatar limit remain
 independent. Pending or over-budget avatars draw neutral silhouette cards rather
 than disappearing; cards have a dynamically sized instance buffer.
+
+Stage 1 screen-space shadow fixes: `aurora-render/src/shaders/contact_shadows_stream.wgsl` shares 64-sample ray tiles within a Bend wavefront and conservatively rejects 16-sample spans using depth bounds. `contact_shadows::variant_source` appends the existing sample-reconstruction helper and selects the independent scalar reference with a compile-time flag. Streaming is the default; the scalar oracle and former bounded shader remain diagnostic controls. Streaming retains its pipeline at every photo scale, including Freeze Frame.
+
+Contact-mask filtering (`contact_shadows_filter.wgsl`) uses separable depth-aware tents whose footprint follows the active render height and full-photo crop/height. The working RGBA8 mask is allocated only for that mode and included in upstream's measured GPU target memory planning; tile guards include the radius. A two-entry kernel cache retains live/photo variants. `contact_shadows_filter_legacy.wgsl` is the fixed 5 × 5 A/B control (`AURORA_CONTACT_SOFT=legacy`).
+
+The streaming contact mask resolves overlapping wavefronts deterministically: an atomic key chooses the sample nearest the output pixel centre, with stronger occlusion on a quantized-distance tie. Initialization, trace and resolve are distinct GPU passes. The temporary keys add four bytes per pixel, split over eight buffers to keep a 16K image within portable 128 MiB storage bindings; measured photo memory accounting includes them. The scalar GPU comparison covers all pixels, with no overlap exclusion.
+
+Directional cascades use PCSS in common.wgsl: receiver-plane-corrected blocker search, world-space penumbra and symmetric fixed disk filtering, with dense contact filtering and PCF fallback for missed blockers/grazing receivers. shadow_cull.rs and the cascade fit include its bounded physical footprint. pcss_tests.rs is an in-memory GPU regression for penumbra growth and cascade/atlas stability; it writes no captures. Projector maps use perspective-linearized blocker distances and a bounded physical source radius, with the same fixed symmetric sample disk and atlas isolation. The saved shadow_pcss preference controls both map types live, independently of screen-space contact detail; AURORA_SHADOW_PCSS=0|1 overrides it at startup. Conservative caster guards remain valid across live switches. Graphics profiles carry the choice and photo quality preserves it.

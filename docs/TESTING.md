@@ -9415,10 +9415,11 @@ What the inventory must show with these scenarios:
 | `AURORA_TANGENTS=vertex\|pixel\|derivative\|alt` | Tangent frame of the normal maps: the vertices' (default), per pixel, the former one, or vertex and pixel alternated each second |
 | `AURORA_ALPHA_COVERAGE=0` | Mips of alpha-masked textures plainly averaged, as before (foliage thins out with the distance) |
 | `AURORA_MIP_FILTER=weighted` | Colour of the mips averaged by the alpha, as before (distant foliage brighter than in the Legacy Viewer) |
+| `AURORA_SHADOW_PCSS=0|1` | Override the saved PCSS choice for sun/moon and projector shadow maps |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
 | `AURORA_BLEND_SHADOWS=0` | Alpha-blended faces that are not rigged cast no shadow, as before |
-| `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
+| `AURORA_DEBUG_SHADOWS=1\|contact` | Shadow cascades and their shadow, or the contact mask alone |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_FOOT_IK_SCOPE=<mode>` | Offline foot-placement benchmark override (all or visible10) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
@@ -9460,8 +9461,8 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
-| `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
-| `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
+| `AURORA_CONTACT_SOFT=0\|1\|legacy` | Unfiltered, resolution-aware softening (default), or the former fixed 5 × 5 filter |
+| `AURORA_CONTACT_VARIANT=stream`, `bend`, `full-ray`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -9814,6 +9815,9 @@ What the inventory must show with these scenarios:
   4, default 1.5; 1 is one physical bounce, which hardly shows);
   `AURORA_SSIL_INTENSITY=<0-8>` replaces it for a launch, to compare (at
   2 a glow starts around the foot of objects, at 4 it is grainy).
+
+- **`AURORA_SHADOW_PCSS=0|1`**: Preferences > Graphics > Shadows > Soft shadows (PCSS) controls directional sun/moon and projector shadow maps without a restart. Enabled by default and in High/Deluxe presets; modest presets use PCF. The optional environment override applies the saved choice at startup: `0` selects the previous fixed PCF filter and `1` selects PCSS. Blocker search includes dense local samples and a bounded wider disk; average blocker/receiver separation in metres determines the penumbra (effective angular radius tangent 0.02, half-width capped at 0.25 m). A symmetric fixed 32-tap disk avoids frame jitter; near contact uses a nine-tap round kernel with matching disk moments, blended continuously into the wider kernel around a one-texel radius. A small extra smoothing radius is combined in quadrature, bounded by both the physical penumbra and 1 cm, preserving contact hardening. Receiver-plane correction, atlas clamps and widened caster/map guards cover the entire footprint. Plane correction fades continuously on curved receivers when the estimated tangent-plane departure across the footprint exceeds the existing depth-bias tolerance; flat receivers retain it. The curvature estimate divides normal variation by position variation, so camera magnification and active resolution do not change its physical scale. This guards against triangular facial self-shadowing without increasing bias or disabling PCSS. With PCSS enabled, a bounded continuous point/normal receiver fit reduces coarse-mesh self-shadow faceting without changing the drawn/caster geometry; flat faces and vertices keep their positions, while signed interpolation supports concave and saddle regions. The fit uses eye-relative position/normal moments rather than screen derivatives, with a 5 cm maximum included in cascade guards. A shared Disney terminator correction attenuates only direct sun/moon, projector and point-light terms for normal-map deviations; cast/contact visibility, ambient and environment terms remain separate. Neither correction adds a shadow tap or a render pass. Inspect untextured smooth meshes as well as strongly normal-mapped materials, including thin gaps, concave surfaces, nonuniform scales and camera motion. No blocker found falls back to dense PCF so a sparse search cannot simply erase thin casters. Grazing receivers also retain PCF. Stage 1 contact shadows remain enabled and now resolve overlapping wavefronts deterministically. Projector maps linearize perspective depth before averaging blockers; a 2 cm effective source radius gives contact hardening, with a maximum 25 cm receiving half-width and a 0.125-map UV cap. Receiver-plane correction and atlas clamps prevent self-blockers and neighbouring-map leakage; a sparse missed-blocker search or grazing receiver retains the five-tap footprint with plane-corrected comparisons where the plane is numerically valid. The independent Contact shadows switch preserves stage 1 fine detail with either map filter. Photo quality retains the chosen PCSS state, including Freeze Frame and tiled captures. Compare the same camera, lighting and graphics settings; inspect moving silhouettes and cascade transitions, not only still images.
+
 - **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell`**: the sun's contact shadows
   (Preferences › Graphics › Contact shadows, `contact_shadows.rs`, after
   Bend Studio's screen space shadows) for this launch, without changing the
@@ -9825,14 +9829,31 @@ What the inventory must show with these scenarios:
   as a shell of 0.5 % of its distance (Bend's window, before issue 988)
   instead of a body as deep as the ray went under it (up to 5 cm, with
   the sun ahead of the camera): a ray that goes under a thick caster is
-  stopped only where it grazes its edges. **`AURORA_CONTACT_SOFT=0`**:
-  the mask reaches the shading as the pass wrote it, without the 5 × 5
-  softening over each surface (`contact_shadows_filter.wgsl`): hard steps
-  of whole pixels on curved bodies (the sides of our avatar with
-  `AURORA_DEMO_SUN=0,12`) and a dotted line under the hovering shoe of
-  `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
-  frame 690). Softened, neither shows and no shadow spreads from the
-  ground onto a caster nor the reverse.
+  stopped only where it grazes its edges.
+  **`AURORA_CONTACT_SOFT=0|1|legacy`**: `0` shows the unfiltered mask;
+  `legacy` keeps the former fixed 5 × 5 surface-aware tent for A/B comparisons;
+  `1` (also the default) uses horizontal and vertical depth-aware tents at
+  full resolution. The support is 3.5 pixels at 1080 render lines and grows
+  with the actual render height (render scale included): 7 taps per axis at
+  1080p, 9 at 1440p, 13 at 4K and 27 at 8K 16:9. A wider photo's cropped
+  camera field is included so its footprint matches the viewfinder. Each
+  photo tile uses the whole rendered photo height, including supersampling;
+  the tile guard includes the filter radius. The two passes share depth/mask
+  tiles and keep depth unchanged, rejecting samples across surface breaks;
+  one extra RGBA8 mask is kept only while the new filter is selected (four
+  bytes per render pixel, included in the photo memory planner). Uniform
+  regions retain their density; a one-pixel shadow keeps its integrated
+  weight rather than being discarded. Support is capped at 64 pixels per
+  axis (8.4 KB of workgroup storage, within the portable 16 KB minimum).
+  The live and last photo kernels are cached across Freeze Frame/release.
+  Compare the same camera angle and actual 8K PNGs, inspecting thin
+  jewellery/straps and depth silhouettes for halos. This is image-space
+  softening; PCSS remains a separate follow-up.
+
+  **`AURORA_DEBUG_SHADOWS=contact`** displays only contact visibility on rendered surfaces (white lit, black shadowed), independent of sun response and regular shadow maps; combine with `AURORA_CONTACT_SOFT=0` to inspect the unfiltered mask. Use this diagnostic for zoom comparisons rather than inferring missing shadows from final colour.
+
+  **`AURORA_CONTACT_VARIANT=stream|bend|full-ray`**: `stream` is the normal default; `bend` selects the previous bounded search for comparisons. `stream` visits the visible ray in shared 64-sample tiles, with conservative 16-sample depth bounds and saturation exits; it neither skips sample positions nor fades close-up shadows out. `full-ray` is the independent scalar oracle, without bounds or saturation exits, intentionally slow. The GPU regression `streaming_matches_the_scalar_full_ray_and_keeps_a_one_pixel_caster` compares the raw masks byte-for-byte at every pixel, including overlapping wavefronts for lights in front/behind the camera and a one-pixel caster over 480 pixels away. Screen-space limits remain: hidden/off-screen casters are absent. The streaming variant stays active for enlarged photos and Freeze Frame, rather than selecting the old bounded photo shader. The scale-transition GPU regression visits 1×, 2×, 4×, 8× and back to 1× on the same shader instance. Tiled photos retain their existing depth guard bands; arbitrary rays beyond those bands remain a limitation.
+
   **`AURORA_CONTACT_VARIANT=no-early-out|no-shared|short|skip`**: a
   diagnostic of the GPU hangs (device lost, Windows TDR) some AMD RX 9070 XT
   cards had as soon as the pass ran, each value without one construct of

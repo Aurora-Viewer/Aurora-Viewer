@@ -2464,6 +2464,14 @@ fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
     }
 }
 
+/// Effective full render height for a filter matched to the camera field.
+fn contact_render_height(scene_height: u32, photo_tile: Mat4, proj: Mat4, fov_y: f32) -> u32 {
+    // A wider photo keeps the camera's horizontal field, narrowing its
+    // vertical field. Include that crop so its softness matches the viewfinder.
+    let crop = whole_proj(proj, photo_tile).y_axis.y.abs() * (fov_y * 0.5).tan().abs();
+    (scene_height as f32 * photo_tile.y_axis.y.abs() * crop).round().max(1.0) as u32
+}
+
 /// The part of the whole image a frame draws with `photo_tile` (see
 /// [`whole_proj`]), in fractions of it: left, top, width, height (0, 0, 1,
 /// 1 outside a tiled photo). The glow keeps the whole photo's 512 x 512
@@ -5163,7 +5171,14 @@ impl Backend {
             }
             let center = corners.iter().fold(Vec3::ZERO, |a, c| a + *c) / 8.0;
             let radius = corners.iter().map(|c| c.distance(center)).fold(0.0f32, f32::max).max(1.0);
-            let radius = (radius * 16.0).ceil() / 16.0;
+            // Leave room inside the atlas tile for the complete PCSS footprint
+            // and receiver offset, even at a frustum corner.
+            let guard = if self.settings.shadow_pcss {
+                crate::shadow_cull::PCSS_MAX_RADIUS + crate::shadow_cull::SMOOTH_RECEIVER_MAX_OFFSET + 0.02 + 0.04 * i as f32
+            } else {
+                0.0
+            };
+            let radius = ((radius + guard) * 16.0).ceil() / 16.0;
             let up = if light_dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
             let eye = center - light_dir * (radius + crate::shadow_cull::CASCADE_DEPTH_PAD);
             let mut view = glam::camera::rh::view::look_at_mat4(eye, center, up);
@@ -5988,7 +6003,10 @@ impl Backend {
         // too), or the ambient occlusion
         static SHADOW_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let cascades_asked = *SHADOW_VIEW.get_or_init(|| std::env::var_os("AURORA_DEBUG_SHADOWS").is_some());
+        static CONTACT_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let contact_asked = *CONTACT_VIEW.get_or_init(|| std::env::var("AURORA_DEBUG_SHADOWS").as_deref() == Ok("contact"));
         main.light_sets.mode[2] = match (cascades_asked || f.debug.shadows, f.debug.ambient_occlusion) {
+            (true, _) if contact_asked => 3,
             (true, _) => 1,
             (false, true) => 2,
             (false, false) => 0,
@@ -6004,6 +6022,9 @@ impl Backend {
             Ok("before") => 0x300,
             _ => 0,
         });
+        if !self.settings.shadow_pcss {
+            main.light_sets.mode[2] |= 0x20000; // SHADOW_FILTER_PCF
+        }
         // AURORA_SHADOW_BIAS=legacy|new|alt: the receiver bias of before (a
         // fixed 0.0005 of the cascade's depth range), the one in texels, or
         // one second in two each (common.wgsl SHADOW_BIAS_LEGACY)
@@ -6315,8 +6336,15 @@ impl Backend {
             // an infinite reversed projection keeps its near plane there
             // (centred or not: tiled photos); a photo larger than the
             // viewfinder marches as much further
-            self.contact
-                .write(&self.device, &self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
+            self.contact.write(
+                &self.device,
+                &self.queue,
+                t,
+                light,
+                fu.proj.w_axis.z,
+                f.photo_scale,
+                contact_render_height(world_size.1, f.photo_tile, f.proj, f.fov_y),
+            );
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
@@ -8822,6 +8850,21 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contact_filter_uses_actual_render_height_and_whole_photo_height() {
+        let fov = 60f32.to_radians();
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 16.0 / 9.0, 0.1);
+        assert_eq!(contact_render_height(1080, Mat4::IDENTITY, proj, fov), 1080);
+        assert_eq!(contact_render_height(2160, Mat4::IDENTITY, proj, fov), 2160);
+        assert_eq!(contact_render_height(540, Mat4::IDENTITY, proj, fov), 540);
+        let a = Mat4::from_scale(Vec3::new(2.0, 2.0, 1.0));
+        let b = Mat4::from_scale(Vec3::new(4.0, 4.0, 1.0));
+        assert_eq!(contact_render_height(2700, a, a * proj, fov), 5400);
+        assert_eq!(contact_render_height(1350, b, b * proj, fov), 5400);
+        let wide = Mat4::from_scale(Vec3::new(1.0, 1.25, 1.0)) * proj;
+        assert_eq!(contact_render_height(2160, Mat4::IDENTITY, wide, fov), 2700);
+    }
 
     #[test]
     fn blend_runs_preserve_order_and_subranges_and_keep_single_sided_faces_culled() {

@@ -73,7 +73,7 @@ struct Frame {
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier, z 1 = PBR materials' occlusion applied, w 1 = specular occlusion from GTAO's bent normal (in ao_tex.gba)
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1), w colored sky ambient
-    sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22° halo)
+    sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22Â° halo)
     sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
     // night sky (stars.rs StarFrame): region directions of the catalogue's
     // axes; w: catalogue (-1 none), Milky Way strength, 0
@@ -132,7 +132,7 @@ struct DrawRecord {
     uv_st: vec4<f32>,         // scale s, scale t, offset s, offset t
     params: vec4<f32>,        // x rotation, y metallic, z roughness, w alpha cutoff
     tex: vec4<u32>,           // base, normal, metallic-roughness, emissive
-    flags: vec4<u32>,         // x low 16 flags / high 16 HUD zoom ×4096 (0 = 1), y palette base (anchored: anchor matrix), z skin binds, w texture animation mode | size x << 8 | size y << 16
+    flags: vec4<u32>,         // x low 16 flags / high 16 HUD zoom Ã—4096 (0 = 1), y palette base (anchored: anchor matrix), z skin binds, w texture animation mode | size x << 8 | size y << 16
     mat_uv: vec4<f32>,        // normal map: scale s, t, offset s, t
     spec_uv: vec4<f32>,       // legacy specular / PBR metallic-roughness map: scale s, t, offset s, t
     legacy: vec4<f32>,        // x normal rot, y spec / MR rot, z glossiness (PBR: emissive rot), w env intensity
@@ -1154,7 +1154,7 @@ const SPECULAR_AA: u32 = 0x8000u;
 // the form Filament gives it, normalFiltering): where the shading normal
 // turns faster than a pixel, the highlight is widened so it no longer
 // shimmers from one frame to the next. The kernel adds to the GGX lobe's
-// alpha², capped, so a large smooth surface keeps its highlight. Only the
+// alphaÂ², capped, so a large smooth surface keeps its highlight. Only the
 // change a pixel cannot resolve counts: below SPECULAR_AA_FLOOR (a normal
 // turning about 0.06 rad per pixel: an object some 35 pixels across, or a
 // normal map's relief seen from afar) nothing changes, so a polished ball
@@ -1189,7 +1189,7 @@ fn specular_aa_roughness(perceptual: f32, variance: f32) -> f32 {
 }
 
 // The same for a legacy material's glossiness (its Blinn-Phong exponent is
-// gloss² × 368, ll_light_func): through the GGX alpha of the same lobe
+// glossÂ² Ã— 368, ll_light_func): through the GGX alpha of the same lobe
 // width, alpha = sqrt(2 / (e + 2)), and back. Without variance the
 // glossiness comes back unchanged.
 fn specular_aa_gloss(gloss: f32, variance: f32) -> f32 {
@@ -1200,6 +1200,290 @@ fn specular_aa_gloss(gloss: f32, variance: f32) -> f32 {
     let e2 = max(2.0 / (a2 * a2) - 2.0, 0.0);
     return clamp(sqrt(e2 / 368.0), 0.0, 1.0);
 }
+
+// The actual receiver triangle, supplied before divergent material shading.
+// Smooth vertex normals remain appropriate for lighting and normal offsets,
+// but cannot predict the depth stored by rasterization on a curved mesh.
+var<private> shadow_receiver_plane: vec3<f32> = vec3<f32>(0.0);
+const SMOOTH_RECEIVER_MAX_OFFSET: f32 = 0.05;
+// SMOOTH RECEIVER BEGIN
+// A continuous point/normal fit. Interpolate unit normals N and the scalar
+// vertex moment dot(P,N). For a sphere P=C+R*N, moment-dot(P,Nraw) equals
+// R*(1-|Nraw|^2); division by 1+|Nraw| recovers its smooth-surface sag.
+// Cylinders have the same identity. The signed moment also handles concave
+// and saddle regions without choosing a triangle-dependent curvature fit.
+// Shared edges interpolate identical data, so the correction is continuous.
+// Positions and moments use eye-relative world axes to limit cancellation.
+// Only the shadow query moves; normal maps and caster geometry are unchanged.
+fn smooth_receiver_offset(raw: vec3<f32>, position: vec3<f32>, moment: f32) -> vec3<f32> {
+    let squared = dot(raw, raw);
+    let size = sqrt(squared);
+    if (size <= 0.2) { return vec3<f32>(0.0); }
+    let confidence = smoothstep(0.2, 0.3, size) * smoothstep(1e-7, 1e-5, 1.0 - squared);
+    if (confidence <= 0.0) { return vec3<f32>(0.0); }
+    let sag = (moment - dot(position, raw)) / (1.0 + size);
+    if (!(sag >= -1e20 && sag <= 1e20)) { return vec3<f32>(0.0); }
+    return raw / size * clamp(sag, -SMOOTH_RECEIVER_MAX_OFFSET, SMOOTH_RECEIVER_MAX_OFFSET) * confidence;
+}
+// SMOOTH RECEIVER END
+
+var<private> shadow_receiver_offset: vec3<f32> = vec3<f32>(0.0);
+var<private> shadow_receiver_curvature: f32 = 0.0;
+
+fn shadow_plane(n: vec3<f32>) -> vec3<f32> {
+    return select(n, shadow_receiver_plane, dot(shadow_receiver_plane, shadow_receiver_plane) > 0.5);
+}
+
+// PCSS BEGIN
+// RECEIVER PLANE BEGIN
+// A tangent plane cannot be extrapolated across a tightly curved receiver.
+// Estimate normal rotation per metre from matching position/normal derivatives;
+// their ratio is independent of render resolution and camera magnification.
+fn receiver_curvature(px: vec3<f32>, py: vec3<f32>, nx: vec3<f32>, ny: vec3<f32>) -> f32 {
+    let h = vec3<f32>(dot(nx, nx), dot(nx, ny), dot(ny, ny));
+    if (h.x + h.z <= 1e-20) { return 0.0; }
+    let g = vec3<f32>(dot(px, px), dot(px, py), dot(py, py));
+    let determinant = g.x * g.z - g.y * g.y;
+    if (determinant <= max(1e-30, 1e-6 * g.x * g.z)) { return 1e6; }
+    // Largest generalized eigenvalue of the normal/position metrics.
+    // Unlike a ratio of their traces, this is invariant when camera motion
+    // shears or stretches the screen derivatives of a cylindrical surface.
+    let trace = max((g.z * h.x + g.x * h.z - 2.0 * g.y * h.y) / determinant, 0.0);
+    let product = max((h.x * h.z - h.y * h.y) / determinant, 0.0);
+    return sqrt(0.5 * (trace + sqrt(max(trace * trace - 4.0 * product, 0.0))));
+}
+fn receiver_plane_confidence(curvature: f32, footprint: f32, bias_metres: f32) -> f32 {
+    let departure = 0.5 * curvature * footprint * footprint;
+    let tolerance = max(bias_metres, 1e-6);
+    return 1.0 - smoothstep(tolerance, 2.0 * tolerance, departure);
+}
+// RECEIVER PLANE END
+// Directional PCSS: parallel-plane blocker search and distance-dependent
+// percentage-closer filtering (Fernando, NVIDIA, 2005). The angular source
+// radius is an artistic effective sun/moon size; the footprint is in metres
+// and bounded so caster culling and atlas sampling cover every tap.
+const PCSS_SOURCE_TAN: f32 = 0.02;
+// Bounded extra softness: combine radii in quadrature, with the extra
+// radius never exceeding either the physical penumbra or one centimetre.
+// Close contacts stay tight; broad PCSS penumbrae retain their growth.
+const PCSS_AA_RADIUS: f32 = 0.01;
+const PCSS_MAX_RADIUS: f32 = 0.25;
+const SHADOW_FILTER_PCF: u32 = 0x20000u;
+// Nine-point disk cubature: centre weight 1/4, eight ring weights 3/32.
+// Radius sqrt(2/3) matches the uniform disk's second and fourth moments.
+// The old square tent had twice the disk's variance at the same radius,
+// causing a visible sharpness jump when PCSS changed sample patterns.
+const PCSS_NEAR_DISK: array<vec2<f32>, 9> = array<vec2<f32>, 9>(
+    vec2<f32>(0.0, 0.0),
+    vec2<f32>(0.81649658, 0.0), vec2<f32>(-0.81649658, 0.0),
+    vec2<f32>(0.0, 0.81649658), vec2<f32>(0.0, -0.81649658),
+    vec2<f32>(0.57735027, 0.57735027), vec2<f32>(-0.57735027, -0.57735027),
+    vec2<f32>(0.57735027, -0.57735027), vec2<f32>(-0.57735027, 0.57735027)
+);
+
+const PCSS_DISK: array<vec2<f32>, 32> = array(
+    vec2<f32>(0.176776695, 0.000000000),
+    vec2<f32>(-0.176776695, 0.000000000),
+    vec2<f32>(-0.225772188, 0.206825818),
+    vec2<f32>(0.225772188, -0.206825818),
+    vec2<f32>(0.034558052, -0.393771179),
+    vec2<f32>(-0.034558052, 0.393771179),
+    vec2<f32>(0.284571220, 0.371172764),
+    vec2<f32>(-0.284571220, -0.371172764),
+    vec2<f32>(-0.522223187, -0.092373929),
+    vec2<f32>(0.522223187, 0.092373929),
+    vec2<f32>(0.494695392, -0.314684715),
+    vec2<f32>(-0.494695392, 0.314684715),
+    vec2<f32>(-0.165465927, 0.615525001),
+    vec2<f32>(0.165465927, -0.615525001),
+    vec2<f32>(-0.315561468, -0.607594404),
+    vec2<f32>(0.315561468, 0.607594404),
+    vec2<f32>(0.684642162, 0.250030219),
+    vec2<f32>(-0.684642162, -0.250030219),
+    vec2<f32>(-0.712256086, 0.294008958),
+    vec2<f32>(0.712256086, -0.294008958),
+    vec2<f32>(0.343354499, -0.733728620),
+    vec2<f32>(-0.343354499, 0.733728620),
+    vec2<f32>(0.253730241, 0.808931990),
+    vec2<f32>(-0.253730241, -0.808931990),
+    vec2<f32>(-0.764745892, -0.443185876),
+    vec2<f32>(0.764745892, 0.443185876),
+    vec2<f32>(0.897133984, -0.197232390),
+    vec2<f32>(-0.897133984, 0.197232390),
+    vec2<f32>(-0.547506905, 0.778772232),
+    vec2<f32>(0.547506905, -0.778772232),
+    vec2<f32>(-0.126486773, -0.976089697),
+    vec2<f32>(0.126486773, 0.976089697)
+);
+
+fn pcss_tile_uv(uv: vec2<f32>, texel: f32) -> vec2<f32> {
+    return clamp(uv, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+}
+
+// Compare against the receiver plane at the actual clamped sample position.
+// Correct the blocker separation into metres, not normalized cascade depth.
+fn pcss_gap(uv: vec2<f32>, offset: vec2<f32>, tile: vec2<f32>, texel: f32,
+    receiver: f32, bias: f32, gradient: vec2<f32>, depth_per_metre: f32) -> f32 {
+    let local = pcss_tile_uv(uv + offset, texel);
+    let at = vec2<i32>(floor((local + tile) * 0.5 * vec2<f32>(textureDimensions(shadow_map))));
+    let depth = textureLoad(shadow_map, at, 0);
+    let centre = (vec2<f32>(at) + 0.5) / vec2<f32>(textureDimensions(shadow_map)) * 2.0 - tile;
+    let expected = receiver + dot(gradient, centre - uv);
+    if (depth < expected - bias) { return (expected - depth) / depth_per_metre; }
+    return -1.0;
+}
+
+// Hardware PCF compares four depths with one reference. On a sloping
+// receiver those four texel centres have different reference depths. Keep
+// the hardware fast path where the existing bias covers that variation;
+// otherwise perform the same bilinear filter with a corrected reference
+// for each texel. No larger receiver bias or wider blur is needed.
+fn pcss_plane_compare(uv: vec2<f32>, local: vec2<f32>, origin: vec2<f32>, atlas_scale: f32,
+    texel: f32, receiver: f32, bias: f32, gradient: vec2<f32>) -> f32 {
+    let reference = receiver + dot(gradient, local - uv) - bias;
+    if (texel * (abs(gradient.x) + abs(gradient.y)) <= bias) {
+        return textureSampleCompareLevel(shadow_map, shadow_sampler, origin + local * atlas_scale, reference);
+    }
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    let point = (origin + local * atlas_scale) * dims - 0.5;
+    let first = vec2<i32>(floor(point));
+    let phase = fract(point);
+    let lower = vec2<i32>(round(origin * dims));
+    let upper = vec2<i32>(round((origin + atlas_scale) * dims)) - 1;
+    let a = clamp(first, lower, upper);
+    let b = clamp(first + vec2<i32>(1), lower, upper);
+    let dx = (((vec2<f32>(f32(a.x), f32(b.x)) + 0.5) / dims.x - origin.x) / atlas_scale - uv.x) * gradient.x;
+    let dy = (((vec2<f32>(f32(a.y), f32(b.y)) + 0.5) / dims.y - origin.y) / atlas_scale - uv.y) * gradient.y;
+    let expected = vec4<f32>(dx.x + dy.x, dx.y + dy.x, dx.x + dy.y, dx.y + dy.y) + receiver - bias;
+    let depths = vec4<f32>(textureLoad(shadow_map, a, 0), textureLoad(shadow_map, vec2<i32>(b.x, a.y), 0),
+        textureLoad(shadow_map, vec2<i32>(a.x, b.y), 0), textureLoad(shadow_map, b, 0));
+    let compared = select(vec4<f32>(0.0), vec4<f32>(1.0), depths >= expected);
+    let visibility = select(compared, vec4<f32>(1.0), depths >= vec4<f32>(1.0));
+    return mix(mix(visibility.x, visibility.y, phase.x), mix(visibility.z, visibility.w, phase.x), phase.y);
+}
+
+fn pcss_compare(uv: vec2<f32>, offset: vec2<f32>, tile: vec2<f32>, texel: f32,
+    receiver: f32, bias: f32, gradient: vec2<f32>) -> f32 {
+    let local = pcss_tile_uv(uv + offset, texel);
+    return pcss_plane_compare(uv, local, tile * 0.5, 0.5, texel, receiver, bias, gradient);
+}
+
+// The baseline filter is shared by ordinary shadows and PCSS. At contact,
+// enabling PCSS must not change receiver depth, coverage or minimum softness.
+fn directional_pcf(uv: vec2<f32>, tile: vec2<f32>, texel: f32, receiver: f32,
+    bias: f32, span: f32, taps: u32) -> f32 {
+    let step = span / f32(taps - 1u);
+    let center = 0.5 * f32(taps - 1u);
+    var sum = 0.0;
+    for (var y = 0u; y < taps; y++) {
+        for (var x = 0u; x < taps; x++) {
+            let offset = (vec2<f32>(f32(x), f32(y)) - center) * step;
+            let at = pcss_tile_uv(uv + offset, texel);
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (at + tile) * 0.5, receiver - bias);
+        }
+    }
+    return sum / f32(taps * taps);
+}
+
+// Visibility and its blend weight; a missed blocker or sub-resolution
+// penumbra retains the baseline PCF exactly. Wide PCSS only adds softness.
+fn pcss_shadow(uv: vec2<f32>, tile: vec2<f32>, texel: f32, radius: f32,
+    receiver: f32, bias: f32, gradient: vec2<f32>, depth_per_metre: f32,
+    curvature: f32, minimum_radius: f32) -> vec2<f32> {
+    let bias_metres = bias / depth_per_metre;
+    let near_gradient = gradient * receiver_plane_confidence(curvature, 3.0 * sqrt(2.0) * radius * texel, bias_metres);
+    let search_gradient = gradient * receiver_plane_confidence(curvature, PCSS_MAX_RADIUS + sqrt(2.0) * radius * texel, bias_metres);
+    var separation = 0.0;
+    var blockers = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let gap = pcss_gap(uv, vec2<f32>(f32(x), f32(y)) * texel, tile, texel, receiver, bias, near_gradient, depth_per_metre);
+            if (gap >= 0.0) { separation += gap; blockers += 1.0; }
+        }
+    }
+    let search = PCSS_MAX_RADIUS / (2.0 * radius);
+    for (var i = 0u; i < 16u; i++) {
+        let gap = pcss_gap(uv, PCSS_DISK[(i / 2u) * 4u + 2u + (i & 1u)] * search, tile, texel, receiver, bias, search_gradient, depth_per_metre);
+        if (gap >= 0.0) { separation += gap; blockers += 1.0; }
+    }
+    if (blockers == 0.0) { return vec2<f32>(-2.0, 0.0); }
+    let physical_radius = (separation / blockers) * PCSS_SOURCE_TAN;
+    let map_radius = min(PCSS_MAX_RADIUS, sqrt(physical_radius * physical_radius + min(physical_radius, PCSS_AA_RADIUS) * min(physical_radius, PCSS_AA_RADIUS)));
+    let weight = smoothstep(minimum_radius, 1.5 * minimum_radius, map_radius);
+    if (weight <= 0.0) { return vec2<f32>(-2.0, 0.0); }
+    let half_uv = map_radius / (2.0 * radius);
+    let filter_gradient = gradient * receiver_plane_confidence(curvature,
+        map_radius + 2.0 * sqrt(2.0) * radius * texel, bias_metres);
+    var sum = 0.0;
+    for (var i = 0u; i < 32u; i++) {
+        sum += pcss_compare(uv, PCSS_DISK[i] * half_uv, tile, texel, receiver, bias, filter_gradient);
+    }
+    return vec2<f32>(sum / 32.0, weight);
+}
+
+// Projector PCSS uses perspective depth d = A + B / z. Never average
+// nonlinear stored depths: blocker separation and source size are in metres.
+// Fixed 2 cm source radius; the receiving footprint is capped at 25 cm.
+// Algorithm: NVIDIA, Integrating Realistic Soft Shadows (2008), adapted to
+// the existing atlas, receiver planes and dense missed-blocker fallback.
+fn spot_pcss_compare(uv: vec2<f32>, offset: vec2<f32>, origin: vec2<f32>, texel: f32,
+                     receiver: f32, gradient: vec2<f32>) -> f32 {
+    let local = pcss_tile_uv(uv + offset, texel);
+    return pcss_plane_compare(uv, local, origin, 0.25, texel, receiver, 0.0002, gradient);
+}
+
+fn spot_pcss(uv: vec2<f32>, origin: vec2<f32>, texel: f32, receiver: f32,
+             gradient: vec2<f32>, z: f32, ab: vec2<f32>, projection_scale: vec2<f32>) -> f32 {
+    let near = max(-ab.y / ab.x, 0.001);
+    let max_uv = min(projection_scale * PCSS_MAX_RADIUS / z, vec2<f32>(0.125));
+    let search = min(max_uv, projection_scale * 0.02 * max(z - near, 0.0) / (near * z));
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    var blockers = 0.0;
+    var blocker_z = 0.0;
+    for (var i = 0u; i < 25u; i++) {
+        var offset: vec2<f32>;
+        if (i < 9u) {
+            offset = (vec2<f32>(f32(i % 3u), f32(i / 3u)) - 1.0) * texel;
+        } else {
+            let j = i - 9u;
+            offset = PCSS_DISK[(j / 2u) * 4u + 2u + (j & 1u)] * search;
+        }
+        let local = pcss_tile_uv(uv + offset, texel);
+        let at = vec2<i32>(floor((origin + local * 0.25) * dims));
+        let stored = textureLoad(shadow_map, at, 0);
+        let centre = ((vec2<f32>(at) + 0.5) / dims - origin) * 4.0;
+        let correction = dot(gradient, centre - uv);
+        let expected = receiver + correction;
+        if (stored < 1.0 && stored < expected - 0.0002) {
+            let distance = ab.y / (stored - correction - ab.x);
+            if (distance > 0.0 && distance < z) {
+                blocker_z += distance;
+                blockers += 1.0;
+            }
+        }
+    }
+    if (blockers == 0.0) { return -2.0; }
+    let average_z = blocker_z / blockers;
+    let physical_radius = 0.02 * (z - average_z) / average_z;
+    let filtered_radius = sqrt(physical_radius * physical_radius + min(physical_radius, PCSS_AA_RADIUS) * min(physical_radius, PCSS_AA_RADIUS));
+    let half_uv = max(vec2<f32>(0.70710678 * texel), min(max_uv, projection_scale * filtered_radius / z));
+    let blend = smoothstep(0.8 * texel, 1.2 * texel, max(half_uv.x, half_uv.y));
+    var near_sum = 0.0;
+    if (blend < 1.0) {
+        for (var i = 0u; i < 9u; i++) {
+            near_sum += select(0.09375, 0.25, i == 0u) * spot_pcss_compare(uv, PCSS_NEAR_DISK[i] * half_uv,
+                origin, texel, receiver, gradient);
+        }
+    }
+    if (blend <= 0.0) { return near_sum; }
+    var sum = 0.0;
+    for (var i = 0u; i < 32u; i++) {
+        sum += spot_pcss_compare(uv, PCSS_DISK[i] * half_uv, origin, texel, receiver, gradient);
+    }
+    return mix(near_sum, sum / 32.0, blend);
+}
+
+// PCSS END
 
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
 // two taps are never more than a texel apart: 4 when they already are not,
@@ -1213,8 +1497,10 @@ fn shadow_taps(span: f32, texel: f32) -> u32 {
 // its tile, so that a blend never takes light from a cascade that does not
 // see the point.
 fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
-    let bias_n = n * (0.02 + 0.04 * f32(cascade));
     let m = frame.cascade_vp[cascade];
+    let depth_per_metre = length(vec3<f32>(m[0].z, m[1].z, m[2].z));
+    let axis_z = vec3<f32>(m[0].z, m[1].z, m[2].z) / max(depth_per_metre, 1e-8);
+    let bias_n = n * (0.02 + 0.04 * f32(cascade));
     let lp = m * vec4<f32>(world_pos + bias_n, 1.0);
     let ndc = lp.xyz / lp.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
@@ -1240,8 +1526,6 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     if ((frame.light_mode.z & SHADOW_FILTER_GAPS) != 0u) {
         taps = 4u;
     }
-    let step = span / f32(taps - 1u);
-    let center = 0.5 * f32(taps - 1u);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
     // Receiver bias in metres along the light: two texels of the cascade.
     // The depth range of a cascade is its square plus CASCADE_DEPTH_PAD on
@@ -1255,23 +1539,39 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     // fixed 0.004 of a shadow range fitted to the scene (RenderShadowBias,
     // shadowUtil.glsl pcfShadow). (frame.light_mode.z SHADOW_BIAS_LEGACY:
     // the bias of before, AURORA_SHADOW_BIAS.)
-    let depth_per_metre = length(vec3<f32>(m[0].z, m[1].z, m[2].z));
     var receiver_bias = 2.0 * texel * radius * 2.0 * depth_per_metre;
     if ((frame.light_mode.z & SHADOW_BIAS_LEGACY) != 0u) {
         receiver_bias = 0.0005;
     }
-    var sum = 0.0;
-    for (var y = 0u; y < taps; y++) {
-        for (var x = 0u; x < taps; x++) {
-            let o = (vec2<f32>(f32(x), f32(y)) - center) * step;
-            // clamped to the centers of the tile's edge texels: the same
-            // result as the clamp-to-edge of a separate texture, never a
-            // texel of the neighbouring tile
-            let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - receiver_bias);
+    // Use the rasterized triangle plane, including in the dense fallback.
+    // Falling back must not restore the old uncorrected self-shadowing.
+    let plane_n = shadow_plane(n);
+    let denominator = dot(plane_n, axis_z);
+    let axis_x = vec3<f32>(m[0].x, m[1].x, m[2].x) * radius;
+    let axis_y = vec3<f32>(m[0].y, m[1].y, m[2].y) * radius;
+    let plane_filter = (frame.light_mode.z & (SHADOW_FILTER_PCF | SHADOW_FILTER_GAPS)) == 0u;
+    var soft_visibility = -1.0;
+    var soft_weight = 0.0;
+    var gradient = vec2<f32>(0.0);
+    if (plane_filter) {
+        gradient = vec2<f32>(-dot(plane_n, axis_x), dot(plane_n, axis_y))
+            * (2.0 * radius * depth_per_metre * denominator / max(denominator * denominator, 1e-6));
+        // Blend between filters rather than popping at a grazing-angle cutoff.
+        soft_weight = smoothstep(0.10, 0.20, abs(denominator));
+        if (soft_weight > 0.0) {
+            // Match the baseline grid's second moment with a disk: each
+            // axis has variance span^2 * (taps+1)/(12*(taps-1)). A smaller
+            // PCSS disk exposed mesh facets and changed shadows at contact.
+            let minimum_radius = 2.0 * radius * span * sqrt(f32(taps + 1u) / (3.0 * f32(taps - 1u)));
+            let soft = pcss_shadow(uv, tile, texel, radius, ndc.z, receiver_bias, gradient,
+                max(depth_per_metre, 1e-8), shadow_receiver_curvature, minimum_radius);
+            soft_visibility = soft.x;
+            soft_weight *= soft.y;
+            if (soft_visibility >= 0.0 && soft_weight >= 1.0) { return soft_visibility; }
         }
     }
-    return sum / f32(taps * taps);
+    let visibility = directional_pcf(uv, tile, texel, ndc.z, receiver_bias, span, taps);
+    return mix(visibility, max(soft_visibility, 0.0), select(0.0, soft_weight, soft_visibility >= 0.0));
 }
 
 // The motion of a pixel on the screen from its clip positions, this frame's
@@ -1285,11 +1585,11 @@ fn screen_motion(cur: vec4<f32>, prev: vec4<f32>) -> vec2<f32> {
     return (cur.xy / cur.w - prev.xy / prev.w) * vec2<f32>(0.5, -0.5);
 }
 
-// The view shown instead of the image (frame.light_mode.z, Preferences ›
+// The view shown instead of the image (frame.light_mode.z, Preferences â€º
 // Debug), or `col`.
-// 1 (also AURORA_DEBUG_SHADOWS): the cascade each pixel reads — red, green,
+// 1 (also AURORA_DEBUG_SHADOWS): the cascade each pixel reads â€” red, green,
 // blue from the finest, mixed where two are blended, black beyond the
-// shadow distance — darkened where the pixel is in shadow. The choice
+// shadow distance â€” darkened where the pixel is in shadow. The choice
 // mirrors shadow_factor.
 // 2: the ambient occlusion of the screen alone, light grey where nothing is
 // occluded (and everywhere when the effect is off), whatever the exposure
@@ -1298,6 +1598,11 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
     let view = frame.light_mode.z & 0xffu;
     if (view == 0u) {
         return col;
+    }
+    // Direct contact visibility: independent of normal, sun response and
+    // shadow maps, so a lighting change cannot masquerade as a lost mask.
+    if (view == 3u) {
+        return vec3<f32>(contact_shadow(frag) / max(frame.params.x, 1e-3));
     }
     if (view == 2u) {
         let ao = screen_ao(frag);
@@ -1326,13 +1631,10 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
     return w * (0.12 + 0.88 * sun_shadow(world_pos, n, vertex_depth, frag));
 }
 
-// Whether the fragment being shaded is the surface of the depth prepass,
-// whose contact shadows the mask holds: not a blended face.
+
+// Whether this fragment belongs to the contact-shadow depth surface.
 var<private> contact_surface: bool = true;
 
-// The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
-// what the shadow map is too coarse to show, taken as the darker of the
-// two (sun_shadow). 1 elsewhere: other views, blended faces, off.
 fn contact_shadow(frag: vec2<f32>) -> f32 {
     if (frame.contact.x < 0.5 || !contact_surface || in_reflection_pass()) {
         return 1.0;
@@ -1436,6 +1738,10 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, nv: f32) -> vec3<f32> {
 // screen-space one (normal_map_occlusion); none outside the object shader.
 var<private> surface_occlusion: f32 = 0.0;
 
+// Smooth surface normal before bump mapping. The triangle plane used for
+// shadow-map depth correction has a separate role (shadow_receiver_plane).
+var<private> surface_base_normal: vec3<f32> = vec3<f32>(0.0);
+
 // False while a translucent blended face is shaded: the screen-space
 // occlusion and indirect light come from the occlusion's depth, so on such
 // a face they are those of what lies behind it, around a closer object a
@@ -1509,7 +1815,7 @@ fn spherical_caps_intersection(cos_a: f32, cos_b: f32, cos_d: f32) -> f32 {
 // of convex shapes, whose grazing reflections nothing hides (Aurora's
 // choice; an open surface keeps exactly its reflection). And a reflection
 // is never darkened more than the ambient light (the visibility): what
-// hides the sky is itself lit, which the cones take for black — a polished
+// hides the sky is itself lit, which the cones take for black â€” a polished
 // metal turned black in an inside corner, with the bent normal's noise.
 // And the lobe is never narrower than about 26 degrees here: a narrow lobe
 // swings from open to hidden with the smallest turn of the bent normal,
@@ -1600,8 +1906,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     // sun / moon
     let l = normalize(frame.sun_dir.xyz);
     let nl = max(dot(n, l), 0.0);
+    let direct_shadow = shadow ;
     if (legacy) {
-        col += diffuse_color * frame.sun_color.rgb * (nl * shadow / 3.0);
+        col += diffuse_color * frame.sun_color.rgb * (nl * direct_shadow / 3.0);
     } else if (nl > 0.0) {
         let h = normalize(l + v);
         let nh = max(dot(n, h), 0.0);
@@ -1609,7 +1916,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         let f = f_schlick(f0, vh);
         let spec = d_ggx(nh, a) * v_smith(nv, nl, a) * f;
         let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-        col += (kd + spec) * frame.sun_color.rgb * nl * shadow;
+        col += (kd + spec) * frame.sun_color.rgb * nl * direct_shadow;
     }
     // local lights
     var lights = light_walk(world_pos, frag);
@@ -1630,7 +1937,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
                 let f = f_schlick(f0, vh);
                 let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
                 let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-                col += (kd + spec) * lt.color_falloff.rgb * lnl * atten;
+                col += (kd + spec) * lt.color_falloff.rgb * lnl * atten ;
             }
         }
     }
@@ -1675,9 +1982,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     return col;
 }
 
-// Normal mapping without precomputed tangents (Mikkelsen 2010 / Schüler).
+// Normal mapping without precomputed tangents (Mikkelsen 2010 / SchÃ¼ler).
 // The cotangent frame is the solution divided by det = dot(dp1, dp2perp).
-// Schüler drops it because it is positive in GL, where dFdy runs up the
+// SchÃ¼ler drops it because it is positive in GL, where dFdy runs up the
 // window; here dpdy runs down the framebuffer, det is negative on every face
 // and without its sign both axes come out reversed (bumps lit as dents).
 // `uv` is the sampling coordinate of the top-left-origin texture, so the
@@ -1934,9 +2241,10 @@ fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
 // Light left by the shadow map of projector `i` (1: lit, or no map), as
 // spotLightF.glsl with sampleSpotShadow / pcfSpotShadow (shadowUtil.glsl):
 // the two projectors that weigh most on screen have a map, in the halves of
-// the top row of the shadow atlas's fourth tile. Like Firestorm's, these
+// the top row of the shadow atlas's fourth tile. Like the Legacy Viewer's, these
 // shadows stop with the sun's (the last tenth of its shadow distance).
-fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+fn projector_shadow(i: i32, surface_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+    let world_pos = surface_pos + shadow_receiver_offset;
     if (frame.params.z < 0.5 || (i != frame.spot_lights.x && i != frame.spot_lights.y)) {
         return 1.0;
     }
@@ -1946,8 +2254,10 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     if (depth >= far) {
         return 1.0;
     }
+    let pcss = (frame.light_mode.z & SHADOW_FILTER_PCF) == 0u;
+    let receiver_n = select(n, surface_base_normal, pcss && dot(surface_base_normal, surface_base_normal) > 0.5);
     // RenderSpotShadowOffset: the point is moved 4 cm along its normal
-    let lp = frame.spot_vp[k] * vec4<f32>(world_pos + n * 0.04, 1.0);
+    let lp = frame.spot_vp[k] * vec4<f32>(world_pos + receiver_n * 0.04, 1.0);
     if (lp.w <= 0.0) {
         return 1.0;
     }
@@ -1959,15 +2269,51 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     // a map is a quarter of the atlas wide: its texel in map coordinates
     let texel = 4.0 / f32(textureDimensions(shadow_map).x);
     let origin = vec2<f32>(0.5 + 0.25 * f32(k), 0.5);
-    var sum = 0.0;
-    // pcfSpotShadow's five taps
-    let taps = array<vec2<f32>, 5>(
-        vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
-    for (var t = 0; t < 5; t++) {
-        let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0002);
+    var s = -2.0;
+    var gradient = vec2<f32>(0.0);
+    var plane_filter = false;
+    if (pcss) {
+        let m = frame.spot_vp[k];
+        let row_x = vec3<f32>(m[0].x, m[1].x, m[2].x);
+        let row_y = vec3<f32>(m[0].y, m[1].y, m[2].y);
+        let row_z = vec3<f32>(m[0].z, m[1].z, m[2].z);
+        let row_w = vec3<f32>(m[0].w, m[1].w, m[2].w);
+        let projection = vec2<f32>(length(row_x), length(row_y));
+        let a = dot(row_z, row_w) / dot(row_w, row_w);
+        let b = m[3].z - a * m[3].w;
+        let relative = world_pos + receiver_n * 0.04 - frame.projectors[i].origin.xyz;
+        let plane_n = shadow_plane(receiver_n);
+        let plane = dot(plane_n, relative);
+        // The wide blocker search needs a well-conditioned plane, but the
+        // dense fallback still corrects each comparison on grazing faces.
+        plane_filter = abs(plane) > 1e-5 * length(relative);
+        if (plane_filter) {
+            gradient = b * vec2<f32>(2.0 * dot(plane_n, row_x) / (projection.x * projection.x),
+                -2.0 * dot(plane_n, row_y) / (projection.y * projection.y)) / plane;
+            let bias_metres = 0.0002 * lp.w * lp.w / max(abs(b), 1e-8);
+            gradient *= receiver_plane_confidence(shadow_receiver_curvature, PCSS_MAX_RADIUS, bias_metres);
+            if (abs(plane) > 0.15 * length(relative)) {
+                let soft = spot_pcss(uv, origin, texel, ndc.z, gradient, lp.w,
+                    vec2<f32>(a, b), projection * 0.5);
+                if (soft >= 0.0) { s = soft; }
+            }
+        }
     }
-    var s = sum * 0.2;
+    if (s < 0.0) {
+        var sum = 0.0;
+        // pcfSpotShadow's five taps
+        let taps = array<vec2<f32>, 5>(
+            vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
+        for (var t = 0; t < 5; t++) {
+            let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+            if (plane_filter) {
+                sum += pcss_plane_compare(uv, at, origin, 0.25, texel, ndc.z, 0.0002, gradient);
+            } else {
+                sum += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0002);
+            }
+        }
+        s = sum * 0.2;
+    }
     // the map fades in and out as its projector takes or loses it
     s = clamp(s + select(frame.spot_fade.x, frame.spot_fade.y, k == 1u), 0.0, 1.0);
     return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
@@ -2027,7 +2373,7 @@ fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
     let c = projector_diffuse(slot, uv, clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0));
     // the beam is shadowed, the ambiance is not (spotLightF)
     at.shadow = projector_shadow(i, world_pos, n);
-    at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow;
+    at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow ;
     at.ambiance = pj.params.y;
     if (at.ambiance > 0.0) {
         // getTexture2DLodAmbient: the image's mean color (its last level),
@@ -2271,13 +2617,23 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
         let irr = ll_ssao(a.amblit * ll_ambient_lighting(n), frag);
         let sun_contrib = vec3<f32>(min(pow(nl_sun, 1.2), shadow));
         // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
+        if ((frame.light_mode.z & SHADOW_FILTER_PCF) == 0u) {
+            // PCSS returns area-light visibility. Scale the linear direct
+            // contribution once; min(N.L, visibility) clips almost the
+            // entire penumbra at grazing angles. Preserve both endpoints
+            // of the classic sky response, including its ambient colour.
+            let ambient = srgb_to_linear(irr * 0.9);
+            let lit = srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(vec3<f32>(pow(nl_sun, 1.2))) * sunlit * 0.7);
+            return (mix(ambient, lit, shadow ) + screen_indirect(frag)) * base;
+        }
         return (srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(sun_contrib) * sunlit * 0.7) + screen_indirect(frag)) * base;
     }
     // linear mode: grey sky ambient, linear sunlight, plain lambert
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
     let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
-    return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
+    let sun = select(nl_sun * shadow , min(nl_sun, shadow), (frame.light_mode.z & SHADOW_FILTER_PCF) != 0u);
+    return (irr + sun * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
 }
 
 // Local lights on a classic surface (multiPointLightF): light color x n.l x
@@ -2294,7 +2650,7 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
         if (dist < radius) {
             let nl = dot(n, to_l / max(dist, 1e-4));
             if (nl > 0.0) {
-                local += lt.color_falloff.rgb / 3.25 * nl * ll_light_atten(dist / radius, lt.color_falloff.w) * base;
+                local += lt.color_falloff.rgb / 3.25 * nl * ll_light_atten(dist / radius, lt.color_falloff.w) * base ;
             }
         }
     }
@@ -2337,8 +2693,9 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         let f = f_schlick(f0, vh);
         let spec = d_ggx(nh, ra) * v_smith(nv, nl, ra) * f;
         let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-        let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(min(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
-        final_sun = clamp(sun_contrib * (diff + spec) * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
+        let direct = select(pow(nl, 1.2), min(pow(nl, 1.2), shadow), (frame.light_mode.z & SHADOW_FILTER_PCF) != 0u);
+        let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(direct)) * sunlit * 0.7) * PI;
+        final_sun = clamp(sun_contrib * (diff + spec) * shadow , vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
     // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2388,7 +2745,7 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
                 let spec = d_ggx(max(dot(n, h), 0.0), ra) * v_smith(nv, lnl, ra) * f;
                 let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
                 let intensity = ll_light_atten(dist / radius, lt.color_falloff.w) * lt.color_falloff.rgb;
-                col += intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0));
+                col += intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0)) ;
             }
         }
     }

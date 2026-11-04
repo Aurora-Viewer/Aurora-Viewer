@@ -39,6 +39,8 @@ mod motion_history;
 mod occlusion;
 pub mod pacing;
 mod packet;
+#[cfg(test)]
+mod pcss_tests;
 mod pick;
 pub mod pipeline_cache;
 #[cfg(test)]
@@ -104,7 +106,7 @@ pub use arena::MeshAlloc;
 // What a tile of a photo draws around what it keeps, for the bloom, the
 // depth of field and the contact shadows (snapshot tiles in the viewer).
 pub use bloom::tile_reach as bloom_tile_reach;
-pub use contact_shadows::tile_reach as contact_tile_reach;
+pub use contact_shadows::{tile_reach as contact_tile_reach, tile_reach_for_height as contact_tile_reach_for_height};
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
 pub use gpu_cull::set_whole_chunk_uploads;
@@ -1052,13 +1054,23 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     fn contact_shadows_shader_is_valid() {
         validate(include_str!("shaders/contact_shadows.wgsl"));
         validate(include_str!("shaders/contact_shadows_filter.wgsl"));
+        validate(include_str!("shaders/contact_shadows_filter_legacy.wgsl"));
+        for height in [1, 720, 1440, 2160, 4320, 7680, u32::MAX] {
+            validate(&crate::contact_shadows::filter_source(height));
+        }
         // a photo's, up to the most samples
         validate(&crate::contact_shadows::shader_source(192, 13));
         let (count, hard) = crate::contact_shadows::samples(100.0);
         validate(&crate::contact_shadows::shader_source(count, hard));
         // the diagnostic variants (AURORA_CONTACT_VARIANT)
         use crate::contact_shadows::{Variant, variant_source};
-        for v in [Variant::NoEarlyOut, Variant::NoShared, Variant::Short] {
+        for v in [
+            Variant::Stream,
+            Variant::StreamReference,
+            Variant::NoEarlyOut,
+            Variant::NoShared,
+            Variant::Short,
+        ] {
             validate(&variant_source(v));
         }
     }

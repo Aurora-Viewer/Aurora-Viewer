@@ -246,6 +246,10 @@ const BLEND_BAND: f32 = 0.15;
 /// taps over three spacings of at most two texels, each a bilinear
 /// footprint.
 const FILTER_TEXELS: f32 = 6.0;
+/// Maximum directional PCSS half-width in metres (common.wgsl).
+pub(crate) const PCSS_MAX_RADIUS: f32 = 0.25;
+/// Maximum smooth-surface receiver displacement in metres (common.wgsl).
+pub(crate) const SMOOTH_RECEIVER_MAX_OFFSET: f32 = 0.05;
 
 /// Taps per axis of the shadow filter for a span of `span_texels`
 /// (`shadow_taps` in common.wgsl): never more than a texel apart, since a
@@ -291,7 +295,15 @@ pub fn cascade_caster_planes(
 /// filter's taps and the normal offset (0.02 + 0.04 k) of `cascade_shadow`
 /// (common.wgsl), and a little more.
 pub fn lookup_margin(k: usize, texel: f32) -> f32 {
-    FILTER_TEXELS * texel + 0.02 + 0.04 * k as f32 + 0.05
+    // Keep the conservative PCSS guard with either filter: a live setting
+    // change cannot expose a caster discarded by a cached draw list.
+    lookup_margin_for(k, texel, true)
+}
+
+fn lookup_margin_for(k: usize, texel: f32, pcss: bool) -> f32 {
+    let filter = FILTER_TEXELS * texel;
+    let filter = if pcss { filter.max(PCSS_MAX_RADIUS + texel) } else { filter };
+    filter + 0.02 + 0.04 * k as f32 + 0.05
 }
 
 /// Depth a cascade keeps on each side of its square, along the light
@@ -319,8 +331,8 @@ pub fn cascade_scale(m: &Mat4) -> f32 {
 /// (`c`, `r`), its depth comes from the map of the cascade before
 /// (`merged_from_finer` in cull.wgsl, kept line for line). The cascades
 /// look along the same light, so a caster covers the same place in each of
-/// them: when the cascade before holds it — it draws it, or leaves it in
-/// turn to the one before — and the caster is inside that cascade's square
+/// them: when the cascade before holds it â€” it draws it, or leaves it in
+/// turn to the one before â€” and the caster is inside that cascade's square
 /// with `MERGE_TEXELS` to spare, every texel of `k` it would have covered
 /// is filled from the finer map (shadow_merge.rs). `shadow_size`: side of a
 /// cascade in texels (0: no merge).
@@ -694,6 +706,23 @@ mod tests {
     /// One axis of `cascade_shadow`'s filter across a straight shadow edge:
     /// texels below `edge` are in shadow, each tap a bilinear compare
     /// (linear between the two texel centres around it).
+    #[test]
+    fn pcss_culling_guard_keeps_the_whole_world_space_footprint() {
+        assert!(crate::COMMON_SHADER.contains(&format!("const PCSS_MAX_RADIUS: f32 = {PCSS_MAX_RADIUS};")));
+        assert!(crate::COMMON_SHADER.contains(&format!("const SMOOTH_RECEIVER_MAX_OFFSET: f32 = {SMOOTH_RECEIVER_MAX_OFFSET};")));
+        for cascade in 0..3 {
+            for texel in [0.001, 0.008, 0.04, 0.2] {
+                let legacy = lookup_margin_for(cascade, texel, false);
+                let pcss = lookup_margin_for(cascade, texel, true);
+                let receiver = 0.02 + 0.04 * cascade as f32 + 0.05;
+                assert!(pcss >= legacy);
+                assert!(pcss + 1e-6 >= PCSS_MAX_RADIUS + texel + receiver);
+                assert!(pcss + 1e-6 >= PCSS_MAX_RADIUS + texel + 0.02 + 0.04 * cascade as f32 + SMOOTH_RECEIVER_MAX_OFFSET);
+                assert!((legacy - (6.0 * texel + receiver)).abs() < 1e-6);
+            }
+        }
+    }
+
     fn filtered_edge(p: f32, span: f32, taps: u32, edge: i32) -> f32 {
         let lit = |i: i32| if i < edge { 0.0 } else { 1.0 };
         let step = span / (taps - 1) as f32;

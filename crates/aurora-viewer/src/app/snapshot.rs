@@ -1150,7 +1150,8 @@ impl App {
             .photo_dof_max_coc(size.1, renderer.size().1)
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
-        let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
+        let filter_height = (renderer.size().1 as f32 * snapshot::viewfinder_scale(size, renderer.size(), 100)).round() as u32;
+        let contact = aurora_render::contact_tile_reach_for_height(self.settings.contact_shadows, scale, filter_height);
         let guard = snapshot::TILE_GUARD
             .max(aurora_render::bloom_tile_reach(bloom))
             .max(dof)

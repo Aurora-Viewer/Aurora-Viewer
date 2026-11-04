@@ -295,6 +295,7 @@ struct VsOut {
     // zero for the per-pixel one
     @location(9) tangent: vec3<f32>,
     @location(10) @interpolate(flat) tangent_sign: f32,
+    @location(11) shadow_surface: vec4<f32>,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -547,6 +548,10 @@ fn vs_main(in: VsIn) -> VsOut {
     out.clip = frame.eye_view_proj * ep;
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * vertex_normal(rec, in);
+    if ((frame.light_mode.z & SHADOW_FILTER_PCF) == 0u) {
+        let sn = normalize(out.normal);
+        out.shadow_surface = vec4<f32>(sn, dot(ep.xyz, sn));
+    }
     var st = face_st(in, rec);
     let animated = has_tex_anim(rec);
     if (animated) {
@@ -858,6 +863,10 @@ struct Material {
     // the face's normal without its normal map, which offsets the shadow
     // lookup (shadow_normal)
     geo_n: vec3<f32>,
+    // Actual rasterized triangle plane, distinct from its smooth vertex normals.
+    plane_n: vec3<f32>,
+    shadow_offset: vec3<f32>,
+    shadow_curvature: f32,
 };
 
 // The normal that moves a fragment's shadow lookup off its surface. The
@@ -894,6 +903,19 @@ fn eval_material(in: VsOut, front: bool) -> Material {
         m.color = vec4<f32>(srgb_to_linear(base_s.rgb * rec.base_color.rgb), base_s.a * rec.base_color.a);
     }
     m.geo_n = n;
+    let shadow_surface = select(-in.shadow_surface, in.shadow_surface, front);
+    m.shadow_offset = vec3<f32>(0.0);
+    m.shadow_curvature = 0.0;
+    if ((frame.light_mode.z & SHADOW_FILTER_PCF) == 0u) {
+        m.shadow_offset = smooth_receiver_offset(shadow_surface.xyz, in.world_pos - frame.eye.xyz, shadow_surface.w);
+        m.shadow_curvature = receiver_curvature(dpdx(in.world_pos), dpdy(in.world_pos), dpdx(n), dpdy(n));
+    }
+    // Receiver-plane depth is affine on the triangle, not on the smoothed
+    // normal field. Compute before any alpha discard in shade_material.
+    let plane = cross(dpdx(in.world_pos), dpdy(in.world_pos));
+    let plane_length = dot(plane, plane);
+    let plane_unit = plane * inverseSqrt(max(plane_length, 1e-20));
+    m.plane_n = select(n, plane_unit * select(-1.0, 1.0, dot(plane_unit, n) >= 0.0), plane_length > 1e-20);
     m.n = perturb_normal(n, in.world_pos, in.uv_t, in.tangent, in.tangent_sign, front, nrm_s.xyz);
     if (rec.tex.y == 1u) {
         m.n = n;
@@ -1026,7 +1048,7 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     gloss_sky *= specular_occlusion(frag, r, 1.0 - spec.a, 1.0);
     if (spec.a > 0.0) {
         let l = normalize(frame.sun_dir.xyz);
-        col += ll_spec(n, v, l, spec.a) * shadow * sun_lin * spec.rgb;
+        col += ll_spec(n, v, l, spec.a) * shadow  * sun_lin * spec.rgb;
         // applyGlossEnv: its "fake energy conservation" is not clamped, a
         // face lit above 1 loses light there
         var fresnel = clamp(1.0 - dot(v, n), 0.3, 1.0);
@@ -1065,7 +1087,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             let radius = lt.pos_radius.w;
             if (dist < radius) {
                 let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
-                let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
+                let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten ;
                 col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
             }
         }
@@ -1091,7 +1113,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
                 let uv = stc.xy / stc.w;
                 if (stc.z > 0.0 && uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
                     let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * 0.6);
-                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * at.shadow * env;
+                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * at.shadow * env ;
                 }
             }
         }
@@ -1375,6 +1397,13 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
     surface_occlusion = m.occlusion;
+    surface_base_normal = m.geo_n;
+    shadow_receiver_offset = m.shadow_offset;
+    shadow_receiver_curvature = m.shadow_curvature;
+    // A tiny fit offset must not switch the receiver to a different normal.
+    // The smooth geometric field is continuous across shared mesh edges;
+    // curvature confidence bounds its tangent-plane extrapolation.
+    shadow_receiver_plane = m.geo_n;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
     // lies behind it
@@ -1386,8 +1415,10 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // Share this calculation across both lighting branches: duplicating its
     // wave/shadow code crashes Apple's Metal pipeline compiler.
     var caustic_light = vec3<f32>(0.0);
+    var sun_visibility = 1.0;
     if ((rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
         caustic_light = m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n);
+        sun_visibility = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
     }
     var col: vec3<f32>;
     let classic = is_classic_sky();
@@ -1399,7 +1430,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     } else if (classic) {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
         // softenLightF: scol = max(shadow, emissive)
-        let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
+        let sh = sun_visibility;
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         // softenLightF: (sun + sky + specular + environment + emissive) x
         // final_scale, then the local lights pass, then hazeF
@@ -1417,7 +1448,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         hazed = true;
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
-        let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
+        let sh = sun_visibility;
         // a sky with a probe ambiance: softenLightF's non-classic branch, a
         // face without a PBR material lit as a legacy one
         let legacy = (rec.flags.x & FLAG_PBR) == 0u;
