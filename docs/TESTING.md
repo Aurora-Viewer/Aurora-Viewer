@@ -2934,6 +2934,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit\|resync` | Animation loops, sequences, stops and synchronization after delayed loading, editing or Ctrl+S |
+| `AURORA_DEMO_PELVIS_CONSTRAINT=1` | An animation constraint carrying the avatar's body out of sight, 4 s out of 8 |
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns |
@@ -3509,6 +3510,12 @@ Passage / water-walk validation (2026-10-18): full `scripts/check.ps1` green, 3,
 Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, design-current, design-tabs, design-movement, design-section, design-swim.
 
 
+- **`AURORA_DEMO_PELVIS_CONSTRAINT=1`**: the plaza's avatars that play the
+  idle animation play a loop of 8 s with a pelvis constraint active from its
+  4th second: the bodies and what is worn on them leave the screen, the name
+  tags stay and the camera does not move; they are back at the next loop,
+  with no shadow or lighting left behind. Count the frames from the frame
+  rate when capturing (at 170 fps, a loop is about 1,360 frames).
 - **`AURORA_DEMO_ANIM_LOOP=1`**: loop whose first interval is missing,
   sequence changed every 120 frames, stop / restart at frames
   960 / 1020 every 1200 frames.
