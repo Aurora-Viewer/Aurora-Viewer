@@ -5,20 +5,21 @@
 use super::{OptionsResult, OptionsUi};
 use crate::theme::Palette;
 use crate::ui::widgets::{ActionKind, Modal, action_button, action_button_if, checkbox, radio};
-use crate::world::legacy_lists::{Counts, Parts};
+use crate::world::legacy_lists::{Folder, Parts};
 use aurora_i18n::tr;
 use egui::{RichText, Vec2};
-use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct State {
     pub open: bool,
     /// The account's folders and what each holds; None until the search
     /// answers.
-    pub found: Option<Vec<(PathBuf, Counts)>>,
+    pub found: Option<Vec<Folder>>,
     /// The folder to read.
     pub chosen: usize,
     pub parts: Parts,
+    /// A grid whose folders cannot be told apart (`Account::grid_known`).
+    pub other_grid: bool,
 }
 
 pub(super) fn modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mut OptionsResult, open: bool) {
@@ -42,16 +43,21 @@ pub(super) fn modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
             }
             Some(found) => {
                 state.chosen = state.chosen.min(found.len() - 1);
-                for (i, (dir, _)) in found.iter().enumerate() {
-                    let text = RichText::new(dir.display().to_string()).size(12.5).color(p.ink);
+                for (i, folder) in found.iter().enumerate() {
+                    let text = RichText::new(folder.dir.display().to_string()).size(12.5).color(p.ink);
                     if found.len() == 1 {
                         ui.label(text);
                     } else if radio(ui, p, state.chosen == i, text).clicked() {
                         state.chosen = i;
                     }
                 }
+                if state.other_grid {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(tr!("ui-options-legacy-lists-other-grid")).size(12.5).color(p.muted));
+                }
                 ui.add_space(6.0);
-                let counts = found[state.chosen].1;
+                let folder = &found[state.chosen];
+                let counts = folder.counts;
                 let parts = &mut state.parts;
                 let rows = [
                     (
@@ -80,6 +86,12 @@ pub(super) fn modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
                         checkbox(ui, p, on, RichText::new(label).size(12.5).color(p.ink));
                     });
                     ready |= *on && count > 0;
+                }
+                if !folder.unreadable.is_empty() {
+                    ui.add_space(6.0);
+                    let files = folder.unreadable.join(", ");
+                    let text = tr!("ui-options-legacy-lists-failed", files = files);
+                    ui.label(RichText::new(text).size(12.5).color(p.muted));
                 }
             }
         }

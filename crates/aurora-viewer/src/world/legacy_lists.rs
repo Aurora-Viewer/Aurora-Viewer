@@ -63,6 +63,21 @@ pub struct Found {
     pub lists: Lists,
 }
 
+/// A folder as the import window shows it.
+pub struct Folder {
+    pub dir: PathBuf,
+    pub counts: Counts,
+    /// Files in it that could not be read.
+    pub unreadable: Vec<&'static str>,
+}
+
+impl Found {
+    /// What the import window shows of it.
+    pub fn folder(&self) -> Folder {
+        Folder { dir: self.dir.clone(), counts: self.counts, unreadable: self.lists.unreadable.clone() }
+    }
+}
+
 /// What a Legacy Viewer's account folder holds.
 #[derive(Default)]
 pub struct Lists {

@@ -27,6 +27,7 @@ impl App {
             self.options_ui.legacy_lists.found = Some(Vec::new());
             return;
         };
+        self.options_ui.legacy_lists.other_grid = !account.grid_known() || mode() == Some(Mode::OtherGrid);
         let apps = self.world.chat_log.legacy_apps();
         let (tx, rx) = channel();
         self.legacy_lists.looking = Some(rx);
@@ -69,7 +70,7 @@ impl App {
             return;
         };
         self.legacy_lists.looking = None;
-        self.options_ui.legacy_lists.found = Some(found.iter().map(|f| (f.dir.clone(), f.counts)).collect());
+        self.options_ui.legacy_lists.found = Some(found.iter().map(Found::folder).collect());
         self.legacy_lists.found = found;
         if self.legacy_lists.demo_imports > 0 {
             self.legacy_lists.demo_imports -= 1;
@@ -111,7 +112,7 @@ impl App {
             }
         }
         self.legacy_lists.demo_imports = match mode {
-            Mode::Window | Mode::None => 0,
+            Mode::Window | Mode::None | Mode::Unreadable | Mode::OtherGrid => 0,
             Mode::Run => 1,
             Mode::Again => 2,
         };

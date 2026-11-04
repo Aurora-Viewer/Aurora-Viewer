@@ -13178,3 +13178,4 @@ ui-options-legacy-lists-imported = Ajouté ou mis à jour : { $teleports } histo
 ui-options-legacy-lists-nothing = Rien de nouveau : ce compte a déjà ces listes.
 ui-options-legacy-lists-not-saved = Impossible d'enregistrer les cercles.
 ui-options-legacy-lists-failed = Illisible : { $files }.
+ui-options-legacy-lists-other-grid = Sur cette grille, un dossier du même nom peut appartenir à une autre grille : vérifiez que c'est le bon.

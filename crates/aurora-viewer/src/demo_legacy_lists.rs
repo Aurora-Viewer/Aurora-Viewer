@@ -16,6 +16,10 @@ pub enum Mode {
     Again,
     /// No folder for the account.
     None,
+    /// The account's only list cannot be read.
+    Unreadable,
+    /// The window as on a grid whose folders cannot be told apart.
+    OtherGrid,
 }
 
 pub fn mode() -> Option<Mode> {
@@ -23,6 +27,8 @@ pub fn mode() -> Option<Mode> {
         "run" => Mode::Run,
         "again" => Mode::Again,
         "none" => Mode::None,
+        "unreadable" => Mode::Unreadable,
+        "other-grid" => Mode::OtherGrid,
         _ => Mode::Window,
     })
 }
@@ -41,6 +47,9 @@ pub fn seed(root: &Path, own_name: &str, mode: Mode, object: Option<Uuid>) -> st
     }
     let dir = root.join(own_name.to_lowercase().replace(' ', "_"));
     std::fs::create_dir_all(&dir)?;
+    if mode == Mode::Unreadable {
+        return std::fs::write(dir.join(filter::FILE), "not a list");
+    }
     std::fs::write(
         dir.join("teleport_history.txt"),
         "{'date':d\"2024-03-02T18:40:00Z\",'global_pos':[r256128,r256128,r22],'slurl':'','title':'The Old Pier, Harbor'}\n\

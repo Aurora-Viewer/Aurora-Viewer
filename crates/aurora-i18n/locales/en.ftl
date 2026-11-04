@@ -13182,3 +13182,4 @@ ui-options-legacy-lists-imported = Added or updated: { $teleports } teleport his
 ui-options-legacy-lists-nothing = Nothing new: this account already has these lists.
 ui-options-legacy-lists-not-saved = Could not save the contact sets.
 ui-options-legacy-lists-failed = Could not read: { $files }.
+ui-options-legacy-lists-other-grid = On this grid a folder of the same name can belong to another grid: check that it is the right one.
