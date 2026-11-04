@@ -1425,4 +1425,73 @@ mod tests {
             }
         }
     }
+
+    /// The sample mask route off Vulkan (spirv_fix gives the plain module
+    /// there): naga's HLSL (DX12) and MSL (Metal) writers take the scene
+    /// module's `fs_st_depth_mask` as `mask_module` makes it (the overrides
+    /// turned into constants), the coverage a scalar `SV_Coverage` /
+    /// `[[sample_mask]]` output, as those languages want it.
+    #[test]
+    fn the_mask_route_writes_hlsl_and_msl() {
+        let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+        let src = format!(
+            "{}{}\n{}\n{}",
+            enable_directive_with(true),
+            crate::COMMON_SHADER,
+            object_source_with(&object, true),
+            include_str!("shaders/env.wgsl")
+        );
+        let src = constants_for_overrides(&src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]);
+        let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
+        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
+        let entry = Some((naga::ShaderStage::Fragment, "fs_st_depth_mask".to_owned()));
+        // (wgpu sizes the bindless texture pages from the layout's count; the
+        // other resources take made-up registers)
+        let mut binding_map = naga::back::hlsl::BindingMap::default();
+        binding_map.insert(
+            naga::ResourceBinding { group: 2, binding: 0 },
+            naga::back::hlsl::BindTarget {
+                space: 2,
+                register: 0,
+                binding_array_size: Some(64),
+                ..Default::default()
+            },
+        );
+        let mut hlsl = String::new();
+        naga::back::hlsl::Writer::new(
+            &mut hlsl,
+            &naga::back::hlsl::Options {
+                // wgpu's DX12 backend compiles with DXC at 6.x (bindless)
+                shader_model: naga::back::hlsl::ShaderModel::V6_6,
+                binding_map,
+                fake_missing_bindings: true,
+                ..Default::default()
+            },
+            &naga::back::hlsl::PipelineOptions {
+                entry_point: entry.clone(),
+            },
+        )
+        .write(&module, &info, None)
+        .expect("HLSL");
+        let coverage: Vec<&str> = hlsl.lines().filter(|l| l.contains("SV_Coverage")).map(str::trim).collect();
+        assert_eq!(coverage.len(), 1, "{coverage:?}");
+        assert!(coverage[0].starts_with("uint "), "{coverage:?}");
+        let (msl, _) = naga::back::msl::write_string(
+            &module,
+            &info,
+            &naga::back::msl::Options {
+                lang_version: (2, 4),
+                ..Default::default()
+            },
+            &naga::back::msl::PipelineOptions {
+                entry_point: entry,
+                ..Default::default()
+            },
+        )
+        .expect("MSL");
+        assert_eq!(msl.matches("[[sample_mask]]").count(), 1);
+        assert!(msl.contains("uint mask [[sample_mask]]"));
+    }
 }
