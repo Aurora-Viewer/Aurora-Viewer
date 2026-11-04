@@ -1,7 +1,8 @@
 //! AURORA_DEMO_MASK_255=<alpha>: a texture whose alpha is <alpha> (250 to
 //! 254, 250 by default) on every texel, on two panels: left with no
 //! material, shown whole, and right with a Mask material of cutoff 255,
-//! which must hide it (#2276). The texture is a real `.j2c` in the disk
+//! which must hide it (#2276). With 255 the texture has no alpha channel
+//! and the Mask shows it whole. The texture is a real `.j2c` in the disk
 //! cache, so that it goes through the decode job and its BC7 encoding: the
 //! demo's procedural textures do not.
 
@@ -50,9 +51,10 @@ impl Mask255Demo {
     }
 }
 
-/// The alpha asked for; a value out of range is the default.
+/// The alpha asked for, 255 for no alpha channel; a value out of range is
+/// the default.
 fn parse(value: &str) -> u8 {
-    value.trim().parse().ok().filter(|a| (250..255).contains(a)).unwrap_or(250)
+    value.trim().parse().ok().filter(|a| (250..=255).contains(a)).unwrap_or(250)
 }
 
 /// The texture's `.j2c` in the disk cache, without its `.bc7` of a previous
@@ -72,7 +74,12 @@ fn write_texture(alpha: u8, cache_dir: &Path) {
             ]
         })
         .collect();
-    let file = match aurora_assets::j2k::encode_texture_j2k(SIDE, SIDE, 4, &picture, true) {
+    let (components, picture) = if alpha == 255 {
+        (3, picture.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect())
+    } else {
+        (4, picture)
+    };
+    let file = match aurora_assets::j2k::encode_texture_j2k(SIDE, SIDE, components, &picture, true) {
         Ok(file) => file,
         Err(e) => {
             log::warn!("demo mask 255: {e}");
@@ -120,10 +127,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_alpha_stays_just_under_opaque() {
+    fn the_alpha_is_just_under_opaque_or_opaque() {
         assert_eq!(parse("254"), 254);
         assert_eq!(parse(" 251 "), 251);
-        for other in ["1", "", "255", "249", "many"] {
+        assert_eq!(parse("255"), 255);
+        for other in ["1", "", "256", "249", "many"] {
             assert_eq!(parse(other), 250, "{other}");
         }
     }

@@ -31,7 +31,9 @@ const MAGIC: &[u8; 4] = b"AUTX";
 /// 4: retain the legacy pick mask and an exact alpha > 0 plane together.
 /// 5: textures classed opaque keep an alpha under 255 in their blocks
 /// (`bc7_keeps_alpha`): only their chains are decoded again ([`parse`]).
-const VERSION: u8 = 5;
+/// 6: chains without alpha decode at alpha 255; those of older files are
+/// sealed as they are read ([`read_for`]), not decoded again.
+const VERSION: u8 = 6;
 const KIND_KEEP_RGBA: u8 = 0;
 const KIND_BC7: u8 = 1;
 /// Fixed part of the header, then 8 bytes per level.
@@ -229,7 +231,12 @@ fn read_for(path: &Path, want: impl FnOnce(&[u8]) -> u8) -> Option<Transcoded> {
     let parsed = parse(&head, file_len, want(&head))?;
     match parsed {
         Parsed::KeepRgba => Some(Transcoded::KeepRgba),
-        Parsed::Bc7 { mut cached, mask, data } => {
+        Parsed::Bc7 {
+            mut cached,
+            mask,
+            data,
+            seal,
+        } => {
             if let Some((w, h, at, len)) = mask {
                 let mut bits = vec![0u8; len];
                 file.seek(SeekFrom::Start(at)).ok()?;
@@ -241,6 +248,9 @@ fn read_for(path: &Path, want: impl FnOnce(&[u8]) -> u8) -> Option<Transcoded> {
                 *blocks = vec![0u8; TexelFormat::Bc7.level_bytes(*w, *h) as usize];
                 file.read_exact(blocks).ok()?;
                 crate::disk_io::read(crate::disk_io::Origin::Textures, blocks.len());
+                if seal {
+                    aurora_render::bc7::seal_opaque(blocks);
+                }
             }
             // (least recently used files go first when the cache is full)
             crate::cache::touch(path);
@@ -258,13 +268,15 @@ enum Parsed {
         mask: Option<(u32, u32, u64, usize)>,
         /// Offset of the first level to read.
         data: u64,
+        /// An older chain without alpha: [`aurora_render::bc7::seal_opaque`].
+        seal: bool,
     },
 }
 
 /// The header checked against the length of the file, and where to read
 /// the levels from `want` on.
 fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
-    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3 | 4 | VERSION) {
+    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3..=VERSION) {
         return None;
     }
     let kind = head[5];
@@ -298,10 +310,11 @@ fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
         return None;
     }
     // Before version 5, a chain classed opaque was encoded without the alpha
-    // channel its texture may have. Only those are decoded again: the other
-    // chains are unchanged, and decoding a whole cache again is minutes of
-    // processor back in a busy region.
-    if head[4] < 5 && alpha == AlphaKind::Opaque && head[8] != 0 {
+    // channel its texture may have, and before 6 it could stay unsealed.
+    // Only those are decoded again: the other chains are unchanged, and
+    // decoding a whole cache again is minutes of processor back in a busy
+    // region.
+    if head[4] < VERSION && alpha == AlphaKind::Opaque && head[8] != 0 {
         return None;
     }
     let mut sizes = Vec::with_capacity(count);
@@ -340,6 +353,7 @@ fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
         },
         mask: (mlen > 0).then_some((mw, mh, mask_at, mlen)),
         data: first + sizes[..skip].iter().map(bytes).sum::<u64>(),
+        seal: head[4] < VERSION && alpha == AlphaKind::Opaque,
     })
 }
 
@@ -417,6 +431,32 @@ mod tests {
         };
         assert!(matches!(read(&old(&plain, "plain.bc7"), 0), Some(Transcoded::Bc7(_))));
         assert!(matches!(read(&old(&meta(0), "mask.bc7"), 0), Some(Transcoded::Bc7(_))));
+    }
+
+    #[test]
+    fn old_chains_without_alpha_are_sealed_as_they_are_read() {
+        // mode 6, in every block of the level
+        let levels = vec![(16, 8, [0x40u8].repeat(TexelFormat::Bc7.level_bytes(16, 8) as usize))];
+        let at = |meta: &Meta, version: u8, name: &str| {
+            let mut bytes = encode(meta, None, &levels).expect("file");
+            bytes[4] = version;
+            let Some(Transcoded::Bc7(c)) = read(&file(name, &bytes), 0) else {
+                panic!("a BC7 chain");
+            };
+            c.levels[0].2[..16].to_vec()
+        };
+        let opaque = Meta {
+            alpha: AlphaKind::Opaque,
+            alpha_channel: false,
+            ..meta(0)
+        };
+        for version in [3, 4, 5] {
+            let block = at(&opaque, version, &format!("sealed-old{version}.bc7"));
+            assert_eq!((block[6], block[7], block[8]), (0xfe, 0xff, 0x41), "{version}");
+        }
+        // a chain written now was sealed by the encoder, and an alpha stays
+        assert_eq!(at(&opaque, VERSION, "sealed-now.bc7"), [0x40; 16]);
+        assert_eq!(at(&meta(0), 5, "sealed-mask.bc7"), [0x40; 16]);
     }
 
     #[test]
