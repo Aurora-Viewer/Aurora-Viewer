@@ -856,6 +856,9 @@ pub struct Settings {
     pub log_show_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
     pub log_dated_names: bool,
+    /// Import the Legacy Viewer's transcripts at each login.
+    #[serde(default)]
+    pub log_import_at_login: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
@@ -1902,6 +1905,7 @@ impl Default for Settings {
             reopen_ims: false,
             log_show_history: true,
             log_dated_names: false,
+            log_import_at_login: false,
             warn_external_links: true,
             trusted_sites: Default::default(),
             mute_all_groups: false,
