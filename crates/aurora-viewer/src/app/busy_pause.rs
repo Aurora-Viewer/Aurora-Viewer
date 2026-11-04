@@ -77,10 +77,7 @@ impl App {
     pub(super) fn busy_pause_frame(&mut self, vr: bool) {
         let mut timed = self.capture.is_some() || self.frame_profile.enabled();
         let (mut behind, mut gpu_ms) = (!self.focused, self.last_render.gpu_ms);
-        if self.demo
-            && !self.busy_pause.demo_released
-            && demo_from().is_some_and(|from| self.frame_count >= from)
-        {
+        if self.demo && !self.busy_pause.demo_released && demo_from().is_some_and(|from| self.frame_count >= from) {
             (behind, gpu_ms, timed) = (true, Some(SLOW_MS * 2.0), false);
         }
         let allowed = self.settings.background_gpu_pause && !timed && !vr && !self.snapshots.drawing();
