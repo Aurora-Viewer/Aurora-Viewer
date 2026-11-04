@@ -2789,6 +2789,7 @@ impl App {
         self.moderation_ask = None;
         self.object_menu = Default::default();
         self.place_confirm = None;
+        self.places_ui.forget_question();
         self.url_confirm = None;
         self.inventory_ui = Default::default();
         self.contents_copies = Default::default();
