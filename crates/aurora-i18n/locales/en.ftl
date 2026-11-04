@@ -1,11 +1,11 @@
 language-name = English
 avatar-studio-title = Avatar Studio
-avatar-studio-input-left = Left drag
-avatar-studio-input-right = Right drag
-avatar-studio-input-middle = Middle drag
-avatar-studio-input-wheel = Scroll wheel
-avatar-studio-action-focus = Focus height
-avatar-studio-action-pan = Pan view
+avatar-studio-rotate-tip = Hold the left mouse button and drag to rotate around your avatar.
+avatar-studio-focus-tip = Hold the right mouse button and drag up or down to adjust the focus height.
+avatar-studio-pan-tip = Hold the middle mouse button and drag to pan the view.
+avatar-studio-zoom-tip = Scroll the mouse wheel to zoom in or out.
+avatar-studio-action-focus = Height
+avatar-studio-action-pan = Pan
 avatar-studio-action-zoom = Zoom
 avatar-studio-exit = Leave studio
 joystick-title = Joystick and 3D mouse

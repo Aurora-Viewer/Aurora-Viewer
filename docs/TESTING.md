@@ -8547,9 +8547,11 @@ Toggle quickly during either fade, press Escape during entry, and repeat
 at 30/120 FPS: no uncovered camera cut, stuck black frame or repeated burst.
 Avatar and attachment animations must continue, and HUD textures must retain
 their normal colours throughout the reveal. No worn material is modified.
-The controls overlay has a clear title/action row and four readable gesture
-hints in a two-row grid. Inspect English, French and Japanese: labels should
-align, remain readable at ordinary UI scale, and avoid the avatar's head.
+The controls overlay has a title/action row and four mouse diagrams with the
+relevant button highlighted, movement symbols and short captions. The wheel
+diagram also has scroll arrows. Hover each hint for the full instruction.
+Inspect English, French and Japanese: captions should align, remain readable
+at ordinary UI scale, and avoid the avatar's head.
 The water should reflect the sky; distant ridgelines stay near the horizon.
 `pedestal` lowers the focus to the feet and zooms in one wheel step for a
 repeatable close-up; capture at frame 850. Rounded upper/lower shoulders should catch

@@ -234,23 +234,30 @@ impl App {
         }
         let mut reset = false;
         egui::Area::new(egui::Id::unique("avatar_studio_controls"))
-            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
             .order(egui::Order::Middle)
             .show(ctx, |ui| {
                 crate::ui::widgets::overlay(ui, &self.palette, egui::Margin::same(10), |ui| {
                     let controls = [
-                        (aurora_i18n::tr!("avatar-studio-input-left"), aurora_i18n::tr!("common-rotate")),
                         (
-                            aurora_i18n::tr!("avatar-studio-input-right"),
+                            "rotate-360",
+                            aurora_i18n::tr!("common-rotate"),
+                            aurora_i18n::tr!("avatar-studio-rotate-tip"),
+                        ),
+                        (
+                            "arrows-vertical",
                             aurora_i18n::tr!("avatar-studio-action-focus"),
+                            aurora_i18n::tr!("avatar-studio-focus-tip"),
                         ),
                         (
-                            aurora_i18n::tr!("avatar-studio-input-middle"),
+                            "arrows-move",
                             aurora_i18n::tr!("avatar-studio-action-pan"),
+                            aurora_i18n::tr!("avatar-studio-pan-tip"),
                         ),
                         (
-                            aurora_i18n::tr!("avatar-studio-input-wheel"),
+                            "zoom-in-filled",
                             aurora_i18n::tr!("avatar-studio-action-zoom"),
+                            aurora_i18n::tr!("avatar-studio-zoom-tip"),
                         ),
                     ];
                     let font = egui::TextStyle::Body.resolve(ui.style());
@@ -260,13 +267,8 @@ impl App {
                             .size()
                             .x
                     };
-                    // Measure translated labels instead of shrinking the help
-                    // text or assuming English-sized columns.
-                    let grid_width = width(controls[0].0).max(width(controls[2].0))
-                        + width(controls[0].1).max(width(controls[2].1))
-                        + width(controls[1].0).max(width(controls[3].0))
-                        + width(controls[1].1).max(width(controls[3].1))
-                        + 36.0;
+                    let column_width = controls.iter().map(|(_, label, _)| width(label)).fold(60.0, f32::max);
+                    let legend_width = column_width * 4.0 + ui.spacing().item_spacing.x * 3.0;
                     let title = aurora_i18n::tr!("avatar-studio-title");
                     let reset_label = aurora_i18n::tr!("common-reset");
                     let exit_label = aurora_i18n::tr!("avatar-studio-exit");
@@ -276,7 +278,7 @@ impl App {
                         + ui.spacing().button_padding.x * 4.0
                         + ui.spacing().item_spacing.x * 3.0
                         + 16.0;
-                    ui.set_width(grid_width.max(header_width).min((ctx.content_rect().width() - 40.0).max(1.0)));
+                    ui.set_width(legend_width.max(header_width).min((ctx.content_rect().width() - 40.0).max(1.0)));
                     ui.horizontal(|ui| {
                         ui.strong(title);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -287,19 +289,18 @@ impl App {
                         });
                     });
                     ui.add_space(6.0);
-                    egui::Grid::new("avatar_studio_control_legend")
-                        .num_columns(4)
-                        .min_row_height(ui.text_style_height(&egui::TextStyle::Body))
-                        .spacing(egui::vec2(12.0, 4.0))
-                        .show(ui, |ui| {
-                            for (i, (gesture, action)) in controls.into_iter().enumerate() {
-                                ui.label(egui::RichText::new(gesture).color(self.palette.muted));
-                                ui.label(action);
-                                if i % 2 == 1 {
-                                    ui.end_row();
-                                }
-                            }
-                        });
+                    ui.columns(4, |columns| {
+                        for (i, (icon, label, tip)) in controls.into_iter().enumerate() {
+                            let response = columns[i]
+                                .vertical_centered(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(60.0, 32.0), egui::Sense::hover());
+                                    studio_mouse_hint(ui.painter(), rect, i, icon, &self.palette);
+                                    ui.label(label);
+                                })
+                                .response;
+                            response.on_hover_text(tip);
+                        }
+                    });
                 });
             });
         if reset {
@@ -308,4 +309,43 @@ impl App {
             self.avatar_studio.floor_offset = offset;
         }
     }
+}
+
+/// Button highlights reuse clipped Tabler masks, keeping the mouse silhouette
+/// and movement glyphs consistent with the viewer's camera controls.
+fn studio_mouse_hint(painter: &egui::Painter, rect: egui::Rect, button: usize, action: &str, p: &crate::theme::Palette) {
+    let mouse = egui::Rect::from_min_size(rect.min, egui::Vec2::splat(32.0));
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    let paint = |painter: &egui::Painter, name: &str, rect, tint| {
+        if let Some(texture) = crate::ui::icons::global(name) {
+            painter.image(texture.id(), rect, uv, tint);
+        }
+    };
+    let point = |x: f32, y: f32| mouse.min + mouse.size() * egui::vec2(x / 24.0, y / 24.0);
+    if button < 2 {
+        let (left, right) = if button == 0 { (5.0, 12.0) } else { (12.0, 19.0) };
+        let clip = egui::Rect::from_min_max(point(left, 2.0), point(right, 10.0));
+        paint(
+            &painter.with_clip_rect(clip.intersect(painter.clip_rect())),
+            "mouse-filled",
+            mouse,
+            p.violet_light,
+        );
+        paint(painter, "mouse-2", mouse, p.muted);
+    } else {
+        paint(painter, "mouse", mouse, p.muted);
+        let clip = egui::Rect::from_min_max(point(10.0, 6.0), point(14.0, 12.0));
+        paint(
+            &painter.with_clip_rect(clip.intersect(painter.clip_rect())),
+            "mouse",
+            mouse,
+            p.violet_light,
+        );
+        if button == 3 {
+            let scroll = egui::Rect::from_center_size(mouse.right_center() - egui::vec2(2.0, 0.0), egui::vec2(10.0, 22.0));
+            paint(painter, "arrows-vertical", scroll, p.violet_light);
+        }
+    }
+    let movement = egui::Rect::from_center_size(rect.right_center() - egui::vec2(10.0, 0.0), egui::Vec2::splat(20.0));
+    paint(painter, action, movement, p.ink);
 }
