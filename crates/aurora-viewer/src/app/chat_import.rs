@@ -50,7 +50,15 @@ impl App {
 
     /// A folder chosen by hand joins the list.
     pub(super) fn chat_import_chosen(&mut self, dir: PathBuf) {
-        self.look_for_chat_logs(Some(dir));
+        if self.options_ui.chat_import.open {
+            self.look_for_chat_logs(Some(dir));
+        }
+    }
+
+    /// The account is gone: what was found was found for it.
+    pub(super) fn chat_import_closed(&mut self) {
+        self.options_ui.chat_import = Default::default();
+        self.chat_import.looking.clear();
     }
 
     pub(super) fn chat_import_start(&mut self, folders: Vec<PathBuf>) {
@@ -61,10 +69,14 @@ impl App {
 
     /// Every frame: what was found, how far the import is, how it ended.
     pub(super) fn poll_chat_import(&mut self) {
-        let answers: Vec<_> = self.chat_import.looking.iter().filter_map(|rx| rx.try_recv().ok()).collect();
-        self.chat_import
-            .looking
-            .retain(|rx| !matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+        let mut answers = Vec::new();
+        self.chat_import.looking.retain(|rx| match rx.try_recv() {
+            Ok(found) => {
+                answers.push(found);
+                false
+            }
+            Err(e) => e == std::sync::mpsc::TryRecvError::Empty,
+        });
         for found in answers {
             let list = self.options_ui.chat_import.found.get_or_insert_default();
             for f in found {

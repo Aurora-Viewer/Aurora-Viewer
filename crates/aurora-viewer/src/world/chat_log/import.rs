@@ -16,7 +16,7 @@ use super::{format, names, store};
 pub use crate::legacy_profile::Account;
 use crate::legacy_profile::account_folders;
 use crossbeam_channel::{Receiver, Sender};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -139,7 +139,7 @@ fn is_transcript(path: &Path) -> bool {
 
 /// A file's name without the date of LogFileNamewithDate, which only says
 /// how the viewer cut the conversation: `chat-2026-10-12`, `Jane Doe-2026-10`.
-fn undated(stem: &str) -> &str {
+pub fn undated(stem: &str) -> &str {
     let date = |s: &str, pattern: &str| {
         s.bytes()
             .zip(pattern.bytes())
@@ -450,15 +450,18 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
         .collect();
     total.store(plan.len(), Ordering::Relaxed);
     let mut state = load_state(&request.state);
+    // files a source of this run creates: the others meant for them are due
+    let missing: HashSet<PathBuf> = plan.iter().map(|(_, target)| target).filter(|t| !t.is_file()).cloned().collect();
     let mut out = Report::default();
     let mut first_error = None;
     for (source, target) in plan {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let key = source.to_string_lossy().into_owned();
+        // with its target: Dated files moves where a source goes
+        let key = format!("{}\n{}", source.display(), target.display());
         let seen = signature(&source);
-        if request.skip_unchanged && seen.is_some() && state.get(&key) == seen.as_ref() && target.is_file() {
+        if request.skip_unchanged && seen.is_some() && state.get(&key) == seen.as_ref() && !missing.contains(&target) {
             done.fetch_add(1, Ordering::Relaxed);
             continue;
         }
@@ -628,6 +631,39 @@ mod tests {
         assert_eq!(target("Jane-2026-10.txt", false), Path::new("d/Jane.txt"));
         assert_eq!(target("Jane-2026-10.txt", true), Path::new("d/Jane-2026-10.txt"));
         assert_eq!(target("Jane.txt", true), Path::new("d/Jane.txt"));
+    }
+
+    /// Runs an import of `from` at login to its end.
+    fn import_at_login(from: &Path, to: &Path, dated: bool) -> Report {
+        let worker = store::Worker::start().unwrap();
+        let request = Request {
+            sources: Sources::Folders(vec![from.to_path_buf()]),
+            dir: to.to_path_buf(),
+            dated,
+            state: to.join("state.json"),
+            skip_unchanged: true,
+        };
+        let running = start(worker.merge_port(), request).unwrap();
+        running.report.recv().unwrap()
+    }
+
+    #[test]
+    fn at_login_a_source_is_read_again_when_its_target_is_not_the_same() {
+        let (from, to) = (temp(), temp());
+        let line = |day| format!("[2026/10/{day:02} 12:00]  Jane Doe: hello {day}\n");
+        std::fs::write(from.join("Bob-2026-09.txt"), line(1)).unwrap();
+        std::fs::write(from.join("Bob-2026-10.txt"), line(2)).unwrap();
+
+        assert_eq!(import_at_login(&from, &to, true).added, 2);
+        assert_eq!(import_at_login(&from, &to, true).added, 0);
+        // Dated files turned off: both join Bob.txt
+        assert_eq!(import_at_login(&from, &to, false).added, 2);
+        assert_eq!(import_at_login(&from, &to, false).added, 0);
+        // the file deleted: the first source to create it does not end the run
+        std::fs::remove_file(to.join("Bob.txt")).unwrap();
+        assert_eq!(import_at_login(&from, &to, false).added, 2);
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
     }
 
     #[test]
