@@ -502,8 +502,12 @@ impl WearableFavoritesUi {
     }
 
     fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, out: &mut Vec<FavoritesAction>) {
-        ui.horizontal(|ui| {
-            if favorites::legacy_root(&world.inventory).is_some() {
+        // above the button: a refusal is read whole, whatever the window's width
+        if !self.message.is_empty() {
+            ui.add(egui::Label::new(RichText::new(&self.message).size(12.0).color(p.muted)).wrap());
+        }
+        if favorites::legacy_root(&world.inventory).is_some() {
+            ui.horizontal(|ui| {
                 let free = self.pending.is_none();
                 let sync = widgets::action_button_if(
                     ui,
@@ -518,11 +522,8 @@ impl WearableFavoritesUi {
                 if sync.clicked() {
                     self.sync(world, out);
                 }
-            }
-            if !self.message.is_empty() {
-                ui.add(egui::Label::new(RichText::new(&self.message).size(12.0).color(p.muted)).truncate());
-            }
-        });
+            });
+        }
     }
 
     /// The Sync button: nothing to add says so, without a change.
