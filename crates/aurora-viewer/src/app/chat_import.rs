@@ -145,5 +145,9 @@ fn import_status(report: &import::Report) -> String {
         text.push(' ');
         text.push_str(&tr!("ui-options-chat-logs-import-failed", count = report.failed));
     }
+    if report.left_out > 0 {
+        text.push(' ');
+        text.push_str(&tr!("ui-options-chat-logs-import-left-out", count = report.left_out));
+    }
     text
 }

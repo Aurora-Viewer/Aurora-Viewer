@@ -9104,6 +9104,10 @@ ui-options-chat-logs-import-failed = { $count ->
     [one] { $count } file could not be imported and was left as it was: import again to retry.
    *[other] { $count } files could not be imported and were left as they were: import again to retry.
     }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] { $count } text file has no timestamps and was left out: it may be a conversation logged without them.
+   *[other] { $count } text files have no timestamps and were left out: they may be conversations logged without them.
+    }
 ui-chat-filter-conversation = Filter the conversation (Ctrl+F: find)
 ui-chat-filter = Filter…
 ui-chat-find = Find in this conversation…

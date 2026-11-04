@@ -194,6 +194,8 @@ pub fn seed_legacy(root: &Path, own_name: &str, stage: ImportStage) -> std::io::
         line(day * 3, &peer, s[0]) + &line(day * 2, own_name, s[1]),
     )?;
     std::fs::write(dir.join("chat-2026-10-12.txt"), line(day * 9, &peer, s[2]))?;
+    // told in the result line, not imported
+    std::fs::write(dir.join("Old Friend.txt"), format!("{}: {}\n", peer, s[3]))?;
     std::fs::write(dir.join("search_history.txt"), "<llsd><array /></llsd>\n")
 }
 

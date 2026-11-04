@@ -109,32 +109,62 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// settings folder on the viewer's side, which has text files that are not
 /// transcripts (search_history.txt, teleport_history.txt…).
 pub fn transcripts(dir: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case(names::EXTENSION)) && is_transcript(p))
-        .collect();
+    let mut files: Vec<PathBuf> = text_files(dir).filter(|p| kind(p) == Kind::Transcript).collect();
     files.sort();
     files
 }
 
-/// LLLogChat::isTranscriptFileFound: the first line starts with a timestamp;
-/// the nearby chat's file always counts.
-fn is_transcript(path: &Path) -> bool {
+/// The folder's files that may be conversations but carry no timestamp.
+fn left_out(dir: &Path) -> usize {
+    text_files(dir).filter(|p| kind(p) == Kind::NoStamp).count()
+}
+
+fn text_files(dir: &Path) -> impl Iterator<Item = PathBuf> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case(names::EXTENSION)))
+}
+
+/// What a text file of a Legacy Viewer's folder is to the import.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Transcript,
+    /// Text without a timestamp, or a file that cannot be read: told in the
+    /// report, as a conversation logged with LogTimestamp off looks like this.
+    NoStamp,
+    Other,
+}
+
+/// LLLogChat::isTranscriptFileFound asks for a timestamp on the first line,
+/// to offer a history panel; here it would drop a whole conversation that
+/// began without one, so any line of the head will do. The nearby chat's
+/// file always counts.
+fn kind(path: &Path) -> Kind {
     use std::io::Read;
     if !path.is_file() {
-        return false;
+        return Kind::Other;
     }
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     if undated(stem) == names::NEARBY {
-        return true;
+        return Kind::Transcript;
     }
     let mut head = Vec::with_capacity(64);
-    let read = std::fs::File::open(path).and_then(|f| f.take(store::LOG_RECALL_SIZE).read_to_end(&mut head));
+    if std::fs::File::open(path).and_then(|f| f.take(store::LOG_RECALL_SIZE).read_to_end(&mut head)).is_err() {
+        return Kind::NoStamp;
+    }
     let head = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&head);
-    read.is_ok() && format::starts_with_stamp(&String::from_utf8_lossy(head))
+    let head = String::from_utf8_lossy(head);
+    if head.lines().any(format::starts_with_stamp) {
+        return Kind::Transcript;
+    }
+    // the settings files in that folder are LLSD
+    match head.trim_start().chars().next() {
+        None | Some('<' | '{') => Kind::Other,
+        Some(_) => Kind::NoStamp,
+    }
 }
 
 /// A file's name without the date of LogFileNamewithDate, which only says
@@ -395,6 +425,8 @@ pub struct Report {
     pub changed: BTreeSet<String>,
     /// Files that could not be merged; they stay as they were.
     pub failed: usize,
+    /// Text files without any timestamp, not imported.
+    pub left_out: usize,
 }
 
 /// An import under way.
@@ -471,6 +503,7 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
             .collect(),
     };
     let sources: Vec<PathBuf> = folders.iter().flat_map(|folder| transcripts(folder)).collect();
+    let left_out = folders.iter().map(|folder| left_out(folder)).sum();
     let spelled = spellings(&request.dir, &sources);
     let plan: Vec<(PathBuf, PathBuf)> = sources
         .into_iter()
@@ -481,7 +514,10 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
     let mut state = load_state(&request.state);
     // files a source of this run creates: the others meant for them are due
     let missing: HashSet<PathBuf> = plan.iter().map(|(_, target)| target).filter(|t| !t.is_file()).cloned().collect();
-    let mut out = Report::default();
+    let mut out = Report {
+        left_out,
+        ..Report::default()
+    };
     let mut first_error = None;
     for (source, target) in plan {
         if cancel.load(Ordering::Relaxed) {
@@ -520,10 +556,11 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
     // no folder or file name: they are names of residents and groups, and
     // the viewer's log may be shared
     log::info!(
-        "conversation transcripts: import added {} messages to {} files, {} failed{}",
+        "conversation transcripts: import added {} messages to {} files, {} failed, {} left out{}",
         out.added,
         out.changed.len(),
         out.failed,
+        out.left_out,
         first_error.map_or(String::new(), |e| format!(" ({e})"))
     );
     let _ = report.send(out);
@@ -618,6 +655,25 @@ mod tests {
         let found = inspect_chosen(&root, &account("agni"), Path::new("elsewhere"));
         assert_eq!((found.dir, found.files), (inner, 1));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_stamp_on_a_later_line_is_a_transcript() {
+        let dir = temp();
+        std::fs::write(dir.join("Blank.txt"), "\n[2026/10/12 14:05]  Bob: hi\n").unwrap();
+        std::fs::write(dir.join("Late.txt"), "no stamp yet\r\n[2026/10/12 14:05]  Bob: hi\r\n").unwrap();
+        std::fs::write(dir.join("None.txt"), "Bob: no stamp at all\n").unwrap();
+        std::fs::write(dir.join("search_history.txt"), "<llsd><array /></llsd>\n").unwrap();
+        std::fs::write(dir.join("teleport_history.txt"), "{\"a\":1}\n").unwrap();
+        std::fs::write(dir.join("empty.txt"), "").unwrap();
+        let names: Vec<String> = transcripts(&dir)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["Blank.txt", "Late.txt"]);
+        // only what may be a conversation is told: not the settings files
+        assert_eq!(left_out(&dir), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
