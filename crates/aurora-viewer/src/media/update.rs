@@ -194,6 +194,16 @@ impl MediaManager {
                 .is_some_and(|te| local.is_some() || te.faces.iter().any(|f| f.media_flags & 1 != 0));
         if !has_media {
             if let Some(e) = self.objects.remove(&o.full_id) {
+                log::info!(
+                    "media: {} has no media face any more ({}, hud {})",
+                    o.full_id,
+                    if o.te.is_some() {
+                        "texture entry without media"
+                    } else {
+                        "no texture entry"
+                    },
+                    e.hud
+                );
                 forget_slot(&mut self.slot_ids, e.idx, &o.full_id);
             }
             forget_slot(&mut self.slot_ids, idx, &o.full_id);
@@ -227,10 +237,12 @@ impl MediaManager {
             (Some(have), Some(v)) => v > have,
             (Some(_), None) => false,
         };
-        if need
-            && !self.client.is_queued(&o.full_id)
-            && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
-        {
+        if need && self.client.is_queued(&o.full_id) {
+            // queued before its avatar was known: ours goes first now
+            if e.hud || e.on_own_avatar {
+                self.client.prioritize(&o.full_id);
+            }
+        } else if need && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia")) {
             e.requested_version = version;
             self.client.request(o.full_id, cap, e.hud || e.on_own_avatar);
         }

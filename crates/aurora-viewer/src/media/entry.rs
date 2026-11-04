@@ -289,6 +289,14 @@ impl MediaDataClient {
         });
     }
 
+    /// A queued request turns out to be ours (its avatar arrived after it
+    /// was queued): it goes first.
+    pub fn prioritize(&mut self, object: &Uuid) {
+        if let Some(p) = self.queue.iter_mut().find(|p| p.object == *object) {
+            p.first = true;
+        }
+    }
+
     pub fn clear(&mut self) {
         self.queue.clear();
         self.queued.clear();
@@ -410,6 +418,10 @@ mod tests {
         assert!(client.queue.iter().all(|p| p.object != Uuid::from_u128(3)), "our HUD goes first");
         client.update(rt.handle(), &http);
         assert_eq!(client.queue.len(), 2, "the next waits for PrimMediaRequestQueueDelay");
+        // a request queued before its avatar was known goes first once it is
+        client.request(Uuid::from_u128(4), "http://127.0.0.1:9/media", false);
+        client.prioritize(&Uuid::from_u128(4));
+        assert!(client.queue.iter().any(|p| p.object == Uuid::from_u128(4) && p.first));
     }
 
     #[test]
