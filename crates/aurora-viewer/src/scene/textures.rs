@@ -1383,13 +1383,26 @@ impl TextureStreamer {
         }
     }
 
-    /// The texture has see-through pixels (None until it is decoded): the
-    /// build floater's "Alpha mode" is only offered then.
+    /// The texture has see-through pixels (None until it is decoded).
     pub fn has_alpha(&self, id: &Uuid) -> Option<bool> {
         if !self.is_loaded(id) {
             return None;
         }
         Some(self.entries.get(id)?.alpha != AlphaKind::Opaque)
+    }
+
+    /// The texture has an alpha channel, whatever its texels hold (None until
+    /// it is decoded): the build floater's "Alpha mode" is offered then, and
+    /// a face without a material defaults to Alpha blending, as
+    /// LLPanelFace::LLSelectedTE::getImageFormat reads the image format. A
+    /// channel of flat alpha 250-254 or 255 is still classed opaque for the
+    /// render passes, `has_alpha`.
+    pub fn has_alpha_channel(&self, id: &Uuid) -> Option<bool> {
+        if !self.is_loaded(id) {
+            return None;
+        }
+        let slot = self.entries.get(id)?.slot as usize;
+        Some(self.alpha_channel_by_slot.get(slot).copied().unwrap_or(false))
     }
 
     pub fn describe(&self, id: &Uuid) -> String {
@@ -4284,6 +4297,24 @@ mod tests {
         assert_eq!(s.pressure.step(), step);
         s.entries.extend(entries.into_iter().map(|(id, e)| (Uuid::from_u128(id), e)));
         s
+    }
+
+    /// Alpha mode follows the format, the passes follow the texels: flat
+    /// alpha 250-254 is an alpha channel classed opaque.
+    #[test]
+    fn an_alpha_channel_of_opaque_texels_is_an_alpha_channel() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let (id, slot) = (Uuid::from_u128(1), entry(None, 0.0).slot as usize);
+        s.alpha_channel_by_slot = vec![false; slot + 1];
+        s.entries.insert(id, entry(None, 0.0));
+        assert_eq!(s.has_alpha_channel(&id), None, "not decoded yet");
+        s.entries.insert(id, entry(Some(0), 0.0));
+        assert_eq!(s.has_alpha_channel(&id), Some(false), "RGB");
+        s.alpha_channel_by_slot[slot] = true;
+        assert_eq!(s.entries[&id].alpha, AlphaKind::Opaque);
+        assert_eq!(s.has_alpha_channel(&id), Some(true), "RGBA, opaque texels");
+        assert_eq!(s.has_alpha(&id), Some(false));
+        assert_eq!(s.has_alpha_channel(&Uuid::from_u128(2)), None, "unknown");
     }
 
     #[test]
