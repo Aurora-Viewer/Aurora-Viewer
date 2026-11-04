@@ -4234,7 +4234,9 @@ physics once from the final constrained pose, within the parallel pose jobs.
 
 Avatar Studio (`avatar_studio.rs`, `app/avatar_studio.rs`,
 `scene/avatar_studio.rs`) is a session-local dressing-room presentation,
-toggled by the configurable `avatar_studio` toolbar command. Left-drag orbits;
+toggled by the configurable `avatar_studio` toolbar command or the wolf menu's
+Build > Avatar Studio entry, before Poser and IK Edit. Both share the same
+toggle and active indication. Left-drag orbits;
 right-drag moves a bounded focus along the avatar's vertical centre line.
 The wheel changes distance to that focus independently of pointer position.
 Focus height and distance ease towards their targets with a frame-rate
