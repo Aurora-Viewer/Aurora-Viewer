@@ -28,6 +28,7 @@ const GAP: f32 = 8.0;
 const TEXT: f32 = 13.0;
 
 /// The lines of one sender in a row (a notice is a group of its own).
+#[cfg(test)]
 pub(super) fn groups<'a>(lines: &[&'a ChatLine]) -> Vec<Vec<&'a ChatLine>> {
     let mut out: Vec<Vec<&'a ChatLine>> = Vec::new();
     for &line in lines {
@@ -35,6 +36,31 @@ pub(super) fn groups<'a>(lines: &[&'a ChatLine]) -> Vec<Vec<&'a ChatLine>> {
             Some(group) if same_sender(group[group.len() - 1], line) => group.push(line),
             _ => out.push(vec![line]),
         }
+    }
+    out
+}
+
+/// Keep the latest six sender cards as stable layout slots. Repeated lines
+/// from one sender must not evict the older cards before their fade finishes.
+fn recent_groups<'a>(lines: impl DoubleEndedIterator<Item = &'a ChatLine>, residents: bool) -> Vec<Vec<&'a ChatLine>> {
+    let mut out: Vec<Vec<&ChatLine>> = Vec::new();
+    for line in lines.rev().filter(|line| residents || !super::said_by_resident(line)) {
+        if let Some(group) = out.last_mut()
+            && same_sender(group[group.len() - 1], line)
+        {
+            if group.len() < 6 {
+                group.push(line);
+            }
+            continue;
+        }
+        if out.len() == 6 {
+            break;
+        }
+        out.push(vec![line]);
+    }
+    out.reverse();
+    for group in &mut out {
+        group.reverse();
     }
     out
 }
@@ -91,20 +117,16 @@ pub(super) fn cards(
     times: bool,
     compact_automated: bool,
     residents: bool,
+    now: std::time::SystemTime,
 ) {
-    let now = std::time::SystemTime::now();
-    let mut recent: Vec<&ChatLine> = world
-        .chat
+    let recent = recent_groups(world.chat.iter(), residents);
+    if !recent
         .iter()
-        .rev()
-        .filter(|l| residents || !super::said_by_resident(l))
-        .take(6)
-        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
-        .collect();
-    if recent.is_empty() {
+        .flatten()
+        .any(|line| now.duration_since(line.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
+    {
         return;
     }
-    recent.reverse();
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
     egui::Area::new(egui::Id::unique("chat_toasts"))
@@ -117,12 +139,21 @@ pub(super) fn cards(
         .show(ctx, |ui| {
             ui.set_max_width(WIDTH);
             ui.spacing_mut().item_spacing.y = 0.0;
-            for group in groups(&recent) {
+            for group in &recent {
                 let card_alpha = group.iter().map(|l| alpha(seconds, l, now)).fold(0.0_f32, f32::max);
                 let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * card_alpha) as u8);
                 let radius = ui.visuals().window_corner_radius;
                 let glass = p.panel_alpha < 255;
                 let mut slot = None;
+                let mut ghost_names = HashSet::new();
+                let mut ghost_pics = HashSet::new();
+                let mut ghost_links = Vec::new();
+                let mut ghost_sender_names = Vec::new();
+                let (name_requests, picture_requests, click_links, sender_names) = if card_alpha > 0.0 {
+                    (&mut *want_names, &mut *wanted_pics, &mut links, &mut names)
+                } else {
+                    (&mut ghost_names, &mut ghost_pics, &mut ghost_links, &mut ghost_sender_names)
+                };
                 let small = super::object_row::compact(group[0], compact_automated);
                 let card = egui::Frame::new()
                     .fill(if glass { Color32::TRANSPARENT } else { tint })
@@ -137,7 +168,17 @@ pub(super) fn cards(
                         ui.multiply_opacity(card_alpha);
                         if small {
                             compact_card(
-                                ui, p, world, want_names, &group, seconds, now, card_alpha, times, &mut links, &mut names,
+                                ui,
+                                p,
+                                world,
+                                name_requests,
+                                group,
+                                seconds,
+                                now,
+                                card_alpha,
+                                times,
+                                click_links,
+                                sender_names,
                             );
                             return;
                         }
@@ -146,15 +187,15 @@ pub(super) fn cards(
                             p,
                             world,
                             pics,
-                            want_names,
-                            wanted_pics,
-                            &group,
+                            name_requests,
+                            picture_requests,
+                            group,
                             seconds,
                             now,
                             card_alpha,
                             times,
-                            &mut links,
-                            &mut names,
+                            click_links,
+                            sender_names,
                         );
                     });
                 if glass && let Some(slot) = slot {
@@ -276,6 +317,10 @@ fn compact_card<'a>(
     ui.spacing_mut().item_spacing.y = 1.0;
     for &line in group {
         let fade = alpha(seconds, line, now) / card_alpha.max(0.01);
+        let mut ghost_names = HashSet::new();
+        let name_requests = if fade > 0.0 { &mut *want_names } else { &mut ghost_names };
+        let mut ghost_links = Vec::new();
+        let click_links = if fade > 0.0 { &mut *links } else { &mut ghost_links };
         // the time before the line, set on its baseline (in the line's job,
         // a smaller section sits on the bottom of the row, lower)
         let time = times.then(|| super::object_row::time_galley(ui.painter(), p, line));
@@ -296,7 +341,7 @@ fn compact_card<'a>(
             line,
             p,
             world,
-            want_names,
+            name_requests,
             WIDTH - 18.0 - lead,
             size,
             false,
@@ -328,7 +373,8 @@ fn compact_card<'a>(
             let (glyph, tint) = super::object_row::object_glyph(line, p, p.muted_dim);
             thread::paint_icon(&painter, glyph, r.shrink(1.0), tint);
         }
-        if let Some(range) = name
+        if fade > 0.0
+            && let Some(range) = name
             && let Some(r) = visual.range_rects(origin, range).first().copied()
         {
             names.push((r, line));
@@ -336,7 +382,7 @@ fn compact_card<'a>(
         let col = crate::ui::colors::keyword_color(line)
             .unwrap_or_else(|| super::object_row::text_color(line, p))
             .gamma_multiply(fade);
-        line_extras(ui, p, world, &visual, origin, size, fade, badges, line_links, col, links);
+        line_extras(ui, p, world, &visual, origin, size, fade, badges, line_links, col, click_links);
     }
 }
 
@@ -388,6 +434,10 @@ fn body(
     fade: f32,
     links: &mut Vec<(egui::Rect, Link, Color32)>,
 ) {
+    let mut ghost_names = HashSet::new();
+    let name_requests = if fade > 0.0 { &mut *want_names } else { &mut ghost_names };
+    let mut ghost_links = Vec::new();
+    let click_links = if fade > 0.0 { &mut *links } else { &mut ghost_links };
     let size = chat_size(ui.ctx(), TEXT);
     let BubbleJob {
         job,
@@ -395,7 +445,7 @@ fn body(
         badges,
         name,
         ..
-    } = line_job(ui.ctx(), line, p, world, want_names, width, size, false, JobLook::Body);
+    } = line_job(ui.ctx(), line, p, world, name_requests, width, size, false, JobLook::Body);
     let base = super::bidi_base(&name, &line.from);
     let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
     let galley = visual.galley.clone();
@@ -404,7 +454,7 @@ fn body(
     painter.multiply_opacity(fade);
     painter.galley(rect.min, galley.clone(), p.ink);
     let col = super::message_color(line, p, world).gamma_multiply(fade);
-    line_extras(ui, p, world, &visual, rect.min, size, fade, badges, line_links, col, links);
+    line_extras(ui, p, world, &visual, rect.min, size, fade, badges, line_links, col, click_links);
 }
 
 #[cfg(test)]
@@ -437,6 +487,99 @@ mod tests {
         let lines = [&a1, &a2, &b, &notice, &object, &a3];
         let sizes: Vec<usize> = groups(&lines).iter().map(Vec::len).collect();
         assert_eq!(sizes, vec![2, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn chat_cards_keep_their_positions_when_repeated_lines_arrive_and_an_older_card_expires() {
+        let base = std::time::UNIX_EPOCH + std::time::Duration::from_secs(10_000);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let line = |from: &str, source: u128, text: &str, age: u64| ChatLine {
+            time: base - std::time::Duration::from_secs(age),
+            from: from.into(),
+            text: text.into(),
+            kind: ChatKind::Local(ChatType::Normal),
+            source: uuid::Uuid::from_u128(source),
+            origin: crate::world::Origin::Live,
+        };
+        world.chat.extend([
+            line("First", 1, "Toast first unique", 19),
+            line("Second", 2, "Toast second unique", 10),
+            line("Third", 3, "Toast third unique", 5),
+        ]);
+        world
+            .chat
+            .extend((0..6).map(|index| line("Newest", 4, &format!("Toast incoming {index}"), 5 - index)));
+
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        let frame = |now, time| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    cards(
+                        ui.ctx(),
+                        &p,
+                        &world,
+                        &HashMap::new(),
+                        &mut HashSet::new(),
+                        &mut HashSet::new(),
+                        740.0,
+                        20.0,
+                        false,
+                        false,
+                        true,
+                        now,
+                    )
+                },
+            );
+            out.textures_delta.clear();
+            let positions = out
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text().starts_with("Toast ") => {
+                        Some((text.galley.text().to_owned(), text.pos.y))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let area = ctx.memory(|memory| memory.area_rect(egui::Id::unique("chat_toasts")));
+            (positions, area)
+        };
+
+        let _ = frame(base, 0.0);
+        let _ = frame(base, 0.016);
+        let _ = frame(base, 0.032);
+        let before_expiration = frame(base, 0.048);
+        let after_expiration = base + std::time::Duration::from_secs(2);
+        let first_frame = frame(after_expiration, 1.0);
+        let settled_frame = frame(after_expiration, 1.016);
+
+        for surviving in ["Toast second unique", "Toast third unique"] {
+            let y = |positions: &[(String, f32)]| {
+                positions
+                    .iter()
+                    .find(|(text, _)| text.contains(surviving))
+                    .map(|(_, y)| *y)
+                    .expect("the toast remains visible")
+            };
+            let before = y(&before_expiration.0);
+            let after = y(&first_frame.0);
+            let settled = y(&settled_frame.0);
+            assert!(
+                (before - after).abs() < 0.5 && (before - settled).abs() < 0.5,
+                "{surviving} moved from y={before} to y={after}, then y={settled} as the older card expired; areas {:?}, {:?}, {:?}",
+                before_expiration.1,
+                first_frame.1,
+                settled_frame.1
+            );
+        }
     }
 
     /// The human's report of 2026-10-24: above the chat bar, the time of an
@@ -494,6 +637,7 @@ mod tests {
                                 true,
                                 true,
                                 true,
+                                std::time::SystemTime::now(),
                             )
                         },
                     )
@@ -625,6 +769,7 @@ mod tests {
                         false,
                         false,
                         true,
+                        std::time::SystemTime::now(),
                     )
                 },
             );
