@@ -644,7 +644,8 @@ impl LandUi {
             r.info.as_ref().map(|i| RegionView {
                 name: i.name.clone(),
                 owner: i.owner,
-                estate_manager: i.is_estate_manager,
+                // LLViewerRegion::canManageEstate counts a god
+                estate_manager: i.is_estate_manager || world.god_level > 0,
                 product: i.product_name.clone(),
                 sim_access: i.sim_access,
                 flags: i.region_flags,

@@ -102,14 +102,16 @@ impl App {
                 .is_some_and(|r| r.caps.contains_key("ExtEnvironment"))
     }
 
-    /// LLAgent::canManageEstate (we are never godlike): an estate manager or
-    /// the region's owner.
+    /// LLViewerRegion::canManageEstate: a god, an estate manager or the
+    /// region's owner.
     pub(super) fn can_manage_estate(&self) -> bool {
-        self.world
-            .main_region
-            .and_then(|h| self.world.regions.get(&h))
-            .and_then(|r| r.info.as_ref())
-            .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
+        self.world.god_level > 0
+            || self
+                .world
+                .main_region
+                .and_then(|h| self.world.regions.get(&h))
+                .and_then(|r| r.info.as_ref())
+                .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
     }
 
     /// LLViewerParcelMgr::getAgentOrSelectedParcel: About Land's selection,

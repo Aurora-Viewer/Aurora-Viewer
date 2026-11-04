@@ -104,7 +104,8 @@ impl World {
             .find(|p| in_parcel(&p.bitmap, origin, global));
         Some(Place {
             region_owner: info.owner,
-            estate_manager: info.is_estate_manager,
+            // LLViewerRegion::canManageEstate counts a god
+            estate_manager: info.is_estate_manager || self.god_level > 0,
             overlay,
             parcel,
         })
