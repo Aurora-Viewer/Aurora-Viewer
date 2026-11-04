@@ -4062,6 +4062,11 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
     }
 }
 
+/// AURORA_DEMO_TP_NO_ARRIVAL=1: the region never confirms a demo teleport.
+pub fn tp_no_arrival() -> bool {
+    std::env::var_os("AURORA_DEMO_TP_NO_ARRIVAL").is_some()
+}
+
 pub fn friend_join_scenario() -> bool {
     std::env::var("AURORA_DEMO_FRIEND_LOCATION").is_ok_and(|m| {
         matches!(
