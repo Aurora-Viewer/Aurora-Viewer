@@ -28,8 +28,20 @@
 //! when it changes itself, or an object between it and its point, and when
 //! the detail level check comes round.
 //!
-//! Left to the sync as before: HUD attachments, flexible prims, objects
-//! that move by themselves (spin) and what is linked below those.
+//! An object that moves by itself (a spin, llTargetOmega, or a velocity the
+//! simulator reported: `motion.rs` extrapolates it) has an anchor of its
+//! own, a **mover**: one matrix in a palette slot of movers (256 each,
+//! never a skeleton's), written at each frame with the object's place.
+//! The object and what is linked below it are placed relative to it, as
+//! a worn prim is to its point: on Agni a busy region had 380 to 450 of
+//! them and their prims placed again and their records sent at each
+//! frame. The sync still visits what moves by itself below them (a child
+//! that spins too has its own mover, a flexible prim, a seated avatar).
+//! `AURORA_MOVING_ANCHORS=0` leaves them to the sync, `alt` alternates.
+//!
+//! Left to the sync as before: HUD attachments, flexible prims, and what
+//! only moves for a while (the fading correction of a report, a seat being
+//! damped) with what is linked below it.
 //!
 //! The CPU still wants to know where these objects are (blended faces to
 //! sort, hover, lights, impostors): their centre is recomputed from the
@@ -64,12 +76,73 @@ use uuid::Uuid;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnchorRef {
     /// Owner of the palette (object index): the wearer, or the root of an
-    /// animated object.
+    /// animated object; for a mover, the object that moves.
     pub wearer: u32,
-    /// Anchor of the palette: 0 the skeleton's, else an attachment point.
+    /// Anchor of the palette: 0 the skeleton's, else an attachment point;
+    /// [`MOVER`] the mover's own.
     pub slot: u8,
     /// Index of the anchor matrix in the palettes buffer.
     pub matrix: u32,
+}
+
+/// `AnchorRef::slot` of an object placed from a mover (an object that
+/// moves by itself, or the object itself).
+pub const MOVER: u8 = u8::MAX;
+
+/// Movers per palette slot of movers: the matrices before the live morph
+/// weights, which `update_anchors` writes into every slot it knows.
+const MOVERS_PER_SLOT: usize = super::live_morphs::WEIGHTS;
+
+/// Frames a freed mover matrix waits before another mover takes it: what
+/// was placed from it is placed again by the sync in the meantime.
+const MOVER_QUARANTINE: u64 = 4;
+
+/// `AURORA_MOVING_ANCHORS`: `0` leaves what moves by itself to the sync,
+/// `alt` alternates.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MoverMode {
+    On,
+    Off,
+    Alternate,
+}
+
+fn mover_mode() -> MoverMode {
+    static MODE: std::sync::OnceLock<MoverMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("AURORA_MOVING_ANCHORS").as_deref() {
+        Ok("0") => MoverMode::Off,
+        Ok("alt") => MoverMode::Alternate,
+        _ => MoverMode::On,
+    })
+}
+
+/// The old way this second, with `alt`.
+static MOVERS_OLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `AURORA_MOVING_ANCHORS=alt`: the way of second `n` (true: the sync
+/// places what moves by itself, one second in three). None without `alt`.
+pub fn alternate_movers(n: u64) -> Option<bool> {
+    (mover_mode() == MoverMode::Alternate).then(|| {
+        let old = n.is_multiple_of(3);
+        MOVERS_OLD.store(old, std::sync::atomic::Ordering::Relaxed);
+        old
+    })
+}
+
+/// What moves by itself is placed from movers in this frame.
+pub fn movers_now() -> bool {
+    enabled()
+        && match mover_mode() {
+            MoverMode::On => true,
+            MoverMode::Off => false,
+            MoverMode::Alternate => !MOVERS_OLD.load(std::sync::atomic::Ordering::Relaxed),
+        }
+}
+
+/// An object that can be a mover: it follows a motion the simulator
+/// reported (not only a correction fading or a seat damped, which end in a
+/// moment).
+pub fn can_move_itself(o: &Object) -> bool {
+    o.extrapolates() && !o.is_avatar()
 }
 
 /// A rigged mesh the GPU poses for culling (`object_flags::POSED`).
@@ -191,18 +264,50 @@ pub fn enabled() -> bool {
 /// on a body point, and nothing from it up to the point moves by itself.
 /// `matrix_of` gives the anchor matrix index of a wearer's anchor (None:
 /// the wearer has no palette yet).
+#[cfg(test)]
 pub fn anchored(world: &World, o: &Object, matrix_of: impl Fn(&Object, u8) -> Option<u32>) -> Option<(AnchorRef, Vec3, Quat)> {
+    anchored_or_moving(world, usize::MAX, o, matrix_of, |_, _| None)
+}
+
+/// [`anchored`], or the mover object `o` (index `idx`) hangs from: itself
+/// or the nearest ancestor that moves by itself, when nothing between them
+/// moves. `mover_of` gives a mover's matrix index (None: it has none yet,
+/// or movers are off in this frame).
+pub fn anchored_or_moving(
+    world: &World,
+    idx: usize,
+    o: &Object,
+    matrix_of: impl Fn(&Object, u8) -> Option<u32>,
+    mover_of: impl Fn(usize, &Object) -> Option<u32>,
+) -> Option<(AnchorRef, Vec3, Quat)> {
     if o.is_flexible() {
         return None;
     }
-    // transform of `o` in the space of `cur`'s parent, composed as
+    // transform of `o` in the space of `cur`, composed as
     // `Scene::object_transform` does it
-    let (mut pos, mut rot) = (o.position, o.rotation);
-    let mut cur = o;
+    let (mut pos, mut rot) = (Vec3::ZERO, Quat::IDENTITY);
+    let (mut cur, mut cur_idx) = (o, idx);
     for _ in 0..MAX_DEPTH {
-        if cur.has_motion() || cur.is_avatar() {
+        if cur.is_avatar() {
             return None;
         }
+        if cur.has_motion() {
+            if !can_move_itself(cur) {
+                return None;
+            }
+            let matrix = mover_of(cur_idx, cur)?;
+            return Some((
+                AnchorRef {
+                    wearer: cur_idx as u32,
+                    slot: MOVER,
+                    matrix,
+                },
+                pos,
+                rot,
+            ));
+        }
+        pos = cur.position + cur.rotation * pos;
+        rot = (cur.rotation * rot).normalize();
         let pidx = world.objects.parent_of(cur)?;
         let parent = world.objects.get(pidx)?;
         if parent.is_avatar() {
@@ -225,11 +330,23 @@ pub fn anchored(world: &World, o: &Object, matrix_of: impl Fn(&Object, u8) -> Op
                 rot,
             ));
         }
-        pos = parent.position + parent.rotation * pos;
-        rot = (parent.rotation * rot).normalize();
         cur = parent;
+        cur_idx = pidx;
     }
     None
+}
+
+/// An object that moves by itself and the matrix it is written into.
+struct Mover {
+    id: Uuid,
+    matrix: u32,
+    /// What it was last written with.
+    written: Option<[[f32; 4]; 4]>,
+    /// Its matrix changed this frame: what hangs from it moved.
+    changed: bool,
+    /// An object was placed from it since the last frame: every centre is
+    /// brought up to date.
+    refresh: bool,
 }
 
 /// The owner of a palette (a wearer, the root of an animated object) with
@@ -335,6 +452,15 @@ impl JointBoxes {
 #[derive(Default)]
 pub struct Anchors {
     wearers: HashMap<u32, Wearer>,
+    /// What moves by itself, by object index.
+    movers: HashMap<u32, Mover>,
+    /// Mover matrices no mover holds.
+    free_movers: Vec<u32>,
+    /// Mover matrices freed, with the frame they were: taken again only
+    /// once what was placed from them was placed again.
+    freed_movers: std::collections::VecDeque<(u64, u32)>,
+    /// Frames counted for `freed_movers`.
+    frame: u64,
     /// Anchored objects (validated at each frame, removed lazily).
     members: IndexSet,
     /// AURORA_SYNC_CHECK: centres left as they were, and those of them not
@@ -343,6 +469,9 @@ pub struct Anchors {
     /// AURORA_SYNC_CHECK: anchors left as they were, and those of them not
     /// what the wearer's pose and place give (must stay 0).
     pub kept_anchors: (u64, u64),
+    /// AURORA_SYNC_CHECK: objects placed from a mover, and those of them
+    /// the GPU puts elsewhere than the sync would (must stay 0).
+    pub mover_placed: (u64, u64),
 }
 
 impl Anchors {
@@ -356,6 +485,13 @@ impl Anchors {
             self.members.remove(idx);
             return;
         };
+        if a.slot == MOVER {
+            if let Some(m) = self.movers.get_mut(&a.wearer) {
+                self.members.insert(idx);
+                m.refresh = true;
+            }
+            return;
+        }
         let Some(wearer) = world.objects.get(a.wearer as usize) else {
             return;
         };
@@ -404,6 +540,31 @@ impl Anchors {
     pub fn members(&self) -> &[usize] {
         self.members.as_slice()
     }
+
+    /// The matrix index of the mover of object `idx` (`id`), when it has
+    /// one and movers are on in this frame.
+    pub fn mover_matrix(&self, idx: usize, id: Uuid) -> Option<u32> {
+        let m = self.movers.get(&(idx as u32)).filter(|m| m.id == id && m.written.is_some())?;
+        movers_now().then_some(m.matrix)
+    }
+
+    /// A free mover matrix; `new_slot` gives a palette slot of movers when
+    /// none is left.
+    fn take_mover_matrix(&mut self, new_slot: impl FnOnce() -> u32) -> u32 {
+        while let Some(&(frame, m)) = self.freed_movers.front()
+            && frame + MOVER_QUARANTINE <= self.frame
+        {
+            self.freed_movers.pop_front();
+            self.free_movers.push(m);
+        }
+        if let Some(m) = self.free_movers.pop() {
+            return m;
+        }
+        let base = new_slot() as usize * PALETTE_JOINTS;
+        // (taken from the first one on)
+        self.free_movers.extend((base + 1..base + MOVERS_PER_SLOT).rev().map(|m| m as u32));
+        base as u32
+    }
 }
 
 impl Scene {
@@ -413,6 +574,84 @@ impl Scene {
     pub(super) fn anchor_matrix(palette_slots: &FastMap<Uuid, u32>, palettes: usize, wearer: &Object, slot: u8) -> Option<u32> {
         let base = *palette_slots.get(&wearer.full_id)? as usize * PALETTE_JOINTS;
         (base + PALETTE_JOINTS <= palettes && (slot as usize) < ANCHORS).then_some((base + ANCHOR_BASE + slot as usize) as u32)
+    }
+
+    /// The movers of this frame: one for each object of the sync's moving
+    /// set that can be one, its matrix written with the object's place in
+    /// this frame (into `moved`, neighbours in one range); those that
+    /// stopped, left or went on a HUD are freed, and what hangs from them
+    /// is placed by the sync again (`update_anchors`).
+    fn update_movers(&mut self, world: &World, now: Instant, moved: &mut Vec<std::ops::Range<usize>>) {
+        self.anchors.frame += 1;
+        let on = enabled() && mover_mode() != MoverMode::Off;
+        let not_hud = |gpu: &[super::ObjGpu], idx: usize| gpu.get(idx).is_some_and(|g| !g.hud);
+        if on {
+            for &idx in self.sets.own_moving.as_slice() {
+                if self.anchors.movers.contains_key(&(idx as u32)) || !not_hud(&self.gpu, idx) {
+                    continue;
+                }
+                let Some(o) = world.objects.get(idx).filter(|o| can_move_itself(o)) else {
+                    continue;
+                };
+                let (count, free, fresh) = (&mut self.palette_count, &mut self.palette_free, &mut self.palette_fresh);
+                let matrix = self.anchors.take_mover_matrix(|| {
+                    let slot = free.pop().unwrap_or_else(|| {
+                        *count += 1;
+                        *count - 1
+                    });
+                    fresh.push(slot as usize);
+                    slot
+                });
+                self.anchors.movers.insert(
+                    idx as u32,
+                    Mover {
+                        id: o.full_id,
+                        matrix,
+                        written: None,
+                        changed: false,
+                        refresh: true,
+                    },
+                );
+            }
+        }
+        let frame = self.anchors.frame;
+        let Anchors { movers, freed_movers, .. } = &mut self.anchors;
+        let mut written = Vec::new();
+        movers.retain(|&idx, m| {
+            m.changed = false;
+            let idx = idx as usize;
+            let keep = on && not_hud(&self.gpu, idx) && world.objects.get(idx).is_some_and(|o| o.full_id == m.id && can_move_itself(o));
+            if !keep {
+                freed_movers.push_back((frame, m.matrix));
+                return false;
+            }
+            let Some((p, r, _)) = self
+                .xf_cache
+                .get(idx)
+                .or_else(|| Self::object_transform_in(world, idx, now, 0, Some(&self.xf_cache)))
+            else {
+                return true;
+            };
+            let mat = Mat4::from_rotation_translation(r, p).to_cols_array_2d();
+            // (a slot of movers made in this frame is sized by the next
+            // `update_poses`: written then)
+            if m.written != Some(mat)
+                && let Some(slot) = self.palettes.get_mut(m.matrix as usize)
+            {
+                *slot = mat;
+                m.written = Some(mat);
+                m.changed = true;
+                written.push(m.matrix as usize);
+            }
+            true
+        });
+        written.sort_unstable();
+        for m in written {
+            match moved.last_mut() {
+                Some(r) if r.end == m => r.end += 1,
+                _ => moved.push(m..m + 1),
+            }
+        }
     }
 
     /// After the sync placed this frame's objects (`now`: the time it
@@ -425,6 +664,7 @@ impl Scene {
         posed.sort_unstable();
         // anchors of the wearers not posed in this frame
         let mut moved: Vec<std::ops::Range<usize>> = Vec::new();
+        self.update_movers(world, now, &mut moved);
         let (kept_anchors, wrong_anchors) = {
             let k = &mut self.anchors.kept_anchors;
             (&mut k.0, &mut k.1)
@@ -536,8 +776,10 @@ impl Scene {
         // set: its wearer is looked up once for the run)
         let Anchors {
             wearers,
+            movers,
             members,
             kept_centres,
+            mover_placed,
             ..
         } = &mut self.anchors;
         let mut run: Option<Run> = None;
@@ -552,6 +794,45 @@ impl Scene {
         while i < members.len() {
             let idx = members.as_slice()[i];
             let anchor = self.gpu.get(idx).and_then(|g| g.anchor);
+            if let Some(a) = anchor
+                && a.slot == MOVER
+            {
+                let Some(m) = movers.get(&a.wearer).filter(|m| m.matrix == a.matrix) else {
+                    // its mover stopped or left: the sync places it again
+                    members.remove(idx);
+                    self.sets.dirty.insert(idx);
+                    continue;
+                };
+                i += 1;
+                if verify {
+                    // where the GPU puts its first face (mover × relative),
+                    // against where the sync would (a rezzed rigged mesh,
+                    // whose bind shape is undone in its model, is left out)
+                    let skinned = |g: &super::ObjGpu| matches!(g.geom, Some(GeomKey::Mesh { id, .. }) if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
+                    if let Some(g) = self.gpu.get(idx).filter(|g| !skinned(g))
+                        && let Some(record) = g.faces.first().and_then(|f| renderer.records.get(f.record))
+                        && let Some(mat) = self.palettes.get(a.matrix as usize)
+                        && let Some((p, r, _)) = Self::object_transform_in(world, idx, now, 0, Some(&self.xf_cache))
+                    {
+                        let gpu = Mat4::from_cols_array_2d(mat) * Mat4::from_cols_array_2d(&record.model);
+                        let (_, gr, gp) = gpu.to_scale_rotation_translation();
+                        mover_placed.0 += 1;
+                        // (the angle from the quaternion between them, not
+                        // `angle_between`: its acos is blind under 1e-3)
+                        let turn = 2.0 * (gr * r.inverse()).xyz().length();
+                        if gp.distance(p) > 1e-3 || turn > 1e-4 {
+                            mover_placed.1 += 1;
+                        }
+                    }
+                }
+                if (m.refresh || m.changed || every_centre)
+                    && let (Some(mat), Some(g)) = (self.palettes.get(a.matrix as usize), self.gpu.get_mut(idx))
+                {
+                    g.center = Mat4::from_cols_array_2d(mat).transform_point3(g.local_center);
+                    self.pick.set(idx, hover::PickEntry::of(g));
+                }
+                continue;
+            }
             if let Some(a) = anchor
                 && run.is_none_or(|r| r.wearer != a.wearer)
             {
@@ -608,6 +889,9 @@ impl Scene {
             }
         }
         close(run, wearers);
+        for m in movers.values_mut() {
+            m.refresh = false;
+        }
         // an anchor nothing hangs from any more is no longer written
         wearers.retain(|_, w| {
             w.used = w.seen | std::mem::take(&mut w.kept);
@@ -617,6 +901,7 @@ impl Scene {
             w.used != 0
         });
         self.stats.anchored = members.len();
+        self.stats.movers = movers.len();
     }
 }
 
@@ -879,5 +1164,73 @@ mod tests {
         assert!(!after.contains(&root));
         assert!(children.iter().all(|c| !after.contains(c)));
         assert_eq!(after.len(), before.len() - 1 - children.len());
+    }
+
+    /// An object that moves by itself, on the ground or worn, and what is
+    /// linked below it hang from its mover: their transform relative to
+    /// it, composed with its world matrix, gives the parent chain's. An
+    /// avatar never gets one, and without a mover matrix nothing does.
+    #[test]
+    fn mover_transform_matches_the_parent_chain() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        for ev in crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::crowd_events(2, false))
+            .chain(crate::demo::crowd_busy_events(2))
+        {
+            world.apply(ev);
+        }
+        let now = Instant::now();
+        // a crowd avatar moves too: it stays with the sync
+        let avatar = (0..world.objects.slots.len())
+            .find(|&i| world.objects.get(i).is_some_and(|o| o.is_avatar()))
+            .expect("an avatar");
+        world.objects.get_mut(avatar).expect("avatar").velocity = Vec3::X;
+        let any = |_: &Object, slot: u8| Some(slot as u32);
+        let (mut on_root, mut below, mut worn) = (0, 0, 0);
+        for idx in 0..world.objects.slots.len() {
+            let Some(o) = world.objects.get(idx) else {
+                continue;
+            };
+            assert!(
+                anchored_or_moving(&world, idx, o, any, |_, _| None).is_none_or(|(a, _, _)| a.slot != MOVER),
+                "object {idx}: a mover without a matrix"
+            );
+            let Some((a, lp, lr)) = anchored_or_moving(&world, idx, o, any, |m, _| Some(m as u32)) else {
+                continue;
+            };
+            if a.slot != MOVER {
+                continue;
+            }
+            assert_eq!(a.matrix, a.wearer);
+            let mover = world.objects.get(a.wearer as usize).expect("mover");
+            assert!(can_move_itself(mover) && !mover.is_avatar());
+            let (mp, mr, mover_hud) = Scene::object_transform(&world, a.wearer as usize, now, 0).expect("mover placed");
+            if mover_hud {
+                // the sync gives a HUD no mover (`update_movers`)
+                continue;
+            }
+            let composed = Mat4::from_rotation_translation(mr, mp) * Mat4::from_scale_rotation_translation(o.scale, lr, lp);
+            let (pos, rot, hud) = Scene::object_transform(&world, idx, now, 0).expect("placed");
+            assert!(!hud);
+            let direct = Mat4::from_scale_rotation_translation(o.scale, rot, pos);
+            assert!(composed.abs_diff_eq(direct, 1e-4), "object {idx}: {composed:?} / {direct:?}");
+            if a.wearer as usize == idx {
+                on_root += 1;
+            } else {
+                below += 1;
+            }
+            let attached = world
+                .objects
+                .parent_of(mover)
+                .and_then(|p| world.objects.get(p))
+                .is_some_and(|p| p.is_avatar());
+            worn += usize::from(attached);
+        }
+        // 60 spinners on the ground and 2 worn ornaments, each with prims below
+        let spinners = crate::demo::BUSY_SPINNERS as usize + 2;
+        assert!(on_root >= spinners, "{on_root} movers");
+        assert!(below >= spinners, "{below} objects below a mover");
+        assert!(worn >= 3, "{worn} worn objects from a mover");
     }
 }

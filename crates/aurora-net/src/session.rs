@@ -5,6 +5,7 @@
 
 mod abuse_reports;
 mod account;
+mod appearance_queue;
 mod asset_imports;
 mod attach_queue;
 mod build_cmds;
@@ -230,6 +231,52 @@ pub(crate) struct Shared {
     pub viewer_stats_posts: Arc<crate::viewer_stats::PostsInFlight>,
 }
 
+/// How long one appearance request may hold the queue.
+const APPEARANCE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// One POST of the COF version to UpdateAvatarAppearance: whether it
+/// succeeded, and the version the server expects when it says.
+async fn post_appearance_request(http: &reqwest::Client, request: appearance_queue::Request) -> (bool, Option<i32>) {
+    let appearance_queue::Request { cof_version, url } = request;
+    let body = aurora_llsd::to_xml(&aurora_llsd::llsd_map! { "cof_version" => cof_version });
+    let exchange = async {
+        let resp = http
+            .post(&url)
+            .header("Content-Type", "application/llsd+xml")
+            .header("Accept", "application/llsd+xml")
+            .body(body)
+            .send()
+            .await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.ok();
+        Ok::<_, reqwest::Error>((status, bytes.and_then(|b| aurora_llsd::from_xml(&b).ok())))
+    };
+    match tokio::time::timeout(APPEARANCE_REQUEST_TIMEOUT, exchange).await {
+        Ok(Ok((status, Some(d)))) => {
+            let ok = status.is_success() && d["success"].as_bool();
+            if !ok {
+                log::warn!(
+                    "appearance request for COF {cof_version} failed: HTTP {status} {}",
+                    d["error"].to_string_value()
+                );
+            }
+            (ok, d.has("expected").then(|| d["expected"].as_i32()))
+        }
+        Ok(Ok((status, None))) => {
+            log::warn!("appearance request for COF {cof_version}: HTTP {status}");
+            (false, None)
+        }
+        Ok(Err(e)) => {
+            log::warn!("appearance request failed: {}", e.without_url());
+            (false, None)
+        }
+        Err(_) => {
+            log::warn!("appearance request for COF {cof_version}: no answer");
+            (false, None)
+        }
+    }
+}
+
 struct Session<'a> {
     sh: &'a Shared,
     sock: Arc<UdpSocket>,
@@ -243,6 +290,8 @@ struct Session<'a> {
     inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
     /// AgentSetAppearance messages sent this session (their SerialNum).
     appearance_serial: u32,
+    /// UpdateAvatarAppearance requests: one at a time, the newest version.
+    appearance_queue: Arc<Mutex<appearance_queue::AppearanceQueue>>,
     /// Our profile as last received (AvatarPropertiesReply), which a grid
     /// without `AgentProfile` needs whole to save a change.
     own_profile: Option<crate::profile::OwnProfile>,
@@ -475,6 +524,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_move_tx,
         inventory_udp_tx,
         appearance_serial: 0,
+        appearance_queue: Default::default(),
         own_profile: None,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
@@ -3557,51 +3607,32 @@ impl Session<'_> {
             );
             return;
         };
+        let request = appearance_queue::Request { cof_version, url };
+        let Some(first) = self.appearance_queue.lock().request(request) else {
+            return;
+        };
+        let queue = self.appearance_queue.clone();
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let body = aurora_llsd::to_xml(&aurora_llsd::llsd_map! { "cof_version" => cof_version });
-            let result = http
-                .post(&url)
-                .header("Content-Type", "application/llsd+xml")
-                .header("Accept", "application/llsd+xml")
-                .body(body)
-                .send()
-                .await;
-            let (success, expected) = match result {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let doc = resp.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
-                    match doc {
-                        Some(d) => {
-                            let ok = status.is_success() && d["success"].as_bool();
-                            if !ok {
-                                log::warn!(
-                                    "appearance request for COF {cof_version} failed: HTTP {status} {}",
-                                    d["error"].to_string_value()
-                                );
-                            }
-                            (ok, d.has("expected").then(|| d["expected"].as_i32()))
-                        }
-                        None => {
-                            log::warn!("appearance request for COF {cof_version}: HTTP {status}");
-                            (false, None)
-                        }
+            appearance_queue::drain(&queue, first, |request| {
+                let http = http.clone();
+                let events = events.clone();
+                async move {
+                    let cof_version = request.cof_version;
+                    let (success, expected) = post_appearance_request(&http, request).await;
+                    if success {
+                        log::info!("server appearance requested for COF version {cof_version}");
                     }
+                    let _ = events.send(NetEvent::AppearanceRequestResult {
+                        cof_version,
+                        success,
+                        expected,
+                    });
+                    success
                 }
-                Err(e) => {
-                    log::warn!("appearance request failed: {}", e.without_url());
-                    (false, None)
-                }
-            };
-            if success {
-                log::info!("server appearance requested for COF version {cof_version}");
-            }
-            let _ = events.send(NetEvent::AppearanceRequestResult {
-                cof_version,
-                success,
-                expected,
-            });
+            })
+            .await;
         });
     }
 
@@ -6219,6 +6250,7 @@ mod event_queue_tests {
             inventory_move_tx,
             inventory_udp_tx,
             appearance_serial: 0,
+            appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
@@ -6560,6 +6592,7 @@ mod script_dialog_tests {
             inventory_move_tx,
             inventory_udp_tx,
             appearance_serial: 0,
+            appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),

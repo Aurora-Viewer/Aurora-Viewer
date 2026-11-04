@@ -97,12 +97,12 @@ struct Frame {
     // `light_projectors` (x: lights 0..31, y: lights 32..63)
     projectors: array<ProjectorLight, 64>,
     light_projectors: vec4<u32>,
-    // shadow maps of the two projectors that cast shadows: world to the
+    // shadow maps of the projectors within the configured budget: world to the
     // clip space of each, its light (-1: none), and what it leaves unlit
     // of its shadows (1 - fade)
-    spot_vp: array<mat4x4<f32>, 2>,
-    spot_lights: vec4<i32>,
-    spot_fade: vec4<f32>,
+    spot_vp: array<mat4x4<f32>, 16>,
+    spot_lights: array<vec4<i32>, 4>,
+    spot_fade: array<vec4<f32>, 4>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
     features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
     // Motion vectors (main view; zero in the other passes), without the TAA
@@ -1243,6 +1243,8 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let step = span / f32(taps - 1u);
     let center = 0.5 * f32(taps - 1u);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
+    let atlas = vec2<f32>(textureDimensions(shadow_map));
+    let tile_scale = vec2<f32>(0.5, atlas.x / (2.0 * atlas.y));
     // Receiver bias in metres along the light: two texels of the cascade.
     // The depth range of a cascade is its square plus CASCADE_DEPTH_PAD on
     // each side (about 810 m for the finest), so a fixed 0.0005 of it was
@@ -1268,7 +1270,7 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
             // result as the clamp-to-edge of a separate texture, never a
             // texel of the neighbouring tile
             let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - receiver_bias);
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * tile_scale, ndc.z - receiver_bias);
         }
     }
     return sum / f32(taps * taps);
@@ -1933,14 +1935,15 @@ fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
 
 // Light left by the shadow map of projector `i` (1: lit, or no map), as
 // spotLightF.glsl with sampleSpotShadow / pcfSpotShadow (shadowUtil.glsl):
-// the two projectors that weigh most on screen have a map, in the halves of
-// the top row of the shadow atlas's fourth tile. Like Firestorm's, these
-// shadows stop with the sun's (the last tenth of its shadow distance).
+// the configured budget extends the Legacy Viewer's two-map limit without
+// reducing each map's resolution (projector_shadows.rs). These shadows stop
+// with the sun's (the last tenth of its shadow distance).
 fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
-    if (frame.params.z < 0.5 || (i != frame.spot_lights.x && i != frame.spot_lights.y)) {
+    let slot = frame.projectors[i].tex.y;
+    if (frame.params.z < 0.5 || slot == 0u) {
         return 1.0;
     }
-    let k = select(0u, 1u, i == frame.spot_lights.y);
+    let k = slot - 1u;
     let far = frame.cascade_splits.z;
     let depth = distance(world_pos, frame.camera_pos.xyz);
     if (depth >= far) {
@@ -1958,18 +1961,26 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     }
     // a map is a quarter of the atlas wide: its texel in map coordinates
     let texel = 4.0 / f32(textureDimensions(shadow_map).x);
-    let origin = vec2<f32>(0.5 + 0.25 * f32(k), 0.5);
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    let size = dims.x * 0.5;
+    let half = size * 0.5;
+    var origin: vec2<f32>;
+    if (k < 4u) {
+        origin = vec2<f32>(size + f32(k % 2u) * half, size + f32(k / 2u) * half);
+    } else {
+        origin = vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
+    }
     var sum = 0.0;
     // pcfSpotShadow's five taps
     let taps = array<vec2<f32>, 5>(
         vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
     for (var t = 0; t < 5; t++) {
         let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0002);
+        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + at * half) / dims, ndc.z - 0.0002);
     }
     var s = sum * 0.2;
     // the map fades in and out as its projector takes or loses it
-    s = clamp(s + select(frame.spot_fade.x, frame.spot_fade.y, k == 1u), 0.0, 1.0);
+    s = clamp(s + frame.spot_fade[k / 4u][k % 4u], 0.0, 1.0);
     return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
 }
 

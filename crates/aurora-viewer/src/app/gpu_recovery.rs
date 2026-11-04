@@ -221,6 +221,7 @@ impl App {
         // again, and a report that comes later counts this recovery
         self.crash_kept = Default::default();
         self.crash_swapchain = Default::default();
+        self.crash_recent = Default::default();
         crate::crash::gpu_recovered(started.elapsed().as_millis(), safe);
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;

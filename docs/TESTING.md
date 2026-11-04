@@ -97,6 +97,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
+| `AURORA_PROJECTOR_SHADOW_LIMIT=1..16` | Override the projector shadow budget (default 2) |
 | `AURORA_HDR=0\|1` | Overrides "HDR and Emissive" (Graphics › Image) |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
@@ -3761,7 +3762,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
-| `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
+| `AURORA_DEMO_PROJECTOR=1`, `point`, `cluster`, `cluster-orbit`, `cluster-scan` or `cluster-bench` | Projectors and overlapping shadow-map transitions |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
@@ -3943,6 +3944,24 @@ both open states and the selection count. Capture at frame 620.
   the pool light then lights in cyan our avatar from below and
   the sides of the slab's relief turned towards it. The orange light is
   the same in both modes.
+  `cluster`, `cluster-orbit`, `cluster-scan` and `cluster-bench` add twelve adjacent ceiling
+  projectors, an opaque floor and twelve shadow-casting posts (#1494). They
+  supply a fixed camera, a slow orbit after frame 700 or a repeating
+  reversing orbit after frame 700. Captures hide the interface. Use Deluxe
+  and compare with `AURORA_PROJECTOR_SHADOWS=0`; the projectors stay lit and
+  only their shadows change. `AURORA_DEMO_ALTITUDE=807` places the floor
+  near 839 m. Shadow-map retention requires a 20% apparent-area advantage
+  to replace a current projector, and moving-camera fades accelerate by at
+  most four times (0.25 s per fade). A camera turn must not abruptly blink
+  a fully visible shadow off. `cluster-bench` keeps the fixed camera and
+  exits after 50 seconds. For a same-quality budget A/B, use
+  `AURORA_PROJECTOR_SHADOW_LIMIT=2` then `10`, `AURORA_PROFILE=1`, disabled
+  vertical sync and the same resolution and preset. Discard the first
+  15 seconds for loading and warm-up; compare seconds 15–45. Check the
+  `projector shadow maps active` log for actual occupancy, and the
+  `projector shadow budget` line for map and atlas dimensions. Increasing
+  the budget grows the atlas without reducing the per-map resolution;
+  the device texture-size limit may reduce the effective budget.
 - **`AURORA_DEMO_GLOW_LAYERS=1|shell`**: two "skin" panels (the first
   with a glow of 0.02, the second without) and, 1 cm in front of their lower
   half, a transparent pink layer (alpha from 0 to 1) with a glow of 0.02, like
@@ -6864,6 +6883,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   then each recovery's (a recovery's counts its frames from 0 again): with
   `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
   with the safe graphics level, then close.
+  The report's "Last state" table then shows the new device-lost fields
+  (effects on, GPU frame times, session and region seconds,
+  `GPU loss: first seen by` = `demo`), and its first table the
+  `Vulkan layers on offer`: read it in the session's
+  `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
   compute dispatch whose loop runs about 12 s on a recent card (the log says
@@ -6889,7 +6913,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_OVERLAY_HOOK=<file>`**, with `AURORA_DEMO=1` (Windows): the
   overlay hook watch (`overlay_hooks.rs`) counts that module file name as
   loaded, for example `DiscordHook64.dll`, `GameOverlayRenderer64.dll`,
-  `RTSSHooks64.dll` or `graphics-hook64.dll`. A known one gets its warning
+  `RTSSHooks64.dll`, `graphics-hook64.dll` or `we-graphics-hook64.dll`. A known one gets its warning
   in the log (`overlay hook loaded in the viewer: …`) and its line in
   `overlay-hooks.txt` of the crash session; any other name does nothing.
   With `AURORA_DEMO_CRASH=freeze`, the report then says
@@ -9402,6 +9426,8 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_FLEXI_CULL=0` or `alt` | Every flexible prim's mesh swept again each frame, as before, even when no view shows it; `alt`: one second in three |
+| `AURORA_WRITE_STAGING=0` or `alt` | The journal's buffer writes made one by one through the queue, as before, instead of one staging buffer per frame; `alt`: one second in three |
+| `AURORA_MOVING_ANCHORS=0` or `alt` | Objects that move by themselves (spin, velocity) and what is linked to them placed by the sync every frame, as before, instead of by the GPU from one anchor per object; `alt`: one second in three |
 | `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, not their avatar's, as before |
 | `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), whatever Preferences › Network and cache › Download connections says |
 | `AURORA_DEMO_NET_ADAPTER=<description>` | This network adapter instead of the computer's, for the download connections (e.g. `Marvell AQtion 10Gbit Network Adapter`: always limited, "Follow the connection" greyed) |
@@ -9470,6 +9496,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
+| `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
@@ -9824,6 +9851,12 @@ What the inventory must show with these scenarios:
   4, default 1.5; 1 is one physical bounce, which hardly shows);
   `AURORA_SSIL_INTENSITY=<0-8>` replaces it for a launch, to compare (at
   2 a glow starts around the foot of objects, at 4 it is grainy).
+- **`AURORA_PROJECTOR_TRACE=1`**: writes `projector trace:` lines with the
+  camera position, selected projector object indices, shadow-map
+  owners, their fade values and candidate priorities. It requires an info
+  log filter (`RUST_LOG=warn,aurora_viewer::scene::lights=info` is enough).
+  Use a separately named test log and unset the variable after diagnosis;
+  these per-frame lines are intended for local investigation.
 - **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell`**: the sun's contact shadows
   (Preferences › Graphics › Contact shadows, `contact_shadows.rs`, after
   Bend Studio's screen space shadows) for this launch, without changing the
@@ -10203,6 +10236,40 @@ What the inventory must show with these scenarios:
   jump when they come into view.
   `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
   end of the `perf summary` line.
+- **`AURORA_WRITE_STAGING=0`**: the render thread replays the journal of
+  the frame (`writes.rs`) through `Queue::write_buffer`, one call per
+  write, as before; wgpu makes, maps and frees a staging buffer for each of
+  them. By default the bytes of the frame's buffer writes are copied into
+  one staging buffer kept mapped, and one GPU copy per run of writes that
+  follow each other is submitted before the frame (`write_staging.rs`).
+  Texture writes still go through the queue. Up to three staging buffers
+  take turns; a frame that writes more than any of them holds goes through
+  the queue while a larger one is made on a thread of its own (the
+  arrival in a region), and one that writes more than 32 MB always does.
+  To read in `perf summary`: `r_resources` (render thread) and
+  `journal_kb`; a slow frame's line `frame writes took` gives how many
+  writes were staged. Nothing should change on screen.
+  `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
+  end of the `perf summary` line.
+- **`AURORA_MOVING_ANCHORS=0`**: an object that moves by itself (a spin
+  given by the simulator, llTargetOmega, or a reported velocity) and
+  everything linked under it are placed by the sync every frame, as
+  before: their records are written again each frame. By default such an
+  object (not an avatar, not a HUD) gets a "mover", one world matrix of its
+  own in a palette slot set aside for movers (256 per slot,
+  `scene/anchors.rs`): the sync
+  writes that matrix each frame, and the records of the object and of what
+  is linked under it hold their placement relative to it, like worn prims
+  relative to their attachment point. The sync no longer visits them while
+  only the mover turns or slides; a fading correction, a change of shape or
+  of parent puts the object back in the sync for that time. To read in
+  `perf summary`: `movers` (objects placed from a mover), `synced`,
+  `records_kb`, `journal_kb`, `s_sync_plan` and `s_sync_apply`.
+  `AURORA_SYNC_CHECK=1` checks every mover-placed record against where the
+  sync would put it ("placed from a mover: …, 0 not where the sync would
+  put them"). Spinning signs, wheels and vehicles should turn and move as
+  before, with no jump. `alt`: the old way one second in three,
+  `xmode=old` / `xmode=new` at the end of the `perf summary` line.
 - **`AURORA_MATERIAL_REBUILD=all`**: each material that arrives (or is given
   up) rebuilds every object using materials, as before, instead of the users
   of that material only (`scene/mat_changes.rs`). `alt`: the old way one second
@@ -10725,7 +10792,8 @@ thread.
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn
     objects and rigged meshes placed by the GPU (`anchored`, which the sync
-    no longer visits), the flexible prims whose mesh was swept again
+    no longer visits), the objects that move by themselves placed from a
+    matrix of their own (`movers`, `AURORA_MOVING_ANCHORS`), the flexible prims whose mesh was swept again
     (`flexies`) and those simulated with their mesh held because no view
     shows them (`flexies_held`, `AURORA_FLEXI_CULL`), the posed avatars,
     the bytes of records and palettes
