@@ -265,6 +265,8 @@ pub mod texture_res;
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]
 pub mod toasts;
+#[path = "demo_tortured_prims.rs"]
+pub mod tortured_prims;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;
@@ -5763,6 +5765,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
     ev.extend(alpha_mask_ab::events());
+    ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
     ev.extend(land_beside_events());
     ev.extend(object_snap::events());
@@ -7991,6 +7994,28 @@ pub fn loop_animation() -> aurora_assets::Animation {
             .collect(),
     });
     anim
+}
+
+/// `AURORA_DEMO_PELVIS_CONSTRAINT`: the loop below, with a pelvis constraint
+/// that carries the body out of sight for the last 4 s of every 8 s.
+pub fn pelvis_constraint_animation() -> (aurora_assets::Animation, Vec<aurora_assets::anim::Constraint>) {
+    let mut anim = loop_animation();
+    anim.duration = 8.0;
+    anim.loop_out = 8.0;
+    let constraint = aurora_assets::anim::Constraint {
+        chain_length: 0,
+        constraint_type: 0,
+        source_volume: "PELVIS".into(),
+        source_offset: Vec3::new(0.0, 0.0, f32::MAX),
+        target_volume: "PELVIS".into(),
+        target_offset: Vec3::ZERO,
+        target_dir: Vec3::ZERO,
+        ease_in_start: 4.0,
+        ease_in_stop: 163_840.0,
+        ease_out_start: 163_840.0,
+        ease_out_stop: 163_840.0,
+    };
+    (anim, vec![constraint])
 }
 
 pub const SYNC_LEADER_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0021);

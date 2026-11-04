@@ -95,6 +95,78 @@ pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
     parse(data, false).map(|(animation, _)| animation)
 }
 
+/// One joint constraint of a keyframe animation
+/// (LLKeyframeMotion::JointConstraintSharedData).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Constraint {
+    pub chain_length: u8,
+    /// `CONSTRAINT_TYPE_POINT` (0) or `CONSTRAINT_TYPE_PLANE` (1).
+    pub constraint_type: u8,
+    pub source_volume: String,
+    pub source_offset: Vec3,
+    /// A collision volume, or "GROUND".
+    pub target_volume: String,
+    pub target_offset: Vec3,
+    pub target_dir: Vec3,
+    pub ease_in_start: f32,
+    pub ease_in_stop: f32,
+    pub ease_out_start: f32,
+    pub ease_out_stop: f32,
+}
+
+/// The animation with its constraints. A file that ends before them or holds
+/// a malformed one still plays its keyframes, without constraints.
+pub fn parse_animation_with_constraints(data: &[u8]) -> Result<(Animation, Vec<Constraint>), AssetError> {
+    let (animation, length) = parse(data, false)?;
+    let constraints = data
+        .get(length..)
+        .and_then(|tail| read_constraints(tail, animation.joints.len()))
+        .unwrap_or_default();
+    Ok((animation, constraints))
+}
+
+fn read_constraints(tail: &[u8], num_joints: usize) -> Option<Vec<Constraint>> {
+    fn volume(r: &mut ByteReader, field: &'static str) -> Option<String> {
+        let name = r.take(16, field).ok()?;
+        let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
+        Some(String::from_utf8_lossy(&name[..end]).into_owned())
+    }
+    fn vector(r: &mut ByteReader, field: &'static str) -> Option<Vec3> {
+        let v = Vec3::new(r.f32(field).ok()?, r.f32(field).ok()?, r.f32(field).ok()?);
+        v.is_finite().then_some(v)
+    }
+    fn time(r: &mut ByteReader, field: &'static str) -> Option<f32> {
+        r.f32(field).ok().filter(|v| v.is_finite())
+    }
+    let mut r = ByteReader::new(tail);
+    let count = r.i32("constraints").ok()?;
+    if !(0..=10).contains(&count) {
+        return None;
+    }
+    let mut constraints = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let chain_length = r.u8("chain length").ok()?;
+        let constraint_type = r.u8("constraint type").ok()?;
+        if usize::from(chain_length) > num_joints || constraint_type > 1 {
+            return None;
+        }
+        constraints.push(Constraint {
+            chain_length,
+            constraint_type,
+            source_volume: volume(&mut r, "source volume")?,
+            source_offset: vector(&mut r, "source offset")?,
+            target_volume: volume(&mut r, "target volume")?,
+            target_offset: vector(&mut r, "target offset")?,
+            target_dir: vector(&mut r, "target direction")?,
+            ease_in_start: time(&mut r, "ease in start")?,
+            ease_in_stop: time(&mut r, "ease in stop")?,
+            ease_out_start: time(&mut r, "ease out start")?,
+            ease_out_stop: time(&mut r, "ease out stop")?,
+        });
+    }
+    Some(constraints)
+}
+
 /// Validate the entire native file before paying for its upload. Playback
 /// tolerates old files without constraints; imports retain and validate them.
 pub fn parse_animation_upload(data: &[u8]) -> Result<Animation, AssetError> {

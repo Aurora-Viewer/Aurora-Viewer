@@ -366,6 +366,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
+| `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
@@ -686,6 +687,40 @@ environment`) and leaves the photo mode (960): the scene keeps that light.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
+
+`AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]`: from
+`AURORA_DEMO_SNAPSHOT_FRAME` (700 by default) the photo mode takes `n` real
+photos (12 at most), 20 frames apart, saved to `demo-photo-reel` in the
+cache folder (never the Pictures folder), the focal length going through
+35, 50, 24 and 85 mm so that they differ; the photo mode's look follows
+`AURORA_DEMO_SNAPSHOT` (`viewfinder`, or `open` for the panel). In the
+viewfinder each photo shows its card (its picture alone, on a tile of the
+dock like the tray's photos) centred over the lens and aperture controls for
+2 s, then flies in an arc to the reel's tray, bottom left: the stack of
+the photos shuffled as loose prints, the newest on top, a badge counting
+them. The pile gives a small bounce and a soft glow when a photo lands, or
+when a new photo cuts the last one's card or flight short, as these photos in
+quick succession do. `apart` takes them 600 frames apart instead: each pile
+pulses only when its photo lands. `moved` puts the
+tray at the middle of the screen (as if dragged there): the photos fly to
+it there. In the panel the row under the shutter shows the stack and the
+older photos. `quick` then opens the quick view on the newest (the world
+darkened in its own colours, the full photo in a frame, each button on its
+own under it, the filmstrip with the newest on the right); `delete` adds the
+deletion's confirmation ("reel-<n>.png goes to the Recycle Bin."); `send`
+sends the newest again to the inventory at once: the price's confirmation
+shows over the quick view (its price from the photo's own size), and Upload
+sends it, the view neither frozen nor left; `upload` confirms that price at once: the photo is uploaded, its
+thumbnail in the strip gets a green check and Apply to profile takes the
+Upload button's place (Apply only shows for an uploaded photo); `item` then
+presses Show in inventory: the quick view and photo mode close and the
+inventory shows the photo; `mail` opens the e-mail's form
+over the quick view (Send waits for a valid recipient); `apply` uploads it, then
+asks to make it our profile picture over the quick view; `applied` accepts:
+photo mode closes and our profile opens on its main tab with the picture. `toolbar` puts the Photo roll button on
+the right toolbar (dimmed, "No photos this session yet", until the first
+photo), then closes photo mode and opens the quick view with it (the button
+lit). The log gives `photo reel demo: <n> photos in the reel`.
 
 `AURORA_DEMO_ISOLATE` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
 mode): at frame 640 `own` shows our avatar alone (My avatar), the sky,
@@ -1430,6 +1465,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu, every scripted object's window |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
+| `AURORA_DEMO_TORTURED_PRIMS=1` | Hollow reversed sphere and ordinary prim controls |
 | `AURORA_DEMO_BEACONS=1` | Object beacons and World overlays |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
@@ -1461,6 +1497,18 @@ when unfocused") is ignored during a screenshot.
 
 
 ### Details
+
+`AURORA_DEMO_TORTURED_PRIMS=1`, with `AURORA_DEMO_POS=100,100`, places
+four prims on open ground. From left to right: a grey oval with the former
+clamped ratio, an orange hollow reversed sphere with ratio Y=2, a blue
+ordinary sphere and a green torus. The orange sphere must have a broad
+lantern body and two collars; the grey oval must remain narrow. This is a
+synthetic reproduction of #2138, using its reported hollow/twist and scale
+proportions, with the larger ratio inferred from the reference silhouette.
+Inspect `object:97381` with `AURORA_DEMO_BUILD=move,object:97381`: changing
+another shape field must preserve the existing ratio. Check different camera
+distances for the four LODs. Use the original grid object for human
+validation in addition to this synthetic reproduction.
 
 `AURORA_DEMO_PARTICLE_EDITOR` needs an object of ours selected by the build
 script, for example `AURORA_DEMO_BUILD=move,object:151`. At frame 700 the
@@ -1528,7 +1576,10 @@ Compare with `floater_tools.xml` and `panel_fs_tools_texture.xml`: the compact t
 block ends with linked-part navigation, Link/Unlink and the ruler on one row;
 counters sit directly above the five tabs. General places sale before permissions.
 Object has flags and vertical XYZ/C/P/p blocks on the left, shape/mesh data on the
-right. Features exposes its flexible/physics columns and light/probe controls
+right. Skew, Radius and Revolutions remain available for every parametric shape,
+including spheres and extended paths; scroll the Object panel at minimum height
+to reach its last fields. Sculpties retain their texture, stitching, mirror and
+inside-out controls. Features exposes its flexible/physics columns and light/probe controls
 without folding cards. Texture always exposes PBR, Blinn-Phong and Media as
 three adjacent buttons, including with no editable faces. Blinn-Phong shows its
 three maps vertically with tints beside them and surface parameters on the right.
@@ -2899,6 +2950,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit\|resync` | Animation loops, sequences, stops and synchronization after delayed loading, editing or Ctrl+S |
+| `AURORA_DEMO_PELVIS_CONSTRAINT=1` | An animation constraint carrying the avatar's body out of sight, 4 s out of 8 |
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns |
@@ -3474,6 +3526,12 @@ Passage / water-walk validation (2026-10-18): full `scripts/check.ps1` green, 3,
 Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, design-current, design-tabs, design-movement, design-section, design-swim.
 
 
+- **`AURORA_DEMO_PELVIS_CONSTRAINT=1`**: the plaza's avatars that play the
+  idle animation play a loop of 8 s with a pelvis constraint active from its
+  4th second: the bodies and what is worn on them leave the screen, the name
+  tags stay and the camera does not move; they are back at the next loop,
+  with no shadow or lighting left behind. Count the frames from the frame
+  rate when capturing (at 170 fps, a loop is about 1,360 frames).
 - **`AURORA_DEMO_ANIM_LOOP=1`**: loop whose first interval is missing,
   sequence changed every 120 frames, stop / restart at frames
   960 / 1020 every 1200 frames.
@@ -4752,7 +4810,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
 | `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|sent-open\|friend\|off` | A direct payment as a card in the conversation with the other resident |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
-| `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
+| `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` | Press Log in of the open login form at those frames |
 | `AURORA_DEMO_LOGIN_FAVORITES=1\|open\|pick` | Stored favorite landmarks in the demo accounts' start menus |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -6701,7 +6759,8 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_LOGIN=connecting|first-connecting|add-connecting`**: synthetic waiting state in the selected card, inline first-account form, or Add form. Capture early and late frames (`AURORA_CAPTURE_FRAMES=20|40|90`) to check the brief animation, status/bar placement and persistent Aurora background. No black progress screen and no grid request. Confirm that inputs remain read-only while pending; a real error/MFA/terms challenge must restore the form, and successful authentication must switch to region loading.
 - **`AURORA_DEMO_LOGIN=cards1|derez1`**: a single saved account; `derez1` starts its validation. With no neighbour card to shatter, a faint echo of the chosen card breaks apart towards both sides from under it. Capture `AURORA_CAPTURE_FRAMES=30|36|42` and compare with `derez` (three cards).
 - **`AURORA_DEMO_LOGIN_WAIT=logout|sudden|refused`** (#956, `login_wait.rs`): the demo account's previous session logged out when the viewer started (`logout`: Log in waits up to 10 s), was never seen ending (`sudden`: a crash or a killed viewer, up to 60 s from its last sign of life), or the offline login server answers once as the grid does while it logs out a previous session (`refused`: the grid's message, then a 60 s countdown before trying again). The login screen shows the countdown in the connection progress (“Previous session… 7 s · Esc cancels”, “Session still open… 57 s” after a refusal); Escape cancels it and gives the form back, the end of the countdown sends the login (the demo then says it cannot connect). Use it with `AURORA_DEMO_LOGIN=cards` or `connecting`, and `AURORA_DEMO_LOGIN_SUBMIT=<frame>` for captures. The log says `login waits <n> s for the previous session (…)`. Nothing is read from or written to `last_sessions.json` in demo mode.
-- **`AURORA_DEMO_LOGIN=add-mfa`**: one saved account and the Add form open with a second synthetic identity typed in; Log in sends it to the offline server, which asks for the second factor 1.2 s later. The challenge must stay in the Add form with the new identity (never the saved card's), and the log line `demo login: request for a new account` names which identity was sent, without the name. `AURORA_DEMO_LOGIN_SUBMIT=<frame>` presses Log in at that frame for captures (`AURORA_DEMO_LOGIN_SUBMIT=40`, `AURORA_CAPTURE_FRAMES=170`). The demo never touches the system credential store.
+- **`AURORA_DEMO_LOGIN=add-mfa`**: one saved account and the Add form open with a second synthetic identity typed in; Log in sends it to the offline server, which asks for the second factor 1.2 s later. The challenge must stay in the Add form with the new identity (never the saved card's), and the log line `demo login: request for a new account` names which identity was sent, without the name. `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` presses Log in at those frames for captures (`AURORA_DEMO_LOGIN_SUBMIT=40`, `AURORA_CAPTURE_FRAMES=170`). The demo never touches the system credential store.
+- **`AURORA_DEMO_LOGIN=mfa-refused`**: the first-account form with a synthetic code typed in. The offline server refuses a request that carries a code the way the grid refuses a wrong one, and challenges a request without one. With `AURORA_DEMO_LOGIN_SUBMIT=40,300`, the log must read `code true` for the first request and `code false` for the second, and the second answer opens an empty code field (capture frames 200 and 500).
 
 - **`AURORA_DEMO_LOGIN=drag|drag2|drag-card|drag-card2`**: eight/two synthetic profiles with a left-button side-grip or portrait gesture injected into egui at frames 20–44. Capture frame 40 while held and frame 75 after release. With eight profiles, check continuous card motion, clipped neighbours, circular wrapping, final alignment and central selection without connecting. With two profiles, the same gesture must keep the cards fixed, without arrows or connecting. Input injection never moves the OS pointer. Manually drag in both directions from portraits, place images, names, card padding and Connect buttons; release over a card/outside the window and resize during motion. A simple click still connects, while grid/start menus and text-field drag selection remain usable. Also check Enter, dialogs and short-window vertical scrolling outside the browse row.
 
@@ -6805,6 +6864,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   then each recovery's (a recovery's counts its frames from 0 again): with
   `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
   with the safe graphics level, then close.
+  The report's "Last state" table then shows the new device-lost fields
+  (effects on, GPU frame times, session and region seconds, Vulkan layers,
+  `GPU loss: first seen by` = `demo`, stall 0): read it in the session's
+  `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
   compute dispatch whose loop runs about 12 s on a recent card (the log says
@@ -6830,7 +6893,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_OVERLAY_HOOK=<file>`**, with `AURORA_DEMO=1` (Windows): the
   overlay hook watch (`overlay_hooks.rs`) counts that module file name as
   loaded, for example `DiscordHook64.dll`, `GameOverlayRenderer64.dll`,
-  `RTSSHooks64.dll` or `graphics-hook64.dll`. A known one gets its warning
+  `RTSSHooks64.dll`, `graphics-hook64.dll` or `we-graphics-hook64.dll`. A known one gets its warning
   in the log (`overlay hook loaded in the viewer: …`) and its line in
   `overlay-hooks.txt` of the crash session; any other name does nothing.
   With `AURORA_DEMO_CRASH=freeze`, the report then says
@@ -8335,7 +8398,7 @@ The demo objects use distinct points (skull, left ear,
 left ring finger, left foot and top-right HUD), shown in the
 lists of Appearance and Inventory.
 
-**`AURORA_DEMO_REZ=1|land|object|contents|nocopy|cancel`** — opens the synthetic
+**`AURORA_DEMO_REZ=1|land|object|contents|nocopy|cancel|build|build-object|build-delete`** — opens the synthetic
 inventory. `1` allows testing with the mouse; the other modes drag
 a real inventory row from frame 680: terrain, opaque object,
 contents of the object with Ctrl, no-copy item or cancellation with Esc.
@@ -8345,6 +8408,16 @@ disappears from the inventory, that Ctrl adds to the contents without a new cube
 and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
+
+For #2074, `build` and `build-object` start with the Create tool open and drop
+onto land or an object respectively. The build tools must switch to Edit on
+the inventory drop, dismiss the creation preview and select the rezzed cube.
+Compare captures at frames 670 and 760; repeat with `land` or `object` to
+verify that rezzing with the build tools closed does not open them.
+`build-delete` also presses Delete at frame 720 without clicking again: the
+rezzed object must disappear while its inventory original stays in place and
+no inventory deletion dialog opens. Capture at frames 710 and 780. Clicking
+an inventory row afterwards must give its ordinary shortcuts back to the list.
 
 **`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
@@ -9317,6 +9390,8 @@ What the inventory must show with these scenarios:
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
+| `AURORA_FLEXI_CULL=0` or `alt` | Every flexible prim's mesh swept again each frame, as before, even when no view shows it; `alt`: one second in three |
+| `AURORA_WRITE_STAGING=0` or `alt` | The journal's buffer writes made one by one through the queue, as before, instead of one staging buffer per frame; `alt`: one second in three |
 | `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, not their avatar's, as before |
 | `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), whatever Preferences › Network and cache › Download connections says |
 | `AURORA_DEMO_NET_ADAPTER=<description>` | This network adapter instead of the computer's, for the download connections (e.g. `Marvell AQtion 10Gbit Network Adapter`: always limited, "Follow the connection" greyed) |
@@ -10124,6 +10199,36 @@ What the inventory must show with these scenarios:
   transparent faces of the rigged meshes, which the CPU lists, are tested
   with the extent of their skeleton and no longer with their own bounds
   (`blend` slightly higher).
+- **`AURORA_FLEXI_CULL=0`**: sweeps the mesh of every flexible prim within
+  draw distance again each frame and sends its vertices, as before
+  (`scene/flexible.rs`). By default the physics of each one still runs
+  every frame, but its mesh is swept only while a view can show it: the
+  camera (a sphere around it that holds it bent any way), its reflection on
+  the water of its region, its reflection in the mirror drawn, or its
+  shadow, followed 64 m away from the sun and from the moon. A held mesh
+  takes its current shape the frame it can be seen again; the HUDs and a
+  selected flexible prim are never held. To read in `perf summary`:
+  `flexies` (meshes swept per frame), `flexies_held`, `vertices_kb`,
+  `s_sync_flexibles` and `r_resources`. Turn the camera away from a place
+  full of flexible prims (hair, skirts, flags) and back: no shape should
+  jump when they come into view.
+  `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
+  end of the `perf summary` line.
+- **`AURORA_WRITE_STAGING=0`**: the render thread replays the journal of
+  the frame (`writes.rs`) through `Queue::write_buffer`, one call per
+  write, as before; wgpu makes, maps and frees a staging buffer for each of
+  them. By default the bytes of the frame's buffer writes are copied into
+  one staging buffer kept mapped, and one GPU copy per run of writes that
+  follow each other is submitted before the frame (`write_staging.rs`).
+  Texture writes still go through the queue. Up to three staging buffers
+  take turns; a frame that writes more than any of them holds goes through
+  the queue while a larger one is made on a thread of its own (the
+  arrival in a region), and one that writes more than 32 MB always does.
+  To read in `perf summary`: `r_resources` (render thread) and
+  `journal_kb`; a slow frame's line `frame writes took` gives how many
+  writes were staged. Nothing should change on screen.
+  `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
+  end of the `perf summary` line.
 - **`AURORA_MATERIAL_REBUILD=all`**: each material that arrives (or is given
   up) rebuilds every object using materials, as before, instead of the users
   of that material only (`scene/mat_changes.rs`). `alt`: the old way one second
@@ -10569,7 +10674,9 @@ thread.
     `sync_apply` moves and full syncs that fit in the frame's time budget,
     `sync_anchors` anchors of the skeletons and of the attachment points
     (writing, sending with the posed palettes, centre of the anchored
-    objects), `sync_alpha` faces reclassified after the change of a
+    objects), `sync_flexibles` the flexible prims (physics, and the meshes
+    a view shows swept again) and the grass on new terrain, `sync_alpha`
+    faces reclassified after the change of a
     texture's alpha class;
   - the parts of the frame parameters (`p_*`, in `params`): `screen` switch
     from loading to the world and teleport screen, `env` sky and water of
@@ -10644,7 +10751,10 @@ thread.
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn
     objects and rigged meshes placed by the GPU (`anchored`, which the sync
-    no longer visits), the posed avatars, the bytes of records and palettes
+    no longer visits), the flexible prims whose mesh was swept again
+    (`flexies`) and those simulated with their mesh held because no view
+    shows them (`flexies_held`, `AURORA_FLEXI_CULL`), the posed avatars,
+    the bytes of records and palettes
     sent to the GPU, those of the culling tables (`cull_kb`: faces,
     objects, boxes per bone) and of the vertices deformed in place
     (`vertices_kb`: flexible prims), and those of the whole write journal

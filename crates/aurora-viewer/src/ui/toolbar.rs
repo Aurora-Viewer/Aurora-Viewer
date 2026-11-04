@@ -267,6 +267,10 @@ pub struct ToolbarUi {
     pub water_walk_active: bool,
     /// Our profile is shown on its Picks tab (Avatar.IsPicksTabOpen).
     pub picks_active: bool,
+    /// The photo reel holds no photo (given by the app): its button is
+    /// dimmed. And its quick view is open: the button is lit.
+    pub photo_roll_empty: bool,
+    pub photo_roll_active: bool,
     /// The nearby chat bar is shown (MainChatbarVisible).
     pub chat_bar_active: bool,
     /// The windows the app opens itself, for their buttons' highlight.

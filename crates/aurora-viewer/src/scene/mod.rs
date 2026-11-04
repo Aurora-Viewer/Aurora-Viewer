@@ -19,7 +19,7 @@ pub(crate) mod default_motions;
 pub mod describe;
 pub mod drawn;
 pub mod fetch_priority;
-mod flexible;
+pub(crate) mod flexible;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -695,10 +695,15 @@ pub struct SceneStats {
     pub posed: usize,
     /// Worn objects placed by the GPU (anchors.rs): not visited by the sync.
     pub anchored: usize,
+    /// Flexible prims whose mesh was swept again this frame, and those
+    /// simulated with their mesh held because no view shows them
+    /// (flexible.rs).
+    pub flexies: usize,
+    pub flexies_held: usize,
     /// Skeletons built again this frame (a shape, an attachment or their
     /// age changed), out of `posed` (AURORA_PROFILE).
     pub skeletons_rebuilt: usize,
-    /// How the avatars of the last lists are drawn (AURORA_PROFILE).
+    /// How the avatars of the last lists are drawn.
     pub avatars: AvatarCounts,
 }
 
@@ -761,6 +766,9 @@ pub struct Scene {
     job_rx: crossbeam_channel::Receiver<JobResult>,
     geoms: FastMap<GeomKey, GeomEntry>,
     flexibles: FastMap<usize, flexible::State>,
+    /// The plane (point, normal) of the mirror the last frame drew, for the
+    /// flexible prims only it shows (flexible.rs).
+    pub mirror_plane: Option<(Vec3, Vec3)>,
     /// Grass tufts drawn, and the terrain they were placed on (plants.rs).
     grass: HashMap<usize, plants::GrassBuilt>,
     pub textures: TextureStreamer,
@@ -1417,6 +1425,7 @@ impl Scene {
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),
             geoms: Default::default(),
             flexibles: Default::default(),
+            mirror_plane: None,
             grass: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
             meshes: MeshStreamer::new(cache_dir.clone()),
@@ -2890,6 +2899,7 @@ impl Scene {
         step(&mut slow, "anchors");
         self.sync_flexibles(renderer, world, &synced, now, view);
         self.sync_grass_ground(renderer, world, now, &mut synced);
+        let t_part = self.parts.lap(Part::SyncFlexibles, t_part);
         step(&mut slow, "flexibles");
         self.sync_photo_isolation(renderer, world, &synced);
         // GPU object table: bounds and flags of what was synced (unchanged
@@ -4351,26 +4361,25 @@ impl Scene {
             }
         }
         self.stats.avatars_hidden = imp_avatars.len();
-        if aurora_net::probe::enabled() {
-            let full: Vec<usize> = avatars.iter().filter(|(_, i)| avatar_ok[*i]).map(|(_, i)| *i).collect();
-            self.stats.avatars = AvatarCounts {
-                total: avatars.len(),
-                full: full.len(),
-                full_in_view: full
-                    .iter()
-                    .filter(|&&i| self.gpu.get(i).is_some_and(|g| view.sphere_visible(g.center, 1.6)))
-                    .count(),
-                impostors: imp_avatars.len(),
-                impostors_in_view: imp_avatars.iter().filter(|a| a.in_view).count(),
-                pictured: plan.capture.len(),
-                silhouettes: avatars.iter().filter(|(_, i)| self.too_complex.contains(i)).count(),
-                loading: if self.hide_loading {
-                    avatars.iter().filter(|(_, i)| self.loading.indices.contains(i)).count()
-                } else {
-                    0
-                },
-            };
-        }
+        // every frame, not only with the probes: the crash report's last state
+        // and the grid's viewer statistics read these too
+        self.stats.avatars = AvatarCounts {
+            total: avatars.len(),
+            full: avatars.iter().filter(|(_, i)| avatar_ok[*i]).count(),
+            full_in_view: avatars
+                .iter()
+                .filter(|(_, i)| avatar_ok[*i] && self.gpu.get(*i).is_some_and(|g| view.sphere_visible(g.center, 1.6)))
+                .count(),
+            impostors: imp_avatars.len(),
+            impostors_in_view: imp_avatars.iter().filter(|a| a.in_view).count(),
+            pictured: plan.capture.len(),
+            silhouettes: avatars.iter().filter(|(_, i)| self.too_complex.contains(i)).count(),
+            loading: if self.hide_loading {
+                avatars.iter().filter(|(_, i)| self.loading.indices.contains(i)).count()
+            } else {
+                0
+            },
+        };
         // avatar states of the GPU object table (few avatars: every frame)
         for &(_, i) in &avatars {
             let mut st = 0;
