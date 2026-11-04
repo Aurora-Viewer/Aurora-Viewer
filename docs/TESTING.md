@@ -1092,34 +1092,15 @@ when unfocused") is ignored during a screenshot.
   trigger plain G (snap / guide). Releasing a key first pressed without
   AltGr must always release it, even if AltGr was held in the meantime.
 
-- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|hair|drift,x,y[,n]|orbit,x,y[,px]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
   winit reports it (neither Ctrl nor Alt), so its `demo camera` lines match
   those of `alt` frame for frame; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
-  fixed camera, to compare consecutive screenshots; the drag is per frame
-  and the focus animation per second, so the depth reached depends on the
-  frame rate: use `hair` to compare runs); `hair`: the fly-through of the 400 strand cards
-  (`AURORA_DEMO_HAIR_CARDS=400`) by the scripted camera, locked on a path
-  fixed in our avatar's head frame (it follows the avatar as it stands and
-  turns) and run by time from frame 600, 15 s in all: 0 to 3 s straight in
-  from 0.5 m outside the cards to 0.16 m from the head's centre, inside
-  their shell (cards in front, behind and around, the near plane, 0.1 m,
-  crossing the nearest); 3 to 6 s a full turn on the spot there; 6 to 12 s an orbit inside
-  the shell along the cards' arc, looking ahead along it; 12 to 15 s
-  straight back out; then the scripted camera is released. The camera is
-  logged once a second. Every run follows the same path whatever the frame
-  rate; with `AURORA_FPS_LIMIT=60` a second is 60 frames, so a capture at
-  frame 870 is 4.5 s into the path (inside, mid-turn). The headline run of
-  the transparency measurements (`AURORA_OIT`, `AURORA_PROFILE_FRAMES=1` for
-  the GPU time of every frame); `drift`: the same
+  fixed camera, to compare consecutive screenshots); `drift`: the same
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
-  until frame 1200; `orbit,x,y[,px]`: Alt+click at (x, y) at frame 600,
-  then an orbit of `px` mouse pixels per frame (0.5 by default) that never
-  stops, its pitch swinging slowly, for the stability runs of several
-  minutes with a moving camera (the panes of `AURORA_DEMO_ALPHA_PLANES`
-  seen from every side); press on our own name plate then drag (steering);
+  until frame 1200; press on our own name plate then drag (steering);
   entering / leaving mouselook (frame 650 shows "Press Esc to return to
   world view" above the bottom bar); `ml-zoom`: the right button held in
   mouselook at 640 (the normal angle stays: no zoom was set with the wheel
@@ -4162,7 +4143,6 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
-| `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]` | `n` translucent panes filling the view ahead of the start position: `n` blended layers on every pixel; spacing 0: coplanar |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
@@ -9488,9 +9468,6 @@ What the inventory must show with these scenarios:
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
-| `AURORA_OIT=0` or `1` | Order-independent transparency off or on for this launch, whatever the setting |
-| `AURORA_OIT_NODES=<n>` | Layers per pixel of its slot array and pool for this launch (2 to 32): 2 makes a deep scene take many bands |
-| `AURORA_OIT_STATS=1` | With `AURORA_OIT=1`, logs the layers per pixel and the bands of the frame once a second (`oit layers:`) |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
@@ -9963,60 +9940,6 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
-- **`AURORA_OIT=0|1`**: the blended faces sorted per pixel (Preferences ›
-  Aurora, or Graphics › Image › Transparency; off by default, the Legacy
-  Viewer's order) or by object, as before, for this launch. With `1` the
-  log gives `oit: <s> slots (<MB> MB) + <n> nodes (<MB> MB) for <w>x<h>, up
-  to 16 bands` when the pool is made (the heads, the counts and the
-  composite texture, 24 B per pixel, the nodes' claims and the band plan
-  come on top: 512 MB in all, the pool taking what the rest leaves), and
-  `oit: off, pool freed` when the setting is turned off. The blended faces
-  are counted per pixel first, unshaded, and the screen is cut into bands
-  of rows whose lists fit the pool (16 at most), each captured, sorted and
-  composited in turn: no frame overflows the pool, every fragment is
-  composited in its order whatever the depth complexity, no face is shaded
-  twice. Before / after: `AURORA_DEMO_HAIR_CARDS=60
-  AURORA_DEMO_CAMERA=close,846,560,40 AURORA_DEMO_POS=133,129`, capture at
-  frame 780: with `0` the head and the back show between the shuffled
-  strand cards, with `1` the cards cover them in their depth order. Inside
-  the hair: `AURORA_DEMO_HAIR_CARDS=400 AURORA_DEMO_CAMERA=hair` with
-  `AURORA_PROFILE_FRAMES=1` and `AURORA_FPS_LIMIT=60`, the GPU time of
-  every frame of the fly-through (`gpu profile:`); with `0` the cards show
-  the body and the scene through their gaps in hard planes (the per-object
-  order), with `1` a dense hair, and the frames' cost follows the depth
-  without a step. Check each antialiasing (`AURORA_AA=0`, `3`, `5`, `6`):
-  the lists are resolved per pixel, without the strands' MSAA coverage, so
-  with MSAA (`3`) the frame also gets the SMAA mode's passes over the
-  resolved image (only while OIT is on; `g_post` then holds them too) and
-  the strands' edges are smoothed as with SMAA (`6`); an opaque edge seen
-  through a layer (the head behind the strands, a pillar behind a pane)
-  keeps its anti-aliasing where the layer is in front of every sample of
-  the pixel, and is decided for the pixel's majority of samples otherwise.
-  Deep stacks keep their nearest layers: with `AURORA_DEMO_HAIR_CARDS=400`,
-  more than 24 layers overlap, and the strands in front must stay in front
-  of the farther ones at any "Layers sorted per pixel" (24 and 1 in
-  Graphics › Image › Transparency). In `perf summary`, `g_transparent`
-  includes the count, the captures and the resolves (`g_oit_*`).
-- **`AURORA_OIT_NODES=<n>`**: with `AURORA_OIT=1`, the slot array holds
-  half of `n` layers per pixel and the pool `n` minus them per pixel on
-  average (2 to 32; without it the pool takes the rest of the 512 MB, the
-  setting "Layers kept per pixel" sizing the slot array only). At 2, the
-  hair cards scenario above needs many bands (`oit layers:` with
-  `AURORA_OIT_STATS=1` lists them): the capture must give the same image as
-  at the default size (compare the two captures: 0 differing pixels of a
-  static region). The bands' draws are chosen on the GPU through copies of
-  the draws' arguments (`oit_gate.rs`), the path every backend takes,
-  Metal included: on a Mac, check both captures.
-- **`AURORA_OIT_STATS=1`**: with `AURORA_OIT=1`, the count pass's layers
-  per pixel and the band plan are read back about once a second (mapped
-  without a wait) and the log gets an `oit layers:` line: the pixels
-  holding a layer, the fragments counted, the layers per covered pixel
-  (mean, median, 95th percentile, maximum), the pixels past the slot
-  array, past the 24 layers the sort keeps and past a walk's bound, the
-  nodes the frame needed against the pool, the bands used with their rows,
-  and whether rows had to be merged into the last band (more than 16
-  needed) or a band's lists passed the pool (a single tile row needing more
-  than it): fragments are then left out of the image, which the line says.
 - **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
   default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
@@ -10101,24 +10024,6 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=write`, the ring
   of #556 (the pane missing around the hair) appears; by default it does
   not.
-- **`AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`**: `n` translucent
-  panes (1 to 64, 8 when the value is not a number; `alpha` their opacity,
-  0.3 by default) ahead of the start position (`AURORA_DEMO_POS`), facing
-  the camera, one every `spacing` metres (0.25 by default, up to 2) from
-  3 m on, each large enough to fill the view at its distance, their hue
-  running from the nearest to the farthest: the fog planes, glass walls and
-  skybox panes of a club, `n` blended layers over nearly every pixel. A
-  spacing of `0` puts them all in the same place, exactly coplanar
-  (`2,0.5,0`: two panes of the same depth on every pixel): with
-  `AURORA_OIT=1` their order is decided by the tie-break of the sort (the
-  object's id and the face's index hashed), so consecutive captures
-  (`AURORA_CAPTURE_FRAMES=2000,2001,2002`) must be identical over the
-  panes, frame after frame, and the same again in another session, with
-  other content loaded first (`AURORA_DEMO_HAIR_CARDS`, `AURORA_DEMO_CROWD`). The load of the order-independent transparency
-  (`AURORA_OIT=1`): `8` fits its default pool, `20` and more overflow it at
-  1600 × 900 and the frame is drawn again in the object order (the image
-  stays the same as with `AURORA_OIT=0`). In `perf summary`, compare
-  `g_transparent` with `AURORA_OIT=0` and `1`, `AURORA_AA=3` and `6`.
 - **`AURORA_DEMO_BLEND_AO=1`**: a flat face 4 m ahead of the start
   position (`AURORA_DEMO_POS`) and 1.6 m to its left, above our avatar's
   head, turned towards the camera: two halves alike, the left one blended
@@ -10841,13 +10746,6 @@ thread.
     are counted with it), and SSR;
   - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
     counted in `g_post`;
-  - `g_oit_count`, `g_oit_capture`, `g_oit_classify`, `g_oit_composite`,
-    `g_oit_rest`: the order-independent transparency's phases
-    (`AURORA_OIT=1`), all counted in `g_transparent`: its count pass with
-    the band plan, then summed over the bands its capture passes, its
-    classifies (the sort per pixel) and its composites (with the glow),
-    and the rest (the rigged faces' depth, the overlays; the whole of
-    `g_transparent` while OIT is off, the others 0 then);
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn

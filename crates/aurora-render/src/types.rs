@@ -290,32 +290,6 @@ pub struct DrawRecord {
     /// Finite portal cut: center.xyz and encoded horizontal entry direction.
     /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
-    /// x: the order-independent transparency's tie-break of the face
-    /// ([`oit_tie`]: the object's full id and the face's index hashed, the
-    /// same on every launch; the capture keeps its low 24 bits with each
-    /// layer, the resolve orders layers of one depth by it). y, z, w: spare.
-    pub identity: [u32; 4],
-}
-
-/// The tie-break of a face for the order-independent transparency
-/// (`DrawRecord::identity[0]`): a hash of the object's full id (its UUID,
-/// not the region's local id) and of the face's index, so that two coplanar
-/// faces sort the same way on every frame and every launch, whatever the
-/// order they were loaded in or where their geometry sits. The shader keeps
-/// the low 24 bits: two faces of one depth whose 24 bits collide (one pair
-/// in sixteen million) fall back to the order of their fragments.
-pub fn oit_tie(id: [u8; 16], face: u32) -> u32 {
-    // FNV-1a over the id and the face, then a final mix so that every byte
-    // reaches the low 24 bits
-    let mut h: u32 = 0x811c_9dc5;
-    for b in id.into_iter().chain(face.to_le_bytes()) {
-        h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
-    }
-    h ^= h >> 16;
-    h = h.wrapping_mul(0x7feb_352d);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x846c_a68b);
-    h ^ (h >> 16)
 }
 
 /// Modes of `DrawRecord::rez` (`rez_apply` in object.wgsl).
@@ -354,7 +328,6 @@ impl Default for DrawRecord {
             spec_uv: [1.0, 1.0, 0.0, 0.0],
             legacy: [0.0; 4],
             spec_color: [1.0, 1.0, 1.0, 0.0],
-            identity: [0; 4],
             anim: [0; 4],
             anim_xf: [0.0; 4],
             rez: [0; 4],
@@ -1060,19 +1033,6 @@ pub struct RenderSettings {
     pub probe_slots: u32,
     /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
-    /// Order-independent transparency (oit.rs): the blended faces are sorted
-    /// per pixel rather than per object. Off (the default: an opt-in), or on
-    /// a GPU without writable storage in fragment shaders, they are blended
-    /// in the drawing order, and the OIT's video memory is freed.
-    pub oit: bool,
-    /// Its node pool: blended fragments per screen pixel on average
-    /// (`oit::MIN_NODES_PER_PIXEL..=oit::MAX_NODES_PER_PIXEL`), within
-    /// `oit::MAX_POOL_BYTES` in all (the per-pixel tables included).
-    pub oit_nodes_per_pixel: u32,
-    /// Layers sorted exactly in each pixel (`1..=oit::MAX_SORTED_LAYERS`);
-    /// the nearest are kept whatever the drawing order, the farther ones are
-    /// blended behind them as a weighted average.
-    pub oit_max_layers: u32,
 }
 
 impl Default for RenderSettings {
@@ -1098,9 +1058,6 @@ impl Default for RenderSettings {
             anisotropy: 8,
             probe_slots: 32,
             occlusion: true,
-            oit: false,
-            oit_nodes_per_pixel: crate::oit::DEFAULT_NODES_PER_PIXEL,
-            oit_max_layers: crate::oit::DEFAULT_SORTED_LAYERS,
         }
     }
 }
@@ -1613,12 +1570,6 @@ pub struct RenderStats {
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
-    /// GPU times of the order-independent transparency's phases (ms),
-    /// parts of [`GpuElement::Transparent`]: its count pass with the band
-    /// plan, then over the bands its capture passes, its classifies and
-    /// its composites (with the glow), and the rest (the rigged faces'
-    /// depth, the overlays; the whole while OIT is off, the others 0 then).
-    pub gpu_oit: Option<[f32; 5]>,
     /// GPU time of the rest of [`GpuElement::Effects`] (ms): the planar
     /// reflections (with the refracted water light), the reflection probe,
     /// the scene copy (with the cut-out pass and the submerged water
@@ -1967,12 +1918,11 @@ mod tests {
     /// matrix, then one 16-byte vector per field).
     #[test]
     fn draw_record_layout_matches_wgsl() {
-        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 15 * 16);
+        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 14 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim), 64 + 10 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim_xf), 64 + 11 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, rez), 64 + 12 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, portal_clip), 64 + 13 * 16);
-        assert_eq!(std::mem::offset_of!(DrawRecord, identity), 64 + 14 * 16);
         let wgsl = include_str!("shaders/common.wgsl");
         let start = wgsl.find("struct DrawRecord {").expect("DrawRecord in common.wgsl");
         let body = &wgsl[start..start + wgsl[start..].find("};").expect("end of DrawRecord")];
@@ -1999,28 +1949,9 @@ mod tests {
                 "anim",
                 "anim_xf",
                 "rez",
-                "portal_clip",
-                "identity"
+                "portal_clip"
             ]
         );
-    }
-
-    /// The OIT tie-break depends on the object's id and the face's index
-    /// only: the same value whenever they are the same, another one when
-    /// either differs, nothing else in it (no slot, no offset, no order).
-    #[test]
-    fn oit_tie_depends_on_the_id_and_the_face_only() {
-        let a = [0x11; 16];
-        let b = [0x22; 16];
-        assert_eq!(oit_tie(a, 3), oit_tie(a, 3));
-        assert_ne!(oit_tie(a, 3), oit_tie(a, 4));
-        assert_ne!(oit_tie(a, 3), oit_tie(b, 3));
-        // the shader keeps 24 bits: distinct there too for these
-        let low = |v: u32| v & 0xff_ffff;
-        assert_ne!(low(oit_tie(a, 3)), low(oit_tie(a, 4)));
-        assert_ne!(low(oit_tie(a, 3)), low(oit_tie(b, 3)));
-        // a face of a system avatar part: its own namespace of indices
-        assert_ne!(low(oit_tie(a, 0)), low(oit_tie(a, 0x8000)));
     }
 
     #[test]

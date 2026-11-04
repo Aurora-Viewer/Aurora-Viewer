@@ -3653,8 +3653,6 @@ impl Scene {
                 continue;
             }
             let mut rec = te_record_base(model, &tf);
-            // the OIT tie-break: the object's id and this face
-            rec.identity[0] = aurora_render::oit_tie(*o.full_id.as_bytes(), fi as u32);
             // Linden plants cut at 0.5, not the 0.33 of other faces without a
             // material (LLDrawPoolTree, setMinimumAlpha(0.5))
             if plant.is_some() {
@@ -4108,9 +4106,6 @@ impl Scene {
                     model: record_model,
                     params: [0.0, 0.0, 0.8, minimum_alpha],
                     flags: [flags::SKINNED, palette, system_binds, 0],
-                    // the OIT tie-break: the avatar's id and the part, in a
-                    // range of its own above the faces of an object
-                    identity: [aurora_render::oit_tie(*o.full_id.as_bytes(), 0x8000 | pi as u32), 0, 0, 0],
                     ..Default::default()
                 };
                 if let Some((base, count, moving)) = self.live_morphs.parts.get(pi).copied().flatten() {

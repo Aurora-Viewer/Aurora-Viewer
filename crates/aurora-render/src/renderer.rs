@@ -852,16 +852,6 @@ struct Pipelines {
     blend_depth_fringe: SidedPipelines,
     /// `Layers`: after each object's fringes, their depth from 1/255.
     blend_depth_fringe_depth: SidedPipelines,
-    /// Order-independent capture (oit.rs); `None` when the GPU cannot.
-    blend_oit: Option<SidedPipelines>,
-    /// the count before the capture (`fs_count_oit`): the same fragments,
-    /// counted per pixel, unshaded
-    blend_oit_count: Option<SidedPipelines>,
-    /// the blended faces' glow after the composite, dimmed by the layers in
-    /// front of each (`fs_glow_oit`)
-    glow_oit: Option<wgpu::RenderPipeline>,
-    /// the composite of the lists, for this sample count
-    oit_resolve: Option<crate::oit::Resolve>,
     /// The blended faces under the water (`DrawLists::blend_under_water`),
     /// and their depth into the single-sampled scene depth.
     blend_under: SidedPipelines,
@@ -970,10 +960,6 @@ struct GpuTimer {
     last_contact: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
-    /// Last times of the order-independent transparency's phases (ms):
-    /// count and band plan, then over the bands the captures, the
-    /// classifies and the composites, then the rest (`MARK_OIT_*`).
-    last_oit: Option<[f32; 5]>,
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
     /// order.
     last_effects: Option<[f32; 4]>,
@@ -1039,7 +1025,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 28 + 3 * crate::oit::MAX_BANDS;
+const GPU_MARKS: u32 = 25;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1101,21 +1087,6 @@ const MARK_CONTACT_END: u32 = 23;
 const MARK_WATER_INTERFACE_END: u32 = 24;
 const MARK_WATER_AIR_BEGIN: u32 = 25;
 const MARK_WATER_AIR_END: u32 = 26;
-/// Inside the blended faces' range (`MARK_GLOW_END` to `MARK_BLEND_END`),
-/// the order-independent transparency's phases: after its count pass and
-/// band plan, then for each band after its capture pass, its classify and
-/// its composite (`mark_oit_band`); what follows the last band to
-/// `MARK_BLEND_END` is the rest (the rigged faces' depth, the overlays).
-/// All written right after `MARK_GLOW_END` while OIT is off (the phases
-/// then empty, the rest whole).
-const MARK_OIT_COUNT_END: u32 = 27;
-const MARK_OIT_BANDS: u32 = 28;
-/// The mark after phase `phase` (0 capture, 1 classify, 2 composite) of
-/// band `band`.
-const fn mark_oit_band(band: u32, phase: u32) -> u32 {
-    MARK_OIT_BANDS + 3 * band + phase
-}
-const MARK_OIT_LAST: u32 = MARK_OIT_BANDS + 3 * crate::oit::MAX_BANDS - 1;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1205,7 +1176,6 @@ impl GpuTimer {
             last_ssao: None,
             last_contact: None,
             last_bloom: None,
-            last_oit: None,
             last_effects: None,
             slot_prepass: Default::default(),
             compare: PrepassCompare::default(),
@@ -1237,22 +1207,6 @@ impl GpuTimer {
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
-                            let mut oit = [
-                                ms(MARK_GLOW_END, MARK_OIT_COUNT_END),
-                                0.0,
-                                0.0,
-                                0.0,
-                                ms(MARK_OIT_LAST, MARK_BLEND_END),
-                            ];
-                            let mut prev = MARK_OIT_COUNT_END;
-                            for band in 0..crate::oit::MAX_BANDS {
-                                for phase in 0..3 {
-                                    let at = mark_oit_band(band, phase);
-                                    oit[1 + phase as usize] += ms(prev, at);
-                                    prev = at;
-                                }
-                            }
-                            self.last_oit = Some(oit);
                             self.last_effects = Some(GPU_EFFECT_PARTS.map(|(a, b)| ms(a, b)));
                             if msaa_prepass() == MsaaPrepass::Alternate {
                                 let mut times = [0.0; COMPARE_KEYS.len()];
@@ -1569,8 +1523,6 @@ pub(crate) struct Backend {
     post_layout: wgpu::BindGroupLayout,
     gbuf_layout: wgpu::BindGroupLayout,
     pipelines: Pipelines,
-    /// Order-independent transparency (oit.rs); `None` when the GPU cannot.
-    oit: Option<crate::oit::Oit>,
     ssao: Ssao,
     gtao: crate::gtao::Gtao,
     water_effects: crate::water_effects::WaterGpu,
@@ -2093,17 +2045,6 @@ fn tex(binding: u32, v: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
     }
 }
 
-/// Whether the SMAA passes run on the frame: in the SMAA mode, and in the
-/// MSAA modes while the order-independent transparency is on (`oit` its
-/// effective setting, on a device that has it). Its lists are resolved per
-/// pixel, without the MSAA coverage of the transparent faces, so their
-/// edges and the hair's wisps take their anti-aliasing from the SMAA pass
-/// over the resolved image, the SMAA mode's own pass at its own place;
-/// every other combination keeps its passes.
-fn smaa_wanted(aa: AntiAliasing, oit: bool) -> bool {
-    aa == AntiAliasing::Smaa || (matches!(aa, AntiAliasing::Msaa(_)) && oit)
-}
-
 fn float_tex(binding: u32) -> wgpu::BindGroupLayoutEntry {
     tex_entry(binding, wgpu::TextureSampleType::Float { filterable: true })
 }
@@ -2419,10 +2360,7 @@ impl Impostors {
         let src = format!(
             "{}\n{}\n{}",
             crate::common_shader_source(),
-            crate::oit::object_source(
-                device,
-                &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"))
-            ),
+            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3070,10 +3008,6 @@ impl Backend {
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
         let bloom = crate::bloom::Bloom::new(&device, &post_layout);
-        let oit = crate::oit::Oit::new(&device, HDR_FORMAT, DEPTH_FORMAT);
-        if oit.is_none() {
-            log::info!("oit: not supported by this GPU, blended faces sorted by object");
-        }
         let pipelines = Self::make_pipelines(
             &device,
             &frame_layout,
@@ -3082,7 +3016,6 @@ impl Backend {
             &shadow_layout,
             [&post_layout, &bloom.post_layout],
             &gbuf_layout,
-            oit.as_ref().map(|o| o.shared()),
             msaa_samples,
             format,
             settings.ssr,
@@ -3193,7 +3126,6 @@ impl Backend {
             post_layout,
             gbuf_layout,
             pipelines,
-            oit,
             ssao,
             gtao,
             water_effects,
@@ -3336,7 +3268,6 @@ impl Backend {
         shadow_layout: &wgpu::BindGroupLayout,
         post_layouts: [&wgpu::BindGroupLayout; 2],
         gbuf_layout: &wgpu::BindGroupLayout,
-        oit: Option<&crate::oit::Shared>,
         samples: u32,
         surface_format: wgpu::TextureFormat,
         ssr: bool,
@@ -3344,10 +3275,7 @@ impl Backend {
         let src = format!(
             "{}\n{}\n{}",
             crate::common_shader_source(),
-            crate::oit::object_source(
-                device,
-                &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"))
-            ),
+            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3607,60 +3535,6 @@ impl Backend {
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
             ..base("blend rigged fringe depth", "vs_main", "fs_blend")
         });
-        // Order-independent transparency (oit.rs): every blended face into
-        // its pixels' lists, the pool as group 3 (dropped when the pool is
-        // full: the faces are then replayed in order)
-        let oit_layout = oit.map(|oit| {
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("scene oit"),
-                bind_group_layouts: &[
-                    Some(frame_layout),
-                    Some(records_layout),
-                    Some(tex_layout),
-                    Some(oit.capture_layout()),
-                ],
-                immediate_size: 0,
-            })
-        });
-        // the glow reads the slot array the capture wrote (own group 3 layout)
-        let glow_oit_layout = oit.map(|oit| {
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("scene oit glow"),
-                bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(oit.glow_layout())],
-                immediate_size: 0,
-            })
-        });
-        // the count before the capture and the capture: the same depth
-        // test, cull and samples, so the same fragments; the lists are
-        // their output, the colour is not written. The capture is drawn on
-        // the band's depth mask (oit.rs `band_mask`), the count sees all.
-        let oit_constants: &[(&str, f64)] = if crate::oit::early_depth(device) {
-            &[("BLEND_EARLY_DISCARD", 1.0), ("OIT_EARLY_DEPTH", 1.0), ("WATER_CLIP", 1.0)]
-        } else {
-            &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)]
-        };
-        let oit_pipe = |label: &'static str, vs: &'static str, fs: &'static str| {
-            oit_layout.as_ref().map(|layout| {
-                std::array::from_fn(|side| {
-                    make_pipeline(
-                        device,
-                        &module,
-                        layout,
-                        PipeDesc {
-                            cull: blend_cull(side != 0),
-                            blend: Some(suppress),
-                            write_mask: wgpu::ColorWrites::empty(),
-                            depth_write: false,
-                            depth_compare: wgpu::CompareFunction::Greater,
-                            constants: oit_constants,
-                            ..base(label, vs, fs)
-                        },
-                    )
-                })
-            })
-        };
-        let blend_oit_count = oit_pipe("blend oit count", "vs_main", "fs_count_oit");
-        let blend_oit = oit_pipe("blend oit capture", "vs_main", "fs_blend_oit");
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -3717,18 +3591,6 @@ impl Backend {
         // the blended faces drawn after the water: their glow clipped to the
         // camera's side like their colour (`blend_pipe`, WATER_CLIP 1)
         let glow_water = pipe(glow_desc("glow above water", &[("WATER_CLIP", 1.0)]));
-        let glow_oit = glow_oit_layout.as_ref().map(|layout| {
-            make_pipeline(
-                device,
-                &module,
-                layout,
-                PipeDesc {
-                    fs: Some("fs_glow_oit"),
-                    ..glow_desc("glow above water, oit", &[("WATER_CLIP", 1.0)])
-                },
-            )
-        });
-        let oit_resolve = oit.map(|oit| crate::oit::make_resolve(device, oit, samples));
         // opaque glowing faces: mesh bodies stack coplanar layers that all pass
         // the depth test; keep the strongest glow instead of their sum
         let glow_max = pipe(PipeDesc {
@@ -4180,10 +4042,6 @@ impl Backend {
             blend_depth_solid,
             blend_depth_fringe,
             blend_depth_fringe_depth,
-            blend_oit,
-            blend_oit_count,
-            glow_oit,
-            oit_resolve,
             blend_under,
             blend_under_depth_ss,
             particles,
@@ -4912,7 +4770,7 @@ impl Backend {
             self.msaa_samples,
             &self.settings,
         );
-        let smaa = smaa_wanted(self.settings.aa, self.oit_wanted(&self.settings)).then(|| {
+        let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
             self.smaa
                 .make_targets(&self.device, &self.queue, &self.dummies.white, size.0, size.1, self.surface_srgb)
         });
@@ -5015,7 +4873,6 @@ impl Backend {
                     &self.shadow_layout,
                     [&self.post_layout, &self.bloom.post_layout],
                     &self.gbuf_layout,
-                    self.oit.as_ref().map(|o| o.shared()),
                     samples,
                     self.config.format,
                     s.ssr,
@@ -5048,23 +4905,10 @@ impl Backend {
             self.gbuf_layout.clone(),
             self.impostors.layout.clone(),
         ];
-        let oit_shared = self.oit.as_ref().map(|o| o.shared().clone());
         let format = self.config.format;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
             let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
-            let scene = Self::make_pipelines(
-                &device,
-                frame,
-                records,
-                tex,
-                shadow,
-                [post, bloom],
-                gbuf,
-                oit_shared.as_ref(),
-                samples,
-                format,
-                ssr,
-            );
+            let scene = Self::make_pipelines(&device, frame, records, tex, shadow, [post, bloom], gbuf, samples, format, ssr);
             let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr);
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
@@ -5081,19 +4925,13 @@ impl Backend {
         }
     }
 
-    /// The order-independent transparency `s` asks for, on a device that
-    /// has it (`AURORA_OIT` over the setting, as the frame decides).
-    fn oit_wanted(&self, s: &RenderSettings) -> bool {
-        crate::oit::env_override().unwrap_or(s.oit) && self.oit.is_some()
-    }
-
     /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
     /// set compiled for other samples or SSR, `None` when they stay.
     fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
         let pipelines_dirty = rebuilt.is_some();
         let targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
-            || smaa_wanted(s.aa, self.oit_wanted(&s)) != smaa_wanted(self.settings.aa, self.oit_wanted(&self.settings))
+            || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
             || s.screen_indirect != self.settings.screen_indirect
@@ -5778,9 +5616,6 @@ impl Backend {
             t.harvest();
         }
         self.occlusion.harvest();
-        if let Some(line) = self.oit.as_ref().and_then(|o| o.layers_log()) {
-            log::info!("{line}");
-        }
         self.cull.harvest();
         self.depth_pick.harvest();
         self.depth_pick.harvest_clicks();
@@ -7926,105 +7761,33 @@ impl Backend {
         let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
         let (b0, bn) = rg.blend;
         let n_depth = (lists.blend_depth as u32).min(bn);
-        // Order-independent transparency (oit.rs): the blended faces, rigged
-        // or not, into per-pixel lists, sorted and composited after them
-        let oit_on = crate::oit::env_override().unwrap_or(self.settings.oit) && bn > 0 && self.pipelines.blend_oit.is_some() && {
-            let size = self.targets.depth_ss_tex.size();
-            let samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
-            let s = &self.settings;
-            // (the resolve comes with the scene's pipelines, for their samples)
-            let resolve_ready = self.pipelines.oit_resolve.as_ref().is_some_and(|r| r.samples() == samples);
-            let depth_msaa = self.targets.depth_msaa.as_ref();
-            let depth_ss = &self.targets.depth_ss;
-            let (device, queue, indirect) = (&self.device, &self.queue, &self.indirect);
-            resolve_ready
-                && self.pipelines.blend_oit_count.is_some()
-                && self.oit.as_mut().is_some_and(|o| {
-                    o.prepare(
-                        device,
-                        queue,
-                        size.width,
-                        size.height,
-                        samples,
-                        crate::oit::nodes_override().unwrap_or(s.oit_nodes_per_pixel),
-                        s.oit_max_layers,
-                        depth_ss,
-                        depth_msaa,
-                        indirect,
-                        // the blend list, drawn once per band
-                        rg.blend,
-                    )
-                })
-        };
-        // Off, the pool is freed: `prepare` only runs while it is on. (Not
-        // when merely no face is blended this frame: the pool would be made
-        // again as soon as one is.)
-        if !crate::oit::env_override().unwrap_or(self.settings.oit)
-            && let Some(o) = &mut self.oit
-        {
-            o.release();
-        }
-        let split = n_depth > 0 && !oit_on;
+        let split = n_depth > 0;
         let blend_pipe = self
             .pipelines
             .blend_late
             .as_ref()
             .filter(|_| f.blend_late_discard)
             .unwrap_or(&self.pipelines.blend);
-        // A draw of the in-order path, or of band `Some(band)` of the OIT:
-        // then all of it or nothing, as the band plan decided on the GPU,
-        // through the band's copy of its arguments with or without their
-        // instances (oit_gate.rs).
-        let draw_g = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, r: (u64, u32), gate: Option<u32>| match gate {
-            None => draw(pass, pipe, r),
-            Some(band) if r.1 > 0 => {
-                if let Some((args, offset)) = self.oit.as_ref().and_then(|o| o.band_draws(band, r.0, r.1)) {
-                    calls.set(calls.get() + 1);
-                    pass.set_pipeline(pipe);
-                    pass.multi_draw_indexed_indirect(args, offset, r.1);
-                }
-            }
-            Some(_) => {}
-        };
-        // `draw_sided` (the faces `first..` of the blend list, by sidedness
-        // runs), gated as `draw_g`
-        let draw_sided_g = |pass: &mut wgpu::RenderPass, pipes: &SidedPipelines, r: (u64, u32), first: u32, gate: Option<u32>| {
-            for (run, double_sided) in blend_runs(&lists.blend_double_sided, first..first + r.1) {
-                draw_g(
-                    pass,
-                    &pipes[usize::from(double_sided)],
-                    (r.0 + u64::from(run.start - first) * stride, run.end - run.start),
-                    gate,
-                );
-            }
-        };
         // blended faces `from..to`, back to front; a glowing one adds its glow
         // right after itself, so later layers in front dim it (LLDrawPoolAlpha)
-        let blended_g = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, from: u32, to: u32, gate: Option<u32>| {
+        let blended = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, from: u32, to: u32| {
             let mut start = from;
             for i in from..to {
                 if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
                     continue;
                 }
-                draw_sided_g(pass, pipe, (b0 + start as u64 * stride, i + 1 - start), start, gate);
-                draw_g(pass, &self.pipelines.glow_water, (b0 + i as u64 * stride, 1), gate);
+                draw_sided(pass, pipe, (b0 + start as u64 * stride, i + 1 - start), start);
+                draw(pass, &self.pipelines.glow_water, (b0 + i as u64 * stride, 1));
                 start = i + 1;
             }
-            draw_sided_g(pass, pipe, (b0 + start as u64 * stride, to - start), start, gate);
+            draw_sided(pass, pipe, (b0 + start as u64 * stride, to - start), start);
         };
-        let blended = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, from: u32, to: u32| {
-            blended_g(pass, pipe, from, to, None);
-        };
-        // the other blended faces (not with `oit_on`: composited before),
-        // the overlays and the particles
+        // the other blended faces, the overlays and the particles
         let rest = |pass: &mut wgpu::RenderPass| {
-            if !oit_on {
-                // The local hologram leaves world depth and the SSR G-buffer
-                // untouched; transparent world faces still cover it normally.
-                // (With `oit_on`, drawn before the composite.)
-                draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
-                blended(pass, blend_pipe, n_depth, bn);
-            }
+            // The local hologram leaves world depth and the SSR G-buffer
+            // untouched; transparent world faces still cover it normally.
+            draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
+            blended(pass, blend_pipe, n_depth, bn);
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
@@ -8072,7 +7835,7 @@ impl Backend {
             }
         };
         {
-            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !oit_on, false);
+            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split, false);
             bind_mesh(&mut pass, &self.groups.b);
             if let (Some(ssr), Some(gbg)) = (&self.pipelines.ssr, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
@@ -8100,33 +7863,24 @@ impl Backend {
                 }
             }
             pass_mark(&mut pass, MARK_GLOW_END);
-            if !oit_on {
-                // (no OIT phase this frame: its marks empty, the rest whole)
-                for m in MARK_OIT_COUNT_END..=MARK_OIT_LAST {
-                    pass_mark(&mut pass, m);
-                }
-            }
-            if !split && !oit_on {
+            if !split {
                 rest(&mut pass);
             }
         }
-        // The rigged blended faces drawn in order, by `RiggedBlendDepth` mode
-        // (each fragment written ahead of the faces drawn after it).
-        let rigged_in_order = |encoder: &mut wgpu::CommandEncoder| {
-            let gate: Option<u32> = None;
+        if split {
             // (the frame group without the scene copy and the depth: the
             // depth is written here, and fs_blend reads neither)
             match lists.blend_depth_mode {
                 RiggedBlendDepth::Write => {
-                    let mut pass = begin_scene_b(encoder, &self.targets, "scene b rigged blend", false, true);
+                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
-                    blended_g(&mut pass, &self.pipelines.blend_depth, 0, n_depth, gate);
+                    blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
                 }
                 RiggedBlendDepth::HalfCovered => {
-                    let mut pass = begin_scene_b(encoder, &self.targets, "scene b rigged blend", false, true);
+                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
-                    draw_sided_g(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0, gate);
-                    blended_g(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth, gate);
+                    draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
+                    blended(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth);
                 }
                 RiggedBlendDepth::Layered => {
                     // their colour as the Legacy Viewer draws it, each
@@ -8136,35 +7890,34 @@ impl Backend {
                     if let Some((layers_tex, layers)) = &t.blend_layers {
                         let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
                         encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
-                        let mut pass = begin_scene_b_on(encoder, t, "scene b rigged blend", false, true, layers);
+                        let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
                         bind_mesh(&mut pass, &self.groups.a);
-                        blended_g(&mut pass, &self.pipelines.blend_depth, 0, n_depth, gate);
+                        blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
                     }
                     // ...and in the scene depth only where at least half
                     // covered, for what is drawn after them (#556)
-                    let mut pass = begin_scene_b(encoder, t, "scene b rigged blend depth", false, true);
+                    let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
-                    draw_sided_g(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0, gate);
+                    draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
                 }
                 RiggedBlendDepth::Split => {
                     // object by object in their drawing order, what is at
                     // least half covered, hiding what is drawn after it
                     // behind it, then the object's fringes (#935); the glow
                     // once, with the first
-                    let mut pass = begin_scene_b(encoder, &self.targets, "scene b rigged blend", false, true);
+                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
                     let mut from = 0;
                     for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
                         if end <= from {
                             continue;
                         }
-                        blended_g(&mut pass, &self.pipelines.blend_depth_solid, from, end, gate);
-                        draw_sided_g(
+                        blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
+                        draw_sided(
                             &mut pass,
                             &self.pipelines.blend_depth_fringe,
                             (b0 + from as u64 * stride, end - from),
                             from,
-                            gate,
                         );
                         from = end;
                     }
@@ -8177,7 +7930,7 @@ impl Backend {
                     if let Some((layers_tex, layers)) = &t.blend_layers {
                         let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
                         encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
-                        let mut pass = begin_scene_b_on(encoder, t, "scene b rigged blend", false, true, layers);
+                        let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
                         bind_mesh(&mut pass, &self.groups.a);
                         let mut from = 0;
                         for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
@@ -8185,130 +7938,40 @@ impl Backend {
                                 continue;
                             }
                             let run = (b0 + from as u64 * stride, end - from);
-                            blended_g(&mut pass, &self.pipelines.blend_depth_solid, from, end, gate);
-                            draw_sided_g(&mut pass, &self.pipelines.blend_depth_fringe, run, from, gate);
-                            draw_sided_g(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from, gate);
+                            blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
+                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
+                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
                             from = end;
                         }
                     }
                     // ...and in the scene depth only where at least half
                     // covered, for what is drawn after them (#556)
-                    let mut pass = begin_scene_b(encoder, t, "scene b rigged blend depth", false, true);
+                    let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
-                    draw_sided_g(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0, gate);
+                    draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
                 }
                 RiggedBlendDepth::Runs => {
                     // their depth where nearly opaque, then run by run
                     // their colour and their depth where half covered (#935)
-                    let mut pass = begin_scene_b(encoder, &self.targets, "scene b rigged blend", false, true);
+                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
-                    draw_sided_g(&mut pass, &self.pipelines.blend_depth_opaque, (b0, n_depth), 0, gate);
+                    draw_sided(&mut pass, &self.pipelines.blend_depth_opaque, (b0, n_depth), 0);
                     let mut from = 0;
                     for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
                         if end <= from {
                             continue;
                         }
-                        blended_g(&mut pass, &self.pipelines.blend_depth_color, from, end, gate);
-                        draw_sided_g(
+                        blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                        draw_sided(
                             &mut pass,
                             &self.pipelines.blend_depth_mask,
                             (b0 + from as u64 * stride, end - from),
                             from,
-                            gate,
                         );
                         from = end;
                     }
                 }
             }
-        };
-        if let (true, Some(oit), Some(count), Some(capture), Some(resolve), Some(oit_group), Some(glow_group), Some(band_depth)) = (
-            oit_on,
-            &self.oit,
-            &self.pipelines.blend_oit_count,
-            &self.pipelines.blend_oit,
-            &self.pipelines.oit_resolve,
-            self.oit.as_ref().and_then(|o| o.capture_group()),
-            self.oit.as_ref().and_then(|o| o.glow_group()),
-            self.oit.as_ref().and_then(|o| o.band_depth()),
-        ) {
-            // the count: every blended face once, unshaded, its fragments
-            // counted per pixel; then the bands of rows whose lists fit the
-            // pool, decided on the GPU with each band's draws (oit_gate.rs)
-            oit.clear_counts(&mut encoder);
-            {
-                let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b oit count", false, false);
-                bind_mesh(&mut pass, &self.groups.b);
-                pass.set_bind_group(3, oit_group, &[0]);
-                draw_sided(&mut pass, count, (b0, bn), 0);
-            }
-            oit.plan_bands(&mut encoder);
-            // (AURORA_OIT_STATS: the counts and the bands read back for the log)
-            oit.sample_layers(&self.device, &mut encoder);
-            mark(&mut encoder, MARK_OIT_COUNT_END);
-            // The creation preview (opaque, no depth) under the composite,
-            // as under the blended faces drawn in order.
-            {
-                let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b oit preview", false, false);
-                bind_mesh(&mut pass, &self.groups.b);
-                draw(&mut pass, &self.pipelines.creation_preview, rg.creation_preview);
-            }
-            // Band by band: the band's depth mask, then the lists of its
-            // rows (every blended face once, the other rows rejected by
-            // the mask), sorted once per pixel, the band's tiles listed and
-            // composited; the glow of the glowing faces after them on the
-            // mask too, each dimmed by the layers in front of it, on the
-            // camera's side of the water like their colour (`fs_glow_oit`).
-            // A band the plan did not use draws nothing.
-            for band in 0..crate::oit::MAX_BANDS {
-                let offset = crate::oit::Oit::band_offset(band);
-                oit.clear_heads(&mut encoder);
-                oit.band_mask(&mut encoder, resolve, band);
-                {
-                    let mut pass = begin_scene_b_on(&mut encoder, &self.targets, "scene b oit capture", false, false, band_depth);
-                    bind_mesh(&mut pass, &self.groups.b);
-                    pass.set_bind_group(3, oit_group, &[offset]);
-                    draw_sided_g(&mut pass, capture, (b0, bn), 0, Some(band));
-                    pass_mark(&mut pass, mark_oit_band(band, 0));
-                }
-                if band == 0 {
-                    oit.sample_heads(&mut encoder);
-                }
-                oit.classify(&mut encoder, resolve, band);
-                mark(&mut encoder, mark_oit_band(band, 1));
-                {
-                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b oit resolve", false, false);
-                    bind_mesh(&mut pass, &self.groups.b);
-                    oit.resolve(&mut pass, resolve, band);
-                }
-                let glowing = glow_on && glow_skip & 8 == 0 && lists.blend_glow.iter().any(|&g| g);
-                if let (true, Some(glow_oit)) = (glowing, &self.pipelines.glow_oit) {
-                    let mut pass = begin_scene_b_on(&mut encoder, &self.targets, "scene b oit glow", false, false, band_depth);
-                    bind_mesh(&mut pass, &self.groups.b);
-                    pass.set_bind_group(3, glow_group, &[offset]);
-                    for i in 0..bn {
-                        if lists.blend_glow.get(i as usize).copied().unwrap_or(false) {
-                            draw_g(&mut pass, glow_oit, (b0 + u64::from(i) * stride, 1), Some(band));
-                        }
-                    }
-                    pass_mark(&mut pass, mark_oit_band(band, 2));
-                } else {
-                    mark(&mut encoder, mark_oit_band(band, 2));
-                }
-            }
-            // then the rigged faces' depth from 1/255, as they leave it
-            // when drawn in order (`RiggedBlendDepth::Write`,
-            // LLDrawPoolAlpha::forwardRender(true)), for what follows
-            if n_depth > 0 {
-                let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend depth", false, true);
-                bind_mesh(&mut pass, &self.groups.a);
-                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, (b0, n_depth), 0);
-            }
-            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
-            bind_mesh(&mut pass, &self.groups.b);
-            rest(&mut pass);
-        }
-        if split {
-            rigged_in_order(&mut encoder);
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
             rest(&mut pass);
@@ -8984,9 +8647,6 @@ impl Backend {
             });
         }
         self.occlusion.after_submit();
-        if let Some(o) = &self.oit {
-            o.after_submit();
-        }
         self.cull.after_submit();
         self.depth_pick.after_submit();
         self.exposure.after_submit();
@@ -9038,7 +8698,6 @@ impl Backend {
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
-        stats.gpu_oit = self.timer.as_ref().and_then(|t| t.last_oit);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
@@ -9163,20 +8822,6 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn smaa_runs_in_its_mode_and_in_the_msaa_modes_with_oit_only() {
-        for oit in [false, true] {
-            assert!(smaa_wanted(AntiAliasing::Smaa, oit));
-            assert!(!smaa_wanted(AntiAliasing::None, oit));
-            assert!(!smaa_wanted(AntiAliasing::Fxaa, oit));
-            assert!(!smaa_wanted(AntiAliasing::Taa, oit));
-        }
-        for samples in [2, 4, 8] {
-            assert!(smaa_wanted(AntiAliasing::Msaa(samples), true));
-            assert!(!smaa_wanted(AntiAliasing::Msaa(samples), false));
-        }
-    }
 
     #[test]
     fn blend_runs_preserve_order_and_subranges_and_keep_single_sided_faces_culled() {

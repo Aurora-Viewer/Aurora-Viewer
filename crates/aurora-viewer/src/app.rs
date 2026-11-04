@@ -397,9 +397,6 @@ pub struct App {
     last_frame: Instant,
     /// Duration of the frame before the last one (s).
     prev_dt: f32,
-    /// Seconds since frame 600, for the demo camera scenarios that move by
-    /// time (camera/demo.rs `steps_at`).
-    demo_camera_clock: f32,
     start: Instant,
     right_drag: bool,
     /// The camera's vertical angle last sent in AgentFOV.
@@ -1346,7 +1343,6 @@ impl App {
             egui_replay: false,
             last_frame: Instant::now(),
             prev_dt: 0.0,
-            demo_camera_clock: 0.0,
             start: Instant::now(),
             right_drag: false,
             sent_fov: crate::camera::DEFAULT_FOV,
@@ -3941,14 +3937,7 @@ impl App {
                 sources: Vec::new(),
             });
         }
-        // (the scenarios that move by time count from frame 600)
-        let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
-        if self.frame_count <= 600 {
-            self.demo_camera_clock = 0.0;
-        } else {
-            self.demo_camera_clock += dt;
-        }
-        for step in crate::camera::demo::steps_at(spec, self.frame_count, self.demo_camera_clock, dt) {
+        for step in crate::camera::demo::steps(spec, self.frame_count) {
             match step {
                 Step::Cursor(x, y) => self.cursor_pos = (x, y),
                 Step::CursorOnOwnTag => {
@@ -3998,43 +3987,6 @@ impl App {
                 }
                 Step::Wheel(clicks) => self.camera_wheel(clicks),
                 Step::Fly => self.world.agent.flying = true,
-                Step::HairCam(t) => {
-                    // the scripted camera on the path, locked on its eye
-                    // and its focus (no lag, no threshold), from our
-                    // avatar's head as it stands and turns
-                    if let (Some(handle), Some(head), Some((eye, at))) = (
-                        self.world.main_region,
-                        self.scene.head_world(&self.world, &self.world.agent_id, Instant::now()),
-                        crate::camera::demo::hair_path(t),
-                    ) {
-                        let rot = glam::Quat::from_rotation_z(self.world.agent.yaw);
-                        let (eye, at) = (head + rot * eye, head + rot * at);
-                        self.world.apply(NetEvent::SetFollowCam {
-                            handle,
-                            object: crate::camera::demo::HAIR_CAM,
-                            properties: vec![
-                                (12, 1.0),
-                                (5, 0.0),
-                                (6, 0.0),
-                                (10, 0.0),
-                                (11, 0.0),
-                                (14, eye.x),
-                                (15, eye.y),
-                                (16, eye.z),
-                                (18, at.x),
-                                (19, at.y),
-                                (20, at.z),
-                                (21, 1.0),
-                                (22, 1.0),
-                            ],
-                        });
-                    }
-                }
-                Step::HairCamOff => {
-                    self.world.apply(NetEvent::ClearFollowCam {
-                        object: crate::camera::demo::HAIR_CAM,
-                    });
-                }
                 Step::FollowEvents => {
                     if let Some(handle) = self.world.main_region {
                         let events = if spec == "scripted-sit" {

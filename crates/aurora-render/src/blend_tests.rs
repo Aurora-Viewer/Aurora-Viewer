@@ -9,7 +9,6 @@ fn transparent_pbr_sidedness_matches_colour_and_depth_on_gpu() {
     let mut fragments = String::new();
     for name in [
         "fs_blend",
-        "blend_color",
         "depth_contact",
         "fs_depth_contact",
         "fs_depth_contact_normal",
