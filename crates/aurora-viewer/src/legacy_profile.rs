@@ -7,8 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
-/// The per-user folders of the viewers read, by application name: Firestorm
-/// (the 64-bit name first, then the macOS and former one), the official
+/// The per-user folders of the viewers read, by application name: the Legacy
+/// Viewer (the 64-bit name first, then the macOS and former one), the official
 /// viewer and Alchemy. Any other goes through a folder dialog.
 const APPS: [&str; 5] = ["Firestorm_x64", "Firestorm", "SecondLife", "AlchemyNext", "Alchemy"];
 
