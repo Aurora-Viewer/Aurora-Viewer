@@ -1361,9 +1361,9 @@ fn a_texture_dropped_on_a_texture_slot_applies_to_the_selected_faces() {
     let agent = inspector.world.agent_id;
     let all = crate::build::contents_drop::UNRESTRICTED;
     let (texture, material, asset) = (
-        uuid::Uuid::from_u128(0x2296_1),
-        uuid::Uuid::from_u128(0x2296_2),
-        uuid::Uuid::from_u128(0x2296_3),
+        uuid::Uuid::from_u128(0x0002_2961),
+        uuid::Uuid::from_u128(0x0002_2962),
+        uuid::Uuid::from_u128(0x0002_2963),
     );
     for (id, kind) in [(texture, 0), (material, 57)] {
         inspector.world.inventory.items.insert(
