@@ -7,9 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-/// The per-user folders of the viewers read, by application name: the Legacy
-/// Viewer (the 64-bit name first, then the macOS and former one), the official
-/// viewer and Alchemy. Any other goes through a folder dialog.
+/// The per-user folders read, by application name: each Legacy Viewer's, the
+/// 64-bit name first, then the macOS and former one. Any other goes through a
+/// folder dialog.
 const APPS: [&str; 5] = ["Firestorm_x64", "Firestorm", "SecondLife", "AlchemyNext", "Alchemy"];
 
 /// Label of the beta grid in the folder names (SECOND_LIFE_BETA_LABEL).
@@ -114,7 +114,7 @@ mod tests {
         assert_eq!(app_folders_in(home, data, true)[0], Path::new("/home/j/.firestorm_x64"));
         assert_eq!(app_folders_in(home, data, true)[3], Path::new("/home/j/.alchemynext"));
         assert_eq!(app_folders_in(home, data, false)[0], Path::new("/data/Firestorm_x64"));
-        // the macOS build's folder is "Firestorm"
+        // the macOS build's folder
         assert_eq!(app_folders_in(home, data, false)[1], Path::new("/data/Firestorm"));
     }
 
