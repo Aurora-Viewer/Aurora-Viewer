@@ -1031,17 +1031,13 @@ fn incoming_messages_keep_chat_context_menus_open() {
                     h.frame(Vec::new());
                 }
                 if older {
-                    let at = h.text_rect("another message 79").center();
-                    h.frame(vec![
-                        egui::Event::PointerMoved(at),
-                        egui::Event::MouseWheel {
-                            unit: egui::MouseWheelUnit::Point,
-                            delta: egui::vec2(0.0, 250.0),
-                            phase: egui::TouchPhase::Move,
-                            source: egui::MouseWheelSource::Unknown,
-                            modifiers: Default::default(),
-                        },
-                    ]);
+                    // This tests menu retention away from the live end. Set
+                    // that precondition through the view's navigation rather
+                    // than aiming a wheel event at the last, possibly clipped row.
+                    h.st.views
+                        .get_mut(&Some(GROUP))
+                        .expect("the conversation is laid out")
+                        .scroll_to(80);
                     for _ in 0..30 {
                         h.frame(Vec::new());
                     }
