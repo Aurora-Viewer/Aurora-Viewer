@@ -51,11 +51,14 @@ impl SwapchainRecent {
 /// frame is kept for [`PEAK_SPAN`] before the loss.
 #[derive(Debug, Default)]
 pub(super) struct Recent {
-    /// (when, longest GPU ms, its heaviest pass) of each past note
-    /// interval, oldest first; expired by the time of the frame itself.
+    /// The GPU frames that may yet be the longest of the last [`PEAK_SPAN`]:
+    /// (when, GPU ms, its heaviest pass), oldest first and strictly
+    /// decreasing in time, so the front is the window's peak. A frame drops
+    /// every older frame no longer than itself (those could never be the
+    /// peak again) and the front leaves once older than the span: amortised
+    /// one push and one pop a frame, nothing scanned, at most [`PEAK_CAP`]
+    /// kept.
     peaks: VecDeque<(Instant, f32, Option<&'static str>)>,
-    /// The same for the interval under way.
-    current: Option<(Instant, f32, Option<&'static str>)>,
     last_ms: Option<f32>,
     last_pass: Option<&'static str>,
     uploads: u32,
@@ -90,6 +93,15 @@ const MB: f32 = (1 << 20) as f32;
 /// How far back the longest GPU frame looks.
 const PEAK_SPAN: Duration = Duration::from_secs(10);
 
+/// The most candidate peaks kept. The queue grows by one only on a frame
+/// shorter than the one before, so reaching it takes that many ever
+/// shorter frames within the span (1,024 distinct, falling GPU times in
+/// 10 s): the noise of real frame times breaks such a run long before. Past
+/// it, the newest candidate (the shortest, the one that would be the peak
+/// last) gives way to the new frame: the report may then name a frame a
+/// little shorter once everything older has expired, never a wrong one.
+const PEAK_CAP: usize = 1024;
+
 impl Recent {
     /// One frame: the GPU time the renderer measured last (it arrives a
     /// frame or two late, without waiting on the GPU) and the uploads.
@@ -101,9 +113,16 @@ impl Recent {
             let pass = stats.gpu_elements.as_ref().and_then(heaviest_pass);
             self.last_ms = Some(ms);
             self.last_pass = pass;
-            if self.current.is_none_or(|c| ms > c.1) {
-                self.current = Some((now, ms, pass));
+            // an older frame no longer than this one is never the peak again:
+            // of two equal ones the later stays, it outlives the other
+            while self.peaks.back().is_some_and(|p| p.1 <= ms) {
+                self.peaks.pop_back();
             }
+            if self.peaks.len() >= PEAK_CAP {
+                self.peaks.pop_back();
+            }
+            self.peaks.push_back((now, ms, pass));
+            self.expire(now);
         }
         self.uploads = self.uploads.saturating_add(uploads.min(u32::MAX as usize) as u32);
         self.upload_bytes += upload_bytes;
@@ -126,14 +145,8 @@ impl Recent {
         if let Some(kept) = self.at_loss {
             return kept;
         }
-        let peak = self
-            .peaks
-            .iter()
-            .copied()
-            .chain(self.current)
-            .filter(|p| now.saturating_duration_since(p.0) <= PEAK_SPAN)
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|p| (p.1, p.2));
+        self.expire(now);
+        let peak = self.peaks.front().map(|p| (p.1, p.2));
         let sample = Sample {
             gpu_ms: self.last_ms,
             peak,
@@ -146,15 +159,19 @@ impl Recent {
             self.frozen = true;
             self.at_loss = Some(sample);
         } else {
-            self.peaks.extend(self.current.take());
-            while self.peaks.front().is_some_and(|p| now.saturating_duration_since(p.0) > PEAK_SPAN) {
-                self.peaks.pop_front();
-            }
             self.uploads = 0;
             self.upload_bytes = 0;
             self.upload_peak_bytes = 0;
         }
         sample
+    }
+
+    /// Drops the peaks older than the span; a frame exactly as old still
+    /// counts.
+    fn expire(&mut self, now: Instant) {
+        while self.peaks.front().is_some_and(|p| now.saturating_duration_since(p.0) > PEAK_SPAN) {
+            self.peaks.pop_front();
+        }
     }
 }
 
@@ -632,6 +649,102 @@ mod tests {
         let at_loss = recent.note(t + s(13), true);
         recent.frame(t + s(14), &stats(5000.0, [0.0; 7]), 9, 9 << 20);
         assert_eq!(recent.note(t + s(15), true), at_loss);
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_later_smaller_peak_outlives_the_maximum_of_its_interval() {
+        let mut recent = Recent::default();
+        let t = Instant::now();
+        // two slow frames in the first interval: the second is smaller, but
+        // it is the one still in the window once the first has expired
+        recent.frame(t + ms(100), &stats(1500.0, [1.0, 1400.0, 1.0, 4.0, 0.0, 1.0, 0.0]), 0, 0);
+        recent.frame(t + ms(1900), &stats(1200.0, [1.0, 1.0, 1.0, 1100.0, 0.0, 1.0, 0.0]), 0, 0);
+        assert_eq!(recent.note(t + s(2), false).peak, Some((1500.0, Some("effects"))));
+        for at in [4, 6, 8, 10] {
+            recent.frame(t + s(at), &stats(5.0, [0.0; 7]), 0, 0);
+            recent.note(t + s(at), false);
+        }
+        // at 10.2 s the 1500 ms frame is 10.1 s old and gone; the 1200 ms
+        // one is 8.3 s old and must still be the peak, with its own pass
+        assert_eq!(recent.note(t + s(10) + ms(200), true).peak, Some((1200.0, Some("objects"))));
+    }
+
+    #[test]
+    fn of_two_equal_peaks_the_later_one_stays_with_its_own_pass() {
+        let mut recent = Recent::default();
+        let t = Instant::now();
+        recent.frame(t, &stats(900.0, [800.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 0, 0);
+        recent.frame(t + s(3), &stats(900.0, [0.0, 0.0, 0.0, 0.0, 0.0, 800.0, 0.0]), 0, 0);
+        assert_eq!(recent.peaks.len(), 1);
+        let later_pass = aurora_render::GpuElement::ALL[5].key();
+        assert_eq!(recent.note(t + s(4), false).peak, Some((900.0, Some(later_pass))));
+        // the first would be gone at 11 s; the later one, which replaced
+        // it, is still there
+        assert_eq!(recent.note(t + s(11), false).peak, Some((900.0, Some(later_pass))));
+        assert_eq!(recent.note(t + s(13) + ms(1), false).peak, None);
+    }
+
+    #[test]
+    fn a_run_of_ever_shorter_frames_keeps_each_as_a_candidate_up_to_the_cap() {
+        let mut recent = Recent::default();
+        let t = Instant::now();
+        let n = PEAK_CAP + 100;
+        for i in 0..n {
+            // 5 ms apart: well inside the span, all distinct and falling
+            recent.frame(t + ms(5 * i as u64), &stats((n - i) as f32, [0.0; 7]), 0, 0);
+        }
+        assert_eq!(recent.peaks.len(), PEAK_CAP);
+        // the longest frame is still the front, the newest is still the back
+        assert_eq!(recent.note(t + s(6), false).peak, Some((n as f32, None)));
+        assert_eq!(recent.peaks.back().map(|p| p.1), Some(1.0));
+        // the candidates leave in order as they age out
+        let after_first = recent.note(t + ms(5) + PEAK_SPAN, false);
+        assert_eq!(after_first.peak, Some(((n - 1) as f32, None)));
+        // a longer frame clears the whole run at once
+        recent.frame(t + s(7), &stats(5000.0, [0.0; 7]), 0, 0);
+        assert_eq!(recent.peaks.len(), 1);
+    }
+
+    #[test]
+    fn all_peaks_expire_and_a_note_then_has_none() {
+        let mut recent = Recent::default();
+        let t = Instant::now();
+        recent.frame(t, &stats(50.0, [0.0; 7]), 0, 0);
+        recent.frame(t + s(1), &stats(40.0, [0.0; 7]), 0, 0);
+        recent.frame(t + s(2), &stats(30.0, [0.0; 7]), 0, 0);
+        // exactly ten seconds old still counts, a millisecond more does not
+        assert_eq!(recent.note(t + s(10), false).peak, Some((50.0, None)));
+        assert_eq!(recent.note(t + s(10) + ms(1), false).peak, Some((40.0, None)));
+        assert_eq!(recent.note(t + s(12) + ms(1), false).peak, None);
+        assert!(recent.peaks.is_empty());
+        // the last frame time is not a peak: it stays as it was measured
+        assert_eq!(recent.note(t + s(13), false).gpu_ms, Some(30.0));
+    }
+
+    #[test]
+    fn the_sample_at_the_loss_stays_whatever_the_frames_after_it() {
+        let mut recent = Recent::default();
+        let t = Instant::now();
+        recent.frame(t, &stats(700.0, [0.0, 600.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 2, 2 << 20);
+        recent.stall(Some(ms(300)));
+        let at_loss = recent.note(t + s(1), true);
+        assert_eq!(at_loss.peak, Some((700.0, Some("effects"))));
+        // longer frames, more uploads, a longer stall and the peak's own
+        // expiry change nothing once lost
+        recent.frame(t + s(2), &stats(9000.0, [0.0; 7]), 50, 50 << 20);
+        recent.stall(Some(s(3)));
+        assert_eq!(recent.note(t + s(3), true), at_loss);
+        assert_eq!(recent.note(t + s(30), false), at_loss);
+        assert_eq!(recent.note(t + s(40), true), at_loss);
+        // the reset after a recovery (gpu_recovery.rs) starts afresh
+        recent = Recent::default();
+        assert_eq!(recent.note(t + s(41), false), Sample::default());
+        recent.frame(t + s(42), &stats(12.0, [0.0; 7]), 0, 0);
+        assert_eq!(recent.note(t + s(43), false).peak, Some((12.0, None)));
     }
 
     #[test]
