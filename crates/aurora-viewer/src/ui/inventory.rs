@@ -211,6 +211,8 @@ pub enum InvAction {
 #[derive(Default)]
 pub struct Facts {
     pub agent: Uuid,
+    /// We hold a god level (Copy Asset UUID of any item).
+    pub god: bool,
     pub worn: HashSet<Uuid>,
     pub active_gestures: std::collections::BTreeSet<Uuid>,
     pub worn_labels: std::collections::HashMap<Uuid, String>,
@@ -262,6 +264,7 @@ impl Facts {
             .collect();
         Self {
             agent: world.agent_id,
+            god: world.god_level > 0,
             worn,
             active_gestures: world.active_gestures.clone(),
             worn_labels,

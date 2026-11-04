@@ -7101,6 +7101,19 @@ mod script_dialog_tests {
         session.on_command(NetCommand::God(GodCommand::SaveState { handle: 10 }));
         let save = received::<StateSave>(&main, 1).await.remove(0);
         assert_eq!(save.agent_data.agent_id, me);
+
+        session.on_command(NetCommand::God(GodCommand::KickUser {
+            handle: 10,
+            agent_id: Uuid::from_u128(9),
+            flags: crate::god::KICK_FREEZE,
+            reason: "Frozen".into(),
+        }));
+        let kick = received::<GodKickUser>(&main, 1).await.remove(0).user_info;
+        assert_eq!(
+            (kick.god_id, kick.god_session_id, kick.agent_id, kick.kick_flags),
+            (me, Uuid::from_u128(2), Uuid::from_u128(9), 1)
+        );
+        assert_eq!(field_str(&kick.reason), "Frozen");
         let mut rest = [0; 1500];
         assert!(other.try_recv_from(&mut rest).is_err());
     }

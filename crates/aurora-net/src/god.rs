@@ -9,6 +9,12 @@ use uuid::Uuid;
 /// PERM_ALL (llpermissionsflags.h).
 pub const PERM_ALL: u32 = 0x7FFF_FFFF;
 
+/// GodKickUser's KickFlags (KICK_FLAGS_*, llavataractions.cpp):
+/// logged off, frozen, unfrozen.
+pub const KICK_DEFAULT: u32 = 0;
+pub const KICK_FREEZE: u32 = 1;
+pub const KICK_UNFREEZE: u32 = 2;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GodCommand {
     /// Object › Force Owner To Me: ObjectOwner with Override
@@ -40,4 +46,13 @@ pub enum GodCommand {
     },
     /// Region › Save Region State: StateSave (LLFloaterGodTools / Admin.OnSaveState).
     SaveState { handle: RegionHandle },
+    /// A resident's Admin › Kick / Freeze / Unfreeze: GodKickUser with
+    /// `KICK_*` and the message they read (LLAvatarActions::handleKick,
+    /// handleFreeze, handleUnfreeze); the region finds them on the grid.
+    KickUser {
+        handle: RegionHandle,
+        agent_id: Uuid,
+        flags: u32,
+        reason: String,
+    },
 }

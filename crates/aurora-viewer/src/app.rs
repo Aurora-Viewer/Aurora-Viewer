@@ -547,6 +547,8 @@ pub struct App {
     delete_confirm: Option<(Vec<uuid::Uuid>, String)>,
     /// "Freeze" / "Eject" waiting for an answer (app/land_moderation.rs).
     moderation_ask: Option<land_moderation::Ask>,
+    /// A resident's Admin › Kick / Freeze / Unfreeze, waiting for its message.
+    god_kick_ask: Option<admin_status::KickAsk>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -1410,6 +1412,7 @@ impl App {
             context_menu_was: false,
             delete_confirm: None,
             moderation_ask: None,
+            god_kick_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
             suitcase_ask: None,
@@ -15948,6 +15951,7 @@ impl App {
                     }
                 }
                 self.land_moderation_ui(&ctx, &p);
+                self.god_kick_ui(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {

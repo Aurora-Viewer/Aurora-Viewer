@@ -238,6 +238,8 @@ pub struct Facts {
 
     /// "Freeze" / "Eject" of the avatar, and whether the eject may ban.
     pub moderation: crate::world::land_moderation::Rights,
+    /// The region gave us a god level: the resident's Admin entries.
+    pub god: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -296,6 +298,9 @@ pub enum CtxAction {
     /// landFreeze / landEject).
     Freeze(Uuid),
     Eject(Uuid),
+    /// Admin › Kick / Freeze / Unfreeze (LLAvatarActions::kick, freeze,
+    /// unfreeze): asked with its message first; `flags` are GodKickUser's.
+    GodKick(Uuid, u32),
     Touch(u32),
     Sit {
         target: Uuid,

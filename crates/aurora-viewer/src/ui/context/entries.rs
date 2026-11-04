@@ -752,6 +752,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         });
     }
     avatar_moderation(ui, f, id);
+    avatar_admin(ui, f, id);
     let display = f
         .complexity
         .map(|(c, silhouette)| {
@@ -850,6 +851,29 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         );
         sound_block_items(ui, f, id);
         particles_submenu(ui, f);
+    });
+}
+
+/// Admin, while the region keeps our god level: GodKickUser anywhere on the
+/// grid (the Legacy Viewer's Kick, and Freeze / Unfreeze at a distance of
+/// menu_inspect_avatar_gear.xml and the profile).
+fn avatar_admin(ui: &mut Builder, f: &Facts, id: Uuid) {
+    use aurora_net::god::{KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE};
+    if !f.god || id == f.me {
+        return;
+    }
+    ui.submenu("crown-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+        ui.item("logout", aurora_i18n::tr!("admin-kick-menu"), CtxAction::GodKick(id, KICK_DEFAULT));
+        ui.item(
+            "snowflake",
+            aurora_i18n::tr!("admin-freeze-menu"),
+            CtxAction::GodKick(id, KICK_FREEZE),
+        );
+        ui.item(
+            "sun-filled",
+            aurora_i18n::tr!("admin-unfreeze-menu"),
+            CtxAction::GodKick(id, KICK_UNFREEZE),
+        );
     });
 }
 
@@ -1288,6 +1312,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_god_kicks_freezes_and_unfreezes_others_from_the_admin_group() {
+        use aurora_net::god::{KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE};
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(7));
+        let admin = |id: Uuid, god: bool| {
+            let facts = Facts {
+                me,
+                god,
+                ..Facts::default()
+            };
+            let target = Target::Avatar {
+                id,
+                own: id == me,
+                attachment: None,
+            };
+            world_menu(&target, &facts, Vec3::ZERO)
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("admin-menu"))
+        };
+        assert!(admin(other, false).is_none());
+        assert!(admin(me, true).is_none(), "not on ourselves");
+        let flags: Vec<u32> = rows(admin(other, true).into_iter().collect())
+            .iter()
+            .filter_map(|e| match e.kind {
+                Kind::Action(CtxAction::GodKick(who, flags)) if who == other => Some(flags),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, [KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE]);
     }
 
     #[test]

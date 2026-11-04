@@ -35,7 +35,8 @@ impl Session<'_> {
             | GodCommand::ForceDelete { handle, .. }
             | GodCommand::Request { handle, .. }
             | GodCommand::ParcelForceOwner { handle, .. }
-            | GodCommand::SaveState { handle } => *handle,
+            | GodCommand::SaveState { handle }
+            | GodCommand::KickUser { handle, .. } => *handle,
         };
         let Some(addr) = self.sim_for_handle(handle) else {
             log::warn!("admin: no circuit to region {handle} for {c:?}");
@@ -114,6 +115,20 @@ impl Session<'_> {
                 let mut m = StateSave::default();
                 m.agent_data.agent_id = agent_id;
                 m.agent_data.session_id = session_id;
+                self.send(addr, &m, true);
+            }
+            GodCommand::KickUser {
+                agent_id: target,
+                flags,
+                reason,
+                ..
+            } => {
+                let mut m = GodKickUser::default();
+                m.user_info.god_id = agent_id;
+                m.user_info.god_session_id = session_id;
+                m.user_info.agent_id = target;
+                m.user_info.kick_flags = flags;
+                m.user_info.reason = str_field(&reason);
                 self.send(addr, &m, true);
             }
         }
