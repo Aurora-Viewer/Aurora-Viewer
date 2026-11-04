@@ -171,7 +171,6 @@ pub struct Studio {
     target_height: f32,
     distance: f32,
     target_distance: f32,
-    full_distance: f32,
     pan: Vec2,
     target_pan: Vec2,
 }
@@ -202,7 +201,6 @@ impl Studio {
             distance: (height * 0.78 / (FOV * 0.5).tan()).clamp(1.5, 6.0),
             ..Self::default()
         };
-        self.full_distance = self.distance;
         self.target_distance = self.distance;
     }
 
@@ -339,6 +337,7 @@ mod tests {
         for yaw in [0.0, 0.7, 1.8, 3.5] {
             let mut studio = Studio::default();
             studio.enter(yaw, 1.8);
+            let original_distance = studio.distance;
             let before = studio.view(Vec3::ZERO, 1.5);
             studio.pan_view(100.0, 80.0, 900.0);
             assert_eq!(studio.view(Vec3::ZERO, 1.5).eye, before.eye, "pan eases from a target");
@@ -354,7 +353,7 @@ mod tests {
             assert!(delta.dot(right) < 0.0);
             assert!(delta.dot(up) > 0.0);
             assert_eq!(studio.focus_height, 0.9);
-            assert_eq!(studio.distance, studio.full_distance);
+            assert_eq!(studio.distance, original_distance);
             studio.enter(yaw, 1.8);
             assert_eq!(studio.view(Vec3::ZERO, 1.5).eye, before.eye, "reset recentres");
         }
@@ -475,6 +474,7 @@ mod tests {
     fn inspection_has_no_framing_limits_and_reset_is_repeatable() {
         let mut studio = Studio::default();
         studio.enter(0.0, 1.8);
+        let original_distance = studio.distance;
         let original = studio.view(Vec3::ZERO, 1.5);
         studio.rotate(500.0);
         studio.rotate(f32::NAN);
@@ -497,7 +497,7 @@ mod tests {
             studio.zoom(-10.0);
             studio.update(1.0 / 60.0);
         }
-        assert!(studio.target_distance > studio.full_distance);
+        assert!(studio.target_distance > original_distance);
         assert!(studio.view(Vec3::ZERO, 1.5).view.is_finite());
         assert_eq!(studio.target_height, focus, "zoom out does not change the chosen focus");
         studio.enter(0.0, 1.8);
