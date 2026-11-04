@@ -269,8 +269,8 @@ pub fn volume_from_ui(u: &ShapeUi, prev_ty: usize, flexible: bool) -> VolumePara
 
 /// Small isometric drawing of a shape's outline (Create palette).
 pub fn shape_preview(ui: &egui::Ui, rect: egui::Rect, params: &VolumeParams, rot: Quat, color: Color32) {
-    let edges = crate::build::silhouette::preview_edges(params);
     let view = Quat::from_rotation_x(-0.6) * Quat::from_rotation_z(0.75) * rot;
+    let edges = crate::build::silhouette::preview_edges(params, view);
     let s = rect.width().min(rect.height()) * 0.62;
     let proj = |v: Vec3| {
         let q = view * v;

@@ -197,20 +197,22 @@ fn obb(p: &Painter3d, pos: Vec3, rot: Quat, half: Vec3, c: Color32) {
 }
 
 thread_local! {
-    static PREVIEWS: std::cell::RefCell<HashMap<u64, Arc<Vec<(Vec3, Vec3)>>>> = std::cell::RefCell::new(HashMap::new());
+    static PREVIEWS: std::cell::RefCell<HashMap<(u64, [u32; 4]), Arc<Vec<(Vec3, Vec3)>>>> = std::cell::RefCell::new(HashMap::new());
 }
 
 /// Outline segments of a shape for the Create palette icons.
-pub fn preview_edges(params: &aurora_prim::VolumeParams) -> Arc<Vec<(Vec3, Vec3)>> {
-    let key = params.cache_key();
+pub fn preview_edges(params: &aurora_prim::VolumeParams, projection: Quat) -> Arc<Vec<(Vec3, Vec3)>> {
+    let key = (params.cache_key(), projection.to_array().map(f32::to_bits));
     PREVIEWS.with(|m| {
         m.borrow_mut()
             .entry(key)
             .or_insert_with(|| {
                 let t = topology(params);
                 // borders, plus the outline seen from the icon's viewpoint
-                let view = Vec3::new(0.6, -0.9, 0.7) * 10.0;
-                let facing: Vec<bool> = t.tris.iter().map(|(v, n)| n.dot(view - *v) > 0.0).collect();
+                // shape_preview projects X/Z after this rotation: depth is Y.
+                // Its orthographic silhouette must use that same view.
+                let direction = projection.inverse() * Vec3::Y;
+                let facing: Vec<bool> = t.tris.iter().map(|(_, n)| n.dot(direction) > 0.0).collect();
                 let mut out: Vec<(Vec3, Vec3)> = t.border.iter().map(|e| (e.a, e.b)).collect();
                 out.extend(
                     t.inner
