@@ -415,19 +415,22 @@ fn a_setting_has_one_page() {
 fn camera_and_vr_page_resets_are_independent() {
     let mut s = Settings::default();
     s.camera.vr_mouse_look = true;
-    s.camera.vr_resolution = [2160, 2160];
+    s.camera.vr_resolution = [2560, 2560];
     s.camera.vr_gamma = 1.5;
+    s.camera.vr_vibrancy = 0.7;
     s.camera.smoothing = 8.0;
     reset_page_settings(Page::Camera, &mut s);
     assert!(s.camera.vr_mouse_look);
-    assert_eq!(s.camera.vr_resolution, [2160, 2160]);
+    assert_eq!(s.camera.vr_resolution, [2560, 2560]);
     assert_eq!(s.camera.vr_gamma, 1.5);
+    assert_eq!(s.camera.vr_vibrancy, 0.7);
     assert_eq!(s.camera.smoothing, Settings::default().camera.smoothing);
     s.camera.smoothing = 8.0;
     reset_page_settings(Page::Vr, &mut s);
     assert!(!s.camera.vr_mouse_look);
-    assert_eq!(s.camera.vr_resolution, [1600, 1600]);
-    assert_eq!(s.camera.vr_gamma, 1.0);
+    assert_eq!(s.camera.vr_resolution, [2160, 2160]);
+    assert_eq!(s.camera.vr_gamma, 0.8);
+    assert_eq!(s.camera.vr_vibrancy, 1.1);
     assert_eq!(s.camera.smoothing, 8.0);
 }
 

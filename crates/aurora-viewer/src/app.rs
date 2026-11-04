@@ -4302,6 +4302,10 @@ impl App {
     }
 
     fn toggle_mouselook(&mut self) {
+        if self.vr_mode.is_some() {
+            self.cycle_gamepad_view();
+            return;
+        }
         self.camera.toggle_mouselook(&mut self.world.agent, &self.settings.camera);
         let ml = self.camera.mouselook();
         self.set_mouselook_grab(ml);
@@ -4586,14 +4590,22 @@ impl App {
     /// 2 left, 3 right (turn keys only when they strafe).
     fn run_group(&self, input: &Input) -> Option<u8> {
         // steering with the left button: left / right slide
-        let strafe = self.mouse_mode == MouseMode::Steer || self.shift != self.settings.arrows_strafe;
+        if self.vr_mode == Some(crate::camera::VrView::Flycam) {
+            return None;
+        }
+        let first_person_vr = self.vr_mode == Some(crate::camera::VrView::FirstPerson);
+        let strafe = if first_person_vr {
+            self.settings.camera.vr_mouse_look
+        } else {
+            self.mouse_mode == MouseMode::Steer || self.shift != self.settings.arrows_strafe
+        };
         self.settings.keybinds.held_actions_of(input).into_iter().find_map(|a| match a {
             Action::Forward => Some(0),
             Action::Back => Some(1),
             Action::Left if strafe => Some(2),
             Action::Right if strafe => Some(3),
-            Action::StrafeLeft => Some(2),
-            Action::StrafeRight => Some(3),
+            Action::StrafeLeft if !first_person_vr || strafe => Some(2),
+            Action::StrafeRight if !first_person_vr || strafe => Some(3),
             _ => None,
         })
     }
@@ -4758,13 +4770,7 @@ impl App {
             Action::MovementEnhancer => self.open_movement(),
             Action::PassWall => self.pass_wall(),
             Action::SitGround => self.sit_stand_shortcut(),
-            Action::Mouselook => {
-                if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged()) {
-                    self.cycle_gamepad_view();
-                } else {
-                    self.toggle_mouselook();
-                }
-            }
+            Action::Mouselook => self.toggle_mouselook(),
             Action::CameraControls => self.request_controls(false, true),
             Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
                 if self.world.rlva.camera_owner().is_none() {
@@ -7472,6 +7478,9 @@ impl App {
     /// Wheel clicks on the world (SL sign: positive zooms out): the held
     /// mouselook zoom's angle, or the camera's own use of the wheel.
     fn camera_wheel(&mut self, clicks: f32) {
+        if clicks > 0.0 && self.vr_mode == Some(crate::camera::VrView::FirstPerson) {
+            return;
+        }
         let aspect = self.view_aspect();
         if self.camera.scroll_mouselook_zoom(clicks, aspect) {
             return;
@@ -7998,6 +8007,7 @@ impl App {
         let gesture = crate::gestures::keys::from_key(code, &key.key_without_modifiers());
         if key.state == ElementState::Released {
             self.down.remove(&input);
+            self.check_temp_run();
             if let Some(key) = gesture {
                 self.gesture_state.manager.release(Some(key));
             }
@@ -8019,7 +8029,7 @@ impl App {
             return;
         }
         if !key.repeat && self.settings.keybinds.triggered(&input, mods) == Some(Action::Mouselook) {
-            self.cycle_gamepad_view();
+            self.toggle_mouselook();
             return;
         }
         if !key.repeat
@@ -8037,7 +8047,11 @@ impl App {
                 )
             })
         {
+            let group = self.run_group(&input);
             self.down.insert(input);
+            if let Some(group) = group {
+                self.walk_tap(group, true);
+            }
         }
     }
 
@@ -9345,12 +9359,7 @@ impl App {
         self.mouselook_alt_cursor();
         // (not under a first-person VR entry, mouselook only underneath:
         // the cursor would stay hidden after VR ends)
-        if !self.exit_prompt.open
-            && self.camera.mouselook()
-            && (self.vr_camera.is_none() || self.settings.camera.vr_mouse_look)
-            && self.focused
-            && !self.cursor_hold.held()
-            && !self.alt_cursor.free()
+        if !self.exit_prompt.open && self.mouselook_capture_enabled() && self.focused && !self.cursor_hold.held() && !self.alt_cursor.free()
         {
             self.set_mouselook_grab(true);
         }
@@ -10145,6 +10154,8 @@ impl App {
         {
             self.vr_mode = None;
             self.down.clear();
+            self.check_temp_run();
+            self.last_tap = None;
             self.vr_focused = false;
             self.joystick.active = false;
             self.camera = camera;
@@ -11167,10 +11178,10 @@ impl App {
             view,
             vr_rig: if self.camera.flycam.is_some() {
                 aurora_render::stereo_view::RigMode::Flycam
-            } else if self.vr_mode == Some(crate::camera::VrView::Avatar) && !self.camera.mouselook() {
-                aurora_render::stereo_view::RigMode::Avatar
-            } else {
+            } else if self.vr_mode == Some(crate::camera::VrView::FirstPerson) {
                 aurora_render::stereo_view::RigMode::FirstPerson
+            } else {
+                aurora_render::stereo_view::RigMode::Avatar
             },
             proj,
             photo_tile,

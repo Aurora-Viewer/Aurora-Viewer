@@ -568,7 +568,14 @@ impl Camera {
 
     /// LLAgentCamera::changeCameraToMouselook.
     pub fn change_to_mouselook(&mut self, agent: &mut AgentState, s: &CameraSettings, animate: bool) {
-        if !s.enable_mouselook || self.mouselook() {
+        if !s.enable_mouselook {
+            return;
+        }
+        self.enter_mouselook(agent, s, animate);
+    }
+
+    fn enter_mouselook(&mut self, agent: &mut AgentState, s: &CameraSettings, animate: bool) {
+        if self.mouselook() {
             return;
         }
         // mouselook ends the free camera (the flycam's toggle the other way)
@@ -2252,7 +2259,7 @@ impl Camera {
         let was_mouselook = self.mouselook();
         agent.pitch = 0.0;
         match mode {
-            VrView::FirstPerson => self.change_to_mouselook(agent, settings, false),
+            VrView::FirstPerson => self.enter_mouselook(agent, settings, false),
             VrView::Avatar => self.change_to_default(agent, settings),
             VrView::Flycam => {
                 self.change_to_default(agent, settings);

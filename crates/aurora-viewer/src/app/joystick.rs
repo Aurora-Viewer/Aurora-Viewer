@@ -61,6 +61,13 @@ impl App {
     }
 
     pub(super) fn toggle_flycam_from_input(&mut self, gamepad: bool) {
+        use crate::camera::VrView;
+        if let Some(mode) = self.vr_mode {
+            let next = if mode == VrView::Flycam { VrView::Avatar } else { VrView::Flycam };
+            self.apply_vr_mode(next);
+            self.joystick.flycam_gamepad = gamepad;
+            return;
+        }
         let (profile, selected) = if gamepad {
             (
                 &self.settings.gamepad,
@@ -113,6 +120,8 @@ impl App {
         self.joystick.active = mode == VrView::Flycam;
         self.joystick.flycam_gamepad = self.settings.gamepad.enabled;
         self.vr_mode = Some(mode);
+        self.check_temp_run();
+        self.last_tap = None;
     }
 
     pub(super) fn cycle_gamepad_view(&mut self) {
@@ -166,11 +175,12 @@ impl App {
             // the same yaw into the VR boom, even when focus is unlocked.
             self.camera.vr_request_orbit_framing(key_yaw != 0.0);
             self.camera.joystick_orbit_yaw(yaw_rate, dt, &mut self.world.agent);
-            self.input.turn_left = false;
-            self.input.turn_right = false;
         } else {
             self.vr_rig_yaw += turn;
         }
+        // VR consumes turn keys as rig yaw before desktop mouselook can strafe.
+        self.input.turn_left = false;
+        self.input.turn_right = false;
         let translating = self.input.forward || self.input.back || self.input.strafe_left || self.input.strafe_right;
         self.world.agent.yaw = if translating || key_yaw != 0.0 {
             crate::camera::vr_walk_yaw(self.camera.vr_view(self.vr_rig_yaw), self.vr_head_rotation) + if avatar { turn } else { 0.0 }
@@ -196,9 +206,10 @@ impl App {
         let travelling = self.world.teleporting || !self.world.movement_complete || !self.in_world();
         let first = self.vr_camera.is_some() && self.vr_mode == Some(VrView::FirstPerson) && self.camera.mouselook();
         let seated = self.world.agent.is_sitting();
+        let airborne = self.world.agent.flying || self.world.agent.velocity.z.abs() > 0.5;
         if !first {
             self.vr_body_follow.rebase();
-        } else if seated || self.world.agent.flying || travelling {
+        } else if seated || airborne || travelling {
             // Crossing handshakes and locomotion takeovers suspend following;
             // explicit teleport/recenter events rebase the origin separately.
             self.vr_body_follow.pause();
@@ -207,20 +218,14 @@ impl App {
             p.matches(self.world.main_region, self.vr_revision) && matches!(p.mode, aurora_render::stereo_view::RigMode::FirstPerson)
         });
         let manual = self.input.resets_camera(self.crouch_toggle.latched())
+            || self.turn_since.is_some()
             || self.input.up
             || self.input.down
             || self.joystick.motion.player_movement_input()
             || self.joystick.motion.yaw_input
             || self.autopilot.is_some();
         let locked = self.settings.bridge.get(&self.world.agent_id).is_some_and(|prefs| prefs.enabled);
-        let allowed = first
-            && !seated
-            && !self.world.agent.flying
-            && self.vr_focused
-            && self.autopilot.is_none()
-            && !text_input
-            && !travelling
-            && !locked;
+        let allowed = first && !seated && !airborne && self.vr_focused && self.autopilot.is_none() && !text_input && !travelling && !locked;
         let facing = head.map_or(self.world.agent.yaw, |pose| {
             crate::camera::vr_walk_yaw(self.camera.vr_view(self.vr_rig_yaw), pose.rotation)
         });

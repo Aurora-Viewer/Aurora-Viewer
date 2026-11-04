@@ -1110,9 +1110,9 @@ pub struct RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
-            vr_resolution: [1600, 1600],
-            vr_gamma: 1.0,
-            vr_vibrancy: 1.0,
+            vr_resolution: [2160, 2160],
+            vr_gamma: 0.8,
+            vr_vibrancy: 1.1,
             render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets

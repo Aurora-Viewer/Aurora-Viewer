@@ -13,14 +13,14 @@ mod first_person_tests {
     fn vr_preferences_ignore_old_view_and_keep_comfort_options() {
         let defaults: CameraSettings = serde_json::from_str("{}").expect("defaults");
         assert!(!defaults.vr_mouse_look);
-        assert_eq!(defaults.vr_resolution, [1600, 1600]);
+        assert_eq!(defaults.vr_resolution, [2160, 2160]);
         assert!(serde_json::from_str::<CameraSettings>(r#"{"vr_view":"DesktopCamera"}"#).is_ok());
         let saved = CameraSettings {
             vr_mouse_look: true,
             vr_resolution: [2048, 2304],
             vr_resolution_custom: true,
-            vr_gamma: 1.0,
-            vr_vibrancy: 1.0,
+            vr_gamma: 0.8,
+            vr_vibrancy: 1.1,
             ..defaults
         };
         let loaded: CameraSettings = serde_json::from_str(&serde_json::to_string(&saved).expect("save")).expect("load");
@@ -327,10 +327,10 @@ impl Default for CameraSettings {
             show_interface_in_mouselook: false,
             vr_at_start: false,
             vr_mouse_look: false,
-            vr_resolution: [1600, 1600],
+            vr_resolution: [2160, 2160],
             vr_resolution_custom: false,
-            vr_gamma: 1.0,
-            vr_vibrancy: 1.0,
+            vr_gamma: 0.8,
+            vr_vibrancy: 1.1,
         }
     }
 }

@@ -145,12 +145,9 @@ impl Anchor {
         if changed_mode && !matches!(mode, RigMode::Flycam) {
             // Returning to the avatar/eyes chooses a new viewpoint. A previous
             // dolly/turn correction belongs to the old rig, not to room-scale lean.
-            next.correction = Vec3::ZERO;
-            if matches!(mode, RigMode::Avatar) {
-                // Avatar starts at its normal desktop camera height even if the
-                // wearer stood/crouched after entering VR. Future tracking is 1:1.
-                next.correction.z = -next.rig.transform_vector3(tracked_head).z;
-            }
+            // Use the tracked height at the mode switch. The startup
+            // reference may have been sampled before the headset was lifted.
+            next.correction = Vec3::Z * -next.rig.transform_vector3(tracked_head).z;
         } else if matches!(mode, RigMode::Avatar) {
             // The tracked head and its offset orbit with the Avatar rig.
             next.correction = next.rig.transform_vector3(old_rig.inverse().transform_vector3(self.correction));
@@ -259,6 +256,20 @@ mod tests {
             (after.distance(translated) - 0.1).abs() < 2e-5,
             "physical lean must remain one-to-one"
         );
+    }
+
+    #[test]
+    fn vr_first_person_entry_uses_height_after_the_headset_is_picked_up() {
+        let floor = pose(Vec3::ZERO);
+        let raised = pose(Vec3::Y * 1.6);
+        let view = rig_view(Vec3::new(20.0, 30.0, 2.0), 0.3);
+        let mut anchor = Anchor::new(view, floor).expect("anchor");
+        anchor.follow_head(view, floor, RigMode::Avatar).expect("startup");
+        anchor.follow_head(view, raised, RigMode::FirstPerson).expect("first person");
+        assert!((anchor.head_position(raised).expect("head").z - 2.0).abs() < 1e-5);
+        let leaned = pose(Vec3::Y * 1.8);
+        anchor.follow_head(view, leaned, RigMode::FirstPerson).expect("tracking");
+        assert!((anchor.head_position(leaned).expect("head").z - 2.2).abs() < 1e-5);
     }
 
     #[test]
