@@ -4065,10 +4065,10 @@ The studio bar uses the top islands' shared glass surface and 36-point height,
 smaller mouse hints, and Pose / Lighting dropdowns. AO / In-world is the default
 pose; T-Pose and A-Pose override only our final joint palette, including worn
 attachment anchors, after the ordinary motion and physics update on the same
-parallel pose workers. Animation
-signals and controller clocks continue, so releasing the override restores the
-current phase. The shaped rest skeleton is retained, with A-Pose lowering each
-straight arm 45 degrees. Leaving the studio releases the local override.
+parallel pose workers. Animation signals and controller clocks continue, so
+releasing the override restores the current phase. The shaped rest skeleton is
+retained, with A-Pose lowering each straight arm 45 degrees. Leaving the studio
+releases the local override.
 Each preset's final matrices are translated as one unit so the lowest foot
 joint, less the shared sole-height approximation, meets the entry floor. The
 conversion uses the actual skeleton model, including mesh pelvis offsets and
