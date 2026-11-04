@@ -580,15 +580,14 @@ impl Viewfinder {
             self.pad = Pad::default();
         }
         // a new photo while the last one is still on its card or on its way:
-        // that one joins the pile at once, and the pile answers it
+        // that one joins the pile at once, and the pile answers it (as of
+        // last frame: the new photo's own card starts with it)
         let newest = f.reel.photos.first().map(|photo| photo.id);
-        if newest != self.newest {
-            if newest > self.newest && self.newest.is_some() && (f.now < self.review_until || self.fly.is_some()) {
-                self.fly = None;
-                self.pulse = Some(f.now);
-            }
-            self.newest = newest;
+        if cuts_short(self.newest, newest, self.card_rect.is_some() || self.fly.is_some()) {
+            self.fly = None;
+            self.pulse = Some(f.now);
         }
+        self.newest = newest;
         // the session's photos where they were moved (bottom left at first,
         // over the camera pad when it shows); the last photo's card centred
         // over the lens and aperture controls
@@ -2120,6 +2119,12 @@ fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
     clicked
 }
 
+/// A photo newer than `before` arrived while the last one was still `showing`
+/// (on its card or on its way to the tray).
+fn cuts_short(before: Option<u64>, newest: Option<u64>, showing: bool) -> bool {
+    showing && before.is_some() && newest > before
+}
+
 /// How long the card of the photo just taken shows (seconds).
 pub(crate) const CARD_TIME: f64 = 2.0;
 
@@ -2455,4 +2460,24 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         Box::new(move |_, _| Some(Out::FirstPerson(!first))),
     ));
     v
+}
+
+#[cfg(test)]
+mod cut_short_tests {
+    use super::cuts_short;
+
+    #[test]
+    fn only_a_photo_over_one_still_showing_cuts_it_short() {
+        // nothing showing: a photo taken on its own, its pulse is for its landing
+        assert!(!cuts_short(Some(1), Some(2), false));
+        assert!(!cuts_short(None, Some(1), false));
+        // the card or the flight of the last one under way
+        assert!(cuts_short(Some(1), Some(2), true));
+        // the same photo, or the newest deleted: nothing landed
+        assert!(!cuts_short(Some(2), Some(2), true));
+        assert!(!cuts_short(Some(2), Some(1), true));
+        assert!(!cuts_short(Some(2), None, true));
+        // the very first photo has nothing to cut short
+        assert!(!cuts_short(None, Some(1), true));
+    }
 }

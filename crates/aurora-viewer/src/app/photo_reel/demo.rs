@@ -1,4 +1,4 @@
-//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar]:
+//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]:
 //! the reel filled with `n` real photos of the plaza, saved to a folder of
 //! the cache (never the Pictures folder), the focal length changed between
 //! them so that they differ. `quick` then opens the quick view on the
@@ -11,7 +11,8 @@
 //! `applied` accepts: photo mode closes, our profile shows it. `moved` puts the tray at the middle
 //! of the screen: the photos fly to it there. `toolbar` puts the Photo roll
 //! button on the right toolbar (dimmed until the first photo), then closes
-//! photo mode and opens the quick view with it. From AURORA_DEMO_SNAPSHOT_FRAME
+//! photo mode and opens the quick view with it. `apart` takes the photos 600 frames
+//! apart, each card and flight over before the next. From AURORA_DEMO_SNAPSHOT_FRAME
 //! (700 by default); the photo mode's look follows AURORA_DEMO_SNAPSHOT.
 
 use super::super::App;
@@ -42,6 +43,8 @@ pub(in crate::app) struct Demo {
     moved: bool,
     /// The toolbar's Photo roll: shown, then the quick view opened with it.
     toolbar: bool,
+    /// Frames between two photos.
+    gap: u64,
     start: u64,
     taken: usize,
     /// The frame of the last step.
@@ -75,6 +78,7 @@ impl Demo {
             applied: words.contains(&"applied"),
             moved: words.contains(&"moved"),
             toolbar: words.contains(&"toolbar"),
+            gap: if words.contains(&"apart") { 600 } else { 20 },
             start,
             ..Demo::default()
         })
@@ -153,7 +157,7 @@ impl App {
             self.photo_reel_action(ReelAction::ShowItem(id), renderer);
             return;
         }
-        if d.done || busy || frame < d.start || frame < d.last + 20 {
+        if d.done || busy || frame < d.start || frame < d.last + d.gap {
             return;
         }
         d.last = frame;

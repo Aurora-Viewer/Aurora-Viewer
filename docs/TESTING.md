@@ -344,7 +344,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
-| `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
+| `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
@@ -664,7 +664,7 @@ environment`) and leaves the photo mode (960): the scene keeps that light.
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
 
-`AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar]`: from
+`AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]`: from
 `AURORA_DEMO_SNAPSHOT_FRAME` (700 by default) the photo mode takes `n` real
 photos (12 at most), 20 frames apart, saved to `demo-photo-reel` in the
 cache folder (never the Pictures folder), the focal length going through
@@ -676,7 +676,8 @@ dock like the tray's photos) centred over the lens and aperture controls for
 the photos shuffled as loose prints, the newest on top, a badge counting
 them. The pile gives a small bounce and a soft glow when a photo lands, or
 when a new photo cuts the last one's card or flight short, as these photos in
-quick succession do. `moved` puts the
+quick succession do. `apart` takes them 600 frames apart instead: each pile
+pulses only when its photo lands. `moved` puts the
 tray at the middle of the screen (as if dragged there): the photos fly to
 it there. In the panel the row under the shutter shows the stack and the
 older photos. `quick` then opens the quick view on the newest (the world
