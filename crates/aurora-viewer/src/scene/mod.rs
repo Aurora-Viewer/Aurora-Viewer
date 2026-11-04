@@ -8,6 +8,7 @@ pub mod animesh;
 pub mod animesh_report;
 mod auto_hover;
 pub mod avatar;
+pub mod avatar_studio;
 pub mod banlines;
 pub mod blend_order;
 mod blender_live;
@@ -843,6 +844,8 @@ pub struct Scene {
     pub too_complex: std::collections::HashSet<usize>,
     parcel_visibility_version: u64,
     photo_isolation_version: u64,
+    studio_visible: bool,
+    pub studio_stage: avatar_studio::Stage,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
     /// not at the clock's.
@@ -1519,6 +1522,8 @@ impl Scene {
             too_complex: Default::default(),
             parcel_visibility_version: 0,
             photo_isolation_version: 0,
+            studio_visible: false,
+            studio_stage: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
             give_marks: Default::default(),
@@ -2209,6 +2214,7 @@ impl Scene {
             r.surface.free(renderer, &mut self.textures);
         }
         self.water.clear(renderer);
+        self.studio_stage.clear(renderer);
         self.banlines.clear(renderer);
         self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
@@ -2616,8 +2622,9 @@ impl Scene {
     fn sync_photo_isolation(&mut self, renderer: &mut Renderer, world: &World, synced: &[usize]) {
         use crate::snapshot::isolate;
         let iso = &world.photo_isolation;
-        if self.photo_isolation_version != iso.version {
+        if self.photo_isolation_version != iso.version || self.studio_visible != world.avatar_studio {
             self.photo_isolation_version = iso.version;
+            self.studio_visible = world.avatar_studio;
             for idx in 0..self.gpu.len() {
                 let hidden = !isolate::object_visible(world, idx);
                 let g = &mut self.gpu[idx];
@@ -2626,7 +2633,7 @@ impl Scene {
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.applied() {
+        } else if iso.applied() || world.avatar_studio {
             for &idx in synced {
                 let hidden = !isolate::object_visible(world, idx);
                 if let Some(g) = self.gpu.get_mut(idx) {
@@ -4755,7 +4762,7 @@ impl Scene {
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
-        let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
+        let under_water_plane = self.water.height.filter(|h| !self.studio_visible && view.eye.z >= *h);
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,

@@ -40,6 +40,7 @@ pub const COMMANDS: &[Command] = commands![
     "texture_library", "stack-2-filled", "texture-library-title", true;
     "gestures", "Command_Gestures_Icon", "gesture-title", true;
     "appearance", "Command_Appearance_Icon", "common-appearance", true;
+    "avatar_studio", "man-filled", "avatar-studio-title", true;
     "search", "Command_Search_Icon", "search-title", true;
     "places", "Command_Places_Icon", "common-places", true;
     "snapshot", "Command_Snapshot_Icon", "photo-title", true;

@@ -1,4 +1,7 @@
 language-name = 日本語
+avatar-studio-title = アバタースタジオ
+avatar-studio-help = 左ドラッグで回転・右ドラッグで上下移動・ホイールでズーム
+avatar-studio-exit = スタジオを閉じる
 joystick-title = ジョイスティックと３Ｄマウス
 joystick-enabled = ジョイスティック入力を有効にする
 joystick-enable-hint = ジョイスティック、ゲームパッド、またはSpaceMouseでアバターや飛行カメラを操作します。

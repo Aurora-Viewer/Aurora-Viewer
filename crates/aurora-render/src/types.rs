@@ -207,6 +207,9 @@ pub mod flags {
     /// Bit of flags[3], above the texture animation's 24 packed bits.
     /// World faces whose material permits Blend texture alpha only.
     pub const WORLD_BLEND_PICK: u32 = 1 << 31;
+    /// Bit of flags[3], above packed texture animation: local studio scenery
+    /// is excluded from the avatar's temporary white reveal.
+    pub const STUDIO_STAGE: u32 = 1 << 29;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -1186,6 +1189,9 @@ pub struct SkyParams {
     pub halo_texture: u32,
     /// Night sky: which stars and how they are turned (stars.rs).
     pub stars: crate::stars::StarFrame,
+    /// Session-local studio sky, zero outside Avatar Studio. sRGB navy /
+    /// teal / violet / indigo; w values: enabled / yaw / time / white reveal.
+    pub studio_aurora: [[f32; 4]; 4],
 }
 
 impl Default for SkyParams {
@@ -1234,6 +1240,7 @@ impl Default for SkyParams {
             rainbow_texture: 0,
             halo_texture: 0,
             stars: crate::stars::StarFrame::default(),
+            studio_aurora: [[0.0; 4]; 4],
         }
     }
 }
