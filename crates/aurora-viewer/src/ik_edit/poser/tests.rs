@@ -827,6 +827,63 @@ fn poser_bone_rows_and_xyz_controls_are_painted_inside_their_scroll_clips() {
     }
 }
 #[test]
+fn poser_name_can_be_replaced_and_survives_idle_frames() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let p = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut texts = Vec::new();
+    for _ in 0..5 {
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    let pointer = painted(&texts, &editor.poser.name).rect.center();
+    for pressed in [true, false] {
+        frames.run(
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::PointerButton {
+                    pos: pointer,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+        );
+    }
+    let modifiers = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..Default::default()
+    };
+    frames.run(
+        vec![egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }],
+        |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+    );
+    frames.run(
+        vec![
+            egui::Event::Text("Portrait".into()),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }),
+        ],
+        |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+    );
+    assert_eq!(editor.poser.name, "Portrait");
+    for _ in 0..30 {
+        frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+        assert_eq!(editor.poser.name, "Portrait");
+    }
+}
+#[test]
 fn poser_load_menu_opens_the_existing_library_without_a_file_picker() {
     use crate::ui::widgets::elide_tests::{Frames, painted};
     let (world, mut editor) = selected_fixture();

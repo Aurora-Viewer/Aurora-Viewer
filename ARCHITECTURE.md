@@ -11,7 +11,9 @@ layered Mask/Blend prims and procedural textures for offline comparisons.
 Poser storage returns the successful save path to the UI, selects that entry
 after the asynchronous library refresh and reports its full path. Load exposes
 the existing library directly, and native file pickers start in the same
-account-local poses directory (#2184).
+account-local poses directory (#2184). Restricted text fields distinguish empty
+IME preedit notifications from nonempty provisional composition, preserving
+ordinary typing/paste received in the same input batch on Wayland.
 
 `world/outfit_backup.rs` defines versioned, pretty-printed JSON outfit recipes:
 inventory item UUIDs, clothing link descriptions (layer order), item types and
