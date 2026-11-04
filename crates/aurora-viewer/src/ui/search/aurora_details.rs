@@ -481,7 +481,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
     let clicked = pane(ui, p, ("aurora-search-event", Key::Event(id)), &buttons, |ui| {
         ui.spacing_mut().item_spacing.y = 5.0;
         if let Some(t) = start {
-            date_banner(ui, p, t, info.map(|e| search::event_duration(e.duration)));
+            date_banner(ui, p, t, info.map_or(0, |e| e.duration));
         }
         ui.add_space(4.0);
         let Some(e) = info else {
@@ -534,11 +534,11 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
 
 /// The event's day in large type, its time and duration beside it, and
 /// "Started" once its start is past.
-/// The start of an event: month, day and hour in the clock's zone, which
-/// the line under the hour names (#1754).
-fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, duration: Option<String>) {
+/// The start of an event: month, day, and its hours from start to end in
+/// the clock's zone, which the line under them names (#1754).
+fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, minutes: u32) {
     let zone = crate::ui::bars::clock::zone();
-    let (_, month, day, _, hour, minute, _) = super::event_parts(start, zone);
+    let (_, month, day, ..) = super::event_parts(start, zone);
     let width = ui.available_width();
     egui::Frame::new()
         .fill(p.field)
@@ -560,14 +560,12 @@ fn date_banner(ui: &mut egui::Ui, p: &Palette, start: i64, duration: Option<Stri
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.add_space(3.0);
-                    ui.label(RichText::new(format!("{hour:02}:{minute:02}")).size(15.0).strong().color(p.ink));
-                    let mut sub = match zone {
+                    let hours = super::event_hours(start, minutes, zone);
+                    ui.label(RichText::new(hours).size(15.0).strong().color(p.ink));
+                    let sub = match zone {
                         crate::settings::ClockZone::Slt => aurora_i18n::tr!("search-aurora-slt").to_owned(),
                         crate::settings::ClockZone::Local => crate::ui::bars::clock::zone_name(zone, start),
                     };
-                    if let Some(d) = duration {
-                        sub = format!("{sub} · {d}");
-                    }
                     ui.label(RichText::new(sub).size(12.0).color(p.muted));
                 });
                 if start <= super::unix_now() {

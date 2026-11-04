@@ -7989,7 +7989,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Date column and the details' Date field ("11/04 14:00" in SLT, the
   directory's text; "11/04 23:00 CET" in local time), Aurora's event cards
   ("Today · 14:00 SLT" / "Today · 23:00 CET", the day following local
-  midnight) and the date banner of the details (hour and zone).
+  midnight) and the date banner of the details: the hours from start to
+  end ("16:00–17:00", "23:00–01:00 (+1)" past midnight) over the zone.
 - **`AURORA_DEMO_SEARCH_WEB=<page>`**: the address the Web tab loads in
   demo (a local `file:///…` page is enough to try back, forward,
   reload and the address). Set it to `teleport` for the bundled offline

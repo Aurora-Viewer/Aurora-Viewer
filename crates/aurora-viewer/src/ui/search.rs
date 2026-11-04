@@ -274,6 +274,34 @@ pub(crate) fn event_date_text(server: &str, unix: i64, zone: ClockZone) -> Strin
     zoned_date_text(unix, offset, &super::bars::clock::zone_name(zone, unix))
 }
 
+/// The hours of an event in `zone`: "16:00–17:00", the start alone
+/// without a duration, and "(+1)" after an end on a later day
+/// ("23:00–01:00 (+1)"). The end takes the zone's offset at its own time,
+/// so an event over a daylight saving switch ends at the hour the clock
+/// will then show.
+pub(crate) fn event_hours(start: i64, minutes: u32, zone: ClockZone) -> String {
+    event_hours_at(start, minutes, |t| super::bars::clock::offset(zone, t))
+}
+
+/// `event_hours` with the zone's offset at a time.
+fn event_hours_at(start: i64, minutes: u32, offset: impl Fn(i64) -> i64) -> String {
+    let at = |t: i64| {
+        let local = t + offset(t);
+        (local.div_euclid(86400), (local.rem_euclid(86400)) / 60)
+    };
+    let (day, from) = at(start);
+    let first = format!("{:02}:{:02}", from / 60, from % 60);
+    if minutes == 0 {
+        return first;
+    }
+    let (end_day, to) = at(start + i64::from(minutes) * 60);
+    let range = format!("{first}–{:02}:{:02}", to / 60, to % 60);
+    match end_day - day {
+        0 => range,
+        days => format!("{range} (+{days})"),
+    }
+}
+
 /// "MM/DD HH:MM <zone>" at `offset` seconds from UTC.
 fn zoned_date_text(unix: i64, offset: i64, zone: &str) -> String {
     let (_, month, day, _, hour, minute, _) = super::land::parts_at(unix, offset);
@@ -1243,5 +1271,28 @@ mod tests {
         };
         assert_eq!(cell_text(&dated, ClockZone::Local), (own, false));
         assert_eq!(zone_name(ClockZone::Slt, t), "SLT");
+    }
+
+    /// The details' hours from start to end (#1754 follow-up: a range, not
+    /// "· 1:00", read as a zone's offset).
+    #[test]
+    fn event_hours_from_start_to_end() {
+        // 2026-11-04 16:00 UTC, an hour: in GMT, in SLT (08:00 PST)
+        let start = 1_793_808_000;
+        assert_eq!(event_hours_at(start, 60, |_| 0), "16:00–17:00");
+        assert_eq!(event_hours_at(start, 60, |_| -8 * 3600), "08:00–09:00");
+        assert_eq!(event_hours_at(start, 90, |_| 3600), "17:00–18:30");
+        // no duration: the start alone
+        assert_eq!(event_hours_at(start, 0, |_| 0), "16:00");
+        // past midnight, and over two days
+        assert_eq!(event_hours_at(start, 9 * 60, |_| 0), "16:00–01:00 (+1)");
+        assert_eq!(event_hours_at(start, 8 * 60, |_| 0), "16:00–00:00 (+1)");
+        assert_eq!(event_hours_at(start, 50 * 60, |_| 0), "16:00–18:00 (+2)");
+        // an end after the daylight saving switch of 2026-11-01 (09:00
+        // UTC): 23:00 PDT to 01:00 PST is three real hours
+        let before = 1_793_520_000 - 2 * 3600; // 2026-11-01 06:00 UTC, 23:00 PDT on 10/31
+        assert_eq!(event_hours(before, 180, ClockZone::Slt), "23:00–01:00 (+1)");
+        // the clock's zone
+        assert_eq!(event_hours(start, 60, ClockZone::Slt), "08:00–09:00");
     }
 }
