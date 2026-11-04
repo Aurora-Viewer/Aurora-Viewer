@@ -703,6 +703,11 @@ fn item_menu(
         {
             super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(it.id));
         }
+        if let [it] = items.as_slice()
+            && menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("ui-appearance-items-show-original"))
+        {
+            actions.push(Action::ShowOriginal(it.id));
+        }
         items::remove_item(ui, p, &items, locks, aurora_i18n::tr!("common-remove"), actions);
     });
 }
