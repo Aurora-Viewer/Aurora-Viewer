@@ -164,24 +164,54 @@ pub fn undated(stem: &str) -> &str {
 /// The file in Aurora's folder that receives a Legacy file. With dated names
 /// off a conversation is one file, as it is here, or the months Aurora
 /// does not read back would stay out of its history.
-fn target_of(dir: &Path, source: &Path, dated: bool) -> Option<PathBuf> {
+fn target_of(dir: &Path, source: &Path, dated: bool, spelled: &Spellings) -> Option<PathBuf> {
     let stem = source.file_stem()?.to_str()?;
     let stem = once_group(if dated { stem } else { undated(stem) });
-    names::file_path(dir, &resident_name(&stem), None)
+    names::file_path(dir, &resident_name(&stem, spelled), None)
+}
+
+/// The files' names with their capitals, by their name in lower case.
+type Spellings = HashMap<String, String>;
+
+/// What Aurora's folder and the sources say of the capitals of a name that
+/// lost them. Aurora's come first: that file is the one it reads.
+fn spellings(dir: &Path, sources: &[PathBuf]) -> Spellings {
+    let mut spelled = Spellings::new();
+    let mut add = |file: &Path| {
+        let Some(stem) = file.file_stem().and_then(|s| s.to_str()) else {
+            return;
+        };
+        let base = undated(stem);
+        if base != base.to_lowercase() && !base.ends_with(names::GROUP_SUFFIX) {
+            spelled.entry(base.to_lowercase()).or_insert_with(|| base.to_owned());
+        }
+    };
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        add(&entry.path());
+    }
+    sources.iter().for_each(|source| add(source));
+    spelled
 }
 
 /// `jane_doe` as Aurora names that resident's file, `Jane Doe`: the official
 /// viewer, and the others with UseLegacyIMLogNames off, name it from
 /// LLCacheName::buildUsername, then cleanFileName turns its dot into '_'.
-/// The name's capitals are lost there: those of a word's start come back.
-fn resident_name(stem: &str) -> String {
+/// That leaves the name in lower case, and Aurora's file of `JaneDoe` or
+/// `Jane McDoe` keeps its capitals: taken from `spelled`, or each word's
+/// first one comes back when nothing says more.
+fn resident_name(stem: &str, spelled: &Spellings) -> String {
     let base = undated(stem);
+    if base != base.to_lowercase() || base == names::NEARBY {
+        return stem.to_owned();
+    }
+    let tail = &stem[base.len()..];
+    if let Some(known) = spelled.get(&base.replacen('_', " ", 1)) {
+        return format!("{known}{tail}");
+    }
     let word = |w: &str| !w.is_empty() && w.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
     let capital = |w: &str| w[..1].to_ascii_uppercase() + &w[1..];
     match base.split_once('_') {
-        Some((first, last)) if word(first) && word(last) => {
-            format!("{} {}{}", capital(first), capital(last), &stem[base.len()..])
-        }
+        Some((first, last)) if word(first) && word(last) => format!("{} {}{tail}", capital(first), capital(last)),
         _ => stem.to_owned(),
     }
 }
@@ -440,10 +470,11 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
             .map(|found| found.dir)
             .collect(),
     };
-    let plan: Vec<(PathBuf, PathBuf)> = folders
-        .iter()
-        .flat_map(|folder| transcripts(folder))
-        .filter_map(|source| Some((target_of(&request.dir, &source, request.dated)?, source)))
+    let sources: Vec<PathBuf> = folders.iter().flat_map(|folder| transcripts(folder)).collect();
+    let spelled = spellings(&request.dir, &sources);
+    let plan: Vec<(PathBuf, PathBuf)> = sources
+        .into_iter()
+        .filter_map(|source| Some((target_of(&request.dir, &source, request.dated, &spelled)?, source)))
         .map(|(target, source)| (source, target))
         .collect();
     total.store(plan.len(), Ordering::Relaxed);
@@ -625,7 +656,7 @@ mod tests {
             "Jane Doe Conference 2010_11_19 03_43 f0f4"
         );
         assert_eq!(undated("ジェーン-2026-10"), "ジェーン");
-        let target = |name: &str, dated| target_of(Path::new("d"), Path::new(name), dated).unwrap();
+        let target = |name: &str, dated| target_of(Path::new("d"), Path::new(name), dated, &Spellings::new()).unwrap();
         assert_eq!(target("Jane-2026-10.txt", false), Path::new("d/Jane.txt"));
         assert_eq!(target("Jane-2026-10.txt", true), Path::new("d/Jane-2026-10.txt"));
         assert_eq!(target("Jane.txt", true), Path::new("d/Jane.txt"));
@@ -666,15 +697,37 @@ mod tests {
 
     #[test]
     fn a_username_file_is_the_residents_file() {
-        assert_eq!(resident_name("jane_doe"), "Jane Doe");
-        assert_eq!(resident_name("jane_doe-2026-10"), "Jane Doe-2026-10");
-        assert_eq!(resident_name("janedoe"), "janedoe");
-        assert_eq!(resident_name("Jane Doe"), "Jane Doe");
-        assert_eq!(resident_name("chat"), "chat");
-        assert_eq!(resident_name("a_b_c"), "a_b_c");
-        assert_eq!(resident_name("foo_bar (group)"), "foo_bar (group)");
-        let target = target_of(Path::new("d"), Path::new("jane_doe.txt"), false);
+        let none = Spellings::new();
+        assert_eq!(resident_name("jane_doe", &none), "Jane Doe");
+        assert_eq!(resident_name("jane_doe-2026-10", &none), "Jane Doe-2026-10");
+        assert_eq!(resident_name("janedoe", &none), "janedoe");
+        assert_eq!(resident_name("Jane Doe", &none), "Jane Doe");
+        assert_eq!(resident_name("chat", &none), "chat");
+        assert_eq!(resident_name("a_b_c", &none), "a_b_c");
+        assert_eq!(resident_name("foo_bar (group)", &none), "foo_bar (group)");
+        let target = target_of(Path::new("d"), Path::new("jane_doe.txt"), false, &none);
         assert_eq!(target.unwrap(), Path::new("d/Jane Doe.txt"));
+    }
+
+    #[test]
+    fn a_username_takes_the_capitals_known_for_it() {
+        let dir = temp();
+        std::fs::write(dir.join("JaneDoe.txt"), "").unwrap();
+        std::fs::write(dir.join("Club (group).txt"), "").unwrap();
+        let sources = [
+            PathBuf::from("legacy/Jane McDoe-2026-10.txt"),
+            PathBuf::from("legacy/janedoe.txt"),
+            PathBuf::from("legacy/JANEDOE.txt"),
+        ];
+        let spelled = spellings(&dir, &sources);
+        assert_eq!(resident_name("janedoe", &spelled), "JaneDoe");
+        assert_eq!(resident_name("janedoe-2026-10", &spelled), "JaneDoe-2026-10");
+        assert_eq!(resident_name("jane_mcdoe", &spelled), "Jane McDoe");
+        // written with capitals, or not a resident's: as it is
+        assert_eq!(resident_name("JANEDOE", &spelled), "JANEDOE");
+        assert_eq!(resident_name("club (group)", &spelled), "club (group)");
+        assert_eq!(resident_name("chat", &[("chat".to_owned(), "Chat".to_owned())].into()), "chat");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -684,7 +737,12 @@ mod tests {
         assert_eq!(once_group("Club (group)"), "Club (group)");
         assert_eq!(once_group("Club (group) (group)-2026-10"), "Club (group)-2026-10");
         assert_eq!(once_group("Jane Doe"), "Jane Doe");
-        let target = target_of(Path::new("d"), Path::new("Club (group) (group)-2026-10.txt"), false);
+        let target = target_of(
+            Path::new("d"),
+            Path::new("Club (group) (group)-2026-10.txt"),
+            false,
+            &Spellings::new(),
+        );
         assert_eq!(target.unwrap(), Path::new("d/Club (group).txt"));
     }
 

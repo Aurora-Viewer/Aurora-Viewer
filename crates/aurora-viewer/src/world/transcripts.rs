@@ -337,7 +337,8 @@ impl World {
     /// An import changed these files: a conversation that shows nothing but
     /// its history reads it again, with what was added. One with lines of
     /// this session keeps what it shows until it is opened again, or the
-    /// file's end would repeat those lines.
+    /// file's end would repeat those lines; so does one still reading its
+    /// history.
     fn history_imported(&mut self, changed: &std::collections::BTreeSet<String>) {
         for s in &mut self.social.ims {
             let imported = s.log.stem().is_some_and(|stem| {

@@ -9,7 +9,8 @@ use std::sync::mpsc::{Receiver, channel};
 #[derive(Default)]
 pub(super) struct ChatImport {
     /// The searches under way: a folder chosen does not stop the first one.
-    looking: Vec<Receiver<Vec<Found>>>,
+    /// Their folders, and whether to tick them.
+    looking: Vec<Receiver<(Vec<Found>, bool)>>,
     /// AURORA_DEMO_CHATLOG=import:again: its second run started.
     again: bool,
 }
@@ -35,8 +36,8 @@ impl App {
         self.chat_import.looking.push(rx);
         let _ = std::thread::Builder::new().name("aurora-chatlog-find".into()).spawn(move || {
             let found = match chosen {
-                Some(dir) => vec![import::inspect_chosen(&dir, &account, &target)],
-                None => import::find(&apps, &account, &target),
+                Some(dir) => (vec![import::inspect_chosen(&dir, &account, &target)], true),
+                None => (import::find(&apps, &account, &target), account.grid_known()),
             };
             let _ = tx.send(found);
         });
@@ -77,11 +78,11 @@ impl App {
             }
             Err(e) => e == std::sync::mpsc::TryRecvError::Empty,
         });
-        for found in answers {
+        for (found, tick) in answers {
             let list = self.options_ui.chat_import.found.get_or_insert_default();
             for f in found {
                 if !list.iter().any(|(known, _)| known.dir == f.dir) {
-                    let ticked = f.files > 0 && !f.same;
+                    let ticked = tick && f.files > 0 && !f.same;
                     list.push((f, ticked));
                 }
             }

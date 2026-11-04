@@ -25,20 +25,29 @@ pub struct Account {
 }
 
 impl Account {
-    /// LLSecAPIBasicCredential::userID: `first_last` in lower case, with
-    /// "resident" for a one-word name.
+    /// LLSecAPIBasicCredential::userID: `first_last` in lower case; the last
+    /// name of a one-word name is "Resident".
     pub fn folder(&self) -> String {
         format!("{}_{}", self.first, self.last).to_lowercase().replace(' ', "_")
     }
 
+    /// False on another grid than Second Life's: its label comes from the
+    /// viewer's grid list (`LLGridManager::getGridLabel`), so its folder
+    /// cannot be told from another grid's, and only the user can choose it.
+    pub fn grid_known(&self) -> bool {
+        !self.grid.starts_with("custom_")
+    }
+
     /// Whether a folder in an application's folder is this account's.
-    /// Another grid's label is unknown (`LLGridManager::getGridLabel`
-    /// comes from the viewer's grid list), so any label will do there.
+    /// Another grid's label is unknown (see `grid_known`), so any label but
+    /// the beta grid's will do there.
     pub fn owns(&self, name: &str) -> bool {
         let base = self.folder();
         match self.grid.as_str() {
             "aditi" => name == format!("{base}{BETA_SUFFIX}"),
-            grid if grid.starts_with("custom_") => name.strip_prefix(base.as_str()).is_some_and(|rest| rest.starts_with('.')),
+            _ if !self.grid_known() => name
+                .strip_prefix(base.as_str())
+                .is_some_and(|rest| rest.starts_with('.') && rest != BETA_SUFFIX),
             _ => name == base,
         }
     }
@@ -117,6 +126,9 @@ mod tests {
         assert!(!account("aditi").owns("jane_doe"));
         assert!(account("custom_x").owns("jane_doe.osgrid"));
         assert!(!account("custom_x").owns("jane_doe"));
+        assert!(!account("custom_x").owns("jane_doe.second_life_beta"));
+        assert!(!account("custom_x").grid_known());
+        assert!(account("agni").grid_known() && account("aditi").grid_known());
         assert!(!account("agni").owns("jane_doe2"));
         let resident = Account {
             first: "JaneDoe".into(),
