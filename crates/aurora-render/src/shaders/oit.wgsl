@@ -47,7 +47,8 @@ struct OitParams {
     tiles: u32,
     // layers per pixel in the slot array
     slots: u32,
-    _pad0: u32,
+    // the capture's frame stamp (its node claims)
+    stamp: u32,
     _pad1: u32,
     _pad2: u32,
     _pad3: u32,
@@ -77,6 +78,10 @@ struct OitParams {
 @group(0) @binding(10) var slots_r: texture_2d_array<u32>;
 
 const TILE: u32 = 8u;
+// The most nodes a walk of one list visits (object.wgsl `OIT_MAX_WALK`):
+// a list is at most as long as its pixel's count and never a loop, but no
+// walk may hang the GPU whatever the data.
+const MAX_WALK: u32 = 1024u;
 // `out_color` alpha of an edge pixel
 const EDGE: f32 = -1.0;
 // a sorted layer held in a slot (the rest of the id: the slot), not a node
@@ -133,9 +138,9 @@ fn resolve___N__(px: vec2<u32>, count: u32, first: u32, full: u32, dmin: f32, dm
             id = SLOT | k;
             k += 1u;
         } else {
-            // (a list holds at most every node of the pool: the bound
-            // only guards against a broken one, never cuts a valid list)
-            if (idx == 0u || steps >= params.node_cap) {
+            // (a list holds at most `count` nodes: the bound only guards
+            // against a broken one, never cuts a valid list)
+            if (idx == 0u || steps >= min(count, MAX_WALK)) {
                 break;
             }
             id = idx - 1u;

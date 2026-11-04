@@ -347,12 +347,17 @@ fn height(x: f32, y: f32) -> f32 {
 /// `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>]`: the panes (1 to 64, 8 when
 /// the value is not a number) and their opacity (0.3 by default, 0.02 to
 /// 1), or `None` without the variable.
-fn alpha_planes_spec(value: Option<&str>) -> Option<(u32, f32)> {
+/// `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`: the panes, their
+/// opacity and the distance between two (metres; 0 puts them all in the
+/// same place, exactly coplanar, for the order-independent transparency's
+/// tie-break).
+fn alpha_planes_spec(value: Option<&str>) -> Option<(u32, f32, f32)> {
     let value = value?;
     let mut parts = value.split(',').map(str::trim);
     let n = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(8).clamp(1, 64);
     let alpha = parts.next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.3).clamp(0.02, 1.0);
-    Some((n, alpha))
+    let spacing = parts.next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.25).clamp(0.0, 2.0);
+    Some((n, alpha, spacing))
 }
 
 fn te(color: [f32; 4], shiny: u8, fullbright: bool, glow: f32) -> Arc<TextureEntry> {
@@ -5325,7 +5330,7 @@ pub fn events() -> Vec<NetEvent> {
     // transparency, oit.rs, and the overflow of its pool past its layers
     // per pixel). A hue ramp from the nearest to the farthest, so that a
     // wrong order shows.
-    if let Some((n, alpha)) = alpha_planes_spec(std::env::var("AURORA_DEMO_ALPHA_PLANES").ok().as_deref()) {
+    if let Some((n, alpha, spacing)) = alpha_planes_spec(std::env::var("AURORA_DEMO_ALPHA_PLANES").ok().as_deref()) {
         let (sx, sy) = std::env::var("AURORA_DEMO_POS")
             .ok()
             .and_then(|v| {
@@ -5335,7 +5340,8 @@ pub fn events() -> Vec<NetEvent> {
             .unwrap_or((132.0, 126.0));
         let (dx, dy) = (0.894_427_2, 0.447_213_6);
         for i in 0..n {
-            let d = 3.0 + 0.25 * i as f32;
+            // (spacing 0: the same place, size and depth for all of them)
+            let d = 3.0 + spacing * i as f32;
             let (px, py) = (sx + dx * d, sy + dy * d);
             // the camera is about 3 m behind the avatar: a pane grows with
             // its distance from it, a little past the view
@@ -7851,14 +7857,16 @@ mod sun_tests {
     }
 
     #[test]
-    fn alpha_planes_read_their_count_and_opacity() {
+    fn alpha_planes_read_their_count_opacity_and_spacing() {
         assert_eq!(alpha_planes_spec(None), None);
-        assert_eq!(alpha_planes_spec(Some("20")), Some((20, 0.3)));
-        assert_eq!(alpha_planes_spec(Some("6, 0.5")), Some((6, 0.5)));
+        assert_eq!(alpha_planes_spec(Some("20")), Some((20, 0.3, 0.25)));
+        assert_eq!(alpha_planes_spec(Some("6, 0.5")), Some((6, 0.5, 0.25)));
+        // coplanar panes: no spacing
+        assert_eq!(alpha_planes_spec(Some("2,0.5,0")), Some((2, 0.5, 0.0)));
         // not a number: the defaults; kept within 1 to 64 panes, never
-        // fully transparent
-        assert_eq!(alpha_planes_spec(Some("on")), Some((8, 0.3)));
-        assert_eq!(alpha_planes_spec(Some("500,0")), Some((64, 0.02)));
+        // fully transparent, at most 2 m apart
+        assert_eq!(alpha_planes_spec(Some("on")), Some((8, 0.3, 0.25)));
+        assert_eq!(alpha_planes_spec(Some("500,0,9")), Some((64, 0.02, 2.0)));
     }
 }
 

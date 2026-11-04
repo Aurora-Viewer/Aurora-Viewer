@@ -4050,7 +4050,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
-| `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>]` | `n` translucent panes filling the view ahead of the start position: `n` blended layers on every pixel |
+| `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]` | `n` translucent panes filling the view ahead of the start position: `n` blended layers on every pixel; spacing 0: coplanar |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
@@ -9898,13 +9898,18 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=write`, the ring
   of #556 (the pane missing around the hair) appears; by default it does
   not.
-- **`AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>]`**: `n` translucent panes (1 to
-  64, 8 when the value is not a number; `alpha` their opacity, 0.3 by
-  default) ahead of the start position (`AURORA_DEMO_POS`), facing the
-  camera, one every 0.25 m from 3 m on, each large enough to fill the view
-  at its distance, their hue running from the nearest to the farthest: the
-  fog planes, glass walls and skybox panes of a club, `n` blended layers
-  over nearly every pixel. The load of the order-independent transparency
+- **`AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`**: `n` translucent
+  panes (1 to 64, 8 when the value is not a number; `alpha` their opacity,
+  0.3 by default) ahead of the start position (`AURORA_DEMO_POS`), facing
+  the camera, one every `spacing` metres (0.25 by default, up to 2) from
+  3 m on, each large enough to fill the view at its distance, their hue
+  running from the nearest to the farthest: the fog planes, glass walls and
+  skybox panes of a club, `n` blended layers over nearly every pixel. A
+  spacing of `0` puts them all in the same place, exactly coplanar
+  (`2,0.5,0`: two panes of the same depth on every pixel): with
+  `AURORA_OIT=1` their order is decided by the tie-break of the sort, so
+  consecutive captures (`AURORA_CAPTURE_FRAMES=2000,2001,2002`) must be
+  identical over the panes, frame after frame. The load of the order-independent transparency
   (`AURORA_OIT=1`): `8` fits its default pool, `20` and more overflow it at
   1600 × 900 and the frame is drawn again in the object order (the image
   stays the same as with `AURORA_OIT=0`). In `perf summary`, compare

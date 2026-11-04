@@ -55,13 +55,16 @@ const SLOT_BYTES: u64 = 16;
 const MAX_SLOTS: u32 = 8;
 /// A node: premultiplied colour, alpha and coverage, depth, next.
 const NODE_BYTES: u64 = 16;
+/// Per node, the stamp of the frame that claimed it (object.wgsl
+/// `oit_claims`).
+const CLAIM_BYTES: u64 = 4;
 /// Side of the resolve's screen tiles (oit.wgsl `TILE`, its workgroups).
 const TILE: u32 = 8;
 
 /// Storage buffers the capture's fragment stage reads: the five of every
-/// blended face (main_thread.rs `FRAGMENT_STORAGE_BUFFERS`), the heads and
-/// the nodes.
-const CAPTURE_STORAGE_BUFFERS: u32 = 7;
+/// blended face (main_thread.rs `FRAGMENT_STORAGE_BUFFERS`), the heads, the
+/// nodes and the claims.
+const CAPTURE_STORAGE_BUFFERS: u32 = 8;
 
 /// oit.wgsl `OitParams` (object.wgsl declares the same words).
 #[repr(C)]
@@ -76,7 +79,9 @@ struct Params {
     tiles: u32,
     /// fragments per pixel kept in the slot array (the rest go to the list)
     slots: u32,
-    _pad: [u32; 4],
+    /// this frame's stamp, never 0: what the capture claims a node with
+    stamp: u32,
+    _pad: [u32; 3],
 }
 
 /// The pool's `flags` buffer is the DrawIndirectArgs of the replay's depth
@@ -116,18 +121,45 @@ pub(crate) fn nodes_override() -> Option<u32> {
 
 /// object.wgsl for this device: the capture's depth test forced before its
 /// shader when the device can (`Features::SHADER_EARLY_DEPTH_TEST`; the
-/// attribute is refused otherwise, and with it the whole module).
+/// attribute is refused otherwise, and with it the whole module), and its
+/// nodes allocated once per subgroup when it has subgroups
+/// (`Features::SUBGROUP`; the subgroup built-ins are refused otherwise).
 pub(crate) fn object_source(device: &wgpu::Device, src: &str) -> String {
-    if early_depth(device) {
+    object_source_with(src, early_depth(device), subgroups(device))
+}
+
+/// [`object_source`] for the given device abilities: the markers of
+/// object.wgsl's capture turned into the early depth test and the subgroup
+/// allocation (`oit_alloc`: its scalar version between the
+/// `OIT_ALLOC_SCALAR` markers, its subgroup version commented out between
+/// the `OIT_ALLOC_SUBGROUP` ones, so that the file itself is the scalar
+/// variant).
+pub(crate) fn object_source_with(src: &str, early_depth: bool, subgroups: bool) -> String {
+    let mut out = if early_depth {
         src.replace("/*OIT_EARLY_DEPTH*/", "@early_depth_test(force)")
     } else {
         src.to_string()
+    };
+    if subgroups
+        && let (Some(start), Some(end)) = (out.find("// <OIT_ALLOC_SCALAR>"), out.find("// </OIT_ALLOC_SCALAR>"))
+        && start < end
+    {
+        let after = end + "// </OIT_ALLOC_SCALAR>".len();
+        out = format!("{}{}", &out[..start], &out[after..])
+            .replace("/* <OIT_ALLOC_SUBGROUP>", "")
+            .replace("</OIT_ALLOC_SUBGROUP> */", "");
     }
+    out
 }
 
 /// The capture's depth test can be forced before its shader.
 pub(crate) fn early_depth(device: &wgpu::Device) -> bool {
     device.features().contains(wgpu::Features::SHADER_EARLY_DEPTH_TEST)
+}
+
+/// The capture can allocate its nodes once per subgroup.
+pub(crate) fn subgroups(device: &wgpu::Device) -> bool {
+    device.features().contains(wgpu::Features::SUBGROUP)
 }
 
 /// oit.wgsl with its sort generated for 8 and 24 layers: two array sizes
@@ -181,8 +213,9 @@ pub fn plan(width: u32, height: u32, nodes_per_pixel: u32, max_binding: u64, max
     }
     let slot_bytes = pixels * SLOT_BYTES * u64::from(slots);
     let wanted = pixels * u64::from(per_pixel - slots);
-    let bytes = (wanted * NODE_BYTES).min(budget.saturating_sub(slot_bytes)).min(max_binding);
-    let node_cap = u32::try_from(bytes / NODE_BYTES).unwrap_or(u32::MAX);
+    let per_node = NODE_BYTES + CLAIM_BYTES;
+    let bytes = (wanted * per_node).min(budget.saturating_sub(slot_bytes)).min(max_binding);
+    let node_cap = u32::try_from(bytes / per_node).unwrap_or(u32::MAX);
     Some(Plan { slots, node_cap })
 }
 
@@ -202,6 +235,9 @@ struct Pool {
     /// keeps the slot array alive
     _slots_tex: wgpu::Texture,
     nodes: wgpu::Buffer,
+    /// per node, the stamp of the frame that claimed it (the capture's
+    /// group keeps it alive; kept here with the pool)
+    _claims: wgpu::Buffer,
     /// each pixel's composite (an edge pixel's alpha: -1)
     color: wgpu::TextureView,
     /// two DrawIndirectArgs (plain tiles, edge tiles), then the tile lists
@@ -269,6 +305,8 @@ pub(crate) struct Oit {
     retry: crate::gpu_alloc::Backoff,
     /// the gated draws' copies of their arguments (oit_gate.rs)
     gate: crate::oit_gate::Gate,
+    /// the frame stamp of the capture's node claims (never 0)
+    stamp: u32,
 }
 
 fn entry(binding: u32, visibility: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -496,6 +534,7 @@ impl Oit {
             entry(20, frag, buffer(B::Storage { read_only: false })),
             entry(21, frag, buffer(B::Storage { read_only: false })),
             entry(22, frag, buffer(B::Uniform)),
+            entry(27, frag, buffer(B::Storage { read_only: false })),
         ];
         let capture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit capture"),
@@ -503,6 +542,7 @@ impl Oit {
                 common[0],
                 common[1],
                 common[2],
+                common[3],
                 entry(
                     23,
                     frag,
@@ -553,6 +593,7 @@ impl Oit {
             pool: None,
             retry: Default::default(),
             gate: crate::oit_gate::Gate::new(device),
+            stamp: 0,
         })
     }
 
@@ -627,8 +668,12 @@ impl Oit {
             tiles_x: pool.tiles_x,
             tiles: pool.tiles,
             slots: pool.slots,
-            _pad: [0; 4],
+            // a new stamp each frame (the claims of the last one are void),
+            // never 0 (what a cleared claim holds)
+            stamp: self.stamp.wrapping_add(1).max(1),
+            _pad: [0; 3],
         };
+        self.stamp = params.stamp;
         if self.last_params != Some(params) {
             queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
             self.last_params = Some(params);
@@ -677,6 +722,7 @@ impl Oit {
         use wgpu::BufferUsages as U;
         let heads = buffer("oit heads", heads_bytes, U::STORAGE)?;
         let nodes = buffer("oit nodes", u64::from(node_cap) * NODE_BYTES, U::STORAGE)?;
+        let claims = buffer("oit node claims", u64::from(node_cap) * CLAIM_BYTES, U::STORAGE)?;
         let args = buffer("oit tile draws", 32, U::STORAGE | U::INDIRECT)?;
         let tile_list = buffer("oit tiles", u64::from(tiles) * 2 * 4, U::STORAGE)?;
         let flags = buffer("oit draw flags", FLAGS_BYTES, U::STORAGE | U::INDIRECT)?;
@@ -726,7 +772,7 @@ impl Oit {
         log::info!(
             "oit: {slots} slots ({} MB) + {node_cap} nodes ({} MB) for {width}x{height}, {nodes_per_pixel} per pixel",
             slots_bytes >> 20,
-            (u64::from(node_cap) * NODE_BYTES) >> 20
+            (u64::from(node_cap) * (NODE_BYTES + CLAIM_BYTES)) >> 20
         );
         let capture = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("oit capture"),
@@ -735,6 +781,7 @@ impl Oit {
                 bind(20, heads.as_entire_binding()),
                 bind(21, nodes.as_entire_binding()),
                 bind(22, self.params.as_entire_binding()),
+                bind(27, claims.as_entire_binding()),
                 bind(23, wgpu::BindingResource::TextureView(&slots_view)),
             ],
         });
@@ -760,6 +807,7 @@ impl Oit {
             slots_view,
             _slots_tex: slots_tex,
             nodes,
+            _claims: claims,
             color,
             args,
             tile_list,
@@ -918,10 +966,12 @@ mod tests {
 
     const BIG: u64 = u64::MAX;
 
-    /// Everything the OIT holds for a plan: slots, nodes, heads, composite,
-    /// tile list (what `make_pool` allocates).
+    /// Everything the OIT holds for a plan: slots, nodes and their claims,
+    /// heads, composite, tile list (what `make_pool` allocates).
     fn total(p: Plan, w: u32, h: u32) -> u64 {
-        u64::from(w) * u64::from(h) * u64::from(p.slots) * SLOT_BYTES + u64::from(p.node_cap) * NODE_BYTES + fixed_bytes(w, h)
+        u64::from(w) * u64::from(h) * u64::from(p.slots) * SLOT_BYTES
+            + u64::from(p.node_cap) * (NODE_BYTES + CLAIM_BYTES)
+            + fixed_bytes(w, h)
     }
 
     /// The selection rule of oit.wgsl `resolve_N`, on the layers' depths in
@@ -985,11 +1035,12 @@ mod tests {
         let p = plan(1920, 1080, 8, BIG, 2048, 16384).unwrap();
         assert_eq!(p.slots, 4);
         assert_eq!(p.node_cap, 1920 * 1080 * 4);
-        // the default at 1600x900: 198 MB in all, heads and composite included
+        // the default at 1600x900: 220 MB in all, heads, composite and the
+        // nodes' claims included
         let p = plan(1600, 900, 8, BIG, 2048, 16384).unwrap();
         assert_eq!((p.slots, p.node_cap), (4, 1600 * 900 * 4));
         let mb = total(p, 1600, 900) >> 20;
-        assert!((197..=199).contains(&mb), "{mb} MB");
+        assert!((218..=221).contains(&mb), "{mb} MB");
     }
 
     #[test]
@@ -1036,7 +1087,7 @@ mod tests {
     fn the_device_limits_are_respected() {
         // a binding limit below the pool wins
         let p = plan(1920, 1080, 8, 64 << 20, 2048, 16384).unwrap();
-        assert_eq!(p.node_cap, (64 << 20) / 16);
+        assert_eq!(p.node_cap, (64 << 20) / (16 + 4));
         // a screen larger than the textures: no plan
         assert_eq!(plan(5000, 100, 8, BIG, 2048, 4096), None);
         // no layer allowed
@@ -1055,6 +1106,32 @@ mod tests {
         let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
         if let Err(e) = v.validate(&module) {
             panic!("{}", e.emit_to_string(&src));
+        }
+    }
+
+    /// The capture's four variants of object.wgsl (early depth test or not,
+    /// the nodes allocated per subgroup or per fragment) are valid.
+    #[test]
+    fn the_capture_shader_is_valid_in_its_four_variants() {
+        let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+        for (early, subgroups) in [(false, false), (true, false), (false, true), (true, true)] {
+            let generated = object_source_with(&object, early, subgroups);
+            // (a comment of the file names the attribute: the marker tells)
+            assert_eq!(generated.contains("/*OIT_EARLY_DEPTH*/"), !early);
+            // (the subgroup version is in the file, commented out)
+            assert_eq!(generated.contains("/* <OIT_ALLOC_SUBGROUP>"), !subgroups);
+            assert_eq!(generated.contains("// <OIT_ALLOC_SCALAR>"), !subgroups);
+            assert_eq!(
+                generated.matches("fn oit_alloc(").count(),
+                1 + usize::from(!subgroups),
+                "one live oit_alloc"
+            );
+            let src = format!("{}\n{}\n{}", crate::COMMON_SHADER, generated, include_str!("shaders/env.wgsl"));
+            let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
+            let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
+            if let Err(e) = v.validate(&module) {
+                panic!("early {early}, subgroups {subgroups}: {}", e.emit_to_string(&src));
+            }
         }
     }
 }

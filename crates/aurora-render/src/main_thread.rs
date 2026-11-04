@@ -1712,6 +1712,11 @@ fn open_device(
     if afeat.contains(wgpu::Features::POLYGON_MODE_LINE) {
         features |= wgpu::Features::POLYGON_MODE_LINE;
     }
+    // the OIT capture allocates its nodes with one atomic per subgroup
+    // instead of one per fragment (oit.rs `subgroups`)
+    if afeat.contains(wgpu::Features::SUBGROUP) {
+        features |= wgpu::Features::SUBGROUP;
+    }
     // Keep the actual water triangles across the near plane. The portable
     // shader path restores their real depth when hardware clamp is absent.
     let portable_water =

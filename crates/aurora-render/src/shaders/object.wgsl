@@ -790,6 +790,16 @@ fn water_clip(world_pos: vec3<f32>) {
     }
 }
 
+// water_clip's decision without the discard (the OIT capture, which must
+// not discard: fs_blend_oit).
+fn water_clipped(world_pos: vec3<f32>) -> bool {
+    let h = frame.params.y;
+    if (WATER_CLIP == 0u || frame.camera_pos.z < h) {
+        return false;
+    }
+    return (WATER_CLIP == 1u) != (world_pos.z >= h);
+}
+
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
@@ -1611,6 +1621,50 @@ fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
     return vec4<f32>(c.rgb * c.a, c.a);
 }
 
+// blend_color for the OIT capture: the same colour, alpha 0 (nothing
+// stored) where blend_color discards. The capture allocates its nodes for
+// a whole subgroup at once (oit_alloc) and a discarded invocation may keep
+// running as a helper, counted in the subgroup but with no effect on
+// memory: no discard happens before that allocation.
+fn blend_color_kept(in: VsOut, front: bool) -> vec4<f32> {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+    if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
+        let surface = portal_surface(records[in.record], in.uv, portal_aa);
+        if (surface.alpha < 0.004) {
+            return vec4<f32>(0.0);
+        }
+        let color = apply_fog(surface.color * frame.sky_cloud_pd2.w, in.world_pos);
+        return vec4<f32>(color * surface.alpha, surface.alpha);
+    }
+    if (water_clipped(in.world_pos)) {
+        return vec4<f32>(0.0);
+    }
+    if (BLEND_SPLIT != 0u) {
+        let rec = records[in.record];
+        let half = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a >= 0.5;
+        if ((BLEND_SPLIT == 1u) != half) {
+            return vec4<f32>(0.0);
+        }
+    }
+    let m = eval_material(in, front);
+    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+        return vec4<f32>(0.0);
+    }
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+        return vec4<f32>(0.0);
+    }
+    var c = shade_material(in, m).color;
+    c.a = c.a * rez_alpha(rec, in);
+    if (c.a < 0.004) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(c.rgb * c.a, c.a);
+}
+
 // ---- order-independent transparency: capture (oit.rs, oit.wgsl)
 //
 // Each blended fragment in front of the opaque scene is stored instead of
@@ -1620,11 +1674,12 @@ fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
 // every pixel's slot k: neighbours write and read side by side, and these
 // fragments leave the pool's counter alone); the others are appended to its
 // linked list in the node pool, with the next node. oit.wgsl sorts and
-// composites them. Once the node pool is full, the fragment is dropped: the
-// classify then skips the composite and the frame's blended faces are drawn
-// again exactly as without OIT (renderer.rs `rigged_in_order`, then the
-// others in order), so a crowded frame is the image it had before OIT: no
-// holes, no reversed order.
+// composites them. Once the node pool is full, the fragment is dropped,
+// unshaded when its pixel's slots are full too: the classify then skips the
+// composite and the frame's blended faces are drawn again exactly as
+// without OIT (renderer.rs `rigged_in_order`, then the others in order), so
+// a crowded frame is the image it had before OIT: no holes, no reversed
+// order, and the capture costs it little more than its rasterization.
 struct OitParams {
     node_cap: u32,
     width: u32,
@@ -1634,7 +1689,8 @@ struct OitParams {
     tiles_x: u32,
     tiles: u32,
     slots: u32,
-    _pad0: u32,
+    // this frame's stamp (never 0): a node is claimed by storing it
+    stamp: u32,
     _pad1: u32,
     _pad2: u32,
     _pad3: u32,
@@ -1647,6 +1703,10 @@ struct OitParams {
 @group(3) @binding(22) var<uniform> oit_params: OitParams;
 // the slots: written by the capture, read by fs_glow_oit
 @group(3) @binding(23) var oit_slots_w: texture_storage_2d_array<rgba32uint, write>;
+// per node, the stamp of the frame that claimed it (oit_alloc hands the
+// subgroup's run of nodes to its lanes: a lane whose claim finds this
+// frame's stamp already there takes a node of its own instead)
+@group(3) @binding(27) var<storage, read_write> oit_claims: array<atomic<u32>>;
 @group(3) @binding(24) var oit_slots_r: texture_2d_array<u32>;
 // fs_glow_oit's read-only view of the heads and nodes: it runs in the pass
 // that composites the lists, which binds them read only (oit.rs)
@@ -1664,27 +1724,101 @@ struct OitParams {
 // of an edge still show (the resolve then tests each sample).
 override OIT_EARLY_DEPTH: bool = false;
 
+// A node for this fragment: allocated for the whole subgroup with one
+// atomic where the device has subgroups (oit.rs `object_source` swaps the
+// two versions), one atomic per fragment otherwise. At or past node_cap
+// once the pool is full: dropped by the caller, the overflow left in
+// heads[0] for the classify. The caller claims the node (oit_claims)
+// before writing it: a lane the GPU keeps running without effect (a
+// helper invocation whose coverage is not 0) could lead the subgroup with
+// an atomic that never landed, and its run of nodes would be handed out
+// twice; a claim that finds the frame's stamp tells, and that lane takes a
+// node of its own.
+// <OIT_ALLOC_SCALAR>
+fn oit_alloc() -> u32 {
+    return atomicAdd(&oit_heads[0], 1u);
+}
+// </OIT_ALLOC_SCALAR>
+/* <OIT_ALLOC_SUBGROUP>
+fn oit_alloc() -> u32 {
+    // the active lanes counted and ranked; the first takes the subgroup's
+    // run of nodes, handed to the others by the maximum (they contribute 0)
+    let count = subgroupAdd(1u);
+    let rank = subgroupExclusiveAdd(1u);
+    var base = 0u;
+    if (rank == 0u) {
+        base = atomicAdd(&oit_heads[0], count);
+    }
+    return subgroupMax(base) + rank;
+}
+</OIT_ALLOC_SUBGROUP> */
+
+// The most nodes a walk of one list visits (oit.wgsl `MAX_WALK` too): a
+// list is at most as long as its pixel's count, and never a loop (each
+// node is claimed once), but no walk may hang the GPU whatever the data.
+const OIT_MAX_WALK: u32 = 1024u;
+
+// Marks the overflow when the pool is exactly full and a fragment needed a
+// node: the classify reads heads[0] past node_cap (heads[0] stops counting
+// past that point, the fragments leave without an atomic).
+fn oit_overflow(used: u32) {
+    if (used == oit_params.node_cap) {
+        atomicMax(&oit_heads[0], oit_params.node_cap + 1u);
+    }
+}
+
 @fragment /*OIT_EARLY_DEPTH*/
 fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
     let px = vec2<u32>(in.clip.xy);
     if (!OIT_EARLY_DEPTH && oit_params.samples <= 1u && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
         discard;
     }
-    let c = blend_color(in, front);
+    let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
+    // A full pool and full slots: nothing to store, so nothing to shade (the
+    // replay of the frame shades every face once, in order)
+    let used = atomicLoad(&oit_heads[0]);
+    if (used >= oit_params.node_cap && atomicLoad(&oit_heads[pixel]) >= oit_params.slots) {
+        oit_overflow(used);
+        return vec4<f32>(0.0);
+    }
+    // (no discard from here on: oit_alloc counts the subgroup's lanes) a
+    // fragment blend_color would discard, or a helper invocation (it
+    // covers no sample), stores nothing
+    let c = blend_color_kept(in, front);
+    if (c.a <= 0.0 || (coverage & 0xffu) == 0u) {
+        return vec4<f32>(0.0);
+    }
     let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
     let b16 = pack2x16float(vec2<f32>(clamp(c.b, 0.0, 65504.0), 0.0)) & 0xffffu;
     let rg = pack2x16float(clamp(c.rg, vec2<f32>(0.0), vec2<f32>(65504.0)));
     let rest = b16 | (a8 << 16u) | ((coverage & 0xffu) << 24u);
-    let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
     let slot = atomicAdd(&oit_heads[pixel], 1u);
     if (slot < oit_params.slots) {
         textureStore(oit_slots_w, px, slot, vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), 0u));
         return vec4<f32>(0.0);
     }
-    // (still counted past the end: the classify sees the overflow)
-    let idx = atomicAdd(&oit_heads[0], 1u);
-    if (idx >= oit_params.node_cap) {
+    if (used >= oit_params.node_cap) {
+        // (the slots were free at the check above, this fragment lost them)
+        oit_overflow(used);
         return vec4<f32>(0.0);
+    }
+    var idx = oit_alloc();
+    // the node claimed with this frame's stamp; one already claimed this
+    // frame was handed out twice (oit_alloc): nodes of this fragment's own
+    // then, a few tries, else dropped (the overflow marked, the frame
+    // replayed)
+    for (var attempt = 0u; attempt < 4u; attempt += 1u) {
+        if (idx >= oit_params.node_cap) {
+            return vec4<f32>(0.0);
+        }
+        if (atomicExchange(&oit_claims[idx], oit_params.stamp) != oit_params.stamp) {
+            break;
+        }
+        if (attempt == 3u) {
+            atomicMax(&oit_heads[0], oit_params.node_cap + 1u);
+            return vec4<f32>(0.0);
+        }
+        idx = atomicAdd(&oit_heads[0], 1u);
     }
     let prev = atomicExchange(&oit_heads[pixel + 1u], idx + 1u);
     oit_nodes[idx] = vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), prev);
@@ -1727,8 +1861,8 @@ fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_ma
             n = textureLoad(oit_slots_r, px, k, 0);
             k += 1u;
         } else {
-            // (bounded by the pool, as oit.wgsl: never cuts a valid list)
-            if (idx == 0u || steps >= oit_params.node_cap) {
+            // (bounded by the pixel's count and OIT_MAX_WALK, as oit.wgsl)
+            if (idx == 0u || steps >= min(oit_heads_r[pixel], OIT_MAX_WALK)) {
                 break;
             }
             n = oit_nodes_r[idx - 1u];
