@@ -282,13 +282,17 @@ impl Animation {
     /// Local animation time for an animation started `elapsed` seconds ago.
     /// Port of LLKeyframeMotion::onUpdate; keep the introduction and the
     /// first passage through loop_out. Only key sampling narrows to f32.
+    /// Loop points saved the wrong way round (loop_out before loop_in) loop
+    /// as the Legacy Viewer's fmod makes them: from loop_in, over the length
+    /// between the two, not frozen on loop_out.
     pub fn local_time(&self, elapsed: f64) -> f64 {
         if self.duration <= 0.0 {
             return 0.0;
         }
         let (a, b) = (f64::from(self.loop_in), f64::from(self.loop_out));
         if self.looping && elapsed > b {
-            if b > a { a + (elapsed - b).rem_euclid(b - a) } else { b }
+            // fmod keeps the sign of the dividend (elapsed - b > 0): `%`
+            if b == a { b } else { a + (elapsed - b) % (b - a) }
         } else {
             elapsed.max(0.0).min(f64::from(self.duration))
         }
@@ -622,8 +626,10 @@ mod tests {
         assert!((a.local_time(2.0) - 1.0).abs() < 1e-12);
         a.loop_out = a.loop_in;
         assert_eq!(a.local_time(100.0), 0.5);
+        // reversed points: loop_in + fmod(t - loop_out, loop_out - loop_in)
         a.loop_out = 0.0;
-        assert_eq!(a.local_time(100.0), 0.0);
+        assert_eq!(a.local_time(100.0), 0.5);
+        assert!((a.local_time(100.2) - 0.7).abs() < 1e-9);
         a.loop_in = 0.0;
         a.loop_out = 0.000005;
         let span = f64::from(a.loop_out);
@@ -632,6 +638,23 @@ mod tests {
         // No artificial minimum span in interpolation either.
         let joint = curve(&[(0.000001, 1.0), (0.000005, -1.0)]);
         assert!(joint.position_at_loop(0.0000005, a.loop_range()).expect("position").x.abs() < 1e-5);
+    }
+
+    #[test]
+    fn reversed_loop_points_hold_the_second_half_not_the_first_frame() {
+        // a worn hand pose saved with loop in 2.083 s and loop out 0 (4.167 s
+        // long): the Legacy Viewer plays 2.083..4.167, a held arm, never its
+        // rest pose at 0
+        let mut a = parse_animation(&build()).expect("animation");
+        a.duration = 4.167;
+        a.loop_in = 2.083;
+        a.loop_out = 0.0;
+        for elapsed in [0.01, 1.0, 3.0, 10.0, 1000.0] {
+            let t = a.local_time(elapsed);
+            assert!((2.083..4.167).contains(&t), "{elapsed} s gives {t}");
+        }
+        let (start, end) = (f64::from(a.loop_in), f64::from(a.loop_out));
+        assert!((a.local_time(10.0) - (start + (10.0 - end) % (end - start))).abs() < 1e-9);
     }
 
     #[test]
