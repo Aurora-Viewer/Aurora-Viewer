@@ -11,8 +11,13 @@
 //! become nodes of the pixel's linked list in the pool, so the result stays
 //! exact. A compute
 //! pass (oit.wgsl) then sorts each pixel's layers once and lists the screen
-//! tiles that hold some; two indirect draws composite those tiles over the
-//! scene, the MSAA edge pixels sample by sample.
+//! tiles that hold some; an indirect draw composites those tiles over the
+//! scene, once per pixel, at the depth of the pixel's nearest layer. No
+//! sample mask is read anywhere: with MSAA a layer counts where it is in
+//! front of at least half of its pixel's samples, the composite's depth
+//! test keeps it off the samples an opaque edge covers in front of every
+//! layer, and the transparent edges take their anti-aliasing from the
+//! post-process one.
 //!
 //! A new Aurora feature: the Legacy Viewer sorts its alpha by object
 //! (LLDrawPoolAlpha). What does not fit changes nothing: when the pool is
@@ -45,10 +50,11 @@ pub const MAX_SORTED_LAYERS: u32 = 24;
 pub const MAX_POOL_BYTES: u64 = 512 << 20;
 /// Bytes per pixel of the heads (a fragment count and a list head, 2 words).
 const HEADS_BYTES: u64 = 8;
-/// Bytes per pixel of the composite texture (`rgba16float`).
-const COMPOSITE_BYTES: u64 = 8;
-/// Bytes per screen tile of the tile list (a plain and an edge entry).
-const TILE_LIST_BYTES: u64 = 8;
+/// Bytes per pixel of the composite texture (`rgba16float`) and of the
+/// depth of its nearest layer (`r32float`).
+const COMPOSITE_BYTES: u64 = 12;
+/// Bytes per screen tile of the tile list.
+const TILE_LIST_BYTES: u64 = 4;
 /// A slot (a texel of the array) has the size of a node.
 const SLOT_BYTES: u64 = 16;
 /// Slots per pixel at most: past that the array costs more than it saves.
@@ -238,9 +244,10 @@ struct Pool {
     /// per node, the stamp of the frame that claimed it (the capture's
     /// group keeps it alive; kept here with the pool)
     _claims: wgpu::Buffer,
-    /// each pixel's composite (an edge pixel's alpha: -1)
+    /// each pixel's composite, and the depth of its nearest layer
     color: wgpu::TextureView,
-    /// two DrawIndirectArgs (plain tiles, edge tiles), then the tile lists
+    depth: wgpu::TextureView,
+    /// the DrawIndirectArgs of the composite over the listed tiles
     args: wgpu::Buffer,
     tile_list: wgpu::Buffer,
     /// the draw counts at REPLAY_FLAG and COMPOSITED_FLAG, set by the classify
@@ -258,8 +265,6 @@ pub(crate) struct Resolve {
     samples: u32,
     classify: wgpu::ComputePipeline,
     composite: wgpu::RenderPipeline,
-    /// per sample, over the edge tiles (MSAA only)
-    edge: Option<wgpu::RenderPipeline>,
     /// the scene depth into another depth target, when the pool overflowed
     /// ([`Oit::copy_depth_if_overflowed`])
     depth_copy: wgpu::RenderPipeline,
@@ -374,12 +379,30 @@ fn resolve_layout(device: &wgpu::Device, classify: bool, ms: bool) -> wgpu::Bind
                 view_dimension: wgpu::TextureViewDimension::D2,
             },
         ));
+        entries.push(entry(
+            12,
+            S::COMPUTE,
+            wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::R32Float,
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+        ));
         entries.push(entry(5, S::COMPUTE, rw));
         entries.push(entry(6, S::COMPUTE, rw));
         entries.push(entry(9, S::COMPUTE, rw));
     } else {
         entries.push(entry(
             7,
+            S::FRAGMENT,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+        ));
+        entries.push(entry(
+            13,
             S::FRAGMENT,
             wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: false },
@@ -464,11 +487,14 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
                 })],
             }),
             primitive: Default::default(),
-            // the scene depth stays attached, read only
+            // the scene depth stays attached, read only: the composite is
+            // tested at the depth of its nearest layer (fs_composite), so
+            // with MSAA an opaque edge in front of every layer keeps its
+            // samples
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: shared.depth_format,
                 depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
+                depth_compare: Some(wgpu::CompareFunction::Greater),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -514,7 +540,6 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
         samples,
         classify,
         composite: draw("oit composite", "fs_composite"),
-        edge: ms.then(|| draw("oit composite msaa edges", "fs_edge")),
         depth_copy,
     }
 }
@@ -678,9 +703,8 @@ impl Oit {
             queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
             self.last_params = Some(params);
         }
-        // no tile listed yet: 6 vertices and no instance each; the edge
-        // tiles' list starts at `tiles` (their first_instance)
-        let args: [u32; 8] = [6, 0, 0, 0, 6, 0, 0, pool.tiles];
+        // no tile listed yet: 6 vertices and no instance
+        let args: [u32; 4] = [6, 0, 0, 0];
         queue.write_buffer(&pool.args, 0, bytemuck::cast_slice(&args));
         let flags = pool.flags.clone();
         self.gate.prepare(device, queue, indirect, &flags, gated)
@@ -723,8 +747,8 @@ impl Oit {
         let heads = buffer("oit heads", heads_bytes, U::STORAGE)?;
         let nodes = buffer("oit nodes", u64::from(node_cap) * NODE_BYTES, U::STORAGE)?;
         let claims = buffer("oit node claims", u64::from(node_cap) * CLAIM_BYTES, U::STORAGE)?;
-        let args = buffer("oit tile draws", 32, U::STORAGE | U::INDIRECT)?;
-        let tile_list = buffer("oit tiles", u64::from(tiles) * 2 * 4, U::STORAGE)?;
+        let args = buffer("oit tile draw", 16, U::STORAGE | U::INDIRECT)?;
+        let tile_list = buffer("oit tiles", u64::from(tiles) * 4, U::STORAGE)?;
         let flags = buffer("oit draw flags", FLAGS_BYTES, U::STORAGE | U::INDIRECT)?;
         let (_, color) = crate::gpu_alloc::try_texture(
             device,
@@ -744,6 +768,25 @@ impl Oit {
             },
             &Default::default(),
             u64::from(width) * u64::from(height) * 8,
+        )?;
+        let (_, depth) = crate::gpu_alloc::try_texture(
+            device,
+            &wgpu::TextureDescriptor {
+                label: Some("oit composite depth"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R32Float,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            &Default::default(),
+            u64::from(width) * u64::from(height) * 4,
         )?;
         let slots_bytes = u64::from(width) * u64::from(height) * u64::from(slots) * SLOT_BYTES;
         let (slots_tex, slots_view) = crate::gpu_alloc::try_texture(
@@ -809,6 +852,7 @@ impl Oit {
             nodes,
             _claims: claims,
             color,
+            depth,
             args,
             tile_list,
             flags,
@@ -839,10 +883,12 @@ impl Oit {
             draws.push(bind(3, wgpu::BindingResource::TextureView(depth)));
         }
         classify.push(bind(4, wgpu::BindingResource::TextureView(&pool.color)));
+        classify.push(bind(12, wgpu::BindingResource::TextureView(&pool.depth)));
         classify.push(bind(5, pool.args.as_entire_binding()));
         classify.push(bind(6, pool.tile_list.as_entire_binding()));
         classify.push(bind(9, pool.flags.as_entire_binding()));
         draws.push(bind(7, wgpu::BindingResource::TextureView(&pool.color)));
+        draws.push(bind(13, wgpu::BindingResource::TextureView(&pool.depth)));
         draws.push(bind(8, pool.tile_list.as_entire_binding()));
         if depth_msaa.is_none() {
             draws.push(bind(11, wgpu::BindingResource::TextureView(depth_ss)));
@@ -943,8 +989,8 @@ impl Oit {
     }
 
     /// Composites the listed tiles over the scene (after [`Oit::classify`],
-    /// in a pass with the scene colour and its depth read only): once per
-    /// pixel, then the MSAA edge pixels sample by sample.
+    /// in a pass with the scene colour and its depth read only), once per
+    /// pixel, at the depth of each pixel's nearest layer.
     pub fn resolve(&self, pass: &mut wgpu::RenderPass, r: &Resolve) {
         if let Some(pool) = &self.pool
             && let Some((_, group)) = &pool.groups
@@ -952,10 +998,6 @@ impl Oit {
             pass.set_bind_group(0, group, &[]);
             pass.set_pipeline(&r.composite);
             pass.draw_indirect(&pool.args, 0);
-            if let Some(edge) = &r.edge {
-                pass.set_pipeline(edge);
-                pass.draw_indirect(&pool.args, 16);
-            }
         }
     }
 }
@@ -1040,13 +1082,14 @@ mod tests {
         let p = plan(1600, 900, 8, BIG, 2048, 16384).unwrap();
         assert_eq!((p.slots, p.node_cap), (4, 1600 * 900 * 4));
         let mb = total(p, 1600, 900) >> 20;
-        assert!((218..=221).contains(&mb), "{mb} MB");
+        assert!((224..=226).contains(&mb), "{mb} MB");
     }
 
     #[test]
     fn the_heads_and_the_composite_count_in_the_budget() {
-        // 16 bytes per pixel before the first slot, plus the tile list
-        assert_eq!(fixed_bytes(1600, 900), 1600 * 900 * 16 + 200 * 113 * 8 + FLAGS_BYTES);
+        // 20 bytes per pixel before the first slot (the heads, the composite
+        // and its depth), plus the tile list
+        assert_eq!(fixed_bytes(1600, 900), 1600 * 900 * 20 + 200 * 113 * 4 + FLAGS_BYTES);
         // however large the budget wanted, the total never passes the cap
         for (w, h) in [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160), (7680, 4320)] {
             for per_pixel in [2, 8, 16, 32] {

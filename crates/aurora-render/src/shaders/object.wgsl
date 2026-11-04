@@ -1668,8 +1668,9 @@ fn blend_color_kept(in: VsOut, front: bool) -> vec4<f32> {
 // ---- order-independent transparency: capture (oit.rs, oit.wgsl)
 //
 // Each blended fragment in front of the opaque scene is stored instead of
-// being blended: premultiplied colour (rg and b as halves), alpha (8 bits),
-// the MSAA samples it covers (8 bits) and its depth. A pixel's first
+// being blended: premultiplied colour (rg and b as halves), alpha (8 bits)
+// and its depth; no coverage (the capture reads no sample mask): the
+// resolve is per pixel, oit.wgsl. A pixel's first
 // `slots` fragments go to its slots of a texture array (layer k holding
 // every pixel's slot k: neighbours write and read side by side, and these
 // fragments leave the pool's counter alone); the others are appended to its
@@ -1718,10 +1719,11 @@ struct OitParams {
 // `@early_depth_test(force)` and sets OIT_EARLY_DEPTH): writing the lists
 // would otherwise make it shade every fragment behind the opaque scene (the
 // strands behind a head) before testing it. With MSAA a fragment runs when
-// one of its samples passes; the resolve tests each sample again. Without
-// it, the shader leaves early itself against the single-sample prepass, only
-// without MSAA: with it, that one depth would hide a layer that some samples
-// of an edge still show (the resolve then tests each sample).
+// one of its samples passes; the resolve then keeps a layer in front of at
+// least half of its pixel's samples. Without it, the shader leaves early
+// itself against the single-sample prepass, only without MSAA: with it,
+// that one depth would hide a layer that some samples of an edge still
+// show.
 override OIT_EARLY_DEPTH: bool = false;
 
 // A node for this fragment: allocated for the whole subgroup with one
@@ -1768,7 +1770,7 @@ fn oit_overflow(used: u32) {
 }
 
 @fragment /*OIT_EARLY_DEPTH*/
-fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
+fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let px = vec2<u32>(in.clip.xy);
     if (!OIT_EARLY_DEPTH && oit_params.samples <= 1u && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
         discard;
@@ -1782,16 +1784,15 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_m
         return vec4<f32>(0.0);
     }
     // (no discard from here on: oit_alloc counts the subgroup's lanes) a
-    // fragment blend_color would discard, or a helper invocation (it
-    // covers no sample), stores nothing
+    // fragment blend_color would discard stores nothing
     let c = blend_color_kept(in, front);
-    if (c.a <= 0.0 || (coverage & 0xffu) == 0u) {
+    if (c.a <= 0.0) {
         return vec4<f32>(0.0);
     }
     let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
     let b16 = pack2x16float(vec2<f32>(clamp(c.b, 0.0, 65504.0), 0.0)) & 0xffffu;
     let rg = pack2x16float(clamp(c.rg, vec2<f32>(0.0), vec2<f32>(65504.0)));
-    let rest = b16 | (a8 << 16u) | ((coverage & 0xffu) << 24u);
+    let rest = b16 | (a8 << 16u);
     let slot = atomicAdd(&oit_heads[pixel], 1u);
     if (slot < oit_params.slots) {
         textureStore(oit_slots_w, px, slot, vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), 0u));
@@ -1841,9 +1842,10 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
 // the lists are composited: dimmed by the layers of its pixel's list in front
 // of it, as the faces drawn after it in the drawing order dim it (each one by
 // its alpha, LLDrawPoolAlpha), so a glowing face behind a nearly opaque pane
-// barely shows. Its own layer, at its depth, is not in front.
+// barely shows. Its own layer, at its depth, is not in front. Per pixel,
+// as the composite.
 @fragment
-fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) mask: u32) -> @location(0) vec4<f32> {
+fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let g = glow_amount(in, front);
     let px = vec2<u32>(in.clip.xy);
     var through = 1.0;
@@ -1869,8 +1871,8 @@ fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_ma
             idx = n.w;
             steps += 1u;
         }
-        // nearer (reverse-Z) and over one of this fragment's samples
-        if (bitcast<f32>(n.z) > in.clip.z && ((n.y >> 24u) & mask) != 0u) {
+        // nearer (reverse-Z)
+        if (bitcast<f32>(n.z) > in.clip.z) {
             through *= 1.0 - f32((n.y >> 16u) & 0xffu) / 255.0;
         }
     }
