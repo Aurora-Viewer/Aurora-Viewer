@@ -6868,7 +6868,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   elsewhere the stall's length alone), and the next start offers the safe
   graphics.
   When the frame ends the box goes away by itself and drawing resumes
-  (`the graphics card answered again`).
+  (`the graphics card answered again`). A box still shown when the viewer
+  ends goes with it, on macOS and Linux too, where another process draws it
+  (UserNotificationCenter, zenity).
   With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.
   The window's close button during the stall closes at once (the exit
   prompt cannot be drawn).
