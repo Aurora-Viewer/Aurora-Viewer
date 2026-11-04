@@ -3302,7 +3302,7 @@ mod tests {
                             .shapes
                             .iter()
                             .filter_map(|shape| match &shape.shape {
-                                egui::Shape::Rect(rect) if rect.fill == palette.field && rect.rect.height() < 40.0 => Some(rect.rect),
+                                egui::Shape::Rect(rect) if rect.fill == palette.bar && rect.rect.height() < 40.0 => Some(rect.rect),
                                 _ => None,
                             })
                             .max_by(|a, b| a.width().total_cmp(&b.width()))
@@ -3445,7 +3445,7 @@ mod tests {
                 .shapes
                 .iter()
                 .filter_map(|shape| match &shape.shape {
-                    egui::Shape::Rect(rect) if rect.fill == palette.field && rect.rect.height() < 40.0 => Some(rect.rect),
+                    egui::Shape::Rect(rect) if rect.fill == palette.bar && rect.rect.height() < 40.0 => Some(rect.rect),
                     _ => None,
                 })
                 .max_by(|a, b| a.width().total_cmp(&b.width()))
@@ -3535,7 +3535,7 @@ mod tests {
                     .shapes
                     .iter()
                     .filter_map(|shape| match &shape.shape {
-                        egui::Shape::Rect(rect) if rect.fill == palette.field => Some(rect.rect),
+                        egui::Shape::Rect(rect) if rect.fill == palette.bar => Some(rect.rect),
                         _ => None,
                     })
                     .max_by(|a, b| a.width().total_cmp(&b.width()))

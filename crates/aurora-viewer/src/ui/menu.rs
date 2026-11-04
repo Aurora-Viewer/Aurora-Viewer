@@ -1338,10 +1338,9 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     if opened {
         state = SearchState::default();
     }
-    // taken before the field sees them, and only while it has the keyboard
-    // (Tab onto its clear button leaves Enter to that button): a one-line
-    // field has no use for the arrows, and Enter, even with nothing found,
-    // would only drop its focus
+    // taken before the field sees them, and only while it has the keyboard:
+    // a one-line field has no use for the arrows, and Enter, even with
+    // nothing found, would only drop its focus
     let focused = state.field.is_some_and(|f| ui.memory(|m| m.has_focus(f)));
     let (down, up, enter) = if !focused || query_words(&state.query).is_empty() {
         (false, false, false)
@@ -1355,7 +1354,7 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     };
     let before = state.query.clone();
     let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
-    let field = ui.horizontal(|ui| super::widgets::clearable_search_box(ui, p, &mut state.query, aurora_i18n::tr!("common-search"), w));
+    let field = ui.horizontal(|ui| super::widgets::search_box(ui, p, &mut state.query, aurora_i18n::tr!("common-search"), w));
     if opened {
         field.inner.request_focus();
     }

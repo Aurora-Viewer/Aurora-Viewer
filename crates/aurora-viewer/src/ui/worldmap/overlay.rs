@@ -833,16 +833,15 @@ impl WorldMapUi {
                 icon(ui.painter(), "search-filled", r.center(), 15.0, p.muted);
                 let hint_w = if self.ov.query.is_empty() { 0.0 } else { 44.0 };
                 let w = (ui.available_width() - 26.0 - hint_w).max(60.0);
-                let r = ui.add(
+                let margin = widgets::bare_clear_margin(ui);
+                let mut r = ui.add(
                     egui::TextEdit::singleline(&mut self.ov.query)
                         .id(id)
-                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
-                            ui.ctx(),
-                            &egui::TextStyle::Body.resolve(ui.style()),
-                        )))
+                        .frame(egui::Frame::NONE.inner_margin(margin))
                         .hint_text(aurora_i18n::tr!("ui-worldmap-search-anything"))
                         .desired_width(w),
                 );
+                widgets::clear_button(ui, p, &mut self.ov.query, &mut r);
                 if !self.ov.query.is_empty() {
                     let (hr, _) = ui.allocate_exact_size(Vec2::new(hint_w - 6.0, 22.0), Sense::hover());
                     ui.painter().text(

@@ -253,28 +253,84 @@ pub fn filter_pill_width(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
     (if icon.is_empty() { 0.0 } else { 13.0 + 5.0 }) + w + 18.0
 }
 
-/// The search field of a list: a magnifier then the text, on the field's face.
+/// The search field of a list: a magnifier then the text, on the field's
+/// face, with the clear cross of `clear_button` while it holds text. Every
+/// search and filter goes through it, in any layout: it takes the height of
+/// its line.
 pub fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    icon_field(ui, p, "search-filled", text, hint, width)
+    search_box_with(ui, p, text, hint, width, |edit| edit)
 }
 
-/// `search_box` with an in-field clear button while filled.
-pub fn clearable_search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    icon_field_inner(ui, p, "search-filled", text, hint, width, true)
+/// `search_box` whose `style` finishes the edit (an id, an event filter…).
+pub fn search_box_with(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    style: impl for<'a> FnOnce(egui::TextEdit<'a>) -> egui::TextEdit<'a>,
+) -> egui::Response {
+    search_face(ui, p, "search-filled", width, |ui| {
+        let margin = face_clear_margin(ui);
+        let edit = egui::TextEdit::singleline(&mut *text)
+            .frame(egui::Frame::NONE.inner_margin(margin))
+            .hint_text(hint)
+            .desired_width(f32::INFINITY);
+        let mut response = ui.add(style(edit));
+        clear_button(ui, p, text, &mut response);
+        response
+    })
 }
 
-/// A plain filter input with the same clear button as `clearable_search_box`.
-pub fn filter_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, id: egui::Id, width: f32) -> egui::Response {
-    let mut margin = egui::Margin::symmetric(4, 2) + super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
-    if !text.is_empty() {
-        margin.right += CLEAR_WIDTH;
+/// `AURORA_DEMO_FIELD_TEXT`: a field with the clear cross starts holding this
+/// text, once, so a capture of any window shows the cross and the filter's
+/// effect, in demo mode only.
+pub fn demo_field_text(ui: &egui::Ui, text: &mut String, response: &mut egui::Response) {
+    static DEMO: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let Some(demo) = DEMO.get_or_init(|| {
+        std::env::var("AURORA_DEMO_FIELD_TEXT")
+            .ok()
+            .filter(|_| std::env::var_os("AURORA_DEMO").is_some())
+    }) else {
+        return;
+    };
+    let seen = response.id.with("demo_field_text");
+    if !ui.data(|d| d.get_temp::<bool>(seen).unwrap_or(false)) {
+        ui.data_mut(|d| d.insert_temp(seen, true));
+        if text.is_empty() {
+            text.clone_from(demo);
+            response.mark_changed();
+        }
     }
+}
+
+/// A plain filter input with the same clear button as `search_box`, for a
+/// column of a table of filters (Area Search), where a face per cell would
+/// be noise.
+pub fn filter_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, id: egui::Id, width: f32) -> egui::Response {
+    let margin = egui::Margin::symmetric(4, 2) + bare_clear_margin(ui);
     let mut response = ui.add_sized(
         [width, ui.spacing().interact_size.y],
         egui::TextEdit::singleline(text).id(id).margin(margin),
     );
-    clear_filter(ui, p, text, &mut response);
+    clear_button(ui, p, text, &mut response);
     response
+}
+
+/// `bare_clear_margin` of a field in `search_face`.
+pub fn face_clear_margin(ui: &egui::Ui) -> egui::Margin {
+    let mut margin = bare_clear_margin(ui);
+    margin.left = FACE_TEXT_LEFT;
+    margin
+}
+
+/// The margin of a field with no frame of its own, laid on a face, with the
+/// room of `clear_button`, kept even while empty so the first letter moves
+/// nothing.
+pub fn bare_clear_margin(ui: &egui::Ui) -> egui::Margin {
+    let mut margin = super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
+    margin.right += CLEAR_WIDTH;
+    margin
 }
 
 /// The face of a field of the redrawn windows and menus: the search box's,
@@ -288,31 +344,48 @@ pub fn field_frame(ui: &egui::Ui, p: &Palette) -> egui::Frame {
 
 /// A text field on that face, a Tabler `icon` before the text.
 pub fn icon_field(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    icon_field_inner(ui, p, icon, text, hint, width, false)
+    search_face(ui, p, icon, width, |ui| {
+        let mut margin = super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
+        margin.left = FACE_TEXT_LEFT;
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .frame(egui::Frame::NONE.inner_margin(margin))
+                .hint_text(hint)
+                .desired_width(f32::INFINITY),
+        )
+    })
 }
 
-fn icon_field_inner(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32, clear: bool) -> egui::Response {
+/// The search box's face around `body`, a Tabler `icon` before it, laid
+/// under the field (`face_clear_margin` leaves it room) so that a click on it
+/// reaches the field. Left to right even in a row laid out from the right,
+/// and one line high even in a column, whose full height a plain
+/// `with_layout` would take.
+pub fn search_face<R>(ui: &mut egui::Ui, p: &Palette, icon: &str, width: f32, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    search_face_sized(ui, p, icon, width, 0.0, body)
+}
+
+/// `search_face` at least `height` high, for a toolbar's row of that height.
+pub fn search_face_sized<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    width: f32,
+    height: f32,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     field_frame(ui, p)
         .show(ui, |ui| {
-            ui.set_width(width - 18.0);
-            // left to right even in a row laid out from the right
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 7.0;
-                super::glyph(ui, icon, p.muted, 13.0);
-                let mut centre = super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
-                if clear && !text.is_empty() {
-                    centre.right += CLEAR_WIDTH;
-                }
-                let mut response = ui.add(
-                    egui::TextEdit::singleline(text)
-                        .frame(egui::Frame::NONE.inner_margin(centre))
-                        .hint_text(hint)
-                        .desired_width(f32::INFINITY),
-                );
-                if clear {
-                    clear_filter(ui, p, text, &mut response);
-                }
-                response
+            ui.set_width((width - 18.0).max(0.0));
+            // from the top: a row's centring would push the line down the
+            // face and stretch it, and a tree window's taller rows do not
+            // reach the line, as high as its text unless `height` says more
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                let line = egui::vec2(ui.available_width(), (height - 8.0).max(0.0));
+                let shown = ui.allocate_ui_with_layout(line, egui::Layout::left_to_right(egui::Align::Center), body);
+                let at = egui::pos2(shown.response.rect.left() + GLYPH / 2.0, shown.response.rect.center().y);
+                super::paint_glyph(ui.painter(), icon, at, GLYPH, p.muted);
+                shown.inner
             })
             .inner
         })
@@ -320,22 +393,37 @@ fn icon_field_inner(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut Strin
 }
 
 const CLEAR_WIDTH: i8 = 20;
+/// The side of `search_face`'s icon.
+const GLYPH: f32 = 13.0;
+/// The room of that icon before the text, its gap included.
+const FACE_TEXT_LEFT: i8 = 20;
 
-fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mut egui::Response) {
-    if text.is_empty() {
+/// The cross at the right end of a field whose margin keeps its room
+/// (`bare_clear_margin`): empties `text`, reports the field changed and gives
+/// it the keyboard back. Only while the field holds text and can be typed
+/// in. As the Legacy Viewer's filter editors (LLSearchEditor, `clear_button`).
+pub fn clear_button(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mut egui::Response) {
+    demo_field_text(ui, text, response);
+    if text.is_empty() || !ui.is_enabled() {
         return;
     }
-    let rect = Rect::from_min_max(
-        egui::pos2(response.rect.right() - f32::from(CLEAR_WIDTH), response.rect.top()),
-        response.rect.right_bottom(),
-    );
-    let clear = ui.interact(rect, response.id.with("clear"), Sense::click());
-    super::paint_title_button(ui, p, "x", &clear);
-    let label = aurora_i18n::tr!("common-clear");
-    clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-    if clear.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+    if clear_cross(ui, p, response, aurora_i18n::tr!("common-clear")) {
         text.clear();
         response.mark_changed();
         response.request_focus();
     }
+}
+
+/// The cross alone, true when clicked, for a field that clears more than its
+/// text (the inventory's filters). Clicks only, so that Tab goes from field
+/// to field.
+pub fn clear_cross(ui: &mut egui::Ui, p: &Palette, field: &egui::Response, label: &str) -> bool {
+    let rect = Rect::from_min_max(
+        egui::pos2(field.rect.right() - f32::from(CLEAR_WIDTH), field.rect.top()),
+        field.rect.right_bottom(),
+    );
+    let clear = ui.interact(rect, field.id.with("clear"), Sense::CLICK);
+    super::paint_title_button(ui, p, "x", &clear);
+    clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    clear.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }

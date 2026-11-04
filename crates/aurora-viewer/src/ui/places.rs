@@ -455,11 +455,7 @@ impl PlacesUi {
             ui.spacing_mut().item_spacing.x = 3.0;
             let buttons = if history { 2.0 } else { 4.0 };
             let w = (ui.available_width() - buttons * 25.0).max(60.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text(aurora_i18n::tr!("ui-places-filter-places"))
-                    .desired_width(w),
-            );
+            widgets::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-filter-places"), w);
             widgets::icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-places-show-options"), |ui| {
                 if history {
                     self.history_item_menu(ui, p, world, actions);

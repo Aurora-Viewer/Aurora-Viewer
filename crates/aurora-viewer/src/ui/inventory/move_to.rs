@@ -4,7 +4,7 @@
 //! picker is an Aurora addition; submission uses the existing move mutation.
 
 use super::*;
-use crate::ui::widgets::{Floater, above_footer, flat_button, search_field};
+use crate::ui::widgets::{Floater, above_footer, flat_button, search_box};
 use rayon::prelude::*;
 use std::time::{Duration, Instant};
 
@@ -166,7 +166,7 @@ pub(super) fn show(
         ui.add(egui::Label::new(summary).truncate())
             .on_hover_text(picker.ids.iter().map(|id| rules::name(inv, *id)).collect::<Vec<_>>().join("\n"));
         let width = ui.available_width();
-        let filter = search_field(ui, &mut picker.filter, aurora_i18n::tr!("inventory-move-filter"), width);
+        let filter = search_box(ui, p, &mut picker.filter, aurora_i18n::tr!("inventory-move-filter"), width);
         if picker.focus {
             filter.request_focus();
             picker.focus = false;

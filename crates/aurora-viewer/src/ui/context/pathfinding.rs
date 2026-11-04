@@ -106,9 +106,14 @@ impl PathfindingUi {
         floater.show(ctx, p, &mut open, |ui| {
             ui.label(world.regions.get(&self.region).map_or_else(String::new, |r| r.name.clone()));
             ui.horizontal(|ui| {
-                if ui
-                    .add(egui::TextEdit::singleline(&mut self.query).hint_text(aurora_i18n::tr!("common-search")))
-                    .changed()
+                if crate::ui::widgets::search_box(
+                    ui,
+                    p,
+                    &mut self.query,
+                    aurora_i18n::tr!("common-search"),
+                    ui.spacing().text_edit_width,
+                )
+                .changed()
                 {
                     self.filter();
                 }

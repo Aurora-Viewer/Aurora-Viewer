@@ -1459,8 +1459,7 @@ impl PlacesUi {
             return;
         }
         let w = ui.available_width();
-        // in a row: the field takes the height of its line only
-        ui.horizontal(|ui| widgets::pills::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w));
+        widgets::pills::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w);
         ui.add_space(8.0);
         // the three tabs
         let favorites = model::favorites(cat, env.favorites).len();

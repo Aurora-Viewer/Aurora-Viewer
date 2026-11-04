@@ -1,7 +1,7 @@
 //! Item image editor, picker and scene snapshot (LLFloaterChangeItemThumbnail).
 
 use super::*;
-use crate::ui::widgets::{Floater, flat_button, search_field};
+use crate::ui::widgets::{Floater, flat_button, search_box};
 use std::{collections::HashMap, sync::Arc};
 
 mod choices;
@@ -271,7 +271,7 @@ impl ThumbnailUi {
                     });
                     ui.vertical(|ui| {
                         ui.set_width(250.0);
-                        search_field(ui, &mut self.filter, aurora_i18n::tr!("common-filter-textures"), 250.0);
+                        search_box(ui, p, &mut self.filter, aurora_i18n::tr!("common-filter-textures"), 250.0);
                         egui::ScrollArea::both()
                             .id_salt("thumbnail_tree")
                             .max_height(255.0)

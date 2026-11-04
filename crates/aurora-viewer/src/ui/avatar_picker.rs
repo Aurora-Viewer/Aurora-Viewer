@@ -118,7 +118,7 @@ impl AvatarPicker {
                             .color(p.muted),
                     );
                     ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(&mut self.query).desired_width(ui.available_width() - 60.0));
+                        let r = widgets::search_box(ui, p, &mut self.query, "", ui.available_width() - 60.0);
                         let go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         // LLFloaterAvatarPicker::onBtnFind: at least 3 characters
                         ui.add_enabled_ui(self.query.trim().chars().count() >= 3, |ui| {
