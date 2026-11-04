@@ -38,13 +38,14 @@
 //! memory to system RAM (GPU frames of 1 s, then a device lost).
 //!
 //! wgpu keeps the extension from its own use on RADV, every AMD GPU under
-//! Linux: it turns a budget into allocation failures, and RADV's usage
-//! could wrap below zero (gfx-rs/wgpu#9742, mesa#15725). That removes it
-//! from the list wgpu keeps, not from the driver, so the driver's list is
-//! asked here ([`lists_memory_budget`]). A device-level extension's
-//! physical-device queries need no logical device with it enabled, and the
-//! viewer only reads the figures. A wrapped usage is no reading
-//! ([`plausible`]).
+//! Linux: it turns a budget into allocation failures, and RADV before
+//! Mesa 26.2.0 charges an imported dmabuf to one heap and credits it to
+//! another (gfx-rs/wgpu#9742, mesa#15725; the viewer imports none). That
+//! removes it from the list wgpu keeps, not from the driver, so the
+//! driver's list is asked here ([`lists_memory_budget`]). A device-level
+//! extension's physical-device queries need no logical device with it
+//! enabled, and the viewer only reads the figures. A wrapped figure is no
+//! reading ([`plausible`]).
 
 #[cfg(not(target_os = "macos"))]
 use ash::vk;
@@ -183,11 +184,12 @@ fn lists_memory_budget(extensions: &[vk::ExtensionProperties]) -> bool {
 }
 
 /// Whether a reading can be used: a driver that fills nothing in reports no
-/// budget, and a usage that wrapped below zero (mesa#15725, read
-/// 18446744073709367296 on a 256 MB heap) would count as past any budget,
-/// which pauses a window behind and takes its textures.
+/// budget, and a figure wrapped below zero (mesa#15725 read
+/// 18446744073709367296, on the host-visible heap, not the one read here)
+/// would be past any budget, which pauses a window behind and takes its
+/// textures, or a budget without a limit.
 fn plausible(budget: u64, usage: u64) -> bool {
-    budget > 0 && usage <= i64::MAX as u64
+    budget > 0 && budget.max(usage) <= i64::MAX as u64
 }
 
 impl VideoMemoryProbe {
@@ -408,14 +410,15 @@ mod tests {
     }
 
     #[test]
-    fn a_reading_without_a_budget_or_with_a_wrapped_usage_is_no_reading() {
+    fn a_reading_without_a_budget_or_with_a_wrapped_figure_is_no_reading() {
         // the 610M under RADV, the viewer's own use just above nothing
         assert!(plausible(21_990 * MB, 0));
         // past the budget is a true reading: a window behind reacts to it
         assert!(plausible(8_000 * MB, 9_000 * MB));
         assert!(!plausible(0, 0));
-        // the figure of mesa#15725
+        // the figure of mesa#15725, as a usage and as a budget
         assert!(!plausible(268_435_456, 18_446_744_073_709_367_296));
+        assert!(!plausible(18_446_744_073_709_367_296, 0));
     }
 
     #[test]
