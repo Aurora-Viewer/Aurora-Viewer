@@ -759,13 +759,13 @@ mod tests {
         assert_eq!(ground.shapes(beside, 0.0).len(), 1);
         // only for the frame it was set in
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let _ = crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
             ground.set(ui.ctx());
             assert!(ModalGround::current(ui.ctx()).is_some());
-        });
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        }));
+        let _ = crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
             assert!(ModalGround::current(ui.ctx()).is_none());
-        });
+        }));
     }
 
     #[test]

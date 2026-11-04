@@ -923,13 +923,13 @@ mod tests {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(600.0))),
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        let _ = crate::ui::login::test_output(ctx.run_ui(input, |ui| {
             let area = egui::Area::new(Id::unique("tray"))
                 .movable(true)
                 .current_pos(Pos2::new(100.0, 100.0))
                 .show(ui.ctx(), |ui| tray(ui, &p, &view, None, &mut out));
             dragged = area.response.dragged();
-        });
+        }));
         (out, dragged)
     }
 
