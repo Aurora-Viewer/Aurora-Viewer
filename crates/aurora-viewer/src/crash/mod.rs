@@ -18,6 +18,10 @@ mod threads;
 mod watchdog;
 mod window;
 
+#[cfg(test)]
+pub(crate) use summary::state_value as summary_state_value;
+#[cfg(test)]
+pub(crate) use watchdog::WINDOW_STATES;
 pub use watchdog::{State, note as note_state, pumped, watch_window};
 
 use std::io::{Read, Write};

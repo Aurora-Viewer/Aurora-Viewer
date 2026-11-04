@@ -6864,6 +6864,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   then each recovery's (a recovery's counts its frames from 0 again): with
   `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
   with the safe graphics level, then close.
+  The report's "Last state" table then shows the new device-lost fields
+  (effects on, GPU frame times, session and region seconds, Vulkan layers,
+  `GPU loss: first seen by` = `demo`, stall 0): read it in the session's
+  `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
   compute dispatch whose loop runs about 12 s on a recent card (the log says
@@ -6889,7 +6893,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_OVERLAY_HOOK=<file>`**, with `AURORA_DEMO=1` (Windows): the
   overlay hook watch (`overlay_hooks.rs`) counts that module file name as
   loaded, for example `DiscordHook64.dll`, `GameOverlayRenderer64.dll`,
-  `RTSSHooks64.dll` or `graphics-hook64.dll`. A known one gets its warning
+  `RTSSHooks64.dll`, `graphics-hook64.dll` or `we-graphics-hook64.dll`. A known one gets its warning
   in the log (`overlay hook loaded in the viewer: …`) and its line in
   `overlay-hooks.txt` of the crash session; any other name does nothing.
   With `AURORA_DEMO_CRASH=freeze`, the report then says
