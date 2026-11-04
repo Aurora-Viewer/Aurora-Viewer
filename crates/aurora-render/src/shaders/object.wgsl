@@ -1496,7 +1496,12 @@ fn fs_opaque(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4
 @fragment
 fn fs_mask(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    return mask_color(rec, shade(in, front).color);
+    let m = eval_material(in, front);
+    // Evaluate derivatives before rejection, but do not light uncovered pixels.
+    // Zero alpha-to-coverage contributes neither colour nor depth, just as discard.
+    let alpha = mask_color(rec, m.color).a;
+    if (ALPHA_TO_COVERAGE && alpha <= 0.0) { discard; }
+    return vec4<f32>(shade_material(in, m).color.rgb, alpha);
 }
 
 struct GOut {
@@ -1517,9 +1522,12 @@ fn fs_opaque_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
     let rec = records[in.record];
-    let s = shade(in, front);
+    let m = eval_material(in, front);
+    let alpha = mask_color(rec, m.color).a;
+    if (ALPHA_TO_COVERAGE && alpha <= 0.0) { discard; }
+    let s = shade_material(in, m);
     var o: GOut;
-    o.color = mask_color(rec, s.color);
+    o.color = vec4<f32>(s.color.rgb, alpha);
     o.gbuf = gbuffer(s);
     return o;
 }

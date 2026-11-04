@@ -133,6 +133,12 @@ pub(super) fn show(
                                         if entry.local {
                                             checkbox(ui, p, &mut entry.local_live, aurora_i18n::tr!("import-local-live"));
                                         }
+                                        // The footer only says that a file has an error: its reason is here.
+                                        if let Status::Error(error) = &entry.status
+                                            && *error != imports.message
+                                        {
+                                            ui.add(egui::Label::new(egui::RichText::new(error).small().color(p.danger)).wrap());
+                                        }
                                         if let Status::Done(item) = entry.status
                                             && flat_button(ui, p, aurora_i18n::tr!("import-open-inventory")).clicked()
                                         {

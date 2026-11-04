@@ -132,7 +132,9 @@ pub(super) fn show(
             );
         }
         ui.label(aurora_i18n::text(if dialog.track { "ao-track-name" } else { "ao-group-name" }));
-        ui.add(egui::TextEdit::singleline(&mut dialog.name).desired_width(f32::INFINITY));
+        widgets::restricted_text_field(ui, true, &mut dialog.name, widgets::TextPolicy::AoName, |b, _| {
+            egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
+        });
         if dialog.rename.is_none()
             && let Some(c) = set.states.get(&dialog.state)
             && c.steps.iter().any(|s| !s.group)

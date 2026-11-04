@@ -763,7 +763,10 @@ pub(super) fn dialogs(
         .show(ctx, p, &mut open, |ui| {
             ui.horizontal(|ui| {
                 ui.label(aurora_i18n::tr!("script-goto-line"));
-                let input = ui.add(egui::DragValue::new(&mut e.tools.goto_line).range(0..=usize::MAX));
+                let input = ui.add(crate::ui::widgets::restricted_number(
+                    egui::DragValue::new(&mut e.tools.goto_line).range(0..=usize::MAX),
+                    crate::ui::widgets::TextPolicy::Digits,
+                ));
                 if flat_button(ui, p, aurora_i18n::tr!("script-goto-go")).clicked()
                     || (input.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)))
                 {

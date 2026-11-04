@@ -407,7 +407,9 @@ pub(super) fn dialogs(
                     .color(p.ink),
             );
             ui.add_space(8.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut name).char_limit(63).desired_width(f32::INFINITY));
+            let r = crate::ui::widgets::restricted_text_field(ui, true, &mut name, crate::ui::widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).char_limit(63).desired_width(f32::INFINITY)
+            });
             if st.gallery.focus {
                 r.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, r.id) {

@@ -156,6 +156,10 @@ fn field(
     text: &mut String,
     password: Option<&mut bool>,
 ) -> egui::Response {
+    // Only the username and editable grid match ASCII-restricted combo
+    // editors in panel_login.xml/panel_fs_login.xml. Passwords, MFA, region
+    // locations and the account search retain their independent policies.
+    let restriction = matches!(id, "login_user" | "new_account_user" | "login_grid").then_some(widgets::TextPolicy::Ascii);
     let id = egui::Id::unique(id);
     let focused = ui.memory(|m| m.has_focus(id));
     let stroke = if focused {
@@ -181,8 +185,10 @@ fn field(
                     ui.visuals_mut().weak_text_color = Some(p.ink);
                 }
                 let hidden = remembered || password.as_deref().is_some_and(|show| !*show);
-                let resp = ui.add(
-                    TextEdit::singleline(text)
+                // Interactivity comes from the disabled UI and TextEdit.
+                // Keep this form's explicit ink color while it is disabled.
+                let resp = widgets::text_field_with_policy(ui, true, text, restriction, |b, ui| {
+                    TextEdit::singleline(b)
                         .id(id)
                         .interactive(ui.is_enabled())
                         .frame(
@@ -193,8 +199,8 @@ fn field(
                         .hint_text(RichText::new(hint).color(p.muted_dim))
                         .font(egui::FontId::proportional(14.0))
                         .text_color(p.ink)
-                        .desired_width(w),
-                );
+                        .desired_width(w)
+                });
                 if let Some(show) = password {
                     let (r, eye) = ui.allocate_exact_size(Vec2::splat(18.0), if remembered { Sense::hover() } else { Sense::click() });
                     let col = if !remembered && eye.hovered() { p.ink } else { p.muted };

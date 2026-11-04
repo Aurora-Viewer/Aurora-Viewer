@@ -14,8 +14,9 @@
 //! session is not reported as a Rust panic (aurora-viewer logging.rs).
 
 use std::cell::Cell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 thread_local! {
     static GUARDED: Cell<bool> = const { Cell::new(false) };
@@ -78,17 +79,116 @@ fn guarded<T>(wait: impl FnOnce() -> T) -> Option<T> {
 /// Shared between the device-lost callback, the main thread and the render
 /// thread.
 #[derive(Clone, Debug, Default)]
-pub struct DeviceLost(Arc<AtomicBool>);
+pub struct DeviceLost {
+    lost: Arc<AtomicBool>,
+    work: Arc<Mutex<Work>>,
+}
+
+/// The GPU work the render thread last gave the device and the last it saw
+/// finished: at a loss, [`DeviceLost::work_at_loss`] tells a hang from a
+/// fault, which the crash reports could not ([`hang_or_fault`]). Each
+/// submission has its own token: the eyes of an XR frame, or the journal's
+/// submits and the frame's own, share a frame number.
+#[derive(Debug, Default)]
+struct Work {
+    /// Tokens handed out.
+    count: u64,
+    /// The newest submission and its time.
+    submitted: Option<(Submission, Instant)>,
+    /// The newest submission the GPU finished and its time.
+    finished: Option<(Submission, Instant)>,
+}
+
+/// One `queue.submit`, noted by [`DeviceLost::submitting`]: its order among
+/// all the submissions and the frame it belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Submission {
+    token: u64,
+    frame: u64,
+}
 
 impl DeviceLost {
     pub fn set(&self) {
-        self.0.store(true, Ordering::Release);
+        self.lost.store(true, Ordering::Release);
     }
 
     pub fn get(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.lost.load(Ordering::Acquire)
     }
 
+    /// A submission of frame `frame` is about to be made: noted before
+    /// `queue.submit`, which can itself find the loss or block across a
+    /// reset, and without the lock held across it ([`submit_tracked`]).
+    pub fn submitting(&self, frame: u64) -> Submission {
+        let Ok(mut w) = self.work.lock() else {
+            return Submission { token: u64::MAX, frame };
+        };
+        w.count += 1;
+        let submission = Submission { token: w.count, frame };
+        w.submitted = Some((submission, Instant::now()));
+        submission
+    }
+
+    /// The GPU finished `submission` (`on_submitted_work_done`).
+    pub fn finished(&self, submission: Submission) {
+        if let Ok(mut w) = self.work.lock()
+            && w.finished.is_none_or(|(done, _)| done.token < submission.token)
+        {
+            w.finished = Some((submission, Instant::now()));
+        }
+    }
+
+    /// What the GPU had in hand at the loss (the device-lost callback logs
+    /// it): see [`hang_or_fault`].
+    pub fn work_at_loss(&self) -> String {
+        let now = Instant::now();
+        let Ok(w) = self.work.lock() else {
+            return "unknown".to_owned();
+        };
+        let age = |at: Instant| now.saturating_duration_since(at);
+        let done = match (w.submitted, w.finished) {
+            (Some((s, _)), Some((f, _))) => f.token >= s.token,
+            _ => false,
+        };
+        hang_or_fault(
+            w.submitted.map(|(s, at)| (s.frame, age(at))),
+            w.finished.map(|(f, at)| (f.frame, age(at))),
+            done,
+        )
+    }
+}
+
+/// `queue.submit` noted for the line of a device loss: the submission is
+/// noted before the call, and the GPU's own news of its end marks it
+/// finished. Every submit of the render thread goes through it: the
+/// frame's, the journal's copies, a skipped frame's uploads.
+pub fn submit_tracked(
+    lost: &DeviceLost,
+    queue: &wgpu::Queue,
+    frame: u64,
+    commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
+) -> wgpu::SubmissionIndex {
+    let submission = lost.submitting(frame);
+    let index = queue.submit(commands);
+    let lost = lost.clone();
+    queue.on_submitted_work_done(move || lost.finished(submission));
+    index
+}
+
+/// The fixed endings of the line of a loss, in the order of
+/// [`hang_or_fault`]'s cases: the crash report only publishes one of them
+/// (aurora-viewer crash/summary.rs).
+pub const GPU_WORK_VERDICTS: [&str; 4] = [
+    "a fault found after that frame ended (not a hang)",
+    "a hang (the driver reset the card while that frame ran)",
+    "a fault in the work of that frame (not a hang)",
+    "undecided (a slow frame that faulted, or a hang)",
+];
+
+/// The line of a loss before any submission.
+pub const GPU_WORK_NONE: &str = "nothing submitted yet (lost while starting)";
+
+impl DeviceLost {
     /// Waits for the GPU to finish the work submitted (read-backs: photos,
     /// captures, clicks). False, without waiting, once the device is lost:
     /// the read-back is then not mapped and the caller gives it up.
@@ -114,6 +214,52 @@ impl DeviceLost {
         }
         result
     }
+}
+
+/// A submission the GPU had not finished this long after it, when the
+/// loss came, hung: the driver's watchdog reset the card. Measured, not
+/// the 2 s of the Windows TDR setting: an RTX 5070 Ti (driver 621.01)
+/// declared `AURORA_DEMO_GPU_HANG`'s submission lost 1.101 s after it.
+const HANG_AFTER: Duration = Duration::from_millis(500);
+/// A loss this soon after a submission the GPU had not finished is a fault
+/// the driver found in that work (an invalid access on NVIDIA:
+/// VK_ERROR_DEVICE_LOST at once, well within a frame).
+const FAULT_WITHIN: Duration = Duration::from_millis(100);
+
+/// Hang or fault: the line the device-lost callback logs, from the newest
+/// submission and the newest finished one, each with its frame and its age
+/// at the loss, and whether the newest submission is the finished one
+/// (`done`). A loss with the last submission finished is a fault found
+/// after it; one with it not finished is a hang past [`HANG_AFTER`], a
+/// fault within [`FAULT_WITHIN`], and left undecided between the two (a
+/// frame that slow may have faulted, or hung). The crash reports showed
+/// neither: the main thread's own stall warning (STALL_AFTER, 2 s) comes
+/// too late for a hang.
+fn hang_or_fault(submitted: Option<(u64, Duration)>, finished: Option<(u64, Duration)>, done: bool) -> String {
+    let secs = |d: Duration| format!("{:.3} s", d.as_secs_f64());
+    let Some((frame, age)) = submitted else {
+        return GPU_WORK_NONE.to_owned();
+    };
+    let last = match finished {
+        Some((f, a)) => format!("frame {f} finished {} before", secs(a)),
+        None => "none finished yet".to_owned(),
+    };
+    // (fixed words and numbers: the crash report parses the line and
+    // publishes it rebuilt, aurora-viewer crash/summary.rs)
+    let verdict = if done {
+        GPU_WORK_VERDICTS[0]
+    } else if age >= HANG_AFTER {
+        GPU_WORK_VERDICTS[1]
+    } else if age < FAULT_WITHIN {
+        GPU_WORK_VERDICTS[2]
+    } else {
+        GPU_WORK_VERDICTS[3]
+    };
+    format!(
+        "last submission frame {frame}, {} before, {}, {last}, {verdict}",
+        secs(age),
+        if done { "finished" } else { "not finished" }
+    )
 }
 
 /// The renderers made so far in the run, for `AURORA_DEMO_GPU_LOST`'s list,
@@ -246,6 +392,69 @@ mod tests {
         std::panic::set_hook(before);
         assert!(bug.is_err());
         assert!(!in_guarded_poll());
+    }
+
+    /// The line of the loss tells a hang (the last frame not finished after
+    /// `HANG_AFTER`: the real hang of `AURORA_DEMO_GPU_HANG` on an RTX 5070
+    /// Ti was declared lost 1.101 s after its submission) from a fault (the
+    /// last frame finished, or lost within `FAULT_WITHIN` of its
+    /// submission), and leaves the band between undecided.
+    #[test]
+    fn the_loss_names_a_hang_or_a_fault_from_the_work_in_hand() {
+        let ms = Duration::from_millis;
+        assert_eq!(hang_or_fault(None, None, false), GPU_WORK_NONE);
+        let hang = hang_or_fault(Some((601, ms(1101))), Some((599, ms(1103))), false);
+        assert_eq!(
+            hang,
+            "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, \
+             a hang (the driver reset the card while that frame ran)"
+        );
+        assert!(hang_or_fault(Some((812, ms(500))), Some((811, ms(510))), false).ends_with(GPU_WORK_VERDICTS[1]));
+        let fault = hang_or_fault(Some((812, ms(9))), Some((812, ms(1))), true);
+        assert!(fault.ends_with(GPU_WORK_VERDICTS[0]), "{fault}");
+        let early = hang_or_fault(Some((812, ms(8))), Some((811, ms(9))), false);
+        assert!(early.ends_with(GPU_WORK_VERDICTS[2]), "{early}");
+        let slow = hang_or_fault(Some((812, ms(120))), Some((811, ms(130))), false);
+        assert!(slow.ends_with(GPU_WORK_VERDICTS[3]), "{slow}");
+        let first = hang_or_fault(Some((0, ms(3000))), None, false);
+        assert!(
+            first.contains("none finished yet") && first.ends_with(GPU_WORK_VERDICTS[1]),
+            "{first}"
+        );
+        // the shared copies see the same work; the newest finished
+        // submission is kept, whatever order the news comes in
+        let lost = DeviceLost::default();
+        let render_thread = lost.clone();
+        let s3 = render_thread.submitting(3);
+        let s4 = render_thread.submitting(4);
+        let s5 = render_thread.submitting(5);
+        render_thread.finished(s4);
+        render_thread.finished(s3);
+        let line = lost.work_at_loss();
+        assert!(line.starts_with("last submission frame 5, 0."), "{line}");
+        assert!(line.contains("not finished, frame 4 finished"), "{line}");
+        render_thread.finished(s5);
+        assert!(lost.work_at_loss().ends_with(GPU_WORK_VERDICTS[0]));
+    }
+
+    /// Two submissions of one frame (the eyes of an XR frame, the journal's
+    /// copies then the frame's own): the first one finishing does not mark
+    /// the second finished.
+    #[test]
+    fn submissions_of_one_frame_are_told_apart() {
+        let lost = DeviceLost::default();
+        let left = lost.submitting(601);
+        let right = lost.submitting(601);
+        assert_ne!(left, right);
+        lost.finished(left);
+        let line = lost.work_at_loss();
+        assert!(line.contains("not finished, frame 601 finished"), "{line}");
+        assert!(line.ends_with(GPU_WORK_VERDICTS[2]), "{line}");
+        lost.finished(right);
+        assert!(lost.work_at_loss().ends_with(GPU_WORK_VERDICTS[0]));
+        // the first eye's late news does not undo the second's
+        lost.finished(left);
+        assert!(lost.work_at_loss().ends_with(GPU_WORK_VERDICTS[0]));
     }
 
     #[test]

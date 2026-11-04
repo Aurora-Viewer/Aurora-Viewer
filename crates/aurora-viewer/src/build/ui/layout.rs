@@ -29,7 +29,7 @@ pub(super) fn title(item: Item) -> &'static str {
         Item::Linked => aurora_i18n::tr!("build-compact-linked"),
         Item::ScaleBoth => aurora_i18n::tr!("build-compact-both-sides"),
         Item::RootAxis => aurora_i18n::tr!("build-compact-root-axis"),
-        Item::Snap => aurora_i18n::tr!("build-compact-snap"),
+        Item::Snap => aurora_i18n::tr!("build-snap"),
         Item::Highlight => aurora_i18n::tr!("build-compact-highlight"),
         Item::Probes => aurora_i18n::tr!("build-compact-probes"),
         Item::OwnedOnly => aurora_i18n::tr!("build-compact-owned-only"),
@@ -113,6 +113,8 @@ pub(super) fn row(
         34.0
     } else if matches!(item, Item::Manipulators | Item::Actions) {
         28.0
+    } else if item == Item::Snap && !organizing && s.snap_mode() == crate::build::SnapMode::Objects {
+        SNAP_ROWS_HEIGHT
     } else {
         24.0
     };
@@ -211,6 +213,109 @@ pub(super) fn row(
     }
 }
 
+/// The Snap item's three lines in Objects mode, Place on surface and its
+/// rotation under the choice (`snap_mode`).
+const SNAP_ROWS_HEIGHT: f32 = 84.0;
+
+/// "Snap": off, to the grid or to objects, one at a time
+/// (`BuildSettings::snap_mode`); under it in Objects mode, "Place on
+/// surface", then Keep rotation or Auto rotate with the side put against
+/// the surface (`build/place.rs`).
+fn snap_mode(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        snap_rows(ui, p, tool, world, s);
+    });
+}
+
+fn snap_rows(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
+    use crate::build::SnapMode;
+    const MODES: [SnapMode; 3] = [SnapMode::Off, SnapMode::Grid, SnapMode::Objects];
+    let options = [
+        // (the accent for Aurora's own choice, as everywhere)
+        (aurora_i18n::tr!("build-snap-off"), false),
+        (aurora_i18n::tr!("build-snap-grid"), false),
+        (aurora_i18n::tr!("build-snap-objects"), true),
+    ];
+    let mut selected = MODES.iter().position(|m| *m == s.snap_mode()).unwrap_or(0);
+    ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), 22.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label(RichText::new(title(Item::Snap)).size(common::BODY));
+            ui.add_space((ui.available_width() - widgets::segmented_size(ui, &options).x).max(4.0));
+            if widgets::segmented(ui, p, &mut selected, &options) {
+                s.set_snap_mode(MODES[selected]);
+            }
+        },
+    );
+    // Place on surface goes with the object snap
+    if s.snap_mode() != crate::build::SnapMode::Objects {
+        return;
+    }
+    ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), 24.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let kind = if tool.place.active {
+                widgets::ActionKind::Primary
+            } else {
+                widgets::ActionKind::Flat
+            };
+            let label = aurora_i18n::tr!("build-place");
+            if widgets::action_button_if(
+                ui,
+                p,
+                "box-align-bottom-filled",
+                label,
+                kind,
+                Vec2::new(0.0, 22.0),
+                tool.can_place(world),
+            )
+            .on_hover_text(aurora_i18n::tr!("build-place-tip"))
+            .clicked()
+            {
+                tool.toggle_place(world);
+            }
+            // its distance off the surface
+            ui.add_space((ui.available_width() - 136.0).max(4.0));
+            ui.label(RichText::new(aurora_i18n::tr!("build-place-offset")).size(common::BODY))
+                .on_hover_text(aurora_i18n::tr!("build-place-offset-tip"));
+            ui.add_space((ui.available_width() - 70.0).max(4.0));
+            common::spin(ui, &mut s.place_offset, 0.01, -10.0..=10.0, 3, 64.0, false);
+        },
+    );
+    // Keep rotation, or Auto rotate onto a chosen side
+    ui.allocate_ui_with_layout(
+        Vec2::new(ui.available_width(), 24.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let options = [
+                (aurora_i18n::tr!("build-place-keep"), true),
+                (aurora_i18n::tr!("build-place-rotate"), true),
+            ];
+            let mut selected = usize::from(s.place_rotate);
+            ui.scope(|ui| {
+                if widgets::segmented(ui, p, &mut selected, &options) {
+                    s.place_rotate = selected == 1;
+                }
+            })
+            .response
+            .on_hover_text(aurora_i18n::tr!("build-place-rotate-tip"));
+            let sides: Vec<(&str, crate::build::place::Side)> =
+                crate::build::place::Side::ALL.iter().map(|side| (side.label(), *side)).collect();
+            ui.add_space((ui.available_width() - 96.0).max(4.0));
+            ui.scope(|ui| {
+                if let Some(side) = common::combo(ui, "place-side", Some(s.place_side), &sides, 90.0, s.place_rotate) {
+                    s.place_side = side;
+                }
+            })
+            .response
+            .on_hover_text(aurora_i18n::tr!("build-place-side-tip"));
+        },
+    );
+}
+
 pub(super) fn control(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -228,13 +333,16 @@ pub(super) fn control(
         compact::action_row(ui, p, tool, world, s);
         return;
     }
+    if item == Item::Snap {
+        snap_mode(ui, p, tool, world, s);
+        return;
+    }
     let mut value = match item {
         Item::Face => tool.edit_mode == EditMode::Face,
         Item::Linked => s.edit_linked,
         Item::StretchTextures => s.scale_stretch_textures,
         Item::ScaleBoth => s.scale_uniform,
         Item::RootAxis => s.actual_root,
-        Item::Snap => s.snap,
         Item::Highlight => s.show_highlight,
         Item::Probes => s.select_probes,
         Item::OwnedOnly => s.select_owned_only,
@@ -258,7 +366,6 @@ pub(super) fn control(
                 Item::StretchTextures => s.scale_stretch_textures = value,
                 Item::ScaleBoth => s.scale_uniform = value,
                 Item::RootAxis => s.actual_root = value,
-                Item::Snap => s.snap = value,
                 Item::Highlight => s.show_highlight = value,
                 Item::Probes => s.select_probes = value,
                 Item::OwnedOnly => s.select_owned_only = value,
@@ -390,6 +497,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                     }
                     if s.legacy_window {
                         for item in [
+                            Item::Snap,
                             Item::OwnedOnly,
                             Item::MovableOnly,
                             Item::Surrounding,
