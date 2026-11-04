@@ -1005,6 +1005,7 @@ fn pad(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
         ],
     ];
     let width = 4.0 * PAD_BUTTON + 3.0 * 4.0 + 12.0;
+    let drag_id = ui.scope_id().with("movement-pad-press");
     for row in rows {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -1018,7 +1019,7 @@ fn pad(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
                     Some(b) => format!("{} ({})", tr_key(tip), b.label()),
                     None => tr_key(tip).to_owned(),
                 };
-                if pad_button(ui, p, icon, &tip, binding.as_ref()) {
+                if pad_button(ui, p, icon, &tip, binding.as_ref(), drag_id) {
                     out.held.push(action);
                 }
             }
@@ -1333,9 +1334,25 @@ fn square_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> bool 
 
 /// One of the movement buttons: its icon, its key in the corner, lit while
 /// held.
-fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Option<&Binding>) -> bool {
+fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Option<&Binding>, drag_id: egui::Id) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(PAD_BUTTON), Sense::click_and_drag());
-    let held = resp.is_pointer_button_down_on();
+    // Keep the press on whichever movement button is currently under the
+    // pointer, like the Legacy Viewer's held direction controls. egui keeps
+    // `hovered` on the button that owns a drag, so use the pointer position
+    // and remember that the press began on this pad.
+    let down = ui.input(|i| i.pointer.primary_down());
+    let on_pad_press = resp.is_pointer_button_down_on();
+    let pad_pressed = ui.ctx().data_mut(|data| {
+        if !down {
+            data.remove::<bool>(drag_id);
+            return false;
+        }
+        if on_pad_press {
+            data.insert_temp(drag_id, true);
+        }
+        data.get_temp::<bool>(drag_id).unwrap_or(false)
+    });
+    let held = pad_pressed && ui.input(|i| i.pointer.interact_pos().is_some_and(|pos| rect.contains(pos)));
     let resp = resp.on_hover_text(tip);
     let fill = if held {
         p.violet
@@ -1622,6 +1639,77 @@ mod tests {
             }]);
             assert!(frame(vec![]).2.actions.is_empty());
         }
+    }
+
+    #[test]
+    fn held_movement_pad_switches_to_the_button_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let mut time = 0.0;
+        let mut frame = |events| {
+            time += 1.0 / 60.0;
+            let mut rects = [Rect::NOTHING; 2];
+            let mut held = [false; 2];
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let drag_id = ui.scope_id().with("movement-pad-test");
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            rects[0] = Rect::from_min_size(ui.cursor().min, Vec2::splat(PAD_BUTTON));
+                            held[0] = pad_button(ui, &p, "arrow-up", "", None, drag_id);
+                        });
+                        ui.horizontal(|ui| {
+                            rects[1] = Rect::from_min_size(ui.cursor().min, Vec2::splat(PAD_BUTTON));
+                            held[1] = pad_button(ui, &p, "rotate-2", "", None, drag_id);
+                        });
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            (rects, held)
+        };
+        let (rects, _) = frame(vec![]);
+        let start = rects[0].center();
+        let end = rects[1].center();
+        let moved = |pos| vec![egui::Event::PointerMoved(pos)];
+        frame(moved(start));
+        frame(vec![egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        let (_, held) = frame(moved(end));
+        assert_eq!(held, [false, true], "dragging between pad buttons switches the held direction");
+        let (_, held) = frame(moved(start));
+        assert_eq!(held, [true, false], "dragging back switches to the original direction");
+        frame(vec![egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        let (_, held) = frame(vec![]);
+        assert_eq!(held, [false, false], "releasing the mouse stops the movement buttons");
+
+        let outside = Pos2::new(350.0, 180.0);
+        frame(moved(outside));
+        frame(vec![egui::Event::PointerButton {
+            pos: outside,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        let (_, held) = frame(moved(end));
+        assert_eq!(held, [false, false], "a drag that starts outside the pad does not activate it");
     }
 
     #[test]
