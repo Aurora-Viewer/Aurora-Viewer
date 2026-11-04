@@ -13138,3 +13138,9 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
+
+picker-pipette-hint = Click an object face to select its texture or material from your inventory.
+
+picker-pipette-no-texture = No copyable texture found in your inventory.
+
+picker-pipette-no-material = No copyable material found in your inventory.

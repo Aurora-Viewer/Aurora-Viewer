@@ -671,10 +671,11 @@ impl App {
                         .imports
                         .local_appearance_targets
                         .iter()
-                        .filter(|(_, appearance)| appearance.entry() == id)
+                        .filter(|(_, appearance)| appearance.contains(id))
                         .map(|((id, _), _)| *id)
                         .collect();
                     self.imports.clear_appearance_targets(&mut self.world.objects, &targets, Some(id));
+                    self.build.forget_local_picker_asset(id);
                     if let Some(index) = self.imports.entries.iter().position(|e| e.id == id) {
                         let mut entry = self.imports.entries.remove(index);
                         if let Some(Source::Mesh(draft)) = &mut entry.source {

@@ -13111,3 +13111,9 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
+
+picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。
+
+picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。

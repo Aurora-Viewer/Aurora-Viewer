@@ -1952,7 +1952,8 @@ and stay closed across inventory updates. Presets form two rows beneath the
 list (Default/Blank, Transparent/None), followed by a BOM selector for textures
 and the validated, vertically centered UUID. BOM shows its placeholder until
 selected, then the bake's name; it applies the canonical magic UUID. Local contains the collapsible
-"Local files" folder in diffuse texture and PBR material pickers. It lists the
+"Local files" folder in construction surface texture channels (diffuse, normal,
+specular, PBR maps and projector) and the PBR material picker. It lists the
 local previews already loaded, textures or materials depending on the choice
 requested, and follows the search filter. A click applies the local preview;
 "OK" keeps it, "Cancel" restores it. Under the list, Add opens a file
@@ -1961,6 +1962,16 @@ list as local previews; Remove and Import, greyed until a local file is
 chosen, drop it or open the importer on it. `faces-picker-local` and
 `faces-picker-material-local` open the picker on this tab. To show the
 synthetic local files, combine these scenarios with `AURORA_DEMO_IMPORTS=local`.
+`faces-picker-normal-local` and `faces-picker-specular-local` exercise the
+individual legacy maps. Local channels can coexist on one face; Cancel restores
+the previous local bindings, and removing a file keeps the other channels.
+The Inventory tab's eyedropper is shared by all texture/material callers,
+including plain profile pickers. Click a volume face: a copyable matching
+inventory asset is selected and previewed, otherwise an error is shown without
+changing the choice. Blank PBR material needs no inventory item. Hold and drag
+to sample another face; release, Escape, closing the picker or changing source
+puts the tool down. Cancel restores the value from before sampling. The sampled
+face is highlighted rather than the whole prim (the Legacy tool's TODO).
 Keep the picker open while changing the main inventory's name/date order,
 "Folders always by name" and "System folders first": its tree and search
 results must follow those options, including in the Aurora Library tab.

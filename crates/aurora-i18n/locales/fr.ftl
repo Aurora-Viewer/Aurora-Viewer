@@ -13134,3 +13134,9 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+
+picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
+
+picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventaire.
+
+picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.

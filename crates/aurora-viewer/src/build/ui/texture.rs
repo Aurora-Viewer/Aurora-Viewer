@@ -681,6 +681,13 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     let loaded = base.is_some();
     let mut mat = base.map(|m| (*m).clone()).unwrap_or_default();
     mat.apply_override(&over);
+    if let Some(appearance) = world
+        .objects
+        .get(first.idx)
+        .and_then(|object| object.local_appearance(first.face as usize))
+    {
+        appearance.apply_pbr(&mut mat);
+    }
     let editable = has_all;
     tool.ui.material_previews.poll();
     let model = asset.filter(|_| loaded && !asset_mixed).and_then(|asset| {
@@ -886,7 +893,17 @@ fn pbr_factors(
 
 #[allow(clippy::too_many_arguments)]
 fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env, sel: &[Sel]) {
-    let legacy: Vec<Option<LegacyMaterial>> = sel.iter().map(|x| tool.face_legacy(env, world, x.idx, x.face, &x.te)).collect();
+    let legacy: Vec<Option<LegacyMaterial>> = sel
+        .iter()
+        .map(|x| {
+            let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
+            if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
+                let value = material.get_or_insert_with(|| default_legacy(env, &x.te));
+                appearance.apply_legacy(value);
+            }
+            material
+        })
+        .collect();
     let (tex, tex_mixed) = same(sel.iter().map(|x| x.te.texture));
     let (normal, normal_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.normal_map).unwrap_or_default()));
     let (spec, spec_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_map).unwrap_or_default()));
