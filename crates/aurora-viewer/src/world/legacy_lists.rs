@@ -288,7 +288,11 @@ mod tests {
         };
         let mut found = find(&[root.clone(), root.clone()], &account);
         assert_eq!(found.len(), 1);
-        let Found { dir: at, counts, mut lists } = found.remove(0);
+        let Found {
+            dir: at,
+            counts,
+            mut lists,
+        } = found.remove(0);
         assert_eq!(at, dir);
         assert_eq!(
             counts,

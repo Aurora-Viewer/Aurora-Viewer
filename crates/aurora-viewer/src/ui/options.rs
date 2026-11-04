@@ -5,8 +5,8 @@
 //! marks it when it differs from its default and resets it.
 
 pub mod backup;
-pub mod legacy_lists;
 pub(crate) mod cx;
+pub mod legacy_lists;
 mod pages;
 mod saved_graphics;
 mod scale;
@@ -1259,7 +1259,11 @@ fn chat_import_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &m
         ui.add_space(8.0);
         match &mut st.chat_import.found {
             None => {
-                ui.label(RichText::new(tr!("ui-options-chat-logs-import-searching")).size(12.5).color(p.muted));
+                ui.label(
+                    RichText::new(tr!("ui-options-chat-logs-import-searching"))
+                        .size(12.5)
+                        .color(p.muted),
+                );
             }
             Some(found) if found.is_empty() => {
                 ui.label(RichText::new(tr!("ui-options-chat-logs-import-none")).size(12.5).color(p.muted));
@@ -1269,7 +1273,12 @@ fn chat_import_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &m
                     let usable = folder.files > 0 && !folder.same;
                     *ticked &= usable;
                     ui.add_enabled_ui(usable, |ui| {
-                        checkbox(ui, p, ticked, RichText::new(folder.dir.display().to_string()).size(12.5).color(p.ink));
+                        checkbox(
+                            ui,
+                            p,
+                            ticked,
+                            RichText::new(folder.dir.display().to_string()).size(12.5).color(p.ink),
+                        );
                     });
                     let note = if folder.same {
                         tr!("ui-options-chat-logs-import-same").to_owned()
@@ -1313,7 +1322,16 @@ fn chat_import_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &m
             {
                 r.import_legacy_logs = Some(folders);
             }
-            if action_button(ui, p, "folder-open-filled", tr!("ui-options-chat-logs-import-choose"), ActionKind::Flat, size).clicked() {
+            if action_button(
+                ui,
+                p,
+                "folder-open-filled",
+                tr!("ui-options-chat-logs-import-choose"),
+                ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
                 r.folder = Some((Folder::LegacyLogs, FolderChoice::Pick));
             }
             if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {

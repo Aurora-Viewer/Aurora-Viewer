@@ -64,8 +64,6 @@ pub mod calls;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
-#[path = "demo_legacy_lists.rs"]
-pub mod legacy_lists;
 /// The classifieds of the profile scenarios, ours kept for the run.
 #[path = "demo_classifieds.rs"]
 pub mod classifieds;
@@ -144,6 +142,8 @@ pub mod keywords;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
+#[path = "demo_legacy_lists.rs"]
+pub mod legacy_lists;
 #[path = "demo_link.rs"]
 pub mod link;
 #[path = "demo_missing_texture.rs"]

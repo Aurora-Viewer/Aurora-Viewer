@@ -54,9 +54,21 @@ pub(super) fn modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
                 let counts = found[state.chosen].1;
                 let parts = &mut state.parts;
                 let rows = [
-                    (&mut parts.teleports, tr!("ui-options-legacy-lists-teleports", count = counts.teleports), counts.teleports),
-                    (&mut parts.derender, tr!("ui-options-legacy-lists-derender", count = counts.derender), counts.derender),
-                    (&mut parts.media, tr!("ui-options-legacy-lists-media", count = counts.media), counts.media),
+                    (
+                        &mut parts.teleports,
+                        tr!("ui-options-legacy-lists-teleports", count = counts.teleports),
+                        counts.teleports,
+                    ),
+                    (
+                        &mut parts.derender,
+                        tr!("ui-options-legacy-lists-derender", count = counts.derender),
+                        counts.derender,
+                    ),
+                    (
+                        &mut parts.media,
+                        tr!("ui-options-legacy-lists-media", count = counts.media),
+                        counts.media,
+                    ),
                     (
                         &mut parts.contact_sets,
                         tr!("ui-options-legacy-lists-contact-sets", count = counts.contact_sets),

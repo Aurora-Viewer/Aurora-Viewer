@@ -44,10 +44,7 @@ impl App {
 
     /// The import window opens: look for the viewers' folders.
     pub(super) fn chat_import_opened(&mut self) {
-        self.options_ui.chat_import = ui::options::ChatImportUi {
-            open: true,
-            found: None,
-        };
+        self.options_ui.chat_import = ui::options::ChatImportUi { open: true, found: None };
         self.look_for_chat_logs(None);
     }
 

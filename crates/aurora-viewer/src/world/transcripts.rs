@@ -340,7 +340,10 @@ impl World {
     /// file's end would repeat those lines.
     fn history_imported(&mut self, changed: &std::collections::BTreeSet<String>) {
         for s in &mut self.social.ims {
-            let imported = s.log.stem().is_some_and(|stem| changed.contains(&names::clean_file_name(stem.trim())));
+            let imported = s
+                .log
+                .stem()
+                .is_some_and(|stem| changed.contains(&names::clean_file_name(stem.trim())));
             if imported && s.log.history == HistoryState::Done && s.lines.iter().all(|l| l.origin == Origin::Log) {
                 s.lines.clear();
                 s.clock.renumbered();

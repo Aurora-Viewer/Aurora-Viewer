@@ -891,7 +891,13 @@ mod tests {
             ])
         };
         let mut list = Derender::default();
-        list.add(kept, Entry { name: "ours".into(), ..entry(Kind::Object, true) });
+        list.add(
+            kept,
+            Entry {
+                name: "ours".into(),
+                ..entry(Kind::Object, true)
+            },
+        );
         list.add(sounds, entry(Kind::Sound(1), true));
         list.add(temporary, entry(Kind::Object, false));
 
@@ -912,7 +918,13 @@ mod tests {
     fn merge_derender_takes_new_objects_out_of_the_world_but_never_ourselves() {
         let (mut world, _) = demo_world();
         let me = world.agent_id;
-        let object = world.objects.iter().find(|(_, o)| o.key.local_id == 101).expect("a demo object").1.full_id;
+        let object = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == 101)
+            .expect("a demo object")
+            .1
+            .full_id;
         let file = vec![file_entry(me, AT_PERSON, 0, "me"), file_entry(object, AT_OBJECT, 0, "an object")];
         let (changed, unseated) = world.merge_derender(legacy_file(file));
         assert_eq!((changed, unseated), (1, false));
