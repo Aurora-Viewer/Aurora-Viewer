@@ -9097,6 +9097,10 @@ ui-options-chat-logs-import-failed = { $count ->
     [one] { $count } fichier n'a pas pu être importé et reste inchangé : importez à nouveau pour réessayer.
    *[other] { $count } fichiers n'ont pas pu être importés et restent inchangés : importez à nouveau pour réessayer.
     }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] { $count } fichier texte sans heure a été laissé de côté : c'est peut-être une conversation enregistrée sans l'heure.
+   *[other] { $count } fichiers texte sans heure ont été laissés de côté : ce sont peut-être des conversations enregistrées sans l'heure.
+    }
 ui-chat-filter-conversation = Filtrer la conversation (Ctrl+F : rechercher)
 ui-chat-filter = Filtrer…
 ui-chat-find = Rechercher dans cette conversation…

@@ -9091,6 +9091,10 @@ ui-options-chat-logs-import-failed = { $count ->
     [one] { $count }個のファイルをインポートできず、変更しませんでした。もう一度インポートして再試行してください。
    *[other] { $count }個のファイルをインポートできず、変更しませんでした。もう一度インポートして再試行してください。
     }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] 時刻のないテキストファイル{ $count }個をインポートしませんでした。時刻なしで記録された会話の可能性があります。
+   *[other] 時刻のないテキストファイル{ $count }個をインポートしませんでした。時刻なしで記録された会話の可能性があります。
+    }
 ui-chat-filter-conversation = 会話を絞り込む（Ctrl＋F：検索）
 ui-chat-filter = フィルタ…
 ui-chat-find = この会話を検索…
