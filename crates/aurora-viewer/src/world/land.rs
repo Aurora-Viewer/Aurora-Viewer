@@ -1625,6 +1625,47 @@ mod tests {
     }
 
     #[test]
+    fn a_parcel_id_from_another_region_does_not_name_the_selection() {
+        let mut land = Land::default();
+        land.select_at(5, Vec3::new(100.0, 100.0, 20.0), (256.0, 256.0));
+        let ctx = SelectionContext {
+            agent_region: Some(5),
+            region_id: Uuid::from_u128(3),
+        };
+        let info = Arc::new(ParcelInfo {
+            local_id: 4,
+            ..Default::default()
+        });
+        land.apply(
+            LandEvent::Selected {
+                handle: 5,
+                info,
+                result: 0,
+            },
+            &ctx,
+        );
+        let id = Some(Uuid::from_u128(9));
+        land.apply(
+            LandEvent::ParcelId {
+                handle: 6,
+                local_id: 4,
+                id,
+            },
+            &ctx,
+        );
+        assert_eq!(land.sel.as_ref().and_then(|s| s.parcel_uuid), None);
+        land.apply(
+            LandEvent::ParcelId {
+                handle: 5,
+                local_id: 4,
+                id,
+            },
+            &ctx,
+        );
+        assert_eq!(land.sel.as_ref().and_then(|s| s.parcel_uuid), Some(id));
+    }
+
+    #[test]
     fn selection_asks_for_what_the_floater_shows() {
         let mut land = Land::default();
         land.select_at(5, Vec3::new(100.0, 100.0, 20.0), (256.0, 256.0));
