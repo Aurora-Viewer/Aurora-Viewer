@@ -89,6 +89,7 @@ pub fn vr_headset_ready() -> bool {
 }
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod vr_mirror;
+pub mod write_staging;
 pub mod writes;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod xr_device;
