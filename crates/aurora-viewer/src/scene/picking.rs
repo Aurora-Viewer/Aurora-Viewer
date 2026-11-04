@@ -71,6 +71,9 @@ pub(super) enum FacePick {
     /// Left button: only world Blend faces test exact nonzero texels.
     Left,
     LeftBlend,
+    /// Build face tool: include the visible faces of worn unrigged meshes.
+    /// World left-clicks still use only their invisible clickers (`only_hidden`).
+    Edit,
 }
 
 impl PickFace {
@@ -498,7 +501,7 @@ impl Scene {
     /// occluded prims. Reuses hover's bounds index and the rendered triangles;
     /// the wheel never waits for a GPU depth readback.
     pub fn edit_ray_hits(&self, world: &World, ray: (Vec3, Vec3), hud: bool, select_probes: bool, select_limit: Option<f32>) -> Vec<usize> {
-        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Surface)
+        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Edit)
     }
 
     pub fn left_edit_ray_hits(
@@ -509,7 +512,7 @@ impl Scene {
         select_probes: bool,
         select_limit: Option<f32>,
     ) -> Vec<usize> {
-        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Left)
+        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Edit)
     }
 
     fn edit_ray_hits_mode(
@@ -786,7 +789,9 @@ impl Scene {
         if !g.hud && g.rigged {
             return None;
         }
-        let only_hidden = !g.hud && worn_unrigged_mesh(o, g);
+        // Edit mode needs the faces the user sees on worn unrigged mesh, so
+        // the face tool does not fall through to the world object behind.
+        let only_hidden = !g.hud && worn_unrigged_mesh(o, g) && mode != FacePick::Edit;
         if only_hidden && !include_hidden {
             return None;
         }
@@ -1174,6 +1179,18 @@ impl Scene {
 
     pub fn left_touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
         self.touch_surface_mode(world, idx, ray, FacePick::Left)
+    }
+
+    /// Face / TE pick for the build face tool: same as left click, but worn
+    /// unrigged meshes keep their visible faces.
+    pub fn edit_touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
+        self.touch_surface_mode(world, idx, ray, FacePick::Edit)
+    }
+
+    /// World point of an edit face hit, for comparing with GPU-posed picks.
+    pub fn edit_hit_point(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<Vec3> {
+        let hit = self.face_hit_mode(world, idx, ray, Instant::now(), true, FacePick::Edit)?;
+        Some(ray.0 + ray.1 * hit.t)
     }
 
     fn touch_surface_mode(&self, world: &World, idx: usize, ray: (Vec3, Vec3), mode: FacePick) -> Option<TouchSurface> {
@@ -1865,6 +1882,41 @@ pub(crate) mod tests {
         assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_some());
         assert_eq!(scene.action_point(&world, Some(ray), Some(behind), false, 100.0), Some(front_point));
         assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), Some(front));
+    }
+
+    #[test]
+    fn edit_face_tool_reaches_visible_faces_of_worn_unrigged_mesh() {
+        // Build face tool must hit the worn mesh the user sees. Left click
+        // still uses only invisible clickers so a mesh body does not steal
+        // touches meant for scripted prims under it.
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        world.agent.position = ray.0;
+        let o = world.objects.get_mut(front).unwrap();
+        let mut volume = o.volume;
+        volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::from_u128(0xface),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        o.render.local_volume = Some(Box::new(volume));
+        scene.gpu[front].owner_avatar = world.objects.avatars().next().map(|(idx, _)| idx);
+        scene.gpu[front].built_faces = scene.gpu[front].faces.len();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), false).is_none());
+        assert!(
+            scene
+                .face_hit_mode(&world, front, ray, Instant::now(), true, FacePick::Edit)
+                .is_some()
+        );
+        assert_eq!(scene.edit_ray_hits(&world, ray, false, false, None), [front, back]);
+        assert_eq!(scene.left_edit_ray_hits(&world, ray, false, false, None), [front, back]);
+        assert!(scene.edit_touch_surface(&world, front, ray).is_some());
+        assert!(scene.left_touch_surface(&world, front, ray).is_none());
+        assert!(scene.edit_hit_point(&world, front, ray).is_some());
     }
 
     #[test]
