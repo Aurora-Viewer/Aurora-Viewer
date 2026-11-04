@@ -763,12 +763,13 @@ impl super::World {
     }
 
     /// A Legacy Viewer's list added to ours (`Derender::merge`): what it
-    /// names leaves the world as with `derender`, our own avatar excepted.
+    /// names leaves the world as with `derender`, our own avatar excepted,
+    /// though its sounds can be blocked like anyone's (`sound_blacklisted`).
     /// The number of entries added or updated, and whether our avatar sat
     /// on one of them and was taken off (the app stands it up).
     pub fn merge_derender(&mut self, mut file: FileEntries) -> (usize, bool) {
         let me = self.agent_id;
-        file.entries.retain(|(id, _)| *id != me);
+        file.entries.retain(|(id, entry)| *id != me || matches!(entry.kind, Kind::Sound(_)));
         let (changed, hide) = self.derender.merge(file);
         let mut unseated = false;
         for id in hide {
@@ -930,6 +931,15 @@ mod tests {
         assert_eq!((changed, unseated), (1, false));
         assert!(!world.derender.contains(&me));
         assert!(world.objects.index_of_uuid(&object).is_none());
+    }
+
+    #[test]
+    fn merge_derender_keeps_a_sound_rule_on_ourselves() {
+        let (mut world, _) = demo_world();
+        let me = world.agent_id;
+        let file = vec![file_entry(me, AT_SOUND, 4, "my gestures")];
+        assert_eq!(world.merge_derender(legacy_file(file)), (1, false));
+        assert!(world.derender.sound_blocked(Uuid::nil(), me, 4));
     }
 
     fn update(local_id: u32, full_id: u128, parent_id: u32) -> ObjectUpdate {
