@@ -193,8 +193,8 @@ fn spellings(dir: &Path, sources: &[PathBuf]) -> Spellings {
     spelled
 }
 
-/// `jane_doe` as Aurora names that resident's file, `Jane Doe`: the official
-/// viewer, and the others with UseLegacyIMLogNames off, name it from
+/// `jane_doe` as Aurora names that resident's file, `Jane Doe`: a Legacy Viewer
+/// with UseLegacyIMLogNames off, or without it, names it from
 /// LLCacheName::buildUsername, then cleanFileName turns its dot into '_'.
 /// That leaves the name in lower case, and Aurora's file of `JaneDoe` or
 /// `Jane McDoe` keeps its capitals: taken from `spelled`, or each word's
