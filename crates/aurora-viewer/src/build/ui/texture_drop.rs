@@ -90,7 +90,7 @@ pub(super) fn slot(ui: &egui::Ui, p: &Palette, tool: &mut BuildTool, world: &Wor
     crate::ui::inventory::drag::feedback(ui.ctx(), cursor);
     crate::ui::inventory::tree::drop_outline(ui, p, rect, verdict.is_ok());
     if verdict == Err(Refusal::Restricted) {
-        egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), ui.id().with("texture-drop-refused"), rect).show(|ui| {
+        egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), ui.scope_id().with("texture-drop-refused"), rect).show(|ui| {
             ui.label(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
         });
     }
