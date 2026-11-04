@@ -432,6 +432,9 @@ pub struct MediaManager {
     pack_dir: Option<std::path::PathBuf>,
     pub impls: Vec<MediaImpl>,
     objects: HashMap<Uuid, ObjMedia>,
+    /// Objects whose media was on screen until lately (a HUD that clears then
+    /// sets its page): asked again first for `RECENTLY_SHOWN`.
+    recently_shown: HashMap<Uuid, Instant>,
     client: MediaDataClient,
     last_create: Instant,
     pub focus: Option<MediaKey>,
@@ -488,6 +491,7 @@ impl Default for MediaManager {
             pack_dir: None,
             impls: Vec::new(),
             objects: HashMap::new(),
+            recently_shown: HashMap::new(),
             client: MediaDataClient::default(),
             last_create: Instant::now() - CREATE_DELAY,
             focus: None,

@@ -227,11 +227,17 @@ impl MediaManager {
             return;
         }
         // its media shows now, or is about to (a refetch of a page on
-        // screen, its interest not measured yet the frame it started): first
-        let shown = self
+        // screen, its interest not measured yet the frame it started), or
+        // showed until a moment ago (cleared then set again): first
+        let showing = self
             .impls
             .iter()
             .any(|m| matches!(m.key, MediaKey::Prim { object, .. } if object == o.full_id) && (m.wanted || m.interest > 0.0));
+        if showing {
+            self.recently_shown.insert(o.full_id, Instant::now());
+        }
+        self.recently_shown.retain(|_, at| at.elapsed() < RECENTLY_SHOWN);
+        let shown = showing || self.recently_shown.contains_key(&o.full_id);
         let avatar = attachment_avatar(world, idx);
         let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
         let on_own_avatar = !world.agent_id.is_nil() && avatar == Some(world.agent_id);
@@ -951,6 +957,10 @@ fn trusted_by_filter(objects: &HashMap<Uuid, ObjMedia>, key: MediaKey, settings:
 }
 
 /// Root avatar of an attachment.
+/// How long media that left the screen still counts as shown for its next
+/// request (LLMediaDataClient's interest score keeps a HUD panel first).
+const RECENTLY_SHOWN: Duration = Duration::from_secs(60);
+
 /// Where an object's ObjectMedia request goes in the queue: media on screen
 /// first (LLMediaDataClient sorts by getMediaInterest), then a HUD, our other
 /// attachments, the world.
