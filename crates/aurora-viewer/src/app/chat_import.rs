@@ -8,8 +8,8 @@ use std::sync::mpsc::{Receiver, channel};
 
 #[derive(Default)]
 pub(super) struct ChatImport {
-    /// The folders being looked at.
-    looking: Option<Receiver<Vec<Found>>>,
+    /// The searches under way: a folder chosen does not stop the first one.
+    looking: Vec<Receiver<Vec<Found>>>,
     /// AURORA_DEMO_CHATLOG=import:again: its second run started.
     again: bool,
 }
@@ -32,7 +32,7 @@ impl App {
         };
         let apps = self.world.chat_log.legacy_apps();
         let (tx, rx) = channel();
-        self.chat_import.looking = Some(rx);
+        self.chat_import.looking.push(rx);
         let _ = std::thread::Builder::new().name("aurora-chatlog-find".into()).spawn(move || {
             let found = match chosen {
                 Some(dir) => vec![import::inspect_chosen(&dir, &account, &target)],
@@ -61,10 +61,11 @@ impl App {
 
     /// Every frame: what was found, how far the import is, how it ended.
     pub(super) fn poll_chat_import(&mut self) {
-        if let Some(rx) = &self.chat_import.looking
-            && let Ok(found) = rx.try_recv()
-        {
-            self.chat_import.looking = None;
+        let answers: Vec<_> = self.chat_import.looking.iter().filter_map(|rx| rx.try_recv().ok()).collect();
+        self.chat_import
+            .looking
+            .retain(|rx| !matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+        for found in answers {
             let list = self.options_ui.chat_import.found.get_or_insert_default();
             for f in found {
                 if !list.iter().any(|(known, _)| known.dir == f.dir) {

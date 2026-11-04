@@ -9,11 +9,11 @@
 //! `read` runs away from the frame; `World::merge_legacy_lists` then
 //! applies what it found.
 
-use super::chat_log::import::Account;
 use super::contact_sets::CONTACT_SETS_FILE;
 use super::contact_sets::importing::{EMPTY_MAP, ImportData};
 use super::derender::{self, FileEntries};
 use super::tphistory::{self, HistoryItem};
+use crate::legacy_profile::{Account, account_folders};
 use crate::media::filter::{self, Rule};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -138,30 +138,21 @@ fn bytes(folder: &Path, name: &'static str, unreadable: &mut Vec<&'static str>) 
     }
 }
 
-/// The account's folders under the viewers' folders that hold a list, read,
-/// a folder shared by two viewers once.
+/// The account's folders that hold a list, read, a folder shared by two
+/// viewers once.
 pub fn find(apps: &[PathBuf], account: &Account) -> Vec<Found> {
     let mut seen = Vec::new();
     let mut found = Vec::new();
-    for app in apps {
-        let Ok(entries) = std::fs::read_dir(app) else {
+    for dir in account_folders(apps, account) {
+        let real = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+        if seen.contains(&real) {
             continue;
-        };
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if !entry.file_name().to_str().is_some_and(|n| account.owns(n)) || !dir.is_dir() {
-                continue;
-            }
-            let real = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-            if seen.contains(&real) {
-                continue;
-            }
-            seen.push(real);
-            let lists = read(&dir);
-            let counts = lists.counts();
-            if counts.any() || !lists.unreadable.is_empty() {
-                found.push(Found { dir, counts, lists });
-            }
+        }
+        seen.push(real);
+        let lists = read(&dir);
+        let counts = lists.counts();
+        if counts.any() || !lists.unreadable.is_empty() {
+            found.push(Found { dir, counts, lists });
         }
     }
     found

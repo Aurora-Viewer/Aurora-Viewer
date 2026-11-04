@@ -1284,6 +1284,9 @@ fn chat_import_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &m
                         tr!("ui-options-chat-logs-import-same").to_owned()
                     } else if folder.files == 0 {
                         tr!("ui-options-chat-logs-import-empty").to_owned()
+                    } else if folder.bytes < 1024 * 1024 {
+                        // format_bytes would say 0 MB
+                        tr!("ui-options-chat-logs-import-files", count = folder.files).to_owned()
                     } else {
                         format!(
                             "{} · {}",
