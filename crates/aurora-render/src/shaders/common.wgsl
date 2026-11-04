@@ -1368,61 +1368,57 @@ fn pcss_compare(uv: vec2<f32>, offset: vec2<f32>, tile: vec2<f32>, texel: f32,
     return pcss_plane_compare(uv, local, tile * 0.5, 0.5, texel, receiver, bias, gradient);
 }
 
-// Negative means no blocker was found: retain the old dense PCF rather than
-// declaring a thin caster unshadowed after a sparse blocker search missed it.
+// The baseline filter is shared by ordinary shadows and PCSS. At contact,
+// enabling PCSS must not change receiver depth, coverage or minimum softness.
+fn directional_pcf(uv: vec2<f32>, tile: vec2<f32>, texel: f32, receiver: f32,
+    bias: f32, span: f32, taps: u32) -> f32 {
+    let step = span / f32(taps - 1u);
+    let center = 0.5 * f32(taps - 1u);
+    var sum = 0.0;
+    for (var y = 0u; y < taps; y++) {
+        for (var x = 0u; x < taps; x++) {
+            let offset = (vec2<f32>(f32(x), f32(y)) - center) * step;
+            let at = pcss_tile_uv(uv + offset, texel);
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (at + tile) * 0.5, receiver - bias);
+        }
+    }
+    return sum / f32(taps * taps);
+}
+
+// Visibility and its blend weight; a missed blocker or sub-resolution
+// penumbra retains the baseline PCF exactly. Wide PCSS only adds softness.
 fn pcss_shadow(uv: vec2<f32>, tile: vec2<f32>, texel: f32, radius: f32,
-    receiver: f32, bias: f32, gradient: vec2<f32>, depth_per_metre: f32) -> f32 {
+    receiver: f32, bias: f32, gradient: vec2<f32>, depth_per_metre: f32,
+    curvature: f32, minimum_radius: f32) -> vec2<f32> {
+    let bias_metres = bias / depth_per_metre;
+    let near_gradient = gradient * receiver_plane_confidence(curvature, 3.0 * sqrt(2.0) * radius * texel, bias_metres);
+    let search_gradient = gradient * receiver_plane_confidence(curvature, PCSS_MAX_RADIUS + sqrt(2.0) * radius * texel, bias_metres);
     var separation = 0.0;
     var blockers = 0.0;
-    // Dense near samples protect small/thin casters; the wider disk also
-    // finds blockers whose penumbra reaches outside their hard silhouette.
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
-            let gap = pcss_gap(uv, vec2<f32>(f32(x), f32(y)) * texel, tile, texel, receiver, bias, gradient, depth_per_metre);
+            let gap = pcss_gap(uv, vec2<f32>(f32(x), f32(y)) * texel, tile, texel, receiver, bias, near_gradient, depth_per_metre);
             if (gap >= 0.0) { separation += gap; blockers += 1.0; }
         }
     }
     let search = PCSS_MAX_RADIUS / (2.0 * radius);
     for (var i = 0u; i < 16u; i++) {
-        let gap = pcss_gap(uv, PCSS_DISK[(i / 2u) * 4u + 2u + (i & 1u)] * search, tile, texel, receiver, bias, gradient, depth_per_metre);
+        let gap = pcss_gap(uv, PCSS_DISK[(i / 2u) * 4u + 2u + (i & 1u)] * search, tile, texel, receiver, bias, search_gradient, depth_per_metre);
         if (gap >= 0.0) { separation += gap; blockers += 1.0; }
     }
-    let contact_gap = pcss_contact_gap();
-    if (blockers == 0.0 && contact_gap < 0.0) { return -2.0; }
-    // Different occluders can overlap: each visibility sample needs its own
-    // caster separation. A nearby contact must not shrink the mapped
-    // penumbra of a farther caster.
-    let map_gap = separation / max(blockers, 1.0);
-    let physical_radius = map_gap * PCSS_SOURCE_TAN;
+    if (blockers == 0.0) { return vec2<f32>(-2.0, 0.0); }
+    let physical_radius = (separation / blockers) * PCSS_SOURCE_TAN;
     let map_radius = min(PCSS_MAX_RADIUS, sqrt(physical_radius * physical_radius + min(physical_radius, PCSS_AA_RADIUS) * min(physical_radius, PCSS_AA_RADIUS)));
-    let contact_radius = min(PCSS_MAX_RADIUS, max(contact_gap, 0.0) * PCSS_SOURCE_TAN);
-    let contact_uv = contact_radius / (2.0 * radius);
-    // Preserve the old minimum filter variance with the round kernel.
-    let half_uv = max(0.70710678 * texel, map_radius / (2.0 * radius));
-    let blend = smoothstep(0.8 * texel, 1.2 * texel, max(half_uv, contact_uv));
-    var near_sum = 0.0;
-    if (blend < 1.0) {
-        for (var i = 0u; i < 9u; i++) {
-            let disk = PCSS_NEAR_DISK[i];
-            let mapped = pcss_compare(uv, disk * half_uv, tile, texel, receiver, bias, gradient);
-            let contact = pcss_contact_visibility(disk * contact_uv, radius);
-            near_sum += select(0.09375, 0.25, i == 0u) * min(mapped, contact);
-        }
-    }
-    if (blend <= 0.0) {
-        pcss_contact_complete();
-        return near_sum;
-    }
+    let weight = smoothstep(minimum_radius, 1.5 * minimum_radius, map_radius);
+    if (weight <= 0.0) { return vec2<f32>(-2.0, 0.0); }
+    let half_uv = map_radius / (2.0 * radius);
+    let filter_gradient = gradient * receiver_plane_confidence(curvature,
+        map_radius + 2.0 * sqrt(2.0) * radius * texel, bias_metres);
     var sum = 0.0;
-    // Fixed light-space pattern: no frame randomization or dependence on
-    // the screen resolution, and the same physical support in each cascade.
     for (var i = 0u; i < 32u; i++) {
-        let mapped = pcss_compare(uv, PCSS_DISK[i] * half_uv, tile, texel, receiver, bias, gradient);
-        let contact = pcss_contact_visibility(PCSS_DISK[i] * contact_uv, radius);
-        sum += min(mapped, contact);
+        sum += pcss_compare(uv, PCSS_DISK[i] * half_uv, tile, texel, receiver, bias, filter_gradient);
     }
-    pcss_contact_complete();
-    return mix(near_sum, sum / 32.0, blend);
+    return vec2<f32>(sum / 32.0, weight);
 }
 
 // Projector PCSS uses perspective depth d = A + B / z. Never average
@@ -1505,7 +1501,7 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let depth_per_metre = length(vec3<f32>(m[0].z, m[1].z, m[2].z));
     let axis_z = vec3<f32>(m[0].z, m[1].z, m[2].z) / max(depth_per_metre, 1e-8);
     let bias_n = n * (0.02 + 0.04 * f32(cascade));
-    let lp = m * vec4<f32>(world_pos + shadow_receiver_offset + bias_n, 1.0);
+    let lp = m * vec4<f32>(world_pos + bias_n, 1.0);
     let ndc = lp.xyz / lp.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
@@ -1530,8 +1526,6 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     if ((frame.light_mode.z & SHADOW_FILTER_GAPS) != 0u) {
         taps = 4u;
     }
-    let step = span / f32(taps - 1u);
-    let center = 0.5 * f32(taps - 1u);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
     // Receiver bias in metres along the light: two texels of the cascade.
     // The depth range of a cascade is its square plus CASCADE_DEPTH_PAD on
@@ -1555,44 +1549,29 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let denominator = dot(plane_n, axis_z);
     let axis_x = vec3<f32>(m[0].x, m[1].x, m[2].x) * radius;
     let axis_y = vec3<f32>(m[0].y, m[1].y, m[2].y) * radius;
-    let plane_filter = (frame.light_mode.z & (SHADOW_FILTER_PCF | SHADOW_FILTER_GAPS)) == 0u && abs(denominator) > 1e-5;
+    let plane_filter = (frame.light_mode.z & (SHADOW_FILTER_PCF | SHADOW_FILTER_GAPS)) == 0u;
+    var soft_visibility = -1.0;
+    var soft_weight = 0.0;
     var gradient = vec2<f32>(0.0);
     if (plane_filter) {
         gradient = vec2<f32>(-dot(plane_n, axis_x), dot(plane_n, axis_y))
-            * (2.0 * radius * depth_per_metre / denominator);
-        gradient *= receiver_plane_confidence(shadow_receiver_curvature, PCSS_MAX_RADIUS,
-            receiver_bias / max(depth_per_metre, 1e-8));
-        // Wide searches on a grazing receiver are ill-conditioned, but its
-        // dense fallback still needs the plane-corrected comparisons.
-        if (abs(denominator) > 0.15) {
-            contact_area_x = axis_x;
-            contact_area_y = axis_y;
-            contact_area_z = axis_z;
-            let soft = pcss_shadow(uv, tile, texel, radius, ndc.z, receiver_bias, gradient, max(depth_per_metre, 1e-8));
-            if (soft >= 0.0) { return soft; }
+            * (2.0 * radius * depth_per_metre * denominator / max(denominator * denominator, 1e-6));
+        // Blend between filters rather than popping at a grazing-angle cutoff.
+        soft_weight = smoothstep(0.10, 0.20, abs(denominator));
+        if (soft_weight > 0.0) {
+            // Match the baseline grid's second moment with a disk: each
+            // axis has variance span^2 * (taps+1)/(12*(taps-1)). A smaller
+            // PCSS disk exposed mesh facets and changed shadows at contact.
+            let minimum_radius = 2.0 * radius * span * sqrt(f32(taps + 1u) / (3.0 * f32(taps - 1u)));
+            let soft = pcss_shadow(uv, tile, texel, radius, ndc.z, receiver_bias, gradient,
+                max(depth_per_metre, 1e-8), shadow_receiver_curvature, minimum_radius);
+            soft_visibility = soft.x;
+            soft_weight *= soft.y;
+            if (soft_visibility >= 0.0 && soft_weight >= 1.0) { return soft_visibility; }
         }
     }
-    var sum = 0.0;
-    for (var y = 0u; y < taps; y++) {
-        for (var x = 0u; x < taps; x++) {
-            let o = (vec2<f32>(f32(x), f32(y)) - center) * step;
-            // clamped to the centers of the tile's edge texels: the same
-            // result as the clamp-to-edge of a separate texture, never a
-            // texel of the neighbouring tile
-            let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-            if (plane_filter) {
-                sum += pcss_compare(uv, o, tile, texel, ndc.z, receiver_bias, gradient);
-            } else {
-                sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - receiver_bias);
-            }
-        }
-    }
-    let visibility = sum / f32(taps * taps);
-    if (contact_area_active) {
-        contact_area_combined = true;
-        return min(visibility, contact_area_centre().r);
-    }
-    return visibility;
+    let visibility = directional_pcf(uv, tile, texel, ndc.z, receiver_bias, span, taps);
+    return mix(visibility, max(soft_visibility, 0.0), select(0.0, soft_weight, soft_visibility >= 0.0));
 }
 
 // The motion of a pixel on the screen from its clip positions, this frame's
@@ -1653,88 +1632,9 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
 }
 
 
-// The area-light prototype combines map and screen visibility per sample,
-// before averaging. A finished hard contact mask must not override a soft
-// penumbra. View-space blocker metadata keeps real contact locally sharp.
-var<private> contact_area_active: bool = false;
-var<private> contact_area_combined: bool = false;
-var<private> contact_area_world: vec3<f32>;
-var<private> contact_area_normal: vec3<f32>;
-var<private> contact_area_x: vec3<f32>;
-var<private> contact_area_y: vec3<f32>;
-var<private> contact_area_z: vec3<f32>;
-var<private> contact_area_depth_gradient: vec2<f32>;
-
-// Continuous reconstruction on the receiver plane. Invalid neighbours contribute
-// lit visibility rather than borrowing a foreground surface's shadow. Opacity
-// and blocker distance are reconstructed together from the same valid samples.
-fn contact_area_sample(uv: vec2<f32>, receiver_depth: f32) -> vec2<f32> {
-    let size = vec2<i32>(textureDimensions(contact_tex));
-    let point = uv * vec2<f32>(size) - 0.5;
-    let base = vec2<i32>(floor(point));
-    let fraction = fract(point);
-    var opacity = 0.0;
-    var gap_sum = 0.0;
-    var gap_weight = 0.0;
-    for (var y = 0; y < 2; y++) {
-        for (var x = 0; x < 2; x++) {
-            let pixel = base + vec2<i32>(x, y);
-            if (any(pixel < vec2<i32>(0)) || any(pixel >= size)) { continue; }
-            let delta = ((vec2<f32>(pixel) + 0.5) / vec2<f32>(size) - uv) * vec2<f32>(2.0, -2.0);
-            let expected = receiver_depth + dot(contact_area_depth_gradient, delta);
-            let depth = textureLoad(depth_tex, pixel, 0);
-            let error = abs(depth - expected) / max(abs(expected), 1e-6);
-            let confidence = select(0.0, 1.0 - smoothstep(0.005, 0.01, error), depth > 0.0 && expected > 0.0);
-            let weight = select(1.0 - fraction.x, fraction.x, x == 1)
-                * select(1.0 - fraction.y, fraction.y, y == 1) * confidence;
-            let mask = textureLoad(contact_tex, pixel, 0);
-            opacity += weight * mask.r;
-            if (mask.g > 0.0) {
-                let contribution = weight * mask.r;
-                gap_sum += contribution * ((exp2(round(mask.g * 255.0) / 16.0) - 1.0) * 0.01);
-                gap_weight += contribution;
-            }
-        }
-    }
-    return vec2<f32>(1.0 - opacity, select(-1.0, gap_sum / max(gap_weight, 1e-8), gap_weight > 1e-8));
-}
-
-fn contact_area_centre() -> vec2<f32> {
-    let q = frame.view_proj * vec4<f32>(contact_area_world, 1.0);
-    let uv = q.xy / q.w * vec2<f32>(0.5, -0.5) + 0.5;
-    return contact_area_sample(uv, q.z / q.w);
-}
-
-fn pcss_contact_gap() -> f32 {
-    if (!contact_area_active) { return -1.0; }
-    let centre = contact_area_centre();
-    if (centre.x >= 0.999 || centre.y <= 0.0) { return -1.0; }
-    return centre.y;
-}
-
-fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 {
-    if (!contact_area_active) { return 1.0; }
-    var delta = (contact_area_x * offset.x - contact_area_y * offset.y) * (2.0 * radius);
-    delta -= contact_area_z * (dot(contact_area_normal, delta) / dot(contact_area_normal, contact_area_z));
-    let q = frame.view_proj * vec4<f32>(contact_area_world + delta, 1.0);
-    if (q.w <= 0.0) { return 1.0; }
-    let ndc = q.xyz / q.w;
-    let uv = ndc.xy * vec2<f32>(0.5, -0.5) + 0.5;
-    if (any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return 1.0; }
-    return contact_area_sample(uv, ndc.z).x;
-}
-
-fn pcss_contact_complete() {
-    if (contact_area_active) { contact_area_combined = true; }
-}
-
-// Whether the fragment being shaded is the surface of the depth prepass,
-// whose contact shadows the mask holds: not a blended face.
+// Whether this fragment belongs to the contact-shadow depth surface.
 var<private> contact_surface: bool = true;
 
-// The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
-// what the shadow map is too coarse to show, taken as the darker of the
-// two (sun_shadow). 1 elsewhere: other views, blended faces, off.
 fn contact_shadow(frag: vec2<f32>) -> f32 {
     if (frame.contact.x < 0.5 || !contact_surface || in_reflection_pass()) {
         return 1.0;
@@ -1750,22 +1650,8 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
 // The sun's shadow of an opaque surface of the main view: the shadow map,
 // and the contact shadows where they are on.
 fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
-    contact_area_active = (frame.light_mode.z & 0x40000u) != 0u
-        && frame.contact.x >= 0.5 && contact_surface && !in_reflection_pass();
-    contact_area_combined = false;
-    contact_area_world = world_pos;
-    contact_area_normal = shadow_plane(n);
-    if (contact_area_active) {
-        let plane = transpose(frame.inv_view_proj) * vec4<f32>(contact_area_normal, -dot(contact_area_normal, world_pos));
-        if (abs(plane.z) > 1e-8) {
-            contact_area_depth_gradient = -plane.xy / plane.z;
-        } else {
-            contact_area_active = false;
-        }
-    }
     let s = shadow_factor(world_pos, n, vertex_depth);
-    contact_area_active = false;
-    if (contact_area_combined || frame.params.z < 0.5) {
+    if (frame.params.z < 0.5) {
         return s;
     }
     return min(s, contact_shadow(frag));
@@ -1855,33 +1741,6 @@ var<private> surface_occlusion: f32 = 0.0;
 // Smooth surface normal before bump mapping. The triangle plane used for
 // shadow-map depth correction has a separate role (shadow_receiver_plane).
 var<private> surface_base_normal: vec3<f32> = vec3<f32>(0.0);
-
-// TERMINATOR BEGIN
-// Chiang, Li and Burley, "Taming the Shadow Terminator" (2019), eqs. 1-2.
-// https://media.disneyanimation.com/technology/publications/2019/TamingtheShadowTerminator.pdf
-// Inputs are unit normals/directions. This is BRDF attenuation, not visibility:
-// apply once to direct illumination, leaving ambient and cast shadows intact.
-fn terminator_visibility(base: vec3<f32>, shading: vec3<f32>, light: vec3<f32>) -> f32 {
-    let alignment = dot(base, shading);
-    // Unperturbed normals must retain their exact response, even at grazing
-    // angles. Avoid a division on the common, unperturbed material path.
-    if (alignment >= 0.999999) { return 1.0; }
-    let nl = dot(shading, light);
-    let gl = dot(base, light);
-    if (nl <= 0.0 || gl <= 0.0 || alignment <= 0.0) { return 0.0; }
-    let denominator = nl * alignment;
-    if (gl >= denominator) { return 1.0; }
-    let g = gl / denominator;
-    return g * (1.0 + g * (1.0 - g));
-}
-// TERMINATOR END
-
-fn direct_visibility(n: vec3<f32>, l: vec3<f32>) -> f32 {
-    if ((frame.light_mode.z & SHADOW_FILTER_PCF) != 0u || dot(surface_base_normal, surface_base_normal) < 0.5) {
-        return 1.0;
-    }
-    return terminator_visibility(surface_base_normal, n, l);
-}
 
 // False while a translucent blended face is shaded: the screen-space
 // occlusion and indirect light come from the occlusion's depth, so on such
@@ -2047,7 +1906,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     // sun / moon
     let l = normalize(frame.sun_dir.xyz);
     let nl = max(dot(n, l), 0.0);
-    let direct_shadow = shadow * direct_visibility(n, l);
+    let direct_shadow = shadow ;
     if (legacy) {
         col += diffuse_color * frame.sun_color.rgb * (nl * direct_shadow / 3.0);
     } else if (nl > 0.0) {
@@ -2078,7 +1937,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
                 let f = f_schlick(f0, vh);
                 let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
                 let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-                col += (kd + spec) * lt.color_falloff.rgb * lnl * atten * direct_visibility(n, ll);
+                col += (kd + spec) * lt.color_falloff.rgb * lnl * atten ;
             }
         }
     }
@@ -2514,7 +2373,7 @@ fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
     let c = projector_diffuse(slot, uv, clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0));
     // the beam is shadowed, the ambiance is not (spotLightF)
     at.shadow = projector_shadow(i, world_pos, n);
-    at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow * direct_visibility(n, at.l);
+    at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow ;
     at.ambiance = pj.params.y;
     if (at.ambiance > 0.0) {
         // getTexture2DLodAmbient: the image's mean color (its last level),
@@ -2765,7 +2624,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
             // of the classic sky response, including its ambient colour.
             let ambient = srgb_to_linear(irr * 0.9);
             let lit = srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(vec3<f32>(pow(nl_sun, 1.2))) * sunlit * 0.7);
-            return (mix(ambient, lit, shadow * direct_visibility(n, normalize(frame.sun_dir.xyz))) + screen_indirect(frag)) * base;
+            return (mix(ambient, lit, shadow ) + screen_indirect(frag)) * base;
         }
         return (srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(sun_contrib) * sunlit * 0.7) + screen_indirect(frag)) * base;
     }
@@ -2773,7 +2632,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
     let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
-    let sun = select(nl_sun * shadow * direct_visibility(n, normalize(frame.sun_dir.xyz)), min(nl_sun, shadow), (frame.light_mode.z & SHADOW_FILTER_PCF) != 0u);
+    let sun = select(nl_sun * shadow , min(nl_sun, shadow), (frame.light_mode.z & SHADOW_FILTER_PCF) != 0u);
     return (irr + sun * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
 }
 
@@ -2791,7 +2650,7 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
         if (dist < radius) {
             let nl = dot(n, to_l / max(dist, 1e-4));
             if (nl > 0.0) {
-                local += lt.color_falloff.rgb / 3.25 * nl * ll_light_atten(dist / radius, lt.color_falloff.w) * base * direct_visibility(n, to_l / max(dist, 1e-4));
+                local += lt.color_falloff.rgb / 3.25 * nl * ll_light_atten(dist / radius, lt.color_falloff.w) * base ;
             }
         }
     }
@@ -2836,7 +2695,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
         let direct = select(pow(nl, 1.2), min(pow(nl, 1.2), shadow), (frame.light_mode.z & SHADOW_FILTER_PCF) != 0u);
         let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(direct)) * sunlit * 0.7) * PI;
-        final_sun = clamp(sun_contrib * (diff + spec) * shadow * direct_visibility(n, l), vec3<f32>(0.0), vec3<f32>(10.0));
+        final_sun = clamp(sun_contrib * (diff + spec) * shadow , vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
     // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2886,7 +2745,7 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
                 let spec = d_ggx(max(dot(n, h), 0.0), ra) * v_smith(nv, lnl, ra) * f;
                 let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
                 let intensity = ll_light_atten(dist / radius, lt.color_falloff.w) * lt.color_falloff.rgb;
-                col += intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0)) * direct_visibility(n, ll);
+                col += intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0)) ;
             }
         }
     }

@@ -5,9 +5,6 @@
 // wavefront would have shared for its read `index / WAVE_SIZE`, with the
 // same arithmetic, so the mask stays the same.
 
-// Only the joint stream variant opts into continuous depth reconstruction.
-const CONTINUOUS_DEPTH: bool = false;
-
 struct Wave {
     start_xy: vec2<f32>,
     end_xy: vec2<f32>,
@@ -38,14 +35,7 @@ fn stored_depth(w: Wave, index: i32) -> f32 {
     let d1 = load_depth(read_xy + offset_xy);
     let use_point_filter = abs(d0 - d1) > abs(FAR_DEPTH - d0) * params.tuning.y;
     let shadow_depth = d0 + abs(d0 - d1) * w.z_sign;
-    var shadowing_depth = select(shadow_depth, d0, use_point_filter);
-    if (CONTINUOUS_DEPTH) {
-        // Fade the conservative depth extension instead of snapping when
-        // rotation moves a sample pair across the depth-discontinuity limit.
-        let relative_gap = abs(d0 - d1) / max(abs(FAR_DEPTH - d0), 1e-8);
-        let continuity = 1.0 - smoothstep(params.tuning.y * 0.5, params.tuning.y, relative_gap);
-        shadowing_depth = mix(d0, shadow_depth, continuity);
-    }
+    let shadowing_depth = select(shadow_depth, d0, use_point_filter);
     let sample_distance = pixel_distance + f32(WAVE_SIZE * i) * w.direction;
     var stored = (shadowing_depth - params.light.z) / sample_distance;
     if (i != 0) {

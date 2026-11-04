@@ -1048,7 +1048,7 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     gloss_sky *= specular_occlusion(frag, r, 1.0 - spec.a, 1.0);
     if (spec.a > 0.0) {
         let l = normalize(frame.sun_dir.xyz);
-        col += ll_spec(n, v, l, spec.a) * shadow * direct_visibility(n, l) * sun_lin * spec.rgb;
+        col += ll_spec(n, v, l, spec.a) * shadow  * sun_lin * spec.rgb;
         // applyGlossEnv: its "fake energy conservation" is not clamped, a
         // face lit above 1 loses light there
         var fresnel = clamp(1.0 - dot(v, n), 0.3, 1.0);
@@ -1087,7 +1087,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             let radius = lt.pos_radius.w;
             if (dist < radius) {
                 let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
-                let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten * direct_visibility(n, to_l / max(dist, 1e-4));
+                let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten ;
                 col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
             }
         }
@@ -1113,7 +1113,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
                 let uv = stc.xy / stc.w;
                 if (stc.z > 0.0 && uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
                     let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * 0.6);
-                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * at.shadow * env * direct_visibility(n, ref_dir);
+                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * at.shadow * env ;
                 }
             }
         }
@@ -1400,7 +1400,10 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     surface_base_normal = m.geo_n;
     shadow_receiver_offset = m.shadow_offset;
     shadow_receiver_curvature = m.shadow_curvature;
-    shadow_receiver_plane = select(m.plane_n, m.geo_n, dot(m.shadow_offset, m.shadow_offset) > 1e-12);
+    // A tiny fit offset must not switch the receiver to a different normal.
+    // The smooth geometric field is continuous across shared mesh edges;
+    // curvature confidence bounds its tangent-plane extrapolation.
+    shadow_receiver_plane = m.geo_n;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
     // lies behind it

@@ -1535,7 +1535,6 @@ pub(crate) struct Backend {
     /// This frame's GTAO reads the mesh normals the depth prepass draws
     /// (`AURORA_GTAO_NORMALS=alt` switches them each second).
     gtao_normals_now: bool,
-    motion_normals_now: bool,
     /// This frame draws the blended faces at least half covered into the
     /// occlusion's depth (`AURORA_BLEND_AO`).
     blend_ao_depth: bool,
@@ -1608,7 +1607,7 @@ pub(crate) struct Backend {
     /// was submitted since: the next one takes its matrices as the previous.
     motion_cut: bool,
     /// The last submitted frame kept its matrices for the next one: only
-    /// while something reads the motion (`motion_normals_now`).
+    /// while something reads the motion (`gtao_normals_now`).
     motion_kept: bool,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
@@ -3140,7 +3139,6 @@ impl Backend {
             contact,
             contact_now: false,
             gtao_normals_now: false,
-            motion_normals_now: false,
             blend_ao_depth: true,
             bloom,
             exposure,
@@ -4262,7 +4260,7 @@ impl Backend {
         let gtao_shown = gtao.is_some() && !legacy_ao;
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
-            .then(|| contact.targets_with_motion(device, &depth_ss, DEPTH_FORMAT, w, h, gtao.as_ref().map(|g| &g.normals)));
+            .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
         let water_refl = refl("water reflection", s.water_reflection_scale, false);
         let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
         let mirror = refl("mirror", s.mirror_scale, false);
@@ -5900,11 +5898,9 @@ impl Backend {
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
-        self.motion_normals_now =
-            self.gtao_normals_now || (self.contact_now && self.targets.contact.as_ref().is_some_and(|t| t.history.is_some()));
         // nothing kept the matrices while nothing read the motion: the
         // first frame that reads it again starts the history again
-        self.motion_cut |= self.motion_normals_now && !self.motion_kept;
+        self.motion_cut |= self.gtao_normals_now && !self.motion_kept;
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         if f.photo_tile != Mat4::IDENTITY {
@@ -6019,10 +6015,6 @@ impl Backend {
             Ok("before") => 0x300,
             _ => 0,
         });
-        let area_contacts = self.settings.shadow_pcss && crate::contact_shadows::area_mode(self.frame_index);
-        if area_contacts {
-            main.light_sets.mode[2] |= 0x40000;
-        }
         if !self.settings.shadow_pcss {
             main.light_sets.mode[2] |= 0x20000; // SHADOW_FILTER_PCF
         }
@@ -6337,29 +6329,6 @@ impl Backend {
             // an infinite reversed projection keeps its near plane there
             // (centred or not: tiled photos); a photo larger than the
             // viewfinder marches as much further
-            self.contact
-                .set_area_geometry(area_contacts.then(|| (fu.proj.inverse(), fu.view.transform_vector3(f.sun_dir))));
-            let centre = glam::Vec4::new(0.0, 0.0, -1.0, 1.0);
-            let jittered = fu.proj * centre;
-            let unjittered = f.proj * centre;
-            let jitter = (jittered.truncate().truncate() / jittered.w - unjittered.truncate().truncate() / unjittered.w)
-                * glam::Vec2::new(0.5, -0.5);
-            self.contact.write_history(
-                &self.queue,
-                t,
-                crate::contact_history::Frame {
-                    index: self.frame_index,
-                    projection: fu.proj,
-                    view: fu.view,
-                    jitter,
-                    sun: f.sun_dir,
-                    reset: self.motion_cut
-                        || snapshot.is_some()
-                        || f.photo_tile != Mat4::IDENTITY
-                        || f.photo_scale != 1.0
-                        || !area_contacts,
-                },
-            );
             self.contact.write(
                 &self.device,
                 &self.queue,
@@ -6752,7 +6721,7 @@ impl Backend {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        if self.motion_cut && self.motion_normals_now {
+        if self.motion_cut && self.gtao_normals_now {
             self.motion_history.encode(&self.device, &mut encoder, &scene);
         }
         if let Some(old) = old_impostor_atlas {
@@ -7022,16 +6991,7 @@ impl Backend {
         };
         // GTAO's mesh normals, drawn beside the depth when it reads them;
         // without them the passes keep no colour target at all
-        let normals = self
-            .motion_normals_now
-            .then(|| {
-                self.targets
-                    .gtao
-                    .as_ref()
-                    .map(|g| &g.normals)
-                    .or_else(|| self.targets.contact.as_ref().and_then(|t| t.history.as_ref()).map(|h| &h.motion))
-            })
-            .flatten();
+        let normals = self.targets.gtao.as_ref().filter(|_| self.gtao_normals_now).map(|g| &g.normals);
         let normal_target = |load| {
             normals.map(|view| {
                 Some(wgpu::RenderPassColorAttachment {
@@ -8334,16 +8294,7 @@ impl Backend {
         }
 
         if let Some(debug) = &self.motion_debug {
-            let motion = self
-                .motion_normals_now
-                .then(|| {
-                    self.targets
-                        .gtao
-                        .as_ref()
-                        .map(|g| &g.normals)
-                        .or_else(|| self.targets.contact.as_ref().and_then(|t| t.history.as_ref()).map(|h| &h.motion))
-                })
-                .flatten();
+            let motion = self.targets.gtao.as_ref().filter(|_| self.gtao_normals_now).map(|g| &g.normals);
             debug.encode(
                 &self.device,
                 &self.queue,
@@ -8618,8 +8569,8 @@ impl Backend {
 
         prof.mark("egui");
         // after every pass that read this frame's matrices; without a
-        // reader of the motion (neither GTAO normals nor contact history) no copy runs
-        if self.motion_normals_now {
+        // reader of the motion (GTAO off or from the depth) no copy runs
+        if self.gtao_normals_now {
             self.motion_history.encode(&self.device, &mut encoder, &scene);
         }
         if wanted == Some(Capture::Full) {
@@ -8675,7 +8626,7 @@ impl Backend {
             self.queue.on_submitted_work_done(move || frames.finished_through(index));
         }
         self.motion_cut = false;
-        self.motion_kept = self.motion_normals_now;
+        self.motion_kept = self.gtao_normals_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
         let mut captured = None;

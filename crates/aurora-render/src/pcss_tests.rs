@@ -98,71 +98,6 @@ fn pcss_penumbra_grows_in_metres_and_stays_inside_its_cascade() {
         pass.draw(0..3, 0..1);
     }
     queue.submit([encoder.finish()]);
-    contact_history_contract(&device, &queue, &depth);
-    // Exercise the production reconstruction across a texel boundary, with
-    // a synthetic contact edge over the real constant-depth GPU fixture.
-    let reconstruction = crate::COMMON_SHADER
-        .split("fn contact_area_sample(")
-        .nth(1)
-        .expect("contact reconstruction")
-        .split("fn contact_area_centre()")
-        .next()
-        .expect("contact reconstruction end");
-    let reconstruction = format!("fn contact_area_sample({reconstruction}")
-        .replace("textureDimensions(contact_tex)", "textureDimensions(shadow_map)")
-        .replace("textureLoad(depth_tex, pixel, 0)", "textureLoad(shadow_map, pixel, 0)")
-        .replace(
-            "textureLoad(contact_tex, pixel, 0)",
-            "vec4<f32>(select(0.0, 1.0, pixel.x >= 128), 32.0 / 255.0, 0.0, 0.0)",
-        );
-    let reconstruction_source = format!(
-        r#"
-@group(0) @binding(0) var shadow_map: texture_depth_2d;
-@group(0) @binding(1) var shadow_sampler: sampler_comparison;
-var<private> contact_area_depth_gradient: vec2<f32>;
-{reconstruction}
-struct Query {{ a: vec4<f32>, b: vec4<f32> }};
-@group(0) @binding(2) var<storage, read> queries: array<Query>;
-@group(0) @binding(3) var<storage, read_write> results: array<vec4<f32>>;
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
-    if (id.x >= arrayLength(&queries)) {{ return; }}
-    let q = queries[id.x];
-    contact_area_depth_gradient = q.b.xy;
-    let sample = contact_area_sample(q.a.xy, q.a.z);
-    results[id.x] = vec4<f32>(sample, 0.0, textureSampleCompareLevel(shadow_map, shadow_sampler, q.a.xy, q.a.z));
-}}
-"#
-    );
-    let reconstruction_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("continuous contact reconstruction"),
-        source: wgpu::ShaderSource::Wgsl(reconstruction_source.into()),
-    });
-    let reconstruction_pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-        label: Some("continuous contact reconstruction"),
-        layout: None,
-        module: &reconstruction_module,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let mut reconstruction_queries: Vec<[f32; 8]> = [-0.49, -0.001, 0.0, 0.001, 0.49]
-        .into_iter()
-        .map(|delta| [(128.0 + delta) / 512.0, 128.0 / 512.0, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0])
-        .collect();
-    reconstruction_queries.push([128.0 / 512.0, 128.0 / 512.0, 0.8, 0.0, 0.0, 0.0, 0.0, 0.0]);
-    let reconstructed = run_queries(&device, &queue, &reconstruction_pipeline, &depth, &reconstruction_queries);
-    for (sample, expected) in reconstructed[..5].iter().zip([0.99, 0.501, 0.5, 0.499, 0.01]) {
-        assert!(
-            (sample[0] - expected).abs() < 0.0001,
-            "subpixel contact reconstruction: {reconstructed:?}"
-        );
-        assert!((sample[1] - 0.03).abs() < 0.0001, "distance must use the opacity's valid samples");
-    }
-    assert!(
-        reconstructed[5][0] > 0.999 && reconstructed[5][1] < 0.0,
-        "another surface must not lend its shadow or blocker distance: {reconstructed:?}"
-    );
     let body = crate::COMMON_SHADER
         .split("// PCSS BEGIN")
         .nth(1)
@@ -175,9 +110,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
 @group(0) @binding(0) var shadow_map: texture_depth_2d;
 @group(0) @binding(1) var shadow_sampler: sampler_comparison;
 {body}
-fn pcss_contact_gap() -> f32 {{ return -1.0; }}
-fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 {{ return 1.0; }}
-fn pcss_contact_complete() {{ }}
+const TEST_CURVATURE: f32 = 0.0;
 struct Query {{ a: vec4<f32>, b: vec4<f32> }};
 @group(0) @binding(2) var<storage, read> queries: array<Query>;
 @group(0) @binding(3) var<storage, read_write> results: array<vec4<f32>>;
@@ -187,11 +120,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     let q = queries[id.x];
     let texel = 1.0 / 256.0;
     let bias = q.b.w * 0.001;
-    let soft = pcss_shadow(q.a.xy, q.b.xy, texel, q.a.w, q.a.z, bias, vec2<f32>(q.b.z, 0.0), q.b.w);
-    let fallback = pcss_compare(q.a.xy, vec2<f32>(0.0), q.b.xy, texel, q.a.z, bias, vec2<f32>(q.b.z, 0.0));
+    let span = 1.5 * texel;
+    let minimum_radius = 2.0 * q.a.w * span * sqrt(5.0 / 9.0);
+    let soft = pcss_shadow(q.a.xy, q.b.xy, texel, q.a.w, q.a.z, bias,
+        vec2<f32>(q.b.z, 0.0), q.b.w, TEST_CURVATURE, minimum_radius);
+    let fallback = directional_pcf(q.a.xy, q.b.xy, texel, q.a.z, bias, span, 4u);
     let curvature = receiver_curvature(vec3<f32>(q.a.w, 0.0, 0.0), vec3<f32>(0.6 * q.a.w, 0.2 * q.a.w, 0.0),
         vec3<f32>(q.a.w * q.b.z, 0.0, 0.0), vec3<f32>(0.6 * q.a.w * q.b.z, 0.0, 0.0));
-    results[id.x] = vec4<f32>(select(soft, fallback, soft < 0.0), soft,
+    results[id.x] = vec4<f32>(mix(fallback, max(soft.x, 0.0), soft.y), soft.x,
         receiver_plane_confidence(curvature, PCSS_MAX_RADIUS, q.b.w), curvature);
 }}
 "#
@@ -235,7 +171,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     for scale in [0.01, 0.001] {
         for cascade in 0..3u32 {
             let radius = (1u32 << cascade) as f32;
-            for separation in [0.05, 2.0, 8.0] {
+            for separation in [0.05, 3.0, 8.0] {
                 for i in 0..81 {
                     let world_x = 0.3 + i as f32 * 0.005;
                     queries.push([
@@ -323,7 +259,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     });
     let mut transition_queries = Vec::new();
     for u in [0.746_f32, 0.747, 0.748, 0.749, 0.750, 0.751, 0.752, 0.753, 0.754] {
-        for gap in [0.390625_f32 - 0.0001, 0.390625 + 0.0001] {
+        for gap in [0.436732_f32 - 0.0001, 0.436732 + 0.0001] {
             transition_queries.push([u, 0.5, 0.4 + 0.01 * gap, 1.0, 0.0, 0.0, 0.0, 0.01]);
         }
     }
@@ -337,48 +273,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
         "small/wide PCSS transition must be continuous: {transition:?}"
     );
 
-    // A shared far caster must not acquire a hard screen-space silhouette.
-    // A separate near contact must stay sharp without shrinking the far map
-    // penumbra. These fail if finished masks are simply min-composed, or if
-    // both filters use the nearest caster's radius.
-    let joint_queries = [
-        [0.5 + 0.495 / 2.0, 0.5, 0.48, 1.0, 0.0, 0.0, 0.0, 0.01],
-        [0.5 + 0.520 / 2.0, 0.5, 0.48, 1.0, 0.0, 0.0, 0.0, 0.01],
-    ];
-    let mapped = run_queries(&device, &queue, &pipeline, &depth, &joint_queries);
-    for contact_gap in [8.0, 0.05] {
-        let joint = source
-            .replace("fn pcss_contact_gap() -> f32 { return -1.0; }",
-                &format!("fn pcss_contact_gap() -> f32 {{ return {contact_gap}; }}"))
-            .replace("fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 { return 1.0; }",
-                "var<private> test_world_x: f32;\nfn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 { return select(1.0, 0.0, test_world_x + offset.x * (2.0 * radius) < 0.5); }")
-            .replace("    let soft = pcss_shadow(", "    test_world_x = (q.a.x - 0.5) * (2.0 * q.a.w);\n    let soft = pcss_shadow(");
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("joint contact/map visibility"),
-            source: wgpu::ShaderSource::Wgsl(joint.into()),
-        });
-        let joint_pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-            label: Some("joint contact/map visibility"),
-            layout: None,
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        let samples = run_queries(&device, &queue, &joint_pipeline, &depth, &joint_queries);
-        if contact_gap > 1.0 {
-            assert!(
-                samples[0][0] > 0.2 && samples[0][0] < 0.8,
-                "contact detail must not harden a shared far penumbra: {samples:?}"
-            );
-        } else {
-            assert!(samples[0][0] < 0.01, "true near contact stays sharp");
-            assert!(
-                (samples[1][0] - mapped[1][0]).abs() < 0.002,
-                "a near contact must not shrink the far mapped penumbra"
-            );
-        }
-    }
     // A sloping, unoccluded receiver must not become its own blocker as
     // sub-texel sample positions change. The point depth is at a texel centre.
     let plane = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -390,39 +284,43 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
 }
 @fragment fn fs(@builtin(position) p: vec4<f32>) -> @builtin(frag_depth) f32 {
-    return 0.4 + 0.06 * (fract(p.x / 256.0) - 0.5);
+    return 0.4 + 0.06 * (fract(p.x / 256.0) - 0.5) + 2.0 * 0.06 / 256.0;
 }
+
 "#
             .into(),
         ),
     });
-    let plane_raster = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
-        label: Some("PCSS fixture"),
-        layout: None,
-        vertex: wgpu::VertexState {
-            module: &plane,
-            entry_point: Some("vs"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        primitive: Default::default(),
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: Default::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &plane,
-            entry_point: Some("fs"),
-            compilation_options: Default::default(),
-            targets: &[],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
+    let make_plane_raster = |entry| {
+        device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+            label: Some("PCSS fixture"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &plane,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &plane,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let plane_raster = make_plane_raster("fs");
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -469,6 +367,66 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     assert!(
         samples.iter().all(|s| s[1] < 0.0),
         "a receiver plane must not produce false blockers: {samples:?}"
+    );
+
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("PCSS near blocker"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&raster);
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+    // Close blockers must preserve the ordinary filter, even when receiver
+    // normals or curvature change. Vary the irrelevant curvature field over
+    // sub-texel positions and require the same mask as the baseline.
+    let mut contact_probes = Vec::new();
+    for phase in 0..257 {
+        let u = 0.746 + phase as f32 / (256.0 * 256.0);
+        contact_probes.push([u, 0.5, 0.4005, 1.0, 0.0, 0.0, 0.0, 0.01]);
+    }
+    let contact_source = source
+        .replace("const TEST_CURVATURE: f32 = 0.0;", "const TEST_CURVATURE: f32 = 1000000.0;")
+        .replace("let bias = q.b.w * 0.001;", "let bias = 4.0 * q.a.w * texel * q.b.w;")
+        .replace(
+            "receiver_plane_confidence(curvature, PCSS_MAX_RADIUS, q.b.w), curvature",
+            "fallback, curvature",
+        );
+    let contact_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("PCSS contact filter parity"),
+        source: wgpu::ShaderSource::Wgsl(contact_source.into()),
+    });
+    let contact_pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("PCSS contact filter parity"),
+        layout: None,
+        module: &contact_module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let contact = run_queries(&device, &queue, &contact_pipeline, &depth, &contact_probes);
+    let low = contact.iter().map(|s| s[2]).fold(1.0_f32, f32::min);
+    let high = contact.iter().map(|s| s[2]).fold(0.0_f32, f32::max);
+    assert!(
+        high - low > 0.1,
+        "the parity fixture must cross a shadow edge, not a uniformly lit region"
+    );
+    assert!(
+        contact.iter().all(|s| (s[0] - s[2]).abs() < 1e-6),
+        "sub-resolution PCSS must match the ordinary shadow mask through motion: {contact:?}"
     );
 }
 
@@ -581,9 +539,6 @@ fn projector_pcss_hardens_at_contact_and_isolates_atlas_tiles() {
 @group(0) @binding(0) var shadow_map: texture_depth_2d;
 @group(0) @binding(1) var shadow_sampler: sampler_comparison;
 {body}
-fn pcss_contact_gap() -> f32 {{ return -1.0; }}
-fn pcss_contact_visibility(offset: vec2<f32>, radius: f32) -> f32 {{ return 1.0; }}
-fn pcss_contact_complete() {{ }}
 struct Query {{ a: vec4<f32>, b: vec4<f32> }};
 @group(0) @binding(2) var<storage, read> queries: array<Query>;
 @group(0) @binding(3) var<storage, read_write> results: array<vec4<f32>>;
@@ -823,20 +778,13 @@ fn run_queries(
 
 #[test]
 #[ignore = "requires a GPU"]
-fn pcss_terminator_preserves_unperturbed_normals_and_softens_the_horizon() {
+fn pcss_receiver_fit_preserves_signed_curvature_and_flat_surfaces() {
     let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::default();
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
         return;
     };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("test device");
-    let body = crate::COMMON_SHADER
-        .split("// TERMINATOR BEGIN")
-        .nth(1)
-        .expect("terminator start")
-        .split("// TERMINATOR END")
-        .next()
-        .expect("terminator end");
     let smooth_body = crate::COMMON_SHADER
         .split("// SMOOTH RECEIVER BEGIN")
         .nth(1)
@@ -846,7 +794,6 @@ fn pcss_terminator_preserves_unperturbed_normals_and_softens_the_horizon() {
         .expect("smooth receiver end");
     let source = format!(
         r#"
-{body}
 const SMOOTH_RECEIVER_MAX_OFFSET: f32 = 0.05;
 {smooth_body}
 @group(0) @binding(0) var shadow_map: texture_depth_2d;
@@ -860,23 +807,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     let q = queries[id.x];
     var factor = 1.0;
     var offset = vec3<f32>(0.0);
-    if (q.b.w < 0.5) {{
-        let n = vec3<f32>(sin(q.a.x), 0.0, cos(q.a.x));
-        let l = vec3<f32>(sin(q.a.y), 0.0, cos(q.a.y));
-        factor = terminator_visibility(vec3<f32>(0.0, 0.0, 1.0), n, l);
-    }} else {{
-        offset = smooth_receiver_offset(q.a.xyz, q.b.xyz, q.a.w);
-    }}
+    offset = smooth_receiver_offset(q.a.xyz, q.b.xyz, q.a.w);
     results[id.x] = vec4<f32>(factor, textureSampleCompareLevel(shadow_map, shadow_sampler, vec2<f32>(0.5), 0.0), offset.z, length(offset.xy));
 }}
 "#
     );
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Disney terminator contract"),
+        label: Some("smooth receiver contract"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
     });
     let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-        label: Some("Disney terminator contract"),
+        label: Some("smooth receiver contract"),
         layout: None,
         module: &module,
         entry_point: Some("main"),
@@ -884,7 +825,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
         cache: None,
     });
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("terminator test map"),
+        label: Some("receiver test map"),
         size: wgpu::Extent3d {
             width: 1,
             height: 1,
@@ -900,23 +841,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
     let depth = texture.create_view(&Default::default());
     let mut queries = Vec::new();
     let mut expected = Vec::new();
-    for tilt in [-75.0_f64, -45.0, -15.0, 0.0, 15.0, 45.0, 75.0] {
-        for angle in -179..=179 {
-            let ns = tilt.to_radians();
-            let light = f64::from(angle).to_radians();
-            let nl = (ns - light).cos();
-            let gl = light.cos();
-            let g = if tilt == 0.0 {
-                1.0
-            } else if nl <= 0.0 || gl <= 0.0 {
-                0.0
-            } else {
-                (gl / (nl * ns.cos())).min(1.0)
-            };
-            expected.push(-g * g * g + g * g + g);
-            queries.push([ns as f32, light as f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-        }
-    }
     let mut expected_offsets = vec![[0.0_f32; 2]; queries.len()];
     let mut probe = |raw: glam::DVec3, position: glam::DVec3, moment: f64, offset: glam::DVec3| {
         queries.push([
@@ -998,197 +922,4 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
             assert_eq!(got[0], 1.0, "no normal perturbation must preserve the original response");
         }
     }
-}
-
-// Real multi-frame GPU history, including a stationary receiver whose caster
-// disappears. A receiver-only motion test would miss that trailing-shadow bug.
-fn contact_history_contract(device: &wgpu::Device, queue: &wgpu::Queue, depth: &wgpu::TextureView) {
-    use crate::contact_history::{Frame, History};
-    use glam::{Mat4, Vec2, Vec3};
-    let make = |format, usage| {
-        device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("contact history contract"),
-            size: wgpu::Extent3d {
-                width: 512,
-                height: 512,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage,
-            view_formats: &[],
-        })
-    };
-    let current = make(
-        wgpu::TextureFormat::Rgba8Unorm,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    );
-    let motion = make(
-        wgpu::TextureFormat::Rgba32Float,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    );
-    let output = make(
-        wgpu::TextureFormat::Rgba8Unorm,
-        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
-    );
-    let mut history = History::new(device);
-    let targets = history.targets(
-        device,
-        (512, 512),
-        [depth, depth],
-        &current.create_view(&Default::default()),
-        &output.create_view(&Default::default()),
-        Some(&motion.create_view(&Default::default())),
-    );
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("contact history readback"),
-        size: 256,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut step = |index, opacity: u8, gap: u8, normal: [f32; 4], reset, view| {
-        let pixels = [opacity, gap, 0, 0].repeat(512 * 512);
-        queue.write_texture(
-            current.as_image_copy(),
-            &pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(512 * 4),
-                rows_per_image: Some(512),
-            },
-            wgpu::Extent3d {
-                width: 512,
-                height: 512,
-                depth_or_array_layers: 1,
-            },
-        );
-        let normals = normal.repeat(512 * 512);
-        queue.write_texture(
-            motion.as_image_copy(),
-            bytemuck::cast_slice(&normals),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(512 * 16),
-                rows_per_image: Some(512),
-            },
-            wgpu::Extent3d {
-                width: 512,
-                height: 512,
-                depth_or_array_layers: 1,
-            },
-        );
-        history.write(
-            queue,
-            &targets,
-            Frame {
-                index,
-                projection: Mat4::IDENTITY,
-                view,
-                jitter: Vec2::ZERO,
-                sun: Vec3::Z,
-                reset,
-            },
-        );
-        let mut encoder = device.create_command_encoder(&Default::default());
-        history.encode(&mut encoder, &targets, false);
-        let mut src = output.as_image_copy();
-        src.origin = wgpu::Origin3d { x: 128, y: 128, z: 0 };
-        encoder.copy_texture_to_buffer(
-            src,
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(256),
-                    rows_per_image: Some(1),
-                },
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        queue.submit([encoder.finish()]);
-        buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("history map"));
-        device.poll(wgpu::PollType::wait_indefinitely()).expect("history GPU");
-        let data = buffer.slice(..).get_mapped_range().expect("history result");
-        let value = data[0];
-        drop(data);
-        buffer.unmap();
-        value
-    };
-    let still = [0.0; 4];
-    assert_eq!(
-        step(1, 192, 32, still, false, Mat4::IDENTITY),
-        192,
-        "first frame cannot read uninitialized history"
-    );
-    assert!(
-        (186..=190).contains(&step(2, 176, 32, still, false, Mat4::IDENTITY)),
-        "stable surface should accumulate"
-    );
-    assert_eq!(
-        step(3, 0, 0, still, false, Mat4::IDENTITY),
-        0,
-        "a disappearing caster must clear in the same frame"
-    );
-    assert_eq!(
-        step(4, 200, 64, still, false, Mat4::IDENTITY),
-        200,
-        "a newly arriving caster must appear immediately"
-    );
-    assert_eq!(
-        step(5, 184, 96, still, false, Mat4::IDENTITY),
-        184,
-        "changed blocker distance must reject history"
-    );
-    let turned = [1.0, 0.0, 0.0, 0.0];
-    assert_eq!(
-        step(6, 168, 96, turned, false, Mat4::IDENTITY),
-        168,
-        "changed surface normal must reject history"
-    );
-    assert_eq!(
-        step(7, 152, 96, turned, true, Mat4::IDENTITY),
-        152,
-        "photo/camera reset must use the current frame"
-    );
-    assert_eq!(
-        step(8, 136, 96, turned, false, Mat4::IDENTITY),
-        136,
-        "reset must invalidate history for the next frame"
-    );
-    assert_eq!(
-        step(10, 120, 96, turned, false, Mat4::IDENTITY),
-        120,
-        "a skipped contact frame must invalidate history"
-    );
-    assert!(
-        (113..=118).contains(&step(11, 104, 96, turned, false, Mat4::IDENTITY)),
-        "history should recover after a reset"
-    );
-    assert_eq!(
-        step(12, 88, 96, turned, false, Mat4::from_translation(Vec3::new(0.0, 0.0, 0.1))),
-        88,
-        "newly exposed depth must reject history"
-    );
-    let mut settled = Vec::new();
-    for index in 20..36 {
-        let value = step(index, if index % 2 == 0 { 192 } else { 176 }, 96, still, false, Mat4::IDENTITY);
-        if index >= 28 {
-            settled.push(value);
-        }
-    }
-    let lo = *settled.iter().min().expect("settled frames");
-    let hi = *settled.iter().max().expect("settled frames");
-    assert!(hi - lo <= 5, "stable-surface variation should shrink from 16 levels: {settled:?}");
-    let moving = [0.0, 0.0, 0.005, 0.0];
-    let moved = step(36, 168, 96, moving, false, Mat4::from_translation(Vec3::new(0.01, 0.0, 0.0)));
-    assert!(
-        (172..=182).contains(&moved),
-        "correctly reprojected motion should retain valid history: {moved}"
-    );
 }

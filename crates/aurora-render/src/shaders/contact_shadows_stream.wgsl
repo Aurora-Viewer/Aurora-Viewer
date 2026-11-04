@@ -39,8 +39,6 @@ struct Params {
     // occluders' depth in units of surface thickness per unit of reversed
     // depth (0: Bend's shell of one unit)
     tuning: vec4<f32>,
-    inverse_projection: mat4x4<f32>,
-    area_light: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -229,17 +227,12 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);
     var hard = 1.0;
     var soft = vec4<f32>(1.0);
-    var blocker_k = 0;
-    var blocker_depth = 0.0;
-    var blocker_value = 1.0;
     if (STREAM_REFERENCE) {
         // Independent scalar oracle: no span bounds, no shared sample cache,
         // and no saturation early exit. Keep the original depth_delta math.
         if (!skip_pixel) {
             for (var k = 1; k <= reach; k++) {
-                let stored = stored_depth(wave, i32(tid) + k);
-                let value = depth_delta(window, stored, k);
-                if (params.area_light.w > 0.5 && blocker_value > 0.75 && value < blocker_value) { blocker_value = value; blocker_k = k; blocker_depth = stored; }
+                let value = depth_delta(window, stored_depth(wave, i32(tid) + k), k);
                 if (k <= HARD_SHADOW_SAMPLES) { hard = min(hard, value); }
                 else { soft[(k - 1) & 3] = min(soft[(k - 1) & 3], value); }
             }
@@ -270,9 +263,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
                     for (var j = 0; j < 16; j++) {
                         let k = first_k + j;
                         if (k >= 1 && k <= reach) {
-                            let stored = stream_depth[block * 16 + j];
-                            let value = depth_delta(window, stored, k);
-                            if (params.area_light.w > 0.5 && blocker_value > 0.75 && value < blocker_value) { blocker_value = value; blocker_k = k; blocker_depth = stored; }
+                            let value = depth_delta(window, stream_depth[block * 16 + j], k);
                             if (k <= HARD_SHADOW_SAMPLES) { hard = min(hard, value); }
                             else { soft[(k - 1) & 3] = min(soft[(k - 1) & 3], value); }
                         }
@@ -293,34 +284,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
         let error = pixel_xy - (vec2<f32>(write_xy) + 0.5);
         let priority = u32(round(clamp(2.0 * dot(error, error), 0.0, 1.0) * 16777214.0));
         let opacity = u32(round(saturate(1.0 - result) * 255.0));
-        var key = (priority << 8u) | (255u - opacity);
-        if (params.area_light.w > 0.5) {
-            // One atomic word retains opacity and blocker separation together.
-            // Sixteen position-priority bits still resolve subpixel ownership;
-            // the last byte encodes centimetre-scale distances logarithmically.
-            var distance_code = 0u;
-            if (blocker_k > 0 && opacity > 0u) {
-                let index = i32(tid) + blocker_k;
-                let tile = index / WAVE_SIZE;
-                let lane = u32(index % WAVE_SIZE);
-                let step = f32(lane ^ select(u32(WAVE_SIZE - 1), 0u, wave.reverse_direction));
-                var sample_xy = mix(wave.start_xy, wave.end_xy, step / f32(WAVE_SIZE));
-                for (var i = 0; i < tile; i++) { sample_xy += wave.xy_delta * wave.direction; }
-                let distance = wave.major_axis_start - step + wave.ma_light_frac + f32(WAVE_SIZE * tile) * wave.direction;
-                let depth = blocker_depth * distance + params.light.z;
-                let receiver_ndc = vec2<f32>((vec2<f32>(write_xy) + 0.5) / vec2<f32>(size)) * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
-                let sample_ndc = sample_xy / vec2<f32>(size) * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
-                let r = params.inverse_projection * vec4<f32>(receiver_ndc, receiver, 1.0);
-                let c = params.inverse_projection * vec4<f32>(sample_ndc, depth, 1.0);
-                if (abs(r.w) > 1e-8 && abs(c.w) > 1e-8) {
-                    let gap = dot(c.xyz / c.w - r.xyz / r.w, params.area_light.xyz);
-                    if (gap > 0.0) { distance_code = u32(clamp(round(log2(1.0 + gap * 100.0) * 16.0), 1.0, 254.0)); }
-                }
-            }
-            let owner_priority = u32(round(clamp(2.0 * dot(error, error), 0.0, 1.0) * 65534.0));
-            key = (owner_priority << 16u) | ((255u - opacity) << 8u) | distance_code;
-        }
-        owner_store(u32(write_xy.y * size.x + write_xy.x), key);
+        owner_store(u32(write_xy.y * size.x + write_xy.x), (priority << 8u) | (255u - opacity));
     }
 }
 // No candidate owns a pixel until the trace has completed.
@@ -338,12 +302,7 @@ fn resolve(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(out_tex);
     if (id.x < size.x && id.y < size.y) {
         let key = owner_load(id.y * size.x + id.x);
-        var shadow = select(f32(255u - (key & 255u)) / 255.0, 0.0, key == 0xffffffffu);
-        var separation = 0.0;
-        if (params.area_light.w > 0.5 && key != 0xffffffffu) {
-            shadow = f32(255u - ((key >> 8u) & 255u)) / 255.0;
-            separation = f32(key & 255u) / 255.0;
-        }
-        textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(shadow, separation, 0.0, 0.0));
+        let shadow = select(f32(255u - (key & 255u)) / 255.0, 0.0, key == 0xffffffffu);
+        textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(shadow, 0.0, 0.0, 0.0));
     }
 }
