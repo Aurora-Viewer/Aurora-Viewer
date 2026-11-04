@@ -78,6 +78,11 @@ use crate::build::BUILD_PARCEL_SEQ;
 /// (llstartup.cpp, circuit_timeout = 100 s, LLCircuitData::checkPeriodTime).
 /// 60 s cut sessions a laggy region or a short network outage would survive.
 const SIM_TIMEOUT: Duration = Duration::from_secs(100);
+/// How long a login waits for AgentMovementComplete before logging out
+/// (STATE_AGENT_WAIT_TIMEOUT, llstartup.cpp). Only the login ends this way: a
+/// teleport or crossing the region does not confirm keeps its session, and the
+/// viewer stops waiting on its own (`NetCommand::ArrivalGivenUp`).
+const LOGIN_ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
@@ -317,6 +322,8 @@ struct Session<'a> {
     viewer_stats: crate::viewer_stats::Schedule,
     regions_visited: std::collections::HashSet<u64>,
     cam_requested_at: Option<Instant>,
+    /// The first arrival of this session is still awaited (STATE_AGENT_WAIT).
+    login_arrival: bool,
     /// Last confirmed agent parcel in the main region, including its geometry.
     agent_parcel: Option<Arc<ParcelInfo>>,
     /// Teleport by region name waiting for its MapBlockReply (lowercase name, position).
@@ -503,6 +510,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         viewer_stats: Default::default(),
         regions_visited: Default::default(),
         cam_requested_at: None,
+        login_arrival: true,
         agent_parcel: None,
         pending_named_tp: None,
         object_cache,
@@ -1436,7 +1444,7 @@ impl Session<'_> {
                 self.cam_warned = true;
                 log::warn!("no AgentMovementComplete 5 s after CompleteAgentMovement: agent updates (movement) paused");
             }
-            if !self.agent_moved && t.elapsed() > Duration::from_secs(90) {
+            if self.login_arrival && !self.agent_moved && t.elapsed() > LOGIN_ARRIVAL_TIMEOUT {
                 // STATE_AGENT_WAIT's timeout (llstartup.cpp): "Session was
                 // created, don't just hang up on server, send a logout
                 // request", or the grid keeps this session and the next
@@ -1615,6 +1623,11 @@ impl Session<'_> {
                     self.send_logout_request();
                     self.logout_started = Some(Instant::now());
                 }
+            }
+            NetCommand::ArrivalGivenUp => {
+                log::warn!("no AgentMovementComplete in time: agent updates resume, session kept");
+                self.agent_moved = true;
+                self.cam_requested_at = None;
             }
             NetCommand::Chat {
                 message,
@@ -4576,6 +4589,7 @@ impl Session<'_> {
             self.agent_moved = true;
             self.regions_visited.insert(m.data.region_handle);
             self.cam_requested_at = None;
+            self.login_arrival = false;
             // gLastVersionChannel: the server version the Region / Estate
             // window shows
             emit(
@@ -5312,6 +5326,7 @@ impl Session<'_> {
             // the agent is in this region: keep (or start) sending its updates
             self.agent_moved = true;
             self.cam_requested_at = None;
+            self.login_arrival = false;
             self.agent_update.force();
             emit(
                 self.sh,
@@ -6266,6 +6281,7 @@ mod event_queue_tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: object_cache::ObjectCaches::new(None).0,
@@ -6608,6 +6624,7 @@ mod script_dialog_tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: super::object_cache::ObjectCaches::new(None).0,
@@ -6738,14 +6755,27 @@ mod script_dialog_tests {
         // account still there, #956): STATE_AGENT_WAIT's time-out logs the
         // new session out before going back to the login screen.
         let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
-        session.cam_requested_at = Some(ago(89));
+        session.login_arrival = true;
+        session.cam_requested_at = Some(ago(239));
         session.tick();
         assert!(!session.finished);
-        session.cam_requested_at = Some(ago(91));
+        session.cam_requested_at = Some(ago(241));
         session.tick();
         logout_request_from(&main).await;
         assert!(session.finished);
         assert!(matches!(ended(&received), Some(NetEvent::Disconnected { lost: true, .. })));
+
+        // A teleport or crossing the region does not confirm keeps the session
+        // however long it takes, and giving up on it resumes the agent updates
+        // (send_agent_update only checks the teleport state).
+        let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
+        session.cam_requested_at = Some(ago(241));
+        session.tick();
+        assert!(!session.finished);
+        assert!(ended(&received).is_none());
+        session.on_command(NetCommand::ArrivalGivenUp);
+        assert!(session.agent_moved);
+        assert!(session.cam_requested_at.is_none());
     }
 
     /// A `ViewerStats` capability: the body of every POST it receives.

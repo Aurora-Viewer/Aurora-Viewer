@@ -6056,6 +6056,7 @@ ui-perf-downloaded = ダウンロード済み
 common-teleport-2 = テレポート
 common-teleport-accepted = テレポートが受け入れられました…
 world-mod-teleporting = テレポートしています…
+world-arrival-not-confirmed = リージョンから到着の確認がありませんでした。接続は維持されています。もう一度テレポートするか、ログアウトしてください。
 app-chat-commands-teleport-offered-to = { $name }{ "にテレポートをオファーしました。" }
 app-teleporting-to = { $value0 }{ "（" }{ $value1 }{ "," }{ $value2 }{ "," }{ $value3 }{ "）にテレポートしています…" }
 app-teleporting-to-2 = { $value0 }{ "にテレポートしています…" }
