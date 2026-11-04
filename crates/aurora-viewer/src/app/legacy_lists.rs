@@ -145,5 +145,9 @@ fn status(report: &Report) -> String {
         text.push(' ');
         text.push_str(tr!("ui-options-legacy-lists-not-saved"));
     }
+    if !report.unsaved.is_empty() {
+        text.push(' ');
+        text.push_str(&tr!("ui-options-legacy-lists-unsaved", files = report.unsaved.join(", ")));
+    }
     text
 }

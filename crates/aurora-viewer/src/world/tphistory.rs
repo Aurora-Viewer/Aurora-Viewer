@@ -256,8 +256,10 @@ impl HistoryStorage {
     /// A Legacy Viewer's places added to this history, adding only. `add`'s
     /// rule decides between two entries of one place: the newest visit
     /// stays, at the older position, so importing again changes nothing.
-    /// The number of places added or updated.
-    pub fn merge(&mut self, items: Vec<HistoryItem>) -> usize {
+    /// The number of places added or updated; on a failed save the history
+    /// stays as it was, in the file too.
+    pub fn merge(&mut self, items: Vec<HistoryItem>) -> std::io::Result<usize> {
+        let before = self.items.clone();
         let mut by_title: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, item) in self.items.iter().enumerate() {
             by_title.entry(item.title.clone()).or_default().push(i);
@@ -290,9 +292,12 @@ impl HistoryStorage {
         }
         if changed > 0 {
             self.items.sort_by(|a, b| a.date.total_cmp(&b.date));
-            self.save();
+            if let Err(e) = self.write() {
+                self.items = before;
+                return Err(e);
+            }
         }
-        changed
+        Ok(changed)
     }
 
     /// A history kept in memory only (the demo's).
@@ -357,8 +362,16 @@ impl HistoryStorage {
     }
 
     fn save(&self) {
+        if let Err(e) = self.write() {
+            log::warn!("can't save the teleport history: {e}");
+        }
+    }
+
+    /// In one step: a full disk leaves the old file. No disk flush, on the
+    /// frame thread.
+    fn write(&self) -> std::io::Result<()> {
         let Some(path) = &self.path else {
-            return;
+            return Ok(());
         };
         let mut text = String::new();
         for it in &self.items {
@@ -368,9 +381,7 @@ impl HistoryStorage {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Err(e) = std::fs::write(path, text) {
-            log::warn!("can't save the teleport history: {e}");
-        }
+        crate::atomic_file::publish(path, text.as_bytes())
     }
 }
 
@@ -458,7 +469,7 @@ mod tests {
              {'date':d\"1970-01-01T00:01:00Z\",'global_pos':[r900,r0,r0],'slurl':'','title':'Far'}\n",
         );
         assert_eq!(legacy.len(), 4);
-        assert_eq!(history.merge(legacy.clone()), 3);
+        assert_eq!(history.merge(legacy.clone()).unwrap(), 3);
         let seen: Vec<_> = history.items.iter().map(|i| (i.title.as_str(), i.global.x, i.date)).collect();
         assert_eq!(
             seen,
@@ -470,15 +481,33 @@ mod tests {
                 ("Shop", 10.0, 300.0),
             ]
         );
-        assert_eq!(history.merge(legacy), 0);
+        assert_eq!(history.merge(legacy).unwrap(), 0);
     }
 
     #[test]
     fn merge_settles_at_once_when_a_place_is_in_range_of_two_entries() {
         let legacy = vec![place("Shop", 0.0, 10.0), place("Shop", 6.0, 20.0), place("Shop", 3.0, 30.0)];
         let mut history = HistoryStorage::default();
-        assert_eq!(history.merge(legacy.clone()), 3);
-        assert_eq!(history.merge(legacy), 0);
+        assert_eq!(history.merge(legacy.clone()).unwrap(), 3);
+        assert_eq!(history.merge(legacy).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_merge_that_cannot_be_saved_leaves_the_history_as_it_was() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphistory-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // the file's folder is a file
+        std::fs::write(dir.join("taken"), "").unwrap();
+        let mut history = HistoryStorage {
+            items: vec![place("Home", 0.0, 100.0)],
+            path: Some(dir.join("taken").join(TELEPORT_HISTORY_FILE)),
+        };
+        assert!(history.merge(vec![place("Far", 900.0, 60.0)]).is_err());
+        assert_eq!(history.items.len(), 1);
+        history.path = Some(dir.join(TELEPORT_HISTORY_FILE));
+        assert_eq!(history.merge(vec![place("Far", 900.0, 60.0)]).unwrap(), 1);
+        assert_eq!(HistoryStorage::load(dir.join(TELEPORT_HISTORY_FILE)).items.len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn e(n: &str) -> TpEntry {

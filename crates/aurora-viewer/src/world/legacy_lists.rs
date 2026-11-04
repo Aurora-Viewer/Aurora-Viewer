@@ -130,6 +130,8 @@ pub struct Report {
     pub unreadable: Vec<&'static str>,
     /// The account's contact sets could not be written.
     pub contact_sets_unsaved: bool,
+    /// Lists that could not be written: they stay as they were.
+    pub unsaved: Vec<&'static str>,
     /// Our avatar sat on something that left the world.
     pub unseated: bool,
 }
@@ -219,11 +221,23 @@ impl super::World {
     /// Add what `read` found to the account's lists.
     pub fn merge_legacy_lists(&mut self, lists: Lists) -> Report {
         let mut report = Report {
-            teleports: self.tp_storage.merge(lists.history),
-            media: self.media_filter.merge(lists.media),
             unreadable: lists.unreadable,
             ..Report::default()
         };
+        match self.tp_storage.merge(lists.history) {
+            Ok(changed) => report.teleports = changed,
+            Err(e) => {
+                log::warn!("teleport history not saved: {e}");
+                report.unsaved.push(tphistory::TELEPORT_HISTORY_FILE);
+            }
+        }
+        match self.media_filter.merge(lists.media) {
+            Ok(added) => report.media = added,
+            Err(e) => {
+                log::warn!("media filter list not saved: {e}");
+                report.unsaved.push(filter::FILE);
+            }
+        }
         if let Some(file) = lists.derender {
             (report.derender, report.unseated) = self.merge_derender(file);
         }

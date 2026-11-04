@@ -245,8 +245,9 @@ impl MediaFilter {
     }
 
     /// A Legacy Viewer's rules added to the list, adding only: a pattern
-    /// the list has keeps its answer. The number of rules added.
-    pub fn merge(&mut self, rules: Vec<Rule>) -> usize {
+    /// the list has keeps its answer. The number of rules added; on a failed
+    /// save the list stays as it was, in the file too.
+    pub fn merge(&mut self, rules: Vec<Rule>) -> std::io::Result<usize> {
         let before = self.rules.len();
         for rule in rules {
             if !self.rules.iter().any(|r| r.pattern == rule.pattern) {
@@ -255,19 +256,29 @@ impl MediaFilter {
         }
         let added = self.rules.len() - before;
         if added > 0 {
-            self.save();
+            if let Err(e) = self.write() {
+                self.rules.truncate(before);
+                return Err(e);
+            }
             // the questions a new rule settles go too
             let (rules, session) = (&self.rules, &self.session);
             self.questions
                 .retain(|o| !session.contains_key(&o.url) && rule_for(rules, &o.url, &o.domain).is_none());
         }
-        added
+        Ok(added)
     }
 
-    /// saveDomainFilterList.
     fn save(&self) {
+        if let Err(e) = self.write() {
+            log::warn!("media filter list not saved: {e}");
+        }
+    }
+
+    /// saveDomainFilterList, in one step: a full disk leaves the old list.
+    /// No disk flush, on the frame thread.
+    fn write(&self) -> std::io::Result<()> {
         let Some(path) = &self.path else {
-            return;
+            return Ok(());
         };
         let list = self
             .rules
@@ -282,9 +293,7 @@ impl MediaFilter {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Err(e) = std::fs::write(path, aurora_llsd::to_xml(&Llsd::Array(list))) {
-            log::warn!("media filter list not saved: {e}");
-        }
+        crate::atomic_file::publish(path, aurora_llsd::to_xml(&Llsd::Array(list)).as_bytes())
     }
 
     pub fn rules(&self) -> &[Rule] {
@@ -434,10 +443,33 @@ mod tests {
         f.apply(Edit::Set("kept.example".into(), Action::Allow));
         assert_eq!(f.check("http://new.example/a", Source::ParcelMedia), Verdict::Ask);
         let legacy = vec![rule("kept.example", Action::Deny), rule("new.example", Action::Deny)];
-        assert_eq!(f.merge(legacy.clone()), 1);
+        assert_eq!(f.merge(legacy.clone()).unwrap(), 1);
         assert_eq!(f.rules, [rule("kept.example", Action::Allow), rule("new.example", Action::Deny)]);
         assert!(f.question().is_none());
-        assert_eq!(f.merge(legacy), 0);
+        assert_eq!(f.merge(legacy).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_merge_that_cannot_be_saved_leaves_the_list_as_it_was() {
+        let rule = |pattern: &str| Rule {
+            pattern: pattern.into(),
+            action: Action::Deny,
+        };
+        let dir = std::env::temp_dir().join(format!("aurora-media-filter-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // the file's folder is a file
+        std::fs::write(dir.join("taken"), "").unwrap();
+        let mut f = MediaFilter {
+            rules: vec![rule("kept.example")],
+            path: Some(dir.join("taken").join(FILE)),
+            ..MediaFilter::default()
+        };
+        assert!(f.merge(vec![rule("new.example")]).is_err());
+        assert_eq!(f.rules, [rule("kept.example")]);
+        f.path = Some(dir.join(FILE));
+        assert_eq!(f.merge(vec![rule("new.example")]).unwrap(), 1);
+        assert_eq!(MediaFilter::load(dir.join(FILE)).rules.len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

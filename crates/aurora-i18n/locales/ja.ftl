@@ -13155,4 +13155,5 @@ ui-options-legacy-lists-imported = 追加または更新：テレポート履歴
 ui-options-legacy-lists-nothing = 新しい項目はありません。このアカウントにはすでにこれらのリストがあります。
 ui-options-legacy-lists-not-saved = コンタクトセットを保存できませんでした。
 ui-options-legacy-lists-failed = 読み取れません：{ $files }。
+ui-options-legacy-lists-unsaved = 保存できず、変更しませんでした：{ $files }。
 ui-options-legacy-lists-other-grid = このグリッドでは、同じ名前のフォルダーが別のグリッドのものである場合があります。正しいフォルダーか確認してください。
