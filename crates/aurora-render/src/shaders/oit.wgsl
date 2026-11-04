@@ -1,14 +1,20 @@
-// Order-independent transparency: resolve (oit.rs).
+// Order-independent transparency: the band plan and the resolve (oit.rs).
 //
-// fs_blend_oit (object.wgsl) stored each blended fragment: a pixel's first
-// `slots` layers in its slots of a texture array (layer k: every pixel's
-// slot k, so a tile's pixels read their layers side by side), the others
-// appended to its linked list in the node pool. Here, in two steps:
+// fs_count_oit (object.wgsl) counted each pixel's blended fragments in
+// front of the opaque scene. Here, per frame:
 //
-// 1. cs_classify (compute, one 8 x 8 tile per workgroup): each pixel sorts
-//    its list once and stores the composite in `out_color`, the depth of
-//    its nearest layer in `out_depth`. The tiles holding layers are listed,
-//    with the instance count of an indirect draw.
+// 0. cs_band_rows and cs_band_plan (compute): the nodes each tile row of
+//    the screen needs (its fragments past the slot array), then the rows
+//    cut into bands whose nodes fit the pool, in order from the top; the
+//    dispatch and draw arguments of each band, and the gated copies of the
+//    blended draws (oit_gate.wgsl) that draw a band or nothing.
+// Then per band (renderer.rs), fs_blend_oit (object.wgsl) having stored
+// the band's fragments in the slot array and the pool:
+// 1. cs_classify (compute, one 8 x 8 tile per workgroup over the band's
+//    tile rows): each pixel sorts its list once and stores the composite in
+//    `out_color`, the depth of its nearest layer in `out_depth`. The tiles
+//    holding layers are listed, with the instance count of the band's
+//    indirect draw.
 // 2. fs_composite (vs_tile over the listed tiles): the composite over the
 //    scene, once per pixel, at the depth of its nearest layer: with MSAA
 //    the depth test keeps it off the samples where an opaque edge is in
@@ -20,12 +26,6 @@
 // of the transparent faces themselves get their anti-aliasing from the
 // post-process one (SMAA) over the final image. An opaque edge pixel seen
 // through a layer is wrong on at most half of its samples.
-//
-// When the pool overflowed (heads[0], the nodes asked for, past node_cap),
-// no tile is listed and `flags` turns the in-order replay of the blended
-// faces on and the composite's glow off (renderer.rs: the gated draws read
-// copies of their arguments that oit_gate.wgsl zeroes or keeps from them):
-// the frame is then drawn in the drawing order, as without the lists.
 //
 // Sorting: the `max_layers` nearest layers of a pixel, whatever their draw
 // order, back to front, by depth then by the tie-break the capture stored
@@ -57,10 +57,18 @@ struct OitParams {
     slots: u32,
     // the capture's frame stamp (its node claims)
     stamp: u32,
-    // AURORA_OIT_STATS: the capture counts every fragment (oit.rs)
-    stats: u32,
+    // bands the frame may be captured in
+    max_bands: u32,
     _pad2: u32,
     _pad3: u32,
+};
+// the band being classified or composited (a uniform with a dynamic
+// offset, one word per band)
+struct OitBand {
+    index: u32,
+    _a: u32,
+    _b: u32,
+    _c: u32,
 };
 // heads[0] counts the pool's nodes; pixel p: heads[1 + 2p] its layers,
 // heads[2 + 2p] the first node of its list plus one (0: none)
@@ -72,21 +80,32 @@ struct OitParams {
 // cs_classify only: the composite and the depth of its nearest layer
 @group(0) @binding(4) var out_color: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(12) var out_depth: texture_storage_2d<r32float, write>;
-// one DrawIndirectArgs: the listed tiles
-@group(0) @binding(5) var<storage, read_write> args: array<atomic<u32>, 4>;
+// per band, the DrawIndirectArgs of its composite (the listed tiles)
+@group(0) @binding(5) var<storage, read_write> draw_args: array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read_write> tiles_w: array<u32>;
-// The DrawIndirectArgs of the replay's depth copy (one triangle, when the
-// pool overflowed): flags[1], its instance count, is also what
-// oit_gate.wgsl reads to keep or zero the gated draws' instances
-@group(0) @binding(9) var<storage, read_write> flags: array<u32, 4>;
 // the draws only
 @group(0) @binding(7) var resolved: texture_2d<f32>;
 @group(0) @binding(13) var resolved_depth: texture_2d<f32>;
 @group(0) @binding(8) var<storage, read> tiles_r: array<u32>;
-// single-sample only: the scene depth (the replay's depth copy)
-@group(0) @binding(11) var depth_ss: texture_depth_2d;
 // the slot array (same node layout, `w` unused)
 @group(0) @binding(10) var slots_r: texture_2d_array<u32>;
+// single-sample only: the scene depth (the band depth mask)
+@group(0) @binding(11) var depth_ss: texture_depth_2d;
+// the count pass's layers per pixel (object.wgsl fs_count_oit)
+@group(0) @binding(14) var<storage, read> counts: array<u32>;
+// The bands: [0] the header (x: bands used, y: 1 once a band's lists
+// passed the pool, z: 1 when rows had to be merged into the last band, w:
+// the tile rows), [1 + b]: band b's first and last pixel rows (x, y) and
+// tile rows (z, w), empty when z == w.
+@group(0) @binding(15) var<storage, read_write> bands: array<vec4<u32>>;
+// the nodes each tile row needs (cs_band_rows)
+@group(0) @binding(16) var<storage, read_write> row_need: array<atomic<u32>>;
+@group(0) @binding(17) var<uniform> band: OitBand;
+// per band, the DispatchIndirectArgs of its classify
+@group(0) @binding(18) var<storage, read_write> dispatch_args: array<u32>;
+// per band, the DrawIndirectArgs of its depth mask (one triangle, no
+// instance for a band without rows)
+@group(0) @binding(19) var<storage, read_write> mask_args: array<u32>;
 
 const TILE: u32 = 8u;
 // The most nodes a walk of one list visits (object.wgsl `OIT_MAX_WALK`):
@@ -95,6 +114,8 @@ const TILE: u32 = 8u;
 const MAX_WALK: u32 = 1024u;
 // a sorted layer held in a slot (the rest of the id: the slot), not a node
 const SLOT: u32 = 0x80000000u;
+// the most tile rows the plan walks (a 16 K screen has 2048)
+const MAX_TILE_ROWS: u32 = 4096u;
 
 struct Resolved {
     // 0 nothing in front, 1 `color` at `depth`, 3 more layers to sort than
@@ -279,21 +300,92 @@ fn pixel(px: vec2<u32>) -> vec2<u32> {
     return vec2<u32>(heads[p], heads[p + 1u]);
 }
 
-fn overflowed() -> bool {
-    return heads[0] > params.node_cap;
-}
+// ---- 0. the band plan, from the count
 
-// One thread of the dispatch sets the draw counts that follow.
-fn set_flags(g: vec3<u32>) {
-    if (g.x == 0u && g.y == 0u) {
-        flags[0] = 3u;
-        flags[1] = select(0u, 1u, overflowed());
-        flags[2] = 0u;
-        flags[3] = 0u;
+// The nodes each tile row needs: its pixels' layers past the slots, summed
+// by one workgroup per tile row.
+var<workgroup> wg_need: atomic<u32>;
+
+@compute @workgroup_size(256)
+fn cs_band_rows(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+    if (li == 0u) {
+        atomicStore(&wg_need, 0u);
+    }
+    workgroupBarrier();
+    let y0 = wg.x * TILE;
+    let y1 = min(y0 + TILE, params.height);
+    var n = 0u;
+    for (var y = y0; y < y1; y += 1u) {
+        for (var x = li; x < params.width; x += 256u) {
+            n += max(counts[y * params.width + x], params.slots) - params.slots;
+        }
+    }
+    if (n != 0u) {
+        atomicAdd(&wg_need, n);
+    }
+    workgroupBarrier();
+    if (li == 0u) {
+        atomicStore(&row_need[wg.x], atomicLoad(&wg_need));
     }
 }
 
-// ---- 1. classify, sort and list the tiles
+// One thread: the tile rows cut into bands from the top, each band taking
+// rows while its nodes stay within the pool (a row needing more than the
+// pool is a band of its own, its capture bounded by the pool); the rows
+// past the last band are merged into it, flagged. Then each band's
+// arguments: its classify's dispatch (its tile rows) and its composite's
+// draw (no tile listed yet), empty for the bands not used.
+@compute @workgroup_size(1)
+fn cs_band_plan() {
+    let tile_rows = min((params.height + TILE - 1u) / TILE, MAX_TILE_ROWS);
+    // a band takes rows while its nodes stay under 15/16 of the pool: the
+    // capture stores a few more fragments than the count pass counts
+    // (0.3 % on the hair, under study), and a band must never pass the pool
+    let capacity = params.node_cap - params.node_cap / 16u;
+    var used = 0u;
+    var merged = 0u;
+    var start = 0u;
+    var need = 0u;
+    for (var r = 0u; r < tile_rows; r += 1u) {
+        let n = atomicLoad(&row_need[r]);
+        if (need + n > capacity && r > start) {
+            if (used + 1u < params.max_bands) {
+                bands[1u + used] = vec4<u32>(start * TILE, min(r * TILE, params.height), start, r);
+                used += 1u;
+                start = r;
+                need = 0u;
+            } else {
+                // the last band takes the rest
+                merged = 1u;
+            }
+        }
+        need += n;
+    }
+    bands[1u + used] = vec4<u32>(start * TILE, params.height, start, tile_rows);
+    used += 1u;
+    bands[0] = vec4<u32>(used, 0u, merged, tile_rows);
+    for (var b = 0u; b < params.max_bands; b += 1u) {
+        var rows = 0u;
+        if (b < used) {
+            rows = bands[1u + b].w - bands[1u + b].z;
+        } else {
+            bands[1u + b] = vec4<u32>(0u);
+        }
+        dispatch_args[b * 3u] = select(0u, params.tiles_x, rows != 0u);
+        dispatch_args[b * 3u + 1u] = rows;
+        dispatch_args[b * 3u + 2u] = select(0u, 1u, rows != 0u);
+        mask_args[b * 4u] = 3u;
+        mask_args[b * 4u + 1u] = select(0u, 1u, rows != 0u);
+        mask_args[b * 4u + 2u] = 0u;
+        mask_args[b * 4u + 3u] = 0u;
+        atomicStore(&draw_args[b * 4u], 6u);
+        atomicStore(&draw_args[b * 4u + 1u], 0u);
+        atomicStore(&draw_args[b * 4u + 2u], 0u);
+        atomicStore(&draw_args[b * 4u + 3u], 0u);
+    }
+}
+
+// ---- 1. classify, sort and list the band's tiles
 
 var<workgroup> tile_flags: atomic<u32>;
 
@@ -303,8 +395,7 @@ fn classify(px: vec2<u32>, dmed: f32) -> u32 {
     var flag = 0u;
     var out = vec4<f32>(0.0);
     var depth = 0.0;
-    // (overflowed: nothing composited, the faces are replayed in order)
-    if (pixel(px).x != 0u && !overflowed()) {
+    if (pixel(px).x != 0u) {
         let r = resolve_list(px, dmed);
         if (r.status == 1u) {
             out = r.color;
@@ -317,29 +408,41 @@ fn classify(px: vec2<u32>, dmed: f32) -> u32 {
     return flag;
 }
 
-fn list_tile(flag: u32, li: u32, wg: vec2<u32>) {
+fn list_tile(flag: u32, li: u32, tile: u32) {
     if (flag != 0u) {
         atomicOr(&tile_flags, flag);
     }
     workgroupBarrier();
     if (li == 0u && atomicLoad(&tile_flags) != 0u) {
-        tiles_w[atomicAdd(&args[1], 1u)] = wg.y * params.tiles_x + wg.x;
+        tiles_w[atomicAdd(&draw_args[band.index * 4u + 1u], 1u)] = tile;
     }
 }
 
+// The pixel of this invocation in the band (its tile rows start at the
+// band's first), and the tile; a band's lists that passed the pool (the
+// capture's counter past node_cap) are flagged in the bands' header.
+fn band_pixel(wg: vec3<u32>, l: vec3<u32>) -> vec3<u32> {
+    let b = bands[1u + band.index];
+    let ty = b.z + wg.y;
+    if (wg.x == 0u && wg.y == 0u && l.x == 0u && l.y == 0u && heads[0] > params.node_cap) {
+        bands[0].y = 1u;
+    }
+    return vec3<u32>(wg.x * TILE + l.x, ty * TILE + l.y, ty * params.tiles_x + wg.x);
+}
+
 @compute @workgroup_size(8, 8)
-fn cs_classify(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wg: vec3<u32>) {
-    set_flags(g);
+fn cs_classify(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>, @builtin(local_invocation_index) li: u32) {
     if (li == 0u) {
         atomicStore(&tile_flags, 0u);
     }
     workgroupBarrier();
+    let p = band_pixel(wg, l);
     var flag = 0u;
-    if (g.x < params.width && g.y < params.height) {
+    if (p.x < params.width && p.y < params.height) {
         // the capture kept only what is in front of the opaque scene
-        flag = classify(g.xy, -1.0);
+        flag = classify(p.xy, -1.0);
     }
-    list_tile(flag, li, wg.xy);
+    list_tile(flag, li, p.z);
 }
 
 // The opaque depth half of the pixel's samples are at or behind: a layer in
@@ -364,24 +467,64 @@ fn median_depth(px: vec2<u32>) -> f32 {
 }
 
 @compute @workgroup_size(8, 8)
-fn cs_classify_ms(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wg: vec3<u32>) {
-    set_flags(g);
+fn cs_classify_ms(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>, @builtin(local_invocation_index) li: u32) {
     if (li == 0u) {
         atomicStore(&tile_flags, 0u);
     }
     workgroupBarrier();
+    let p = band_pixel(wg, l);
     var flag = 0u;
-    if (g.x < params.width && g.y < params.height) {
+    if (p.x < params.width && p.y < params.height) {
         var dmed = 2.0;
-        if (pixel(g.xy).x != 0u && !overflowed()) {
-            dmed = median_depth(g.xy);
+        if (pixel(p.xy).x != 0u) {
+            dmed = median_depth(p.xy);
         }
-        flag = classify(g.xy, dmed);
+        flag = classify(p.xy, dmed);
     }
-    list_tile(flag, li, wg.xy);
+    list_tile(flag, li, p.z);
 }
 
-// ---- 2. composite the listed tiles
+// ---- the band's depth mask
+//
+// The capture and the glow of a band must make no fragment outside its
+// rows (the pool is the band's alone), and the geometry must stay as the
+// rasteriser sees it (clipping it to the rows re-derives the triangles'
+// shared edges and doubles or loses the pixels on them). So each band's
+// capture tests its depth against this copy: the scene's depth inside the
+// band's rows, the nearest depth outside (reverse-Z: 1), which no fragment
+// passes; the hardware rejects the other rows before the shader. One
+// full-screen triangle per band, drawn indirectly (no instance for a band
+// without rows).
+
+@vertex
+fn vs_full(@builtin(vertex_index) v: u32) -> @builtin(position) vec4<f32> {
+    let uv = vec2<f32>(f32((v << 1u) & 2u), f32(v & 2u));
+    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+
+fn in_band(p: vec4<f32>) -> bool {
+    let b = bands[1u + band.index];
+    let y = u32(p.y);
+    return y >= b.x && y < b.y;
+}
+
+@fragment
+fn fs_band_depth(@builtin(position) p: vec4<f32>) -> @builtin(frag_depth) f32 {
+    if (!in_band(p)) {
+        return 1.0;
+    }
+    return textureLoad(depth_ss, vec2<i32>(p.xy), 0);
+}
+
+@fragment
+fn fs_band_depth_ms(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @builtin(frag_depth) f32 {
+    if (!in_band(p)) {
+        return 1.0;
+    }
+    return textureLoad(depth_ms, vec2<i32>(p.xy), i32(s));
+}
+
+// ---- 2. composite the band's listed tiles
 
 @vertex
 fn vs_tile(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -414,30 +557,6 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> CompositeOut {
         discard;
     }
     return CompositeOut(c, textureLoad(resolved_depth, px, 0).x);
-}
-
-// ---- the replay's depth copy (overflow only)
-//
-// The rigged faces' `Layered` and `Layers` modes draw on a copy of the scene
-// depth (renderer.rs, `Targets::blend_layers`). When the pool overflowed the
-// replay needs that copy, and a texture copy cannot wait on the GPU's
-// decision: this full-screen triangle, drawn indirectly (one instance when
-// overflowed, none otherwise), writes it instead.
-
-@vertex
-fn vs_full(@builtin(vertex_index) v: u32) -> @builtin(position) vec4<f32> {
-    let uv = vec2<f32>(f32((v << 1u) & 2u), f32(v & 2u));
-    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-}
-
-@fragment
-fn fs_copy_depth(@builtin(position) p: vec4<f32>) -> @builtin(frag_depth) f32 {
-    return textureLoad(depth_ss, vec2<i32>(p.xy), 0);
-}
-
-@fragment
-fn fs_copy_depth_ms(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @builtin(frag_depth) f32 {
-    return textureLoad(depth_ms, vec2<i32>(p.xy), i32(s));
 }
 
 // ---- The per-sample form of the resolve, kept for reference, not compiled.

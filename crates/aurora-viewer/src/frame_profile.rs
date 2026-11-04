@@ -403,9 +403,9 @@ struct Period {
     gpu_contact: f32,
     /// The bloom levels alone (inside g_post).
     gpu_bloom: f32,
-    /// The OIT's phases (inside g_transparent): capture, classify,
-    /// composite, the rest.
-    gpu_oit: [f32; 4],
+    /// The OIT's phases (inside g_transparent): count and band plan,
+    /// capture, classify, composite, the rest.
+    gpu_oit: [f32; 5],
     /// The rest of g_effects: planar reflections, probe, scene copy, SSR.
     gpu_effects: [f32; 4],
     gpu_frames: u32,
@@ -976,7 +976,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     // the bloom levels alone (inside g_post)
     let _ = write!(out, " g_bloom={:.3}", p.gpu_bloom / gpu_n);
     // the OIT's phases (inside g_transparent)
-    for (key, ms) in ["capture", "classify", "composite", "rest"].iter().zip(p.gpu_oit) {
+    for (key, ms) in ["count", "capture", "classify", "composite", "rest"].iter().zip(p.gpu_oit) {
         let _ = write!(out, " g_oit_{key}={:.3}", ms / gpu_n);
     }
     let _ = write!(out, " | shadow_path={}", aurora_render::shadow_cull::path_name(p.shadow_path));
@@ -1101,7 +1101,7 @@ mod tests {
         assert!(l.contains(" r_finish=0.00 ") && l.contains(" g_objects=0.000 "), "{l}");
         assert!(
             l.contains(
-                " g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_bloom=0.000 g_oit_capture=0.000 g_oit_classify=0.000 g_oit_composite=0.000 g_oit_rest=0.000 | shadow_path="
+                " g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_bloom=0.000 g_oit_count=0.000 g_oit_capture=0.000 g_oit_classify=0.000 g_oit_composite=0.000 g_oit_rest=0.000 | shadow_path="
             ),
             "{l}"
         );

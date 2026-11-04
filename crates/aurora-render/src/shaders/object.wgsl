@@ -620,6 +620,7 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
+
 struct DepthOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
@@ -1684,12 +1685,14 @@ fn blend_color_kept(in: VsOut, front: bool) -> vec4<f32> {
 // every pixel's slot k: neighbours write and read side by side, and these
 // fragments leave the pool's counter alone); the others are appended to its
 // linked list in the node pool, with the next node. oit.wgsl sorts and
-// composites them. Once the node pool is full, the fragment is dropped,
-// unshaded when its pixel's slots are full too: the classify then skips the
-// composite and the frame's blended faces are drawn again exactly as
-// without OIT (renderer.rs `rigged_in_order`, then the others in order), so
-// a crowded frame is the image it had before OIT: no holes, no reversed
-// order, and the capture costs it little more than its rasterization.
+// composites them. The capture runs once per band of rows (its depth
+// attachment holds the nearest depth outside them, oit.wgsl
+// fs_band_depth, so the depth test rejects the other rows before the
+// shader), the bands planned from the count pass (fs_count_oit) so that
+// each band's lists fit the pool: no frame overflows it. Should a
+// band still fill the pool (a count the plan could not place), the
+// fragment is dropped, unshaded when its pixel's slots are full too, and
+// the frame is composited without it (the stats log tells).
 struct OitParams {
     node_cap: u32,
     width: u32,
@@ -1701,10 +1704,19 @@ struct OitParams {
     slots: u32,
     // this frame's stamp (never 0): a node is claimed by storing it
     stamp: u32,
-    // AURORA_OIT_STATS: the capture counts every fragment (oit.rs)
-    stats: u32,
+    // bands the frame may be captured in (oit_bands holds one more: its
+    // header)
+    max_bands: u32,
     _pad2: u32,
     _pad3: u32,
+};
+// The band being drawn (oit_bands[1 + index]; a uniform with a dynamic
+// offset, one word per band).
+struct OitBand {
+    index: u32,
+    _a: u32,
+    _b: u32,
+    _c: u32,
 };
 // heads[0] counts the pool's nodes; pixel p = y * width + x: heads[1 + 2p]
 // counts its fragments, heads[2 + 2p] is the first node of its list plus
@@ -1723,6 +1735,11 @@ struct OitParams {
 // that composites the lists, which binds them read only (oit.rs)
 @group(3) @binding(25) var<storage, read> oit_heads_r: array<u32>;
 @group(3) @binding(26) var<storage, read> oit_nodes_r: array<vec4<u32>>;
+// the count pass's layers per pixel (fs_count_oit) and the band being
+// drawn (its stamp for the node claims; the band's rows are cut by the
+// depth attachment of the capture, oit.wgsl fs_band_depth)
+@group(3) @binding(28) var<storage, read_write> oit_counts: array<atomic<u32>>;
+@group(3) @binding(30) var<uniform> oit_band: OitBand;
 
 // The depth test runs before the shader where the GPU allows forcing it
 // (oit.rs `object_source` turns the marker below into
@@ -1799,11 +1816,11 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) v
         discard;
     }
     let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
-    // A full pool and full slots: nothing to store, so nothing to shade (the
-    // replay of the frame shades every face once, in order). Not with
-    // AURORA_OIT_STATS: the counts below then stay exact, for the log.
+    // A full pool and full slots (the band plan keeps a band's lists within
+    // the pool; this guards a count the plan could not place, oit.wgsl
+    // cs_band_plan): nothing to store, so nothing to shade
     let used = atomicLoad(&oit_heads[0]);
-    if (oit_params.stats == 0u && used >= oit_params.node_cap && atomicLoad(&oit_heads[pixel]) >= oit_params.slots) {
+    if (used >= oit_params.node_cap && atomicLoad(&oit_heads[pixel]) >= oit_params.slots) {
         oit_overflow(used);
         return vec4<f32>(0.0);
     }
@@ -1827,15 +1844,17 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) v
         return vec4<f32>(0.0);
     }
     var idx = oit_alloc();
-    // the node claimed with this frame's stamp; one already claimed this
-    // frame was handed out twice (oit_alloc): nodes of this fragment's own
-    // then, a few tries, else dropped (the overflow marked, the frame
-    // replayed)
+    // the node claimed with this capture's stamp (the frame's and the
+    // band's: the pool is reused by each band, so a node claimed by the
+    // band before must be claimable again); one already claimed by this
+    // capture was handed out twice (oit_alloc): nodes of this fragment's
+    // own then, a few tries, else dropped (the overflow marked)
+    let stamp = (oit_params.stamp << 4u) | (oit_band.index & 15u);
     for (var attempt = 0u; attempt < 4u; attempt += 1u) {
         if (idx >= oit_params.node_cap) {
             return vec4<f32>(0.0);
         }
-        if (atomicExchange(&oit_claims[idx], oit_params.stamp) != oit_params.stamp) {
+        if (atomicExchange(&oit_claims[idx], stamp) != stamp) {
             break;
         }
         if (attempt == 3u) {
@@ -1846,6 +1865,63 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) v
     }
     let prev = atomicExchange(&oit_heads[pixel + 1u], idx + 1u);
     oit_nodes[idx] = vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), prev);
+    return vec4<f32>(0.0);
+}
+
+// ---- the count before the capture
+//
+// The blended faces are rasterised once before the capture, unshaded, with
+// the capture's depth test, cull and samples (the same fragments): each
+// fragment the capture may store adds one to its pixel's count. The band
+// plan (oit.wgsl cs_band_rows, cs_band_plan) cuts the screen into bands of
+// tile rows whose lists fit the pool, and the capture is drawn once per
+// band, cut to its rows by its depth attachment: no list ever passes the pool,
+// every fragment is captured and composited, and no face is shaded twice.
+// The count is at least the capture's (a fragment the shading lowers under
+// 1/255 is counted and not stored): a band planned from it never overflows.
+
+// Whether the capture may store this fragment: blend_color_kept's checks
+// that need no shading, in its order, on the material's alpha alone (the
+// base texture's times the face colour's, or the face colour's under the
+// legacy "emissive mask", eval_material).
+fn blend_counted(in: VsOut, front: bool) -> bool {
+    let rec = records[in.record];
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
+        return false;
+    }
+    if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
+        let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+        return portal_surface(rec, in.uv, portal_aa).alpha >= 0.004;
+    }
+    if (water_clipped(in.world_pos)) {
+        return false;
+    }
+    let base_a = sample_tex(rec.tex.x, in.uv).a;
+    if (BLEND_SPLIT != 0u) {
+        let half = base_a * rec.base_color.a >= 0.5;
+        if ((BLEND_SPLIT == 1u) != half) {
+            return false;
+        }
+    }
+    var a = base_a * rec.base_color.a;
+    if ((rec.flags.x & FLAG_EMISSIVE_MASK) != 0u) {
+        a = rec.base_color.a;
+    }
+    if (BLEND_EARLY_DISCARD && a < 0.004) {
+        return false;
+    }
+    return (rec.flags.x & FLAG_ALPHA_MASK) == 0u || a >= rec.params.w;
+}
+
+@fragment /*OIT_EARLY_DEPTH*/
+fn fs_count_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let px = vec2<u32>(in.clip.xy);
+    if (!OIT_EARLY_DEPTH && oit_params.samples <= 1u && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
+        discard;
+    }
+    if (blend_counted(in, front)) {
+        atomicAdd(&oit_counts[px.y * oit_params.width + px.x], 1u);
+    }
     return vec4<f32>(0.0);
 }
 
