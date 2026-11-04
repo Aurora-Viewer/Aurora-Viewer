@@ -481,7 +481,7 @@ mod tests {
                 .hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, Some(idx + 1))
                 .is_none()
         );
-        // the BB HUD's collapsed panel: hidden in front of the root button
+        // a web HUD's collapsed panel: hidden in front of its root button
         set_alpha(&mut world, 0.0);
         assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_none());
         // a prim with its own touch handler still takes it (specialHoverCursor)
