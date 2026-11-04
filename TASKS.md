@@ -910,6 +910,7 @@ What comes before the rest (requested by the human).
   - ⬜ when the code signing branch (SignPath) lands: its signing step must skip the tags with a pre-release part (`-`), betas stay unsigned
   - ⬜ later, if wanted: a separate login channel name for betas (today the login version of a beta is that of its stable number)
   - ⬜ QA after the merge: the first scheduled run publishes a pre-release with its zip, symbols, policy and Linux archive; a second run with nothing new does nothing; a viewer on Beta is offered the next beta, then the stable of its number. A released viewer has this setting only from the next stable on: the first beta testers install a beta by hand
+  - 🟡 0.9.1 is the update floor for later releases and betas (human request, 2026-11-04; task `update-floor`; no issue): `update-policy.json` sets `minimum_supported_version` to 0.9.1, which a release takes as its default; the nightly now also raises the stable tag's thresholds to those of `update-policy.json` at the tagged commit (`Get-PolicyLine`), leaving out a minimum the beta does not reach. `scripts/test-nightly.ps1`.
 
 ## Network and protocol
 
