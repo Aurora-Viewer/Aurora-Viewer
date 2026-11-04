@@ -1529,7 +1529,7 @@ impl App {
                     s.reel.done(Some(Place::Disk(saved.path.clone())), Some(tex));
                     // (a photo of the reel saved again from the quick view: no card)
                     if viewfinder && !s.reel.sent_again {
-                        s.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
+                        s.vf.review_until = self.egui_ctx.input(|i| i.time) + crate::ui::viewfinder::CARD_TIME;
                     }
                     s.gallery.truncate(gallery::SHOWN);
                     if std::mem::take(&mut s.quiet) {
@@ -2030,7 +2030,7 @@ LUT_3D_SIZE {n}
     fn photo_review_show(&mut self) {
         // (a photo of the reel sent again from the quick view: no card)
         if self.viewfinder_on() && !self.snapshots.reel.sent_again {
-            self.snapshots.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
+            self.snapshots.vf.review_until = self.egui_ctx.input(|i| i.time) + crate::ui::viewfinder::CARD_TIME;
         }
     }
 

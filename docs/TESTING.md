@@ -672,9 +672,11 @@ cache folder (never the Pictures folder), the focal length going through
 `AURORA_DEMO_SNAPSHOT` (`viewfinder`, or `open` for the panel). In the
 viewfinder each photo shows its card (its picture alone, on a tile of the
 dock like the tray's photos) centred over the lens and aperture controls for
-4.8 s, then flies in an arc to the reel's tray, bottom left: the stack of
-the older photos (its badge counting them all) with the folder's button
-under it, then the two newest, the newest on the right. `moved` puts the
+2 s, then flies in an arc to the reel's tray, bottom left: the stack of
+the photos shuffled as loose prints, the newest on top, a badge counting
+them. The pile gives a small bounce and a soft glow when a photo lands, or
+when a new photo cuts the last one's card or flight short, as these photos in
+quick succession do. `moved` puts the
 tray at the middle of the screen (as if dragged there): the photos fly to
 it there. In the panel the row under the shutter shows the stack and the
 older photos. `quick` then opens the quick view on the newest (the world

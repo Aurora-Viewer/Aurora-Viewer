@@ -119,6 +119,8 @@ pub struct Viewfinder {
     fly: Option<(f64, Rect)>,
     /// When the last photo landed on the tray, while the pile pulses.
     pulse: Option<f64>,
+    /// The newest photo of the reel, as of last frame.
+    newest: Option<u64>,
 }
 
 /// What the app gives the viewfinder each frame.
@@ -576,6 +578,16 @@ impl Viewfinder {
             self.camera_pad(ctx, p, screen, f, &mut out);
         } else {
             self.pad = Pad::default();
+        }
+        // a new photo while the last one is still on its card or on its way:
+        // that one joins the pile at once, and the pile answers it
+        let newest = f.reel.photos.first().map(|photo| photo.id);
+        if newest != self.newest {
+            if newest > self.newest && self.newest.is_some() && (f.now < self.review_until || self.fly.is_some()) {
+                self.fly = None;
+                self.pulse = Some(f.now);
+            }
+            self.newest = newest;
         }
         // the session's photos where they were moved (bottom left at first,
         // over the camera pad when it shows); the last photo's card centred
@@ -2107,6 +2119,9 @@ fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
         });
     clicked
 }
+
+/// How long the card of the photo just taken shows (seconds).
+pub(crate) const CARD_TIME: f64 = 2.0;
 
 /// The card of the photo just taken: its picture alone, centred over the
 /// lens and aperture controls (where the first hint was), framed like the

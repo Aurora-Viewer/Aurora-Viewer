@@ -485,14 +485,15 @@ impl QuickView {
         }
 
         // the world darkened behind in its own light (the sky and its
-        // colours kept, as a multiply would); a click outside the photo
-        // and the bars closes
+        // colours kept, as a multiply would) and slightly blurred, with the
+        // windows' blur; a click outside the photo and the bars closes
+        let shade = Color32::from_black_alpha(170); // theme-guard: content — the world dimmed in its own colours, no surface
         let back = egui::Area::new(Id::unique("photo_reel_back"))
             .order(Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
                 let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
-                let shade = Color32::from_black_alpha(170); // theme-guard: content — the world dimmed in its own colours, no surface
+                ui.painter().add(aurora_render::glass_region(rect, 0.0, 1.0, 1.0));
                 ui.painter().rect_filled(rect, 0.0, shade);
                 resp
             });
@@ -538,6 +539,12 @@ impl QuickView {
             }
             painter.image(t.id(), photo_rect, uv, widgets::PICTURE_TINT.gamma_multiply(alpha));
         }
+        // the dialogs over it see all this through their glass
+        widgets::ModalGround {
+            shade,
+            picture: view.thumbs.get(&id).map(|t| (t.id(), photo_rect)),
+        }
+        .set(ctx);
         let pointer = ctx.input(|i| i.pointer.interact_pos());
         let on_photo = pointer.is_some_and(|pos| photo_rect.expand(MAT).contains(pos));
 
