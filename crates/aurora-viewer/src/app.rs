@@ -3539,6 +3539,8 @@ impl App {
         if !self.demo {
             self.settings.release_hover_account();
         }
+        // a parcel's saved preset goes with the session
+        self.panels.time_of_day = self.settings.time_of_day;
         self.hover_height_ui = Default::default();
         // the marks go with the session's World; their window too
         self.avatar_mark_ui = None;

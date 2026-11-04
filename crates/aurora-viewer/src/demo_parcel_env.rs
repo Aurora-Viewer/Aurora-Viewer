@@ -18,13 +18,15 @@ fn walk(world: &mut World, x: f32, y: f32) {
 
 /// Sunrise on the first parcel, carried to the next, where another light is
 /// saved; then back to the first (the sunrise) and to the second (the saved
-/// light). `save` and `left` stop along the way, for captures; `manual` does
+/// light). `save` and `left` stop along the way, for captures; `update` then
+/// changes that light, saves over it and walks off and back; `manual` does
 /// nothing but follow the agent across the four parcels.
 pub fn frame(world: &mut World, time_of_day: &mut u8, mode: &str, frame: u64) {
     let last = match mode {
         "manual" => 0,
         "save" => 420,
         "left" => 560,
+        "update" => 1180,
         _ => 700,
     };
     match frame.min(last + 1) {
@@ -38,13 +40,18 @@ pub fn frame(world: &mut World, time_of_day: &mut u8, mode: &str, frame: u64) {
         420 => world.save_parcel_environment(),
         560 => walk(world, 132.0, 132.0),
         700 => walk(world, 124.0, 132.0),
+        860 if mode == "update" => *time_of_day = 2,
+        900 if mode == "update" => world.save_parcel_environment(),
+        1040 if mode == "update" => walk(world, 132.0, 132.0),
+        1180 if mode == "update" => walk(world, 124.0, 132.0),
         _ => {}
     }
-    if matches!(frame, 380 | 540 | 680 | 840) {
+    if matches!(frame, 380 | 540 | 680 | 840 | 880 | 1020 | 1160 | 1320) {
         log::info!(
-            "parcel environment demo, frame {frame}: parcel {:?}, time of day {time_of_day}, {:?}",
+            "parcel environment demo, frame {frame}: parcel {:?}, time of day {time_of_day}, {:?}, changed {}",
             world.parcel.as_ref().map(|p| p.local_id),
-            world.eep.local_view()
+            world.eep.local_view(),
+            world.parcel_environment_changed()
         );
     }
 }
