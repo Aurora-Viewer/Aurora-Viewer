@@ -8391,7 +8391,7 @@ The demo objects use distinct points (skull, left ear,
 left ring finger, left foot and top-right HUD), shown in the
 lists of Appearance and Inventory.
 
-**`AURORA_DEMO_REZ=1|land|object|contents|nocopy|cancel`** — opens the synthetic
+**`AURORA_DEMO_REZ=1|land|object|contents|nocopy|cancel|build|build-object|build-delete`** — opens the synthetic
 inventory. `1` allows testing with the mouse; the other modes drag
 a real inventory row from frame 680: terrain, opaque object,
 contents of the object with Ctrl, no-copy item or cancellation with Esc.
@@ -8401,6 +8401,16 @@ disappears from the inventory, that Ctrl adds to the contents without a new cube
 and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
+
+For #2074, `build` and `build-object` start with the Create tool open and drop
+onto land or an object respectively. The build tools must switch to Edit on
+the inventory drop, dismiss the creation preview and select the rezzed cube.
+Compare captures at frames 670 and 760; repeat with `land` or `object` to
+verify that rezzing with the build tools closed does not open them.
+`build-delete` also presses Delete at frame 720 without clicking again: the
+rezzed object must disappear while its inventory original stays in place and
+no inventory deletion dialog opens. Capture at frames 710 and 780. Clicking
+an inventory row afterwards must give its ordinary shortcuts back to the list.
 
 **`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
