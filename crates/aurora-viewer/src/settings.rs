@@ -1227,6 +1227,11 @@ pub struct Settings {
     /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
     pub background_fps_limit: u32,
+    /// A window behind whose GPU frames crawl (another program in front
+    /// keeps the card busy) stops drawing its 3D until it has the focus
+    /// again, before Windows resets the card (app/busy_pause.rs). On by
+    /// default; not in the Legacy Viewer.
+    pub background_gpu_pause: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
@@ -2034,6 +2039,7 @@ impl Default for Settings {
             graphics_saved_active: None,
             background_fps_cap: true,
             background_fps_limit: 15,
+            background_gpu_pause: true,
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
