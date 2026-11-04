@@ -1254,6 +1254,10 @@ pub struct Settings {
     pub reflection_probes: u8,
     /// Reflection probe cube slots (RenderReflectionProbeCount; 8..=64).
     pub probe_count: u32,
+    /// How far automatic reflection probes are placed around the camera
+    /// (m, 32..=512), within the draw distance. The Legacy Viewer has no
+    /// such limit (the draw distance); 512 keeps its reach.
+    pub probe_range: f32,
     /// RenderAvatarMaxComplexity: avatars above it show as grey silhouettes
     /// (0 = no limit; Firestorm's Ultra preset is 350 000).
     pub max_complexity: u32,
@@ -2042,6 +2046,7 @@ impl Default for Settings {
             water_reflections: 1,
             reflection_probes: 3,
             probe_count: 32,
+            probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
             loading_avatars: 0,
@@ -2668,6 +2673,11 @@ impl Settings {
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 64);
+        self.probe_range = if self.probe_range.is_finite() {
+            self.probe_range.clamp(32.0, 512.0)
+        } else {
+            512.0
+        };
         self.tonemapper = self.tonemapper.min(1);
         self.tonemap_mix = if self.tonemap_mix.is_finite() {
             self.tonemap_mix.clamp(0.0, 1.0)

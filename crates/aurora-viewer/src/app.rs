@@ -9920,6 +9920,7 @@ impl App {
                 self.probes.level = self.settings.reflection_probes.min(3);
                 self.probes.reset();
             }
+            self.probes.range = self.settings.probe_range.min(self.settings.draw_distance);
             if self.probes.hdr != self.settings.hdr_emissive {
                 self.probes.hdr = self.settings.hdr_emissive;
                 self.probes.refresh();

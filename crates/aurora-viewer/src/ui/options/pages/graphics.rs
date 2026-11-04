@@ -679,6 +679,21 @@ fn reflections_and_water(cx: &mut Cx) {
                 .changed()
             },
         );
+        cx.row(
+            tr!("ui-options-probe-range"),
+            tr!("ui-options-probe-range-help"),
+            &field!(probe_range),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.probe_range, 32.0..=512.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .step_by(16.0)
+                        .suffix(" m")
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
     });
     // Aurora's own water effects, experimental and off by default
     cx.group(tr!("ui-options-aurora-water"), |cx| {

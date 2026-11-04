@@ -38,8 +38,9 @@ pub mod level {
 }
 
 const CELL: f32 = 16.0;
-/// Automatic probes are only kept within this distance of the camera.
-const AUTO_RANGE: f32 = 96.0;
+/// Part of the probe field, at its far end, over which the probes fade into
+/// the default one (`edge_fade`).
+const EDGE_FADE: f32 = 0.3;
 const DEFAULT_PERIOD: Duration = Duration::from_secs(2);
 const SCAN_PERIOD: Duration = Duration::from_millis(500);
 /// The candidate scan visits every object of the scene and of the world: it
@@ -108,6 +109,12 @@ pub struct ProbeManager {
     last_scan: Option<Instant>,
     pass: Option<ScanPass>,
     last_frame: Option<Instant>,
+    /// How far from the camera automatic probes are placed (m): the
+    /// Legacy Viewer keeps every probe of the objects within the draw
+    /// distance (LLReflectionMapManager::update sorts them by distance and
+    /// keeps the closest RenderReflectionProbeCount); Aurora's probe range
+    /// setting, within the draw distance.
+    pub range: f32,
 }
 
 impl Default for ProbeManager {
@@ -123,8 +130,23 @@ impl Default for ProbeManager {
             last_scan: None,
             pass: None,
             last_frame: None,
+            range: 512.0,
         }
     }
+}
+
+/// Weight of a probe at `distance` (to the camera, minus its radius) in a
+/// field that ends at `edge`: 1, then down to 0 over the last [`EDGE_FADE`]
+/// of the field, so that the field ends in a blend into the default probe,
+/// not on a line around the camera (the Legacy Viewer has the line, further
+/// out with its 256 probes).
+fn edge_fade(distance: f32, edge: f32) -> f32 {
+    if !edge.is_finite() {
+        // (no edge: infinity over infinity would weigh the probe NaN)
+        return 1.0;
+    }
+    let band = (edge * EDGE_FADE).max(1.0);
+    ((edge - distance) / band).clamp(0.0, 1.0)
 }
 
 impl ProbeManager {
@@ -226,6 +248,9 @@ impl ProbeManager {
                 p.fade = (p.fade + dt).min(1.0);
             }
         }
+        // where the field ends: the farthest probe kept when the slots run
+        // out, else the range (automatic probes only)
+        let full = (keep > 0 && order.len() > keep).then(|| self.probes[&order[keep - 1]].distance);
         let capture = self.next_capture(&order, eye, now);
         // probe list for the shaders, closest first (refSphere order)
         let mut list = Vec::with_capacity(self.slots as usize);
@@ -245,9 +270,15 @@ impl ProbeManager {
             if list.len() >= self.slots as usize {
                 break;
             }
+            let edge = match (p.kind == 0.0, full) {
+                (true, Some(f)) => f.min(self.range),
+                (true, None) => self.range,
+                (false, Some(f)) => f,
+                (false, None) => f32::INFINITY,
+            };
             list.push(ProbeGpu {
                 center_radius: [p.origin.x, p.origin.y, p.origin.z, p.radius],
-                params: [p.ambiance.max(sky_ambiance), 1.0, p.fade, p.kind],
+                params: [p.ambiance.max(sky_ambiance), 1.0, p.fade * edge_fade(p.distance, edge), p.kind],
                 slot: [slot, 0, 0, 0],
                 box_inv: p.box_inv.to_cols_array_2d(),
             });
@@ -339,7 +370,7 @@ impl ProbeManager {
             // object bounds per 16 m cell (objects that fit in a 16 m node)
             let end = (pass.next_gpu + n.div_ceil(SCAN_SLICES).max(SCAN_MIN_SLICE)).min(n);
             for g in scene.gpu.get(pass.next_gpu..end).unwrap_or_default() {
-                if !auto_candidate(g) || (g.center - eye).length() > AUTO_RANGE + g.radius {
+                if !auto_candidate(g) || (g.center - eye).length() > self.range + g.radius {
                     continue;
                 }
                 let cell = (g.center / CELL).floor().as_ivec3();
@@ -461,6 +492,18 @@ fn auto_candidate(g: &ObjGpu) -> bool {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn probes_fade_out_at_the_edge_of_the_field() {
+        // full weight in the near 70 %, none at the edge, a ramp between
+        assert_eq!(edge_fade(10.0, 100.0), 1.0);
+        assert!((edge_fade(70.0, 100.0) - 1.0).abs() < 1e-5);
+        assert!((edge_fade(85.0, 100.0) - 0.5).abs() < 1e-5);
+        assert_eq!(edge_fade(100.0, 100.0), 0.0);
+        assert_eq!(edge_fade(120.0, 100.0), 0.0);
+        // manual probes with free slots: no edge
+        assert_eq!(edge_fade(400.0, f32::INFINITY), 1.0);
+    }
 
     #[test]
     fn candidate_scan_is_spread_over_frames() {

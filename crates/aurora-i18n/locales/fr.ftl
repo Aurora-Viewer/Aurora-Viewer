@@ -4242,6 +4242,8 @@ ui-people-exact-object-name = Nom exact d'un objet
 ui-options-commands-case-insensitive-partial-name-among-nearby-avatars = Nom partiel, sans tenir compte des majuscules, parmi les avatars à proximité
 world-mutes-empty-name = Nom vide.
 ui-options-probe-count = Nombre de sondes
+ui-options-probe-range = Portée des sondes
+ui-options-probe-range-help = Jusqu’où autour de vous la scène reçoit des sondes de réflexion, dans la distance d’affichage (plus loin ne coûte pas plus de mémoire vidéo)
 ui-options-maximum-pages-videos-loaded-at-once-plugininstancestotal = Nombre maximal de pages / vidéos chargées en même temps (PluginInstancesTotal)
 ui-options-maximum-particles-0-disabled = Nombre maximal de particules (0 = désactivées)
 ui-options-names = Noms
