@@ -63,7 +63,7 @@ fn can_reveal_uuid(inv: &Inventory, id: Uuid, agent: Uuid) -> bool {
     let Some(original) = actions::original(inv, id).and_then(|id| inv.items.get(&id)) else {
         return false;
     };
-    let mask = if original.owner == agent {
+    let mask = if !agent.is_nil() && original.owner == agent {
         original.owner_mask
     } else {
         original.everyone_mask
