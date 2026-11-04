@@ -6,6 +6,8 @@
 //! of `render_thread`); see main_thread.rs for who owns what.
 
 pub mod adapter_choice;
+#[cfg(test)]
+mod alpha_mask_tests;
 pub mod arena;
 pub mod bc7;
 #[cfg(test)]
@@ -17,7 +19,7 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
-pub use device_lost::{in_guarded_poll, is_loss_panic};
+pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic};
 mod dof;
 mod drawn_pick;
 mod exposure;

@@ -28,6 +28,14 @@ pub(crate) mod keycap;
 mod modal_keys;
 pub(crate) mod pills;
 mod resize;
+mod restricted_text;
+#[cfg(test)]
+mod restricted_text_tests;
+pub use crate::text_validation::Policy as TextPolicy;
+pub use restricted_text::field as restricted_text_field;
+pub use restricted_text::number as restricted_number;
+pub use restricted_text::optional as text_field_with_policy;
+pub use restricted_text::show as restricted_text_edit;
 pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
@@ -46,8 +54,8 @@ pub use text_field::text_field;
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
-    Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation, navigation_beside,
-    navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+    Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
+    navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island_shape, organization_drag_preview,
@@ -471,6 +479,11 @@ impl<'a> Floater<'a> {
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
         if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+            // its toolbar button still closes it with the interface hidden,
+            // as it does the windows it toggles itself
+            if close_asked(ctx, self.id) {
+                *open = false;
+            }
             if self.cascade.is_some() {
                 cascade::hidden(ctx, egui::Id::unique(self.id));
             }
@@ -523,7 +536,7 @@ impl<'a> Floater<'a> {
             });
         // Ctrl+W closes it as its cross does, when it is the frontmost.
         // Ctrl+Shift+W closes every window.
-        let mut close = super::close_key::take(ctx, egui::Id::unique(self.id));
+        let mut close = super::close_key::take(ctx, egui::Id::unique(self.id)) || close_asked(ctx, self.id);
         super::close_key::shown(ctx, egui::Id::unique(self.id));
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
@@ -1326,6 +1339,35 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
     unminimize_quietly(ctx, id);
 }
 
+/// The toolbar button of a floater the app opens itself (its opening loads
+/// or resets something), as LLFloaterReg::toggleInstance: a minimized one
+/// expands, a shown one closes as its cross would ([`close_floater`]), and
+/// true asks the caller to open a closed one.
+#[must_use]
+pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool {
+    if open && floater_minimized(ctx, id) {
+        expand_floater(ctx, id);
+    } else if open {
+        close_floater(ctx, id);
+    }
+    !open
+}
+
+/// Close the floater `id` as its cross does, so that the window's own close
+/// runs (its questions, its cleanup): on its next frame drawn, this one or
+/// the next. A request for a window not drawn by then is dropped.
+pub fn close_floater(ctx: &egui::Context, id: &str) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(CLOSE), frame));
+}
+
+/// The floater `id` was asked to close ([`close_floater`]), once.
+fn close_asked(ctx: &egui::Context, id: &str) -> bool {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.remove_temp::<u64>(egui::Id::unique(id).with(CLOSE)))
+        .is_some_and(|at| at + 1 >= frame)
+}
+
 /// Open the floater `id` (LLFloaterReg::showInstance): expanded, whether it
 /// was closed or minimized.
 pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
@@ -1354,6 +1396,9 @@ fn unminimize_quietly(ctx: &egui::Context, id: &str) {
 
 /// Temporary flag of a floater asked to expand (`expand_floater`).
 pub(crate) const EXPAND: &str = "expand";
+
+/// Temporary frame of a floater asked to close (`close_floater`).
+const CLOSE: &str = "close";
 
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {

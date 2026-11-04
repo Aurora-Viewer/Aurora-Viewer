@@ -40,6 +40,8 @@ impl Imports {
                     || entry.description.len() > 127
                     || entry.name.contains('\0')
                     || entry.description.contains('\0')
+                    || !crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.name)
+                    || !crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.description)
             })
         {
             self.message = aurora_i18n::tr!("import-invalid-request").into();

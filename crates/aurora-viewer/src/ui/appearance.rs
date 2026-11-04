@@ -355,7 +355,7 @@ impl AppearanceUi {
             .and_then(|id| inv.folders.get(&id))
             .map(|f| aurora_i18n::tr!("status-new", value0 = f.info.name.to_string()))
             .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-new-outfit").into());
-        self.save_as = Some(name.chars().take(63).collect());
+        self.save_as = Some(crate::text_validation::generated_name(&name, 63));
         self.select_name = true;
         // beside the outfit it comes from: a variant goes in the same group
         self.save_in = model::base(inv)
@@ -1917,7 +1917,9 @@ pub fn show(
             ui.add_space(6.0);
             ui.label(aurora_i18n::tr!("ui-appearance-save-what-i-am-wearing-as-a-new-outfit"));
             ui.add_space(8.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY).char_limit(63));
+            let r = widgets::restricted_text_field(ui, true, &mut name, widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(f32::INFINITY).char_limit(63)
+            });
             if st.select_name {
                 r.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, r.id) {

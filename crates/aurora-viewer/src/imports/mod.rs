@@ -401,7 +401,7 @@ impl Entry {
         Self {
             id: Uuid::new_v4(),
             load_choice: None,
-            name: path.file_stem().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+            name: crate::text_validation::generated_name(&path.file_stem().unwrap_or_default().to_string_lossy(), 63),
             path,
             from_live: false,
             description: String::new(),
@@ -853,6 +853,8 @@ impl Imports {
                     || entry.description.len() > 127
                     || entry.name.contains('\0')
                     || entry.description.contains('\0')
+                    || !crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.name)
+                    || !crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.description)
                     || !crate::world::inventory::actions::destination(&world.inventory, entry.folder)
             })
         {

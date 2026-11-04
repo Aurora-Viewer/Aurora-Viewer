@@ -91,6 +91,7 @@ pub mod parcel_icons;
 pub mod pay;
 pub mod people;
 pub mod perf;
+pub mod photo_reel;
 pub mod physics;
 pub mod place_card;
 pub mod place_details;
@@ -129,6 +130,7 @@ pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
 pub mod wearable;
+pub mod web_browser;
 pub mod web_view;
 pub mod widgets;
 
@@ -195,6 +197,8 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// The built-in web browser (toolbar `webbrowser`).
+    pub web_browser: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
@@ -259,6 +263,7 @@ impl Panels {
             experiences: false,
             bumps: false,
             grid_status: false,
+            web_browser: false,
             quick_prefs: false,
             voice_controls: false,
             about: false,

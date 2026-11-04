@@ -114,7 +114,10 @@ fn parameters(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, assets: &Assets, 
                 flag(ui, p, flags, WAIT_TIME, aurora_i18n::tr!("gesture-wait-time"));
                 ui.add_enabled(
                     *flags & WAIT_TIME != 0,
-                    egui::DragValue::new(seconds).range(0.0..=3600.0).speed(0.1),
+                    widgets::restricted_number(
+                        egui::DragValue::new(seconds).range(0.0..=3600.0).speed(0.1),
+                        widgets::TextPolicy::Decimal,
+                    ),
                 );
             });
         }
@@ -155,9 +158,13 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
             body.add_enabled_ui(editor.saving.is_none(), |ui| {
                 egui::Grid::new("gesture_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                     ui.label(aurora_i18n::tr!("common-description"));
-                    crate::ui::widgets::text_field(ui, modifiable, &mut editor.description, |b, ui| {
-                        egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width())
-                    });
+                    crate::ui::widgets::restricted_text_field(
+                        ui,
+                        modifiable,
+                        &mut editor.description,
+                        crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                        |b, ui| egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width()),
+                    );
                     ui.end_row();
                     ui.label(aurora_i18n::tr!("gesture-trigger"));
                     crate::ui::widgets::text_field(ui, editable, &mut g.trigger, |b, _| egui::TextEdit::singleline(b).char_limit(255));
