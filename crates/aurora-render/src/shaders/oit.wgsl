@@ -57,7 +57,8 @@ struct OitParams {
     slots: u32,
     // the capture's frame stamp (its node claims)
     stamp: u32,
-    _pad1: u32,
+    // AURORA_OIT_STATS: the capture counts every fragment (oit.rs)
+    stats: u32,
     _pad2: u32,
     _pad3: u32,
 };

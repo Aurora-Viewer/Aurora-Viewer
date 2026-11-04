@@ -1701,7 +1701,8 @@ struct OitParams {
     slots: u32,
     // this frame's stamp (never 0): a node is claimed by storing it
     stamp: u32,
-    _pad1: u32,
+    // AURORA_OIT_STATS: the capture counts every fragment (oit.rs)
+    stats: u32,
     _pad2: u32,
     _pad3: u32,
 };
@@ -1799,9 +1800,10 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) v
     }
     let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
     // A full pool and full slots: nothing to store, so nothing to shade (the
-    // replay of the frame shades every face once, in order)
+    // replay of the frame shades every face once, in order). Not with
+    // AURORA_OIT_STATS: the counts below then stay exact, for the log.
     let used = atomicLoad(&oit_heads[0]);
-    if (used >= oit_params.node_cap && atomicLoad(&oit_heads[pixel]) >= oit_params.slots) {
+    if (oit_params.stats == 0u && used >= oit_params.node_cap && atomicLoad(&oit_heads[pixel]) >= oit_params.slots) {
         oit_overflow(used);
         return vec4<f32>(0.0);
     }

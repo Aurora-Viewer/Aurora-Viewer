@@ -967,6 +967,9 @@ struct GpuTimer {
     last_contact: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
+    /// Last times of the order-independent transparency's phases (ms):
+    /// capture, classify, composite, the rest (`MARK_OIT_*`).
+    last_oit: Option<[f32; 4]>,
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
     /// order.
     last_effects: Option<[f32; 4]>,
@@ -1032,7 +1035,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 25;
+const GPU_MARKS: u32 = 28;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1094,6 +1097,15 @@ const MARK_CONTACT_END: u32 = 23;
 const MARK_WATER_INTERFACE_END: u32 = 24;
 const MARK_WATER_AIR_BEGIN: u32 = 25;
 const MARK_WATER_AIR_END: u32 = 26;
+/// Inside the blended faces' range (`MARK_GLOW_END` to `MARK_BLEND_END`),
+/// the order-independent transparency's phases: after its capture pass,
+/// after the classify, after the composite; what follows to
+/// `MARK_BLEND_END` is the rest (the in-order replay when the pool
+/// overflowed, the glow, the overlays). All three written right after
+/// `MARK_GLOW_END` while OIT is off (the first three phases then empty).
+const MARK_OIT_CAPTURE_END: u32 = 27;
+const MARK_OIT_CLASSIFY_END: u32 = 28;
+const MARK_OIT_RESOLVE_END: u32 = 29;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1183,6 +1195,7 @@ impl GpuTimer {
             last_ssao: None,
             last_contact: None,
             last_bloom: None,
+            last_oit: None,
             last_effects: None,
             slot_prepass: Default::default(),
             compare: PrepassCompare::default(),
@@ -1214,6 +1227,12 @@ impl GpuTimer {
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
+                            self.last_oit = Some([
+                                ms(MARK_GLOW_END, MARK_OIT_CAPTURE_END),
+                                ms(MARK_OIT_CAPTURE_END, MARK_OIT_CLASSIFY_END),
+                                ms(MARK_OIT_CLASSIFY_END, MARK_OIT_RESOLVE_END),
+                                ms(MARK_OIT_RESOLVE_END, MARK_BLEND_END),
+                            ]);
                             self.last_effects = Some(GPU_EFFECT_PARTS.map(|(a, b)| ms(a, b)));
                             if msaa_prepass() == MsaaPrepass::Alternate {
                                 let mut times = [0.0; COMPARE_KEYS.len()];
@@ -5725,6 +5744,9 @@ impl Backend {
             t.harvest();
         }
         self.occlusion.harvest();
+        if let Some(line) = self.oit.as_ref().and_then(|o| o.layers_log()) {
+            log::info!("{line}");
+        }
         self.cull.harvest();
         self.depth_pick.harvest();
         self.depth_pick.harvest_clicks();
@@ -8038,6 +8060,12 @@ impl Backend {
                 }
             }
             pass_mark(&mut pass, MARK_GLOW_END);
+            if !oit_on {
+                // (no OIT phase this frame: its marks empty, the rest whole)
+                pass_mark(&mut pass, MARK_OIT_CAPTURE_END);
+                pass_mark(&mut pass, MARK_OIT_CLASSIFY_END);
+                pass_mark(&mut pass, MARK_OIT_RESOLVE_END);
+            }
             if !split && !oit_on {
                 rest(&mut pass);
             }
@@ -8182,10 +8210,14 @@ impl Backend {
                 bind_mesh(&mut pass, &self.groups.b);
                 pass.set_bind_group(3, oit_group, &[]);
                 draw_sided(&mut pass, capture, (b0, bn), 0);
+                pass_mark(&mut pass, MARK_OIT_CAPTURE_END);
             }
+            // (AURORA_OIT_STATS: the layer counts read back for the log)
+            oit.sample_layers(&self.device, &mut encoder);
             // sorted once per pixel, the tiles to composite listed, the
             // replay's and the glow's gated draws set
             oit.classify(&mut encoder, resolve);
+            mark(&mut encoder, MARK_OIT_CLASSIFY_END);
             // Drawn: the composite, or (chosen on the GPU, all or nothing)
             // the frame in the drawing order exactly as without OIT when the
             // pool overflowed. The creation preview (opaque, no depth) under
@@ -8199,6 +8231,7 @@ impl Backend {
                     bind_mesh(&mut pass, &self.groups.b);
                     draw_g(&mut pass, &self.pipelines.creation_preview, rg.creation_preview, composited);
                     oit.resolve(&mut pass, resolve);
+                    pass_mark(&mut pass, MARK_OIT_RESOLVE_END);
                 }
                 // then the rigged faces' depth from 1/255, as they leave it
                 // when drawn in order (`RiggedBlendDepth::Write`,
@@ -8215,6 +8248,7 @@ impl Backend {
             if !rigged {
                 draw_g(&mut pass, &self.pipelines.creation_preview, rg.creation_preview, composited);
                 oit.resolve(&mut pass, resolve);
+                pass_mark(&mut pass, MARK_OIT_RESOLVE_END);
                 bind_mesh(&mut pass, &self.groups.b);
             }
             // (overflowed: what `rest` draws without OIT)
@@ -8907,6 +8941,9 @@ impl Backend {
             });
         }
         self.occlusion.after_submit();
+        if let Some(o) = &self.oit {
+            o.after_submit();
+        }
         self.cull.after_submit();
         self.depth_pick.after_submit();
         self.exposure.after_submit();
@@ -8958,6 +8995,7 @@ impl Backend {
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
+        stats.gpu_oit = self.timer.as_ref().and_then(|t| t.last_oit);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();

@@ -1613,6 +1613,12 @@ pub struct RenderStats {
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
+    /// GPU times of the order-independent transparency's phases (ms),
+    /// parts of [`GpuElement::Transparent`]: its capture pass, the
+    /// classify, the composite, and the rest (the in-order replay when the
+    /// pool overflowed, the glow, the overlays; the whole while OIT is off,
+    /// the others 0 then).
+    pub gpu_oit: Option<[f32; 4]>,
     /// GPU time of the rest of [`GpuElement::Effects`] (ms): the planar
     /// reflections (with the refracted water light), the reflection probe,
     /// the scene copy (with the cut-out pass and the submerged water

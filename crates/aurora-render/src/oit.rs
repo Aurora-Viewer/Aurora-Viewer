@@ -92,7 +92,10 @@ struct Params {
     slots: u32,
     /// this frame's stamp, never 0: what the capture claims a node with
     stamp: u32,
-    _pad: [u32; 3],
+    /// `AURORA_OIT_STATS`: the capture counts every fragment, even once the
+    /// pool is full, so the layer counts read back are exact
+    stats: u32,
+    _pad: [u32; 2],
 }
 
 /// The pool's `flags` buffer is the DrawIndirectArgs of the replay's depth
@@ -128,6 +131,16 @@ pub(crate) fn env_override() -> Option<bool> {
 pub(crate) fn nodes_override() -> Option<u32> {
     static OVERRIDE: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
     *OVERRIDE.get_or_init(|| std::env::var("AURORA_OIT_NODES").ok()?.trim().parse().ok())
+}
+
+/// `AURORA_OIT_STATS=1`: the layer counts of the capture read back about
+/// once a second and logged as `oit layers:` (docs/TESTING.md). The capture
+/// then shades and counts every fragment, even once the pool is full (as
+/// it did before the overflow's early exit), so the frame rate of such a
+/// run is not the viewer's.
+pub(crate) fn stats_wanted() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_OIT_STATS").is_ok_and(|v| v.trim() == "1"))
 }
 
 /// object.wgsl for this device: the capture's depth test forced before its
@@ -317,6 +330,77 @@ pub(crate) struct Oit {
     gate: crate::oit_gate::Gate,
     /// the frame stamp of the capture's node claims (never 0)
     stamp: u32,
+    /// `AURORA_OIT_STATS`: the heads read back for the `oit layers:` line
+    sample: std::sync::Mutex<Option<Sample>>,
+}
+
+/// The read back of the heads for the log (`AURORA_OIT_STATS`): copied
+/// after the capture, mapped after the submit, counted once the GPU is
+/// done (no wait, the line comes a few frames later).
+struct Sample {
+    buf: wgpu::Buffer,
+    bytes: u64,
+    width: u32,
+    height: u32,
+    slots: u32,
+    node_cap: u32,
+    /// SAMPLE_IDLE, _ENCODED (copied this frame), _WAITING (mapping),
+    /// _MAPPED or _FAILED
+    state: std::sync::Arc<std::sync::atomic::AtomicU8>,
+    last: std::time::Instant,
+}
+
+const SAMPLE_IDLE: u8 = 0;
+const SAMPLE_ENCODED: u8 = 1;
+const SAMPLE_WAITING: u8 = 2;
+const SAMPLE_MAPPED: u8 = 3;
+const SAMPLE_FAILED: u8 = 4;
+/// Seconds between two read backs of the heads.
+const SAMPLE_PERIOD: f32 = 1.0;
+
+/// The `oit layers:` line from the heads of one frame (`width` x `height`
+/// pixels, `slots` per pixel in the slot array, a pool of `node_cap`):
+/// the covered pixels, the layers per covered pixel (mean and percentiles),
+/// the pixels past the slots, past the sort's 24 and past a walk's bound,
+/// the nodes the frame needed against the pool, and the pool's counter.
+fn layers_line(heads: &[u32], width: u32, height: u32, slots: u32, node_cap: u32) -> String {
+    let pixels = (width as usize) * (height as usize);
+    let mut counts: Vec<u32> = (0..pixels)
+        .filter_map(|p| heads.get(1 + 2 * p).copied())
+        .filter(|&c| c > 0)
+        .collect();
+    counts.sort_unstable();
+    let covered = counts.len();
+    let fragments: u64 = counts.iter().map(|&c| u64::from(c)).sum();
+    let needed: u64 = counts.iter().map(|&c| u64::from(c.saturating_sub(slots))).sum();
+    let pct = |n: usize| 100.0 * n as f64 / pixels.max(1) as f64;
+    let at = |q: f64| {
+        counts
+            .get(((covered as f64 - 1.0) * q).round().max(0.0) as usize)
+            .copied()
+            .unwrap_or(0)
+    };
+    let over = |n: u32| counts.iter().filter(|&&c| c > n).count();
+    let used = heads.first().copied().unwrap_or(0);
+    format!(
+        "oit layers: {covered} of {pixels} pixels covered ({:.1} %), {fragments} fragments, per covered pixel mean {:.1} p50 {} p95 {} max {}; over the {slots} slots {} ({:.1} %), over 24 {} ({:.1} %), over 1024 {}; nodes needed {needed} of {node_cap} ({:.0} %), counter {used}: {}",
+        pct(covered),
+        fragments as f64 / covered.max(1) as f64,
+        at(0.5),
+        at(0.95),
+        counts.last().copied().unwrap_or(0),
+        over(slots),
+        pct(over(slots)),
+        over(24),
+        pct(over(24)),
+        over(1024),
+        100.0 * needed as f64 / u64::from(node_cap.max(1)) as f64,
+        if used > node_cap {
+            "overflowed, replayed in order"
+        } else {
+            "composited"
+        }
+    )
 }
 
 fn entry(binding: u32, visibility: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -624,6 +708,7 @@ impl Oit {
             retry: Default::default(),
             gate: crate::oit_gate::Gate::new(device),
             stamp: 0,
+            sample: std::sync::Mutex::new(None),
         })
     }
 
@@ -701,7 +786,8 @@ impl Oit {
             // a new stamp each frame (the claims of the last one are void),
             // never 0 (what a cleared claim holds)
             stamp: self.stamp.wrapping_add(1).max(1),
-            _pad: [0; 3],
+            stats: u32::from(stats_wanted()),
+            _pad: [0; 2],
         };
         self.stamp = params.stamp;
         if self.last_params != Some(params) {
@@ -749,7 +835,8 @@ impl Oit {
             )
         };
         use wgpu::BufferUsages as U;
-        let heads = buffer("oit heads", heads_bytes, U::STORAGE)?;
+        // (COPY_SRC: the heads read back with AURORA_OIT_STATS)
+        let heads = buffer("oit heads", heads_bytes, U::STORAGE | U::COPY_SRC)?;
         let nodes = buffer("oit nodes", u64::from(node_cap) * NODE_BYTES, U::STORAGE)?;
         let claims = buffer("oit node claims", u64::from(node_cap) * CLAIM_BYTES, U::STORAGE)?;
         let args = buffer("oit tile draw", 16, U::STORAGE | U::INDIRECT)?;
@@ -990,6 +1077,97 @@ impl Oit {
             pass.set_pipeline(&r.depth_copy);
             pass.set_bind_group(0, group, &[]);
             pass.draw_indirect(&pool.flags, DEPTH_COPY_ARGS);
+        }
+    }
+
+    /// `AURORA_OIT_STATS`: copies the heads after the capture, about once a
+    /// second, for the `oit layers:` line ([`Oit::layers_log`]). Nothing
+    /// otherwise.
+    pub fn sample_layers(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        if !stats_wanted() {
+            return;
+        }
+        let Some(pool) = &self.pool else {
+            return;
+        };
+        let Ok(mut sample) = self.sample.lock() else {
+            return;
+        };
+        let bytes = pool.heads.size();
+        let now = std::time::Instant::now();
+        let stale = sample.as_ref().is_none_or(|s| s.bytes != bytes);
+        if stale {
+            *sample = Some(Sample {
+                buf: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("oit heads readback"),
+                    size: bytes,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                bytes,
+                width: pool.width,
+                height: pool.height,
+                slots: pool.slots,
+                node_cap: pool.node_cap,
+                state: Default::default(),
+                last: now - std::time::Duration::from_secs(10),
+            });
+        }
+        let Some(s) = sample.as_mut() else {
+            return;
+        };
+        use std::sync::atomic::Ordering;
+        if s.state.load(Ordering::Acquire) != SAMPLE_IDLE || now.duration_since(s.last).as_secs_f32() < SAMPLE_PERIOD {
+            return;
+        }
+        encoder.copy_buffer_to_buffer(&pool.heads, 0, &s.buf, 0, bytes);
+        s.last = now;
+        s.state.store(SAMPLE_ENCODED, Ordering::Release);
+    }
+
+    /// Maps the heads copied this frame, once its commands are submitted.
+    pub fn after_submit(&self) {
+        use std::sync::atomic::Ordering;
+        let Ok(sample) = self.sample.lock() else {
+            return;
+        };
+        let Some(s) = sample.as_ref() else {
+            return;
+        };
+        if s.state.load(Ordering::Acquire) != SAMPLE_ENCODED {
+            return;
+        }
+        s.state.store(SAMPLE_WAITING, Ordering::Release);
+        let state = s.state.clone();
+        s.buf.map_async(wgpu::MapMode::Read, .., move |r| {
+            state.store(if r.is_ok() { SAMPLE_MAPPED } else { SAMPLE_FAILED }, Ordering::Release);
+        });
+    }
+
+    /// The `oit layers:` line of the last heads read back, once the GPU
+    /// delivered them (`AURORA_OIT_STATS`).
+    pub fn layers_log(&self) -> Option<String> {
+        use std::sync::atomic::Ordering;
+        let Ok(sample) = self.sample.lock() else {
+            return None;
+        };
+        let s = sample.as_ref()?;
+        match s.state.load(Ordering::Acquire) {
+            SAMPLE_MAPPED => {
+                let line = s
+                    .buf
+                    .get_mapped_range(..)
+                    .ok()
+                    .map(|view| layers_line(bytemuck::cast_slice::<u8, u32>(&view), s.width, s.height, s.slots, s.node_cap));
+                s.buf.unmap();
+                s.state.store(SAMPLE_IDLE, Ordering::Release);
+                line
+            }
+            SAMPLE_FAILED => {
+                s.state.store(SAMPLE_IDLE, Ordering::Release);
+                Some("oit layers: the read back of the heads failed".to_owned())
+            }
+            _ => None,
         }
     }
 

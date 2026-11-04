@@ -9318,6 +9318,7 @@ What the inventory must show with these scenarios:
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_OIT=0` or `1` | Order-independent transparency off or on for this launch, whatever the setting |
 | `AURORA_OIT_NODES=<n>` | Layers per pixel of its pool for this launch (2 to 32): 2 makes it overflow |
+| `AURORA_OIT_STATS=1` | With `AURORA_OIT=1`, logs the layers per pixel of the lists once a second (`oit layers:`); the capture then counts every fragment |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
@@ -9821,6 +9822,18 @@ What the inventory must show with these scenarios:
   are chosen on the GPU through copies of the draws' arguments
   (`oit_gate.rs`), the path every backend takes, Metal included: on a Mac,
   check both this capture and the one at the default size.
+- **`AURORA_OIT_STATS=1`**: with `AURORA_OIT=1`, the heads of the lists are
+  read back about once a second (after the capture, mapped without a wait)
+  and the log gets an `oit layers:` line: the pixels holding a layer, the
+  fragments stored, the layers per covered pixel (mean, median, 95th
+  percentile, maximum), the pixels past the slot array, past the 24 layers
+  the sort keeps and past a walk's bound, the nodes the frame needed against
+  the pool and whether it was composited or replayed in order. The capture
+  then shades and counts every fragment, even once the pool is full (the
+  overflow's early exit is off), so the counts are the frame's true depth
+  complexity but the frame rate of such a run is not the viewer's: measure
+  without it. The `perf summary` line splits `g_transparent` into the
+  phases of OIT (`g_oit_*`, below) with or without it.
 - **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
   default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
@@ -10594,6 +10607,12 @@ thread.
     are counted with it), and SSR;
   - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
     counted in `g_post`;
+  - `g_oit_capture`, `g_oit_classify`, `g_oit_composite`, `g_oit_rest`:
+    the order-independent transparency's phases (`AURORA_OIT=1`), all
+    counted in `g_transparent`: its capture pass, the classify (the sort
+    per pixel), the composite, and the rest (the in-order replay when the
+    pool overflowed, the glow, the overlays; the whole of `g_transparent`
+    while OIT is off, the others 0 then);
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn
