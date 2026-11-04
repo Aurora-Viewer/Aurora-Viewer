@@ -31,6 +31,12 @@ struct ResolveParams {
     sigma_alpha: f32,
     // the temporal blend: weight of this frame
     temporal_weight: f32,
+    // samples per pixel of the scene (the transmittance's target; the
+    // stochastic passes may have more, samples_hw)
+    trans_samples: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
     // this frame's clip space to the last frame's (frame.motion_reproj)
     reproj: mat4x4<f32>,
 };
@@ -109,7 +115,7 @@ fn cs_resolve(@builtin(global_invocation_id) g: vec3<u32>) {
     }
     let px = vec2<i32>(g.xy);
     var trans = 0.0;
-    let n = min(rp.samples_hw, 32u);
+    let n = min(rp.trans_samples, 32u);
     for (var s = 0u; s < n; s += 1u) {
         trans += textureLoad(trans_ms, px, i32(s)).x;
     }

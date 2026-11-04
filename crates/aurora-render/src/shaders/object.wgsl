@@ -1737,8 +1737,22 @@ fn st_sub_mask(mask: u32) -> u32 {
     return (mask >> shift) & select((1u << n) - 1u, 0xffffffffu, n >= 32u);
 }
 
-// A blended fragment's alpha, as blend_color computes it, without the
-// shading (the alpha-only passes); -1 where blend_color discards.
+// eval_material's `color.a` alone, for the alpha-only passes: the portal
+// clip, then one fetch of the base texture (none for an emissive mask, whose
+// alpha is the face colour's). The normal, specular and emissive maps, the
+// normal perturbation and the specular anti-aliasing are left out: alpha
+// does not read them.
+fn st_material_alpha(rec: DrawRecord, in: VsOut) -> f32 {
+    portal_clip(rec, in.world_pos);
+    if ((rec.flags.x & FLAG_EMISSIVE_MASK) != 0u) {
+        return rec.base_color.a;
+    }
+    // (PBR and legacy alike: the texture alpha times the face colour's)
+    return sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+}
+
+// A blended fragment's alpha, as fs_blend computes it, without the shading
+// (the alpha-only passes); -1 where fs_blend discards.
 fn blend_alpha(in: VsOut, front: bool) -> f32 {
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         return -1.0;
@@ -1754,12 +1768,12 @@ fn blend_alpha(in: VsOut, front: bool) -> f32 {
     if (water_clipped(in.world_pos)) {
         return -1.0;
     }
-    let m = eval_material(in, front);
     let rec = records[in.record];
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+    let base_a = st_material_alpha(rec, in);
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && base_a < rec.params.w) {
         return -1.0;
     }
-    let a = m.color.a * rez_alpha(rec, in);
+    let a = base_a * rez_alpha(rec, in);
     if (a < 0.004) {
         return -1.0;
     }

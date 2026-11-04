@@ -3074,7 +3074,15 @@ impl Backend {
         // the setting selects it at any time, its targets are made on the
         // first frame that uses it)
         let st = Some({
-            let mut st = crate::oit_stochastic::Stochastic::new(&device, &queue, HDR_FORMAT, DEPTH_FORMAT);
+            // the stochastic passes' own sample count (oit_stochastic.rs
+            // `pass_samples`): the colour and depth formats both, 2, 8 and
+            // 16 needing the adapter's own format features as the scene's
+            let pass_supported: Vec<u32> = [2u32, 4, 8, 16]
+                .into_iter()
+                .filter(|n| *n == 4 || adapter_specific)
+                .filter(|n| fmt_features.flags.sample_count_supported(*n) && depth_features.flags.sample_count_supported(*n))
+                .collect();
+            let mut st = crate::oit_stochastic::Stochastic::new(&device, &queue, HDR_FORMAT, DEPTH_FORMAT, pass_supported);
             // the sample mask route writes its shader against the scene's
             // layouts (spirv_fix.rs: a passthrough module is not checked
             // against them)
@@ -3633,14 +3641,24 @@ impl Backend {
                 bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(&st.face_layout)],
                 immediate_size: 0,
             });
-            // the sample mask route: its own module without overrides, through
-            // spirv_fix (oit_stochastic.rs `mask_module`)
+            // the sample mask route (the default): its own module without
+            // overrides, through spirv_fix (oit_stochastic.rs `mask_module`);
+            // the sample index route when that cannot be made
             let mask_module = (crate::oit_stochastic::config().route == crate::oit_stochastic::Route::SampleMask)
-                .then(|| st.mask_module(device, &src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]));
+                .then(|| st.mask_module(device, &src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]))
+                .flatten();
+            log::info!(
+                "oit stochastic: the {} route",
+                if mask_module.is_some() { "sample mask" } else { "sample index" }
+            );
             let (depth_module, route_fs, depth_constants): (&wgpu::ShaderModule, &str, &[(&str, f64)]) = match &mask_module {
                 Some(m) => (m, "fs_st_depth_mask", &[]),
                 None => (&module, "fs_st_depth_index", &[("WATER_CLIP", 1.0)]),
             };
+            // the stochastic depth and the accumulation at the passes' own
+            // count (oit_stochastic.rs `pass_samples`), the total alpha at
+            // the scene's
+            let pass_samples = st.pass_samples(samples);
             let alpha = std::array::from_fn(|side| {
                 make_pipeline(
                     device,
@@ -3682,6 +3700,7 @@ impl Backend {
                         depth_write: true,
                         depth_compare: wgpu::CompareFunction::Greater,
                         constants: depth_constants,
+                        samples: pass_samples,
                         ..base("stochastic depth", "vs_main", route_fs)
                     },
                 )
@@ -3709,6 +3728,7 @@ impl Backend {
                         depth_write: false,
                         depth_compare: wgpu::CompareFunction::GreaterEqual,
                         constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
+                        samples: pass_samples,
                         ..base("stochastic accumulation", "vs_main", "fs_blend")
                     },
                 )
@@ -8094,7 +8114,6 @@ impl Backend {
             let t = &self.targets;
             let scene_depth_tex = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
             let scene_depth = t.depth_msaa.as_ref().unwrap_or(&t.depth_ss);
-            let samples = scene_depth_tex.sample_count();
             mark(&mut encoder, MARK_ST_BEGIN);
             // 2. the total alpha of every sample
             if let Some(mut pass) = st.begin_alpha(&mut encoder, scene_depth) {
@@ -8105,8 +8124,8 @@ impl Backend {
             mark(&mut encoder, MARK_ST_ALPHA_END);
             // 3 and 4: the stochastic depth, then the accumulation, once per
             // run of the samples
-            for i in 0..st.iterations(samples) {
-                st.begin_iteration(&mut encoder, scene_depth_tex, i == 0);
+            for i in 0..st.iterations() {
+                st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, i == 0);
                 if let Some(mut pass) = st.begin_depth(&mut encoder) {
                     bind_mesh(&mut pass, &self.groups.b);
                     pass.set_bind_group(3, st.face_group(i), &[]);

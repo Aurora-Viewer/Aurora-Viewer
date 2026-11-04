@@ -436,6 +436,8 @@ pub enum FixError {
 pub struct SampleMaskShaders {
     facts: Option<VulkanFacts>,
     passthrough: bool,
+    /// the device is a Vulkan one (where naga's scalar is wrong)
+    vulkan: bool,
 }
 
 /// The messages that are logged once per process.
@@ -446,19 +448,85 @@ impl SampleMaskShaders {
     /// Reads what the device is; `instance_flags` are those the instance
     /// was created with.
     pub fn new(adapter: &wgpu::Adapter, device: &wgpu::Device, instance_flags: wgpu::InstanceFlags) -> Self {
-        let facts = (adapter.get_info().backend == wgpu::Backend::Vulkan)
-            .then(|| VulkanFacts::query(adapter, device, instance_flags))
-            .flatten();
+        let vulkan = adapter.get_info().backend == wgpu::Backend::Vulkan;
+        let facts = vulkan.then(|| VulkanFacts::query(adapter, device, instance_flags)).flatten();
         Self {
             facts,
             passthrough: device.features().contains(wgpu::Features::PASSTHROUGH_SHADERS),
+            vulkan,
         }
     }
 
     /// Facts given by hand (tests).
     #[cfg(test)]
     pub fn with_facts(facts: Option<VulkanFacts>, passthrough: bool) -> Self {
-        Self { facts, passthrough }
+        let vulkan = facts.is_some();
+        Self {
+            facts,
+            passthrough,
+            vulkan,
+        }
+    }
+
+    /// [`SampleMaskShaders::create_shader_module_mapped`] that never falls
+    /// back to naga's scalar on Vulkan: `None` when the words cannot be
+    /// fixed there (no passthrough, a step failed; logged once), so that
+    /// the caller takes a route without `sample_mask`. Elsewhere (DX12,
+    /// Metal: naga's HLSL and MSL are right) the plain module.
+    pub fn try_create_shader_module_mapped(
+        &self,
+        device: &wgpu::Device,
+        label: &str,
+        wgsl: &str,
+        map: spv::BindingMap,
+    ) -> Option<wgpu::ShaderModule> {
+        if !self.vulkan {
+            return Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl)),
+            }));
+        }
+        let Some(facts) = &self.facts else {
+            log::warn!("sample_mask shader \"{label}\": the Vulkan device could not be queried; not created");
+            return None;
+        };
+        match self.fixed_words_mapped(facts, label, wgsl, map) {
+            Ok(Some(words)) => Some(self.passthrough_module(device, label, words)),
+            // (no SampleMask in the words, or naga's array already: right as it is)
+            Ok(None) => Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(wgsl)),
+            })),
+            Err(err) => {
+                log::warn!("sample_mask shader \"{label}\": {err}; not created");
+                None
+            }
+        }
+    }
+
+    fn passthrough_module(&self, device: &wgpu::Device, label: &str, words: FixedWords) -> wgpu::ShaderModule {
+        let entry_points: Vec<wgpu::PassthroughShaderEntryPoint<'static>> = words
+            .entry_points
+            .iter()
+            .map(|(name, size)| wgpu::PassthroughShaderEntryPoint {
+                name: Cow::Owned(name.clone()),
+                workgroup_size: (size[0], size[1], size[2]),
+            })
+            .collect();
+        // SAFETY: the SPIR-V comes from naga, from a WGSL that naga
+        // validated, written with the options wgpu-hal itself uses; the
+        // rewrite only retypes the SampleMask variables and reroutes their
+        // loads and stores (`rewrite`), and `verify` checked the result
+        // before this point. The tests run spirv-val on the shapes of shader
+        // this serves.
+        unsafe {
+            device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {
+                label: Some(label),
+                entry_points: Cow::Owned(entry_points),
+                spirv: Some(Cow::Owned(words.spirv)),
+                ..Default::default()
+            })
+        }
     }
 
     /// The shader module of a WGSL that uses `sample_mask`, in place of
@@ -482,31 +550,7 @@ impl SampleMaskShaders {
     pub fn create_shader_module_mapped(&self, device: &wgpu::Device, label: &str, wgsl: &str, map: spv::BindingMap) -> wgpu::ShaderModule {
         if let Some(facts) = &self.facts {
             match self.fixed_words_mapped(facts, label, wgsl, map) {
-                Ok(Some(words)) => {
-                    let entry_points: Vec<wgpu::PassthroughShaderEntryPoint<'static>> = words
-                        .entry_points
-                        .iter()
-                        .map(|(name, size)| wgpu::PassthroughShaderEntryPoint {
-                            name: Cow::Owned(name.clone()),
-                            workgroup_size: (size[0], size[1], size[2]),
-                        })
-                        .collect();
-                    // SAFETY: the SPIR-V comes from naga, from a WGSL that
-                    // naga validated, written with the options wgpu-hal
-                    // itself uses; the rewrite only retypes the SampleMask
-                    // variables and reroutes their loads and stores
-                    // (`rewrite`), and `verify` checked the result before
-                    // this point. The tests run spirv-val on the shapes of
-                    // shader this serves.
-                    return unsafe {
-                        device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {
-                            label: Some(label),
-                            entry_points: Cow::Owned(entry_points),
-                            spirv: Some(Cow::Owned(words.spirv)),
-                            ..Default::default()
-                        })
-                    };
-                }
+                Ok(Some(words)) => return self.passthrough_module(device, label, words),
                 Ok(None) => {}
                 Err(err) => {
                     if !FALLBACK_LOGGED.swap(true, Ordering::Relaxed) {

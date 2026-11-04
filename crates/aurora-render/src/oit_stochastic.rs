@@ -19,9 +19,13 @@
 //!    the accumulated colour averaged over the pixel's samples, times the
 //!    alpha correction (total alpha over accumulated alpha).
 //!
-//! More samples than the scene's targets hold (`AURORA_OIT_SAMPLES`): the
-//! passes 3 and 4 run again with the next bits of one stratified mask
-//! (paper footnote 1). The masks come from a table of random S-choose-R
+//! The passes 3 and 4 run at their own sample count, the most the device
+//! has up to 8 (the paper's, section 4: 8 per pass, 1 + 2 S / 8 passes),
+//! even when the scene is at 4x: their depth starts as the opaque depth
+//! spread over those samples (`oit_stochastic_expand.wgsl`), the total alpha
+//! and the composite stay at the scene's samples. More samples than a pass
+//! holds (`AURORA_OIT_SAMPLES`): the passes 3 and 4 run again with the next
+//! bits of one stratified mask (paper footnote 1). The masks come from a table of random S-choose-R
 //! subsets (`masks`), fixed for every launch; the seed is the pixel, the
 //! face's tie-break and the triangle. Needs MSAA (the targets are
 //! multisampled), and `PRIMITIVE_INDEX` for the triangle in the
@@ -34,15 +38,19 @@ use bytemuck::{Pod, Zeroable};
 /// Seeds per alpha level in the mask table (the paper's width, 2 047).
 pub const SEEDS: u32 = 2048;
 pub const MAX_SAMPLES: u32 = 32;
+/// The most samples a stochastic pass takes (the expand map's size).
+pub const MAX_PASS_SAMPLES: u32 = 16;
 
-/// How the coverage mask reaches the samples (the known blocker of the
-/// `@builtin(sample_mask)` output on naga's SPIR-V).
+/// How the coverage mask reaches the samples of the stochastic depth.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Route {
     /// one invocation per sample (`@builtin(sample_index)`), the samples
-    /// off the mask discarded
+    /// off the mask discarded: the fallback, and `AURORA_OIT_STOCH=index`
     SampleIndex,
-    /// the mask written once per fragment (`@builtin(sample_mask)`)
+    /// the mask written once per fragment (`@builtin(sample_mask)`): the
+    /// default, a quarter of the invocations at 4x. On Vulkan only through
+    /// spirv_fix (naga 30's SPIR-V declares the built-in wrong); when that
+    /// cannot make the module, the index route is taken
     SampleMask,
 }
 
@@ -65,6 +73,9 @@ pub struct Config {
     pub prim_seed: bool,
     /// the per-pixel part of the seed
     pub seed: Seed,
+    /// samples per stochastic pass: 0 the most the device has up to 8,
+    /// else this count when the device has it (`pass=<n>`)
+    pub pass_samples: u32,
 }
 
 /// The per-pixel value the masks are drawn from: white noise (a hash), the
@@ -86,9 +97,10 @@ impl Default for Config {
             filter: 0,
             sigma_alpha: 0.1,
             temporal: 0.0,
-            route: Route::SampleIndex,
+            route: Route::SampleMask,
             prim_seed: true,
             seed: Seed::White,
+            pass_samples: 0,
         }
     }
 }
@@ -139,8 +151,11 @@ pub(crate) fn config() -> Config {
 /// `filter=<radius>[:<sigma>]`, `temporal[=<frames>]` (the resolved colour
 /// blended with the last frame's reprojected through the nearest
 /// transparent depth, weight 1/frames, the seeds changing every frame),
-/// `mask` (the sample mask route), `noprim` (the triangle left out of the
-/// seed), `seed=white|r2|blue` (the per-pixel part of the seed).
+/// `index` (the sample index route instead of the sample mask's), `mask`
+/// (the sample mask route, the default), `noprim` (the triangle left out of
+/// the seed), `seed=white|r2|blue` (the per-pixel part of the seed),
+/// `pass=<n>` (samples per stochastic pass, 2 to 16; the scene's count at
+/// least).
 pub fn parse_config(samples: Option<&str>, flags: Option<&str>) -> Config {
     let mut c = Config::default();
     if let Some(s) = samples.and_then(|s| s.trim().parse::<u32>().ok()) {
@@ -166,6 +181,7 @@ pub fn parse_config(samples: Option<&str>, flags: Option<&str>) -> Config {
             "mask" => c.route = Route::SampleMask,
             "index" => c.route = Route::SampleIndex,
             "noprim" => c.prim_seed = false,
+            "pass" => c.pass_samples = value.parse::<u32>().unwrap_or(0).min(MAX_PASS_SAMPLES),
             "seed" => {
                 c.seed = match value {
                     "r2" => Seed::R2,
@@ -239,6 +255,66 @@ pub fn mask_table(samples: u32) -> Vec<u32> {
     table
 }
 
+/// The samples per stochastic pass for a scene of `scene` samples:
+/// `wanted` when the device has it (and it is at least the scene's), else
+/// the most the device has up to 8, never fewer than the scene's (whose
+/// targets the passes can always use). `supported`: the counts both the
+/// colour and the depth formats take.
+pub fn pass_samples(scene: u32, wanted: u32, supported: &[u32]) -> u32 {
+    let ok = |n: u32| n >= scene && n <= MAX_PASS_SAMPLES && supported.contains(&n);
+    if wanted > 0 && ok(wanted) {
+        return wanted;
+    }
+    supported
+        .iter()
+        .copied()
+        .filter(|&n| ok(n) && n <= 8)
+        .max()
+        .unwrap_or(scene)
+        .max(scene)
+}
+
+/// The standard sample positions of Vulkan and Direct3D (in sixteenths of
+/// a pixel from its centre), for the counts a pass or a scene can have.
+fn standard_positions(n: u32) -> &'static [(i32, i32)] {
+    match n {
+        2 => &[(4, 4), (-4, -4)],
+        4 => &[(-2, -6), (6, -2), (-6, 2), (2, 6)],
+        8 => &[(1, -3), (-1, 3), (5, 1), (-3, -5), (-5, 5), (-7, -1), (3, 7), (7, -7)],
+        16 => &[
+            (1, 1),
+            (-1, -3),
+            (-3, 2),
+            (4, -1),
+            (-5, -2),
+            (2, 5),
+            (5, 3),
+            (3, -5),
+            (-2, 6),
+            (0, -7),
+            (-4, -6),
+            (-6, 4),
+            (-8, 0),
+            (7, -4),
+            (6, 7),
+            (-7, -8),
+        ],
+        _ => &[(0, 0)],
+    }
+}
+
+/// For each sample of a pass of `pass` samples, the scene sample nearest to
+/// it (oit_stochastic_expand.wgsl): the opaque depth it starts from.
+pub fn expand_map(scene: u32, pass: u32) -> [u32; MAX_PASS_SAMPLES as usize] {
+    let (from, to) = (standard_positions(scene), standard_positions(pass));
+    let mut map = [0u32; MAX_PASS_SAMPLES as usize];
+    for (m, &(x, y)) in map.iter_mut().zip(to) {
+        let d = |&(a, b): &(i32, i32)| (a - x) * (a - x) + (b - y) * (b - y);
+        *m = (0..from.len()).min_by_key(|&k| d(&from[k])).unwrap_or(0) as u32;
+    }
+    map
+}
+
 /// object.wgsl `StParams`.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -258,12 +334,16 @@ struct StParams {
 struct ResolveParams {
     width: u32,
     height: u32,
+    /// samples per stochastic pass, and in all
     samples_hw: u32,
     samples: u32,
     flags: u32,
     radius: u32,
     sigma_alpha: f32,
     temporal_weight: f32,
+    /// samples of the scene (the total alpha's target)
+    trans_samples: u32,
+    _pad: [u32; 3],
     /// this frame's clip space to the last frame's (frame.motion_reproj)
     reproj: [[f32; 4]; 4],
 }
@@ -292,14 +372,23 @@ pub(crate) struct Shared {
     /// (spirv_fix.rs), with the scene's group layouts (frame, records,
     /// textures) the shader is written against
     mask_shaders: Option<std::sync::Arc<(crate::spirv_fix::SampleMaskShaders, Vec<Vec<wgpu::BindGroupLayoutEntry>>)>>,
+    /// the sample counts the device takes for the stochastic passes'
+    /// targets (the colour and the depth formats both)
+    pass_supported: Vec<u32>,
+    /// the opaque depth spread over a pass's samples
+    expand_layout: wgpu::BindGroupLayout,
+    expand_module: wgpu::ShaderModule,
 }
 
-/// The resolve's pipelines for one sample count.
+/// The resolve's pipelines for one sample count of the scene.
 pub(crate) struct Resolve {
     samples: u32,
     resolve: wgpu::ComputePipeline,
     filter: wgpu::ComputePipeline,
     composite: wgpu::RenderPipeline,
+    /// the opaque depth spread over the pass's samples (more than the
+    /// scene's only)
+    expand: Option<wgpu::RenderPipeline>,
 }
 
 impl Resolve {
@@ -311,7 +400,9 @@ impl Resolve {
 struct Targets {
     width: u32,
     height: u32,
+    /// the scene's samples (the total alpha's), the stochastic passes'
     samples: u32,
+    pass: u32,
     trans: wgpu::TextureView,
     accum: wgpu::TextureView,
     depth_tex: wgpu::Texture,
@@ -332,6 +423,8 @@ pub(crate) struct Stochastic {
     params: Vec<wgpu::Buffer>,
     face_groups: Vec<wgpu::BindGroup>,
     resolve_params: wgpu::Buffer,
+    /// oit_stochastic_expand.wgsl `ExpandParams`
+    expand_params: wgpu::Buffer,
     targets: Option<Targets>,
     frame: u32,
 }
@@ -376,7 +469,15 @@ fn bind(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::BindGroupEnt
 impl Stochastic {
     /// `None` when the device cannot (no MSAA targets are checked here: the
     /// frame checks the scene's samples).
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, hdr_format: wgpu::TextureFormat, depth_format: wgpu::TextureFormat) -> Self {
+    /// `pass_supported`: the sample counts the device takes for both
+    /// formats (the stochastic passes' choice, `pass_samples`).
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        hdr_format: wgpu::TextureFormat,
+        depth_format: wgpu::TextureFormat,
+        pass_supported: Vec<u32>,
+    ) -> Self {
         use wgpu::ShaderStages as S;
         let config = config();
         let face_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -415,6 +516,31 @@ impl Stochastic {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit stochastic"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/oit_stochastic.wgsl").into()),
+        });
+        let expand_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("oit stochastic expand"),
+            entries: &[
+                entry(
+                    0,
+                    S::FRAGMENT,
+                    wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: true,
+                    },
+                ),
+                entry(1, S::FRAGMENT, buffer(wgpu::BufferBindingType::Uniform)),
+            ],
+        });
+        let expand_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("oit stochastic expand"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/oit_stochastic_expand.wgsl").into()),
+        });
+        let expand_params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("oit stochastic expand parameters"),
+            size: u64::from(MAX_PASS_SAMPLES * 4),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let table = mask_table(config.samples);
         let masks = device.create_buffer(&wgpu::BufferDescriptor {
@@ -462,7 +588,7 @@ impl Stochastic {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        log::info!("oit stochastic: {config:?}");
+        log::info!("oit stochastic: {config:?}; pass sample counts the device takes: {pass_supported:?}");
         Stochastic {
             shared: Shared {
                 face_layout,
@@ -471,6 +597,9 @@ impl Stochastic {
                 hdr_format,
                 depth_format,
                 mask_shaders: None,
+                pass_supported,
+                expand_layout,
+                expand_module,
             },
             config,
             _masks: masks,
@@ -478,6 +607,7 @@ impl Stochastic {
             params,
             face_groups,
             resolve_params,
+            expand_params,
             targets: None,
             frame: 0,
         }
@@ -493,9 +623,14 @@ impl Stochastic {
         self.shared.mask_shaders = Some(std::sync::Arc::new((shaders, scene_groups)));
     }
 
-    /// Runs of the passes 3 and 4 for `samples_hw` samples per target.
-    pub fn iterations(&self, samples_hw: u32) -> u32 {
-        self.config.samples.div_ceil(samples_hw.max(1)).clamp(1, MAX_SAMPLES)
+    /// Runs of the passes 3 and 4 for `pass` samples per pass.
+    fn iterations_for(&self, pass: u32) -> u32 {
+        self.config.samples.div_ceil(pass.max(1)).clamp(1, MAX_SAMPLES)
+    }
+
+    /// Runs of the passes 3 and 4 this frame (after `prepare`).
+    pub fn iterations(&self) -> u32 {
+        self.targets.as_ref().map_or(1, |t| self.iterations_for(t.pass))
     }
 
     /// The frame's targets and parameters. `false` without MSAA.
@@ -511,19 +646,22 @@ impl Stochastic {
         if samples <= 1 {
             return false;
         }
+        let pass = self.shared.pass_samples(samples);
         let stale = self
             .targets
             .as_ref()
-            .is_none_or(|t| t.width != width || t.height != height || t.samples != samples);
+            .is_none_or(|t| t.width != width || t.height != height || t.samples != samples || t.pass != pass);
         if stale {
-            self.targets = Some(self.make_targets(device, width, height, samples));
+            self.targets = Some(self.make_targets(device, width, height, samples, pass));
+            queue.write_buffer(&self.expand_params, 0, bytemuck::cast_slice(&expand_map(samples, pass)));
         }
         self.frame = self.frame.wrapping_add(1);
         let c = self.config;
+        let iterations = self.iterations_for(pass);
         let flags = u32::from(c.stratified) | (u32::from(c.temporal > 0.0) << 1) | (u32::from(!c.prim_seed) << 2);
-        for (i, p) in self.params.iter().enumerate().take(self.iterations(samples) as usize) {
+        for (i, p) in self.params.iter().enumerate().take(iterations as usize) {
             let sp = StParams {
-                samples_hw: samples,
+                samples_hw: pass,
                 samples: c.samples,
                 iteration: i as u32,
                 flags,
@@ -536,19 +674,21 @@ impl Stochastic {
         let rp = ResolveParams {
             width,
             height,
-            samples_hw: samples,
-            samples: samples * self.iterations(samples),
+            samples_hw: pass,
+            samples: pass * iterations,
             flags: u32::from(c.correction) | (u32::from(c.filter > 0) << 1) | (u32::from(c.temporal > 0.0) << 2),
             radius: c.filter,
             sigma_alpha: c.sigma_alpha,
             temporal_weight: c.temporal,
+            trans_samples: samples,
+            _pad: [0; 3],
             reproj,
         };
         queue.write_buffer(&self.resolve_params, 0, bytemuck::bytes_of(&rp));
         true
     }
 
-    fn make_targets(&self, device: &wgpu::Device, width: u32, height: u32, samples: u32) -> Targets {
+    fn make_targets(&self, device: &wgpu::Device, width: u32, height: u32, samples: u32, pass: u32) -> Targets {
         let make = |label, format, samples, usage| {
             let (tex, view) = crate::renderer::make_view(device, label, width, height, format, samples, usage);
             (tex, view)
@@ -563,13 +703,13 @@ impl Stochastic {
         let (_, accum) = make(
             "oit stochastic accumulation",
             self.shared.hdr_format,
-            samples,
+            pass,
             U::RENDER_ATTACHMENT | U::TEXTURE_BINDING,
         );
         let (depth_tex, depth) = make(
             "oit stochastic depth",
             self.shared.depth_format,
-            samples,
+            pass,
             U::RENDER_ATTACHMENT | U::COPY_DST | U::TEXTURE_BINDING,
         );
         let single = U::STORAGE_BINDING | U::TEXTURE_BINDING;
@@ -641,14 +781,15 @@ impl Stochastic {
             (resolve, filter, composite)
         });
         log::info!(
-            "oit stochastic: targets {width}x{height} at {samples} samples, {} iterations for {} samples",
-            self.iterations(samples),
+            "oit stochastic: targets {width}x{height}, the scene at {samples} samples, the passes at {pass}: {} iterations for {} samples",
+            self.iterations_for(pass),
             self.config.samples
         );
         Targets {
             width,
             height,
             samples,
+            pass,
             trans,
             accum,
             depth_tex,
@@ -704,10 +845,48 @@ impl Stochastic {
     }
 
     /// Before each iteration: the opaque depth copied into the stochastic
-    /// depth; before the first, the accumulation cleared.
-    pub fn begin_iteration(&self, encoder: &mut wgpu::CommandEncoder, scene_depth: &wgpu::Texture, first: bool) {
+    /// depth (spread over its samples when it has more); before the first,
+    /// the accumulation cleared.
+    pub fn begin_iteration(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        scene_depth: (&wgpu::Texture, &wgpu::TextureView),
+        r: &Resolve,
+        first: bool,
+    ) {
         let Some(t) = &self.targets else { return };
-        encoder.copy_texture_to_texture(scene_depth.as_image_copy(), t.depth_tex.as_image_copy(), scene_depth.size());
+        match (&r.expand, t.pass != t.samples) {
+            (Some(expand), true) => {
+                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("oit stochastic expand"),
+                    layout: &self.shared.expand_layout,
+                    entries: &[
+                        bind(0, wgpu::BindingResource::TextureView(scene_depth.1)),
+                        bind(1, self.expand_params.as_entire_binding()),
+                    ],
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("oit stochastic expand"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &t.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(expand);
+                pass.set_bind_group(0, &group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            _ => encoder.copy_texture_to_texture(scene_depth.0.as_image_copy(), t.depth_tex.as_image_copy(), scene_depth.0.size()),
+        }
         if first {
             encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("oit stochastic accumulation clear"),
@@ -803,12 +982,19 @@ impl Stochastic {
 }
 
 impl Shared {
+    /// The samples per stochastic pass for a scene of `scene` samples.
+    pub fn pass_samples(&self, scene: u32) -> u32 {
+        pass_samples(scene, config().pass_samples, &self.pass_supported)
+    }
+
     /// The scene module for the sample mask route: `src` (the scene's WGSL)
     /// with its overrides turned into constants (`values` for the ones the
     /// stochastic depth pipeline sets, the declared defaults for the rest:
     /// a passthrough module cannot be specialised), created through
-    /// spirv_fix against the scene's layouts and `face_layout`.
-    pub fn mask_module(&self, device: &wgpu::Device, src: &str, values: &[(&str, &str)]) -> wgpu::ShaderModule {
+    /// spirv_fix against the scene's layouts and `face_layout`. `None` when
+    /// it cannot be made right (Vulkan without the fix): the index route
+    /// then.
+    pub fn mask_module(&self, device: &wgpu::Device, src: &str, values: &[(&str, &str)]) -> Option<wgpu::ShaderModule> {
         let wgsl = constants_for_overrides(src, values);
         let face = [
             layout_entry(30, wgpu::BufferBindingType::Storage { read_only: true }),
@@ -836,12 +1022,9 @@ impl Shared {
                         }
                     });
                 }
-                shaders.create_shader_module_mapped(device, "scene stochastic mask", &wgsl, map)
+                shaders.try_create_shader_module_mapped(device, "scene stochastic mask", &wgsl, map)
             }
-            None => device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("scene stochastic mask"),
-                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-            }),
+            None => None,
         }
     }
 }
@@ -961,11 +1144,50 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
         multiview_mask: None,
         cache: None,
     });
+    let pass = shared.pass_samples(samples);
+    let expand = (pass != samples).then(|| {
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("oit stochastic expand"),
+            bind_group_layouts: &[Some(&shared.expand_layout)],
+            immediate_size: 0,
+        });
+        device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+            label: Some("oit stochastic expand"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shared.expand_module,
+                entry_point: Some("vs_full"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shared.expand_module,
+                entry_point: Some("fs_expand"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: shared.depth_format,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: pass,
+                ..Default::default()
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    });
     Resolve {
         samples,
         resolve: compute("oit stochastic resolve", "cs_resolve"),
         filter: compute("oit stochastic filter", "cs_filter"),
         composite,
+        expand,
     }
 }
 
@@ -996,6 +1218,34 @@ mod tests {
     }
 
     #[test]
+    fn the_pass_takes_the_most_samples_up_to_8() {
+        let all = [2, 4, 8, 16];
+        assert_eq!(pass_samples(4, 0, &all), 8);
+        assert_eq!(pass_samples(4, 16, &all), 16);
+        assert_eq!(pass_samples(4, 4, &all), 4);
+        // never fewer than the scene's, nor a count the device lacks
+        assert_eq!(pass_samples(8, 2, &all), 8);
+        assert_eq!(pass_samples(4, 0, &[4]), 4);
+        assert_eq!(pass_samples(2, 16, &[2, 4]), 4);
+    }
+
+    #[test]
+    fn each_pass_sample_takes_the_nearest_scene_sample() {
+        // 8 over 4: two pass samples to each scene sample
+        let m = expand_map(4, 8);
+        assert_eq!(&m[..8], &[0, 3, 1, 0, 2, 2, 3, 1]);
+        // the same count: each its own
+        assert_eq!(&expand_map(4, 4)[..4], &[0, 1, 2, 3]);
+        for n in [2, 4, 8] {
+            let m = expand_map(n, 16);
+            assert!(m.iter().all(|&k| k < n));
+            for k in 0..n {
+                assert!(m.contains(&k), "{n}: scene sample {k} unused");
+            }
+        }
+    }
+
+    #[test]
     fn the_declared_bindings_are_listed() {
         let src = "@group(0) @binding(2) var<uniform> a: u32;
 @group(3)  @binding(20) var<storage> b: array<u32>;
@@ -1017,10 +1267,11 @@ mod tests {
     fn the_flags_parse() {
         let c = parse_config(None, None);
         assert_eq!(c, Config::default());
-        let c = parse_config(Some("16"), Some("naive,nocorr,filter=3:0.2,temporal=4,mask,noprim"));
+        let c = parse_config(Some("16"), Some("naive,nocorr,filter=3:0.2,temporal=4,index,noprim"));
         assert_eq!(c.samples, 16);
         assert!(!c.stratified && !c.correction && !c.prim_seed);
-        assert_eq!((c.filter, c.sigma_alpha, c.temporal, c.route), (3, 0.2, 0.25, Route::SampleMask));
+        assert_eq!((c.filter, c.sigma_alpha, c.temporal, c.route), (3, 0.2, 0.25, Route::SampleIndex));
+        assert_eq!(parse_config(None, None).route, Route::SampleMask);
         assert_eq!(parse_config(None, Some("seed=blue")).seed, Seed::Blue);
         assert_eq!(method(true), Method::Stochastic);
         assert_eq!(method(false), Method::Off);
@@ -1032,11 +1283,15 @@ mod tests {
 
     #[test]
     fn the_shaders_are_valid() {
-        let src = include_str!("shaders/oit_stochastic.wgsl");
-        let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
-        let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
-        if let Err(e) = v.validate(&module) {
-            panic!("{}", e.emit_to_string(src));
+        for src in [
+            include_str!("shaders/oit_stochastic.wgsl"),
+            include_str!("shaders/oit_stochastic_expand.wgsl"),
+        ] {
+            let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+            let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
+            if let Err(e) = v.validate(&module) {
+                panic!("{}", e.emit_to_string(src));
+            }
         }
         let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
         for prim in [false, true] {

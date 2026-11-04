@@ -9492,7 +9492,7 @@ What the inventory must show with these scenarios:
 | `AURORA_OIT=0` or `1` | Order-independent transparency (stochastic) off or on for this launch, whatever the setting |
 | `AURORA_OIT=stochastic` | The same as `1` |
 | `AURORA_OIT_SAMPLES=8\|16\|32` | With the stochastic method: samples per pixel in all (16 by default) |
-| `AURORA_OIT_STOCH=<flags>` | With `AURORA_OIT=stochastic`: `naive`, `nocorr`, `filter=<r>[:<sigma>]`, `temporal[=<n>]`, `mask`, `noprim`, `seed=white\|r2\|blue` (see Details) |
+| `AURORA_OIT_STOCH=<flags>` | With `AURORA_OIT=stochastic`: `naive`, `nocorr`, `filter=<r>[:<sigma>]`, `temporal[=<n>]`, `index`, `mask`, `pass=<n>`, `noprim`, `seed=white\|r2\|blue` (see Details) |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
@@ -10032,16 +10032,23 @@ What the inventory must show with these scenarios:
   the opaque depth, then the accumulation of the fragments at or in front
   of that depth, composited per sample with the alpha correction. MSAA
   modes only (`AURORA_AA=2`, `3`, `4`): the targets are multisampled, with
-  `AURORA_AA=0` the faces stay in the object order. The log gives the
-  configuration (`oit stochastic: Config …`) and the targets
-  (`oit stochastic: targets <w>x<h> at <n> samples, <i> iterations for <S>
+  `AURORA_AA=0` the faces stay in the object order. The two stochastic
+  passes run at their own sample count, the most the device takes up to 8
+  (the paper's 8 per pass), even when the scene is at 4x: their depth
+  starts as the opaque depth spread over those samples (each takes the
+  scene sample nearest to it), the total alpha and the composite stay at
+  the scene's. The log gives the configuration and the counts the device
+  takes (`oit stochastic: Config …; pass sample counts the device takes:
+  [2, 4, 8]`), the route (`oit stochastic: the sample mask route` or `the
+  sample index route`) and the targets (`oit stochastic: targets <w>x<h>,
+  the scene at <n> samples, the passes at <p>: <i> iterations for <S>
   samples`); with `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=…
   depth1=… accum1=… more_iterations=… resolve_composite=… total=…` every
   120 frames (the first run of the stochastic depth and of the
   accumulation, then the other runs together). `AURORA_OIT_SAMPLES` sets
-  the samples in all (16 by default): past the targets' count the two
+  the samples in all (16 by default): past a pass's count the two
   stochastic passes run again with the next bits of one stratified mask
-  (16 at MSAA 4x: four runs). The paper's method is the default: stratified
+  (16 with passes of 8: two runs). The paper's method is the default: stratified
   masks, alpha correction, the depth-based accumulation, seeds by pixel and
   triangle; the other flags below are experiments outside the paper. `AURORA_OIT_STOCH` flags, comma separated: `naive` (one coin per
   sample instead of a stratified S-choose-R mask), `nocorr` (no alpha
@@ -10050,8 +10057,14 @@ What the inventory must show with these scenarios:
   alpha sigma 0.1 by default), `temporal[=<n>]` (the resolved colour
   blended 1/n with the last frame's reprojected through the nearest
   transparent depth and clamped to the 3 x 3 neighbourhood; the seeds then
-  change every frame; ghosts under motion), `mask` (the coverage written
-  through `@builtin(sample_mask)` instead of one invocation per sample),
+  change every frame; ghosts under motion), `index` (the coverage by one
+  invocation per sample, `@builtin(sample_index)`, the samples off the mask
+  discarded, instead of the default `@builtin(sample_mask)` output: the
+  same image, about four times the invocations of that pass; the default
+  falls back to it on Vulkan when `spirv_fix.rs` cannot make the module),
+  `mask` (the default route), `pass=<n>` (the samples of a stochastic pass,
+  2 to 16, when the device takes that count and it is at least the
+  scene's: `pass=4` with `AURORA_AA=3` is the earlier behaviour),
   `noprim` (the triangle index left out of the seed: the fragments of one
   face in a pixel then share a mask and occlude instead of blending),
   `seed=white|r2|blue` (the per-pixel part of the seed: a hash, the R2
