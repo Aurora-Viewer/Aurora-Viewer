@@ -1613,7 +1613,7 @@ mod tests {
                     continue;
                 }
                 // its entries send GodKickUser with the Legacy Viewer's flags
-                let heading = painted(&texts, &admin).rect.center();
+                let heading = painted(&texts, admin).rect.center();
                 let mut entry = None;
                 for _ in 0..30 {
                     let texts = frames.run(vec![egui::Event::PointerMoved(heading)], |ui| {
