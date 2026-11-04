@@ -3,7 +3,8 @@
 //! both sides (`format`, `names`), so a line is kept as written; what differs
 //! is the folder, `<logs>/<first_last>[.<grid label>]` there
 //! (LLDir::setPerAccountChatLogsDir, indra/llfilesystem/lldir.cpp, originally
-//! LGPL 2.1), one folder per account id and grid here (`store::folder`).
+//! LGPL 2.1), found by `legacy_profile`, one folder per account id and grid
+//! here (`store::folder`).
 //!
 //! A conversation both viewers have is merged by time, with what the
 //! Aurora file already holds left out, so importing again adds nothing.
@@ -12,6 +13,8 @@
 //! that file only, then a rename, so that a failure leaves it as it was.
 
 use super::{format, names, store};
+pub use crate::legacy_profile::Account;
+use crate::legacy_profile::account_folders;
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
@@ -20,45 +23,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The per-user folders of the viewers read, by application name: Firestorm
-/// (the 64-bit name first, then the macOS and former one), the official
-/// viewer and Alchemy. Any other goes through the folder dialog.
-const APPS: [&str; 5] = ["Firestorm_x64", "Firestorm", "SecondLife", "AlchemyNext", "Alchemy"];
-
-/// Label of the beta grid in the folder names (SECOND_LIFE_BETA_LABEL).
-const BETA_SUFFIX: &str = ".second_life_beta";
-
 /// The per-account settings file, where a chosen log folder is kept.
 const ACCOUNT_SETTINGS: &str = "settings_per_account.xml";
-
-/// Who to look for in a Legacy Viewer's folders.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Account {
-    pub first: String,
-    pub last: String,
-    /// `chat_log::grid_name`.
-    pub grid: String,
-}
-
-impl Account {
-    /// LLSecAPIBasicCredential::userID: `first_last` in lower case, with
-    /// "resident" for a one-word name.
-    fn folder(&self) -> String {
-        format!("{}_{}", self.first, self.last).to_lowercase().replace(' ', "_")
-    }
-
-    /// Whether a folder in an application's folder is this account's.
-    /// Another grid's label is unknown (`LLGridManager::getGridLabel`
-    /// comes from the viewer's grid list), so any label will do there.
-    fn owns(&self, name: &str) -> bool {
-        let base = self.folder();
-        match self.grid.as_str() {
-            "aditi" => name == format!("{base}{BETA_SUFFIX}"),
-            grid if grid.starts_with("custom_") => name.strip_prefix(base.as_str()).is_some_and(|rest| rest.starts_with('.')),
-            _ => name == base,
-        }
-    }
-}
 
 /// A folder of transcripts, as shown before importing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,31 +34,6 @@ pub struct Found {
     pub bytes: u64,
     /// The folder Aurora writes to, through a link: nothing to import.
     pub same: bool,
-}
-
-/// `<user folder>/<application>` for a home folder and the system's folder
-/// of application data: `~/.firestorm_x64` on Linux
-/// (LLDir_Linux::initAppDirs), `%APPDATA%\Firestorm_x64` on Windows
-/// (LLDir_Win32) and `~/Library/Application Support/Firestorm` on macOS
-/// (LLDir_Mac).
-fn app_folders_in(home: &Path, data: &Path, dotted: bool) -> Vec<PathBuf> {
-    APPS.iter()
-        .map(|app| {
-            if dotted {
-                home.join(format!(".{}", app.to_lowercase()))
-            } else {
-                data.join(app)
-            }
-        })
-        .collect()
-}
-
-/// The application folders of this system.
-pub fn app_folders() -> Vec<PathBuf> {
-    match directories::BaseDirs::new() {
-        Some(dirs) => app_folders_in(dirs.home_dir(), dirs.data_dir(), cfg!(not(any(windows, target_os = "macos")))),
-        None => Vec::new(),
-    }
 }
 
 /// Where a viewer keeps the logs of one account: the InstantMessageLogPath
@@ -113,25 +54,19 @@ fn log_root(app: &Path, account_folder: &Path) -> PathBuf {
 pub fn find(apps: &[PathBuf], account: &Account, target: &Path) -> Vec<Found> {
     let mut seen = Vec::new();
     let mut found = Vec::new();
-    for app in apps {
-        let Ok(entries) = std::fs::read_dir(app) else {
+    for folder in account_folders(apps, account) {
+        let (Some(app), Some(name)) = (folder.parent(), folder.file_name()) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if !name.to_str().is_some_and(|n| account.owns(n)) || !entry.path().is_dir() {
-                continue;
-            }
-            let dir = log_root(app, &entry.path()).join(&name);
-            let real = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-            if seen.contains(&real) {
-                continue;
-            }
-            seen.push(real);
-            let here = inspect(&dir, target);
-            if here.files > 0 {
-                found.push(here);
-            }
+        let dir = log_root(app, &folder).join(name);
+        let real = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+        if seen.contains(&real) {
+            continue;
+        }
+        seen.push(real);
+        let here = inspect(&dir, target);
+        if here.files > 0 {
+            found.push(here);
         }
     }
     found
@@ -231,7 +166,25 @@ fn undated(stem: &str) -> &str {
 /// does not read back would stay out of its history.
 fn target_of(dir: &Path, source: &Path, dated: bool) -> Option<PathBuf> {
     let stem = source.file_stem()?.to_str()?;
-    names::file_path(dir, if dated { stem } else { undated(stem) }, None)
+    let stem = once_group(if dated { stem } else { undated(stem) });
+    names::file_path(dir, &stem, None)
+}
+
+/// A group's file with one " (group)": Legacy Viewers leave many as
+/// `Club (group) (group)`, beside or instead of `Club (group)`, and Aurora
+/// reads only the second. In a dated name the suffix is before the date.
+fn once_group(stem: &str) -> String {
+    let twice = format!("{0}{0}", names::GROUP_SUFFIX);
+    match stem.rfind(&twice) {
+        Some(mut i) => {
+            let tail = &stem[i + twice.len()..];
+            while stem[..i].ends_with(names::GROUP_SUFFIX) {
+                i -= names::GROUP_SUFFIX.len();
+            }
+            format!("{}{}{tail}", &stem[..i], names::GROUP_SUFFIX)
+        }
+        None => stem.to_owned(),
+    }
 }
 
 /// A message of a transcript: its lines in the file, what tells it from
@@ -572,33 +525,6 @@ mod tests {
     }
 
     #[test]
-    fn the_folders_of_each_system() {
-        let (home, data) = (Path::new("/home/j"), Path::new("/data"));
-        assert_eq!(app_folders_in(home, data, true)[0], Path::new("/home/j/.firestorm_x64"));
-        assert_eq!(app_folders_in(home, data, true)[3], Path::new("/home/j/.alchemynext"));
-        assert_eq!(app_folders_in(home, data, false)[0], Path::new("/data/Firestorm_x64"));
-        // the macOS build's folder is "Firestorm"
-        assert_eq!(app_folders_in(home, data, false)[1], Path::new("/data/Firestorm"));
-    }
-
-    #[test]
-    fn an_accounts_folder_on_each_grid() {
-        assert!(account("agni").owns("jane_doe"));
-        assert!(!account("agni").owns("jane_doe.second_life_beta"));
-        assert!(account("aditi").owns("jane_doe.second_life_beta"));
-        assert!(!account("aditi").owns("jane_doe"));
-        assert!(account("custom_x").owns("jane_doe.osgrid"));
-        assert!(!account("custom_x").owns("jane_doe"));
-        assert!(!account("agni").owns("jane_doe2"));
-        let resident = Account {
-            first: "JaneDoe".into(),
-            last: "Resident".into(),
-            grid: "agni".into(),
-        };
-        assert!(resident.owns("janedoe_resident"));
-    }
-
-    #[test]
     fn finds_the_account_in_the_default_and_in_a_chosen_folder() {
         let root = temp();
         let target = root.join("aurora");
@@ -702,6 +628,17 @@ mod tests {
         assert_eq!(target("Jane-2026-10.txt", false), Path::new("d/Jane.txt"));
         assert_eq!(target("Jane-2026-10.txt", true), Path::new("d/Jane-2026-10.txt"));
         assert_eq!(target("Jane.txt", true), Path::new("d/Jane.txt"));
+    }
+
+    #[test]
+    fn a_groups_doubled_name_is_the_groups_file() {
+        assert_eq!(once_group("Club (group) (group)"), "Club (group)");
+        assert_eq!(once_group("Club (group) (group) (group)"), "Club (group)");
+        assert_eq!(once_group("Club (group)"), "Club (group)");
+        assert_eq!(once_group("Club (group) (group)-2026-10"), "Club (group)-2026-10");
+        assert_eq!(once_group("Jane Doe"), "Jane Doe");
+        let target = target_of(Path::new("d"), Path::new("Club (group) (group)-2026-10.txt"), false);
+        assert_eq!(target.unwrap(), Path::new("d/Club (group).txt"));
     }
 
     #[test]

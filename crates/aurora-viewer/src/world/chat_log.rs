@@ -303,7 +303,7 @@ impl ChatLog {
 
     /// The Legacy Viewers' folders to look in.
     pub fn legacy_apps(&self) -> Vec<PathBuf> {
-        self.legacy_apps.clone().unwrap_or_else(import::app_folders)
+        self.legacy_apps.clone().unwrap_or_else(crate::legacy_profile::app_folders)
     }
 
     /// Look in other folders than the system's (tests, demo).
