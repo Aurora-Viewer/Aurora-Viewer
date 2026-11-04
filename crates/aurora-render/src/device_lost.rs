@@ -422,8 +422,13 @@ pub(crate) fn demo_frame_of(demo: bool, var: Option<&str>, renderer: usize) -> O
 mod tests {
     use super::*;
 
+    /// The tests that touch the process-wide loss details take turns: the
+    /// test runner runs them in parallel.
+    static DETAILS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn the_callback_s_copy_tells_every_other() {
+        let _turn = DETAILS.lock().unwrap_or_else(|e| e.into_inner());
         let lost = DeviceLost::default();
         let (callback, render_thread) = (lost.clone(), lost.clone());
         assert!(!render_thread.get());
@@ -433,6 +438,7 @@ mod tests {
 
     #[test]
     fn the_first_sighting_and_the_class_of_the_message_are_kept() {
+        let _turn = DETAILS.lock().unwrap_or_else(|e| e.into_inner());
         forget_details();
         assert_eq!(loss_details(), None);
         let lost = DeviceLost::default();
