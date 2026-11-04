@@ -1,11 +1,11 @@
 language-name = Français
 avatar-studio-title = Studio avatar
-avatar-studio-input-left = Glisser : gauche
-avatar-studio-input-right = Glisser : droit
-avatar-studio-input-middle = Glisser : milieu
-avatar-studio-input-wheel = Molette
-avatar-studio-action-focus = Hauteur du regard
-avatar-studio-action-pan = Déplacer la vue
+avatar-studio-rotate-tip = Maintenez le bouton gauche de la souris et faites glisser pour tourner autour de votre avatar.
+avatar-studio-focus-tip = Maintenez le bouton droit de la souris et faites glisser vers le haut ou le bas pour régler la hauteur du regard.
+avatar-studio-pan-tip = Maintenez le bouton du milieu de la souris et faites glisser pour déplacer la vue.
+avatar-studio-zoom-tip = Tournez la molette de la souris pour rapprocher ou éloigner la vue.
+avatar-studio-action-focus = Hauteur
+avatar-studio-action-pan = Déplacer
 avatar-studio-action-zoom = Zoom
 avatar-studio-exit = Quitter le studio
 joystick-title = Joystick et souris 3D
