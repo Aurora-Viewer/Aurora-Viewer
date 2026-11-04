@@ -392,6 +392,9 @@ impl Default for MediaSettings {
 struct ObjMedia {
     idx: usize,
     fetched_version: Option<u32>,
+    /// The version asked for by the request in flight: a failed request
+    /// waits for a newer one (LLMediaDataClient drops it after its retries).
+    requested_version: Option<u32>,
     data: Option<ObjectMediaData>,
     hud: bool,
     on_other_avatar: bool,

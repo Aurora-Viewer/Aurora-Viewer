@@ -231,9 +231,11 @@ struct Pending {
     not_before: Instant,
 }
 
-/// ObjectMedia GET queue (LLObjectMediaDataClient): requests are spaced by
-/// PrimMediaRequestQueueDelay (1 s) per batch, failures retried after
-/// PrimMediaRetryTimerDelay (5 s) up to PrimMediaMaxRetries (4) times.
+/// ObjectMedia GET queue (LLObjectMediaDataClient): one request per
+/// PrimMediaRequestQueueDelay (1 s), as LLMediaDataClient::serviceQueue
+/// "peels one off" per tick, failures retried after PrimMediaRetryTimerDelay
+/// (5 s) up to PrimMediaMaxRetries (4) times. Faster, a region behind a
+/// proxy answers 503 to all of them.
 pub struct MediaDataClient {
     queue: VecDeque<Pending>,
     queued: HashMap<Uuid, u32>,
@@ -247,7 +249,7 @@ const QUEUE_DELAY: Duration = Duration::from_millis(1000);
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_RETRIES: u32 = 4;
 const MAX_IN_FLIGHT: usize = 4;
-const BATCH: usize = 8;
+const BATCH: usize = 1;
 
 impl Default for MediaDataClient {
     fn default() -> Self {
@@ -383,6 +385,20 @@ pub fn parse_get_response(v: &Llsd, object: Uuid) -> Result<ObjectMediaData, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_media_requests_go_out_one_per_second() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let http = reqwest::Client::new();
+        let mut client = MediaDataClient::default();
+        for n in 1..=3 {
+            client.request(Uuid::from_u128(n), "http://127.0.0.1:9/media");
+        }
+        client.update(rt.handle(), &http);
+        assert_eq!(client.queue.len(), 2, "one sent, as serviceQueue peels one off");
+        client.update(rt.handle(), &http);
+        assert_eq!(client.queue.len(), 2, "the next waits for PrimMediaRequestQueueDelay");
+    }
 
     #[test]
     fn entry_round_trips() {

@@ -231,6 +231,7 @@ impl MediaManager {
             && !self.client.is_queued(&o.full_id)
             && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
         {
+            e.requested_version = version;
             self.client.request(o.full_id, cap);
         }
     }
@@ -259,8 +260,9 @@ impl MediaManager {
                 }
                 Err(err) => {
                     log::info!("media: ObjectMedia for {} failed: {err}", got.object);
-                    // stop asking until the version changes
-                    e.fetched_version = Some(e.fetched_version.unwrap_or(0));
+                    // stop asking until the version changes: the one asked
+                    // for counts as seen, or every frame would ask again
+                    e.fetched_version = Some(e.requested_version.or(e.fetched_version).unwrap_or(0));
                 }
             }
         }
@@ -308,6 +310,13 @@ impl MediaManager {
                         m.height = entry.height_pixels as i32;
                         m.auto_scale = entry.auto_scale;
                         m.looping = entry.auto_loop;
+                        // LLViewerMedia::updateMediaImpl: a loaded media takes
+                        // the new size, scale and loop at once
+                        if let Some(p) = m.plugin.as_mut() {
+                            p.set_auto_scale(m.auto_scale);
+                            p.set_loop(m.looping);
+                            p.set_size(m.width, m.height);
+                        }
                         // someone else navigated: follow (not our own change)
                         let new_url = entry.url();
                         if new_url != old_url && new_url != m.url && !from_self {
