@@ -1465,6 +1465,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu, every scripted object's window |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
+| `AURORA_DEMO_TORTURED_PRIMS=1` | Hollow reversed sphere and ordinary prim controls |
 | `AURORA_DEMO_BEACONS=1` | Object beacons and World overlays |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
@@ -1496,6 +1497,18 @@ when unfocused") is ignored during a screenshot.
 
 
 ### Details
+
+`AURORA_DEMO_TORTURED_PRIMS=1`, with `AURORA_DEMO_POS=100,100`, places
+four prims on open ground. From left to right: a grey oval with the former
+clamped ratio, an orange hollow reversed sphere with ratio Y=2, a blue
+ordinary sphere and a green torus. The orange sphere must have a broad
+lantern body and two collars; the grey oval must remain narrow. This is a
+synthetic reproduction of #2138, using its reported hollow/twist and scale
+proportions, with the larger ratio inferred from the reference silhouette.
+Inspect `object:97381` with `AURORA_DEMO_BUILD=move,object:97381`: changing
+another shape field must preserve the existing ratio. Check different camera
+distances for the four LODs. Use the original grid object for human
+validation in addition to this synthetic reproduction.
 
 `AURORA_DEMO_PARTICLE_EDITOR` needs an object of ours selected by the build
 script, for example `AURORA_DEMO_BUILD=move,object:151`. At frame 700 the
@@ -9364,6 +9377,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
+| `AURORA_FLEXI_CULL=0` or `alt` | Every flexible prim's mesh swept again each frame, as before, even when no view shows it; `alt`: one second in three |
 | `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, not their avatar's, as before |
 | `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), whatever Preferences › Network and cache › Download connections says |
 | `AURORA_DEMO_NET_ADAPTER=<description>` | This network adapter instead of the computer's, for the download connections (e.g. `Marvell AQtion 10Gbit Network Adapter`: always limited, "Follow the connection" greyed) |
@@ -10150,6 +10164,21 @@ What the inventory must show with these scenarios:
   transparent faces of the rigged meshes, which the CPU lists, are tested
   with the extent of their skeleton and no longer with their own bounds
   (`blend` slightly higher).
+- **`AURORA_FLEXI_CULL=0`**: sweeps the mesh of every flexible prim within
+  draw distance again each frame and sends its vertices, as before
+  (`scene/flexible.rs`). By default the physics of each one still runs
+  every frame, but its mesh is swept only while a view can show it: the
+  camera (a sphere around it that holds it bent any way), its reflection on
+  the water of its region, its reflection in the mirror drawn, or its
+  shadow, followed 64 m away from the sun and from the moon. A held mesh
+  takes its current shape the frame it can be seen again; the HUDs and a
+  selected flexible prim are never held. To read in `perf summary`:
+  `flexies` (meshes swept per frame), `flexies_held`, `vertices_kb`,
+  `s_sync_flexibles` and `r_resources`. Turn the camera away from a place
+  full of flexible prims (hair, skirts, flags) and back: no shape should
+  jump when they come into view.
+  `alt`: the old way one second in three, `xmode=old` / `xmode=new` at the
+  end of the `perf summary` line.
 - **`AURORA_MATERIAL_REBUILD=all`**: each material that arrives (or is given
   up) rebuilds every object using materials, as before, instead of the users
   of that material only (`scene/mat_changes.rs`). `alt`: the old way one second
@@ -10595,7 +10624,9 @@ thread.
     `sync_apply` moves and full syncs that fit in the frame's time budget,
     `sync_anchors` anchors of the skeletons and of the attachment points
     (writing, sending with the posed palettes, centre of the anchored
-    objects), `sync_alpha` faces reclassified after the change of a
+    objects), `sync_flexibles` the flexible prims (physics, and the meshes
+    a view shows swept again) and the grass on new terrain, `sync_alpha`
+    faces reclassified after the change of a
     texture's alpha class;
   - the parts of the frame parameters (`p_*`, in `params`): `screen` switch
     from loading to the world and teleport screen, `env` sky and water of
@@ -10670,7 +10701,10 @@ thread.
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn
     objects and rigged meshes placed by the GPU (`anchored`, which the sync
-    no longer visits), the posed avatars, the bytes of records and palettes
+    no longer visits), the flexible prims whose mesh was swept again
+    (`flexies`) and those simulated with their mesh held because no view
+    shows them (`flexies_held`, `AURORA_FLEXI_CULL`), the posed avatars,
+    the bytes of records and palettes
     sent to the GPU, those of the culling tables (`cull_kb`: faces,
     objects, boxes per bone) and of the vertices deformed in place
     (`vertices_kb`: flexible prims), and those of the whole write journal
