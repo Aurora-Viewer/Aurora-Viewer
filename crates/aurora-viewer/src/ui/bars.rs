@@ -2993,7 +2993,7 @@ pub(crate) fn toolbar_row(
         rects.push(response.rect);
         toolbar.button(&response, row.bar, row.style, b, p, row.locked);
         if !super::toolbar::ready(&b.command) || !usable {
-            // a saved Firestorm command Aurora does not have yet, or one
+            // a saved Legacy Viewer command Aurora does not have yet, or one
             // with nothing to do now
             continue;
         }
