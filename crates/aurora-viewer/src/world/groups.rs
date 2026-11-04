@@ -881,7 +881,7 @@ fn saved_prefix(offline: bool, timestamp: u32) -> String {
         return String::new();
     }
     let t = SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp as u64);
-    aurora_i18n::tr!("world-groups-saved-at", value0 = crate::ui::chat::hhmm(t).to_string())
+    aurora_i18n::tr!("world-groups-saved-at", value0 = crate::ui::chat::hhmm_24(t).to_string())
 }
 
 #[cfg(test)]

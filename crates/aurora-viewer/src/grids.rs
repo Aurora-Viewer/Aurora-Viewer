@@ -282,6 +282,23 @@ pub fn current(settings: &Settings, extras: Option<&OpenSimExtras>) -> Option<St
     here(home(settings).as_deref(), extras)
 }
 
+/// The grid of a Hypergrid link region, from the name OpenSim's
+/// HypergridLinker gives it on the map ("http://host:port/ Region" or
+/// "host:port:Region"); None for a region of this grid.
+pub fn link_grid(region_name: &str) -> Option<String> {
+    let name = region_name.trim();
+    if name.starts_with("http://") || name.starts_with("https://") {
+        let url = name.split_whitespace().next()?;
+        return authority(url);
+    }
+    // host:port:Region (a region name has no colon)
+    let (address, region) = name.rsplit_once(':')?;
+    if region.trim().is_empty() || !address.contains(':') && !address.contains('.') {
+        return None;
+    }
+    authority(address)
+}
+
 /// Whether two Hypergrid addresses name the same grid, by any of the
 /// addresses saved for it.
 pub fn same_grid(settings: &Settings, a: &str, b: &str) -> bool {
@@ -420,6 +437,26 @@ pub fn resolve(settings: &Settings, extras: Option<&OpenSimExtras>, destination:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hypergrid_link_region_names_its_grid() {
+        assert_eq!(
+            link_grid("http://hg.example-grid.org:80/ harbor plaza").as_deref(),
+            // port 80 is http's own: the address has none
+            Some("hg.example-grid.org")
+        );
+        assert_eq!(
+            link_grid("grid.other.example:8002:Sandbox").as_deref(),
+            Some("grid.other.example:8002")
+        );
+        assert_eq!(
+            link_grid("hg.example-grid.org:Harbor Plaza").as_deref(),
+            Some("hg.example-grid.org")
+        );
+        for here in ["Harbor Plaza", "THE QUIET DEN", "  ", "Sandbox:"] {
+            assert_eq!(link_grid(here), None, "{here}");
+        }
+    }
 
     #[test]
     fn grid_info_fields_and_manual_fallback() {

@@ -273,6 +273,29 @@ fn task_property_save_rechecks_access_and_preserves_nonmodifiable_item_text() {
     }
 }
 
+#[test]
+fn restricted_text_task_permissions_and_sale_keep_received_unicode_metadata() {
+    let (world, mut tool, object, mut items) = fixture();
+    items[0].name = "Objet de démonstration 桜".into();
+    items[0].description = "説明".into();
+    tool.on_task_inventory(&world, object, Some(2), items.clone());
+    tool.out.clear();
+    let mut state = super::super::item_properties::TaskProperties::new(object, &items[0]).expect("properties");
+    state.edit.next &= !perm::COPY;
+    state.edit.sale_type = 1;
+    state.edit.price = 10;
+    assert!(tool.save_item_properties(&world, &state));
+    let sent = updates(&tool)[0];
+    assert_eq!(sent.name, items[0].name);
+    assert_eq!(sent.description, items[0].description);
+    assert_eq!(sent.sale_price, 10);
+    assert_eq!(sent.next_owner_mask & perm::COPY, 0);
+    tool.out.clear();
+    state.edit.name = "New 龙".into();
+    assert!(!tool.save_item_properties(&world, &state));
+    assert!(updates(&tool).is_empty());
+}
+
 fn frame(ctx: &egui::Context, tool: &mut BuildTool, world: &World, events: Vec<egui::Event>) -> Vec<(String, egui::Rect)> {
     let mut output = ctx.run_ui(
         egui::RawInput {

@@ -24,7 +24,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
                     "×",
                 );
-                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps));
+                // FSShowTimestampsNearbyChat (on): the lines and the cards
+                // over the world
+                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_nearby));
                 // FSShowChatChannel: the "/0" chip of the field (off, as in
                 // the Legacy Viewer)
                 cx.toggle(
@@ -122,6 +124,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
             script_errors(cx);
             cx.group(tr!("ui-options-conversations"), |cx| {
+                // FSShowTimestampsIM (on): private and group conversations
+                cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_im));
                 cx.toggle(
                     tr!("ui-options-show-contacts-tab"),
                     tr!("ui-options-show-contacts-tab-hint"),
@@ -176,6 +180,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(flash_conversations_nearby),
                     );
                 });
+                // "Show number of unread IMs in the window title"
+                // (FSShowMessageCountInWindowTitle)
+                cx.toggle(
+                    tr!("ui-options-unread-ims-in-window-title"),
+                    tr!("ui-options-unread-ims-in-window-title-hint"),
+                    &field!(unread_ims_in_window_title),
+                );
+                // "Announce incoming IMs as soon as the sender starts typing"
+                // (FSAnnounceIncomingIM)
+                cx.toggle(
+                    tr!("ui-options-announce-incoming-im"),
+                    tr!("ui-options-announce-incoming-im-hint"),
+                    &field!(announce_incoming_im),
+                );
                 // the Legacy Viewer's IM chiclets (FSDisableIMChiclets off):
                 // beside the chat bar by default, the human's choice (#1134)
                 use crate::settings::ChatThumbnails;

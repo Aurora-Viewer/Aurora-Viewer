@@ -1,4 +1,35 @@
 use super::*;
+use std::path::Path;
+
+#[test]
+fn restricted_text_uploads_clean_generated_labels_without_changing_local_paths() {
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.inventory.root = Uuid::from_u128(1);
+    world.inventory.created_folders(vec![aurora_net::inventory::InvFolder {
+        id: world.inventory.root,
+        parent: Uuid::nil(),
+        name: "Inventory".into(),
+        type_default: 8,
+        ..Default::default()
+    }]);
+    world.balance = Some(1000);
+    let mut imports = Imports::default();
+    for file in ["Été.png", "桜.png"] {
+        let mut entry = Entry::new(file.into(), Ok(Source::Texture(image(16, 16))), Default::default());
+        entry.folder = world.inventory.root;
+        assert_eq!(entry.path, PathBuf::from(file));
+        assert_eq!(
+            entry.name,
+            crate::text_validation::generated_name(Path::new(file).file_stem().expect("stem").to_str().expect("UTF-8"), 63)
+        );
+        assert!(crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.name));
+        imports.entries.push(entry);
+    }
+    imports.start(&world, &Default::default(), &Default::default(), &prices());
+    assert_eq!(imports.queue.len(), 2, "{}", imports.message);
+    assert_eq!(imports.entries[0].path, PathBuf::from("Été.png"));
+    assert_eq!(imports.entries[1].path, PathBuf::from("桜.png"));
+}
 
 #[test]
 fn authored_native_animation_opens_the_normal_inspector_without_starting_or_charging_an_upload() {

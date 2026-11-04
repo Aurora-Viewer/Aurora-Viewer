@@ -27,7 +27,9 @@ pub mod layout;
 pub mod manip;
 mod material_preview;
 pub mod materials;
+mod object_snap;
 pub mod particle_editor;
+pub mod place;
 mod property_query;
 pub mod replace;
 pub mod script_queue;
@@ -65,6 +67,46 @@ const UNLIMITED_PLACEMENT_RAY: f32 = 129.0;
 /// SL prim size limits (llmath/xform.h: DEFAULT_MIN_PRIM_SCALE / MAX).
 pub const MIN_PRIM_SCALE: f32 = 0.01;
 pub const MAX_PRIM_SCALE: f32 = 64.0;
+
+/// The sizes a prim may take on the agent's region: OpenSim regions may set
+/// their own in OpenSimExtras (MinPrimScale, MaxPrimScale, which
+/// LFSimFeatureHandler hands to LLWorld::setRegionMin/MaxPrimScale for
+/// LLManipScale), else Second Life's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PrimLimits {
+    pub min: f32,
+    pub max: f32,
+}
+
+impl Default for PrimLimits {
+    fn default() -> Self {
+        PrimLimits {
+            min: MIN_PRIM_SCALE,
+            max: MAX_PRIM_SCALE,
+        }
+    }
+}
+
+impl PrimLimits {
+    pub fn from_extras(extras: Option<&aurora_net::OpenSimExtras>) -> Self {
+        let usual = Self::default();
+        let Some(e) = extras else { return usual };
+        let limits = PrimLimits {
+            min: e.min_prim_scale.unwrap_or(usual.min),
+            max: e.max_prim_scale.unwrap_or(usual.max),
+        };
+        // a region contradicting itself keeps the usual limits
+        if limits.min <= limits.max { limits } else { usual }
+    }
+
+    pub fn clamp(self, v: f32) -> f32 {
+        v.clamp(self.min, self.max)
+    }
+
+    pub fn clamp3(self, v: Vec3) -> Vec3 {
+        v.clamp(Vec3::splat(self.min), Vec3::splat(self.max))
+    }
+}
 /// How far from its point of the body an attachment may be typed
 /// (llviewerjointattachment.h).
 pub const MAX_ATTACHMENT_DIST: f32 = 3.5;
@@ -92,6 +134,22 @@ pub struct BuildSettings {
     pub grid_mode: u8,
     /// SnapEnabled.
     pub snap: bool,
+    /// Aurora: the move handles snap the selection against nearby prims, and
+    /// stop it at their faces (`object_snap`). Never
+    /// with `snap` (`snap_mode`); off by default, so moving behaves as the
+    /// Legacy Viewer's until it is chosen.
+    pub object_snap: bool,
+    /// "Place on surface" (`place.rs`; Aurora's own): whether it turns the
+    /// selection ("Auto rotate") or keeps its rotation, and the side it then
+    /// puts against the surface.
+    pub place_rotate: bool,
+    pub place_side: place::Side,
+    /// Its distance off the surface (metres, into it when negative).
+    pub place_offset: f32,
+    /// Aurora: a hologram while the move handles drag the selection (the
+    /// selection itself, or where it began); Preferences › Aurora. Off by
+    /// default: a move looks as the Legacy Viewer's.
+    pub move_hologram: MoveHologram,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
     /// EditLinkedParts.
@@ -169,7 +227,43 @@ pub struct BuildSettings {
     pub gizmo_scale: f32,
 }
 
+/// The hologram of a move (`BuildSettings::move_hologram`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MoveHologram {
+    #[default]
+    Off,
+    /// The prims moved are drawn as a hologram until released.
+    Moving,
+    /// A hologram of them stays where the move began.
+    Start,
+}
+
+/// What the move handles snap to: one at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapMode {
+    Off,
+    /// The Legacy Viewer's grid (SnapEnabled).
+    Grid,
+    /// Nearby prims (`object_snap`).
+    Objects,
+}
+
 impl BuildSettings {
+    /// The snap in use; the grid when a settings file has both on.
+    pub fn snap_mode(&self) -> SnapMode {
+        if self.snap {
+            SnapMode::Grid
+        } else if self.object_snap {
+            SnapMode::Objects
+        } else {
+            SnapMode::Off
+        }
+    }
+    pub fn set_snap_mode(&mut self, mode: SnapMode) {
+        self.snap = mode == SnapMode::Grid;
+        self.object_snap = mode == SnapMode::Objects;
+    }
     /// `gizmo_scale` within the slider's range; an edited settings file
     /// falls back to the Legacy Viewer's size.
     pub fn gizmo_scale(&self) -> f32 {
@@ -297,6 +391,37 @@ pub(crate) fn take_folder(inv: &crate::world::inventory::Inventory, folders: imp
     let known = inv.folders.get(&folder).is_some_and(|f| !f.library);
     let trashed = !trash.is_nil() && crate::world::inventory::actions::under(inv, folder, trash);
     (known && !trashed).then_some(folder)
+}
+
+#[cfg(test)]
+mod prim_limit_tests {
+    use super::PrimLimits;
+    use glam::Vec3;
+
+    #[test]
+    fn opensim_regions_widen_or_narrow_the_prim_sizes() {
+        assert_eq!(PrimLimits::from_extras(None), PrimLimits::default());
+        let big = aurora_net::OpenSimExtras {
+            max_prim_scale: Some(256.0),
+            min_prim_scale: Some(0.001),
+            ..Default::default()
+        };
+        let limits = PrimLimits::from_extras(Some(&big));
+        assert_eq!(limits.clamp3(Vec3::new(0.0005, 100.0, 300.0)), Vec3::new(0.001, 100.0, 256.0));
+        // only one side given: the other stays Second Life's
+        let only_max = aurora_net::OpenSimExtras {
+            max_prim_scale: Some(128.0),
+            ..Default::default()
+        };
+        assert_eq!(PrimLimits::from_extras(Some(&only_max)).min, 0.01);
+        // a region contradicting itself keeps the usual limits
+        let broken = aurora_net::OpenSimExtras {
+            min_prim_scale: Some(10.0),
+            max_prim_scale: Some(1.0),
+            ..Default::default()
+        };
+        assert_eq!(PrimLimits::from_extras(Some(&broken)), PrimLimits::default());
+    }
 }
 
 #[cfg(test)]
@@ -453,6 +578,11 @@ impl Default for BuildSettings {
             grid_opacity: 0.7,
             grid_mode: 0,
             snap: true,
+            object_snap: false,
+            place_rotate: false,
+            place_side: place::Side::Bottom,
+            place_offset: 0.0,
+            move_hologram: MoveHologram::Off,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,
@@ -582,6 +712,10 @@ struct PendingUnlink {
 }
 
 pub struct BuildTool {
+    /// The asset ids our inventory lets be exported, for Build › General's
+    /// Export box, with the inventory generation and agent they were read
+    /// for: rebuilt when the inventory changes, never walked each frame.
+    pub(crate) export_assets: Option<(u64, Uuid, HashSet<Uuid>)>,
     wheel_selection: cycle::Wheel,
     /// Last inspected selection/mode; object display choices live in the world.
     material_preview_selection: HashSet<Uuid>,
@@ -621,6 +755,8 @@ pub struct BuildTool {
     pub replacement: replace::Replacement,
     pub grab: grab::Grab,
     pub align: align::Align,
+    /// The "Place on surface" button and its preview.
+    pub place: place::Place,
     /// Everything the floater keeps between frames (tabs, clipboards,
     /// fields being typed, secondary floaters).
     pub ui: ui::FloaterState,
@@ -664,6 +800,7 @@ pub struct BuildTool {
 impl Default for BuildTool {
     fn default() -> Self {
         BuildTool {
+            export_assets: None,
             wheel_selection: cycle::Wheel::default(),
             material_preview_selection: HashSet::new(),
             material_preview_mode: None,
@@ -686,6 +823,7 @@ impl Default for BuildTool {
             replacement: replace::Replacement::default(),
             grab: grab::Grab::default(),
             align: align::Align::default(),
+            place: place::Place::default(),
             ui: ui::FloaterState::default(),
             caps: HashMap::new(),
             next_tag: 1,
@@ -965,6 +1103,7 @@ impl BuildTool {
         self.cancel_color_picker(world);
         self.commit_color_edit();
         self.open = false;
+        self.place.stop();
         self.manip.cancel();
         self.land.cancel();
         self.grab_up();
@@ -1732,6 +1871,10 @@ impl BuildTool {
         self.advance_bulk_permissions(world, now);
         self.advance_link(world, now);
         self.update_material_preview(world, s);
+        // "Place on surface" lives in the Edit tool of the open tools
+        if !self.open || self.replacement_active() || self.tool != Tool::Edit {
+            self.place.stop();
+        }
         if !self.open || self.replacement_active() {
             self.sync_hud_zoom(world);
             return;
@@ -1750,6 +1893,9 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
+                if self.place.active {
+                    self.place_hover(world, s, scene, cursor, over_ui);
+                }
                 if mode == EditMode::Align {
                     self.align_hover(world, cursor, mods.shift);
                 }
@@ -1767,6 +1913,7 @@ impl BuildTool {
                         mods,
                         now,
                         &mut cmds,
+                        scene,
                     );
                     for c in cmds {
                         self.send(c);
@@ -1837,6 +1984,10 @@ impl BuildTool {
                 } else if !mods.shift {
                     self.deselect_all(world);
                 }
+                true
+            }
+            Tool::Edit if self.place.active => {
+                self.place_click(world);
                 true
             }
             Tool::Edit => {
@@ -2090,7 +2241,7 @@ impl BuildTool {
                 sh.raw(),
                 sh.rotation(),
                 0,
-                Vec3::from_array(s.new_prim_size).clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)),
+                world.prim_limits().clamp3(Vec3::from_array(s.new_prim_size)),
                 FLAGS_CREATE_SELECTED,
             )
         };
@@ -2211,6 +2362,15 @@ impl BuildTool {
             && !(mods.shift || mods.ctrl || mods.alt)
     }
 
+    /// The move under way and its hologram's kind, when the preference asks
+    /// for one: in the world only (a HUD has its own space).
+    pub fn move_hologram(&self, world: &World, s: &BuildSettings) -> Option<(MoveHologram, manip::MoveGhost)> {
+        if s.move_hologram == MoveHologram::Off || self.select_type(world) != SelectType::World {
+            return None;
+        }
+        Some((s.move_hologram, self.manip.move_ghost()?))
+    }
+
     fn face_mode(&self) -> bool {
         self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
     }
@@ -2263,6 +2423,9 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
+                if self.place.active {
+                    self.place_draw(&mut p);
+                }
                 if mode == EditMode::Align {
                     self.align_draw(&mut p, world);
                 } else if mode != EditMode::Face {
@@ -2346,7 +2509,8 @@ impl BuildTool {
             ),
             None => (new_world_pos - off, new_world_rot.normalize()),
         };
-        let scale = size.map(|v| v.clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)));
+        let limits = world.prim_limits();
+        let scale = size.map(|v| limits.clamp3(v));
         if let Some(o) = world.objects.get_mut(idx) {
             o.position = local_pos;
             o.rotation = local_rot;

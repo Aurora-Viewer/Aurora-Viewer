@@ -432,6 +432,9 @@ pub struct Settings {
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
     pub language_is_public: bool,
+    /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
+    /// button) opens on (Preferences › Network and cache).
+    pub browser_home_page: String,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
@@ -480,6 +483,9 @@ pub struct Settings {
     /// Requested position lock and options, independent for each avatar.
     pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
     pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
+    /// Show Friends Only and keeping it after a teleport, for each account
+    /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
+    pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
     /// Depth of field (Preferences › Graphics).
@@ -556,6 +562,10 @@ pub struct Settings {
     /// Texture memory sized from the detected video memory (else `texture_budget_mb`).
     pub texture_budget_auto: bool,
     pub texture_budget_mb: u32,
+    /// The largest side, in pixels, ordinary world textures are loaded at
+    /// (the Legacy Viewer's RenderMaxTextureResolution: 512, 1024 or 2048,
+    /// 2048 by default): `TextureStreamer::max_resolution`.
+    pub max_texture_resolution: u32,
     pub ui_scale: f32,
     /// Firestorm UsePieMenu. Keep Aurora's existing list menu by default.
     pub use_pie_menu: bool,
@@ -597,6 +607,11 @@ pub struct Settings {
     /// box "Do not show again" of the confirmation turns it off). Firestorm
     /// keeps one "ignore" per notification: one setting here for the three.
     pub confirm_teleports: bool,
+    /// Ask before a Hypergrid teleport that leaves worn items behind: with
+    /// OpenSim's suitcase, another grid loads only what is in My Suitcase
+    /// (`world::suitcase`). Not a Legacy Viewer setting; its box "Do not
+    /// show again" turns it off.
+    pub warn_hypergrid_suitcase: bool,
     /// SettingsMakeNoTrans is asked (its "ignore" box turns it off; shown
     /// by default like the notification).
     pub confirm_no_transfer_settings: bool,
@@ -674,7 +689,15 @@ pub struct Settings {
     /// the chat fields. A multiplier in the limits of the interface's text
     /// size rather than the Legacy Viewer's four steps.
     pub chat_font_scale: f32,
-    pub chat_timestamps: bool,
+    /// The times of the nearby chat's lines and of its cards over the world
+    /// (FSShowTimestampsNearbyChat, on; Preferences › Chat › Nearby chat).
+    pub chat_timestamps_nearby: bool,
+    /// The times of the conversations' lines, private and group
+    /// (FSShowTimestampsIM, on; Preferences › Chat › Conversations).
+    pub chat_timestamps_im: bool,
+    /// The former single switch, read once: its choice goes to both.
+    #[serde(rename = "chat_timestamps", skip_serializing)]
+    pub(crate) former_chat_timestamps: Option<bool>,
     /// The channel selector of the nearby chat's field (FSShowChatChannel,
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
@@ -767,6 +790,13 @@ pub struct Settings {
     /// closed (FSNotifyNearbyChatFlash, on); the button's right-click menu
     /// turns it off, IMs and group chats keep flashing.
     pub flash_conversations_nearby: bool,
+    /// A resident starting to type an IM to us, with no conversation open
+    /// yet, opens it with "Incoming message from <name>"
+    /// (FSAnnounceIncomingIM, off).
+    pub announce_incoming_im: bool,
+    /// "(<unread>) " before the window title while IMs, group chats or
+    /// conferences wait unread (FSShowMessageCountInWindowTitle, off).
+    pub unread_ims_in_window_title: bool,
     /// The thumbnails of the open conversations, with their unread count
     /// (the Legacy Viewer's IM chiclets, #1134): where, or none.
     pub chat_thumbnails: ChatThumbnails,
@@ -1124,6 +1154,10 @@ pub struct Settings {
     /// Quickjump: jump and land without waiting for the pre-jump and landing
     /// animations (FSIgnoreFinishAnimation, off; Me › Quickjump too).
     pub quickjump: bool,
+    /// The fly override's caution was shown (the Legacy Viewer's
+    /// FirstUseFlyOverride notification, once ever). The override itself is
+    /// never saved (`World::fly_override`).
+    pub fly_override_warned: bool,
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
@@ -1361,7 +1395,23 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 30;
+/// RenderMaxTextureResolution's default and top (settings.xml,
+/// MAX_IMAGE_SIZE_DEFAULT), and the choices of its dropdown
+/// (panel_preferences_graphics1.xml).
+pub(crate) const MAX_TEXTURE_RESOLUTION: u32 = 2048;
+pub(crate) const MAX_TEXTURE_RESOLUTIONS: [u32; 3] = [512, 1024, MAX_TEXTURE_RESOLUTION];
+
+/// A maximum texture resolution as one of the dropdown's choices, never
+/// above what was asked (the Legacy Viewer clamps it to 512..2048).
+pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
+    MAX_TEXTURE_RESOLUTIONS
+        .into_iter()
+        .rev()
+        .find(|&c| c <= v)
+        .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
+}
+
+const SETTINGS_VERSION: u32 = 31;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1674,6 +1724,7 @@ impl Default for Settings {
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
+            browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             show_bug_report: true,
             show_huds: true,
             sun_beacon: false,
@@ -1732,6 +1783,7 @@ impl Default for Settings {
             lod_factor: 2.0,
             texture_budget_auto: true,
             texture_budget_mb: 1536,
+            max_texture_resolution: MAX_TEXTURE_RESOLUTION,
             ui_scale: 1.0,
             use_pie_menu: false,
             world_context_menus: Default::default(),
@@ -1755,6 +1807,7 @@ impl Default for Settings {
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
             confirm_teleports: true,
+            warn_hypergrid_suitcase: true,
             confirm_no_transfer_settings: true,
             confirm_object_bonus: true,
             confirm_return_to_owner: true,
@@ -1782,6 +1835,7 @@ impl Default for Settings {
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
+            friends_only: Default::default(),
             snapshot: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
@@ -1795,7 +1849,9 @@ impl Default for Settings {
             font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
             chat_font_scale: 1.0,
-            chat_timestamps: true,
+            chat_timestamps_nearby: true,
+            chat_timestamps_im: true,
+            former_chat_timestamps: None,
             show_chat_channel: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
@@ -1822,6 +1878,8 @@ impl Default for Settings {
             flash_unread_conversations: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
+            announce_incoming_im: false,
+            unread_ims_in_window_title: false,
             chat_thumbnails: ChatThumbnails::ChatBar,
             chat_thumbnails_flash: true,
             flash_on_message: true,
@@ -1950,6 +2008,7 @@ impl Default for Settings {
             fly_after_teleport: false,
             crouch_toggle: false,
             quickjump: false,
+            fly_override_warned: false,
             block_click_sit: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
             follow: Default::default(),
@@ -2302,6 +2361,10 @@ impl Settings {
             profile.locked = true;
         }
         self.grids.retain_mut(|grid| grid.validate().is_ok());
+        if let Some(on) = self.former_chat_timestamps.take() {
+            self.chat_timestamps_nearby = on;
+            self.chat_timestamps_im = on;
+        }
         if std::mem::take(&mut self.former_hide_own_group_title) {
             self.group_titles = crate::world::names::GroupTitles::AllExceptMine;
         }
@@ -2505,6 +2568,12 @@ impl Settings {
             // below. Every earlier file wrote the former default, off
             self.build.limit_select_distance = true;
         }
+        if self.settings_version < 31 {
+            // the levels now set the maximum texture resolution: a profile
+            // still exactly on Potato or Low takes theirs (512 and 1024),
+            // any other keeps 2048
+            crate::graphics_presets::upgrade_max_texture_resolution(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2544,6 +2613,7 @@ impl Settings {
             8..=15 => 8,
             _ => 16,
         };
+        self.max_texture_resolution = max_texture_resolution_choice(self.max_texture_resolution);
         self.cache_size_mb = self.cache_size_mb.clamp(512, 65536);
         self.bandwidth_kbps = self.bandwidth_kbps.clamp(50, aurora_net::throttle::DEFAULT_KBPS as u32);
         if !self.chat_bar_width.is_finite() || self.chat_bar_width < 0.0 {
@@ -3091,6 +3161,33 @@ mod tests {
                 assert_eq!(reloaded.sanitized().group_titles, expected);
             }
         }
+    }
+
+    #[test]
+    fn the_former_show_time_switch_goes_to_both_and_is_not_saved_again() {
+        let fresh: super::Settings = serde_json::from_str("{}").expect("fresh settings");
+        let fresh = fresh.sanitized();
+        assert!(
+            fresh.chat_timestamps_nearby && fresh.chat_timestamps_im,
+            "on by default, as in the Legacy Viewer"
+        );
+        for on in [false, true] {
+            let old: super::Settings = serde_json::from_value(serde_json::json!({ "chat_timestamps": on })).expect("former show time");
+            let migrated = old.sanitized();
+            assert_eq!((migrated.chat_timestamps_nearby, migrated.chat_timestamps_im), (on, on));
+            let saved = serde_json::to_value(&migrated).expect("save show time");
+            assert!(saved.get("chat_timestamps").is_none(), "only the two switches are saved");
+            let reloaded: super::Settings = serde_json::from_value(saved).expect("reload show time");
+            assert_eq!((reloaded.chat_timestamps_nearby, reloaded.chat_timestamps_im), (on, on));
+        }
+        // the two switches apart survive a reload
+        let apart: super::Settings = serde_json::from_value(serde_json::json!({
+            "chat_timestamps_nearby": false,
+            "chat_timestamps_im": true,
+        }))
+        .expect("separate switches");
+        let apart = apart.sanitized();
+        assert_eq!((apart.chat_timestamps_nearby, apart.chat_timestamps_im), (false, true));
     }
 
     #[test]

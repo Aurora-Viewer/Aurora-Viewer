@@ -64,6 +64,13 @@ pub enum Action {
     },
     Save(Option<String>),
     SaveIn(String, Uuid),
+    ExportJson(Uuid),
+    PickJson,
+    ImportJson {
+        backup: Box<super::outfit_backup::Backup>,
+        name: String,
+        partial: bool,
+    },
     Remove(Uuid),
     RemoveItems(Vec<Uuid>),
     Add(Uuid),
@@ -503,6 +510,62 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let original_current = current.clone();
     let mut sync = true;
     match action {
+        Action::ImportJson { backup, name, partial } => {
+            if !super::outfit_backup::valid_name(&name) {
+                return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
+            }
+            let resolved = backup.resolve(inv, inv.owner);
+            if !partial && !resolved.missing.is_empty() {
+                return Err(aurora_i18n::tr!("outfit-json-missing-changed").into());
+            }
+            // Wearing zero links would take off every clothing item and
+            // attachment, so an empty backup is refused like an unavailable one.
+            if resolved.links.is_empty() {
+                return Err(if resolved.missing.is_empty() {
+                    aurora_i18n::tr!("outfit-json-empty")
+                } else {
+                    aurora_i18n::tr!("outfit-json-none-found")
+                }
+                .into());
+            }
+            let mut links = resolved.links;
+            // As updateCOF does, keep the current required body part whenever
+            // the selected (possibly partial) outfit does not supply its type.
+            for old in current.iter().filter(|link| !link.folder) {
+                if let Some(item) = inv.items.get(&old.target)
+                    && item.asset_type == 13
+                    && !links.iter().any(|link| {
+                        inv.items
+                            .get(&link.target)
+                            .is_some_and(|it| it.asset_type == 13 && it.flags & 0xff == item.flags & 0xff)
+                    })
+                {
+                    links.push(old.clone());
+                }
+            }
+            let parent =
+                system_folder(inv, FT_MY_OUTFITS).ok_or(aurora_i18n::tr!("world-appearance-the-my-outfits-folder-is-unavailable"))?;
+            let id = Uuid::new_v4();
+            let name = name.trim().to_owned();
+            change.folder = id;
+            change.create = Some(InvFolder {
+                id,
+                parent,
+                name: name.clone(),
+                type_default: FT_OUTFIT,
+                version: 1,
+                ..Default::default()
+            });
+            change.links = links.clone();
+            links.push(OutfitLink {
+                target: id,
+                name,
+                desc: String::new(),
+                folder: true,
+                inv_type: 8,
+            });
+            change.cof = Some((cof, links));
+        }
         Action::Save(_) | Action::SaveIn(..) | Action::SaveTo(_) => {
             let my = system_folder(inv, FT_MY_OUTFITS);
             let (name, destination, parent) = match action {
@@ -531,6 +594,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             let links: Vec<_> = current.iter().filter(|l| !l.folder).cloned().collect();
             if let Some(name) = name {
+                crate::text_validation::require(crate::text_validation::Policy::Ascii, &name)?;
                 let name = name.trim();
                 if name.is_empty() || name.chars().count() > 63 {
                     return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
@@ -812,9 +876,20 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             change.links = current;
         }
-        Action::ShowOriginal(_) | Action::Favorite(_) | Action::Category(..) | Action::Folders(_) | Action::DeleteFromOutfit { .. } => {
+        Action::ShowOriginal(_)
+        | Action::Favorite(_)
+        | Action::Category(..)
+        | Action::Folders(_)
+        | Action::DeleteFromOutfit { .. }
+        | Action::ExportJson(_)
+        | Action::PickJson => {
             return Err(aurora_i18n::tr!("world-appearance-this-action-does-not-change-the-current-outfit").into());
         }
+    }
+    // Every new-outfit entry point (including imports) must satisfy the
+    // destination-name policy before any inventory requests are prepared.
+    if let Some(created) = &change.create {
+        crate::text_validation::require(crate::text_validation::Policy::Ascii, &created.name)?;
     }
     if change.folder == cof {
         drop_coalesced(inv, &mut change.links);
@@ -884,6 +959,7 @@ pub fn category_plan(
     require_outfit(inv, id)?;
     match &mut update {
         Update::Rename(name) => {
+            crate::text_validation::require_edit(crate::text_validation::Policy::Ascii, &inv.folders[&id].info.name, name)?;
             *name = name.trim().into();
             if name.is_empty() || name.chars().count() > 63 || name.chars().any(char::is_control) {
                 return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
@@ -1144,6 +1220,14 @@ pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> 
             })
             .collect(),
         Action::Force { wear, .. } => wear.clone(),
+        Action::ImportJson { backup, .. } => {
+            let available: HashSet<_> = backup.resolve(inv, agent).links.into_iter().map(|link| link.target).collect();
+            backup
+                .points()
+                .into_iter()
+                .filter(|request| available.contains(&request.item))
+                .collect()
+        }
         Action::Add(item) => vec![WearRequest {
             item: *item,
             replace: false,

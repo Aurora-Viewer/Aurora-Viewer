@@ -31,6 +31,11 @@ pub fn page(cx: &mut Cx) {
             &field!(confirm_teleports),
         );
         cx.toggle(
+            tr!("ui-options-warn-hypergrid-suitcase"),
+            tr!("ui-options-warn-hypergrid-suitcase-help"),
+            &field!(warn_hypergrid_suitcase),
+        );
+        cx.toggle(
             tr!("ui-options-confirm-return-to-owner"),
             tr!("ui-options-confirm-return-to-owner-help"),
             &field!(confirm_return_to_owner),
@@ -62,7 +67,7 @@ pub fn page(cx: &mut Cx) {
                             .custom_parser(aurora_i18n::parse_number)
                             .range(0..=i32::MAX)
                             .speed(1.0)
-                            .suffix(" L$"),
+                            .suffix(format!(" {}", aurora_i18n::currency())),
                     )
                     .changed()
                 },

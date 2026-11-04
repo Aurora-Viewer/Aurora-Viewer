@@ -38,7 +38,7 @@ const WIDTH: f32 = 380.0;
 const BUTTON_H: f32 = 30.0;
 
 fn money(amount: i32) -> String {
-    format!("L$ {}", aurora_i18n::integer(i64::from(amount.max(0))))
+    format!("{} {}", aurora_i18n::currency(), aurora_i18n::integer(i64::from(amount.max(0))))
 }
 
 /// Where the window is in a payment.
@@ -549,12 +549,9 @@ impl PayUi {
                 });
             ui.horizontal(|ui| {
                 ui.label(aurora_i18n::tr!("ui-object-actions-or-choose-an-amount"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut payee.amount)
-                        .char_limit(AMOUNT_DIGITS)
-                        .desired_width(90.0),
-                );
-                payee.amount.retain(|c| c.is_ascii_digit());
+                widgets::restricted_text_field(ui, true, &mut payee.amount, widgets::TextPolicy::Digits, |b, _| {
+                    egui::TextEdit::singleline(b).char_limit(AMOUNT_DIGITS).desired_width(90.0)
+                });
             });
             if !payee.group {
                 let enabled = message_allowed(world, payee);
@@ -993,23 +990,22 @@ fn amount_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, focus: &mut b
                     + 8.0;
                 let cur_w = 26.0;
                 ui.add_space(((ui.available_width() - digits_w - cur_w) / 2.0).max(0.0));
-                ui.label(RichText::new("L$").size(18.0).strong().color(p.muted));
+                ui.label(RichText::new(aurora_i18n::currency()).size(18.0).strong().color(p.muted));
                 // the hint in the figures' font: egui lays a hint out in the
                 // body text style, not in the field's `font` (a small "0"
                 // above the baseline of "L$")
-                let response = ui.add(
-                    egui::TextEdit::singleline(text)
+                let response = widgets::restricted_text_field(ui, true, text, widgets::TextPolicy::Digits, |b, _| {
+                    egui::TextEdit::singleline(b)
                         .font(font.clone())
                         .text_color(p.ink)
                         .hint_text(RichText::new("0").font(font).color(p.muted_dim))
                         .frame(egui::Frame::NONE)
                         .char_limit(AMOUNT_DIGITS)
-                        .desired_width(digits_w),
-                );
+                        .desired_width(digits_w)
+                });
                 if std::mem::take(focus) {
                     response.request_focus();
                 }
-                text.retain(|c| c.is_ascii_digit());
             });
         });
 }

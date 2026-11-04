@@ -115,12 +115,7 @@ impl World {
         if !crate::keywords::matches(from, text, local) || self.mutes.is_muted_id(&sender) {
             return;
         }
-        let body = if strip_me(text).len() == text.len() {
-            format!("{from}: {text}")
-        } else {
-            // an emote reads as "Name waves" (FSCommon::is_irc_me_prefix)
-            format!("{from}{}", &text[3..])
-        };
+        let body = emote_line(from, text).unwrap_or_else(|| format!("{from}: {text}"));
         let notice = Notice {
             title: aurora_i18n::tr!("world-keyword-alert").to_owned(),
             body,
@@ -149,9 +144,23 @@ fn strip_me(text: &str) -> &str {
     }
 }
 
+/// An emote as a toast reads it, "Name waves" (LLToastIMPanel, with
+/// FSCommon::is_irc_me_prefix); None for any other line.
+pub(crate) fn emote_line(from: &str, text: &str) -> Option<String> {
+    (strip_me(text).len() != text.len()).then(|| format!("{from}{}", &text[3..]))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::strip_me;
+    use super::{emote_line, strip_me};
+
+    #[test]
+    fn an_emote_reads_with_its_sender() {
+        assert_eq!(emote_line("Jane", "/me waves").as_deref(), Some("Jane waves"));
+        assert_eq!(emote_line("Jane", "/me's here").as_deref(), Some("Jane's here"));
+        assert_eq!(emote_line("Jane", "/meow"), None);
+        assert_eq!(emote_line("Jane", "hello"), None);
+    }
 
     #[test]
     fn an_emote_loses_its_me() {

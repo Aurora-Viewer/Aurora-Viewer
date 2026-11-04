@@ -12,6 +12,7 @@ pub mod banlines;
 pub mod blend_order;
 mod blender_live;
 pub mod body_physics;
+pub mod build_hologram;
 pub mod complexity;
 pub mod creation_preview;
 pub(crate) mod default_motions;
@@ -965,6 +966,7 @@ pub struct Scene {
     rlva_render_state: (Option<Uuid>, bool, bool),
     pub lists: DrawLists,
     pub creation_preview: creation_preview::CreationPreview,
+    pub build_hologram: build_hologram::BuildHologram,
     pub physics_shapes: physics_shapes::PhysicsShapes,
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
@@ -1523,6 +1525,7 @@ impl Scene {
             rlva_render_state: (None, false, false),
             lists: DrawLists::default(),
             creation_preview: creation_preview::CreationPreview::default(),
+            build_hologram: build_hologram::BuildHologram::default(),
             physics_shapes: physics_shapes::PhysicsShapes::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
@@ -1843,24 +1846,7 @@ impl Scene {
         // what the jobs staged so far becomes copyable (once a frame, before
         // the geometry here and the textures in `stream`)
         renderer.prepare_uploads();
-        if self.staging.is_none() {
-            let pool = renderer.staging_pool();
-            self.textures.staging = Some(pool.clone());
-            // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
-            let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
-            self.textures.bc7 = wanted && renderer.textures.bc7();
-            // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
-            // texture decoded from its JPEG 2000 data as before)
-            let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
-            self.textures.bc7_cache = self.textures.bc7 && cached;
-            log::info!(
-                "textures: BC7 compression {} (GPU support: {})",
-                if self.textures.bc7 { "on" } else { "off" },
-                renderer.textures.bc7()
-            );
-            self.meshes.staging = Some(pool.clone());
-            self.staging = Some(pool);
-        }
+        self.take_staging(renderer);
         // Three kinds of results share the budget, each with a part of it so
         // that none starves the others, and each at least one a frame:
         // geometry whose staging chunk became copyable (the first half),
@@ -1916,6 +1902,9 @@ impl Scene {
                 Part::Decoded
             };
             match r {
+                // staged in the pool of a GPU device lost since (`forget_gpu`):
+                // dropped, the next sync asks for it again
+                JobResult::Geometry { geom, .. } if !geom.staged_in(self.staging.as_deref()) => {}
                 JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
@@ -2082,6 +2071,7 @@ impl Scene {
         self.banlines.clear(renderer);
         self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
+        self.build_hologram.clear(renderer);
         self.physics_shapes.clear(renderer);
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
@@ -2099,6 +2089,77 @@ impl Scene {
         self.palette_fresh.clear();
         self.palette_count = self.live_morphs.slots;
         self.live_morphs.uploaded = false;
+    }
+
+    /// The GPU device is lost (app/gpu_recovery.rs): what the scene holds on
+    /// `old` is released through `clear`'s bookkeeping (CPU only: nothing
+    /// waits on the lost device), with what a logout keeps besides: the
+    /// geometry cache, the environment and projector textures, the
+    /// impostors. The world stays: `clear` forgets the render origin, whose
+    /// change at the next `sync` marks every object and terrain chunk dirty,
+    /// and all of it is built again on the new renderer ([`Self::adopt_gpu`]).
+    pub fn forget_gpu(&mut self, old: &mut Renderer) {
+        for (id, _) in std::mem::take(&mut self.env_tex) {
+            if !id.is_nil() {
+                self.textures.release(&id);
+            }
+        }
+        for (_, (id, _)) in std::mem::take(&mut self.light_textures) {
+            self.textures.release(&id);
+        }
+        self.clear(old);
+        // every GpuGeom holds allocations of the lost device's arena
+        self.geoms.clear();
+        self.geom_zero.clear();
+        self.geom_pending = 0;
+        self.geom_waiting.clear();
+        self.geom_waiting_spare.clear();
+        self.geom_trash = Default::default();
+        self.joint_boxes = Default::default();
+        self.skin_binds = Default::default();
+        self.sculpt_area.clear();
+        self.grass.clear();
+        self.impostors = Default::default();
+        self.far_avatars.clear();
+        // Blender Live's images: installed again from its snapshot
+        self.preview_images.clear();
+        self.preview_appearances.clear();
+        self.meshes.gpu_reset();
+        // set again from the new renderer at the next `sync`
+        self.staging = None;
+    }
+
+    /// The renderer's staging pool for the streamers' jobs, taken once (and
+    /// again for the renderer of a GPU recovery, `adopt_gpu`).
+    fn take_staging(&mut self, renderer: &mut Renderer) {
+        if self.staging.is_some() {
+            return;
+        }
+        let pool = renderer.staging_pool();
+        self.textures.staging = Some(pool.clone());
+        // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
+        let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
+        self.textures.bc7 = wanted && renderer.textures.bc7();
+        // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
+        // texture decoded from its JPEG 2000 data as before)
+        let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
+        self.textures.bc7_cache = self.textures.bc7 && cached;
+        log::info!(
+            "textures: BC7 compression {} (GPU support: {})",
+            if self.textures.bc7 { "on" } else { "off" },
+            renderer.textures.bc7()
+        );
+        self.meshes.staging = Some(pool.clone());
+        self.staging = Some(pool);
+    }
+
+    /// The new renderer of a GPU recovery: every texture held gets a slot of
+    /// it and is uploaded again from memory or the disk cache, and the jobs
+    /// stage into its pool from now on (the imports published again at once
+    /// need it).
+    pub fn adopt_gpu(&mut self, new: &mut Renderer) {
+        self.textures.gpu_reset(new);
+        self.take_staging(new);
     }
 
     /// The nearest avatar the ray `(origin, dir)` meets before `far`, and
@@ -4791,9 +4852,12 @@ impl Scene {
         if usage_phase == 0 {
             // LLTerrainMaterials::boost: TERRAIN_DECODE_PRIORITY = 2048²,
             // for every material map too. A 512 px cap loses terrain relief.
+            // BOOST_TERRAIN is under BOOST_HIGH: the maximum texture
+            // resolution chosen in Preferences still caps it.
+            let px = terrain_surface::DECODE_PIXELS.min(self.textures.max_resolution() as f32);
             for r in self.regions.values() {
                 for id in &r.surface.texture_ids {
-                    self.textures.note_usage_fixed(id, terrain_surface::DECODE_PIXELS);
+                    self.textures.note_usage_fixed(id, px);
                 }
             }
             self.textures.recompute_wants();
