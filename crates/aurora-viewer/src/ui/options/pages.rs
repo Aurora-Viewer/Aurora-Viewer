@@ -25,6 +25,7 @@ pub mod shortcuts;
 pub mod sound;
 pub mod spelling;
 pub mod system;
+pub mod vr;
 
 use super::Page;
 use super::cx::Cx;
@@ -97,6 +98,7 @@ pub fn draw(cx: &mut Cx, page: Page, tab: usize) {
         Page::Aurora => aurora::page(cx, tab),
         Page::Graphics => graphics::page(cx, tab),
         Page::Camera => camera::page(cx, tab),
+        Page::Vr => vr::page(cx),
         Page::Avatars => avatars::page(cx, tab),
         Page::Build => build::page(cx),
         Page::Chat => chat::page(cx, tab),

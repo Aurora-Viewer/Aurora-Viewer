@@ -427,8 +427,19 @@ pub struct App {
     /// The desktop camera, and our avatar's yaw and pitch, before VR: put
     /// back when VR ends (the first-person entry turns the avatar to the
     /// view, as mouselook does).
-    vr_camera: Option<(Camera, f32, f32)>,
+    vr_camera: Option<Camera>,
+    vr_mode: Option<crate::camera::VrView>,
+    vr_rig_yaw: f32,
+    vr_head_rotation: glam::Quat,
+    vr_head_pose: Option<aurora_render::HeadPose>,
+    vr_body_follow: crate::camera::vr::BodyFollow,
+    vr_walk_override: crate::camera::vr::WalkOverride,
+    vr_follow_flags: Option<u32>,
+    vr_revision: u64,
+    vr_reference_generation: Option<u64>,
+    vr_focused: bool,
     vr_toggle: bool,
+    vr_requested_mode: crate::camera::VrView,
     /// Frames left before a first-person VR entry asks for the headset: the
     /// session anchors on the view of the frame it starts in, so the eye
     /// view must have been drawn first.
@@ -1577,7 +1588,18 @@ impl App {
             sky_log: Default::default(),
             camera: Camera::default(),
             vr_camera: None,
+            vr_mode: None,
+            vr_rig_yaw: 0.0,
+            vr_head_rotation: glam::Quat::IDENTITY,
+            vr_head_pose: None,
+            vr_body_follow: crate::camera::vr::BodyFollow::default(),
+            vr_walk_override: crate::camera::vr::WalkOverride::default(),
+            vr_follow_flags: None,
+            vr_revision: 0,
+            vr_reference_generation: None,
+            vr_focused: false,
             vr_toggle: false,
+            vr_requested_mode: crate::cli::get().vr_mode,
             vr_start_in: 0,
             vr_restart_offer: false,
             vr_restart: false,
@@ -4044,7 +4066,11 @@ impl App {
                 ));
                 self.restore_local_environment();
             }
+            NetEvent::TeleportLocal { .. } | NetEvent::TeleportStarted => {
+                self.vr_rebase_after_travel();
+            }
             NetEvent::TeleportFinished { .. } => {
+                self.vr_rebase_after_travel();
                 self.stop_local_typing();
                 // (TeleportFinish is the arrival in another region)
                 self.start_draw_stepping("teleport");
@@ -4085,6 +4111,7 @@ impl App {
                 ));
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
+                    self.vr_rebase_after_travel();
                     let local = self.world.arrived_by_local_teleport;
                     self.camera.on_teleport_arrival(&self.settings.camera, local);
                     log::info!(
@@ -4282,8 +4309,21 @@ impl App {
 
     /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
-        // in VR the head turns the view; the mouse must not turn the avatar
-        if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged()) {
+        let vr = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
+        if vr {
+            if self.settings.camera.vr_mouse_look {
+                let turn = -dx * self.settings.mouse_sensitivity * crate::camera::DRAG_RATE;
+                if self.vr_mode == Some(crate::camera::VrView::Avatar) {
+                    if self.focused && !self.egui_ctx.egui_wants_pointer_input() {
+                        self.camera
+                            .orbit_drag(dx, 0.0, self.settings.mouse_sensitivity, &mut self.world.agent);
+                    }
+                } else if let Some(cam) = &mut self.camera.flycam {
+                    cam.rotation = glam::Quat::from_rotation_z(turn) * cam.rotation;
+                } else if self.vr_mode == Some(crate::camera::VrView::FirstPerson) {
+                    self.vr_rig_yaw += turn;
+                }
+            }
             return;
         }
         if self.clicks.waiting() {
@@ -4503,6 +4543,10 @@ impl App {
 
     /// Escape / "Reset camera" (handle_reset_view).
     fn reset_camera_view(&mut self) {
+        if self.vr_mode == Some(crate::camera::VrView::Avatar) {
+            self.camera.handle_reset_view(&mut self.world.agent, &self.settings.camera);
+            return;
+        }
         self.stop_autopilot(true);
         self.joystick.active = false;
         self.camera.clear_flycam();
@@ -4714,7 +4758,13 @@ impl App {
             Action::MovementEnhancer => self.open_movement(),
             Action::PassWall => self.pass_wall(),
             Action::SitGround => self.sit_stand_shortcut(),
-            Action::Mouselook => self.toggle_mouselook(),
+            Action::Mouselook => {
+                if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged()) {
+                    self.cycle_gamepad_view();
+                } else {
+                    self.toggle_mouselook();
+                }
+            }
             Action::CameraControls => self.request_controls(false, true),
             Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
                 if self.world.rlva.camera_owner().is_none() {
@@ -6127,7 +6177,11 @@ impl App {
     /// frame and when the window's size changes, frames being rare while it
     /// is minimised.
     fn sync_minimized_mute(&mut self) {
-        let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized());
+        let minimized = self
+            .gfx
+            .as_ref()
+            .and_then(|g| g.window.is_minimized())
+            .map(|minimized| effective_window_state(self.focused, minimized, self.vr_camera.is_some()).1);
         if !self.minimized_mute.update(self.settings.audio.mute_when_minimized, minimized) {
             return;
         }
@@ -6291,7 +6345,7 @@ impl App {
         // restarted viewer reads them
         Settings::wait_saved(Duration::from_secs(5));
         if self.restart_into_vr {
-            restart_with_vr();
+            restart_with_vr(self.vr_requested_mode);
         }
         event_loop.exit();
     }
@@ -7742,7 +7796,7 @@ impl App {
         }
         self.always_run = on;
         self.send(NetCommand::SetAlwaysRun(
-            self.always_run || self.temp_run.is_some() || self.joystick.running,
+            (self.always_run || self.temp_run.is_some() || self.joystick.running) && !self.vr_walk_override.active(),
         ));
         self.world.system_message(if self.always_run {
             aurora_i18n::tr!("app-always-run-enabled")
@@ -7934,11 +7988,61 @@ impl App {
         self.alt_codes.key_pressed(code, ke.repeat)
     }
 
-    fn update_move_input(&mut self, typing: bool, dt: f32) {
-        self.poll_joystick(dt);
-        if self.joystick_flycam_step(dt) {
+    fn vr_keyboard_input(&mut self, key: &winit::event::KeyEvent) {
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        let PhysicalKey::Code(code) = key.physical_key else {
+            return;
+        };
+        let code = crate::keybinds::binding_code(code, &key.logical_key);
+        let input = Input::key(code);
+        let gesture = crate::gestures::keys::from_key(code, &key.key_without_modifiers());
+        if key.state == ElementState::Released {
+            self.down.remove(&input);
+            if let Some(key) = gesture {
+                self.gesture_state.manager.release(Some(key));
+            }
             return;
         }
+        if !self.in_world() || !self.vr_focused || self.exit_prompt.open {
+            return;
+        }
+        let mods = self.key_mods(key);
+        if !mods.alt
+            && let Some(gesture) = gesture
+            && (!key.repeat || crate::gestures::Manager::repeat_triggers(gesture))
+            && let Some(id) = self
+                .gesture_state
+                .manager
+                .key_trigger(gesture, u32::from(mods.ctrl) | if mods.shift { 4 } else { 0 })
+        {
+            self.gesture_play(id, Some(gesture));
+            return;
+        }
+        if !key.repeat && self.settings.keybinds.triggered(&input, mods) == Some(Action::Mouselook) {
+            self.cycle_gamepad_view();
+            return;
+        }
+        if !key.repeat
+            && self.settings.keybinds.held_actions_of(&input).iter().any(|action| {
+                matches!(
+                    action,
+                    Action::Forward
+                        | Action::Back
+                        | Action::Left
+                        | Action::Right
+                        | Action::StrafeLeft
+                        | Action::StrafeRight
+                        | Action::Up
+                        | Action::Down
+                )
+            })
+        {
+            self.down.insert(input);
+        }
+    }
+
+    fn update_move_input(&mut self, typing: bool, dt: f32) {
+        self.poll_joystick(dt);
         // (the photo reel's quick view holds the keys like a popup)
         let web_or_popup = self.media.focus.is_some()
             || self.web_has_focus()
@@ -8008,6 +8112,26 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
+        if matches!(
+            self.vr_mode,
+            Some(crate::camera::VrView::FirstPerson | crate::camera::VrView::Flycam)
+        ) {
+            i.vr_lateral_keys(self.settings.camera.vr_mouse_look);
+        }
+        let now = Instant::now();
+        let turn_held = |since: &mut Option<Instant>, input: &MoveInput| {
+            if input.turn_left || input.turn_right {
+                since.get_or_insert(now).elapsed().as_secs_f32()
+            } else {
+                *since = None;
+                0.0
+            }
+        };
+        if self.joystick.active {
+            i.turn_held = turn_held(&mut self.turn_since, &i);
+            self.joystick_flycam_step(&i, dt);
+            return;
+        }
         let joystick_up =
             self.camera.free().is_none() && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
         let player_movement_input = i.forward
@@ -8065,7 +8189,6 @@ impl App {
             i.up = false;
         }
         // nudge phase: the first 0.25 s of a press makes small steps
-        let now = Instant::now();
         let since = |s: &mut Option<Instant>, held: bool| -> bool {
             if !held {
                 *s = None;
@@ -8093,12 +8216,7 @@ impl App {
         {
             self.world.agent.flying = true;
         }
-        i.turn_held = if i.turn_left || i.turn_right {
-            self.turn_since.get_or_insert(now).elapsed().as_secs_f32()
-        } else {
-            self.turn_since = None;
-            0.0
-        };
+        i.turn_held = turn_held(&mut self.turn_since, &i);
         // moving brings the camera back to the avatar (LLAgent::moveAt & co ->
         // resetView, FSResetCameraOnMovement): after an orbit the agent turns
         // to where the camera looks, the camera stays put
@@ -8117,7 +8235,7 @@ impl App {
             i.resets_camera(self.crouch_toggle.latched())
         };
         let gamepad_movement = gamepad && self.joystick.motion.player_movement_input();
-        if moving && self.mouse_mode != MouseMode::FocusOrbit {
+        if moving && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
             let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0 || gamepad_movement;
@@ -8154,7 +8272,7 @@ impl App {
         ];
         let mut rate = [0.0f32; 10];
         for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
-            let key = !typing && self.settings.keybinds.held(a, &self.down, m);
+            let key = self.vr_camera.is_none() && !typing && self.settings.keybinds.held(a, &self.down, m);
             if self.in_world() && (key || self.controls_held.contains(&a)) {
                 let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
                 rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
@@ -9038,11 +9156,14 @@ impl App {
         // time to the screen starts here (Performance › latency, pacing.rs)
         if let Some(g) = &mut self.gfx {
             g.renderer.mark_input(Instant::now());
+            self.vr_focused = g.renderer.vr_focused();
         }
         self.sync_minimized_mute();
         // a window behind gives its textures back (texture_budget::Background)
         let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized()).unwrap_or(false);
-        self.scene.textures.set_window_state(self.focused, minimized);
+        let presenting = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
+        let (focused, minimized) = effective_window_state(self.focused, minimized, presenting);
+        self.scene.textures.set_window_state(focused, minimized);
         // (a demo or a timed run neither publishes nor reads, instances.rs)
         let timed = self.capture.is_some() || self.frame_profile.enabled();
         // the busy card's switch, the same in every viewer (instances.rs)
@@ -9226,7 +9347,7 @@ impl App {
         // the cursor would stay hidden after VR ends)
         if !self.exit_prompt.open
             && self.camera.mouselook()
-            && self.vr_camera.is_none()
+            && (self.vr_camera.is_none() || self.settings.camera.vr_mouse_look)
             && self.focused
             && !self.cursor_hold.held()
             && !self.alt_cursor.free()
@@ -9578,6 +9699,29 @@ impl App {
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
+        if let Some(pose) = gfx.renderer.vr_head_pose() {
+            if self.vr_reference_generation.is_some_and(|previous| previous != pose.generation) {
+                self.vr_rebase_reference(false);
+            }
+            self.vr_reference_generation = Some(pose.generation);
+            self.vr_head_pose = Some(pose);
+        }
+        let pose = self.vr_head_pose.filter(|p| p.fresh() && p.origin == self.world.main_region);
+        self.vr_focused = gfx.renderer.vr_focused() && pose.is_some();
+        if let Some(pose) = pose {
+            self.vr_head_rotation = pose.rotation;
+        } else {
+            self.vr_head_rotation = glam::Quat::IDENTITY;
+        }
+        self.camera
+            .vr_tracking(pose.filter(|p| self.vr_focused && p.revision == self.vr_revision));
+        if gfx.renderer.vr_engaged() && self.vr_mode.is_none() {
+            self.apply_vr_mode(self.vr_requested_mode);
+        }
+        if let Some(pose) = self.vr_head_pose {
+            self.vr_body_follow.reference(pose.generation, self.world.main_region);
+            self.camera.vr_body_offset(self.vr_body_follow.offset());
+        }
         self.apply_local_imports(&mut gfx.renderer);
         self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
         for command in self.local_bakes.update(&self.world, &mut self.scene) {
@@ -9611,7 +9755,14 @@ impl App {
 
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
+        let vr_body_yaw = self.world.agent.yaw;
+        if self.vr_camera.is_some() {
+            self.world.agent.yaw = self.vr_rig_yaw;
+        }
         self.update_move_input(typing, dt);
+        if self.vr_camera.is_some() {
+            self.vr_locomotion(vr_body_yaw, dt);
+        }
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
             && let Some(input) = crate::demo::grounding::scripted_input(&mode, self.frame_count)
@@ -9619,6 +9770,7 @@ impl App {
             self.input = input;
         }
         self.update_autopilot(dt);
+        self.vr_update_body_follow(typing, dt);
         if self.in_world() && self.settings.automatic_land {
             self.world.auto_land(&self.input);
         }
@@ -9667,7 +9819,12 @@ impl App {
             }
             self.update_own_prediction(ml, dt);
             let camera_distance = self.camera.position.distance(self.world.agent.position);
+            let yaw_before_update = self.world.agent.yaw;
             self.world.agent.update(&self.input, ml, dt, camera_distance);
+            if self.vr_camera.is_some() {
+                let delta = self.world.agent.yaw - yaw_before_update;
+                self.vr_rig_yaw += (delta + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            }
             if self.demo
                 && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
             {
@@ -9706,7 +9863,13 @@ impl App {
                 // and first-person eyes after this frame's animation.
                 late_camera_frame = Some(frame);
             } else {
-                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                if self.vr_camera.is_some() {
+                    self.camera
+                        .update_vr(&mut self.world, &self.settings.camera, &frame, self.vr_rig_yaw);
+                    self.vr_counter_body_motion();
+                } else {
+                    self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                }
             }
             if self.demo
                 && let Some((eye, target)) = crate::demo::projector_camera(self.frame_count)
@@ -9730,6 +9893,24 @@ impl App {
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
             // the walk to a double-clicked point (src/autopilot.rs)
             c.control_flags = self.autopilot_controls(c.control_flags);
+            if let Some(flags) = self.vr_follow_flags {
+                let linear = control::AT_POS
+                    | control::AT_NEG
+                    | control::LEFT_POS
+                    | control::LEFT_NEG
+                    | control::UP_POS
+                    | control::UP_NEG
+                    | control::FAST_AT
+                    | control::FAST_LEFT
+                    | control::FAST_UP
+                    | control::NUDGE_AT_POS
+                    | control::NUDGE_AT_NEG
+                    | control::NUDGE_LEFT_POS
+                    | control::NUDGE_LEFT_NEG
+                    | control::NUDGE_UP_POS
+                    | control::NUDGE_UP_NEG;
+                c.control_flags = (c.control_flags & !linear) | flags;
+            }
             c.control_flags = crate::movement::controls(
                 c.control_flags,
                 self.movement_runtime.state,
@@ -9960,14 +10141,21 @@ impl App {
         }
         if !gfx.renderer.vr_engaged()
             && self.vr_start_in == 0
-            && let Some((camera, yaw, pitch)) = self.vr_camera.take()
+            && let Some(camera) = self.vr_camera.take()
         {
+            self.vr_mode = None;
+            self.down.clear();
+            self.vr_focused = false;
+            self.joystick.active = false;
             self.camera = camera;
-            self.world.agent.yaw = yaw;
-            self.world.agent.pitch = pitch;
+            self.release_cursor(false);
             gfx.renderer.cut_motion_history();
         }
-        let mut view = self.camera.view();
+        let mut view = if gfx.renderer.vr_engaged() {
+            self.camera.vr_view(self.vr_rig_yaw)
+        } else {
+            self.camera.view()
+        };
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
         let camera_fast = self.texture_motion.update(self.camera.position, self.camera.forward(), dt);
@@ -10281,7 +10469,13 @@ impl App {
                 if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                     frame.now = now;
                 }
-                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                if self.vr_camera.is_some() {
+                    self.camera
+                        .update_vr(&mut self.world, &self.settings.camera, &frame, self.vr_rig_yaw);
+                    self.vr_counter_body_motion();
+                } else {
+                    self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                }
                 if let Some(controls) = late_controls {
                     // AgentUpdate must describe the displayed eye and aim,
                     // keeping the movement, script and RLVa flags prepared above.
@@ -10302,7 +10496,11 @@ impl App {
                 self.net.send(NetCommand::SetFov(self.sent_fov));
             }
             if camera_changed {
-                view = self.camera.view();
+                view = if gfx.renderer.vr_engaged() {
+                    self.camera.vr_view(self.vr_rig_yaw)
+                } else {
+                    self.camera.view()
+                };
                 proj = frame_proj(&self.camera);
                 vp = proj * view;
                 cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
@@ -10342,7 +10540,7 @@ impl App {
                     autoplay: a.media_autoplay,
                     channel_volume: self.media_volume(),
                     agent_speed: self.world.agent.velocity.length(),
-                    window_focused: self.focused,
+                    window_focused: effective_window_state(self.focused, false, self.vr_camera.is_some()).0,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
                     cache_dir: &cache_dir,
                     language: aurora_i18n::language(),
@@ -10964,7 +11162,16 @@ impl App {
                     .unwrap_or_else(|| self.scene.selection_pulse(Instant::now(), false))
             },
             selection_scale: self.egui_ctx.pixels_per_point(),
+            vr_origin: self.world.main_region,
+            vr_revision: self.vr_revision,
             view,
+            vr_rig: if self.camera.flycam.is_some() {
+                aurora_render::stereo_view::RigMode::Flycam
+            } else if self.vr_mode == Some(crate::camera::VrView::Avatar) && !self.camera.mouselook() {
+                aurora_render::stereo_view::RigMode::Avatar
+            } else {
+                aurora_render::stereo_view::RigMode::FirstPerson
+            },
             proj,
             photo_tile,
             photo_scale,
@@ -11718,10 +11925,11 @@ impl App {
             // otherwise
             if !engaged
                 && self.vr_camera.is_none()
-                && self.settings.camera.vr_view == crate::camera::VrView::FirstPerson
+                && self.vr_requested_mode == crate::camera::VrView::FirstPerson
                 && self.settings.camera.enable_mouselook
             {
-                self.vr_camera = Some((self.camera.clone(), self.world.agent.yaw, self.world.agent.pitch));
+                self.vr_camera = Some(self.camera.clone());
+                self.vr_rig_yaw = self.world.agent.yaw;
                 self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, false);
                 // straight to the eyes, without the position smoothing; one
                 // more frame for the render thread's packet in flight
@@ -11741,7 +11949,8 @@ impl App {
                         head.z
                     );
                     if self.vr_camera.is_none() {
-                        self.vr_camera = Some((self.camera.clone(), self.world.agent.yaw, self.world.agent.pitch));
+                        self.vr_camera = Some(self.camera.clone());
+                        self.vr_rig_yaw = self.world.agent.yaw;
                     }
                     self.down.clear();
                     self.drop_clicks();
@@ -11892,6 +12101,7 @@ impl App {
         let cap = frame_cap(
             &self.settings,
             self.focused,
+            gfx.renderer.vr_engaged(),
             self.in_world(),
             monitor_hz,
             timed,
@@ -14343,7 +14553,16 @@ impl App {
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
-            BarAction::ToggleVr => self.vr_toggle = true,
+            BarAction::VrView(mode) => {
+                if self.vr_mode.is_some() {
+                    if self.vr_mode != Some(mode) {
+                        self.apply_vr_mode(mode);
+                    }
+                } else {
+                    self.vr_requested_mode = mode;
+                    self.vr_toggle = true;
+                }
+            }
             BarAction::ToggleImmersive => self.toggle_immersive(),
             BarAction::ImmersiveHuds(visible) => self.set_immersive_huds(visible),
             BarAction::HoverTips(menu) => {
@@ -21425,14 +21644,19 @@ impl ApplicationHandler for App {
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && key.state == ElementState::Pressed
+            && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
+            && let Some(gfx) = &self.gfx
         {
-            if key.state == ElementState::Pressed
-                && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
-                && let Some(gfx) = &self.gfx
-            {
-                gfx.renderer.set_vr_enabled(false);
-                gfx.window.request_redraw();
-            }
+            gfx.renderer.set_vr_enabled(false);
+            gfx.window.request_redraw();
+            return;
+        }
+
+        if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
+            && let WindowEvent::KeyboardInput { event: key, .. } = &event
+        {
+            self.vr_keyboard_input(key);
             return;
         }
 
@@ -22045,7 +22269,24 @@ fn wait_until(until: Instant) {
 /// desktop compositor and makes the whole machine stutter on some setups.
 /// `timed` runs (AURORA_CAPTURE, AURORA_PROFILE) count or measure frames,
 /// often in a window that never had the focus: no background cap there.
-fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed: bool, fps_limit: Option<u32>) -> f32 {
+fn effective_window_state(window_focused: bool, minimized: bool, headset_presenting: bool) -> (bool, bool) {
+    (window_focused || headset_presenting, minimized && !headset_presenting)
+}
+
+fn frame_cap(
+    s: &Settings,
+    focused: bool,
+    headset_engaged: bool,
+    in_world: bool,
+    monitor_hz: f32,
+    timed: bool,
+    fps_limit: Option<u32>,
+) -> f32 {
+    // The OpenXR frame waiter paces VR. Desktop foreground/background limits
+    // must not throttle simulation while the headset is presenting.
+    if headset_engaged {
+        return fps_limit.map_or(0.0, |limit| limit as f32);
+    }
     let mut cap = if s.fps_cap { s.fps_limit as f32 } else { f32::INFINITY };
     if let Some(limit) = fps_limit {
         cap = cap.min(limit as f32);
@@ -22112,7 +22353,7 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 /// Start this viewer again with `--vr`, as the process ends: the identity
 /// of this instance is kept (title, frame cap, language, grid), not the
 /// one-time login or start place.
-fn restart_with_vr() {
+fn restart_with_vr(mode: crate::camera::VrView) {
     let cli = crate::cli::get();
     let Ok(exe) = std::env::current_exe() else {
         log::warn!("restart into VR: the viewer's path is unknown");
@@ -22128,7 +22369,12 @@ fn restart_with_vr() {
     if let Some(language) = &cli.language {
         command.arg("--language").arg(language);
     }
-    command.arg("--vr");
+    let mode = match mode {
+        crate::camera::VrView::FirstPerson => "first-person",
+        crate::camera::VrView::Avatar => "avatar",
+        crate::camera::VrView::Flycam => "flycam",
+    };
+    command.arg("--vr").arg(format!("--vr-mode={mode}"));
     match command.spawn() {
         Ok(_) => log::info!("restarting into VR"),
         Err(e) => log::warn!("restart into VR failed: {e}"),
@@ -22422,6 +22668,36 @@ mod tests {
     }
 
     #[test]
+    fn vr_runtime_visibility_keeps_textures_resident_with_a_minimized_mirror() {
+        use super::effective_window_state;
+        use std::time::{Duration, Instant};
+        let mut background = crate::scene::texture_budget::Background::default();
+        let now = Instant::now();
+        let (front, minimized) = effective_window_state(false, true, false);
+        assert!(background.update(now, front, minimized, true));
+        assert!(background.paused());
+        let (front, minimized) = effective_window_state(false, true, true);
+        assert!(!background.update(now + Duration::from_secs(120), front, minimized, true));
+        assert!(!background.paused());
+        let (front, minimized) = effective_window_state(false, true, false);
+        assert!(background.update(now + Duration::from_secs(121), front, minimized, true));
+    }
+
+    #[test]
+    fn vr_runtime_focus_uses_headset_pacing_without_desktop_focus() {
+        let settings = Settings {
+            fps_cap: true,
+            fps_limit: 30,
+            background_fps_cap: true,
+            background_fps_limit: 15,
+            ..Settings::default()
+        };
+        assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, None), 0.0);
+        assert_eq!(frame_cap(&settings, false, false, true, 60.0, false, None), 15.0);
+        assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, Some(120)), 120.0);
+    }
+
+    #[test]
     fn frame_cap_rules() {
         let free = Settings {
             fps_cap: false,
@@ -22429,10 +22705,10 @@ mod tests {
             ..Settings::default()
         };
         // in world: free unless the user asks for a cap
-        assert_eq!(frame_cap(&free, true, true, 144.0, false, None), 0.0);
-        assert_eq!(frame_cap(&free, false, true, 144.0, false, None), 0.0);
+        assert_eq!(frame_cap(&free, true, false, true, 144.0, false, None), 0.0);
+        assert_eq!(frame_cap(&free, false, false, true, 144.0, false, None), 0.0);
         // outside the world (login): never above the screen rate
-        assert_eq!(frame_cap(&free, true, false, 144.0, false, None), 144.0);
+        assert_eq!(frame_cap(&free, true, false, false, 144.0, false, None), 144.0);
         let capped = Settings {
             fps_cap: true,
             fps_limit: 90,
@@ -22440,27 +22716,27 @@ mod tests {
             background_fps_limit: 15,
             ..Settings::default()
         };
-        assert_eq!(frame_cap(&capped, true, true, 144.0, false, None), 90.0);
-        assert_eq!(frame_cap(&capped, true, false, 144.0, false, None), 90.0);
-        assert_eq!(frame_cap(&capped, true, false, 60.0, false, None), 60.0);
+        assert_eq!(frame_cap(&capped, true, false, true, 144.0, false, None), 90.0);
+        assert_eq!(frame_cap(&capped, true, false, false, 144.0, false, None), 90.0);
+        assert_eq!(frame_cap(&capped, true, false, false, 60.0, false, None), 60.0);
         // not focused: the lower of the two caps
-        assert_eq!(frame_cap(&capped, false, true, 144.0, false, None), 15.0);
-        assert_eq!(frame_cap(&capped, false, false, 144.0, false, None), 15.0);
+        assert_eq!(frame_cap(&capped, false, false, true, 144.0, false, None), 15.0);
+        assert_eq!(frame_cap(&capped, false, false, false, 144.0, false, None), 15.0);
         // captures and profiles keep their pace without the focus
-        assert_eq!(frame_cap(&capped, false, true, 144.0, true, None), 90.0);
-        assert_eq!(frame_cap(&free, false, false, 144.0, true, None), 144.0);
-        assert_eq!(frame_cap(&free, true, true, 144.0, true, None), 0.0);
-        assert_eq!(frame_cap(&free, true, true, 144.0, false, Some(500)), 500.0);
+        assert_eq!(frame_cap(&capped, false, false, true, 144.0, true, None), 90.0);
+        assert_eq!(frame_cap(&free, false, false, false, 144.0, true, None), 144.0);
+        assert_eq!(frame_cap(&free, true, false, true, 144.0, true, None), 0.0);
+        assert_eq!(frame_cap(&free, true, false, true, 144.0, false, Some(500)), 500.0);
         // A process cap survives preferences, capture mode and loss of focus.
         for focused in [false, true] {
             for in_world in [false, true] {
                 for timed in [false, true] {
-                    assert_eq!(frame_cap(&free, focused, in_world, 144.0, timed, Some(60)), 60.0);
-                    assert!(frame_cap(&capped, focused, in_world, 144.0, timed, Some(60)) <= 60.0);
+                    assert_eq!(frame_cap(&free, focused, false, in_world, 144.0, timed, Some(60)), 60.0);
+                    assert!(frame_cap(&capped, focused, false, in_world, 144.0, timed, Some(60)) <= 60.0);
                 }
             }
         }
-        assert_eq!(frame_cap(&capped, true, true, 144.0, false, Some(30)), 30.0);
+        assert_eq!(frame_cap(&capped, true, false, true, 144.0, false, Some(30)), 30.0);
     }
 
     #[test]

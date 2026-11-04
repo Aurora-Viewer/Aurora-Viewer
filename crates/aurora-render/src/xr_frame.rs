@@ -23,6 +23,9 @@ const WATCH: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub(crate) struct Eyes {
     pub cameras: [EyeView; 2],
+    pub head_rotation: Option<glam::Quat>,
+    pub head_position: glam::Vec3,
+    pub reference_changed: bool,
     pub textures: [wgpu::Texture; 2],
 }
 pub(crate) struct Session {
@@ -36,6 +39,7 @@ pub(crate) struct Session {
     pub width: u32,
     pub height: u32,
     running: bool,
+    pub focused: bool,
     anchor: Option<Anchor>,
     /// Tracked head positions seen in a row, still within `SETTLE_STEP` of
     /// each other, before anchoring; then, for `WATCH`, the last one and
@@ -62,6 +66,7 @@ impl Session {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
+        resolution: [u32; 2],
     ) -> Result<Self> {
         #[cfg(not(target_os = "macos"))]
         let (session, waiter, stream) = {
@@ -113,18 +118,16 @@ impl Session {
         if views.len() != 2 {
             return Err("Expected stereo views".into());
         }
-        let width = views
-            .iter()
-            .map(|v| v.recommended_image_rect_width)
-            .max()
-            .ok_or("No views")?
-            .min(1600);
-        let height = views
-            .iter()
-            .map(|v| v.recommended_image_rect_height)
-            .max()
-            .ok_or("No views")?
-            .min(1600);
+        let max_width = views.iter().map(|v| v.max_image_rect_width).min().ok_or("No views")?;
+        let max_height = views.iter().map(|v| v.max_image_rect_height).min().ok_or("No views")?;
+        let width = resolution[0]
+            .clamp(256, 8192)
+            .min(max_width)
+            .min(device.limits().max_texture_dimension_2d);
+        let height = resolution[1]
+            .clamp(256, 8192)
+            .min(max_height)
+            .min(device.limits().max_texture_dimension_2d);
         let local = session.create_reference_space(xr::ReferenceSpaceType::LOCAL, xr::Posef::IDENTITY)?;
         let head = session.create_reference_space(xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY)?;
         let mut swap_usage =
@@ -235,6 +238,7 @@ impl Session {
             width,
             height,
             running: false,
+            focused: false,
             anchor: None,
             settle: (0, None),
             anchored: None,
@@ -252,7 +256,13 @@ impl Session {
         self.stop_wanted = true;
     }
 
-    pub fn begin(&mut self, instance: &xr::Instance, desktop_view: glam::Mat4, near: f32) -> Result<Option<Eyes>> {
+    pub fn begin(
+        &mut self,
+        instance: &xr::Instance,
+        desktop_view: glam::Mat4,
+        near: f32,
+        rig_mode: crate::stereo_view::RigMode,
+    ) -> Result<Option<Eyes>> {
         let mut event_buffer = xr::EventDataBuffer::new();
         while let Some(event) = instance.poll_event(&mut event_buffer)? {
             if let xr::Event::SessionStateChanged(e) = event {
@@ -263,6 +273,7 @@ impl Session {
                     continue;
                 }
                 log::info!("XR world session: {:?}", e.state());
+                self.focused = e.state() == xr::SessionState::FOCUSED;
                 match e.state() {
                     xr::SessionState::READY => {
                         self.session.begin(VIEWS)?;
@@ -336,6 +347,7 @@ impl Session {
                 self.anchored = None;
             }
         }
+        let reference_changed = self.anchor.is_none();
         if self.anchor.is_none() {
             let head = self.head.locate(&self.local, frame.predicted_display_time)?;
             // tracked, not only valid: a first session's pose can be a
@@ -374,7 +386,21 @@ impl Session {
                 h.z
             );
         }
-        let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
+        let head = self.head.locate(&self.local, frame.predicted_display_time)?;
+        if !head.location_flags.contains(
+            xr::SpaceLocationFlags::POSITION_VALID
+                | xr::SpaceLocationFlags::POSITION_TRACKED
+                | xr::SpaceLocationFlags::ORIENTATION_VALID
+                | xr::SpaceLocationFlags::ORIENTATION_TRACKED,
+        ) {
+            self.stream
+                .end(frame.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE, &[])?;
+            return Ok(None);
+        }
+        let anchor = self.anchor.as_mut().ok_or("Invalid desktop anchor")?;
+        anchor
+            .follow_head(desktop_view, pose(head.pose), rig_mode)
+            .ok_or("Invalid moving VR view")?;
         let camera = |i: usize| -> Result<EyeView> {
             let v = views[i];
             anchor
@@ -391,6 +417,12 @@ impl Session {
                 .ok_or_else(|| "Invalid runtime eye pose".into())
         };
         let cameras = [camera(0)?, camera(1)?];
+        let head_position = anchor.head_position(pose(head.pose)).ok_or("Invalid tracked head position")?;
+        let head_rotation = head
+            .location_flags
+            .contains(xr::SpaceLocationFlags::ORIENTATION_VALID | xr::SpaceLocationFlags::ORIENTATION_TRACKED)
+            .then(|| anchor.relative_head_rotation(pose(head.pose)))
+            .flatten();
         let mut output = Vec::new();
         for i in 0..2 {
             let index = self.swaps[i].acquire_image()? as usize;
@@ -404,6 +436,9 @@ impl Session {
         self.frame = Some((frame.predicted_display_time, views));
         Ok(Some(Eyes {
             cameras,
+            head_rotation,
+            head_position,
+            reference_changed,
             textures: [output.remove(0), output.remove(0)],
         }))
     }

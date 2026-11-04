@@ -13962,10 +13962,7 @@ vr-restart-body = Votre casque a été connecté après le démarrage d'Aurora. 
 vr-restart-body-set-up = Aurora prépare la VR à son démarrage, et seulement une fois que vous l'avez utilisée : redémarrez-le pour utiliser la VR. Il passera en VR tout seul une fois de retour dans le monde, et sera prêt pour la VR à chaque démarrage désormais.
 vr-restart-confirm = Redémarrer en VR
 ui-options-camera-vr = VR
-ui-options-camera-vr-view = Vue du casque
-ui-options-camera-vr-view-help = Où commence la vue quand vous passez en VR : dans les yeux de votre avatar, ou là où était la caméra.
 ui-options-camera-vr-view-first-person = Première personne
-ui-options-camera-vr-view-desktop-camera = Position de la caméra
 ui-options-camera-vr-at-start = Préparer la VR au démarrage
 ui-options-camera-vr-at-start-help = Le bouton VR passe alors en VR tout de suite. Désactivé, Aurora ne charge pas votre logiciel de VR au démarrage, et le bouton VR propose un redémarrage. S'applique au prochain démarrage.
 
@@ -14088,3 +14085,18 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
+
+
+vr-preferences-title = VR
+vr-preferences-about = Déplacement, confort et rendu du casque.
+vr-mode-flycam = Caméra libre
+vr-mode-avatar = Mode avatar
+vr-mouse-look = Vue à la souris en première personne
+vr-discomfort = Peut provoquer une gêne
+vr-gamma = Gamma
+vr-gamma-help = Ajuste la luminosité en VR. Une valeur plus élevée éclaircit l’image. La valeur par défaut est 1,0.
+vr-vibrancy = Intensité des couleurs
+vr-vibrancy-help = Ajuste l’intensité des couleurs dans le casque. La valeur par défaut est 1,0.
+vr-resolution = Résolution par œil
+vr-resolution-help = Redémarrez le viewer pour appliquer la résolution. Les dimensions sont limitées par le système VR.
+vr-custom = Personnalisée

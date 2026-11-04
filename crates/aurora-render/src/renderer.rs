@@ -1818,6 +1818,7 @@ impl std::ops::DerefMut for EguiSlot {
 struct XrWorld {
     backends: [Backend; 2],
     mirror: crate::vr_mirror::Mirror,
+    grading: Option<crate::vr_mirror::HeadsetGrade>,
     session: crate::xr_frame::Session,
     runtime: openxr::Instance,
 }
@@ -6061,7 +6062,14 @@ impl Backend {
                 return Err(Box::new(packet));
             };
             let created = (|| -> Result<XrWorld, Box<dyn std::error::Error>> {
-                let session = crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format)?;
+                let session = crate::xr_frame::Session::new(
+                    runtime,
+                    *system,
+                    &self.device,
+                    &self.queue,
+                    self.config.format,
+                    packet.settings.vr_resolution,
+                )?;
                 let mut init = (**seed).clone();
                 init.external = true;
                 init.xr = None;
@@ -6076,6 +6084,7 @@ impl Backend {
                 Ok(XrWorld {
                     backends: [left, right],
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
+                    grading: None,
                     session,
                     runtime: runtime.clone(),
                 })
@@ -6108,7 +6117,17 @@ impl Backend {
         if !self.vr.wanted() {
             world.session.request_stop();
         }
-        let eyes = match world.session.begin(&world.runtime, packet.params.view, packet.params.near) {
+        let frame = world
+            .session
+            .begin(&world.runtime, packet.params.view, packet.params.near, packet.params.vr_rig);
+        let focused = world.session.focused
+            && frame
+                .as_ref()
+                .is_ok_and(|eyes| eyes.as_ref().is_some_and(|e| e.head_rotation.is_some()));
+        if !focused {
+            self.vr.set_focused(false);
+        }
+        let eyes = match frame {
             Ok(Some(eyes)) => eyes,
             Ok(None) => {
                 self.xr_world = Some(world);
@@ -6122,6 +6141,19 @@ impl Backend {
                 return Err(Box::new(packet));
             }
         };
+        if let Some(rotation) = eyes.head_rotation {
+            self.vr.set_head_pose(crate::HeadPose {
+                rotation,
+                position: eyes.head_position,
+                rig_position: packet.params.view.inverse().w_axis.truncate(),
+                generation: self.vr.reference(eyes.reference_changed),
+                origin: packet.params.vr_origin,
+                revision: packet.params.vr_revision,
+                mode: packet.params.vr_rig,
+                sampled: std::time::Instant::now(),
+            });
+        }
+        self.vr.set_focused(focused);
         self.vr.started();
         // Keep the desktop egui texture atlas current, even though the headset has no UI.
         let mirror_ui = packet.ui.take().map(|mut ui| {
@@ -6159,9 +6191,20 @@ impl Backend {
             motion_cut: packet.motion_cut,
             input_at: None,
         };
+        let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
+        let grade = [
+            bounded(packet.settings.vr_gamma, 0.5, 2.5),
+            bounded(packet.settings.vr_vibrancy, 0.0, 2.0),
+        ];
+        let grading = (grade != [1.0; 2]).then(|| {
+            world
+                .grading
+                .get_or_insert_with(|| crate::vr_mirror::HeadsetGrade::new(&self.device, &eyes.textures[0]))
+        });
+        let sources = grading.as_ref().map_or(&eyes.textures, |grading| &grading.sources);
         let apply = |p: &mut FramePacket, i: usize| {
             let eye = eyes.cameras[i];
-            p.output = Some(eyes.textures[i].clone());
+            p.output = Some(sources[i].clone());
             p.params.view = eye.view;
             p.params.proj = eye.projection;
             p.params.camera_pos = eye.position;
@@ -6186,11 +6229,14 @@ impl Backend {
         let mirror_size = desktop_size;
         let mut first = world.backends[0].render_view(packet);
         let _second = world.backends[1].render_view(other);
+        if let Some(grading) = grading.as_ref() {
+            grading.encode(&self.device, &self.queue, &eyes.textures, grade);
+        }
         first.stats.presented = world.mirror.present(
             &self.device,
             &self.queue,
             &self.surface,
-            &eyes.textures[0],
+            &sources[0],
             (mirror_size.0, mirror_size.1),
             &mut self.egui,
             mirror_ui.as_ref(),

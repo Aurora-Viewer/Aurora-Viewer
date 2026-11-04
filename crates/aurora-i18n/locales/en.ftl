@@ -13963,10 +13963,6 @@ vr-restart-body = Your headset was connected after Aurora started. Aurora sets u
 vr-restart-body-set-up = Aurora sets up VR when it starts, and only once you have used VR: restart it to use VR. It will enter VR on its own once you are back in the world, and will be ready for VR at every start from now on.
 vr-restart-confirm = Restart in VR
 ui-options-camera-vr = VR
-ui-options-camera-vr-view = Headset view
-ui-options-camera-vr-view-help = Where the view starts when you enter VR: at your avatar's eyes, or where the camera was.
-ui-options-camera-vr-view-first-person = First person
-ui-options-camera-vr-view-desktop-camera = Camera position
 ui-options-camera-vr-at-start = Set up VR at startup
 ui-options-camera-vr-at-start-help = The VR button then enters VR at once. Off, Aurora does not load your VR software at startup, and the VR button offers a restart. Applies at the next start.
 
@@ -14089,3 +14085,20 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
+
+ui-options-camera-vr-view-first-person = First Person
+
+
+vr-preferences-title = VR
+vr-preferences-about = Headset movement, comfort and rendering.
+vr-mode-flycam = Flycam
+vr-mode-avatar = Avatar Mode
+vr-mouse-look = First person mouse look
+vr-discomfort = May cause discomfort
+vr-gamma = Gamma
+vr-gamma-help = Adjust VR brightness. Higher values lighten the image. The default is 1.0.
+vr-vibrancy = Colour vibrancy
+vr-vibrancy-help = Adjust headset colour intensity. The default is 1.0.
+vr-resolution = Resolution per eye
+vr-resolution-help = Restart the viewer to apply resolution changes. Dimensions are limited by the headset runtime.
+vr-custom = Custom

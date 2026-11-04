@@ -171,24 +171,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     "",
                 );
             });
-            // the headset's starting viewpoint (app.rs, toggle_vr)
             cx.group(tr!("ui-options-camera-vr"), |cx| {
-                use crate::camera::VrView;
-                cx.unfolded().choice(
-                    tr!("ui-options-camera-vr-view"),
-                    tr!("ui-options-camera-vr-view-help"),
-                    &field!(camera.vr_view),
-                    &[
-                        (VrView::FirstPerson, tr!("ui-options-camera-vr-view-first-person"), false),
-                        (VrView::DesktopCamera, tr!("ui-options-camera-vr-view-desktop-camera"), false),
-                    ],
-                );
-                // read by open_renderer at the next start (#2309)
-                cx.toggle(
-                    tr!("ui-options-camera-vr-at-start"),
-                    tr!("ui-options-camera-vr-at-start-help"),
-                    &field!(camera.vr_at_start),
-                );
+                cx.toggle(tr!("ui-options-camera-vr-at-start"), tr!("ui-options-camera-vr-at-start-help"), &field!(camera.vr_at_start));
             });
         }
         1 => {
@@ -250,7 +234,33 @@ pub fn page(cx: &mut Cx, tab: usize) {
     }
     // the rest of the camera's settings (written by its shortcuts, its
     // windows): the page's reset puts them back too, as "Reset camera" did
-    cx.track(&field!(camera));
+    cx.track(&fields!(
+        camera.preset,
+        camera.camera_offset,
+        camera.focus_offset,
+        camera.offset_scale,
+        camera.fov,
+        camera.zoom_time,
+        camera.smoothing,
+        camera.dynamic_strength,
+        camera.disable_constraints,
+        camera.ignore_sim_constraints,
+        camera.disable_wheel_zoom,
+        camera.click_avatar_keeps_camera,
+        camera.reset_on_movement,
+        camera.reset_on_teleport,
+        camera.reset_view_turns_avatar,
+        camera.hover_affects_camera,
+        camera.track_focus_object,
+        camera.enable_mouselook,
+        camera.show_avatar_in_mouselook,
+        camera.mouselook_follow_eyes,
+        camera.wheel_exits_mouselook,
+        camera.mouselook_zoom_fov,
+        camera.mouselook_alt_right_menu,
+        camera.show_mouselook_instructions,
+        camera.show_interface_in_mouselook,
+    ));
 }
 
 /// Preferences › Camera › Mouselook: the Legacy Viewer's mouselook rows.

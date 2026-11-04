@@ -20,6 +20,10 @@ pub struct State {
 }
 
 impl App {
+    fn joystick_input_focused(&self) -> bool {
+        (if self.vr_camera.is_some() { self.vr_focused } else { self.focused }) || self.joystick.demo_started
+    }
+
     pub(super) fn joystick_status(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
         if !self.joystick.active {
             return;
@@ -92,10 +96,37 @@ impl App {
         self.last_input = Instant::now();
     }
 
-    /// Gamepad view selection reuses the viewer's normal camera transitions.
-    /// Unavailable modes are skipped; the raw joystick flycam toggle is unchanged.
+    /// VR keeps the desktop mappings while explicitly selecting a level camera rig.
+    pub(super) fn apply_vr_mode(&mut self, mode: crate::camera::VrView) {
+        use crate::camera::VrView;
+        if mode != VrView::FirstPerson {
+            self.release_cursor(false);
+        }
+        self.vr_revision = self.vr_revision.wrapping_add(1);
+        self.vr_body_follow.rebase();
+        self.camera.vr_body_offset(glam::Vec3::ZERO);
+        self.stop_autopilot(true);
+        self.vr_rig_yaw = self
+            .camera
+            .enter_vr_mode(mode, &mut self.world.agent, &self.settings.camera, self.vr_rig_yaw);
+        self.snapshots.ui.free.on = false;
+        self.joystick.active = mode == VrView::Flycam;
+        self.joystick.flycam_gamepad = self.settings.gamepad.enabled;
+        self.vr_mode = Some(mode);
+    }
+
     pub(super) fn cycle_gamepad_view(&mut self) {
         if !self.in_world() {
+            return;
+        }
+        if self.vr_camera.is_some() {
+            use crate::camera::VrView;
+            let mode = match self.vr_mode.unwrap_or(self.vr_requested_mode) {
+                VrView::Avatar => VrView::FirstPerson,
+                VrView::FirstPerson => VrView::Flycam,
+                VrView::Flycam => VrView::Avatar,
+            };
+            self.apply_vr_mode(mode);
             return;
         }
         self.end_mouselook_zoom();
@@ -111,6 +142,136 @@ impl App {
             self.reset_camera_view();
         }
         self.last_input = Instant::now();
+    }
+
+    /// Keep locomotion in the rendered gaze frame without feeding physical yaw
+    /// back into the camera rig on the next frame.
+    pub(super) fn vr_locomotion(&mut self, previous_body_yaw: f32, dt: f32) {
+        if !self.vr_focused {
+            self.input = MoveInput::default();
+            self.world.agent.yaw = previous_body_yaw;
+            return;
+        }
+        if self.joystick.active {
+            self.world.agent.yaw = previous_body_yaw;
+            return;
+        }
+        let key_yaw = self.input.keyboard_yaw();
+        let yaw_rate = std::mem::take(&mut self.input.joystick_yaw) + key_yaw;
+        let turn = yaw_rate * dt.clamp(0.0, 0.2);
+        let avatar = self.vr_mode == Some(crate::camera::VrView::Avatar);
+        self.vr_rig_yaw = self.world.agent.yaw;
+        if avatar {
+            // Desktop Avatar steers with the right stick while walking. Route
+            // the same yaw into the VR boom, even when focus is unlocked.
+            self.camera.vr_request_orbit_framing(key_yaw != 0.0);
+            self.camera.joystick_orbit_yaw(yaw_rate, dt, &mut self.world.agent);
+            self.input.turn_left = false;
+            self.input.turn_right = false;
+        } else {
+            self.vr_rig_yaw += turn;
+        }
+        let translating = self.input.forward || self.input.back || self.input.strafe_left || self.input.strafe_right;
+        self.world.agent.yaw = if translating || key_yaw != 0.0 {
+            crate::camera::vr_walk_yaw(self.camera.vr_view(self.vr_rig_yaw), self.vr_head_rotation) + if avatar { turn } else { 0.0 }
+        } else {
+            previous_body_yaw
+        };
+    }
+
+    pub(super) fn vr_rebase_after_travel(&mut self) {
+        self.vr_rebase_reference(true);
+    }
+    pub(super) fn vr_rebase_reference(&mut self, reposition: bool) {
+        self.vr_revision = self.vr_revision.wrapping_add(1);
+        self.vr_body_follow.rebase();
+        self.camera.vr_body_offset(glam::Vec3::ZERO);
+        self.vr_head_pose = None;
+        self.camera.vr_rebase(reposition);
+    }
+
+    pub(super) fn vr_update_body_follow(&mut self, typing: bool, dt: f32) {
+        use crate::camera::VrView;
+        let text_input = typing && !self.chat_bar_moves_avatar();
+        let travelling = self.world.teleporting || !self.world.movement_complete || !self.in_world();
+        let first = self.vr_camera.is_some() && self.vr_mode == Some(VrView::FirstPerson) && self.camera.mouselook();
+        let seated = self.world.agent.is_sitting();
+        if !first {
+            self.vr_body_follow.rebase();
+        } else if seated || self.world.agent.flying || travelling {
+            // Crossing handshakes and locomotion takeovers suspend following;
+            // explicit teleport/recenter events rebase the origin separately.
+            self.vr_body_follow.pause();
+        }
+        let head = self.vr_head_pose.filter(|p| {
+            p.matches(self.world.main_region, self.vr_revision) && matches!(p.mode, aurora_render::stereo_view::RigMode::FirstPerson)
+        });
+        let manual = self.input.resets_camera(self.crouch_toggle.latched())
+            || self.input.up
+            || self.input.down
+            || self.joystick.motion.player_movement_input()
+            || self.joystick.motion.yaw_input
+            || self.autopilot.is_some();
+        let locked = self.settings.bridge.get(&self.world.agent_id).is_some_and(|prefs| prefs.enabled);
+        let allowed = first
+            && !seated
+            && !self.world.agent.flying
+            && self.vr_focused
+            && self.autopilot.is_none()
+            && !text_input
+            && !travelling
+            && !locked;
+        let facing = head.map_or(self.world.agent.yaw, |pose| {
+            crate::camera::vr_walk_yaw(self.camera.vr_view(self.vr_rig_yaw), pose.rotation)
+        });
+        if allowed && head.is_some() {
+            self.world.agent.yaw = facing;
+        }
+        let command = self.vr_body_follow.step_facing(
+            self.camera.vr_body_root(),
+            self.world.agent.velocity,
+            facing,
+            head.map(|pose| self.camera.vr_body_goal(pose)),
+            allowed,
+            manual,
+            dt,
+        );
+        self.vr_follow_flags = None;
+        if let Some(command) = command {
+            self.input = MoveInput::default();
+            self.vr_follow_flags = Some(if command.braking {
+                aurora_net::control::STOP
+            } else if command.forward {
+                // Pick the nearest native walk direction while the body faces
+                // the headset. Diagonal steps use the same controls as WASD.
+                let angle = command.yaw - facing;
+                let sector = (angle / std::f32::consts::FRAC_PI_4).round() as i32;
+                let direction = sector.rem_euclid(8);
+                self.input.forward = matches!(direction, 0 | 1 | 7);
+                self.input.back = matches!(direction, 3..=5);
+                self.input.strafe_left = matches!(direction, 1..=3);
+                self.input.strafe_right = matches!(direction, 5..=7);
+                use aurora_net::control;
+                (u32::from(self.input.forward) * control::AT_POS)
+                    | (u32::from(self.input.back) * control::AT_NEG)
+                    | (u32::from(self.input.strafe_left) * control::LEFT_POS)
+                    | (u32::from(self.input.strafe_right) * control::LEFT_NEG)
+            } else {
+                0
+            });
+        }
+        let run = self.always_run || self.temp_run.is_some() || self.joystick.running;
+        if let Some(run) = self.vr_walk_override.update(command.is_some(), run) {
+            self.send(aurora_net::NetCommand::SetAlwaysRun(run));
+        }
+    }
+    pub(super) fn vr_counter_body_motion(&mut self) {
+        if self.vr_mode == Some(crate::camera::VrView::FirstPerson) {
+            let offset = self
+                .vr_body_follow
+                .accepted_root_at(self.camera.vr_body_root(), self.world.agent.velocity, Instant::now());
+            self.camera.vr_body_offset(offset);
+        }
     }
 
     pub(super) fn poll_joystick(&mut self, dt: f32) {
@@ -144,12 +305,12 @@ impl App {
         } else {
             joystick.flycam_enabled && raw_device.is_some()
         };
-        if self.joystick.active && (!available || !flycam_available) {
+        if self.joystick.active && (!available || !flycam_available) && self.vr_mode != Some(crate::camera::VrView::Flycam) {
             self.camera.clear_flycam();
             self.joystick.active = false;
         }
         let flycam = self.joystick.active;
-        let active = available && (self.focused || self.joystick.demo_started) && !capturing;
+        let active = available && self.joystick_input_focused() && !capturing;
         let first_person = self.camera.mouselook();
         let raw = self.joystick.controller.sample_device(
             raw_device.filter(|_| active && (!flycam || !pad_flycam)),
@@ -191,7 +352,7 @@ impl App {
             }
         }
         let axes = self.joystick.motion.axes;
-        let running = self.focused
+        let running = self.joystick_input_focused()
             && !self.joystick.active
             && avatar_enabled
             && !self.world.rlva.has("temprun")
@@ -208,10 +369,20 @@ impl App {
         if self.camera.free().is_some() || self.joystick.active {
             return;
         }
-        let m = self.joystick.motion;
+        let mut m = self.joystick.motion;
+        if matches!(
+            self.vr_mode,
+            Some(crate::camera::VrView::FirstPerson | crate::camera::VrView::Avatar)
+        ) && m.gamepad
+        {
+            m.keep_vr_forward();
+        }
         // LLViewerJoystick::agentPush/Slide send digital simulator controls;
         // angular motion and the flycam keep the continuous values.
         m.apply_avatar(i);
+        if self.vr_camera.is_some() {
+            i.joystick_pitch = 0.0;
+        }
         // A console gamepad orbits the idle third-person camera with the
         // right stick; while translating, that same stick steers the avatar.
         if m.gamepad
@@ -233,11 +404,8 @@ impl App {
         }
     }
 
-    pub(super) fn joystick_flycam_step(&mut self, dt: f32) -> bool {
-        if !self.joystick.active {
-            return false;
-        }
-        if (self.focused || self.joystick.demo_started)
+    pub(super) fn joystick_flycam_step(&mut self, keys: &MoveInput, dt: f32) {
+        if self.joystick_input_focused()
             && !self.options_ui.joystick_capturing()
             && let Some(cam) = self.camera.flycam.as_mut()
         {
@@ -246,6 +414,20 @@ impl App {
                 cam.reset_zoom();
             }
             let mut axes = m.axes;
+            if self.vr_camera.is_some() {
+                if self.focused {
+                    axes[0] += (i32::from(keys.forward) - i32::from(keys.back)) as f32;
+                    axes[1] += (i32::from(keys.strafe_left) - i32::from(keys.strafe_right)) as f32;
+                    axes[5] += keys.keyboard_yaw();
+                }
+                axes = crate::joystick::flycam::vr_axes(axes, self.vr_head_rotation);
+                if self.focused {
+                    axes[2] += (i32::from(keys.up) - i32::from(keys.down)) as f32;
+                }
+                let forward = cam.forward();
+                let heading = glam::Vec3::new(forward.x, forward.y, 0.0).normalize_or(glam::Vec3::X);
+                cam.rotation = crate::joystick::flycam::Flycam::from_direction(cam.position, heading, glam::Vec3::Z, cam.fov).rotation;
+            }
             axes[2] += (f32::from(u8::from(m.rise)) - f32::from(u8::from(m.fall))) * 2.0;
             let profile = if self.joystick.flycam_gamepad {
                 &self.settings.gamepad
@@ -262,12 +444,24 @@ impl App {
         self.fb_since = None;
         self.lr_since = None;
         self.up_since = None;
-        self.turn_since = None;
-        true
+        if self.vr_camera.is_none() {
+            self.turn_since = None;
+        }
     }
 
     pub(super) fn joystick_avatar_camera(&mut self, moving: bool, player_movement_input: bool, dt: f32) {
         let motion = self.joystick.motion;
+        if self.vr_mode == Some(crate::camera::VrView::Avatar) {
+            if player_movement_input {
+                self.camera.vr_resume_avatar_follow(&mut self.world.agent, &self.settings.camera);
+            }
+            self.camera.vr_request_movement_framing(player_movement_input);
+            self.camera.vr_request_orbit_framing(motion.yaw_input);
+            self.camera.vr_request(crate::camera::vr::FramingInput {
+                recenter: motion.avatar_pan != 0.0,
+                zoom: motion.avatar_zoom,
+            });
+        }
         if self.camera.mouselook() {
             if player_movement_input {
                 self.camera.reset_gamepad_mouselook_zoom();
@@ -309,7 +503,8 @@ impl App {
                     );
                 }
                 self.on_ctx_action(crate::ui::context::CtxAction::ZoomAvatar(id));
-                if self.camera.focus_object_id() == Some(id)
+                if self.vr_mode != Some(crate::camera::VrView::Avatar)
+                    && self.camera.focus_object_id() == Some(id)
                     && let Some(head) = self.scene.head_world(&self.world, &id, now).or_else(|| self.camera.focus_point())
                 {
                     self.camera.gamepad_follow_head(head, &mut self.world.agent, &self.settings.camera);

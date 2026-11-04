@@ -48,6 +48,7 @@ pub enum Page {
     #[default]
     Graphics,
     Camera,
+    Vr,
     Avatars,
     Build,
     Chat,
@@ -71,10 +72,11 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 22] = [
+    pub const ALL: [Page; 23] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
+        Page::Vr,
         Page::Avatars,
         Page::Build,
         Page::Chat,
@@ -103,6 +105,7 @@ impl Page {
             Page::Aurora => "aurora",
             Page::Graphics => "graphics",
             Page::Camera => "camera",
+            Page::Vr => "vr",
             Page::Avatars => "avatars",
             Page::Build => "build",
             Page::Chat => "chat",
@@ -131,6 +134,7 @@ impl Page {
             Page::Aurora => aurora_i18n::tr!("ui-options-aurora"),
             Page::Graphics => aurora_i18n::tr!("ui-options-graphics"),
             Page::Camera => aurora_i18n::tr!("common-camera"),
+            Page::Vr => aurora_i18n::tr!("vr-preferences-title"),
             Page::Avatars => aurora_i18n::tr!("ui-options-avatars"),
             Page::Build => aurora_i18n::tr!("common-build"),
             Page::Chat => aurora_i18n::tr!("common-chat"),
@@ -160,6 +164,7 @@ impl Page {
             Page::Aurora => aurora_i18n::tr!("ui-options-aurora-intro"),
             Page::Graphics => aurora_i18n::tr!("ui-options-about-graphics"),
             Page::Camera => aurora_i18n::tr!("ui-options-about-camera"),
+            Page::Vr => aurora_i18n::tr!("vr-preferences-about"),
             Page::Avatars => aurora_i18n::tr!("ui-options-about-avatars"),
             Page::Build => aurora_i18n::tr!("ui-options-about-build"),
             Page::Chat => aurora_i18n::tr!("ui-options-about-chat"),
@@ -188,6 +193,7 @@ impl Page {
             Page::Aurora => "sparkles-filled",
             Page::Graphics => "device-desktop-filled",
             Page::Camera => "camera-filled",
+            Page::Vr => "device-vision-pro-filled",
             Page::Avatars => "user-filled",
             // the build tools' icon (Command_Build_Icon)
             Page::Build => "box",

@@ -1286,6 +1286,13 @@ impl Renderer {
     pub fn vr_engaged(&self) -> bool {
         self.vr.state().engaged()
     }
+    /// Latest coherent head pose; None on focus loss, stale tracking or contention.
+    pub fn vr_head_pose(&self) -> Option<crate::HeadPose> {
+        self.vr.head_pose()
+    }
+    pub fn vr_focused(&self) -> bool {
+        self.vr.focused()
+    }
     pub fn set_vr_enabled(&self, on: bool) -> bool {
         self.vr.request(on)
     }

@@ -13900,10 +13900,7 @@ vr-restart-body = ヘッドセットはAuroraの起動後に接続されまし�
 vr-restart-body-set-up = AuroraはVRを一度使ったあとにだけ、起動時にVRを準備します。VRを使うには再起動してください。ワールドに戻ると自動的にVRに入り、今後は起動のたびにVRの準備が整います。
 vr-restart-confirm = VRで再起動
 ui-options-camera-vr = VR
-ui-options-camera-vr-view = ヘッドセットの視点
-ui-options-camera-vr-view-help = VRに入ったときの視点の位置です。アバターの目の位置か、カメラがあった位置から始まります。
 ui-options-camera-vr-view-first-person = 一人称
-ui-options-camera-vr-view-desktop-camera = カメラの位置
 ui-options-camera-vr-at-start = 起動時にVRを準備
 ui-options-camera-vr-at-start-help = オンにすると、VRボタンですぐにVRに入れます。オフにすると、Auroraは起動時にVRソフトウェアを読み込まず、VRボタンで再起動を案内します。次回の起動から反映されます。
 
@@ -14026,3 +14023,18 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
 ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
+
+
+vr-preferences-title = VR
+vr-preferences-about = ヘッドセットの移動、快適性、描画。
+vr-mode-flycam = フライカム
+vr-mode-avatar = アバターモード
+vr-mouse-look = 一人称のマウス視点操作
+vr-discomfort = 不快感を引き起こす可能性があります
+vr-gamma = ガンマ
+vr-gamma-help = VRの明るさを調整します。値を上げると映像が明るくなります。既定値は1.0です。
+vr-vibrancy = 色の鮮やかさ
+vr-vibrancy-help = ヘッドセットの色の鮮やかさを調整します。既定値は1.0です。
+vr-resolution = 片目の解像度
+vr-resolution-help = 解像度の変更には再起動が必要です。寸法はVRランタイムの上限に制限されます。
+vr-custom = カスタム

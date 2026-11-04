@@ -18,6 +18,7 @@ pub mod free;
 mod mouselook_zoom;
 pub mod presets;
 mod settings;
+pub mod vr;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
@@ -61,6 +62,7 @@ const CAMERA_FUDGE_FROM_OBJECT: f32 = 16.0;
 /// to its goal again and again.
 const MAX_CAMERA_SMOOTH_DISTANCE: f32 = 50.0;
 const HEAD_BUFFER_SIZE: f32 = 0.3;
+const VR_AVATAR_MIN_DOLLY: f32 = 0.2;
 const LAND_MIN_ZOOM: f32 = 0.15;
 const AVATAR_MIN_ZOOM: f32 = 0.5;
 const OBJECT_MIN_ZOOM: f32 = 0.02;
@@ -160,6 +162,12 @@ impl CameraKeys {
         .iter()
         .any(|r| *r > 0.0)
     }
+}
+
+/// Walking uses projected physical gaze; body yaw never changes the VR rig.
+pub fn vr_walk_yaw(rig_view: Mat4, head_rotation: Quat) -> f32 {
+    let forward = rig_view.inverse().transform_vector3(head_rotation * Vec3::NEG_Z);
+    forward.y.atan2(forward.x)
 }
 
 /// What the frame update needs besides the world.
@@ -279,6 +287,25 @@ pub struct Camera {
     pub target: Vec3,
     pub fov_y: f32,
     pub near: f32,
+    vr_mode: Option<VrView>,
+    vr_native_pose: Option<(Vec3, Vec3)>,
+    vr_center_offset: Vec3,
+    vr_center_goal: Option<Vec3>,
+    vr_frame_on_entry: bool,
+    vr_frame_after_travel: bool,
+    vr_framing_active: u8,
+    vr_movement_input: bool,
+    vr_orbit_input: bool,
+    vr_zoom_boom_z: Option<f32>,
+    vr_pan_height: f32,
+    vr_pan_target: f32,
+    vr_travel_heading: Option<Vec3>,
+    vr_input: vr::FramingInput,
+    vr_head: Option<aurora_render::HeadPose>,
+    vr_heading_offset: f32,
+    vr_body_offset: Vec3,
+    vr_last_frame: Option<Instant>,
+    vr_last_eye: Option<Vec3>,
     /// Camera heading relative to the avatar (see the module note).
     pub orbit_yaw: f32,
     /// Pitch of the agent frame in third person (LLAgent::pitch), radians,
@@ -361,6 +388,25 @@ impl Default for Camera {
             target: Vec3::new(128.0, 128.0, 28.0),
             fov_y: DEFAULT_FOV,
             near: 0.1,
+            vr_mode: None,
+            vr_native_pose: None,
+            vr_center_offset: Vec3::ZERO,
+            vr_center_goal: None,
+            vr_frame_on_entry: false,
+            vr_frame_after_travel: false,
+            vr_framing_active: 0,
+            vr_movement_input: false,
+            vr_orbit_input: false,
+            vr_zoom_boom_z: None,
+            vr_pan_height: 0.0,
+            vr_pan_target: 0.0,
+            vr_travel_heading: None,
+            vr_input: vr::FramingInput::default(),
+            vr_head: None,
+            vr_heading_offset: 0.0,
+            vr_body_offset: Vec3::ZERO,
+            vr_last_frame: None,
+            vr_last_eye: None,
             orbit_yaw: 0.0,
             pitch: 0.0,
             focus_on_avatar: true,
@@ -889,11 +935,34 @@ impl Camera {
     /// the camera faces the avatar, a little above its centre, and keeps it
     /// as the focus object so it follows the avatar as it moves.
     pub fn zoom_avatar(&mut self, avatar: (Uuid, FocusObject), agent: &mut AgentState, s: &CameraSettings) {
+        let previous_vr_view = self.vr_view(0.0);
         self.set_focus_on_avatar(false, true, true, agent, s);
         let g = avatar.1;
-        let eye = g.position + g.rotation * Vec3::new(AVATAR_ZOOM_DISTANCE, 0.0, AVATAR_ZOOM_EYE_Z);
         let focus = g.position + Vec3::Z * AVATAR_ZOOM_FOCUS_Z;
+        let eye = if self.vr_mode == Some(VrView::Avatar) {
+            self.vr_frame_on_entry = false;
+            self.vr_frame_after_travel = true;
+            let heading = previous_vr_view.inverse().transform_vector3(Vec3::NEG_Z);
+            let gaze = self.vr_head.map_or(heading, |head| {
+                previous_vr_view.inverse().transform_vector3(head.rotation * Vec3::NEG_Z)
+            });
+            let direction = gaze.normalize_or(heading);
+            let physical = self.vr_head.map_or(Vec3::ZERO, |head| head.position - head.rig_position);
+            self.vr_travel_heading = Some(heading);
+            self.vr_native_pose = None;
+            self.vr_center_offset = Vec3::ZERO;
+            self.vr_center_goal = None;
+            self.vr_zoom_boom_z = None;
+            self.vr_pan_height = 0.0;
+            self.vr_pan_target = 0.0;
+            focus - direction * AVATAR_ZOOM_DISTANCE - physical
+        } else {
+            g.position + g.rotation * Vec3::new(AVATAR_ZOOM_DISTANCE, 0.0, AVATAR_ZOOM_EYE_Z)
+        };
         self.set_camera_pos_and_focus(eye, focus, Some(avatar), s);
+        if self.vr_mode == Some(VrView::Avatar) {
+            self.gamepad_follow_avatar = true;
+        }
     }
 
     /// LLToolPie CLICK_ACTION_ZOOM: fit the clicked bounding box, keep its
@@ -972,6 +1041,7 @@ impl Camera {
 
     /// handle_reset_view (Escape, "Reset camera").
     pub fn handle_reset_view(&mut self, agent: &mut AgentState, s: &CameraSettings) {
+        let vr_heading = (self.vr_mode == Some(VrView::Avatar)).then(|| self.vr_view(0.0).inverse().transform_vector3(Vec3::NEG_Z));
         if !s.reset_view_turns_avatar {
             // setFocusOnAvatar(true, false, false): the avatar keeps its direction
             if !self.focus_on_avatar {
@@ -983,6 +1053,17 @@ impl Camera {
             self.orbit_yaw = 0.0;
         }
         self.reset_view(agent, s, true, true, false, false);
+        if let Some(heading) = vr_heading {
+            self.vr_travel_heading = Some(heading);
+            self.vr_frame_on_entry = false;
+            self.vr_frame_after_travel = true;
+            self.vr_native_pose = None;
+            self.vr_center_offset = Vec3::ZERO;
+            self.vr_center_goal = None;
+            self.vr_zoom_boom_z = None;
+            self.vr_pan_height = 0.0;
+            self.vr_pan_target = 0.0;
+        }
     }
 
     /// The free camera, while it flies.
@@ -1067,6 +1148,11 @@ impl Camera {
     /// moves the camera origin with the agent): everything kept in render
     /// space moves by `delta`, so that a border crossing shows nothing.
     pub fn shift(&mut self, delta: Vec3) {
+        if let Some((eye, target)) = &mut self.vr_native_pose {
+            *eye += delta;
+            *target += delta;
+        }
+        self.vr_head = None;
         self.follow.shift(delta);
         for p in [
             &mut self.position,
@@ -1289,7 +1375,13 @@ impl Camera {
                 self.change_to_mouselook(agent, s, false);
             }
             if !s.disable_constraints || !allow_mouselook {
-                self.zoom_fraction = self.zoom_fraction.clamp(MIN_ZOOM_FRACTION, MAX_ZOOM_FRACTION);
+                let min_fraction = if self.vr_mode == Some(VrView::Avatar) {
+                    // VR uses a closer dolly limit while remaining in Avatar mode.
+                    MIN_ZOOM_FRACTION.min(VR_AVATAR_MIN_DOLLY / initial)
+                } else {
+                    MIN_ZOOM_FRACTION
+                };
+                self.zoom_fraction = self.zoom_fraction.clamp(min_fraction, MAX_ZOOM_FRACTION);
             }
         } else {
             let unit = self.focus_offset_target.normalize_or(Vec3::X);
@@ -1313,6 +1405,22 @@ impl Camera {
     /// mouselook), `clicks` > 0 zooms out. Returns true when the settings
     /// changed: Ctrl / Shift + wheel raise the camera / the focus point.
     pub fn scroll(&mut self, clicks: f32, ctrl: bool, shift: bool, agent: &mut AgentState, s: &mut CameraSettings) -> bool {
+        if self.vr_mode == Some(VrView::Avatar) {
+            if clicks.is_finite() && !s.disable_wheel_zoom {
+                self.vr_native_input();
+                self.vr_request(vr::FramingInput {
+                    recenter: false,
+                    zoom: -clicks,
+                });
+                let distance = if self.focus_on_avatar {
+                    self.target_distance
+                } else {
+                    self.focus_offset_target.length()
+                };
+                self.orbit_in_with_mouselook(distance * (1.0 - 2.0_f32.powf(clicks * 0.25)), agent, s, false);
+            }
+            return false;
+        }
         if self.mouselook() {
             if clicks > 0.0 && s.wheel_exits_mouselook {
                 self.change_to_default(agent, s);
@@ -1476,6 +1584,11 @@ impl Camera {
     /// the alt-camera focus point.
     pub fn orbit_drag(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
         let k = DRAG_RATE * sensitivity;
+        if self.vr_mode == Some(VrView::Avatar) && dx != 0.0 {
+            self.vr_native_input();
+            self.vr_orbit_input = true;
+            self.vr_travel_heading = None;
+        }
         if self.focus_on_avatar && self.third_person() {
             self.orbit_yaw -= dx * k;
             self.pitch_by(dy * k);
@@ -1495,6 +1608,21 @@ impl Camera {
     /// Camera keys held this frame (LLAgentCamera::updateCamera); like
     /// camera_spin_around_cw & co they first unlock the view from the avatar.
     pub fn apply_keys(&mut self, keys: CameraKeys, agent: &mut AgentState, s: &CameraSettings, dt: f32) {
+        let mut keys = keys;
+        if self.vr_mode == Some(VrView::Avatar) {
+            if keys.any() {
+                self.vr_native_input();
+                self.vr_request(vr::FramingInput {
+                    recenter: true,
+                    zoom: keys.zoom_in - keys.zoom_out,
+                });
+            }
+            keys.orbit_up = 0.0;
+            keys.orbit_down = 0.0;
+            if keys.orbit_left != 0.0 || keys.orbit_right != 0.0 {
+                self.vr_travel_heading = None;
+            }
+        }
         if !keys.any() || self.mouselook() {
             return;
         }
@@ -1553,6 +1681,13 @@ impl Camera {
     }
 
     pub fn gamepad_zoom(&mut self, rate: f32, dt: f32, agent: &mut AgentState, s: &CameraSettings) {
+        if self.vr_mode == Some(VrView::Avatar) && rate != 0.0 {
+            self.vr_request(vr::FramingInput {
+                recenter: false,
+                zoom: rate,
+            });
+            self.vr_native_input();
+        }
         if rate != 0.0 && self.third_person() && self.free.is_none() && self.flycam.is_none() {
             let distance = self.position.distance(self.target);
             self.orbit_in_with_mouselook(rate.clamp(-1.0, 1.0) * distance * dt.clamp(0.0, 0.2), agent, s, false);
@@ -1563,6 +1698,13 @@ impl Camera {
     /// Returning to the avatar restores the configured camera preset offsets.
     pub fn gamepad_pan_vertical(&mut self, meters: f32, agent: &mut AgentState, s: &CameraSettings) {
         if !self.third_person() || self.free.is_some() || self.flycam.is_some() || !meters.is_finite() || meters == 0.0 {
+            return;
+        }
+        if self.vr_mode == Some(VrView::Avatar) {
+            // Apply pan to the same boom and focus, retaining native orbit,
+            // zoom and follow state through the transition.
+            self.vr_pan_target += meters;
+            self.vr_request(vr::FramingInput { recenter: true, zoom: 0.0 });
             return;
         }
         if self.focus_on_avatar {
@@ -1584,6 +1726,11 @@ impl Camera {
     /// Turn the third-person view with a gamepad while the avatar is idle.
     /// Once movement starts, the caller routes this input to the avatar instead.
     pub fn joystick_orbit_yaw(&mut self, rate: f32, dt: f32, agent: &mut AgentState) {
+        if self.vr_mode == Some(VrView::Avatar) && rate != 0.0 {
+            self.vr_native_input();
+            self.vr_travel_heading = None;
+            self.vr_frame_after_travel = false;
+        }
         if self.mouselook() || rate == 0.0 {
             return;
         }
@@ -1847,6 +1994,10 @@ impl Camera {
         }
     }
 
+    fn vr_tracks_other_avatar(&self) -> bool {
+        self.vr_mode == Some(VrView::Avatar) && self.gamepad_avatar_target().is_some_and(|id| id != self.own)
+    }
+
     /// LLAgentCamera::validateFocusObject and the object tracking of
     /// calcFocusPositionTargetGlobal.
     fn refresh_focus_object(&mut self, world: &World, s: &CameraSettings, now: Instant, track: bool) {
@@ -1860,7 +2011,7 @@ impl Camera {
             self.focus_target = self.avatar.position + self.focus_object_offset;
             return;
         }
-        match focus_object_geom(world, &id, now) {
+        match focus_geometry(world, &id, now, self.vr_tracks_other_avatar()) {
             None => {
                 // the object is gone: keep the point, animate from there
                 self.start_animation(s);
@@ -1981,6 +2132,9 @@ impl Camera {
             }
         }
         self.target_distance = distance.max(MIN_CAMERA_DISTANCE);
+        if self.vr_mode == Some(VrView::Avatar) && self.vr_native_pose.is_none() && !self.initialized {
+            self.current_distance = self.target_distance;
+        }
         if self.target_distance != self.current_distance {
             self.current_distance += (self.target_distance - self.current_distance) * interpolant(CAMERA_ZOOM_HALF_LIFE, dt);
         }
@@ -2085,6 +2239,345 @@ impl Camera {
             self.zoom_fraction,
             self.anim.is_some()
         )
+    }
+
+    /// Enter a VR mode through the same focus/free-camera resets as desktop controls.
+    pub fn enter_vr_mode(&mut self, mode: VrView, agent: &mut AgentState, settings: &CameraSettings, rig_yaw: f32) -> f32 {
+        let vr_forward = self.vr_view(rig_yaw).inverse().transform_vector3(Vec3::NEG_Z);
+        let body_yaw = agent.yaw;
+        agent.yaw = rig_yaw;
+        self.clear_flycam();
+        self.end_free(settings);
+        self.set_focus_on_avatar(true, false, true, agent, settings);
+        let was_mouselook = self.mouselook();
+        agent.pitch = 0.0;
+        match mode {
+            VrView::FirstPerson => self.change_to_mouselook(agent, settings, false),
+            VrView::Avatar => self.change_to_default(agent, settings),
+            VrView::Flycam => {
+                self.change_to_default(agent, settings);
+                self.start_flycam(settings, was_mouselook);
+                if let Some(flycam) = &mut self.flycam {
+                    flycam.rotation =
+                        crate::joystick::flycam::Flycam::from_direction(flycam.position, vr_forward, Vec3::Z, flycam.fov).rotation;
+                }
+            }
+        }
+        self.snap();
+        self.vr_mode = Some(mode);
+        self.vr_frame_on_entry = mode == VrView::Avatar;
+        self.vr_frame_after_travel = false;
+        self.vr_head = None;
+        self.vr_native_pose = None;
+        self.vr_center_offset = Vec3::ZERO;
+        self.vr_center_goal = None;
+        self.vr_zoom_boom_z = None;
+        self.vr_pan_height = 0.0;
+        self.vr_pan_target = 0.0;
+        self.vr_travel_heading = (mode == VrView::Avatar).then_some(vr_forward);
+        self.vr_input = vr::FramingInput::default();
+        self.vr_heading_offset = 0.0;
+        self.vr_body_offset = Vec3::ZERO;
+        self.vr_last_frame = None;
+        self.vr_last_eye = None;
+        self.vr_movement_input = false;
+        self.vr_orbit_input = false;
+        self.vr_framing_active = 0;
+        agent.yaw = body_yaw;
+        if matches!(mode, VrView::FirstPerson | VrView::Avatar) {
+            vr_forward.y.atan2(vr_forward.x)
+        } else {
+            rig_yaw
+        }
+    }
+
+    pub fn vr_tracking(&mut self, pose: Option<aurora_render::HeadPose>) {
+        if pose.is_none() && self.vr_head.is_some() {
+            self.vr_input = vr::FramingInput::default();
+            self.vr_movement_input = false;
+            self.vr_orbit_input = false;
+            self.vr_framing_active = 0;
+            self.vr_center_goal = None;
+        }
+        self.vr_head = pose;
+    }
+    pub fn vr_rebase(&mut self, reposition: bool) {
+        self.vr_head = None;
+        self.vr_input = vr::FramingInput::default();
+        self.vr_last_frame = None;
+        self.vr_last_eye = None;
+        self.vr_movement_input = false;
+        self.vr_orbit_input = false;
+        self.vr_framing_active = 0;
+        if reposition {
+            self.vr_native_pose = None;
+            self.vr_center_offset = Vec3::ZERO;
+            self.vr_zoom_boom_z = None;
+            self.vr_pan_height = 0.0;
+            self.vr_pan_target = 0.0;
+            self.vr_travel_heading = None;
+            self.snap();
+        }
+        self.vr_center_goal = None;
+    }
+    fn vr_native_input(&mut self) {
+        if self.vr_mode == Some(VrView::Avatar)
+            && let Some((eye, target)) = self.vr_native_pose
+        {
+            self.position = eye;
+            self.target = target;
+        }
+    }
+    pub fn vr_resume_avatar_follow(&mut self, agent: &mut AgentState, settings: &CameraSettings) {
+        if self.focus_on_avatar || self.gamepad_avatar_target().is_none_or(|id| id == self.own) {
+            return;
+        }
+        let heading = self.vr_view(0.0).inverse().transform_vector3(Vec3::NEG_Z);
+        self.vr_native_input();
+        self.set_focus_on_avatar(true, true, true, agent, settings);
+        self.vr_travel_heading = Some(heading);
+        self.vr_frame_after_travel = false;
+        self.vr_center_goal = None;
+        self.vr_center_offset = Vec3::ZERO;
+    }
+
+    pub fn vr_request_orbit_framing(&mut self, active: bool) {
+        self.vr_orbit_input |= active;
+    }
+    pub fn vr_request_movement_framing(&mut self, active: bool) {
+        self.vr_movement_input |= active;
+    }
+    pub fn vr_request(&mut self, input: vr::FramingInput) {
+        self.vr_input.recenter |= input.recenter;
+        if input.zoom != 0.0 {
+            self.vr_input.zoom = input.zoom;
+        }
+    }
+    pub fn vr_body_goal(&self, head: aurora_render::HeadPose) -> vr::FollowGoal {
+        // Keep the renderer's turn-pivot correction in the physical offset.
+        // Rebase the asynchronous sample to the current body-compensated rig.
+        let offset = head.position - head.rig_position;
+        vr::FollowGoal {
+            world: self.avatar.position + self.vr_body_offset + offset,
+            physical: offset,
+        }
+    }
+
+    pub fn vr_body_root(&self) -> Vec3 {
+        self.avatar.position
+    }
+    pub fn vr_body_offset(&mut self, offset: Vec3) {
+        if !offset.is_finite() {
+            return;
+        }
+        let delta = offset - self.vr_body_offset;
+        self.vr_body_offset = offset;
+        if self.mouselook() {
+            self.position += delta;
+            self.target += delta;
+        }
+    }
+
+    /// Physical body yaw is independent of the artificial camera rig.
+    pub fn update_vr(&mut self, world: &mut World, settings: &CameraSettings, frame: &FrameInput, rig_yaw: f32) {
+        let avatar = self.vr_mode == Some(VrView::Avatar);
+        let sampled_forward = avatar.then(|| self.vr_view(rig_yaw).inverse().transform_vector3(Vec3::NEG_Z));
+        if avatar {
+            if self.vr_input.zoom != 0.0
+                && self.vr_zoom_boom_z.is_none()
+                && let Some((eye, target)) = self.vr_native_pose
+            {
+                self.vr_zoom_boom_z = Some(eye.z - target.z);
+            }
+            self.vr_native_input();
+        }
+        let body_yaw = world.agent.yaw;
+        world.agent.yaw = rig_yaw;
+        self.update(world, settings, frame);
+        world.agent.yaw = body_yaw;
+        if !avatar {
+            self.stabilize_vr(&world.agent);
+            return;
+        }
+        let previous = self.vr_last_eye.unwrap_or(self.position);
+        let previous_boom = self.vr_native_pose.map(|(eye, target)| (target - eye).truncate().length());
+        let mut native_eye = self.position;
+        let native_target = self.target;
+        if let Some(height) = self.vr_zoom_boom_z {
+            native_eye.z = native_target.z + height;
+        }
+        let native_heading = (native_target - native_eye).with_z(0.0).normalize_or(Vec3::X);
+        if let Some(heading) = self.vr_travel_heading {
+            self.vr_heading_offset = (heading.y.atan2(heading.x) - native_heading.y.atan2(native_heading.x) + PI).rem_euclid(TAU) - PI;
+            // Native focus smoothing can continue after the travel animation.
+            // Hold the viewing direction until deliberate orbit input takes over.
+        }
+        let heading = Quat::from_rotation_z(self.vr_heading_offset) * native_heading;
+        self.vr_native_pose = Some((native_eye, native_target));
+        // Work in the yaw rig so the framing offset orbits with the camera.
+        let yaw = Quat::from_rotation_z(heading.y.atan2(heading.x));
+        let pivot = if self.focus_on_avatar {
+            self.avatar.position.with_z(native_target.z)
+        } else {
+            native_target
+        };
+        let pivot_shift = (pivot - native_target).with_z(0.0);
+        let orbit_eye = native_eye + pivot_shift;
+        let orbiting = std::mem::take(&mut self.vr_orbit_input);
+        let active = u8::from(self.vr_input.recenter)
+            | (u8::from(std::mem::take(&mut self.vr_movement_input)) << 1)
+            | (u8::from(orbiting) << 2)
+            | (u8::from(self.vr_input.zoom > 0.0) << 3)
+            | (u8::from(self.vr_input.zoom < 0.0) << 4);
+        let started = active & !self.vr_framing_active != 0;
+        self.vr_framing_active = active;
+        let boom = (yaw.inverse() * (pivot - orbit_eye)).with_z(0.0);
+        if let Some(head) = self.vr_head {
+            // Use the sampled rig to remove artificial motion from the tracking offset.
+            let sampled_forward = sampled_forward.unwrap_or(heading);
+            let sampled_yaw = Quat::from_rotation_z(sampled_forward.y.atan2(sampled_forward.x));
+            let tracked_offset = sampled_yaw.inverse() * (head.position - head.rig_position);
+            let physical = tracked_offset.with_z(0.0);
+            if self.anim.is_none()
+                && self.vr_zoom_boom_z.is_some()
+                && let Some(previous_boom) = previous_boom
+            {
+                // Route the native dolly distance along the actual head-to-avatar
+                // line, including the remaining motion after trigger release.
+                let axis = boom.normalize_or(Vec3::X);
+                let native_delta = boom.length() - previous_boom;
+                let dolly = |offset: &mut Vec3| {
+                    let radial = axis * previous_boom - offset.with_z(0.0) - physical;
+                    let radial_delta = native_delta.max((VR_AVATAR_MIN_DOLLY - radial.length()).min(0.0));
+                    *offset += axis * native_delta - radial.normalize_or(axis) * radial_delta;
+                };
+                dolly(&mut self.vr_center_offset);
+                if let Some(goal) = &mut self.vr_center_goal {
+                    dolly(goal);
+                }
+            }
+            if self.focus_on_avatar && self.vr_input.zoom > 0.0 && self.anim.is_none() && self.vr_last_frame != Some(frame.now) {
+                let initial = (settings.camera_offset().length() * settings.offset_scale).max(0.001);
+                let limit = MIN_ZOOM_FRACTION.min(VR_AVATAR_MIN_DOLLY / initial);
+                if self.zoom_fraction <= limit + 1e-5 {
+                    // The native boom can reach its limit before the tracked eye
+                    // does, particularly after entry framing or room-scale lean.
+                    let close = |offset: &mut Vec3| {
+                        let radial = boom - offset.with_z(0.0) - physical;
+                        let remaining = (radial.length() - VR_AVATAR_MIN_DOLLY).max(0.0);
+                        *offset += radial.normalize_or_zero() * remaining * interpolant(CAMERA_ZOOM_HALF_LIFE, frame.dt);
+                    };
+                    close(&mut self.vr_center_offset);
+                    if let Some(goal) = &mut self.vr_center_goal {
+                        close(goal);
+                    }
+                }
+            }
+            let entering = std::mem::take(&mut self.vr_frame_on_entry);
+            let arrived = self.anim.is_none() && std::mem::take(&mut self.vr_frame_after_travel);
+            if self.anim.is_some() && !orbiting && !entering {
+                self.vr_center_goal = None;
+            } else if started || entering || arrived {
+                let relative_gaze = head.rotation * Vec3::NEG_Z;
+                let gaze = Vec3::new(-relative_gaze.z, -relative_gaze.x, relative_gaze.y);
+                // Native eye smoothing can outlast the travel animation.
+                // Use the destination the camera solver recorded this frame,
+                // so the correction survives the remainder of that smoothing.
+                let framing_boom = if arrived {
+                    let destination = native_target + (self.virtual_position - native_target) * (1.0 + self.fov_zoom);
+                    yaw.inverse() * (pivot - destination - pivot_shift)
+                } else {
+                    boom
+                };
+                let goal = if arrived && !self.focus_on_avatar {
+                    framing_boom - gaze.normalize_or(Vec3::X) * AVATAR_ZOOM_DISTANCE - tracked_offset
+                } else {
+                    let framing_boom = framing_boom.with_z(0.0);
+                    let offset = self.vr_center_offset.with_z(0.0);
+                    let radius = (framing_boom - offset - physical).length();
+                    (framing_boom - gaze.with_z(0.0).normalize_or(Vec3::X) * radius - physical).with_z(self.vr_center_offset.z)
+                };
+                self.vr_center_goal = Some(goal);
+                if entering {
+                    self.vr_center_offset = goal;
+                }
+            }
+        }
+        if self.vr_last_frame != Some(frame.now) {
+            if let Some(goal) = self.vr_center_goal {
+                self.vr_center_offset += (goal - self.vr_center_offset) * (1.0 - 2.0_f32.powf(-frame.dt.clamp(0.0, 0.1) / 0.18));
+            }
+            self.vr_pan_height += (self.vr_pan_target - self.vr_pan_height) * interpolant(settings.zoom_time * 0.25, frame.dt);
+            self.vr_last_frame = Some(frame.now);
+        }
+        let translation = yaw * self.vr_center_offset + Vec3::Z * self.vr_pan_height;
+        self.position = orbit_eye + translation;
+        self.target = pivot + translation;
+        if world.rlva.enabled() {
+            for (origin, low, high) in [
+                (world.agent.position, "setcam_avdistmin", "setcam_avdistmax"),
+                (native_target, "setcam_origindistmin", "setcam_origindistmax"),
+            ] {
+                let min = world.rlva.camera_limit(low, 0.0, true);
+                let max = world.rlva.camera_limit(high, f32::INFINITY, false).max(min);
+                let limited = vr::constrained_distance(self.position, previous, origin, min, max);
+                let delta = limited - self.position;
+                self.position = limited;
+                self.target += delta;
+                self.vr_center_offset += yaw.inverse() * delta.with_z(0.0);
+            }
+        }
+        // The simulator plane belongs to the player's local follow camera.
+        // The desktop People zoom leaves that camera to follow another avatar.
+        if !self.vr_tracks_other_avatar()
+            && !settings.disable_constraints
+            && !settings.ignore_sim_constraints
+            && self.collide_plane != Vec4::ZERO
+        {
+            let normal = self.collide_plane.truncate();
+            let old = previous.dot(normal) - self.collide_plane.w;
+            let new = self.position.dot(normal) - self.collide_plane.w;
+            if old * new < 0.0 {
+                let limited = previous + (self.position - previous) * ((old / (old - new)).clamp(0.0, 1.0) * 0.999);
+                let delta = limited - self.position;
+                self.position = limited;
+                self.target += delta;
+                self.vr_center_offset += yaw.inverse() * delta.with_z(0.0);
+            }
+        }
+        self.vr_last_eye = Some(self.position);
+        self.shake = Vec3::ZERO;
+        self.vr_input = vr::FramingInput::default();
+    }
+
+    /// Keep the submitted camera, streaming and LOD origin on the VR rig.
+    pub fn stabilize_vr(&mut self, agent: &AgentState) {
+        self.shake = Vec3::ZERO;
+        if self.mouselook() {
+            self.position = self.avatar.position + Vec3::Z * HEAD_HEIGHT + self.vr_body_offset;
+            self.target = self.position + agent.forward();
+        }
+    }
+
+    /// A level VR rig, independent of animated eyes and region camera shake.
+    pub fn vr_view(&self, rig_yaw: f32) -> Mat4 {
+        let position = if let Some(flycam) = self.flycam {
+            flycam.position
+        } else if self.mouselook() {
+            self.avatar.position + Vec3::Z * HEAD_HEIGHT + self.vr_body_offset
+        } else {
+            self.position
+        };
+        let forward = if let Some(flycam) = self.flycam {
+            flycam.forward()
+        } else if self.mouselook() {
+            Vec3::new(rig_yaw.cos(), rig_yaw.sin(), 0.0)
+        } else {
+            self.vr_travel_heading
+                .unwrap_or_else(|| Quat::from_rotation_z(self.vr_heading_offset) * self.forward())
+        };
+        let heading = Vec3::new(forward.x, forward.y, 0.0).normalize_or(Vec3::X);
+        glam::camera::rh::view::look_to_mat4(position, heading, Vec3::Z)
     }
 
     pub fn view(&self) -> Mat4 {
@@ -2222,9 +2715,19 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
 /// Where object `id` is and how it is turned (render space), unless it
 /// is a HUD.
 pub fn focus_object_geom(world: &World, id: &Uuid, now: Instant) -> Option<FocusObject> {
+    focus_geometry(world, id, now, false)
+}
+
+fn focus_geometry(world: &World, id: &Uuid, now: Instant, rendered_avatar: bool) -> Option<FocusObject> {
     let idx = world.objects.index_of_uuid(id)?;
     let o = world.objects.get(idx)?;
-    let (position, rotation, hud) = Scene::object_transform_unshifted(world, idx, now)?;
+    // Remote VR framing targets the visible avatar, including shape and
+    // hover offsets. Other camera callers use the unshifted object root.
+    let (position, rotation, hud) = if rendered_avatar && o.is_avatar() {
+        Scene::object_transform(world, idx, now, 0)?
+    } else {
+        Scene::object_transform_unshifted(world, idx, now)?
+    };
     if hud {
         return None;
     }
@@ -4040,6 +4543,599 @@ mod tests {
         assert!(!camera.needs_animated_eyes(&world.agent, &settings));
         let expected = camera.avatar.position + Vec3::Z * HEAD_HEIGHT + world.agent.forward() * 0.12;
         assert!(camera.position.abs_diff_eq(expected, 1e-5));
+    }
+
+    #[test]
+    fn vr_walking_follows_rendered_gaze_without_accumulating_head_yaw() {
+        use crate::agent::MoveInput;
+        use aurora_render::stereo_view::{Anchor, Fov, Pose};
+        let settings = CameraSettings::default();
+        let rig_yaw = 0.73;
+        for mode in [VrView::FirstPerson, VrView::Avatar] {
+            for initial_yaw in [0.0, 1.2] {
+                for head_yaw in [0.0, std::f32::consts::FRAC_PI_2, -std::f32::consts::FRAC_PI_2, std::f32::consts::PI] {
+                    let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+                    world
+                        .agent
+                        .on_server_update(world.agent.position, Vec3::ZERO, Vec3::ZERO, false, true);
+                    world.agent.yaw = rig_yaw;
+                    let mut camera = Camera::default();
+                    camera.enter_vr_mode(mode, &mut world.agent, &settings, rig_yaw);
+                    camera.update_vr(&mut world, &settings, &frame(0.016), rig_yaw);
+                    let mut anchor = Anchor::new(
+                        camera.vr_view(rig_yaw),
+                        Pose {
+                            position: Vec3::ZERO,
+                            orientation: Quat::from_rotation_y(initial_yaw),
+                        },
+                    )
+                    .expect("entry");
+                    let head = Pose {
+                        position: Vec3::ZERO,
+                        orientation: Quat::from_rotation_y(initial_yaw + head_yaw) * Quat::from_rotation_x(0.4),
+                    };
+                    let physical = anchor.relative_head_rotation(head).expect("head");
+                    let input = MoveInput {
+                        forward: true,
+                        ..Default::default()
+                    };
+                    let mut previous_direction = None;
+                    for _ in 0..30 {
+                        world.agent.yaw = vr_walk_yaw(camera.vr_view(rig_yaw), physical);
+                        let before = world.agent.predicted_position();
+                        world.agent.simulate_locally(&input, mode == VrView::FirstPerson, None, 0.016, true);
+                        let displacement = (world.agent.predicted_position() - before).truncate().normalize();
+                        world.agent.update(&input, mode == VrView::FirstPerson, 0.016, 5.0);
+                        camera.update_vr(&mut world, &settings, &frame(0.016), rig_yaw);
+                        anchor.follow(camera.vr_view(rig_yaw)).expect("rig");
+                        let eye = anchor
+                            .eye(
+                                head,
+                                Fov {
+                                    left: -0.6,
+                                    right: 0.6,
+                                    down: -0.6,
+                                    up: 0.6,
+                                },
+                                0.1,
+                            )
+                            .expect("eye");
+                        let gaze = eye.view.inverse().transform_vector3(Vec3::NEG_Z).truncate().normalize();
+                        assert!(
+                            displacement.dot(gaze) > 0.999,
+                            "{mode:?}: {initial_yaw} / {head_yaw}: {displacement:?} vs {gaze:?}"
+                        );
+                        if let Some(previous) = previous_direction {
+                            assert!(gaze.abs_diff_eq(previous, 1e-4), "physical yaw must not accumulate");
+                        }
+                        previous_direction = Some(gaze);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn vr_mode_entry_preserves_current_rig_heading_before_any_camera_update() {
+        let mut settings = CameraSettings::default();
+        settings.camera_offset[1] = 1.2;
+        settings.focus_offset[1] = -0.4;
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let rig_yaw = 0.4;
+        let body_yaw = rig_yaw + std::f32::consts::FRAC_PI_2;
+        world.agent.yaw = body_yaw;
+        for mode in [VrView::FirstPerson, VrView::Avatar] {
+            camera.enter_vr_mode(mode, &mut world.agent, &settings, rig_yaw);
+            for _ in 0..90 {
+                camera.update_vr(&mut world, &settings, &frame(0.016), rig_yaw);
+            }
+            let before = camera.vr_view(rig_yaw).inverse();
+            let nominal_before = camera.position;
+            let new_rig_yaw = camera.enter_vr_mode(VrView::Flycam, &mut world.agent, &settings, rig_yaw);
+            let after = camera.vr_view(new_rig_yaw).inverse();
+            assert!(
+                after.w_axis.abs_diff_eq(before.w_axis, 1e-4),
+                "{mode:?}: before {:?}, after {:?}, actual flycam {:?}",
+                before.w_axis,
+                after.w_axis,
+                camera.flycam.expect("flycam").position
+            );
+            assert_eq!(camera.flycam.expect("flycam").position, nominal_before);
+            // Full inverse-view roundtrips near 128m differ by a few f32 ULPs.
+            assert!(
+                after
+                    .transform_vector3(Vec3::NEG_Z)
+                    .abs_diff_eq(before.transform_vector3(Vec3::NEG_Z), 1e-5)
+            );
+            assert_eq!(world.agent.yaw, body_yaw, "body gaze must not become the artificial rig yaw");
+        }
+    }
+
+    #[test]
+    fn vr_body_goal_keeps_the_same_point_when_the_head_turns() {
+        use aurora_render::stereo_view::{Anchor, Pose, RigMode};
+        let camera = Camera::default();
+        let view = camera.vr_view(0.0);
+        let start = Pose {
+            position: Vec3::Y * 1.6,
+            orientation: Quat::IDENTITY,
+        };
+        let anchor = Anchor::new(view, start).expect("anchor");
+        let mut head = Pose {
+            position: start.position + Vec3::X * 0.3,
+            ..start
+        };
+        let expected = camera.vr_body_goal(vr_sample(&anchor, head, view, RigMode::FirstPerson)).world;
+        for yaw in [-2.5, -1.0, 0.0, 1.0, 2.5] {
+            head.orientation = Quat::from_rotation_y(yaw);
+            let sample = vr_sample(&anchor, head, view, RigMode::FirstPerson);
+            assert!(camera.vr_body_goal(sample).world.abs_diff_eq(expected, 1e-5));
+            assert!(
+                (vr_walk_yaw(view, sample.rotation) - vr_walk_yaw(view, Quat::IDENTITY) - yaw)
+                    .sin()
+                    .abs()
+                    < 1e-5
+            );
+        }
+    }
+
+    #[test]
+    fn vr_avatar_entry_after_a_flycam_turn_keeps_live_heading_and_body_yaw() {
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        camera.enter_vr_mode(VrView::Flycam, &mut world.agent, &settings, 0.0);
+        let flycam = camera.flycam.as_mut().expect("flycam");
+        flycam.rotation = crate::joystick::flycam::Flycam::from_direction(flycam.position, Vec3::Y, Vec3::Z, flycam.fov).rotation;
+        let body_yaw = world.agent.yaw;
+        let yaw = camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        assert!(
+            camera
+                .vr_view(yaw)
+                .inverse()
+                .transform_vector3(Vec3::NEG_Z)
+                .abs_diff_eq(Vec3::Y, 1e-5)
+        );
+        camera.update_vr(&mut world, &settings, &frame(0.016), yaw);
+        assert!(
+            camera
+                .vr_view(yaw)
+                .inverse()
+                .transform_vector3(Vec3::NEG_Z)
+                .abs_diff_eq(Vec3::Y, 1e-5)
+        );
+        assert_eq!(world.agent.yaw, body_yaw);
+    }
+
+    fn vr_sample(
+        anchor: &aurora_render::stereo_view::Anchor,
+        head: aurora_render::stereo_view::Pose,
+        view: Mat4,
+        mode: aurora_render::stereo_view::RigMode,
+    ) -> aurora_render::HeadPose {
+        aurora_render::HeadPose {
+            rotation: anchor.relative_head_rotation(head).expect("rotation"),
+            position: anchor.head_position(head).expect("head"),
+            rig_position: view.inverse().w_axis.truncate(),
+            generation: 1,
+            origin: None,
+            revision: 0,
+            sampled: Instant::now(),
+            mode,
+        }
+    }
+    #[test]
+    fn vr_avatar_uses_native_controller_orbit_pan_and_zoom_without_zoom_height_drift() {
+        let settings = CameraSettings::default();
+        let mut tick = Instant::now();
+        let mut advance = || {
+            tick += std::time::Duration::from_millis(16);
+            FrameInput { now: tick, ..frame(0.016) }
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let yaw = camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        camera.update_vr(&mut world, &settings, &advance(), yaw);
+        let start = camera.position;
+        let heading = camera.vr_view(yaw).inverse().transform_vector3(Vec3::NEG_Z);
+        for _ in 0..60 {
+            camera.joystick_orbit_yaw(1.0, 0.016, &mut world.agent);
+            camera.update_vr(&mut world, &settings, &advance(), yaw);
+            let forward = camera.vr_view(yaw).inverse().transform_vector3(Vec3::NEG_Z);
+            let toward_avatar = (camera.avatar.position - camera.position).with_z(0.0).normalize();
+            assert!(
+                forward.abs_diff_eq(toward_avatar, 1e-4),
+                "orbit must keep the avatar on the horizontal centerline"
+            );
+        }
+        assert!(camera.position.distance(start) > 1.0, "native orbit must move around the avatar");
+        assert!(camera.vr_view(yaw).inverse().transform_vector3(Vec3::NEG_Z).distance(heading) > 0.5);
+        assert!((camera.position.z - start.z).abs() < 1e-3, "horizontal orbit retains normal height");
+        for _ in 0..60 {
+            camera.gamepad_pan_vertical(0.02, &mut world.agent, &settings);
+            camera.update_vr(&mut world, &settings, &advance(), yaw);
+        }
+        assert!(camera.position.z > start.z + 0.5, "explicit vertical pan remains effective");
+        // Finish native pan animation before zoom. Zoom and its interpolation
+        // must never bring back the native boom's distance-dependent height.
+        for _ in 0..120 {
+            camera.update_vr(&mut world, &settings, &advance(), yaw);
+        }
+        let height = camera.position.z;
+        let before = camera.position;
+        for n in 0..180 {
+            if n < 60 {
+                camera.gamepad_zoom(0.5, 0.016, &mut world.agent, &settings);
+            }
+            camera.update_vr(&mut world, &settings, &advance(), yaw);
+            assert!((camera.position.z - height).abs() < 1e-3, "zoom/release must remain horizontal");
+        }
+        assert!(camera.position.distance(before) > 0.1, "native zoom must actually dolly");
+        for _ in 0..180 {
+            camera.gamepad_zoom(1.0, 0.1, &mut world.agent, &settings);
+            camera.update_vr(&mut world, &settings, &advance(), yaw);
+        }
+        assert!(camera.third_person());
+        assert!(
+            camera.target_distance < VR_AVATAR_MIN_DOLLY + 0.05,
+            "VR zoom should reach the head buffer"
+        );
+    }
+    #[test]
+    fn vr_avatar_recenter_preserves_normal_start_height_and_horizontal_zoom() {
+        use aurora_render::stereo_view::{Anchor, Pose, RigMode};
+        let mut settings = CameraSettings::default();
+        let mut tick = Instant::now();
+        let mut advance = || {
+            tick += std::time::Duration::from_millis(16);
+            FrameInput { now: tick, ..frame(0.016) }
+        };
+        settings.camera_offset[2] = 2.25;
+        for previous in [VrView::FirstPerson, VrView::Flycam] {
+            let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+            let mut normal = Camera::default();
+            settle(&mut normal, &mut world, &settings);
+            let normal_height = normal.position.z;
+            let mut camera = Camera::default();
+            camera.enter_vr_mode(previous, &mut world.agent, &settings, 0.0);
+            camera.update_vr(&mut world, &settings, &advance(), 0.0);
+            let initial = Pose {
+                position: Vec3::new(0.8, 1.6, -0.4),
+                orientation: Quat::from_rotation_y(0.9),
+            };
+            let head = Pose {
+                position: initial.position + Vec3::Y * 0.4,
+                orientation: initial.orientation,
+            };
+            let mut anchor = Anchor::new(camera.vr_view(0.0), initial).expect("entry");
+            anchor
+                .follow_head(
+                    camera.vr_view(0.0),
+                    head,
+                    if previous == VrView::Flycam {
+                        RigMode::Flycam
+                    } else {
+                        RigMode::FirstPerson
+                    },
+                )
+                .expect("old mode");
+            camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+            camera.update_vr(&mut world, &settings, &advance(), 0.0);
+            assert!(
+                (camera.position.z - normal_height).abs() < 1e-4,
+                "{previous:?}: {} vs {normal_height}",
+                camera.position.z
+            );
+            let mode = RigMode::Avatar;
+            anchor.follow_head(camera.vr_view(0.0), head, mode).expect("avatar");
+            assert!((anchor.head_position(head).expect("head").z - normal_height).abs() < 1e-4);
+            let entry_view = camera.vr_view(0.0);
+            camera.vr_tracking(Some(vr_sample(&anchor, head, entry_view, mode)));
+            camera.update_vr(&mut world, &settings, &advance(), 0.0);
+            let centered_view = camera.vr_view(0.0);
+            anchor.follow_head(centered_view, head, mode).expect("centered entry");
+            let gaze = centered_view
+                .inverse()
+                .transform_vector3(anchor.relative_head_rotation(head).expect("rotation") * Vec3::NEG_Z);
+            let to_avatar = world.agent.position - anchor.head_position(head).expect("head");
+            assert!(gaze.truncate().normalize().dot(to_avatar.truncate().normalize()) > 0.999);
+            let orientation = centered_view.inverse().transform_vector3(Vec3::NEG_Z);
+            for _ in 0..20 {
+                let view = camera.vr_view(0.0);
+                camera.vr_tracking(Some(vr_sample(&anchor, head, view, mode)));
+                camera.vr_request(vr::FramingInput { recenter: true, zoom: 0.0 });
+                camera.update_vr(&mut world, &settings, &advance(), 0.0);
+                anchor.follow_head(camera.vr_view(0.0), head, mode).expect("reframe");
+                assert!(
+                    camera
+                        .vr_view(0.0)
+                        .inverse()
+                        .transform_vector3(Vec3::NEG_Z)
+                        .abs_diff_eq(orientation, 1e-5)
+                );
+            }
+            let height = camera.position.z;
+            let actual_height = anchor.head_position(head).expect("head").z;
+            for zoom in [1.0, -1.0, 0.0] {
+                for _ in 0..60 {
+                    let view = camera.vr_view(0.0);
+                    camera.vr_tracking(Some(vr_sample(&anchor, head, view, mode)));
+                    camera.vr_request(vr::FramingInput { recenter: false, zoom });
+                    camera.update_vr(&mut world, &settings, &advance(), 0.0);
+                    anchor.follow_head(camera.vr_view(0.0), head, mode).expect("zoom");
+                    assert_eq!(camera.position.z, height, "zoom and release must hold nominal height");
+                    assert!((anchor.head_position(head).expect("head").z - actual_height).abs() < 1e-4);
+                }
+            }
+            let mut wheel_settings = settings.clone();
+            let before = camera.position;
+            for _ in 0..20 {
+                let view = camera.vr_view(0.0);
+                camera.vr_tracking(Some(vr_sample(&anchor, head, view, mode)));
+                camera.scroll(-20.0, false, false, &mut world.agent, &mut wheel_settings);
+                camera.update_vr(&mut world, &settings, &advance(), 0.0);
+                anchor.follow_head(camera.vr_view(0.0), head, mode).expect("wheel");
+                assert!(!camera.mouselook());
+                assert_eq!(camera.position.z, height);
+            }
+            assert!(camera.position.distance(before) > 0.01, "wheel visibly dollies the VR camera");
+            let head = Pose {
+                position: head.position + Vec3::X * 0.6,
+                ..head
+            };
+            for _ in 0..180 {
+                let view = camera.vr_view(0.0);
+                camera.vr_tracking(Some(vr_sample(&anchor, head, view, mode)));
+                camera.gamepad_zoom(1.0, 0.016, &mut world.agent, &settings);
+                camera.update_vr(&mut world, &settings, &advance(), 0.0);
+                anchor.follow_head(camera.vr_view(0.0), head, mode).expect("close zoom");
+            }
+            let radius = (world.agent.position - anchor.head_position(head).expect("head"))
+                .truncate()
+                .length();
+            assert!((radius - VR_AVATAR_MIN_DOLLY).abs() < 0.025, "tracked eye radius was {radius}");
+            assert!(camera.third_person());
+        }
+    }
+    #[test]
+    fn vr_avatar_target_selection_uses_native_travel_without_front_view_or_body_rotation() {
+        use aurora_render::stereo_view::{Anchor, Pose, RigMode};
+        let settings = CameraSettings {
+            smoothing: 10.0,
+            ..CameraSettings::default()
+        };
+        let mut tick = Instant::now();
+        let mut advance = || {
+            tick += std::time::Duration::from_millis(16);
+            FrameInput { now: tick, ..frame(0.016) }
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = crate::ui::people::nearby(&world)
+            .into_iter()
+            .find(|row| focus_object_geom(&world, &row.0, Instant::now()).is_some_and(|g| g.avatar))
+            .expect("avatar")
+            .0;
+        world.avatar_shape_dz.insert(id, 0.7);
+        let mut camera = Camera::default();
+        camera.start_free(&mut world.agent, &settings);
+        camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        camera.update_vr(&mut world, &settings, &advance(), 0.0);
+        let initial = Pose {
+            position: Vec3::new(0.3, 1.6, -0.2),
+            orientation: Quat::from_rotation_y(0.3),
+        };
+        let mut head = Pose {
+            position: initial.position,
+            orientation: Quat::from_rotation_y(1.0),
+        };
+        let mut anchor = Anchor::new(camera.vr_view(0.0), initial).expect("entry");
+        let mode = RigMode::Avatar;
+        anchor.follow_head(camera.vr_view(0.0), head, mode).expect("head turn");
+        camera.vr_tracking(Some(vr_sample(&anchor, head, camera.vr_view(0.0), mode)));
+        let before = camera.position;
+        let heading_before = camera.vr_view(0.0).inverse().transform_vector3(Vec3::NEG_Z);
+        let body = world.agent.position;
+        let yaw = world.agent.yaw;
+        let geometry = focus_object_geom(&world, &id, Instant::now()).expect("geometry");
+        camera.zoom_avatar((id, geometry), &mut world.agent, &settings);
+        // Put a player-local collision plane directly across the requested
+        // People zoom travel, where the desktop camera would pass it.
+        let destination = camera.focus_target + camera.focus_offset_target;
+        let normal = (destination - before).with_z(0.0).normalize();
+        let plane = normal.extend((before + normal * 0.1).dot(normal));
+        camera.set_collide_plane(plane, &settings);
+
+        assert_eq!(camera.position, before);
+        assert_eq!(camera.gamepad_avatar_target(), Some(id));
+        assert!(camera.free().is_none());
+        for frame in 0..180 {
+            if frame == 10 {
+                head.position += Vec3::new(0.45, 0.0, 0.25);
+                head.orientation = Quat::from_rotation_y(0.65) * Quat::from_rotation_x(-0.4);
+            }
+            let mode = RigMode::Avatar;
+            let view = camera.vr_view(0.0);
+            camera.vr_tracking(Some(vr_sample(&anchor, head, view, mode)));
+            camera.vr_request(vr::FramingInput { recenter: true, zoom: 0.0 });
+            camera.update_vr(&mut world, &settings, &advance(), 0.0);
+            assert!(
+                camera
+                    .vr_view(0.0)
+                    .inverse()
+                    .transform_vector3(Vec3::NEG_Z)
+                    .abs_diff_eq(heading_before, 1e-5)
+            );
+            anchor.follow_head(camera.vr_view(0.0), head, mode).expect("pan");
+        }
+        assert_eq!(world.agent.position, body);
+        assert_eq!(world.agent.yaw, yaw);
+        assert!(
+            camera.position.dot(normal) > plane.w + 0.25,
+            "People zoom must travel beyond the player-local collision plane"
+        );
+        assert!(
+            camera.anim.is_none(),
+            "native target travel completes within its normal animation time"
+        );
+        let gaze = camera
+            .vr_view(0.0)
+            .inverse()
+            .transform_vector3(anchor.relative_head_rotation(head).expect("rotation") * Vec3::NEG_Z)
+            .normalize();
+        let index = world.objects.index_of_uuid(&id).expect("avatar index");
+        let (rendered_root, _, _) = Scene::object_transform(&world, index, advance().now, 0).expect("rendered avatar");
+        let focus = rendered_root + Vec3::Z * AVATAR_ZOOM_FOCUS_Z;
+        let to_avatar = focus - anchor.head_position(head).expect("head");
+        assert!(
+            (to_avatar - gaze * AVATAR_ZOOM_DISTANCE).length() < 0.08,
+            "tracked focus should be 2.5 m down the center sightline: {to_avatar:?}, gaze {gaze:?}"
+        );
+        let to_avatar = to_avatar.normalize();
+        assert!(
+            gaze.dot(to_avatar) > 0.999,
+            "arrival must be framed for actual turned-head gaze: {gaze:?}, {to_avatar:?}"
+        );
+        camera.set_collide_plane(Vec4::ZERO, &settings);
+        camera.vr_resume_avatar_follow(&mut world.agent, &settings);
+        assert!(camera.focus_on_avatar, "movement returns to the player follow camera");
+        assert!(camera.gamepad_avatar_target().is_none(), "movement releases the selected avatar");
+        camera.update_vr(&mut world, &settings, &advance(), 0.0);
+        let heading = camera.vr_view(0.0).inverse().transform_vector3(Vec3::NEG_Z);
+        assert!(
+            heading.abs_diff_eq(heading_before, 1e-5),
+            "return travel must keep the viewing direction"
+        );
+        camera.zoom_avatar((id, geometry), &mut world.agent, &settings);
+        camera.handle_reset_view(&mut world.agent, &settings);
+        head.orientation = Quat::from_rotation_y(-0.4);
+        for _ in 0..180 {
+            let view = camera.vr_view(0.0);
+            anchor.follow_head(view, head, mode).expect("return to player");
+            camera.vr_tracking(Some(vr_sample(&anchor, head, view, mode)));
+            camera.update_vr(&mut world, &settings, &advance(), 0.0);
+        }
+        let view = camera.vr_view(0.0);
+        anchor.follow_head(view, head, mode).expect("centered return");
+        let gaze = view
+            .inverse()
+            .transform_vector3(anchor.relative_head_rotation(head).expect("rotation") * Vec3::NEG_Z);
+        let to_player = world.agent.position - anchor.head_position(head).expect("head");
+        assert!(gaze.truncate().normalize().dot(to_player.truncate().normalize()) > 0.999);
+        assert!(view.inverse().transform_vector3(Vec3::NEG_Z).abs_diff_eq(heading_before, 1e-5));
+    }
+    #[test]
+    fn vr_body_catchup_uses_actual_walk_displacement_without_reapplying_it_to_the_head() {
+        use crate::agent::MoveInput;
+        use aurora_render::stereo_view::{Anchor, Pose, RigMode};
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        world
+            .agent
+            .on_server_update(world.agent.position, Vec3::ZERO, Vec3::ZERO, false, true);
+        let mut camera = Camera::default();
+        camera.enter_vr_mode(VrView::FirstPerson, &mut world.agent, &settings, 0.0);
+        camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+        let initial = Pose {
+            position: Vec3::new(0.0, 1.6, 0.0),
+            orientation: Quat::IDENTITY,
+        };
+        let head = Pose {
+            position: initial.position + Vec3::X * 0.5,
+            ..initial
+        };
+        let mut anchor = Anchor::new(camera.vr_view(0.0), initial).expect("entry");
+        anchor
+            .follow_head(camera.vr_view(0.0), head, RigMode::FirstPerson)
+            .expect("physical lean");
+        let expected = anchor.head_position(head).expect("head");
+        let body_start = camera.vr_body_root();
+        let mut follow = vr::BodyFollow::default();
+        follow.accepted_root(body_start);
+        for _ in 0..90 {
+            let heading = follow.request(
+                camera.vr_body_root(),
+                Some(anchor.head_position(head).expect("head")),
+                true,
+                false,
+                0.016,
+            );
+            let input = if let Some(yaw) = heading {
+                world.agent.yaw = yaw;
+                MoveInput {
+                    forward: true,
+                    ..Default::default()
+                }
+            } else {
+                MoveInput::default()
+            };
+            world.agent.simulate_locally(&input, true, None, 0.016, true);
+            world.agent.update(&input, true, 0.016, 1.0);
+            camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+            camera.vr_body_offset(follow.accepted_root(camera.vr_body_root()));
+            anchor.follow_head(camera.vr_view(0.0), head, RigMode::FirstPerson).expect("follow");
+            assert!(
+                anchor
+                    .head_position(head)
+                    .expect("head")
+                    .truncate()
+                    .abs_diff_eq(expected.truncate(), 1e-4)
+            );
+        }
+        assert!(camera.vr_body_root().truncate().distance(body_start.truncate()) > 0.1);
+        assert!(camera.vr_body_root().truncate().distance(expected.truncate()) < vr::FOLLOW_START);
+        let before = anchor.head_position(head).expect("head");
+        let root = camera.vr_body_root();
+        follow.request(root, Some(before), true, true, 0.016);
+        world.agent.yaw = 0.0;
+        let input = MoveInput {
+            forward: true,
+            ..Default::default()
+        };
+        world.agent.simulate_locally(&input, true, None, 0.016, true);
+        world.agent.update(&input, true, 0.016, 1.0);
+        camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+        camera.vr_body_offset(follow.accepted_root(camera.vr_body_root()));
+        anchor.follow_head(camera.vr_view(0.0), head, RigMode::FirstPerson).expect("manual");
+        assert!(
+            (anchor.head_position(head).expect("head") - before)
+                .truncate()
+                .abs_diff_eq((camera.vr_body_root() - root).truncate(), 1e-4)
+        );
+    }
+
+    #[test]
+    fn vr_first_person_ignores_animated_eyes_shake_and_artificial_pitch() {
+        let settings = CameraSettings {
+            mouselook_follow_eyes: true,
+            ..Default::default()
+        };
+        for seated in [false, true] {
+            let mut world = hover_world(seated);
+            let mut camera = Camera::default();
+            camera.change_to_mouselook(&mut world.agent, &settings, false);
+            let mut previous = None;
+            for eyes in [Vec3::new(0.1, 0.0, 0.65), Vec3::new(-0.3, 0.2, 0.1)] {
+                let mut input = frame(1.0 / 60.0);
+                input.eye_offset = Some(eyes);
+                camera.update(&mut world, &settings, &input);
+                camera.shake = Vec3::new(0.2, 0.1, -0.1);
+                world.agent.pitch = 0.8;
+                camera.stabilize_vr(&world.agent);
+                let view = camera.vr_view(world.agent.yaw);
+                let position = view.inverse().w_axis.truncate();
+                assert!(position.abs_diff_eq(camera.avatar.position + Vec3::Z * HEAD_HEIGHT, 1e-5));
+                assert_eq!(camera.shake, Vec3::ZERO);
+                assert!(view.inverse().transform_vector3(Vec3::NEG_Z).z.abs() < 1e-5);
+                if let Some(previous) = previous {
+                    assert!(position.abs_diff_eq(previous, 1e-5));
+                }
+                previous = Some(position);
+            }
+        }
     }
 
     #[test]

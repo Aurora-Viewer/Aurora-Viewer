@@ -3357,6 +3357,9 @@ impl Settings {
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
+            vr_gamma: self.camera.vr_gamma,
+            vr_vibrancy: self.camera.vr_vibrancy,
+            vr_resolution: self.camera.vr_resolution.map(|n| n.clamp(256, 8192)),
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
             aa: match self.antialiasing {

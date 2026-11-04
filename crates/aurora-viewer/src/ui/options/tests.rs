@@ -412,6 +412,26 @@ fn a_setting_has_one_page() {
 }
 
 #[test]
+fn camera_and_vr_page_resets_are_independent() {
+    let mut s = Settings::default();
+    s.camera.vr_mouse_look = true;
+    s.camera.vr_resolution = [2160, 2160];
+    s.camera.vr_gamma = 1.5;
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Camera, &mut s);
+    assert!(s.camera.vr_mouse_look);
+    assert_eq!(s.camera.vr_resolution, [2160, 2160]);
+    assert_eq!(s.camera.vr_gamma, 1.5);
+    assert_eq!(s.camera.smoothing, Settings::default().camera.smoothing);
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Vr, &mut s);
+    assert!(!s.camera.vr_mouse_look);
+    assert_eq!(s.camera.vr_resolution, [1600, 1600]);
+    assert_eq!(s.camera.vr_gamma, 1.0);
+    assert_eq!(s.camera.smoothing, 8.0);
+}
+
+#[test]
 fn a_page_reset_leaves_the_other_pages_alone() {
     let mut s = Settings {
         draw_distance: 300.0,
