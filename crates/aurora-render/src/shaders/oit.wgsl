@@ -1,35 +1,30 @@
 // Order-independent transparency: resolve (oit.rs).
 //
-// fs_blend_oit (object.wgsl) stored each blended fragment: a pixel's first
-// `slots` layers in its slots of a texture array (layer k: every pixel's
-// slot k, so a tile's pixels read their layers side by side), the others
-// appended to its linked list in the node pool. Here, in three steps:
+// The capture (object.wgsl, fs_blend_keys then fs_blend_payloads) keeps,
+// for each pixel, the `layers` nearest blended fragments of the frame:
+// their depths as keys sorted nearest first (`keys`, one slice of the
+// screen per layer), their colour, alpha and MSAA coverage beside them
+// (`payloads`), and the fragments farther than the kept ones summed in the
+// tail (`tail`: premultiplied colour, alpha and -log transparency, 16.16
+// fixed point). Here, in three steps:
 //
-// 1. cs_classify (compute, one 8 x 8 tile per workgroup): each pixel sorts
-//    its list once and stores the composite in `out_color`; a pixel where
-//    the MSAA samples disagree (a layer covering only some of them, or one
-//    the opaque scene hides behind some of them only) is marked as an edge
-//    instead. The tiles holding layers are listed, plain and edge apart,
-//    with the instance counts of two indirect draws.
+// 1. cs_classify (compute, one 8 x 8 tile per workgroup, the tiles the
+//    capture flagged only): each pixel composited from its tail, then its
+//    layers farthest first, into `out_color`; with MSAA a pixel where the
+//    samples disagree (a layer covering only some of them, or hidden by the
+//    opaque scene behind some of them only) is marked as an edge instead.
+//    The tiles holding layers are listed, plain and edge apart, with the
+//    instance counts of two indirect draws.
 // 2. fs_composite (vs_tile over the plain tiles): the composite over the
 //    scene, once per pixel, MSAA or not.
-// 3. fs_edge (vs_tile over the edge tiles, MSAA only): the edge pixels again,
-//    sample by sample, against each sample's depth.
+// 3. fs_edge (vs_tile over the edge tiles, MSAA only): the edge pixels
+//    sample by sample, each sample over the layers that cover it and lie in
+//    front of its depth. Nothing is sorted here: the keys are.
 //
-// When the pool overflowed (heads[0], the nodes asked for, past node_cap),
-// no tile is listed and `flags` turns the in-order replay of the blended
-// faces on and the composite's glow off (renderer.rs: the gated draws read
-// copies of their arguments that oit_gate.wgsl zeroes or keeps from them):
-// the frame is then drawn in the drawing order, as without the lists.
-//
-// Sorting: the `max_layers` nearest layers of a pixel, whatever their draw
-// order, back to front; the others folded first, behind them, as a weighted
-// average whose coverage is exact (the product of their transparencies), so
-// a deep stack fades instead of popping. The
-// arrays of a sort must stay in registers: a pixel first tries the 8-layer
-// sort (resolve_8) and only a deeper one sorts again with 24 (resolve_24),
-// both generated from the template between the resolve_N markers below
-// (oit.rs `resolve_source`).
+// The tail is the weighted average of the fragments beyond the kept
+// layers, their colour weighted by their alpha over a coverage that is the
+// product of their transparencies, composited behind the layers; it has no
+// coverage of its own, so the samples of an edge pixel share it.
 //
 // Output: premultiplied colour and coverage, blended One / OneMinusSrcAlpha
 // on the colour and Zero / OneMinusSrcAlpha on the alpha: the glow behind is
@@ -37,25 +32,25 @@
 // (LLDrawPoolAlpha glow suppression).
 
 struct OitParams {
-    node_cap: u32,
     width: u32,
     height: u32,
-    max_layers: u32,
+    // the screen's pixels: the stride between the layers' slices
+    pixels: u32,
+    // layers kept per pixel
+    layers: u32,
     samples: u32,
     tiles_x: u32,
-    // tiles on screen: the edge tiles are listed from here
+    // tiles on screen: the edge tiles are listed from here, and the tiles'
+    // flags follow the tail in its buffer (`tail[pixels * 5 + t]`)
     tiles: u32,
-    // layers per pixel in the slot array
-    slots: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-    _pad3: u32,
+    _pad: u32,
 };
-// heads[0] counts the pool's nodes; pixel p: heads[1 + 2p] its layers,
-// heads[2 + 2p] the first node of its list plus one (0: none)
-@group(0) @binding(0) var<storage, read> heads: array<u32>;
-@group(0) @binding(1) var<storage, read> nodes: array<vec4<u32>>;
+// layer i of pixel p: keys[i * pixels + p] holds the bits of its depth
+// (0: no layer; the top bit, CLAIMED, once its payload is stored),
+// payloads[i * pixels + p] its premultiplied colour as rgb9e5, then its
+// alpha (8 bits) and the samples it covers (4 bits)
+@group(0) @binding(0) var<storage, read> keys: array<u32>;
+@group(0) @binding(1) var<storage, read> payloads: array<vec2<u32>>;
 @group(0) @binding(2) var<uniform> params: OitParams;
 // MSAA only: the scene depth, sample by sample
 @group(0) @binding(3) var depth_ms: texture_depth_multisampled_2d;
@@ -64,215 +59,88 @@ struct OitParams {
 // two DrawIndirectArgs: the plain tiles, then the edge tiles
 @group(0) @binding(5) var<storage, read_write> args: array<atomic<u32>, 8>;
 @group(0) @binding(6) var<storage, read_write> tiles_w: array<u32>;
-// The DrawIndirectArgs of the replay's depth copy (one triangle, when the
-// pool overflowed): flags[1], its instance count, is also what
-// oit_gate.wgsl reads to keep or zero the gated draws' instances
-@group(0) @binding(9) var<storage, read_write> flags: array<u32, 4>;
 // the draws only
 @group(0) @binding(7) var resolved: texture_2d<f32>;
 @group(0) @binding(8) var<storage, read> tiles_r: array<u32>;
-// single-sample only: the scene depth (the replay's depth copy)
-@group(0) @binding(11) var depth_ss: texture_depth_2d;
-// the slot array (same node layout, `w` unused)
-@group(0) @binding(10) var slots_r: texture_2d_array<u32>;
+// per pixel five words, the tail's premultiplied r, g, b, its alpha and its
+// -log transparency in 16.16 fixed point; then one word per tile, 1 when
+// the capture kept a layer in it
+@group(0) @binding(9) var<storage, read> tail: array<u32>;
 
 const TILE: u32 = 8u;
 // `out_color` alpha of an edge pixel
 const EDGE: f32 = -1.0;
-// a sorted layer held in a slot (the rest of the id: the slot), not a node
-const SLOT: u32 = 0x80000000u;
+const FIXED: f32 = 65536.0;
 
-struct Resolved {
-    // 0 nothing in front, 1 `color`, 2 an edge (the samples disagree),
-    // 3 more layers to sort than the arrays hold
-    status: u32,
+// rgb9e5: three 9-bit mantissas under a shared 5-bit exponent (packed by
+// object.wgsl `pack_rgb9e5`)
+fn unpack_rgb9e5(v: u32) -> vec3<f32> {
+    let s = exp2(f32(v >> 27u) - 24.0);
+    return vec3<f32>(f32(v & 0x1ffu), f32((v >> 9u) & 0x1ffu), f32((v >> 18u) & 0x1ffu)) * s;
+}
+
+struct Layer {
+    z: f32,
+    // premultiplied
     color: vec4<f32>,
+    mask: u32,
 };
 
-// A layer by its id: slot `id & !SLOT` of the pixel, or node `id`.
-fn layer(px: vec2<u32>, id: u32) -> vec4<u32> {
-    if ((id & SLOT) != 0u) {
-        return textureLoad(slots_r, px, id & ~SLOT, 0);
-    }
-    return nodes[id];
+// Set on a key by the capture's payload pass when the slot got its payload
+// (object.wgsl `OIT_CLAIMED`): a key without it covers nothing.
+const CLAIMED: u32 = 0x80000000u;
+
+fn layer(i: u32, p: u32) -> Layer {
+    let at = i * params.pixels + p;
+    let pl = payloads[at];
+    let k = keys[at];
+    let mask = select(0u, (pl.y >> 8u) & 0xfu, (k & CLAIMED) != 0u);
+    return Layer(bitcast<f32>(k & ~CLAIMED), vec4<f32>(unpack_rgb9e5(pl.x), f32(pl.y & 0xffu) / 255.0), mask);
 }
 
-fn node_color(n: vec4<u32>) -> vec4<f32> {
-    let rg = unpack2x16float(n.x);
-    let b = unpack2x16float(n.y & 0xffffu).x;
-    return vec4<f32>(rg, b, f32((n.y >> 16u) & 0xffu) / 255.0);
-}
-
-// <resolve_N>
-// The layers of pixel `px`: `count` stored, the slots' then the list from
-// `first`; the `keep` nearest are sorted, the others go to the tail. `full`, the samples a layer must cover; a layer at or behind
-// `dmin` is hidden everywhere, one in front of `dmax` nowhere (reverse-Z).
-// Per sample (fs_edge): `full` that sample's bit and dmin = dmax its depth.
-// Without MSAA: 1 and -1, every layer kept.
-fn resolve___N__(px: vec2<u32>, count: u32, first: u32, full: u32, dmin: f32, dmax: f32, keep: u32) -> Resolved {
-    // the kept layers' nodes and depths only (two words each), the colours
-    // read again once sorted: the arrays stay in registers
-    var ids: array<u32, __N__>;
-    var dep: array<f32, __N__>;
-    var cnt = 0u;
-    // the farthest kept layer: its depth and index (valid once cnt > 0)
-    var far_z = 2.0;
-    var far_i = 0u;
-    var tail_sum = vec3<f32>(0.0);
-    var tail_a = 0.0;
-    var tail_trans = 1.0;
-    let in_slots = min(count, params.slots);
-    var k = 0u;
-    var idx = first;
-    var steps = 0u;
-    loop {
-        var n: vec4<u32>;
-        var id: u32;
-        if (k < in_slots) {
-            n = textureLoad(slots_r, px, k, 0);
-            id = SLOT | k;
-            k += 1u;
-        } else {
-            // (a list holds at most every node of the pool: the bound
-            // only guards against a broken one, never cuts a valid list)
-            if (idx == 0u || steps >= params.node_cap) {
-                break;
-            }
-            id = idx - 1u;
-            n = nodes[id];
-            idx = n.w;
-            steps += 1u;
+// The pixel's layers: its keys are sorted nearest first, 0 past the last.
+fn count_of(p: u32) -> u32 {
+    var n = 0u;
+    for (var i = 0u; i < params.layers; i += 1u) {
+        if (keys[i * params.pixels + p] == 0u) {
+            break;
         }
-        let m = (n.y >> 24u) & full;
-        let z = bitcast<f32>(n.z);
-        if (m == 0u || z <= dmin) {
-            continue;
-        }
-        if (m != full || z <= dmax) {
-            return Resolved(2u, vec4<f32>(0.0));
-        }
-        if (cnt < keep) {
-            if (cnt == __N__u) {
-                return Resolved(3u, vec4<f32>(0.0));
-            }
-            ids[cnt] = id;
-            dep[cnt] = z;
-            if (z < far_z) {
-                far_z = z;
-                far_i = cnt;
-            }
-            cnt += 1u;
-            continue;
-        }
-        // full: keep the nearest layers whatever the draw order (reverse-Z:
-        // the nearest has the largest depth). A nearer layer takes the place
-        // of the farthest kept, which is folded into the tail instead.
-        var c = node_color(n);
-        if (z > far_z) {
-            let evicted = layer(px, ids[far_i]);
-            ids[far_i] = id;
-            dep[far_i] = z;
-            c = node_color(evicted);
-            far_z = dep[0];
-            far_i = 0u;
-            for (var i = 1u; i < cnt; i += 1u) {
-                if (dep[i] < far_z) {
-                    far_z = dep[i];
-                    far_i = i;
-                }
-            }
-        }
-        tail_sum += c.rgb;
-        tail_a += c.a;
-        tail_trans *= 1.0 - c.a;
+        n += 1u;
     }
-    if (cnt == 0u && tail_a <= 0.0) {
-        return Resolved(0u, vec4<f32>(0.0));
-    }
-    // insertion sort, farthest first (reverse-Z: ascending depth)
-    for (var i = 1u; i < cnt; i += 1u) {
-        let c = ids[i];
-        let d = dep[i];
-        var j = i;
-        loop {
-            if (j == 0u || dep[j - 1u] <= d) {
-                break;
-            }
-            ids[j] = ids[j - 1u];
-            dep[j] = dep[j - 1u];
-            j -= 1u;
-        }
-        ids[j] = c;
-        dep[j] = d;
-    }
-    var accum = vec3<f32>(0.0);
-    var cov = 0.0;
-    if (tail_a > 0.0) {
-        // colours are premultiplied: their sum over the alphas' sum is the
-        // coverage-weighted average colour
-        cov = 1.0 - tail_trans;
-        accum = tail_sum / tail_a * cov;
-    }
-    for (var i = 0u; i < cnt; i += 1u) {
-        let c = node_color(layer(px, ids[i]));
-        accum = c.rgb + accum * (1.0 - c.a);
-        cov = c.a + cov * (1.0 - c.a);
-    }
-    return Resolved(1u, vec4<f32>(accum, cov));
-}
-// </resolve_N>
-
-fn resolve_list(px: vec2<u32>, full: u32, dmin: f32, dmax: f32) -> Resolved {
-    let keep = min(params.max_layers, 24u);
-    let p = pixel(px);
-    let r = resolve_8(px, p.x, p.y, full, dmin, dmax, keep);
-    if (r.status == 3u) {
-        return resolve_24(px, p.x, p.y, full, dmin, dmax, keep);
-    }
-    return r;
+    return n;
 }
 
-// The pixel's layer count and the first node of its list plus one.
-fn pixel(px: vec2<u32>) -> vec2<u32> {
-    let p = 1u + 2u * (px.y * params.width + px.x);
-    return vec2<u32>(heads[p], heads[p + 1u]);
-}
-
-fn overflowed() -> bool {
-    return heads[0] > params.node_cap;
-}
-
-// One thread of the dispatch sets the draw counts that follow.
-fn set_flags(g: vec3<u32>) {
-    if (g.x == 0u && g.y == 0u) {
-        flags[0] = 3u;
-        flags[1] = select(0u, 1u, overflowed());
-        flags[2] = 0u;
-        flags[3] = 0u;
+// The tail's premultiplied colour and coverage.
+fn tail_of(p: u32) -> vec4<f32> {
+    let t = p * 5u;
+    let a = f32(tail[t + 3u]) / FIXED;
+    if (a <= 0.0) {
+        return vec4<f32>(0.0);
     }
+    let rgb = vec3<f32>(f32(tail[t]), f32(tail[t + 1u]), f32(tail[t + 2u])) / FIXED;
+    let cov = 1.0 - exp(-f32(tail[t + 4u]) / FIXED);
+    return vec4<f32>(rgb / a * cov, cov);
 }
 
-// ---- 1. classify, sort and list the tiles
+// The pixel's `count` layers that cover `mask` and lie in front of `depth`
+// (reverse-Z: nearer is larger), composited farthest first over the tail.
+fn composite(p: u32, count: u32, mask: u32, depth: f32) -> vec4<f32> {
+    var accum = tail_of(p);
+    for (var j = count; j > 0u; j -= 1u) {
+        let l = layer(j - 1u, p);
+        if ((l.mask & mask) != 0u && l.z > depth) {
+            accum = vec4<f32>(l.color.rgb + accum.rgb * (1.0 - l.color.a), l.color.a + accum.a * (1.0 - l.color.a));
+        }
+    }
+    return accum;
+}
+
+// ---- 1. classify, composite and list the tiles
 
 var<workgroup> tile_flags: atomic<u32>;
 
-// 1 plain, 2 edge, 0 nothing; the composite into `out_color`
-fn classify(px: vec2<u32>, full: u32, dmin: f32, dmax: f32) -> u32 {
-    var flag = 0u;
-    var out = vec4<f32>(0.0);
-    // (overflowed: nothing composited, the faces are replayed in order)
-    if (pixel(px).x != 0u && !overflowed()) {
-        let r = resolve_list(px, full, dmin, dmax);
-        if (r.status == 1u) {
-            out = r.color;
-            flag = 1u;
-        } else if (r.status == 2u) {
-            out = vec4<f32>(0.0, 0.0, 0.0, EDGE);
-            flag = 2u;
-        }
-    }
-    textureStore(out_color, px, out);
-    return flag;
+fn tile_busy(wg: vec2<u32>) -> bool {
+    return tail[params.pixels * 5u + wg.y * params.tiles_x + wg.x] != 0u;
 }
 
 fn list_tile(flag: u32, li: u32, wg: vec2<u32>) {
@@ -294,40 +162,66 @@ fn list_tile(flag: u32, li: u32, wg: vec2<u32>) {
 
 @compute @workgroup_size(8, 8)
 fn cs_classify(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wg: vec3<u32>) {
-    set_flags(g);
+    // (an empty tile, most of the screen most of the time, reads and
+    // stores nothing per pixel; the barriers stay)
+    let busy = tile_busy(wg.xy);
     if (li == 0u) {
         atomicStore(&tile_flags, 0u);
     }
     workgroupBarrier();
     var flag = 0u;
-    if (g.x < params.width && g.y < params.height) {
-        // the capture kept only what is in front of the opaque scene
-        flag = classify(g.xy, 1u, -1.0, -1.0);
+    if (busy && g.x < params.width && g.y < params.height) {
+        let p = g.y * params.width + g.x;
+        let n = count_of(p);
+        var out = vec4<f32>(0.0);
+        if (n > 0u) {
+            // the capture kept only what is in front of the opaque scene
+            out = composite(p, n, 1u, -1.0);
+            flag = 1u;
+        }
+        textureStore(out_color, g.xy, out);
     }
     list_tile(flag, li, wg.xy);
 }
 
 @compute @workgroup_size(8, 8)
 fn cs_classify_ms(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wg: vec3<u32>) {
-    set_flags(g);
+    let busy = tile_busy(wg.xy);
     if (li == 0u) {
         atomicStore(&tile_flags, 0u);
     }
     workgroupBarrier();
     var flag = 0u;
-    if (g.x < params.width && g.y < params.height) {
-        // the scene's depth range in the pixel: a layer in front of all its
-        // samples, or behind all, is the same for each
-        var dmin = 2.0;
-        var dmax = -1.0;
-        if (pixel(g.xy).x != 0u && !overflowed()) {
+    if (busy && g.x < params.width && g.y < params.height) {
+        let p = g.y * params.width + g.x;
+        let n = count_of(p);
+        var out = vec4<f32>(0.0);
+        if (n > 0u) {
+            // a layer in front of all the samples' depths and covering them
+            // all is the same for each: composited once; otherwise an edge,
+            // composited sample by sample by fs_edge
+            var dmax = -1.0;
             for (var s = 0u; s < params.samples; s += 1u) {
-                let d = textureLoad(depth_ms, vec2<i32>(g.xy), i32(s));
-                dmin = min(dmin, d);
-                dmax = max(dmax, d);
+                dmax = max(dmax, textureLoad(depth_ms, vec2<i32>(g.xy), i32(s)));
+            }
+            let full = (1u << params.samples) - 1u;
+            var edge = false;
+            for (var i = 0u; i < n; i += 1u) {
+                let l = layer(i, p);
+                if ((l.mask & full) != full || l.z <= dmax) {
+                    edge = true;
+                    break;
+                }
+            }
+            if (edge) {
+                out = vec4<f32>(0.0, 0.0, 0.0, EDGE);
+                flag = 2u;
+            } else {
+                out = composite(p, n, full, -1.0);
+                flag = 1u;
             }
         }
-        flag = classify(g.xy, (1u << params.samples) - 1u, dmin, dmax);
+        textureStore(out_color, g.xy, out);
     }
     list_tile(flag, li, wg.xy);
 }
@@ -362,41 +256,16 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
 }
 
 @fragment
-fn fs_edge(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @location(0) vec4<f32> {
-    let px = vec2<u32>(p.xy);
-    // (per sample: four threads walk the list at once, one per sample,
-    // where one compute thread walking it for all of them was slower)
+fn fs_edge(@builtin(position) pos: vec4<f32>, @builtin(sample_index) s: u32) -> @location(0) vec4<f32> {
+    let px = vec2<u32>(pos.xy);
     if (textureLoad(resolved, vec2<i32>(px), 0).a != EDGE) {
         discard;
     }
+    let p = px.y * params.width + px.x;
     let opaque = textureLoad(depth_ms, vec2<i32>(px), i32(s));
-    let r = resolve_list(px, 1u << s, opaque, opaque);
-    if (r.status != 1u) {
+    let c = composite(p, count_of(p), 1u << s, opaque);
+    if (c.a <= 0.0) {
         discard;
     }
-    return r.color;
-}
-
-// ---- the replay's depth copy (overflow only)
-//
-// The rigged faces' `Layered` and `Layers` modes draw on a copy of the scene
-// depth (renderer.rs, `Targets::blend_layers`). When the pool overflowed the
-// replay needs that copy, and a texture copy cannot wait on the GPU's
-// decision: this full-screen triangle, drawn indirectly (one instance when
-// overflowed, none otherwise), writes it instead.
-
-@vertex
-fn vs_full(@builtin(vertex_index) v: u32) -> @builtin(position) vec4<f32> {
-    let uv = vec2<f32>(f32((v << 1u) & 2u), f32(v & 2u));
-    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-}
-
-@fragment
-fn fs_copy_depth(@builtin(position) p: vec4<f32>) -> @builtin(frag_depth) f32 {
-    return textureLoad(depth_ss, vec2<i32>(p.xy), 0);
-}
-
-@fragment
-fn fs_copy_depth_ms(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @builtin(frag_depth) f32 {
-    return textureLoad(depth_ms, vec2<i32>(p.xy), i32(s));
+    return c;
 }

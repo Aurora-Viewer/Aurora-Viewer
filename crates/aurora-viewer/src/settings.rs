@@ -1299,10 +1299,8 @@ pub struct Settings {
     /// sorted per pixel rather than per object. An Aurora addition, off by
     /// default (an opt-in); GPUs that cannot keep the per-object order.
     pub oit: bool,
-    /// Its pool: blended fragments per screen pixel on average.
-    pub oit_nodes_per_pixel: u32,
-    /// Layers sorted exactly in one pixel; farther ones are averaged.
-    pub oit_max_layers: u32,
+    /// Layers kept and sorted in one pixel; farther ones are averaged.
+    pub oit_layers: u32,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2066,10 +2064,9 @@ impl Default for Settings {
             mirrors: 1,
             ssr: false,
             // off until tried on modest GPUs (integrated graphics, 4 GB
-            // cards): its node pool takes video memory on every frame
+            // cards): its layers take up to 512 MB of video memory
             oit: false,
-            oit_nodes_per_pixel: aurora_render::oit::DEFAULT_NODES_PER_PIXEL,
-            oit_max_layers: aurora_render::oit::DEFAULT_SORTED_LAYERS,
+            oit_layers: aurora_render::oit::DEFAULT_LAYERS,
             anisotropy: 8,
             cache_size_mb: 20480,
             cache_location: String::new(),
@@ -2887,10 +2884,9 @@ impl Settings {
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
             oit: self.oit,
-            oit_nodes_per_pixel: self
-                .oit_nodes_per_pixel
-                .clamp(aurora_render::oit::MIN_NODES_PER_PIXEL, aurora_render::oit::MAX_NODES_PER_PIXEL),
-            oit_max_layers: self.oit_max_layers.clamp(1, aurora_render::oit::MAX_SORTED_LAYERS),
+            oit_layers: self
+                .oit_layers
+                .clamp(aurora_render::oit::MIN_LAYERS, aurora_render::oit::MAX_LAYERS),
         }
     }
 

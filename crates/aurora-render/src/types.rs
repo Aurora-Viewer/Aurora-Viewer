@@ -1038,14 +1038,11 @@ pub struct RenderSettings {
     /// a GPU without writable storage in fragment shaders, they are blended
     /// in the drawing order, and the OIT's video memory is freed.
     pub oit: bool,
-    /// Its node pool: blended fragments per screen pixel on average
-    /// (`oit::MIN_NODES_PER_PIXEL..=oit::MAX_NODES_PER_PIXEL`), within
-    /// `oit::MAX_POOL_BYTES` in all (the per-pixel tables included).
-    pub oit_nodes_per_pixel: u32,
-    /// Layers sorted exactly in each pixel (`1..=oit::MAX_SORTED_LAYERS`);
-    /// the nearest are kept whatever the drawing order, the farther ones are
+    /// Layers kept and sorted in each pixel, the nearest ones whatever the
+    /// drawing order (`oit::MIN_LAYERS..=oit::MAX_LAYERS`, fewer on a screen
+    /// where that many would pass `oit::MAX_BYTES`); the farther ones are
     /// blended behind them as a weighted average.
-    pub oit_max_layers: u32,
+    pub oit_layers: u32,
 }
 
 impl Default for RenderSettings {
@@ -1072,8 +1069,7 @@ impl Default for RenderSettings {
             probe_slots: 32,
             occlusion: true,
             oit: false,
-            oit_nodes_per_pixel: crate::oit::DEFAULT_NODES_PER_PIXEL,
-            oit_max_layers: crate::oit::DEFAULT_SORTED_LAYERS,
+            oit_layers: crate::oit::DEFAULT_LAYERS,
         }
     }
 }
