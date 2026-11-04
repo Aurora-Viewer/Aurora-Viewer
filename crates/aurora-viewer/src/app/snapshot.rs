@@ -249,6 +249,11 @@ pub(super) struct Snapshots {
 }
 
 impl Snapshots {
+    /// A photo is being drawn (the crash report's effects list).
+    pub(super) fn drawing(&self) -> bool {
+        self.job.is_some()
+    }
+
     /// After a GPU recovery (gpu_recovery.rs): a photo under way is given up,
     /// its frames asked of the lost renderer never come back.
     pub(super) fn gpu_lost(&mut self) {

@@ -753,6 +753,12 @@ pub struct App {
     crash_swapchain: crash_state::SwapchainRecent,
     /// The state kept for the report once the GPU is lost.
     crash_kept: crash_state::KeptState,
+    /// GPU frame times and uploads of the last seconds, and the time since
+    /// the login and the last region change, for the same state.
+    crash_recent: crash_state::Recent,
+    crash_timeline: crash_state::Timeline,
+    /// The window is hidden behind others (`WindowEvent::Occluded`).
+    occluded: bool,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
     /// The other viewers on this PC (instances.rs).
@@ -980,6 +986,12 @@ fn ui_font(settings: &Settings) -> String {
 /// (Ctrl+P) and Exit (Ctrl+Q).
 fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
     matches!(screen, Screen::Login) && matches!(action, Some(Action::Preferences | Action::Quit))
+}
+
+/// A press winit made up from the keyboard state when the window gained the
+/// focus. Its synthetic releases stay: they only ever clear a held key.
+fn synthetic_press(is_synthetic: bool, state: ElementState) -> bool {
+    is_synthetic && state == ElementState::Pressed
 }
 
 /// A Ctrl / Alt shortcut of the viewer still works while a text field has
@@ -1551,6 +1563,9 @@ impl App {
             crash_state_at: None,
             crash_swapchain: Default::default(),
             crash_kept: Default::default(),
+            crash_recent: Default::default(),
+            crash_timeline: Default::default(),
+            occluded: false,
             gpu_stall: Default::default(),
             instances: crate::instances::Instances::new(),
             crouch_toggle: Default::default(),
@@ -9896,6 +9911,7 @@ impl App {
         } else {
             None
         };
+        self.scene.mirror_plane = mirror.as_ref().map(|m| (m.point, m.normal));
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
         if in_world {
             self.scene.update_water_effects(
@@ -10308,7 +10324,7 @@ impl App {
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
-            let point = if matches!(mode, "object" | "contents") {
+            let point = if matches!(mode, "object" | "contents" | "build-object") {
                 self.world
                     .objects
                     .index_of_uuid(&crate::demo::action_id(970))
@@ -11415,6 +11431,8 @@ impl App {
             .frame(paced.as_secs_f32().min(0.1) * 1000.0, net, &self.last_render, &self.scene.stats);
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
+        // before the deep profile, which takes the frame's upload bytes
+        self.crash_frame();
         self.end_deep_profile(&gfx.renderer);
         self.monitor_frame(&gfx.renderer);
         self.crash_state(&gfx.renderer, &gfx.window);
@@ -12549,6 +12567,9 @@ impl App {
             geom_pending: st.geom_pending,
             sync_backlog: if in_world { st.sync_backlog } else { 0 },
             anchored: if in_world { st.anchored } else { 0 },
+            flexies: if in_world { st.flexies } else { 0 },
+            flexies_held: if in_world { st.flexies_held } else { 0 },
+            movers: if in_world { st.movers } else { 0 },
         };
         let mut parts = std::mem::take(&mut self.scene.parts);
         parts.merge(&std::mem::take(&mut self.ui_parts));
@@ -12566,9 +12587,23 @@ impl App {
             if let Some(old) = crate::scene::mat_changes::alternate(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
+            // AURORA_FLEXI_CULL=alt: every flexible prim swept one second in three
+            if let Some(old) = crate::scene::flexible::alternate(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_MOVING_ANCHORS=alt: what moves by itself placed by the
+            // sync one second in three
+            if let Some(old) = crate::scene::anchors::alternate_movers(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
             // AURORA_IMPOSTOR_POSES=alt: impostors posed at every frame in the
             // same seconds
             if let Some(old) = crate::scene::impostors::alternate_poses(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_WRITE_STAGING=alt: the journal's buffer writes through
+            // the queue one second in three
+            if let Some(old) = aurora_render::write_staging::alternate(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_PROBE_WALK=alt: the whole probe list walked one second in three
@@ -18590,6 +18625,9 @@ impl ApplicationHandler for App {
             self.demo_shape_editor();
             self.demo_wearable_editor();
             if let Some(mode) = ui::widgets::demo::rez_mode() {
+                if matches!(mode, "build" | "build-object" | "build-delete") {
+                    self.build.open_build(crate::build::Tool::Create);
+                }
                 if mode != "1" && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                     self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
                 }
@@ -18600,7 +18638,7 @@ impl ApplicationHandler for App {
                     uuid::Uuid::from_u128(if mode == "nocopy" { 8109 } else { 8100 }),
                 );
                 self.inventory_ui.expand_all = Some(true);
-                if matches!(mode, "object" | "contents") {
+                if matches!(mode, "object" | "contents" | "build-object") {
                     for ev in crate::demo::action_events() {
                         self.world.apply(ev);
                     }
@@ -19586,6 +19624,17 @@ impl ApplicationHandler for App {
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
             return;
         }
+        // The system's view of the keys when the focus comes back is no key
+        // press: a key it wrongly reports as down (#2287) would stay held
+        // here, with no release to come. Like egui-winit, and like
+        // LLKeyboard::handleTranslatedKeyDown, fed by real key-down messages.
+        if let WindowEvent::KeyboardInput {
+            event: ke, is_synthetic, ..
+        } = &event
+            && synthetic_press(*is_synthetic, ke.state)
+        {
+            return;
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
@@ -19705,6 +19754,9 @@ impl ApplicationHandler for App {
                 if !self.ctrl || self.alt {
                     self.build.reset_selection_wheel();
                 }
+            }
+            WindowEvent::Occluded(hidden) => {
+                self.occluded = *hidden;
             }
             WindowEvent::Focused(true) => {
                 self.focused = true;
@@ -20219,6 +20271,17 @@ mod tests {
     use super::{RightGesture, UiActions, capture_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    /// #2287: only the made-up press is dropped; real keys and every release
+    /// still go through, so a held key can always be let go.
+    #[test]
+    fn only_a_synthetic_press_is_ignored() {
+        use winit::event::ElementState::{Pressed, Released};
+        assert!(super::synthetic_press(true, Pressed));
+        assert!(!super::synthetic_press(true, Released));
+        assert!(!super::synthetic_press(false, Pressed));
+        assert!(!super::synthetic_press(false, Released));
+    }
 
     #[test]
     fn automatic_flight_hold_restarts_after_release_or_disabling_the_preference() {

@@ -265,6 +265,8 @@ pub mod texture_res;
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]
 pub mod toasts;
+#[path = "demo_tortured_prims.rs"]
+pub mod tortured_prims;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;
@@ -5818,6 +5820,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
     ev.extend(alpha_mask_ab::events());
+    ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
     ev.extend(land_beside_events());
     ev.extend(object_snap::events());
@@ -6876,7 +6879,8 @@ pub const BUSY_SPINNERS: u32 = 60;
 
 /// What a busy place has besides worn prims and meshes, for `n` crowd
 /// avatars: on each of them a flexible ribbon and a spinning ornament with
-/// two prims linked below it (none of which the GPU places from an anchor);
+/// two prims linked below it (the ribbon left to the sync, the ornament
+/// placed by the GPU from a mover, `AURORA_MOVING_ANCHORS`);
 /// on our avatar a HUD of [`BUSY_HUD_PRIMS`] prims; and
 /// [`BUSY_SPINNERS`] spinning objects on the ground.
 pub fn crowd_busy_events(n: u32) -> Vec<NetEvent> {

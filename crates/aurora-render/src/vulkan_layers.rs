@@ -114,6 +114,43 @@ pub fn to_disable(keep: Option<&str>, allow_overlays: bool, is_set: impl Fn(&str
     CRASHING.iter().chain(overlays).copied().filter(|l| !is_set(l.variable)).collect()
 }
 
+/// The names of the Vulkan layers the loader offers an instance now: the
+/// implicit ones not disabled (OBS's capture layer, the Steam overlay, the
+/// drivers' own) and the explicit ones installed, for the crash report. Only
+/// names that look like a layer's (`VK_LAYER_` and word characters) are
+/// kept, at most 16, sorted. Empty without a Vulkan loader or on macOS.
+#[cfg(not(target_os = "macos"))]
+pub fn loaded_names() -> Vec<String> {
+    // SAFETY: loading the system's Vulkan library, as the XR start does.
+    let Ok(entry) = (unsafe { ash::Entry::load() }) else {
+        return Vec::new();
+    };
+    // SAFETY: a plain query of the loader, with a valid entry.
+    let Ok(layers) = (unsafe { entry.enumerate_instance_layer_properties() }) else {
+        return Vec::new();
+    };
+    let names = layers.iter().filter_map(|l| l.layer_name_as_c_str().ok()?.to_str().ok());
+    clean_names(names)
+}
+
+#[cfg(target_os = "macos")]
+pub fn loaded_names() -> Vec<String> {
+    Vec::new()
+}
+
+/// Layer names fit for a public report: `VK_LAYER_` and word characters,
+/// 48 at most, sorted and unique, 16 at most.
+pub fn clean_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut out: Vec<String> = names
+        .filter(|n| n.len() <= 48 && n.starts_with("VK_LAYER_") && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .map(str::to_owned)
+        .collect();
+    out.sort();
+    out.dedup();
+    out.truncate(16);
+    out
+}
+
 /// Sets the disabling variables in the process environment and returns the
 /// layers disabled, for the log (written once logging is up).
 ///
@@ -134,6 +171,19 @@ pub unsafe fn disable(allow_overlays: bool) -> Vec<Layer> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_layer_names_reach_the_report() {
+        let names = [
+            "VK_LAYER_OBS_HOOK",
+            "VK_LAYER_NV_optimus",
+            "VK_LAYER_OBS_HOOK",
+            "/home/someone",
+            "VK_LAYER_a b",
+            "other",
+        ];
+        assert_eq!(super::clean_names(names.into_iter()), ["VK_LAYER_NV_optimus", "VK_LAYER_OBS_HOOK"]);
+    }
+
     use super::*;
 
     fn names(layers: &[Layer]) -> Vec<&'static str> {
