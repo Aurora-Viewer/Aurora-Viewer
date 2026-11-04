@@ -2131,6 +2131,7 @@ ui-inventory-thumbnail-choose-object-picture = 選択：オブジェクトの画
 build-ui-texture-choose-material = 選択：マテリアル
 build-ui-texture-choose-normal-map = 選択：法線マップ
 build-ui-texture-choose-specular-map = 選択：鏡面反射マップ
+build-ui-texture-drop-restricted = 無制限のコピーおよび譲渡権限を持つテクスチャのみが許可されます。
 build-ui-texture-choose-texture = 選択：テクスチャ
 build-ui-features-choose-light-texture = 選択：ライトのテクスチャ
 build-ui-object-choose-sculpt-map = 選択：スカルプトマップ

@@ -2134,6 +2134,7 @@ ui-inventory-thumbnail-choose-object-picture = Choose: Object picture
 build-ui-texture-choose-material = Choose: material
 build-ui-texture-choose-normal-map = Choose: normal map
 build-ui-texture-choose-specular-map = Choose: specular map
+build-ui-texture-drop-restricted = Only textures with unrestricted copy and transfer permissions are allowed.
 build-ui-texture-choose-texture = Choose: texture
 build-ui-features-choose-light-texture = Choose: light texture
 build-ui-object-choose-sculpt-map = Choose: sculpt map

@@ -186,6 +186,8 @@ pub struct FloaterState {
     pub confirm: Option<Confirm>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
+    /// A texture or material dropped on a Texture tab slot, applied next frame.
+    pub slot_drop: Option<(PickTarget, Uuid)>,
     texture_edit: Option<texture_preview::Session>,
     /// ObjectMedia data fetched for the selection, and the objects asked.
     pub media_data: HashMap<Uuid, ObjectMediaData>,

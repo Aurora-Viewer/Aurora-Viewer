@@ -1398,7 +1398,7 @@ Features exposes flexible and physics columns above light/projector and probe
 controls. `build/ui/legacy_texture.rs` follows `FSPanelFace` and
 `panel_fs_tools_texture.xml`: three visible PBR/Blinn-Phong/Media tabs, vertical
 classic maps or the PBR map/tint grid on the left, inline parameters on the right,
-then channel tabs above the Scale/Offset/Rotation columns. The shared compact tab
+then channel tabs above the Scale/Offset/Rotation columns. `build/ui/texture_drop.rs` takes an inventory texture or material dropped on any slot of either layout (LLTextureCtrl::handleDragAndDrop with FSPanelFace's filters) and applies it like the picker. The shared compact tab
 strip preserves the theme at inspector density. Face repeats, sync, planar
 alignment and mapping form the footer. UV writers, permission checks, pickers and
 simulator commands stay shared with Aurora.
