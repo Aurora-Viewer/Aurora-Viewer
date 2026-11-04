@@ -267,38 +267,36 @@ impl App {
                             .size()
                             .x
                     };
-                    let column_width = controls.iter().map(|(_, label, _)| width(label)).fold(60.0, f32::max);
-                    let legend_width = column_width * 4.0 + ui.spacing().item_spacing.x * 3.0;
+                    let gap = ui.spacing().item_spacing.x;
+                    let legend_width =
+                        controls.iter().map(|(_, label, _)| 60.0 + gap + width(label)).sum::<f32>() + 3.0 * (6.0 + 2.0 * gap);
                     let title = aurora_i18n::tr!("avatar-studio-title");
                     let reset_label = aurora_i18n::tr!("common-reset");
                     let exit_label = aurora_i18n::tr!("avatar-studio-exit");
-                    let header_width = width(title)
-                        + width(reset_label)
-                        + width(exit_label)
-                        + ui.spacing().button_padding.x * 4.0
-                        + ui.spacing().item_spacing.x * 3.0
-                        + 16.0;
-                    ui.set_width(legend_width.max(header_width).min((ctx.content_rect().width() - 40.0).max(1.0)));
                     ui.horizontal(|ui| {
+                        ui.set_height(32.0);
                         ui.strong(title);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(exit_label).clicked() {
-                                self.panels.avatar_studio = false;
-                            }
-                            reset = ui.button(reset_label).clicked();
-                        });
-                    });
-                    ui.add_space(6.0);
-                    ui.columns(4, |columns| {
-                        for (i, (icon, label, tip)) in controls.into_iter().enumerate() {
-                            let response = columns[i]
-                                .vertical_centered(|ui| {
-                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(60.0, 32.0), egui::Sense::hover());
+                        ui.add_space(8.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(legend_width, 32.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                for (i, (icon, label, tip)) in controls.into_iter().enumerate() {
+                                    if i > 0 {
+                                        // The human requested boundaries between these
+                                        // passive hints; use the shared divider treatment.
+                                        crate::ui::widgets::divider(ui, &self.palette);
+                                    }
+                                    let (rect, response) = ui.allocate_exact_size(egui::vec2(60.0, 32.0), egui::Sense::hover());
                                     studio_mouse_hint(ui.painter(), rect, i, icon, &self.palette);
-                                    ui.label(label);
-                                })
-                                .response;
-                            response.on_hover_text(tip);
+                                    response.union(ui.label(label)).on_hover_text(tip);
+                                }
+                            },
+                        );
+                        ui.add_space(8.0);
+                        reset = ui.button(reset_label).clicked();
+                        if ui.button(exit_label).clicked() {
+                            self.panels.avatar_studio = false;
                         }
                     });
                 });

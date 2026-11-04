@@ -8244,9 +8244,10 @@ Toggle quickly during either fade, press Escape during entry, and repeat
 at 30/120 FPS: no uncovered camera cut, stuck black frame or repeated burst.
 Avatar and attachment animations must continue, and HUD textures must retain
 their normal colours throughout the reveal. No worn material is modified.
-The controls overlay has a title/action row and four mouse diagrams with the
-relevant button highlighted, movement symbols and short captions. The wheel
-diagram also has scroll arrows. Hover each hint for the full instruction.
+The controls overlay is one short row: title on the left, four mouse diagrams
+with highlighted buttons, movement symbols and inline captions in the middle,
+and Reset/Leave studio on the right. Subtle dividers separate the hints. The
+wheel diagram also has scroll arrows. Hover each hint for the full instruction.
 Inspect English, French and Japanese: captions should align, remain readable
 at ordinary UI scale, and avoid the avatar's head.
 The water should reflect the sky; distant ridgelines stay near the horizon.
