@@ -17,7 +17,7 @@ use crate::world::eep;
 use crate::world::env_apply::{self, Target};
 use crate::world::env_day_edit::{self, DayDoc, LegacyError, LegacyFolder};
 use crate::world::env_select::SettingsKind;
-use crate::world::land::{AgentRights, EnvState};
+use crate::world::land::EnvState;
 use crate::world::notifications::{Data, Kind};
 use crate::world::windlight_presets;
 use aurora_llsd::Llsd;

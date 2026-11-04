@@ -63,6 +63,10 @@ pub struct ParcelState<'a> {
 /// allowAgentBuild / LLParcel::allowModifyBy, with "rez under land group":
 /// the parcel is ours or no one's, open to all, or to its group we are in.
 pub fn agent_can_build(s: &ParcelState) -> bool {
+    // allowAgentBuild: a god builds anywhere
+    if s.god_level > 0 {
+        return true;
+    }
     let parcel = |f: u32| s.parcel.flags & f != 0;
     let owner = s.parcel.owner_id.is_nil() || (!s.parcel.is_group_owned && s.parcel.owner_id == s.agent_id);
     let group_create = s

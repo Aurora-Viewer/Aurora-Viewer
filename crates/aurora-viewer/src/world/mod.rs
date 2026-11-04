@@ -1163,6 +1163,11 @@ impl World {
                 &l.raw["agent_region_access"].to_string_value(),
             )
         });
+        // a god may set and enter any rating (LLAgentAccess::canSetMaturity,
+        // canAccessAdult: isGodlike() first)
+        if self.god_level > 0 {
+            access.max = aurora_net::search::SIM_ACCESS_ADULT;
+        }
         if let Some(preferred) = self.maturity.preferred {
             access.preferred = preferred.min(access.max);
         }

@@ -61,7 +61,13 @@ struct ScriptInfo {
     can_edit: bool,
 }
 
-fn permissions(mask: u32, library: bool) -> (bool, bool) {
+/// Read and edit rights: copy and modify, or copy alone for the library
+/// (read only); a god reads and edits any (LLPreviewLSL::loadAsset,
+/// LLLiveLSLEditor::loadAsset: isGodlike() first).
+fn permissions(mask: u32, library: bool, god: bool) -> (bool, bool) {
+    if god {
+        return (true, !library);
+    }
     let copy = mask & perm::COPY != 0;
     let modify = mask & perm::MODIFY != 0;
     (copy && (modify || library), copy && modify && !library)
@@ -422,7 +428,7 @@ impl App {
             let inv = &self.world.inventory;
             let it = inv.items.get(&target.item).filter(|it| it.asset_type == 10)?;
             let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, it.id, inv.lib_root);
-            let (can_read, can_edit) = permissions(it.owner_mask, library);
+            let (can_read, can_edit) = permissions(it.owner_mask, library, self.world.god_level > 0);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: self.world.main_region.unwrap_or_default(),
@@ -448,7 +454,7 @@ impl App {
             } else {
                 it.everyone_mask | if member { it.group_mask } else { 0 }
             };
-            let (can_read, can_edit) = permissions(mask, false);
+            let (can_read, can_edit) = permissions(mask, false, self.world.god_level > 0);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: object.key.region,
@@ -753,10 +759,13 @@ mod tests {
 
     #[test]
     fn script_source_requires_copy_and_modify_except_read_only_library() {
-        assert_eq!(permissions(perm::COPY | perm::MODIFY, false), (true, true));
-        assert_eq!(permissions(perm::COPY, false), (false, false));
-        assert_eq!(permissions(perm::MODIFY, false), (false, false));
-        assert_eq!(permissions(perm::COPY, true), (true, false));
-        assert_eq!(permissions(perm::COPY | perm::MODIFY, true), (true, false));
+        assert_eq!(permissions(perm::COPY | perm::MODIFY, false, false), (true, true));
+        assert_eq!(permissions(perm::COPY, false, false), (false, false));
+        assert_eq!(permissions(perm::MODIFY, false, false), (false, false));
+        assert_eq!(permissions(perm::COPY, true, false), (true, false));
+        assert_eq!(permissions(perm::COPY | perm::MODIFY, true, false), (true, false));
+        // a god reads and edits any script, the library's read only
+        assert_eq!(permissions(0, false, true), (true, true));
+        assert_eq!(permissions(0, true, true), (true, false));
     }
 }
