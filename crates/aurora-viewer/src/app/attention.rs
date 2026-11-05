@@ -145,6 +145,7 @@ impl App {
         }
         if let Some(id) = keyword_sound {
             log::debug!(target: "ui_sound", "UISndFSKeywordSound ({id})");
+            self.scene.sounds.want_kept(id);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
         }
     }
@@ -236,7 +237,11 @@ impl App {
             .attention
             .title
             .get_or_insert_with(|| (crate::cli::window_title(), crate::cli::window_title()));
-        let want = titled(base, unread, on);
+        let mut want = titled(base, unread, on);
+        // (the 3D paused behind on a busy card, busy_pause.rs)
+        if self.busy_pause.paused() {
+            want = aurora_i18n::tr!("busy-pause-window-title", title = want.as_str());
+        }
         if *shown != want {
             g.window.set_title(&want);
             *shown = want;

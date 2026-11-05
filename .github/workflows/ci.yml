@@ -84,7 +84,9 @@ jobs:
       # a few seconds to a minute; hung for hours once (see concurrency)
       - name: Save the Rust cache
         if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        # a cache that is not saved only slows the next run: never a red job
         timeout-minutes: 10
+        continue-on-error: true
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}
@@ -149,7 +151,9 @@ jobs:
         run: cargo test --profile ci --workspace --locked --no-run
       - name: Save the Rust cache
         if: steps.changes.outputs.needed == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        # a cache that is not saved only slows the next run: never a red job
         timeout-minutes: 10
+        continue-on-error: true
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}
@@ -278,7 +282,9 @@ jobs:
         run: cargo test --profile ci --workspace --locked --no-run
       - name: Save the Rust cache
         if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && matrix.part == 'interface' && steps.cache.outputs.cache-hit != 'true'
+        # a cache that is not saved only slows the next run: never a red job
         timeout-minutes: 10
+        continue-on-error: true
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}

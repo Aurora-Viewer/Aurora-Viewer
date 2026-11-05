@@ -721,7 +721,7 @@ pub struct CachedInventory {
 /// as `sort_children` gives it.
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
     let bytes = crate::cache::read_touch(path).ok()?;
-    let (doc, _) = aurora_llsd::from_binary(&bytes).ok()?;
+    let (doc, _) = aurora_llsd::from_binary_local(&bytes).ok()?;
     // Older files were populated by legacy reads that could discard other
     // favorites. Reload those folders through AIS once, even at equal versions.
     if doc["version"].as_i32() != 3 {

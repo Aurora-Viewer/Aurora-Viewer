@@ -277,11 +277,12 @@ pub(super) fn toolbar(
         if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("resource-preview-refresh"), true) {
             actions.push(Action::RefreshTexture(item.asset_id));
         }
-        if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), true) {
+        // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions only
+        let full = item.owner_mask & rules::FULL == rules::FULL;
+        if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), full) {
             ui.ctx().copy_text(item.asset_id.to_string());
         }
-        let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
-        ui.add_enabled_ui(item.owner_mask & full == full, |ui| {
+        ui.add_enabled_ui(full, |ui| {
             egui::ComboBox::from_id_salt("texture_export")
                 .selected_text(aurora_i18n::tr!("common-save-as"))
                 .show_ui(ui, |ui| {
