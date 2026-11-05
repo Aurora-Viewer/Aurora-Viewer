@@ -9,7 +9,14 @@ use aurora_net::{NetCommand, control};
 impl App {
     /// The buttons this frame shows.
     pub(super) fn stand_fly_buttons(&self) -> Buttons {
+        // greyed Stand: the same RLVa query as the menu's Stand up item and
+        // the click guard (RlvActions::canStand)
+        let stand_locked = !self
+            .world
+            .rlva_allows_command(&NetCommand::OneShotControl(control::STAND_UP), uuid::Uuid::nil());
         stand_fly::buttons(&stand_fly::State {
+            enabled: self.settings.show_stand_fly_panel,
+            stand_locked,
             seated: self.world.agent.is_sitting(),
             flying: self.world.agent.flying,
             flycam: self.joystick.active,
@@ -49,7 +56,7 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_STAND_FLY=ground|object|fly|stand|land: at frame 240 our
+    /// AURORA_DEMO_STAND_FLY=ground|object|fly|stand|land|locked|fly-rlva: at frame 240 our
     /// avatar sits on the ground (`ground`, `stand`) or takes off (`fly`,
     /// `land`); at 300 `object` sits on the nearest prim. At 480 `stand`
     /// and `land` press the panel's button. The log gives the buttons shown
@@ -63,11 +70,14 @@ impl App {
         };
         let mode = mode.trim();
         match (self.frame_count, mode) {
-            (240, "ground" | "stand") if !self.world.agent.is_sitting() => {
+            (240, "ground" | "stand" | "locked") if !self.world.agent.is_sitting() => {
                 self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND));
             }
-            (240, "fly" | "land") if !self.world.agent.flying => self.toggle_fly(),
+            (240, "fly" | "land" | "fly-rlva") if !self.world.agent.flying => self.toggle_fly(),
             (300, "object") => self.demo_sit_on_nearest_prim(),
+            // RLVa restrictions arriving once seated / flying
+            (300, "locked") => self.world.rlva_console_input("@unsit=n"),
+            (300, "fly-rlva") => self.world.rlva_console_input("@fly=n"),
             (480, "stand") => self.stand_fly_action(Action::Stand),
             (480, "land") => self.stand_fly_action(Action::StopFlying),
             (470 | 560, _) => log::info!(

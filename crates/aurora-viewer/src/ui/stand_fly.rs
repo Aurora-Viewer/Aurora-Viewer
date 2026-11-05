@@ -9,8 +9,11 @@
 //! flying, EXT-871), Flycam while the joystick flycam is on. The panel goes
 //! with the hidden interface (HideUIControls) and in mouselook, unless the
 //! interface stays there (FSShowInterfaceInMouselook). RLVa does not hide
-//! nor grey Stand, as in the Legacy Viewer: the click does nothing when
-//! @unsit forbids it (`App::stand_fly_action`).
+//! Stand but greys it while @unsit forbids standing, like Aurora's own Stand
+//! up menu item. The Legacy Viewer leaves it enabled and only ignores the
+//! click; this differs on purpose (the human's decision on #2479), and the
+//! click is still refused (`App::stand_fly_action`). A setting
+//! (`show_stand_fly_panel`) hides the panel altogether.
 //!
 //! The Legacy Viewer keeps the panel at a fixed spot of its bottom toolbar
 //! area; here it sits centred just above the bottom bar, in the overlay
@@ -28,6 +31,10 @@ const GAP: f32 = 8.0;
 /// What a frame knows of our avatar and the interface.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct State {
+    /// The setting `show_stand_fly_panel`.
+    pub enabled: bool,
+    /// RLVa forbids standing (@unsit) right now.
+    pub stand_locked: bool,
     /// Sitting, on the ground or on an object.
     pub seated: bool,
     pub flying: bool,
@@ -46,6 +53,8 @@ pub struct Buttons {
     pub stand: bool,
     pub stop_flying: bool,
     pub flycam: bool,
+    /// Stand is shown but greyed: RLVa forbids standing.
+    pub stand_disabled: bool,
 }
 
 impl Buttons {
@@ -68,11 +77,12 @@ pub enum Action {
 /// setStandStopFlyingMode / clearStandStopFlyingMode and setVisible: Stand
 /// and Stop flying share one slot (sitting wins), Flycam has its own.
 pub fn buttons(s: &State) -> Buttons {
-    if s.ui_hidden || (s.mouselook && !s.show_in_mouselook) {
+    if !s.enabled || s.ui_hidden || (s.mouselook && !s.show_in_mouselook) {
         return Buttons::default();
     }
     Buttons {
         stand: s.seated,
+        stand_disabled: s.seated && s.stand_locked,
         stop_flying: s.flying && !s.seated,
         flycam: s.flycam,
     }
@@ -103,9 +113,17 @@ pub fn show(ctx: &egui::Context, p: &Palette, shown: Buttons, bottom_top: f32) -
                     let size = Vec2::new(0.0, BUTTON_H);
                     let kind = widgets::ActionKind::Flat;
                     if shown.stand
-                        && widgets::action_button(ui, p, "man-filled", aurora_i18n::tr!("common-stand-up"), kind, size)
-                            .on_hover_text(aurora_i18n::tr!("stand-panel-stand-tip"))
-                            .clicked()
+                        && widgets::action_button_if(
+                            ui,
+                            p,
+                            "man-filled",
+                            aurora_i18n::tr!("common-stand-up"),
+                            kind,
+                            size,
+                            !shown.stand_disabled,
+                        )
+                        .on_hover_text(aurora_i18n::tr!("stand-panel-stand-tip"))
+                        .clicked()
                     {
                         action = Some(Action::Stand);
                     }
@@ -135,7 +153,10 @@ mod tests {
     use egui::{Pos2, Rect};
 
     fn state() -> State {
-        State::default()
+        State {
+            enabled: true,
+            ..State::default()
+        }
     }
 
     #[test]
@@ -181,6 +202,46 @@ mod tests {
         let up = State { seated: false, ..seated };
         assert!(buttons(&seated).stand);
         assert!(buttons(&up).stop_flying && !buttons(&up).stand);
+    }
+
+    #[test]
+    fn rlva_greys_stand_while_seated() {
+        let b = buttons(&State {
+            seated: true,
+            stand_locked: true,
+            ..state()
+        });
+        assert!(b.stand && b.stand_disabled);
+        // not seated: the lock concerns no button
+        let b = buttons(&State {
+            flying: true,
+            stand_locked: true,
+            ..state()
+        });
+        assert!(b.stop_flying && !b.stand && !b.stand_disabled);
+        assert!(!buttons(&State { seated: true, ..state() }).stand_disabled);
+    }
+
+    #[test]
+    fn the_setting_off_hides_the_panel_in_every_state() {
+        let all = State {
+            enabled: false,
+            seated: true,
+            flying: true,
+            flycam: true,
+            stand_locked: true,
+            ..state()
+        };
+        assert!(!buttons(&all).any());
+        assert!(!buttons(&State { seated: false, ..all }).any());
+        assert!(
+            !buttons(&State {
+                flycam: false,
+                seated: false,
+                ..all
+            })
+            .any()
+        );
     }
 
     #[test]
