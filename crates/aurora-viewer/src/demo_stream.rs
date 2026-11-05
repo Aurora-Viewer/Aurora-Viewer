@@ -272,7 +272,7 @@ const FEED_AGAIN: Duration = Duration::from_secs(2);
 fn spawn_cache_hits(jobs: &Jobs, files: Arc<Vec<PathBuf>>, textures: Vec<u32>) {
     jobs.spawn_many(textures, move |i| JobResult::TextureCache {
         id: texture(i),
-        data: std::fs::read(&files[i as usize % files.len()]).ok(),
+        data: crate::cache::read(&files[i as usize % files.len()]).ok(),
         complete: true,
         keep_rgba: false,
     });

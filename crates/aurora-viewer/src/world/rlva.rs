@@ -451,6 +451,8 @@ pub struct Rlva {
     pub pending: Vec<(Uuid, Command)>,
     pub out: Vec<NetCommand>,
     pub appearance: Vec<(Uuid, super::appearance::Action)>,
+    /// Attachments a forced batch asked for, not arrived yet (`rlva_force_settled`).
+    pub requested_wears: std::collections::HashMap<Uuid, std::time::Instant>,
     pub viewer: Vec<(Uuid, Command)>,
     pub camera_values: BTreeMap<String, String>,
     pub groups: groups::Groups,

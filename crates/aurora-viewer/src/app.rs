@@ -33,6 +33,7 @@ mod attention;
 mod audio_mute;
 mod avatar_render_settings;
 mod bridge;
+mod busy_pause;
 mod movelock;
 mod particle_editor;
 mod portals;
@@ -75,6 +76,7 @@ mod gestures;
 mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
+pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
 mod graphics_start;
 mod grid_status;
 mod group_titles;
@@ -767,6 +769,8 @@ pub struct App {
     occluded: bool,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
+    /// The 3D paused behind on a busy card (app/busy_pause.rs).
+    busy_pause: busy_pause::BusyPause,
     /// The other viewers on this PC (instances.rs).
     instances: crate::instances::Instances,
     /// The Down key's latch (FSCrouchToggle).
@@ -1162,6 +1166,11 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
     }
+    if let Ok(value) = std::env::var("AURORA_PROJECTOR_SHADOW_LIMIT")
+        && let Ok(limit) = value.parse::<u8>()
+    {
+        settings.projector_shadow_limit = limit.clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
+    }
     if let Ok(v) = std::env::var("AURORA_HDR") {
         settings.hdr_emissive = v != "0";
     }
@@ -1209,7 +1218,16 @@ impl App {
         media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
         let lib = Arc::new(AvatarLibrary::load());
-        let cache = crate::settings::cache_dir();
+        // the asset cache store: its key first (the credential store, read
+        // here rather than by the first streamer thread), then the folders
+        // of the earlier format go
+        aurora_net::objcache::seal_with(crate::cache::key().clone());
+        // (not the demo's: its folder is shared by the demo runs of every
+        // build, and holds nothing from the grid)
+        if std::env::var_os("AURORA_DEMO").is_none() {
+            crate::cache::remove_unsealed(crate::settings::cache_dir());
+        }
+        let cache = crate::settings::asset_cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);
         net.set_object_cache_dir(Some(cache.join("objects")));
         net.set_bandwidth(bandwidth_kbps(&settings));
@@ -1577,6 +1595,7 @@ impl App {
             crash_timeline: Default::default(),
             occluded: false,
             gpu_stall: Default::default(),
+            busy_pause: Default::default(),
             instances: crate::instances::Instances::new(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
@@ -8334,6 +8353,11 @@ impl App {
         if self.demo {
             self.demo_uri_restore();
         }
+        if self.demo && crate::demo::projector_bench_done() {
+            log::info!("projector benchmark end");
+            self.shutdown(event_loop);
+            return;
+        }
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
@@ -8894,6 +8918,13 @@ impl App {
                 late_camera_frame = Some(frame);
             } else {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            }
+            if self.demo
+                && let Some((eye, target)) = crate::demo::projector_camera(self.frame_count)
+            {
+                self.camera.position = eye;
+                self.camera.target = target;
+                self.interface.set_hidden(&self.egui_ctx, true);
             }
             let at = self.camera.forward();
             let step_back = self.settings.walk_backwards_without_turning;
@@ -9768,7 +9799,7 @@ impl App {
             // offline demo teleport: the real steps, landing where we were
             let e = t0.elapsed().as_secs_f32();
             let w = &mut self.world;
-            if e >= 3.2 {
+            if e >= 3.2 && !crate::demo::tp_no_arrival() {
                 self.demo_tp_start = None;
                 w.tp_progress = 0.6;
                 w.tp_status = aurora_i18n::tr!("common-loading-region").into();
@@ -9821,6 +9852,22 @@ impl App {
                 self.tp_dest = None;
             }
         }
+        // no answer from the region: stop waiting, without ending the session
+        if self.world.arrival_overdue(Instant::now(), self.scene.own_attachment_count()) {
+            let kind = if self.world.teleporting {
+                aurora_net::transition::Kind::Teleport
+            } else {
+                aurora_net::transition::Kind::Crossing
+            };
+            aurora_net::transition::end(
+                Some(kind),
+                "failed (the region did not confirm the arrival in time)",
+                &self.net.stats,
+            );
+            self.demo_tp_start = None;
+            self.world.give_up_arrival();
+            self.net.send(NetCommand::ArrivalGivenUp);
+        }
         let tp = self.world.teleporting && self.world.tp_show_progress && matches!(self.screen, Screen::World);
         if tp && !self.was_teleporting {
             // keep the view we are leaving for the teleport screen
@@ -9861,15 +9908,6 @@ impl App {
                         teleport_screen::Mode::Quick => "arrived (teleport screen hidden)",
                         teleport_screen::Mode::Old => "arrived (teleport screen hidden, old screen)",
                     },
-                    &self.net.stats,
-                );
-            }
-            // no answer from the simulator: give up the screen
-            if o.arrived.is_none() && o.start.elapsed() > Duration::from_secs(90) && o.end.is_none() {
-                o.end = Some(Instant::now());
-                aurora_net::transition::end(
-                    Some(aurora_net::transition::Kind::Teleport),
-                    "failed (no arrival 90 s after the teleport screen was shown)",
                     &self.net.stats,
                 );
             }
@@ -9995,10 +10033,15 @@ impl App {
                 range: self.settings.draw_distance,
                 dt,
                 projector_shadows: self.settings.projector_shadows && self.settings.shadow_quality > 0,
+                projector_shadow_limit: aurora_render::projector_shadows::effective_limit(
+                    self.settings.shadow_params().0,
+                    self.settings.projector_shadow_limit,
+                    gfx.renderer.max_texture_dimension(),
+                ),
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
-            (Vec::new(), [None; 2])
+            (Vec::new(), [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS])
         };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
@@ -10018,9 +10061,10 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         let mut fp = FrameParams {
-            // (a window behind past the driver's budget pauses its 3D
-            // drawing: its 3D targets shrink, texture_budget::Background)
-            rlva_resolution_divisor: if self.scene.textures.drawing_paused() {
+            // (a window behind past the driver's budget, or on a card another
+            // program keeps busy, pauses its 3D drawing: its 3D targets
+            // shrink, texture_budget::Background, busy_pause.rs)
+            rlva_resolution_divisor: if self.drawing_paused() {
                 PAUSED_RESOLUTION_DIVISOR
             } else {
                 self.world.rlva.resolution_divisor.unwrap_or(1)
@@ -10846,8 +10890,8 @@ impl App {
         // returned are those of the frame before; a frame that carries a
         // capture is waited for, its pixels are read in the tail below.
         // (nothing of the scene while the 3D drawing is paused behind,
-        // texture_budget::Background)
-        let lists = if self.in_world() && !self.scene.textures.drawing_paused() {
+        // texture_budget::Background, busy_pause.rs)
+        let lists = if self.in_world() && !self.drawing_paused() {
             &self.scene.lists
         } else {
             &self.empty_lists
@@ -10860,6 +10904,7 @@ impl App {
         self.photo_gpu_time(&stats);
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
+        self.busy_pause_frame(gfx.renderer.vr_engaged());
         if stats.presented && !gfx.shown {
             gfx.shown = true;
             // On Windows, maximizing can show even a hidden window. Defer
@@ -14426,6 +14471,7 @@ impl App {
         if !matches!(self.screen, Screen::World) && self.interface.hidden {
             self.interface.set_hidden(&ctx, false);
         }
+        self.busy_pause_notice(&ctx, &p);
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {
@@ -20114,6 +20160,11 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.last_input = Instant::now();
+                // (AURORA_DEMO_BUSY_PAUSE: a click ends the demo's busy card,
+                // as the focus does a real one; busy_pause.rs)
+                if *state == ElementState::Pressed && self.busy_pause.paused() {
+                    self.busy_pause.demo_released = true;
+                }
                 if *button == MouseButton::Left {
                     self.alt_cursor.left_button(*state == ElementState::Pressed);
                 }

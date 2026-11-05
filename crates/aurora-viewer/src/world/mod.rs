@@ -10,6 +10,7 @@ pub mod body;
 pub mod bubble_chat;
 pub mod calling_cards;
 
+mod arrival_wait;
 pub mod beacons;
 pub mod bridge;
 pub mod calls;
@@ -618,6 +619,8 @@ pub struct World {
     /// The parcels and accounts of the group whose "Land and L$" tab shows.
     pub group_money: group_money::GroupMoney,
     arrived_once: bool,
+    /// Since when a teleport or crossing awaits its arrival (`arrival_wait.rs`).
+    arrival_wait_since: Option<Instant>,
     /// The instant messages kept while offline were asked for (once per
     /// login).
     offline_im_requested: bool,
@@ -856,6 +859,7 @@ impl World {
             experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
+            arrival_wait_since: None,
             offline_im_requested: false,
             group_titles: Default::default(),
             region_alerts: Default::default(),
@@ -1119,6 +1123,7 @@ impl World {
         self.cancel_friend_join();
         self.map.cancel_avatar_teleport();
         self.teleporting = true;
+        self.arrival_wait_since = None;
         self.tp_show_progress = show_progress;
         self.tp_failed = false;
         self.tp_progress = 0.05;
@@ -5643,6 +5648,7 @@ mod appearance_tests {
 mod motion_tests {
     use super::*;
     use aurora_net::objects::TerseUpdate;
+    use std::time::Duration;
 
     #[test]
     fn animation_signals_keep_continuous_time_until_an_observed_stop() {
@@ -5714,6 +5720,51 @@ mod motion_tests {
         world.main_region = Some(handle);
         world.ensure_region(handle, (256, 256));
         (world, update, handle)
+    }
+
+    /// A teleport the region never confirms: the wait ends after the Legacy
+    /// Viewer's delay, with a notice and a usable world, and a late confirmation
+    /// is still taken. A crossing ends the same way, without "teleport failed".
+    #[test]
+    fn an_arrival_never_confirmed_stops_waiting_after_its_delay() {
+        let (mut world, handle) = teleport_fixture();
+        let start = Instant::now();
+        assert!(!world.arrival_overdue(start, 1), "nothing awaited");
+
+        world.begin_teleport(true);
+        world.movement_complete = false;
+        assert!(!world.arrival_overdue(start, 1));
+        assert!(!world.arrival_overdue(start + Duration::from_secs(18), 1));
+        assert!(world.arrival_overdue(start + Duration::from_secs(19), 1));
+        world.give_up_arrival();
+        assert!(!world.teleporting && world.tp_failed && world.movement_complete);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(20), 1), "the wait is over");
+
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(220.0, 230.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert_eq!(
+            world.agent.position,
+            Vec3::new(220.0, 230.0, 30.0),
+            "a late confirmation is still taken"
+        );
+
+        world.tp_failed = false;
+        world.movement_complete = false;
+        world.crossing = true;
+        assert!(!world.arrival_overdue(start, 0));
+        assert!(world.arrival_overdue(start + Duration::from_secs(16), 0));
+        world.give_up_arrival();
+        assert!(!world.crossing && world.movement_complete);
+        assert!(!world.teleporting && !world.tp_failed, "a crossing is no failed teleport");
+
+        // A new teleport starts its own wait, whatever was running.
+        world.begin_teleport(true);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(100), 0));
+        world.begin_teleport(true);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(200), 0));
     }
 
     fn teleport_fixture() -> (World, RegionHandle) {
