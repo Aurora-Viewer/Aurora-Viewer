@@ -5494,10 +5494,17 @@ impl App {
         self.settings.media.filter = true;
         self.settings.media.filter_explained = mode != "first";
         match mode.as_str() {
-            "ask" | "1" | "first" => {
+            // `data`: a page held in the URL, asked about as "data";
+            // `script`: a script URL, refused without a question
+            "ask" | "1" | "first" | "data" | "script" => {
+                let url = match mode.as_str() {
+                    "data" => "data:text/html,<h1>Aurora</h1>",
+                    "script" => "javascript:void(0)",
+                    _ => "https://media.example.com/welcome/index.html",
+                };
                 if let Some(parcel) = self.world.parcel.as_mut() {
                     let pc = Arc::make_mut(parcel);
-                    pc.media_url = "https://media.example.com/welcome/index.html".into();
+                    pc.media_url = url.into();
                     pc.media.mime = "text/html".into();
                     pc.media.media_id = crate::demo::parcel_media_texture();
                     pc.media.auto_scale = true;
@@ -5519,18 +5526,19 @@ impl App {
                     self.world.media_filter.apply(Edit::Set(site.into(), action));
                 }
             }
-            // media on an item we wear (on our back, or a HUD), on a site the
-            // list does not know: no question unless `-ask` turns
+            // media on an item we wear (on our back, or a HUD) and made, on a
+            // site the list does not know: no question unless `-ask` turns
             // filter_trust_own_worn off; `-blocked` puts the site in the list
-            // as blocked
-            "worn" | "worn-ask" | "worn-blocked" | "hud" | "hud-ask" | "hud-blocked" => {
+            // as blocked; `-gift`: an item someone else made, asked about
+            "worn" | "worn-ask" | "worn-blocked" | "worn-gift" | "hud" | "hud-ask" | "hud-blocked" | "hud-gift" => {
                 let url = "https://media.example.com/earring/index.html";
                 self.settings.media.filter_trust_own_worn = !mode.ends_with("-ask");
                 if mode.ends_with("-blocked") {
                     self.world.media_filter.apply(Edit::Set("media.example.com".into(), Action::Deny));
                 }
-                if mode.starts_with("hud") {
-                    self.demo_hud_media(url);
+                let item = if mode.starts_with("hud") {
+                    // a HUD's AttachItemID is its own id in the demo
+                    self.demo_hud_media(url)
                 } else {
                     if std::env::var_os("AURORA_DEMO_WORN").is_none() {
                         for ev in crate::demo::worn::events() {
@@ -5538,7 +5546,14 @@ impl App {
                         }
                     }
                     self.media.demo_entry(crate::demo::worn::root().full_id, 0, url);
-                }
+                    crate::demo::worn::item_id()
+                };
+                let creator = if mode.ends_with("-gift") {
+                    crate::demo::DEMO_LOUP
+                } else {
+                    self.world.agent_id
+                };
+                self.demo_worn_item(item, creator);
             }
             _ => log::warn!("AURORA_DEMO_MEDIA_FILTER: unknown mode {mode}"),
         }
@@ -5546,8 +5561,30 @@ impl App {
 
     /// AURORA_DEMO_HUDS=media (and the media filter's `hud` modes): a worn
     /// HUD screen with media on `url`, playing at once.
-    fn demo_hud_media(&mut self, url: &str) {
+    /// The inventory item a demo attachment is worn from, made by
+    /// `creator`: the media filter trusts the media of what we made.
+    fn demo_worn_item(&mut self, item: uuid::Uuid, creator: uuid::Uuid) {
+        let mut it = self
+            .world
+            .inventory
+            .items
+            .get(&item)
+            .cloned()
+            .unwrap_or_else(|| aurora_net::inventory::InvItem {
+                id: item,
+                name: aurora_i18n::tr!("demo-worn-item").into(),
+                owner: self.world.agent_id,
+                asset_type: 6,
+                inv_type: 6,
+                ..Default::default()
+            });
+        it.creator = creator;
+        self.world.inventory.add_items(vec![it]);
+    }
+
+    fn demo_hud_media(&mut self, url: &str) -> uuid::Uuid {
         let mut hud = crate::demo::hud::object(35, false);
+        let id = hud.full_id;
         let face = crate::demo::media_screen().2;
         hud.scale = Vec3::new(0.012, 0.7, 0.394);
         if let Some(te) = hud.texture_entry.as_mut() {
@@ -5562,6 +5599,7 @@ impl App {
             handle: self.world.main_region.unwrap_or_default(),
             objects: vec![hud],
         });
+        id
     }
 
     fn update_audio(&mut self) {
@@ -5597,8 +5635,9 @@ impl App {
         };
         let mut want = if self.music_playing { url } else { String::new() };
         // the media filter (filterAudioUrl): nothing reaches the station
-        // before the resident answered; a refusal turns the radio off
-        if !want.is_empty() && self.settings.media.filter {
+        // before the resident answered; a refusal turns the radio off. A
+        // file or script URL never plays, with the filter off too.
+        if !want.is_empty() && (self.settings.media.filter || crate::media::filter::refused_scheme(&want).is_some()) {
             use crate::media::filter::{Source, Verdict};
             match self.world.media_filter.check(&want, Source::Music) {
                 Verdict::Allow => {}
@@ -19782,7 +19821,8 @@ impl ApplicationHandler for App {
                     }
                 }
                 if mode == "media" {
-                    self.demo_hud_media(crate::demo::demo_media_page());
+                    let item = self.demo_hud_media(crate::demo::demo_media_page());
+                    self.demo_worn_item(item, self.world.agent_id);
                 }
             }
             // AURORA_DEMO_PARCEL_MEDIA=<url> (1: the test page): parcel media
