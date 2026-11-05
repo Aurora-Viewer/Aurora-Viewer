@@ -3675,12 +3675,13 @@ impl App {
                         openid_token.to_owned(),
                     );
                 }
-                // interface sounds ready when needed (init_audio preloads)
+                // interface sounds ready when needed (init_audio preloads),
+                // and kept in memory
                 for id in self.settings.audio.ui.preload() {
-                    self.scene.sounds.want(id);
+                    self.scene.sounds.want_kept(id);
                 }
                 if let Some(id) = attention::keyword_sound(&self.settings, &self.settings.keywords) {
-                    self.scene.sounds.want(id);
+                    self.scene.sounds.want_kept(id);
                 }
                 // remembered password: the hash of the one typed (kept when
                 // the remembered one was used); otherwise forgotten
@@ -5170,6 +5171,7 @@ impl App {
         if let Some(id) = self.settings.audio.ui.resolve(s, false) {
             // RUST_LOG=info,ui_sound=debug (Firestorm UISndDebugSpamToggle)
             log::debug!(target: "ui_sound", "UISnd{} ({id})", s.entry().name);
+            self.scene.sounds.want_kept(id);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
         }
     }
