@@ -43,7 +43,7 @@ pub struct Config {
     pub show_history: bool,
     /// Date in the file names (LogFileNamewithDate).
     pub dated_names: bool,
-    /// Import the Legacy Viewer's transcripts at login. Off by default.
+    /// Import the Legacy Viewer's transcripts at login. On by default.
     pub import_at_login: bool,
 }
 
@@ -54,7 +54,7 @@ impl Default for Config {
             log_nearby: false,
             show_history: true,
             dated_names: false,
-            import_at_login: false,
+            import_at_login: true,
         }
     }
 }

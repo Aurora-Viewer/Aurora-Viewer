@@ -9065,8 +9065,15 @@ ui-options-chat-logs-erased = { $count ->
     }
 ui-options-chat-logs-erase-failed = 一部のファイルを消去できませんでした。
 ui-options-chat-logs-import-login = ログイン時にインポート
-ui-options-chat-logs-import-login-help = ログインのたびに、前回のインポート以降にLegacy Viewerがこのアカウントに書き込んだ内容を追加します。Legacy Viewerのファイルは読み取るだけです。既定ではオフです。
+ui-options-chat-logs-import-login-help = ログインのたびに、前回のインポート以降にLegacy Viewerがこのアカウントに書き込んだ内容を追加します。Legacy Viewerのファイルは読み取るだけです。既定ではオンです。
 ui-options-chat-logs-import-login-off = この履歴が戻らないよう、ログイン時のインポートをオフにしました。
+ui-options-chat-logs-imported-at-login = Legacy Viewerのチャット履歴：{ $files ->
+    [one] { $files }件の会話
+   *[other] { $files }件の会話
+    }に{ $count ->
+    [one] { $count }件のメッセージを追加しました。
+   *[other] { $count }件のメッセージを追加しました。
+    }止めるには、「ログイン時にインポート」をオフにしてください（環境設定 › チャット › 履歴）。
 ui-options-chat-logs-import = Legacy Viewerからインポート…
 ui-options-chat-logs-import-title = Legacy Viewerのチャット履歴をインポート
 ui-options-chat-logs-import-text = 会話はこのアカウントのファイルに時系列で追加され、すでにあるメッセージは飛ばされるため、再度インポートしても新しい分だけが追加されます。Legacy Viewerのファイルは読み取るだけです。

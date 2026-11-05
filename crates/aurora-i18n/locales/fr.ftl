@@ -9071,8 +9071,15 @@ ui-options-chat-logs-erased = { $count ->
     }
 ui-options-chat-logs-erase-failed = Certains fichiers n'ont pas pu être effacés.
 ui-options-chat-logs-import-login = Importer à la connexion
-ui-options-chat-logs-import-login-help = À chaque connexion, ajoute ce que le Legacy Viewer a écrit pour ce compte depuis le dernier import. Ses fichiers sont seulement lus. Désactivé par défaut.
+ui-options-chat-logs-import-login-help = À chaque connexion, ajoute ce que le Legacy Viewer a écrit pour ce compte depuis le dernier import. Ses fichiers sont seulement lus. Activé par défaut.
 ui-options-chat-logs-import-login-off = L'import à la connexion est maintenant désactivé, pour que cet historique ne revienne pas.
+ui-options-chat-logs-imported-at-login = Historique du Legacy Viewer : { $count ->
+    [one] { $count } message ajouté
+   *[other] { $count } messages ajoutés
+    } à { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    } Pour arrêter, désactivez Importer à la connexion (Préférences › Chat › Historique).
 ui-options-chat-logs-import = Importer depuis le Legacy Viewer…
 ui-options-chat-logs-import-title = Importer l'historique de chat du Legacy Viewer
 ui-options-chat-logs-import-text = Les conversations sont ajoutées aux fichiers de ce compte par ordre chronologique et les messages déjà présents sont ignorés : importer à nouveau n'ajoute que les nouveautés. Les fichiers du Legacy Viewer sont seulement lus.

@@ -9078,8 +9078,15 @@ ui-options-chat-logs-erased = { $count ->
     }
 ui-options-chat-logs-erase-failed = Some files could not be erased.
 ui-options-chat-logs-import-login = Import at login
-ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import. Its files are only read. Off by default.
+ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import. Its files are only read. On by default.
 ui-options-chat-logs-import-login-off = Import at login is now off, so that this history does not come back.
+ui-options-chat-logs-imported-at-login = Chat history from the Legacy Viewer: { $count ->
+    [one] { $count } message added
+   *[other] { $count } messages added
+    } to { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    } To stop this, turn off Import at login (Preferences › Chat › History).
 ui-options-chat-logs-import = Import from the Legacy Viewer…
 ui-options-chat-logs-import-title = Import chat history from the Legacy Viewer
 ui-options-chat-logs-import-text = Conversations are added to this account's files in time order, and the messages already there are skipped, so importing again adds only what is new. The Legacy Viewer's files are only read.

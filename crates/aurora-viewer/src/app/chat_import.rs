@@ -93,6 +93,17 @@ impl App {
             return;
         };
         self.options_ui.chat_log_status = import_status(&report);
+        if report.at_login && report.added > 0 {
+            // on by default: say what came in, and where to turn it off
+            self.world.system_notice(
+                aurora_i18n::tr!(
+                    "ui-options-chat-logs-imported-at-login",
+                    count = report.added,
+                    files = report.changed.len()
+                ),
+                crate::world::notice_topics::Topic::Info,
+            );
+        }
         self.history_ui.imported(&report.changed);
         self.demo_chat_import_done();
     }

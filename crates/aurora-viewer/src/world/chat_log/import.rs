@@ -430,6 +430,8 @@ pub struct Report {
     pub failed: usize,
     /// Text files without any timestamp, not imported.
     pub left_out: usize,
+    /// Started by the login, not by the import window.
+    pub at_login: bool,
 }
 
 /// An import under way.
@@ -519,6 +521,7 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
     let missing: HashSet<PathBuf> = plan.iter().map(|(_, target)| target).filter(|t| !t.is_file()).cloned().collect();
     let mut out = Report {
         left_out,
+        at_login: request.skip_unchanged,
         ..Report::default()
     };
     let mut first_error = None;
