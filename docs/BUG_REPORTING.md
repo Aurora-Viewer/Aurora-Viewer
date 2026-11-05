@@ -86,6 +86,13 @@ What each part tells the one who fixes it:
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
+- **GPU work at the loss**: the frame last submitted to the card and the
+  last one it finished, each with its age at the loss, and what that says:
+  a hang (the last frame not finished 0.5 s or more after its submission:
+  the driver reset the card; a real hang on an RTX 5070 Ti was declared
+  1.1 s after), a fault the driver found in a frame's work (the loss within
+  0.1 s of the submission, or after the frame ended), or undecided between
+  the two. Frame numbers and ages only.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
   during the session (`AURORA_GPU_RECOVERY=1`), how many, and for the first
   five when in the session, how long the recovery took and whether it came
@@ -93,6 +100,12 @@ What each part tells the one who fixes it:
 - **Overlay hooks**: the overlay or capture programs that injected their
   hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
   game capture), named from the viewer's fixed list only.
+- **Vulkan layers on offer**: the `VK_LAYER_*` names the Vulkan loader offers
+  to the viewer, noted at the very start, so a crash while Vulkan starts has
+  them too.
+- **GPU errors**: the errors wgpu reported, first of each in the order they
+  came: `out-of-memory` or the wgpu operation that failed
+  (`Queue::write_buffer`). Their messages stay in the local log.
 - **Last state**: screen, frame rate, frame time, window size, graphics
   preset, memory, video memory used / budget, the tightest video memory
   headroom of the last 60 seconds (the driver's budget less what it
@@ -101,7 +114,21 @@ What each part tells the one who fixes it:
   memory out and the frames slow down together), texture memory pressure,
   objects, avatars, regions, as noted every 2 seconds, and the swapchain
   recreations of the last 10 seconds (window resizes among them), frozen
-  when the graphics card is lost.
+  when the graphics card is lost. It also tells the cause of a GPU loss
+  apart from another: the graphics switches on (shadows level, contact
+  shadows, ambient occlusion, SSR, anti-aliasing, bloom, indirect light,
+  probes, render scale, draw distance, VR, and photo when one was drawn in
+  the last 10 seconds), the window state
+  (focused, background, minimized, occluded), the latest GPU frame time,
+  the longest one of the last 10 seconds with the pass that took most of it
+  and its ambient occlusion and contact shadows,
+  the texture uploads (count, MB), the seconds since the login began, in
+  the world and since the region changed, what was still loading, how the
+  loss was seen (the
+  reason wgpu gave, the class of its message, the first place that saw it),
+  how long the GPU held the render thread past 2 seconds (no row otherwise:
+  a reset that comes sooner shows in **GPU work at the loss**), the other Aurora viewers on the card (from the viewer registry, not in demo),
+  and the card's memory in use by all programs and by the others (Windows). Fixed words and numbers only.
 - **Recent warnings and errors**: the last 20, as
   `-<seconds before the end> s | level | Rust module | kind`, repeats folded
   (`(x3)`); the messages themselves stay in the local log.

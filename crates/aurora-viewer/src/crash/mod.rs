@@ -18,6 +18,10 @@ mod threads;
 mod watchdog;
 mod window;
 
+#[cfg(test)]
+pub(crate) use summary::state_value as summary_state_value;
+#[cfg(test)]
+pub(crate) use watchdog::WINDOW_STATES;
 pub use watchdog::{State, note as note_state, pumped, watch_window};
 
 use std::io::{Read, Write};
@@ -246,7 +250,24 @@ fn start_inner() -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+    note_vulkan_layers(&dir);
     Ok(())
+}
+
+/// The Vulkan layers on offer go to `vulkan-layers.txt` as soon as they are
+/// known, on a thread of their own: a crash while Vulkan starts, before any
+/// note of the state, is where the report needs them most (#2241).
+fn note_vulkan_layers(dir: &Path) {
+    let dir = dir.to_owned();
+    let spawned = std::thread::Builder::new().name("aurora-crash-facts".into()).spawn(move || {
+        let names = aurora_render::vulkan_layers::loaded_names();
+        if !names.is_empty() {
+            let _ = std::fs::write(dir.join("vulkan-layers.txt"), names.join(","));
+        }
+    });
+    if let Err(error) = spawned {
+        eprintln!("the Vulkan layers are not noted for a crash report: {error}");
+    }
 }
 
 pub fn update(theme: &crate::theme::Theme, settings: &crate::settings::Settings) {

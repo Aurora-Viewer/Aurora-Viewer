@@ -20,6 +20,7 @@ mod blender_live;
 // mod bug_report;
 mod build;
 mod cache;
+mod cache_key;
 mod cache_location;
 mod camera;
 mod cli;
@@ -91,6 +92,7 @@ mod stream_title;
 mod sys_probe;
 mod system_info;
 mod system_notify;
+mod text_validation;
 mod theme;
 mod tolerant;
 mod ui;
@@ -231,6 +233,9 @@ fn run_viewer() -> anyhow::Result<()> {
     }
     let mut app = app::App::new()?;
     let result = event_loop.run_app(app.as_mut());
+    // a graphics card box still shown would outlive the viewer on macOS and
+    // Linux (app/gpu_stall.rs)
+    app::withdraw_gpu_notices(std::time::Duration::from_secs(1));
     // later launches no longer hand their link to this closing viewer
     slurl_handoff::release();
     // the pipelines compiled since the last save (made after the start:

@@ -419,10 +419,12 @@ impl HistoryUi {
         // a page opens at its end, the most recent of its messages
         let area = crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("chat_history", self.page))
             .stick_to_bottom(true)
+            // the view moves the offset before this frame's wheel (`View::show`)
+            .animated(false)
             .auto_shrink([false, false])
             .max_height(height)
             .min_scrolled_height(height);
-        let out = area.show_viewport(ui, |ui, viewport| {
+        area.show_viewport(ui, |ui, viewport| {
             let width = (ui.available_width() * 2.0).round() / 2.0;
             view.sync(
                 &Source {
@@ -436,7 +438,7 @@ impl HistoryUi {
                 width,
             );
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
-            let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+            let content = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                 let Some(line) = lines.get(row.line) else {
                     return;
                 };
@@ -460,12 +462,7 @@ impl HistoryUi {
             };
             // (no field here: what is typed goes nowhere)
             super::select_lines(ui, &content, &drawn, selection, &copied);
-            shift
         });
-        if out.inner != 0.0 {
-            let offset = out.state.unclamped_offset() + egui::vec2(0.0, out.inner);
-            crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
-        }
         super::line_menu::show(ui, menu, p, |ui, target| {
             if let Some(avatar) = target.sender {
                 super::super::context::chat_sender_menu(ui, p, world, avatar, &target.line);

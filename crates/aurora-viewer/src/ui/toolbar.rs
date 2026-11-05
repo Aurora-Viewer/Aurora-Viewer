@@ -223,6 +223,39 @@ enum Edit {
     Style(Bar, BarStyle),
 }
 
+/// Windows whose toolbar button lights while they are open
+/// (is_running_function in commands.xml), given by the app each frame.
+#[derive(Clone, Copy, Default)]
+pub struct Shown {
+    /// Avatar.IsMyProfileOpen.
+    pub profile: bool,
+    /// Floater.IsOpen build.
+    pub build: bool,
+    /// Floater.IsOpen fs_poser.
+    pub poser: bool,
+    /// Floater.IsOpen reporter.
+    pub report_abuse: bool,
+    /// Floater.IsOpen marketplace_listings.
+    pub marketplace_listings: bool,
+    /// Floater.IsOpen fs_teleporthistory: Places on its history tab.
+    pub teleport_history: bool,
+}
+
+impl Shown {
+    /// Whether the button of `command` lights, when it is one of these.
+    pub fn lit(&self, command: &str) -> Option<bool> {
+        Some(match command {
+            "profile" => self.profile,
+            "build" => self.build,
+            "poser" => self.poser,
+            "reporter" => self.report_abuse,
+            "marketplacelistings" => self.marketplace_listings,
+            "teleport_history" => self.teleport_history,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Default)]
 pub struct ToolbarUi {
     pub open: bool,
@@ -234,8 +267,14 @@ pub struct ToolbarUi {
     pub water_walk_active: bool,
     /// Our profile is shown on its Picks tab (Avatar.IsPicksTabOpen).
     pub picks_active: bool,
+    /// The photo reel holds no photo (given by the app): its button is
+    /// dimmed. And its quick view is open: the button is lit.
+    pub photo_roll_empty: bool,
+    pub photo_roll_active: bool,
     /// The nearby chat bar is shown (MainChatbarVisible).
     pub chat_bar_active: bool,
+    /// The windows the app opens itself, for their buttons' highlight.
+    pub shown: Shown,
     /// "Show Friends Only" is on (FSRenderFriendsOnly).
     pub friends_only_active: bool,
     pub movelock_status: String,

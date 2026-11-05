@@ -68,6 +68,8 @@ pub enum BarAction {
     ToggleFlyOverride,
     /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
     PhotoToDisk,
+    /// The toolbar's Photo roll: the reel's quick view on its newest photo.
+    PhotoRoll,
     /// Our profile on its Picks tab, or closed when Picks is shown
     /// (Avatar.TogglePicks, llviewermenu.cpp).
     MyPicks,
@@ -113,6 +115,15 @@ pub enum BarAction {
     ChatPrefs,
     /// Me > Profile.
     MyProfile,
+    /// The toolbar's Profile: our profile, or closed when it is shown
+    /// (Avatar.ToggleMyProfile, llviewermenu.cpp).
+    ToggleMyProfile,
+    /// The toolbar's Poser, Report abuse and Marketplace listings: the
+    /// window, or closed when it is shown (Floater.Toggle,
+    /// Floater.ToggleOrBringToFront, Marketplace.Toggle; commands.xml).
+    TogglePoser,
+    ToggleReportAbuse,
+    ToggleMarketplaceListings,
     /// World › Environment › Use shared environments
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
@@ -2096,6 +2107,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
+        // ToggleWebBrowser: the browser window on the home page, or closed
+        "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
         // Floater.Toggle fs_voice_controls
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
@@ -2105,7 +2118,10 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
+        "photo_roll" => return BarAction::PhotoRoll,
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
+        // Floater.Toggle quickprefs
+        "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
         // Avatar.TogglePicks: our profile on its Picks tab
         "picks" => return BarAction::MyPicks,
         // MainChatbarVisible: the nearby chat bar shown or put away
@@ -2153,12 +2169,12 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         }
         "build" => return BarAction::Build(0),
         "ik_edit" => return BarAction::IkEdit,
-        "poser" => return BarAction::Poser,
-        "profile" => return BarAction::MyProfile,
-        "reporter" => return BarAction::ReportAbuse,
+        "poser" => return BarAction::TogglePoser,
+        "profile" => return BarAction::ToggleMyProfile,
+        "reporter" => return BarAction::ToggleReportAbuse,
         "teleport_history" => return BarAction::TeleportHistory,
         "landmark_here" => return BarAction::CreateLandmark,
-        "marketplacelistings" => return BarAction::MarketplaceListings,
+        "marketplacelistings" => return BarAction::ToggleMarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
         "vr_view" => return BarAction::ToggleVr,
@@ -2191,10 +2207,12 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
         "gridstatus" => panels.grid_status,
+        "webbrowser" => panels.web_browser,
         "voice" => panels.voice_controls,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
+        "quickprefs" => panels.quick_prefs,
         "preferences" => panels.settings,
         "move" => panels.movement_controls,
         "view" => panels.camera_controls,
@@ -2325,6 +2343,7 @@ fn tool_button(
     label: &str,
     tip: &str,
     active: bool,
+    usable: bool,
     look: ButtonLook,
     unread: usize,
     flash: f32,
@@ -2335,9 +2354,10 @@ fn tool_button(
     let icon_size = look.icon;
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    // a saved Firestorm command Aurora does not run yet: very dimmed, with
-    // neither face nor pill under the pointer, as in the window
-    let ready = super::toolbar::ready(command);
+    // a saved Legacy Viewer command Aurora does not run yet, or one with
+    // nothing to do now: very dimmed, with neither face nor pill under the
+    // pointer, as in the window
+    let ready = super::toolbar::ready(command) && usable;
     // `locked`: RLVa would refuse its action, greyed without a hover face
     let hovered = ready && !locked && resp.hovered();
     if let Some(fill) = tool_fill(p, ready && active, hovered).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
@@ -2904,6 +2924,8 @@ pub(crate) fn toolbar_row(
             toolbar.water_walk_active
         } else if b.command == "picks" {
             toolbar.picks_active
+        } else if b.command == "photo_roll" {
+            toolbar.photo_roll_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
         } else if b.command == "RFO" {
@@ -2912,6 +2934,8 @@ pub(crate) fn toolbar_row(
             ui.ctx()
                 .data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")))
                 .unwrap_or(false)
+        } else if let Some(lit) = toolbar.shown.lit(&b.command) {
+            lit
         } else {
             command_active(&b.command, panels, row.flying, row.seated, row.mouselook)
         };
@@ -2921,6 +2945,8 @@ pub(crate) fn toolbar_row(
             && row.unread > 0
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
+        // the Photo roll's button, dimmed while the session has no photo
+        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty);
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -2929,6 +2955,8 @@ pub(crate) fn toolbar_row(
             )
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
+        } else if !usable {
+            format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("photo-reel-none"))
         } else {
             super::toolbar::label(b).to_owned()
         };
@@ -2950,6 +2978,7 @@ pub(crate) fn toolbar_row(
             super::toolbar::label(b),
             &tip,
             active,
+            usable,
             look(b),
             count,
             // the Grid status button flashes on a new entry of the feed
@@ -2963,8 +2992,9 @@ pub(crate) fn toolbar_row(
         );
         rects.push(response.rect);
         toolbar.button(&response, row.bar, row.style, b, p, row.locked);
-        if !super::toolbar::ready(&b.command) {
-            // a saved Firestorm command Aurora does not have yet
+        if !super::toolbar::ready(&b.command) || !usable {
+            // a saved Legacy Viewer command Aurora does not have yet, or one
+            // with nothing to do now
             continue;
         }
         if b.command == "favorites" {
@@ -3617,7 +3647,9 @@ mod tests {
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
+            ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
+            ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
         ] {
@@ -3657,10 +3689,20 @@ mod tests {
     }
 
     #[test]
+    fn photo_roll_opens_the_quick_view_without_photo_mode() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.snapshot = false;
+        assert!(super::super::toolbar::ready("photo_roll"));
+        assert!(matches!(run_command(&ctx, "photo_roll", &mut panels), BarAction::PhotoRoll));
+        assert!(!panels.snapshot);
+    }
+
+    #[test]
     fn statistics_picks_and_chat_bar_toolbar_commands_are_wired() {
         let ctx = egui::Context::default();
         let mut panels = Panels::from_settings(&crate::settings::Settings::default());
-        for cmd in ["statistics", "picks", "defaultchatbar"] {
+        for cmd in ["statistics", "picks", "defaultchatbar", "webbrowser"] {
             assert!(super::super::toolbar::ready(cmd), "{cmd}");
         }
         // Statistics is Aurora's Performance window: both buttons light
@@ -3671,6 +3713,13 @@ mod tests {
         assert!(command_active("performance", &panels, false, false, false));
         assert!(matches!(run_command(&ctx, "picks", &mut panels), BarAction::MyPicks));
         assert!(matches!(run_command(&ctx, "defaultchatbar", &mut panels), BarAction::ToggleChatBar));
+        // ToggleWebBrowser: the window opens, lights the button, closes
+        assert!(!command_active("webbrowser", &panels, false, false, false));
+        run_command(&ctx, "webbrowser", &mut panels);
+        assert!(panels.web_browser);
+        assert!(command_active("webbrowser", &panels, false, false, false));
+        run_command(&ctx, "webbrowser", &mut panels);
+        assert!(!panels.web_browser);
         assert!(super::super::toolbar::ready("RFO"));
         assert!(matches!(run_command(&ctx, "RFO", &mut panels), BarAction::ToggleFriendsOnly));
     }
@@ -3687,6 +3736,63 @@ mod tests {
         assert!(command_active("voice", &panels, false, false, false));
         run_command(&ctx, "voice", &mut panels);
         assert!(!panels.voice_controls);
+    }
+
+    /// Issue #2143: these buttons toggle their window (commands.xml), while
+    /// the menus' entries still only open it, and they light while it is
+    /// open.
+    #[test]
+    fn window_toolbar_commands_toggle_and_light_while_open() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(matches!(run_command(&ctx, "profile", &mut panels), BarAction::ToggleMyProfile));
+        assert!(matches!(run_command(&ctx, "poser", &mut panels), BarAction::TogglePoser));
+        assert!(matches!(run_command(&ctx, "reporter", &mut panels), BarAction::ToggleReportAbuse));
+        assert!(matches!(
+            run_command(&ctx, "marketplacelistings", &mut panels),
+            BarAction::ToggleMarketplaceListings
+        ));
+        assert!(matches!(
+            run_command(&ctx, "teleport_history", &mut panels),
+            BarAction::TeleportHistory
+        ));
+        assert!(matches!(run_command(&ctx, "build", &mut panels), BarAction::Build(0)));
+        // World › Landmark this place is no toggle there either
+        assert!(matches!(run_command(&ctx, "landmark_here", &mut panels), BarAction::CreateLandmark));
+        let commands = ["profile", "build", "poser", "reporter", "marketplacelistings", "teleport_history"];
+        let none = super::super::toolbar::Shown::default();
+        for cmd in commands {
+            assert!(super::super::toolbar::ready(cmd), "{cmd}");
+            assert_eq!(none.lit(cmd), Some(false), "{cmd}");
+        }
+        let all = super::super::toolbar::Shown {
+            profile: true,
+            build: true,
+            poser: true,
+            report_abuse: true,
+            marketplace_listings: true,
+            teleport_history: true,
+        };
+        for cmd in commands {
+            assert_eq!(all.lit(cmd), Some(true), "{cmd}");
+        }
+        assert_eq!(all.lit("landmark_here"), None);
+        assert_eq!(all.lit("inventory"), None);
+    }
+
+    /// The toolbar's Quick preferences button toggles its window and lights
+    /// while it is open.
+    #[test]
+    fn the_quick_preferences_toolbar_command_toggles_its_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("quickprefs"));
+        assert!(!command_active("quickprefs", &panels, false, false, false));
+        run_command(&ctx, "quickprefs", &mut panels);
+        assert!(panels.quick_prefs);
+        assert!(command_active("quickprefs", &panels, false, false, false));
+        run_command(&ctx, "quickprefs", &mut panels);
+        assert!(!panels.quick_prefs);
     }
 
     #[test]
