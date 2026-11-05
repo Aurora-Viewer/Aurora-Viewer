@@ -113,9 +113,23 @@ fn compact_glow(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
 }
 
 fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env, sel: &[Sel]) {
-    let bp: Vec<_> = sel.iter().map(|x| tool.face_legacy(env, world, x.idx, x.face, &x.te)).collect();
+    let bp: Vec<_> = sel
+        .iter()
+        .map(|x| {
+            let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
+            if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
+                appearance.apply_legacy(material.get_or_insert_with(|| default_legacy(env, &x.te)));
+            }
+            material
+        })
+        .collect();
     let water = sel.iter().all(|x| is_hide_water(&x.te, bp[0].as_ref()));
-    let (diffuse, diffuse_mixed) = same(sel.iter().map(|x| x.te.texture));
+    let (diffuse, diffuse_mixed) = same(sel.iter().map(|x| {
+        world
+            .objects
+            .get(x.idx)
+            .map_or(x.te.texture, |object| object.visual_texture_face(x.face as usize).texture)
+    }));
     let (normal, normal_mixed) = same(bp.iter().map(|m| m.as_ref().map(|m| m.normal_map).unwrap_or_default()));
     let (spec, spec_mixed) = same(bp.iter().map(|m| m.as_ref().map(|m| m.specular_map).unwrap_or_default()));
     let normal = normal.filter(|id| !id.is_nil());

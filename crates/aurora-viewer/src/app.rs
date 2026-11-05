@@ -33,6 +33,7 @@ mod attention;
 mod audio_mute;
 mod avatar_render_settings;
 mod bridge;
+mod busy_pause;
 mod movelock;
 mod particle_editor;
 mod portals;
@@ -59,6 +60,7 @@ mod derender;
 mod describe;
 mod dev_toolbox;
 mod folders;
+mod texture_picker;
 use folders::chat_log_root;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
@@ -761,6 +763,8 @@ pub struct App {
     occluded: bool,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
+    /// The 3D paused behind on a busy card (app/busy_pause.rs).
+    busy_pause: busy_pause::BusyPause,
     /// The other viewers on this PC (instances.rs).
     instances: crate::instances::Instances,
     /// The Down key's latch (FSCrouchToggle).
@@ -1208,7 +1212,16 @@ impl App {
         media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
         let lib = Arc::new(AvatarLibrary::load());
-        let cache = crate::settings::cache_dir();
+        // the asset cache store: its key first (the credential store, read
+        // here rather than by the first streamer thread), then the folders
+        // of the earlier format go
+        aurora_net::objcache::seal_with(crate::cache::key().clone());
+        // (not the demo's: its folder is shared by the demo runs of every
+        // build, and holds nothing from the grid)
+        if std::env::var_os("AURORA_DEMO").is_none() {
+            crate::cache::remove_unsealed(crate::settings::cache_dir());
+        }
+        let cache = crate::settings::asset_cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);
         net.set_object_cache_dir(Some(cache.join("objects")));
         net.set_bandwidth(bandwidth_kbps(&settings));
@@ -1572,6 +1585,7 @@ impl App {
             crash_timeline: Default::default(),
             occluded: false,
             gpu_stall: Default::default(),
+            busy_pause: Default::default(),
             instances: crate::instances::Instances::new(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
@@ -3823,6 +3837,7 @@ impl App {
             && !ctrl
             && !self.shift
             && !self.color_pipette()
+            && !self.texture_pipette()
             && !self.exit_prompt.open
             && !self.cursor_hold.held()
             && self.mouse_mode == MouseMode::None
@@ -6557,6 +6572,11 @@ impl App {
     /// Run by `click`; false also when it stopped to ask for the depth under
     /// the cursor (`ClickWait::waiting`), to run again when it has come.
     fn build_mouse_down(&mut self) -> bool {
+        if self.texture_pipette() {
+            self.left_down = true;
+            self.sample_texture();
+            return true;
+        }
         if self.ik_editor.open && !self.alt {
             if self.ik_editor.picking {
                 let Some(picked) = self.click_pick() else {
@@ -6821,6 +6841,12 @@ impl App {
             // after the press it ends, which still waits for its depth
             self.clicks.hold(click_pick::Held::LeftRelease);
             return;
+        }
+        if self.left_down && self.texture_pipette() {
+            if !self.egui_ctx.is_pointer_over_egui() {
+                self.sample_texture();
+            }
+            ui::texture_picker::pipette::release(&self.egui_ctx);
         }
         if self.left_down && self.color_pipette() {
             if !self.egui_ctx.is_pointer_over_egui() {
@@ -8692,6 +8718,9 @@ impl App {
 
         self.frame_profile.lap(Lap::Social);
         // Coalesce OS pointer moves before taking the renderer for this frame.
+        if self.left_down && self.texture_pipette() && !self.egui_ctx.is_pointer_over_egui() {
+            self.sample_texture();
+        }
         if self.left_down && self.color_pipette() && !self.egui_ctx.is_pointer_over_egui() {
             self.sample_build_color();
         }
@@ -9354,11 +9383,17 @@ impl App {
             // Use face coverage while highlighting local appearances. Actual
             // build selection, wire outlines and edits stay untouched; its
             // ordinary face overlay returns when the mode is switched off.
-            let selected_faces = if self.imports.local_status.revealing() {
+            let mut selected_faces = if self.imports.local_status.revealing() {
                 self.imports.appearance_status(&self.world.objects).faces
             } else {
                 self.build.face_selection(&self.world, &self.settings.build)
             };
+            if let Some((object, face)) = ui::texture_picker::pipette::highlighted(&self.egui_ctx)
+                && face < 64
+                && let Some(idx) = self.world.objects.index_of_uuid(&object)
+            {
+                *selected_faces.entry(idx).or_default() |= 1u64 << face;
+            }
             self.scene.set_face_selection(&mut self.world, selected_faces);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
@@ -9969,9 +10004,10 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         let mut fp = FrameParams {
-            // (a window behind past the driver's budget pauses its 3D
-            // drawing: its 3D targets shrink, texture_budget::Background)
-            rlva_resolution_divisor: if self.scene.textures.drawing_paused() {
+            // (a window behind past the driver's budget, or on a card another
+            // program keeps busy, pauses its 3D drawing: its 3D targets
+            // shrink, texture_budget::Background, busy_pause.rs)
+            rlva_resolution_divisor: if self.drawing_paused() {
                 PAUSED_RESOLUTION_DIVISOR
             } else {
                 self.world.rlva.resolution_divisor.unwrap_or(1)
@@ -10582,9 +10618,15 @@ impl App {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = self.cursors.inventory_drag(cursor);
         }
-        if (self.color_pipette() || self.report_abuse.picking || self.particle_editor.picking) && !ctx.is_pointer_over_egui() {
+        if (self.color_pipette() || self.texture_pipette() || self.report_abuse.picking || self.particle_editor.picking)
+            && !ctx.is_pointer_over_egui()
+        {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
+            if ui::texture_picker::pipette::failed(&ctx) {
+                full.platform_output.cursor_icon = egui::CursorIcon::NotAllowed;
+                full.platform_output.cursor_image = None;
+            }
         }
         if self.cursor_hold.held() {
             // the camera holds the hidden cursor: a cursor change from egui
@@ -10797,8 +10839,8 @@ impl App {
         // returned are those of the frame before; a frame that carries a
         // capture is waited for, its pixels are read in the tail below.
         // (nothing of the scene while the 3D drawing is paused behind,
-        // texture_budget::Background)
-        let lists = if self.in_world() && !self.scene.textures.drawing_paused() {
+        // texture_budget::Background, busy_pause.rs)
+        let lists = if self.in_world() && !self.drawing_paused() {
             &self.scene.lists
         } else {
             &self.empty_lists
@@ -10811,6 +10853,7 @@ impl App {
         self.photo_gpu_time(&stats);
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
+        self.busy_pause_frame(gfx.renderer.vr_engaged());
         if stats.presented && !gfx.shown {
             gfx.shown = true;
             // On Windows, maximizing can show even a hidden window. Defer
@@ -12201,14 +12244,14 @@ impl App {
                         self.build.ui.pick_target =
                             Some(channel.map_or(crate::build::ui::PickTarget::Diffuse, crate::build::ui::PickTarget::PbrMap));
                     }
-                    crate::build::demo::Step::TexturePicker(materials, local) => {
+                    crate::build::demo::Step::TexturePicker(target, local) => {
                         let current = self
                             .build
                             .sel_te(&self.world)
                             .first()
                             .and_then(|&(idx, face)| self.world.objects.get(idx)?.te.as_ref().map(|te| te.face(face as usize).texture))
                             .unwrap_or_default();
-                        if materials {
+                        if target == crate::build::ui::PickTarget::PbrMaterial {
                             self.build.ui.picker.open_materials(
                                 aurora_i18n::tr!("build-ui-texture-choose-material"),
                                 crate::demo::pbr_materials().first().map(|(id, _)| *id).unwrap_or_default(),
@@ -12222,10 +12265,42 @@ impl App {
                                 Some(aurora_prim::te::DEFAULT_TEXTURE),
                                 false,
                             );
-                            self.build.ui.pick_target = Some(crate::build::ui::PickTarget::Diffuse);
+                            self.build.ui.pick_target = Some(target);
                         }
                         if local {
                             self.build.ui.picker.show_local_tab();
+                        }
+                        if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|mode| mode.contains("-badges-")) {
+                            use crate::world::objects::{LocalAppearance, LocalTextureSlot};
+                            let material = target == crate::build::ui::PickTarget::PbrMaterial;
+                            if let Some(id) = self
+                                .world
+                                .local_assets
+                                .iter()
+                                .filter(|(_, (_, is_material))| *is_material == material)
+                                .map(|(id, _)| *id)
+                                .min()
+                            {
+                                for (idx, face) in self.build.sel_te(&self.world) {
+                                    if let Some(object) = self.world.objects.get_mut(idx) {
+                                        let value = if material {
+                                            Some(LocalAppearance::Material(id))
+                                        } else {
+                                            LocalAppearance::with_texture(
+                                                Some(LocalAppearance::Texture(id)),
+                                                LocalTextureSlot::Normal,
+                                                Some(id),
+                                            )
+                                        };
+                                        if let Some(value) = value {
+                                            object.render.local_appearance.insert(Some(face), value);
+                                        }
+                                        object.material_dirty = true;
+                                        object.render.needs_records = true;
+                                    }
+                                }
+                                self.build.ui.picker.follow(id);
+                            }
                         }
                         self.imports.open = false;
                         crate::build::demo::texture_inventory(&mut self.world);
@@ -14339,6 +14414,17 @@ impl App {
         let p = self.palette;
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
+        ui::widgets::local_texture::sync(
+            &ctx,
+            self.world.local_assets.keys().copied().chain(
+                self.imports
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.local)
+                    .flat_map(|entry| entry.local_slots.keys().copied()),
+            ),
+            &self.ui_images,
+        );
         ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
         ui::bars::clock::set_chat_format(self.system_island().clock_format);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
@@ -14360,6 +14446,7 @@ impl App {
         if !matches!(self.screen, Screen::World) && self.interface.hidden {
             self.interface.set_hidden(&ctx, false);
         }
+        self.busy_pause_notice(&ctx, &p);
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {
@@ -19825,6 +19912,7 @@ impl ApplicationHandler for App {
                         && (self.build.ui.color_picker.is_open()
                             || self.script_editors.color_open()
                             || eyedropper
+                            || self.texture_pipette()
                             || self.chat_ui.previews.enlarged()
                             || self.chat_ui.previews.image_window_open()
                             || ui::emoji::picker_open(&self.egui_ctx))
@@ -20049,6 +20137,11 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.last_input = Instant::now();
+                // (AURORA_DEMO_BUSY_PAUSE: a click ends the demo's busy card,
+                // as the focus does a real one; busy_pause.rs)
+                if *state == ElementState::Pressed && self.busy_pause.paused() {
+                    self.busy_pause.demo_released = true;
+                }
                 if *button == MouseButton::Left {
                     self.alt_cursor.left_button(*state == ElementState::Pressed);
                 }

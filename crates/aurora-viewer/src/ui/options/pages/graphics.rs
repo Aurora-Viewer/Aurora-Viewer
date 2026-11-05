@@ -221,6 +221,11 @@ fn frames_per_second(cx: &mut Cx) {
                 tr!("status-fps"),
             );
         });
+        cx.unfolded().toggle(
+            tr!("ui-options-pause-when-card-busy"),
+            tr!("ui-options-pause-when-card-busy-tip"),
+            &field!(background_gpu_pause),
+        );
     });
 }
 

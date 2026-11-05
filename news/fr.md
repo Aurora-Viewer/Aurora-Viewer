@@ -26,6 +26,16 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-04 — Aurora 0.9.1 : connexions, téléportations et tenues plus sûres
+Une région lente à confirmer votre arrivée ne termine plus la session, et un code de double authentification refusé ne bloque plus le champ du code à la connexion. Les changements de tenue envoient une demande d'apparence à la fois, pour la version la plus récente : les produits et RLVa qui changent vite la tenue ne noient plus votre apparence sous les mises à jour ratées. Une touche jamais vue enfoncée ne fait plus sauter ni voler l'avatar après un changement de fenêtre. Les ciels Windlight importés s'enregistrent dans l'inventaire.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.1)
+
+## 2026-11-04 — Pellicule photo, ombres des projecteurs, lieux chargés plus fluides
+Le mode photo garde les 10 dernières photos de la session dans une petite pile du viseur : parcourez-les, puis envoyez, expédiez par e-mail ou supprimez l'une d'elles. Choisissez combien de projecteurs portent une ombre, de 1 à 16, dans Préférences › Graphismes › Lumière (2 par défaut). Dans les régions chargées, la carte graphique place les objets qui tournent ou bougent seuls, les prims flexibles hors de vue gardent leur maillage, et les écritures de l'image partent ensemble : plus d'images par seconde, la même image.
+
+## 2026-11-04 — Construction, avatars et rapports de plantage
+Les lanternes en papier et les autres sphères tordues gardent leur forme, la construction Legacy retrouve Inclinaison, Rayon et Révolutions, et les objets posés depuis l'inventaire s'éditent et se cadrent tout de suite. Les objets portés suivent les animations qui déplacent leur point d'attache, un avatar caché par une animation quitte l'écran comme dans le Legacy Viewer, et le Poser marche sur toutes les formes. Les rapports après une carte graphique perdue disent ce qui tournait. Merci à anne-skydancer, Gaalrauch, Marakiinfinity et Odessa-Draekavik.
+
 ## 2026-11-04 — Aurora 0.9.0 : OpenSim et l'Hypergrid, pour de bon
 Sur les grilles OpenSim, votre avatar est maintenant cuit et se voit tel que vous l'habillez, le terrain des grandes régions va au-delà de 256 m, et l'inventaire, les tenues et les profils s'enregistrent sur les grilles sans AIS. Les achats et les prix prennent la monnaie et le symbole de la grille. Après une téléportation Hypergrid, Aurora suit la grille où vous êtes, demande avant un voyage qui laisserait des objets portés, et propose d'ajouter une grille inconnue depuis un lien.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.0)

@@ -6096,7 +6096,7 @@ pub fn chime() -> (Uuid, aurora_audio::SoundClip) {
 pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
     let demo_cache = crate::settings::cache_dir();
     if let Some(real) = demo_cache.parent()
-        && let Ok(data) = std::fs::read(real.join("sound").join(format!("{id}.ogg")))
+        && let Ok(data) = crate::cache::read(real.join(crate::settings::ASSET_STORE).join("sound").join(format!("{id}.ogg")))
         && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
     {
         return clip;

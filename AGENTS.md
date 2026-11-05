@@ -186,6 +186,11 @@ cargo run -p aurora-viewer -- --title "Test avatar-gaze"
   variable: one short line in the table of its topic, and the details (modes,
   images, what to look for) in the "Details" paragraph below, never in the
   table nor in the README.
+- The asset files of the disk cache (`cache/store`) are only read and
+  written through `crate::cache` (`read`, `read_touch`, `reader`,
+  `write`): never with an outside tool or `std::fs`. A scenario that serves
+  assets from a folder (`AURORA_DEMO_ARRIVAL`, `AURORA_DEMO_STREAM`'s
+  `j2k=`) takes plain files or this installation's store.
 - For a new feature, add a demo scenario (`AURORA_DEMO_<NAME>`) when possible:
   it shows the feature and makes it testable without a grid.
 - Some things can only be tested on the grid (real network, voice,

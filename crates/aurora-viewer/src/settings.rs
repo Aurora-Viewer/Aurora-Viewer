@@ -1229,6 +1229,11 @@ pub struct Settings {
     /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
     pub background_fps_limit: u32,
+    /// A window behind whose GPU frames crawl (another program in front
+    /// keeps the card busy) stops drawing its 3D until it has the focus
+    /// again, before Windows resets the card (app/busy_pause.rs). On by
+    /// default; not in the Legacy Viewer.
+    pub background_gpu_pause: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
@@ -2037,6 +2042,7 @@ impl Default for Settings {
             graphics_saved_active: None,
             background_fps_cap: true,
             background_fps_limit: 15,
+            background_gpu_pause: true,
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
@@ -2179,6 +2185,15 @@ pub fn cache_dir() -> PathBuf {
         return for_mode(chosen.to_path_buf());
     }
     for_mode(default_cache_root())
+}
+
+/// The folder of the sealed asset cache (cache.rs), inside [`cache_dir`].
+/// A folder of its own: the earlier versions keep files of another format
+/// right in [`cache_dir`], so that one never reads the other's files.
+pub const ASSET_STORE: &str = "store";
+
+pub fn asset_cache_dir() -> PathBuf {
+    cache_dir().join(ASSET_STORE)
 }
 
 pub(crate) fn default_cache_root() -> PathBuf {
