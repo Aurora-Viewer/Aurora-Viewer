@@ -142,6 +142,7 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
             shape: MarkerShape::Diamond,
             color: [0.0, 0.0, 1.0, 1.0],
             border: None,
+            background: None,
             icon: Some(2),
             fade: Some(*appearance::MARKER_FADE_RANGE.end()),
         }
@@ -174,10 +175,13 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
         "Plain",
         Visuals {
             border: true,
+            background: true,
             ..Default::default()
         },
     );
-    assert_eq!(sets.appearance(&id).marker.expect("marker").border, Some([0.0, 1.0, 0.0, 1.0]));
+    let plate = sets.appearance(&id).marker.expect("marker");
+    assert_eq!(plate.border, Some([0.0, 1.0, 0.0, 1.0]));
+    assert_eq!(plate.background, Some([0.0, 1.0, 0.0, 1.0]));
     assert_eq!(Visuals::read(&Llsd::new_map()).marker, MarkerScope::Off, "older files");
     assert_eq!(Visuals::read(&Llsd::new_map()).marker_shape, MarkerShape::Circle);
 }

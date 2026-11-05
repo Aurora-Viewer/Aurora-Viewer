@@ -44,10 +44,16 @@ pub fn active() -> bool {
     mode().is_some()
 }
 
-/// `body`: markers on the avatars' centre of mass, for this run.
+/// The scenario's marker position. Set in every mode: the demo saves its
+/// preferences, so `body` would otherwise outlive its run.
 pub fn apply_preferences(settings: &mut crate::settings::Settings) {
-    if mode() == Some(Mode::Body) {
-        settings.contact_marker_anchor = crate::settings::MarkerAnchor::Body;
+    use crate::settings::MarkerAnchor;
+    if let Some(mode) = mode() {
+        settings.contact_marker_anchor = if mode == Mode::Body {
+            MarkerAnchor::Body
+        } else {
+            MarkerAnchor::AboveName
+        };
     }
 }
 
@@ -94,6 +100,8 @@ pub fn seed(world: &mut crate::world::World) {
             Visuals {
                 // Family's marker takes its plate border, the others the plain one
                 border: icon == Some(0),
+                // Shop's its plate background
+                background: icon == Some(1),
                 marker: scope,
                 marker_shape,
                 marker_fade: fade,

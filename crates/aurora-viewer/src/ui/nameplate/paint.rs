@@ -74,7 +74,7 @@ impl<'a> Env<'a> {
             now,
             pixels_per_point: painter.pixels_per_point(),
             semibold: crate::ui::fonts::semibold(painter.ctx()),
-            tint: p.navy.lerp_to_gamma(p.bar, 0.5),
+            tint: base_tint(p),
             friend: None,
             skin: {
                 use std::hash::{Hash, Hasher};
@@ -309,7 +309,7 @@ fn friend_color(env: &Env<'_>, c: &Content) -> Option<Color32> {
 /// background, else for a friend a tint of the friends' color.
 pub(super) fn surface_tint(env: &Env<'_>, c: &Content) -> Option<Color32> {
     match c.appearance.background {
-        Some(bg) => Some(plate_tint(env, crate::ui::colors::set_color(bg), SET_TINT)),
+        Some(bg) => Some(set_background(env.p, bg)),
         None => friend_color(env, c).map(|friend| plate_tint(env, friend, FRIEND_TINT)),
     }
 }
@@ -326,21 +326,40 @@ pub(super) fn surface_border(env: &Env<'_>, c: &Content) -> Option<Color32> {
 /// `color` taken `toward` of the way to the plate's own tint, then darkened
 /// until the text reads on it.
 fn plate_tint(env: &Env<'_>, color: Color32, toward: f32) -> Color32 {
+    tint_on(env.p, color, toward)
+}
+
+fn base_tint(p: &Palette) -> Color32 {
+    p.navy.lerp_to_gamma(p.bar, 0.5)
+}
+
+fn tint_on(p: &Palette, color: Color32, toward: f32) -> Color32 {
     // Derive the hue from the color, while keeping the ordinary surface
     // alpha. Check both the main ink and the secondary line against the tint.
-    let mut tint = color.to_opaque().lerp_to_gamma(env.tint, toward);
-    let target = if contrast(env.p.ink, env.p.navy) >= contrast(env.p.ink, env.p.field) {
-        env.p.navy
+    let mut tint = color.to_opaque().lerp_to_gamma(base_tint(p), toward);
+    let target = if contrast(p.ink, p.navy) >= contrast(p.ink, p.field) {
+        p.navy
     } else {
-        env.p.field
+        p.field
     };
     for _ in 0..12 {
-        if contrast(env.p.ink, tint) >= 4.5 && contrast(env.p.muted, tint) >= 3.0 {
+        if contrast(p.ink, tint) >= 4.5 && contrast(p.muted, tint) >= 3.0 {
             break;
         }
         tint = tint.lerp_to_gamma(target, 0.2);
     }
     tint
+}
+
+/// The surface a contact set's background gives a plate, shared with the
+/// contact-set markers.
+pub(crate) fn set_background(p: &Palette, background: [f32; 4]) -> Color32 {
+    tint_on(p, crate::ui::colors::set_color(background), SET_TINT)
+}
+
+/// `color` moved toward the ink until it reads on `background`.
+pub(crate) fn readable_on(color: Color32, background: Color32, ink: Color32) -> Color32 {
+    readable_name(color, background, ink)
 }
 
 fn readable_name(mut name: Color32, background: Color32, ink: Color32) -> Color32 {

@@ -316,8 +316,16 @@ fn chevron(at: Pos2, radius: f32, way: Vec2) -> Vec<Pos2> {
 fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker, alpha: f32, blur: bool) {
     let &Placed { at, radius, merge, edge } = placed;
     let color = super::colors::set_color(marker.color).to_opaque();
-    // the set's colour, moved in lightness to read on the panel's
-    let ink = crate::interface_colors::on_panel(color).gamma_multiply(alpha);
+    // the resident's plate background; a plate's badge keeps the plain one
+    let surface = marker
+        .background
+        .map_or(p.panel, |background| super::nameplate::set_background(p, background))
+        .to_opaque();
+    let surface = surface.lerp_to_gamma(p.panel.to_opaque(), merge);
+    // the set's colour, moved in lightness to read on the panel's, then
+    // toward the text if a tint of that same colour still hides it
+    let ink = crate::interface_colors::on_panel(color);
+    let ink = super::nameplate::readable_on(ink, surface, p.ink).gamma_multiply(alpha);
     let blur = blur && p.panel_alpha < 255;
     let tint = if blur {
         let rect = Rect::from_center_size(at, Vec2::splat(radius * 2.0));
@@ -331,7 +339,7 @@ fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker,
         1.0
     };
     let tint = tint + (BADGE_TINT - tint) * merge;
-    let panel = p.panel.to_opaque().gamma_multiply(tint * alpha);
+    let panel = surface.gamma_multiply(tint * alpha);
     // the resident's plate border, the plain one without a set's; a plate's
     // badge has none: it goes as the marker lands
     let border = marker

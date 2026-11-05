@@ -136,6 +136,8 @@ pub struct Marker {
     /// The resident's plate border (`Appearance::border`), whichever set
     /// gives it; None: the plates' plain one.
     pub border: Option<[f32; 4]>,
+    /// The resident's plate background (`Appearance::background`), likewise.
+    pub background: Option<[f32; 4]>,
     /// Into `ICONS`.
     pub icon: Option<usize>,
     /// Metres from our avatar under which the marker is gone.
@@ -346,6 +348,7 @@ impl ContactSets {
                         shape: v.marker_shape,
                         color: set.color,
                         border: None,
+                        background: None,
                         icon: v.icon.filter(|i| *i < ICONS.len()),
                         fade: v.marker_fade,
                     });
@@ -365,6 +368,7 @@ impl ContactSets {
         for a in resolved.values_mut() {
             if let Some(marker) = &mut a.marker {
                 marker.border = a.border;
+                marker.background = a.background;
             }
         }
         self.appearances = resolved.into_iter().map(|(id, a)| (id, std::sync::Arc::new(a))).collect();

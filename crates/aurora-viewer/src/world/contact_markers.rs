@@ -221,6 +221,7 @@ mod tests {
         shape: crate::world::contact_sets::MarkerShape::Circle,
         color: [1.0, 0.0, 0.0, 1.0],
         border: None,
+        background: None,
         icon: None,
         fade: None,
     };
