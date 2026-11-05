@@ -677,11 +677,22 @@ pub enum Failure {
 }
 
 /// The clients previews download with: `trusted_only`, redirects must stay
-/// on the trusted sites.
+/// on the trusted sites. Neither ever reaches this computer or the local
+/// network: a redirect there stops, and names resolve to public addresses
+/// only (`PublicOnly`). A link written with such an address gets no preview
+/// in the first place (`link_trust`).
 pub fn client(trusted_only: bool) -> Option<reqwest::Client> {
+    builder(trusted_only)
+        .build()
+        .map_err(|e| log::warn!("link previews: no HTTP client: {e}"))
+        .ok()
+}
+
+fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
-        let off_trusted = trusted_only && crate::link_trust::classify(attempt.url().as_str()) != Trust::Trusted;
-        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted {
+        let to = attempt.url().as_str();
+        let off_trusted = trusted_only && crate::link_trust::classify(to) != Trust::Trusted;
+        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted || crate::link_trust::leads_to_local_network(to) {
             attempt.stop()
         } else {
             attempt.follow()
@@ -693,9 +704,33 @@ pub fn client(trusted_only: bool) -> Option<reqwest::Client> {
         .timeout(Duration::from_secs(20))
         .retry(reqwest::retry::never())
         .redirect(policy)
-        .build()
-        .map_err(|e| log::warn!("link previews: no HTTP client: {e}"))
-        .ok()
+        .dns_resolver(PublicOnly)
+}
+
+/// The name resolver of the previews: the system's, keeping only the
+/// public addresses (`link_trust::is_public_ip`). The connection uses the
+/// very addresses kept here, so a name that resolves to the local network,
+/// now or on a second lookup, is never reached.
+struct PublicOnly;
+
+impl reqwest::dns::Resolve for PublicOnly {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(public_addresses(name.as_str().to_owned()))
+    }
+}
+
+async fn public_addresses(host: String) -> Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> {
+    let lookup = host.clone();
+    let found = tokio::task::spawn_blocking(move || {
+        std::net::ToSocketAddrs::to_socket_addrs(&(lookup.as_str(), 0)).map(|addrs| addrs.collect::<Vec<_>>())
+    })
+    .await??;
+    let public: Vec<std::net::SocketAddr> = found.into_iter().filter(|a| crate::link_trust::is_public_ip(a.ip())).collect();
+    if public.is_empty() {
+        log::debug!("link preview: {host} has no public address");
+        return Err(format!("{host}: no public address").into());
+    }
+    Ok(Box::new(public.into_iter()))
 }
 
 /// The body of `url`, at most `max` bytes, and its content type.
@@ -1709,6 +1744,56 @@ mod tests {
         assert_eq!(get("page.png"), Some(Failure::NotPicture));
         assert_eq!(get("gone.png"), Some(Failure::Unavailable));
         thread.join().unwrap();
+    }
+
+    #[test]
+    fn previews_never_reach_this_computer_or_the_local_network() {
+        use std::io::{Read, Write};
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}");
+        let body = png(8, 8);
+        let mut picture = format!(
+            "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: image/png\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        picture.extend_from_slice(&body);
+        let redirect =
+            format!("HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: http://0x7f.1:{port}/b.png\r\nContent-Length: 0\r\n\r\n")
+                .into_bytes();
+        let answers = vec![redirect.clone(), picture.clone(), redirect, picture];
+        let thread = std::thread::spawn(move || {
+            for answer in answers {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(&answer);
+            }
+        });
+        // without the guard, the redirect to 127.0.0.1 (written 0x7f.1) is followed
+        let plain = test_client();
+        assert!(rt.block_on(fetch_picture(&plain, &format!("{base}/a.png"))).is_ok());
+        // the previews' clients stop at it
+        let guarded = builder(false).no_proxy().pool_max_idle_per_host(0).build().unwrap();
+        assert_eq!(
+            rt.block_on(fetch_picture(&guarded, &format!("{base}/a.png"))).err(),
+            Some(Failure::Unavailable)
+        );
+        // and a name of this computer resolves to nothing: the waiting
+        // picture is not served to them
+        assert_eq!(
+            rt.block_on(fetch_picture(&guarded, &format!("http://localhost:{port}/c.png")))
+                .err(),
+            Some(Failure::Unavailable)
+        );
+        assert!(rt.block_on(fetch_picture(&plain, &format!("{base}/d.png"))).is_ok());
+        thread.join().unwrap();
+        // the resolver alone
+        assert!(rt.block_on(public_addresses("localhost".into())).is_err());
+        let name: reqwest::dns::Name = "localhost".parse().unwrap();
+        assert!(rt.block_on(reqwest::dns::Resolve::resolve(&PublicOnly, name)).is_err());
     }
 
     #[test]
