@@ -191,15 +191,30 @@ Rust from [rustup.rs](https://rustup.rs).
 
 To work on the code with an AI agent, also install the search tools the
 agents are told to use ([AGENTS.md](../AGENTS.md), section 5, "Tools"):
-ripgrep (`rg`), `fd`, `jq` and `ast-grep`. They are optional; on Windows the
-Aurora tools install them.
+ripgrep (`rg`), `fd`, `jq` and `ast-grep`. They are optional; the Aurora
+tools' Repair installs them (below), or by hand:
 
 ```bash
 sudo pacman -S --needed ripgrep fd jq ast-grep
 ```
 
 On Debian and Ubuntu: `sudo apt install ripgrep fd-find jq` (`fd` is named
-`fdfind` there), and `cargo install ast-grep --locked`.
+`fdfind` there), and `cargo install ast-grep --locked`; Repair installs
+ripgrep and jq there.
+
+### Development environment
+
+The Aurora tools run on Linux with PowerShell 7 (`pwsh`, needed first): the
+same menus as `aurora-tools.cmd`, explained in
+[the guide for humans](../HUMANS.md#the-aurora-tools-aurora-toolscmd). Clone the
+repository into a folder for the project, then run `aurora-tools.sh`:
+
+```bash
+git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
+./aurora-viewer/aurora-tools.sh
+```
+
+Repair installs what is missing with `pacman` or `apt`, through `sudo`.
 
 ## Reporting a problem
 
