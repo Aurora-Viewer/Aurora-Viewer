@@ -1200,33 +1200,48 @@ impl PreviewSource {
             let discard = texture_cache::preview_discard(width, height).max(self.decoded.unwrap_or(0));
             texture_cache::discard_size(width, height, discard)
         });
+        // (a coarser BC7 preview is kept for when the JPEG 2000 file gives
+        // nothing: a cache-only load with a .part file that fails to decode)
+        let mut coarse = None;
         if let Some(texture_cache::Transcoded::Bc7(cached)) = texture_cache::read_preview(&self.blocks)
-            && let Some((w, h, blocks)) = cached.levels.first()
-            && wanted.is_none_or(|wanted| texture_cache::preview_is_fine_enough((*w, *h), wanted))
-            && let Some(rgba) = aurora_render::bc7::decode_level(blocks, *w, *h)
+            && let Some((w, h, blocks)) = cached.levels.into_iter().next()
         {
-            return Some(image(*w, *h, rgba));
+            if wanted.is_none_or(|wanted| texture_cache::preview_is_fine_enough((w, h), wanted))
+                && let Some(rgba) = aurora_render::bc7::decode_level(&blocks, w, h)
+            {
+                return Some(image(w, h, rgba));
+            }
+            coarse = Some((w, h, blocks));
         }
-        let bytes = if self.bytes.is_empty() {
-            // Progressive downloads may only have a .part cache. Their ready
-            // coarse pixels are already visible in the main scene.
-            crate::cache::read(&self.jpeg)
-                .or_else(|_| crate::cache::read(self.jpeg.with_extension("part")))
-                .ok()
-                .map(Arc::new)?
-        } else {
-            self.bytes
-        };
-        let info = aurora_assets::j2k_info(&bytes)?;
-        // A progressive stream may only hold the coarser level already
-        // visible in the world. Never ask these bytes for a finer decode.
-        let discard = texture_cache::preview_discard(info.width, info.height).max(self.decoded.unwrap_or(0));
-        let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
-        Some(image(
-            pixels.width,
-            pixels.height,
-            super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize),
-        ))
+        let decoded = self.decoded;
+        let bytes = self.bytes;
+        let jpeg = self.jpeg;
+        let finer = (|| {
+            let bytes = if bytes.is_empty() {
+                // Progressive downloads may only have a .part cache. Their ready
+                // coarse pixels are already visible in the main scene.
+                crate::cache::read(&jpeg)
+                    .or_else(|_| crate::cache::read(jpeg.with_extension("part")))
+                    .ok()
+                    .map(Arc::new)?
+            } else {
+                bytes
+            };
+            let info = aurora_assets::j2k_info(&bytes)?;
+            // A progressive stream may only hold the coarser level already
+            // visible in the world. Never ask these bytes for a finer decode.
+            let discard = texture_cache::preview_discard(info.width, info.height).max(decoded.unwrap_or(0));
+            let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
+            Some(image(
+                pixels.width,
+                pixels.height,
+                super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize),
+            ))
+        })();
+        finer.or_else(|| {
+            let (w, h, blocks) = coarse?;
+            aurora_render::bc7::decode_level(&blocks, w, h).map(|rgba| image(w, h, rgba))
+        })
     }
 }
 
