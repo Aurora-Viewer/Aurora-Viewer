@@ -113,7 +113,7 @@ pub enum MarkerScope {
 }
 
 /// A marker's fade-out distance when the option is first switched on, and
-/// what the setting accepts (camera to resident, in metres).
+/// what the setting accepts (our avatar to the resident, in metres).
 pub const MARKER_FADE_DEFAULT: u16 = 10;
 pub const MARKER_FADE_RANGE: std::ops::RangeInclusive<u16> = 1..=128;
 
@@ -124,7 +124,7 @@ pub struct Marker {
     pub color: [f32; 4],
     /// Into `ICONS`.
     pub icon: Option<usize>,
-    /// Metres from the camera under which the marker is gone.
+    /// Metres from our avatar under which the marker is gone.
     pub fade: Option<u16>,
 }
 

@@ -9180,7 +9180,7 @@ What the inventory must show with these scenarios:
   altitude (at our own height). With `AURORA_DEMO_TAGS=voice`, Nova, Orion
   and Vega join the sets: the marker sits above their plate and shows through
   the wall. `parcel`: members only on our parcel (the demo's region is cut
-  into four); `fade`: markers gone within 12 m of the camera.
+  into four); `fade`: markers gone within 12 m of our avatar.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

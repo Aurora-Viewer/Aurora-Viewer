@@ -32,30 +32,6 @@ pub(super) fn editor(ui: &mut egui::Ui, p: &Palette, world: &mut World, name: &s
             .small()
             .color(p.muted),
     );
-    for (value, key) in [
-        (&mut v.border, "contact-visual-border"),
-        (&mut v.background, "contact-visual-background"),
-        (&mut v.nameplate_name, "contact-visual-plate-name"),
-        (&mut v.ui_name, "contact-visual-ui-name"),
-        (&mut v.chat_name, "contact-visual-chat-name"),
-        (&mut v.chat_text, "contact-visual-chat-text"),
-        (&mut v.minimap, "contact-visual-minimap"),
-    ] {
-        widgets::switch_labeled(ui, p, value, aurora_i18n::text(key));
-    }
-    ui.label(aurora_i18n::tr!("contact-visual-size"));
-    for (size, key) in [
-        (PlateSize::Inherit, "contact-visual-size-inherit"),
-        (PlateSize::Expanded, "contact-visual-size-expanded"),
-        (PlateSize::Reduced, "contact-visual-size-reduced"),
-    ] {
-        widgets::radio_value(ui, p, &mut v.size, size, aurora_i18n::text(key));
-    }
-    ui.label(
-        egui::RichText::new(aurora_i18n::tr!("contact-visual-size-hint"))
-            .small()
-            .color(p.muted),
-    );
     ui.label(aurora_i18n::tr!("contact-visual-marker"));
     for (scope, key) in [
         (MarkerScope::Off, "contact-visual-marker-off"),
@@ -82,6 +58,30 @@ pub(super) fn editor(ui: &mut egui::Ui, p: &Palette, world: &mut World, name: &s
             );
         }
     }
+    for (value, key) in [
+        (&mut v.border, "contact-visual-border"),
+        (&mut v.background, "contact-visual-background"),
+        (&mut v.nameplate_name, "contact-visual-plate-name"),
+        (&mut v.ui_name, "contact-visual-ui-name"),
+        (&mut v.chat_name, "contact-visual-chat-name"),
+        (&mut v.chat_text, "contact-visual-chat-text"),
+        (&mut v.minimap, "contact-visual-minimap"),
+    ] {
+        widgets::switch_labeled(ui, p, value, aurora_i18n::text(key));
+    }
+    ui.label(aurora_i18n::tr!("contact-visual-size"));
+    for (size, key) in [
+        (PlateSize::Inherit, "contact-visual-size-inherit"),
+        (PlateSize::Expanded, "contact-visual-size-expanded"),
+        (PlateSize::Reduced, "contact-visual-size-reduced"),
+    ] {
+        widgets::radio_value(ui, p, &mut v.size, size, aurora_i18n::text(key));
+    }
+    ui.label(
+        egui::RichText::new(aurora_i18n::tr!("contact-visual-size-hint"))
+            .small()
+            .color(p.muted),
+    );
     let mut has_icon = v.icon.is_some();
     if widgets::switch_labeled(ui, p, &mut has_icon, aurora_i18n::tr!("contact-visual-icon")).changed() {
         v.icon = has_icon.then_some(0);

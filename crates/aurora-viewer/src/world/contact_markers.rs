@@ -59,7 +59,7 @@ pub fn in_scope(scope: MarkerScope, same_region: bool, parcel: Option<(&[u8], (u
     }
 }
 
-/// How much of a marker shows at `distance` from the camera: nothing up to
+/// How much of a marker shows at `distance` from our avatar: nothing up to
 /// the fade-out distance, everything `FADE_BAND` past it.
 pub fn proximity_alpha(distance: f32, fade: Option<u16>) -> f32 {
     let Some(fade) = fade else { return 1.0 };

@@ -1,6 +1,6 @@
 //! Markers over contact-set members (`world/contact_markers.rs` says who
-//! and where): a diamond in the set's colour with the set's symbol, seen
-//! through everything in the world. Off screen or behind the camera it
+//! and where): a glass diamond with a border and a symbol in the set's
+//! colour, seen through everything in the world. Off screen or behind the camera it
 //! stops at the edge of the room the bars leave and gains a chevron toward
 //! the resident, like the destination beacon (`ui/minimap.rs`).
 
@@ -21,8 +21,15 @@ use uuid::Uuid;
 const RADIUS: f32 = 14.0;
 const INNER_RADIUS: f32 = 5.5;
 const GLYPH: f32 = 14.0;
-const BACKING: f32 = 3.0;
-const BORDER: f32 = 1.5;
+const BORDER: f32 = 1.25;
+/// Opacity of the border over the glass.
+const BORDER_ALPHA: f32 = 0.85;
+/// The glass of a world label (`widgets::paint_world_label`).
+const GLASS_TINT: f32 = 0.65;
+const GLASS_SHADE: f32 = 0.65;
+/// Markers that blur the world behind them, nearest first; the others only
+/// tint it. Far apart on the screen, each widens the area blurred.
+const MAX_GLASS: usize = 12;
 /// Depth and half width of the chevron. A stroke, not the Tabler glyph: a
 /// texture turned to any angle loses its thin lines.
 const CHEVRON: f32 = 6.0;
@@ -32,7 +39,7 @@ const CHEVRON_STROKE: f32 = 2.0;
 const CHEVRON_GAP: f32 = 5.0;
 /// How far from the room's edge a pinned marker stands: its chevron stays
 /// in the room, whichever way it points.
-const EDGE_MARGIN: f32 = RADIUS + CHEVRON_GAP + CHEVRON + BACKING;
+const EDGE_MARGIN: f32 = RADIUS + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
 /// Points between the head and the diamond.
 const GAP: f32 = 6.0;
 /// Points between the top of a name plate and the diamond: the plate's
@@ -139,10 +146,9 @@ pub fn draw(
     let mut markers: Vec<_> = tracker
         .iter_mut()
         .filter_map(|(id, entry)| {
-            let distance = entry.position.distance(eye);
-            let alpha = entry.presence * proximity_alpha(distance, entry.marker.fade);
+            let alpha = entry.presence * proximity_alpha(entry.position.distance(world.agent.position), entry.marker.fade);
             let (at, edge) = place(id, entry, scene, proj, screen.center(), inner, tags, dt)?;
-            (alpha > 0.0).then_some((distance, at, edge, entry.marker, alpha))
+            (alpha > 0.0).then_some((entry.position.distance(eye), at, edge, entry.marker, alpha))
         })
         .collect();
     if markers.is_empty() {
@@ -153,8 +159,9 @@ pub fn draw(
     // never hidden by the scene
     aurora_render::world_label_at(ctx, None);
     let painter = super::hud::world_painter(ctx);
-    for (_, at, edge, marker, alpha) in markers {
-        paint(&painter, p, at, &marker, alpha, edge);
+    let plain = markers.len().saturating_sub(MAX_GLASS);
+    for (i, (_, at, edge, marker, alpha)) in markers.into_iter().enumerate() {
+        paint(&painter, p, at, &marker, alpha, edge, i >= plain);
     }
 }
 
@@ -225,14 +232,6 @@ fn diamond(at: Pos2, radius: f32) -> Vec<Pos2> {
     ]
 }
 
-/// A set's colour is whatever the user chose: the theme's text or its
-/// darkest surface, whichever reads best on it.
-fn glyph_color(p: &Palette, fill: Color32) -> Color32 {
-    use crate::interface_colors::contrast;
-    let (ink, bar) = (p.ink.to_opaque(), p.bar.to_opaque());
-    if contrast(ink, fill) >= contrast(bar, fill) { ink } else { bar }
-}
-
 fn symbol(painter: &egui::Painter, icon: &str, at: Pos2, color: Color32) {
     let Some(texture) = super::icons::global(icon) else { return };
     let mut mesh = egui::Mesh::with_texture(texture.id());
@@ -251,41 +250,47 @@ fn chevron(at: Pos2, way: Vec2) -> Vec<Pos2> {
     vec![base + way.rot90() * CHEVRON_WING, tip, base - way.rot90() * CHEVRON_WING]
 }
 
-fn paint(painter: &egui::Painter, p: &Palette, at: Pos2, marker: &Marker, alpha: f32, edge: Option<Vec2>) {
-    let fill = super::colors::set_color(marker.color).to_opaque();
-    let ink = glyph_color(p, fill);
-    let backing = p.bar.to_opaque().gamma_multiply(0.55 * alpha);
-    painter.add(Shape::convex_polygon(diamond(at, RADIUS + BACKING), backing, Stroke::NONE));
+/// `blur`: the world shows through the glass; off in a window, which has
+/// its own background behind the preview.
+fn paint(painter: &egui::Painter, p: &Palette, at: Pos2, marker: &Marker, alpha: f32, edge: Option<Vec2>, blur: bool) {
+    let color = super::colors::set_color(marker.color).to_opaque();
+    // the set's colour, moved in lightness to read on the panel's
+    let ink = crate::interface_colors::on_panel(color).gamma_multiply(alpha);
+    let blur = blur && p.panel_alpha < 255;
+    let tint = if blur {
+        let rect = Rect::from_center_size(at, Vec2::splat(RADIUS * 2.0));
+        painter.add(aurora_render::glass_diamond(rect, alpha, GLASS_SHADE));
+        f32::from(p.panel_alpha) / 255.0 * GLASS_TINT
+    } else {
+        1.0
+    };
     painter.add(Shape::convex_polygon(
         diamond(at, RADIUS),
-        fill.gamma_multiply(alpha),
-        Stroke::new(BORDER, ink.gamma_multiply(alpha)),
+        p.panel.to_opaque().gamma_multiply(tint * alpha),
+        Stroke::new(BORDER, ink.gamma_multiply(BORDER_ALPHA)),
     ));
     match marker.icon.and_then(|i| ICONS.get(i)) {
-        Some(icon) => symbol(painter, icon, at, ink.gamma_multiply(alpha)),
+        Some(icon) => symbol(painter, icon, at, ink),
         None => {
-            painter.add(Shape::convex_polygon(
-                diamond(at, INNER_RADIUS),
-                ink.gamma_multiply(alpha),
-                Stroke::NONE,
-            ));
+            painter.add(Shape::convex_polygon(diamond(at, INNER_RADIUS), ink, Stroke::NONE));
         }
     }
     if let Some(way) = edge {
         let points = chevron(at, way);
+        let backing = p.bar.to_opaque().gamma_multiply(0.55 * alpha);
         painter.add(Shape::line(points.clone(), Stroke::new(CHEVRON_STROKE + 2.0, backing)));
-        painter.add(Shape::line(points, Stroke::new(CHEVRON_STROKE, fill.gamma_multiply(alpha))));
+        painter.add(Shape::line(points, Stroke::new(CHEVRON_STROKE, color.gamma_multiply(alpha))));
     }
 }
 
 /// The marker of a set in its editor: on screen, then pinned to an edge.
 pub fn preview(ui: &mut egui::Ui, p: &Palette, marker: &Marker) {
-    let pinned_width = RADIUS + BACKING + CHEVRON_GAP + CHEVRON;
-    let size = vec2(pinned_width * 3.0, (RADIUS + BACKING) * 2.0 + 4.0);
+    let pinned_width = RADIUS * 2.0 + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
+    let size = vec2(RADIUS * 3.0 + pinned_width, RADIUS * 2.0 + 4.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let y = rect.center().y;
-    paint(&painter, p, pos2(rect.left() + RADIUS + BACKING, y), marker, 1.0, None);
-    let pinned = pos2(rect.center().x + RADIUS, y);
-    paint(&painter, p, pinned, marker, 1.0, Some(Vec2::RIGHT));
+    paint(&painter, p, pos2(rect.left() + RADIUS, y), marker, 1.0, None, false);
+    let pinned = pos2(rect.left() + RADIUS * 4.0, y);
+    paint(&painter, p, pinned, marker, 1.0, Some(Vec2::RIGHT), false);
 }
