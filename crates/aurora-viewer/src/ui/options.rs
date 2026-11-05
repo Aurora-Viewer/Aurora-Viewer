@@ -19,6 +19,7 @@ use super::icons::Icons;
 use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
+use crate::ui::widgets;
 use cx::{Counts, Cx, Mode};
 use egui::{Rect, RichText, Sense, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -399,6 +400,9 @@ pub struct OptionsUi {
     /// The session's "Show my favorite landmarks at login", while logged in
     /// with an account the login screen remembers (set by the app).
     pub login_favorites: Option<bool>,
+    /// The account's "Keep Show Friends Only after teleporting", while
+    /// logged in (set by the app).
+    pub friends_only_keep: Option<bool>,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
@@ -462,6 +466,10 @@ pub struct OptionsUi {
     pub chat_log_custom: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
+    /// The import of a Legacy Viewer's chat history (set by the app).
+    pub chat_import: ChatImportUi,
+    /// Files done and files to do of the import under way (set by the app).
+    pub chat_log_importing: Option<(usize, usize)>,
     pub restart_voice: bool,
     /// A settings backup read, waiting for the confirmation of its restore
     /// (set by the app), and what the last backup and restore did.
@@ -613,12 +621,18 @@ pub struct OptionsResult {
     pub folder: Option<(Folder, FolderChoice)>,
     /// Erase the conversation transcripts of the account (confirmed).
     pub erase_chat_logs: bool,
+    /// The import window opened: look for the Legacy Viewers' folders.
+    pub find_legacy_logs: bool,
+    /// Import from these folders.
+    pub import_legacy_logs: Option<Vec<std::path::PathBuf>>,
     /// The content rating chosen (SIM_ACCESS_*), to send to the server.
     pub maturity: Option<u8>,
     /// An account setting of Privacy changed, to send to the server.
     pub account: Option<crate::world::user_info::Change>,
     /// "Show my favorite landmarks at login" switched (Privacy).
     pub login_favorites: Option<bool>,
+    /// "Keep Show Friends Only after teleporting" switched (Controls).
+    pub friends_only_keep: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
     pub open_dev_toolbox: bool,
     /// Back up the settings to a file the user chooses.
@@ -634,6 +648,16 @@ pub struct OptionsResult {
 pub enum Folder {
     Cache,
     ChatLogs,
+    /// A Legacy Viewer's transcripts, to import.
+    LegacyLogs,
+}
+
+/// The window that shows what will be imported.
+#[derive(Default)]
+pub struct ChatImportUi {
+    pub open: bool,
+    /// The folders found, ticked or not; None until the search answers.
+    pub found: Option<Vec<(crate::world::chat_log::import::Found, bool)>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -677,26 +701,28 @@ fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
 
 fn slider<T: egui::emath::Numeric>(ui: &mut egui::Ui, v: &mut T, range: std::ops::RangeInclusive<T>, suffix: &str) -> bool {
     ui.spacing_mut().slider_width = SLIDER_W;
-    ui.add(
+    ui.add(widgets::restricted_number(
         egui::Slider::new(v, range)
             .suffix(suffix)
             .custom_parser(aurora_i18n::parse_number)
             .trailing_fill(true),
-    )
+        widgets::TextPolicy::Decimal,
+    ))
     .changed()
 }
 
 /// Slider of whole values (the Legacy Viewer's decimal_digits="0").
 fn slider_whole(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<f32>, suffix: &str) -> bool {
     ui.spacing_mut().slider_width = SLIDER_W;
-    ui.add(
+    ui.add(widgets::restricted_number(
         egui::Slider::new(v, range)
             .suffix(suffix)
             .custom_parser(aurora_i18n::parse_number)
             .fixed_decimals(0)
             .step_by(1.0)
             .trailing_fill(true),
-    )
+        widgets::TextPolicy::Decimal,
+    ))
     .changed()
 }
 
@@ -1150,6 +1176,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    chat_import_modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
@@ -1198,6 +1225,115 @@ fn erase_logs_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
     });
     if modal.should_close() {
         st.confirm_erase_logs = false;
+    }
+}
+
+/// What an import will read, before it starts: the folders found for the
+/// account, or the one chosen. The Legacy Viewer's files are only read.
+fn chat_import_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mut OptionsResult, open: bool) {
+    use super::widgets::{ActionKind, action_button, action_button_if, checkbox};
+    use aurora_i18n::tr;
+    if !(st.chat_import.open && open) {
+        return;
+    }
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_import_chat_logs")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        ui.label(
+            RichText::new(tr!("ui-options-chat-logs-import-title"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(6.0);
+        ui.label(RichText::new(tr!("ui-options-chat-logs-import-text")).size(12.5).color(p.muted));
+        ui.add_space(8.0);
+        match &mut st.chat_import.found {
+            None => {
+                ui.label(
+                    RichText::new(tr!("ui-options-chat-logs-import-searching"))
+                        .size(12.5)
+                        .color(p.muted),
+                );
+            }
+            Some(found) if found.is_empty() => {
+                ui.label(RichText::new(tr!("ui-options-chat-logs-import-none")).size(12.5).color(p.muted));
+            }
+            Some(found) => {
+                for (folder, ticked) in found.iter_mut() {
+                    let usable = folder.files > 0 && !folder.same;
+                    *ticked &= usable;
+                    ui.add_enabled_ui(usable, |ui| {
+                        checkbox(
+                            ui,
+                            p,
+                            ticked,
+                            RichText::new(folder.dir.display().to_string()).size(12.5).color(p.ink),
+                        );
+                    });
+                    let note = if folder.same {
+                        tr!("ui-options-chat-logs-import-same").to_owned()
+                    } else if folder.files == 0 {
+                        tr!("ui-options-chat-logs-import-empty").to_owned()
+                    } else if folder.bytes < 1024 * 1024 {
+                        // format_bytes would say 0 MB
+                        tr!("ui-options-chat-logs-import-files", count = folder.files).to_owned()
+                    } else {
+                        format!(
+                            "{} · {}",
+                            tr!("ui-options-chat-logs-import-files", count = folder.files),
+                            format_bytes(folder.bytes)
+                        )
+                    };
+                    ui.indent("note", |ui| {
+                        ui.label(RichText::new(note).size(11.5).color(p.muted));
+                    });
+                }
+            }
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let size = Vec2::new(0.0, 26.0);
+            let folders: Vec<std::path::PathBuf> = st
+                .chat_import
+                .found
+                .iter()
+                .flatten()
+                .filter(|(_, ticked)| *ticked)
+                .map(|(folder, _)| folder.dir.clone())
+                .collect();
+            let ready = !folders.is_empty() && st.chat_log_importing.is_none();
+            if action_button_if(
+                ui,
+                p,
+                "file-import",
+                tr!("ui-options-chat-logs-import-confirm"),
+                ActionKind::Primary,
+                size,
+                ready,
+            )
+            .clicked()
+            {
+                r.import_legacy_logs = Some(folders);
+            }
+            if action_button(
+                ui,
+                p,
+                "folder-open-filled",
+                tr!("ui-options-chat-logs-import-choose"),
+                ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
+                r.folder = Some((Folder::LegacyLogs, FolderChoice::Pick));
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                st.chat_import.open = false;
+            }
+        });
+    });
+    if modal.should_close() {
+        st.chat_import.open = false;
     }
 }
 

@@ -158,6 +158,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         env_keys: Default::default(),
         double_click: Default::default(),
         quickjump: false,
+        friends_only: false,
         fly_override: false,
         quiet_snapshots: false,
         marketplace: false,

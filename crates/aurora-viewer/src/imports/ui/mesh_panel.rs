@@ -613,19 +613,28 @@ fn mesh_controls(
                     physics_column(ui, column_width, heading_height, captions[2], |ui| {
                         ui.add_sized(
                             Vec2::new(76.0, 26.0),
-                            egui::DragValue::new(&mut draft.options.max_hulls).range(1..=256),
+                            widgets::restricted_number(
+                                egui::DragValue::new(&mut draft.options.max_hulls).range(1..=256),
+                                widgets::TextPolicy::Digits,
+                            ),
                         );
                     });
                     physics_column(ui, column_width, heading_height, captions[3], |ui| {
                         ui.add_sized(
                             Vec2::new(76.0, 26.0),
-                            egui::DragValue::new(&mut draft.options.max_vertices).range(3..=256),
+                            widgets::restricted_number(
+                                egui::DragValue::new(&mut draft.options.max_vertices).range(3..=256),
+                                widgets::TextPolicy::Digits,
+                            ),
                         );
                     });
                     physics_column(ui, column_width, heading_height, captions[4], |ui| {
                         ui.add_sized(
                             Vec2::new(76.0, 26.0),
-                            egui::DragValue::new(&mut draft.options.tolerance).range(0.0001..=99.0).speed(0.001),
+                            widgets::restricted_number(
+                                egui::DragValue::new(&mut draft.options.tolerance).range(0.0001..=99.0).speed(0.001),
+                                widgets::TextPolicy::Decimal,
+                            ),
                         );
                     });
                     physics_column(ui, action_width, heading_height, "", |ui| {

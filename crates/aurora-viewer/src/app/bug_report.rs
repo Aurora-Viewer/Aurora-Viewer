@@ -95,13 +95,15 @@ impl App {
             ];
         }
         if matches!(self.screen, Screen::World) {
+            // The report becomes a public issue: where the tester stands and
+            // who they are start unticked, the tester ticks them when they help.
             fields.insert(
                 3,
                 Field::new(
                     "bug-location",
                     "Location",
                     crate::slurl::make(&self.world.region_name(), self.world.agent.position),
-                    true,
+                    false,
                 ),
             );
             if let Some(name) = self.world.social.avatar_names.get(&self.world.agent_id) {

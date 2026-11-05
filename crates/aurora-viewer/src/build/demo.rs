@@ -11,6 +11,8 @@
 //!   three prims of two objects (ready stops before the face clicks).
 //!   faces-picker | faces-picker-material: select one face and keep its picker open.
 //!   faces-picker-local | faces-picker-material-local: the same, on its Local tab.
+//!   faces-picker-normal-local | faces-picker-specular-local: local legacy maps.
+//!   faces-picker-badges-local | faces-picker-material-badges-local: applied local previews.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
 //!   create-delete | create-ready: create and select a basic prim, then
@@ -22,6 +24,9 @@
 //!   contents-move-many: drop every item into inventory at once (two no-copy
 //!   items share one move warning).
 //!   shared | shared-denied: another resident's object with granted / denied editing.
+//!   place: `place,object:<id>,<target id>[,click][,rotate:<side>]` turns
+//!   "Place on surface" on and holds the cursor over the target's top
+//!   (`click` clicks there; `rotate:back` chooses Auto rotate and that side).
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -57,8 +62,8 @@ pub enum Step {
     Select(usize),
     SharedRights(usize, bool),
     Face(usize, u8, bool),
-    /// Materials, Local tab.
-    TexturePicker(bool, bool),
+    /// Target channel, Local tab.
+    TexturePicker(super::ui::PickTarget, bool),
     BomPicker(Option<usize>),
     CloseView,
     CloseEditor,
@@ -82,6 +87,10 @@ pub enum Step {
     ReplaceBegin(bool),
     ReplacePick(usize),
     ReplaceApply,
+    /// "Place on surface" on or off.
+    Place(bool),
+    /// Its Auto rotate, with that side.
+    PlaceRotate(super::place::Side),
 }
 
 fn part_of(s: &str) -> Option<Part> {
@@ -164,6 +173,19 @@ pub fn apply_handle_size(s: &mut BuildSettings) {
         .and_then(|v| v.trim().parse::<f32>().ok())
     {
         s.gizmo_scale = percent / 100.0;
+    }
+}
+
+/// AURORA_DEMO_OBJECT_SNAP=on: Snap › Objects for the build script.
+pub fn apply_object_snap(s: &mut BuildSettings) {
+    if std::env::var("AURORA_DEMO_OBJECT_SNAP").is_ok_and(|v| v.trim() == "on") {
+        s.set_snap_mode(super::SnapMode::Objects);
+    }
+    // AURORA_DEMO_MOVE_HOLOGRAM=moving|start: the hologram of a move
+    match std::env::var("AURORA_DEMO_MOVE_HOLOGRAM").as_deref().map(str::trim) {
+        Ok("moving") => s.move_hologram = super::MoveHologram::Moving,
+        Ok("start") => s.move_hologram = super::MoveHologram::Start,
+        _ => {}
     }
 }
 
@@ -368,6 +390,39 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             _ => Vec::new(),
         };
     }
+    // place,object:<id>,<target id>[,click][,rotate:<side>]: Place on
+    // surface, the cursor on the top of the target object, clicked with
+    // `click`, Auto rotate onto the side with `rotate:`
+    if parts[0] == "place" {
+        let target = parts
+            .get(2)
+            .and_then(|v| v.parse::<u32>().ok())
+            .and_then(|id| world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i)));
+        let top = target.and_then(|i| {
+            let (at, _, _) = crate::scene::Scene::object_transform(world, i, Instant::now(), 0)?;
+            Some(at + Vec3::Z * world.visual_scale(i).z * 0.5)
+        });
+        let click = parts[3.min(parts.len())..].contains(&"click");
+        let rotate = parts[3.min(parts.len())..].iter().find_map(|p| {
+            let name = p.strip_prefix("rotate:")?;
+            super::place::Side::ALL
+                .into_iter()
+                .find(|s| format!("{s:?}").eq_ignore_ascii_case(name))
+        });
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            245 => rotate.map(Step::PlaceRotate).into_iter().collect(),
+            250 => vec![Step::Place(true)],
+            280 if click => vec![Step::Press],
+            282 if click => vec![Step::Release],
+            255.. => top
+                .and_then(|p| tool.cam.project_px(p))
+                .map(|(x, y)| vec![Step::Cursor(x, y)])
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+    }
     if matches!(parts[0], "create-delete" | "create-ready") {
         return match frame {
             215 => vec![Step::Open(Tool::Create, EditMode::Move, 6)],
@@ -471,7 +526,15 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
             240 => pick(99620, u8::MAX, false),
             250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
-                parts[0].starts_with("faces-picker-material"),
+                if parts[0].starts_with("faces-picker-material") {
+                    super::ui::PickTarget::PbrMaterial
+                } else if parts[0].starts_with("faces-picker-normal") {
+                    super::ui::PickTarget::Normal
+                } else if parts[0].starts_with("faces-picker-specular") {
+                    super::ui::PickTarget::Specular
+                } else {
+                    super::ui::PickTarget::Diffuse
+                },
                 parts[0].ends_with("-local"),
             )],
             _ if parts[0] == "faces-close" => Vec::new(),

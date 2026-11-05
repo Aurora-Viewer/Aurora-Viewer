@@ -152,9 +152,9 @@ pub fn contents_folder_name(object_name: &str) -> String {
     let name: String = object_name.chars().filter(|c| !c.is_control() && *c != '|').collect();
     let name = name.trim();
     if name.is_empty() {
-        aurora_i18n::tr!("common-object").into()
+        crate::text_validation::generated_name(aurora_i18n::tr!("common-object"), 63)
     } else {
-        name.chars().take(63).collect()
+        crate::text_validation::generated_name(name, 63)
     }
 }
 

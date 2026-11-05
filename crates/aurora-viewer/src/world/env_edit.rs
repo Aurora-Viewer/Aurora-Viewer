@@ -665,6 +665,82 @@ mod tests {
         assert_eq!(legacy_preset_name("Nacon%27s%20Sunset"), "Nacon's Sunset");
     }
 
+    /// The keys LLSettingsSky::validationList and
+    /// LLSettingsWater::validationList require.
+    const REQUIRED_SKY: [&str; 21] = [
+        "absorption_config",
+        "bloom_id",
+        "cloud_color",
+        "cloud_pos_density1",
+        "cloud_pos_density2",
+        "cloud_scale",
+        "cloud_scroll_rate",
+        "cloud_shadow",
+        "gamma",
+        "glow",
+        "max_y",
+        "mie_config",
+        "moon_rotation",
+        "planet_radius",
+        "rayleigh_config",
+        "sky_bottom_radius",
+        "sky_top_radius",
+        "star_brightness",
+        "sun_arc_radians",
+        "sun_rotation",
+        "sunlight_color",
+    ];
+    const REQUIRED_WATER: [&str; 11] = [
+        "blur_multiplier",
+        "fresnel_offset",
+        "fresnel_scale",
+        "normal_map",
+        "normal_scale",
+        "scale_above",
+        "scale_below",
+        "underwater_fog_mod",
+        "water_fog_color",
+        "water_fog_density",
+        "wave1_direction",
+    ];
+
+    /// What goes up, read back as the server reads it.
+    fn assert_uploadable(doc: &SettingsDoc, required: &[&str]) {
+        let back = Settings::decode_asset(&doc.to_asset()).expect("asset");
+        for key in required {
+            assert!(back.has(key), "{key} is missing from the {:?} asset", doc.kind());
+        }
+    }
+
+    #[test]
+    fn new_settings_carry_every_key_the_server_requires() {
+        let sky = br#"<llsd><map><key>gamma</key><array><real>1.2</real><real>0</real><real>0</real><real>1</real></array></map></llsd>"#;
+        let imported = SettingsDoc::import_legacy_sky(sky, "Imported").expect("converted");
+        assert_uploadable(&imported, &REQUIRED_SKY);
+        assert_uploadable(&SettingsDoc::snapshot_sky(&SkyFrame::default(), "Snapshot"), &REQUIRED_SKY);
+        let water = br#"<llsd><map><key>waterFogDensity</key><real>16</real></map></llsd>"#;
+        let imported = SettingsDoc::import_legacy_water(water, "Imported").expect("converted");
+        assert_uploadable(&imported, &REQUIRED_WATER);
+        assert_uploadable(&SettingsDoc::snapshot_water(&WaterFrame::default(), "Snapshot"), &REQUIRED_WATER);
+        // what the frame does not carry is the Legacy Viewer's defaults(), and
+        // a preset's own value wins
+        let back = Settings::decode_asset(&imported_sky_with_radius().to_asset()).expect("asset");
+        assert_eq!(back["planet_radius"].as_f32(), 7000.0);
+        assert_eq!(back["sky_top_radius"].as_f32(), 6420.0);
+        assert_eq!(back["mie_config"].at(0)["anisotropy"].as_f32(), 0.8);
+        assert_eq!(back["rayleigh_config"].at(0)["exp_scale"].as_f32(), -1.0 / 8000.0);
+        // in the validator's ranges: it would clamp the absorption's raw defaults
+        let absorption = &back["absorption_config"];
+        assert_eq!(absorption.len(), 2);
+        assert_eq!(absorption.at(0)["width"].as_f32(), 25000.0);
+        assert_eq!(absorption.at(1)["constant_term"].as_f32(), 1.0);
+    }
+
+    fn imported_sky_with_radius() -> SettingsDoc {
+        let sky = br#"<llsd><map><key>planet_radius</key><real>7000</real></map></llsd>"#;
+        SettingsDoc::import_legacy_sky(sky, "Imported").expect("converted")
+    }
+
     #[test]
     fn rights_follow_the_item_and_nosave() {
         let r = Rights::from_item(0x8000 | 0x2000, 0);

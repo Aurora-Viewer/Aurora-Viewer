@@ -5,6 +5,7 @@
 //! other pages.
 
 use super::super::cx::{Cx, F, field};
+use crate::build::MoveHologram;
 use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::world::lookat::{Aim, Style};
@@ -373,11 +374,35 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
         }
         _ => {
+            cx.group(tr!("ui-options-aurora-building"), |cx| {
+                cx.wide().choice(
+                    tr!("ui-options-aurora-move-hologram"),
+                    tr!("ui-options-aurora-move-hologram-help"),
+                    &field!(build.move_hologram),
+                    &[
+                        (MoveHologram::Off, tr!("ui-options-aurora-move-hologram-off"), false),
+                        (MoveHologram::Moving, tr!("ui-options-aurora-move-hologram-moving"), true),
+                        (MoveHologram::Start, tr!("ui-options-aurora-move-hologram-start"), true),
+                    ],
+                );
+            });
             cx.group(tr!("ui-options-aurora-bridge"), |cx| {
                 cx.toggle(
                     tr!("ui-options-aurora-use-bridge"),
                     tr!("ui-options-aurora-use-bridge-help"),
                     &field!(use_bridge),
+                );
+                use crate::world::portals::Sources;
+                cx.combo(
+                    tr!("ui-options-aurora-portal-sources"),
+                    tr!("ui-options-aurora-portal-sources-help"),
+                    &field!(portal_sources),
+                    &[
+                        (Sources::Friends, tr!("ui-options-aurora-portal-sources-friends")),
+                        (Sources::FriendsAndGroups, tr!("ui-options-aurora-portal-sources-groups")),
+                        (Sources::Everyone, tr!("ui-options-aurora-portal-sources-everyone")),
+                        (Sources::Nobody, tr!("ui-options-aurora-portal-sources-nobody")),
+                    ],
                 );
             });
             cx.group(tr!("ui-options-aurora-gaze"), |cx| {

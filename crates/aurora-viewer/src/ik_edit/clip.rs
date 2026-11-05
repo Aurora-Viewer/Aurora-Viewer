@@ -300,18 +300,39 @@ impl Editor {
             self.refresh = true;
         }
     }
+    /// The rest skeleton with this editor's contacts solved on it, never the
+    /// displayed pose: what plays on the avatar is not the user's to record.
+    /// The shape stays, so that later keys do not read it as a translation.
+    fn authored_frame(&self, rig: &Rig, frame: &Frame) -> Option<Frame> {
+        let (shaped, scales) = authoring::local_pose(rig, frame)?;
+        let mut pose = ik::LocalPose {
+            rotations: rig.local_rot.clone(),
+            positions: shaped.positions,
+        };
+        pose.positions[rig.pelvis] = rig.local_pos[rig.pelvis];
+        for goal in &self.request().goals {
+            ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scales, goal);
+        }
+        Some(Frame {
+            model: frame.model,
+            joints: rig
+                .world_with(&pose.rotations, Vec3::ZERO, &pose.positions, &rig.scale)
+                .iter()
+                .map(|m| frame.model * *m)
+                .collect(),
+            at: frame.at,
+        })
+    }
     fn new_clip(&mut self, world: &World, frame: &Frame) {
         if self.clip.history.len() >= 15 {
             return;
         }
+        let rig = &world.avatar_lib.rig;
         let mut document = Document::new();
-        if let Err(key) = document.record(
-            &world.avatar_lib.rig,
-            frame,
-            0,
-            &(0..world.avatar_lib.rig.len()).collect::<Vec<_>>(),
-            &[],
-        ) {
+        let recorded = self.authored_frame(rig, frame).map_or(Err("anim-edit-invalid"), |authored| {
+            document.record(rig, &authored, 0, &(0..rig.len()).collect::<Vec<_>>(), &[])
+        });
+        if let Err(key) = recorded {
             self.clip.error = Some(aurora_i18n::text(key).to_owned());
             return;
         }
@@ -323,10 +344,16 @@ impl Editor {
         self.enter_clip(world, frame);
     }
     fn capture_ik_clip(&mut self, world: &World, frame: &Frame) {
-        let Some(document) = self.clip.document.as_mut() else { return };
         let translations: Vec<_> = self.goals.iter().filter(|g| g.mode == Mode::Direct).map(|g| g.bone).collect();
-        let bones: Vec<_> = (0..world.avatar_lib.rig.len()).collect();
-        match Arc::make_mut(document).record(&world.avatar_lib.rig, frame, self.clip.frame, &bones, &translations) {
+        let rig = &world.avatar_lib.rig;
+        let bones: Vec<_> = (0..rig.len()).collect();
+        let at = self.clip.frame;
+        let authored = self.authored_frame(rig, frame);
+        let Some(document) = self.clip.document.as_mut() else { return };
+        let recorded = authored.map_or(Err("anim-edit-invalid"), |authored| {
+            Arc::make_mut(document).record(rig, &authored, at, &bones, &translations)
+        });
+        match recorded {
             Ok(()) => {
                 self.clip.changed();
                 self.enter_clip(world, frame);
@@ -340,7 +367,10 @@ impl Editor {
         if self.clip.document.is_none() {
             let mut document = Document::new();
             let bones: Vec<_> = (0..rig.len()).collect();
-            if let Err(key) = document.record(rig, frame, 0, &bones, &[]) {
+            let recorded = self
+                .authored_frame(rig, frame)
+                .map_or(Err("anim-edit-invalid"), |authored| document.record(rig, &authored, 0, &bones, &[]));
+            if let Err(key) = recorded {
                 self.clip.error = Some(aurora_i18n::text(key).to_owned());
                 return;
             }
@@ -396,6 +426,10 @@ impl Editor {
         self.tab = 2;
     }
     pub(super) fn capture_clip(&mut self, world: &World, frame: &Frame) {
+        // the held source is the displayed pose, which is never recorded
+        if self.clip.waiting_source() {
+            return;
+        }
         let Some(capture) = self.clip.capture.take() else { return };
         if !self.clip.active {
             return;

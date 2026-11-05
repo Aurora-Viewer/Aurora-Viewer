@@ -306,11 +306,14 @@ pub(super) fn load(
         }
         "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" => Source::Texture(Arc::new(import_texture::decode(&data)?)),
         "wav" => Source::Sound(Arc::new(import_sound::decode_wav(&data, sound::SOURCE_LIMIT)?)),
-        "anim" => Source::Animation {
-            animation: Arc::new(aurora_assets::parse_animation_upload(&data)?),
-            bytes: Arc::new(data),
-            bvh: None,
-        },
+        "anim" => {
+            let (animation, bytes) = aurora_assets::prepare_animation_upload(&data)?;
+            Source::Animation {
+                animation: Arc::new(animation),
+                bytes: Arc::new(bytes),
+                bvh: None,
+            }
+        }
         "bvh" => {
             let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml"))?;
             let bvh = import_animation::parse_bvh(&data, &skeleton)?;
@@ -445,7 +448,10 @@ pub(super) fn load(
                     }),
                     options,
                 );
-                entry.name = format!("{} ({})", path.file_stem().unwrap_or_default().to_string_lossy(), material.name);
+                entry.name = crate::text_validation::generated_name(
+                    &format!("{} ({})", path.file_stem().unwrap_or_default().to_string_lossy(), material.name),
+                    63,
+                );
                 entry.material_index = index;
                 entry.selected = choice != Choice::Material || index == 0;
                 entry.local = choice == Choice::Local;

@@ -64,6 +64,13 @@ pub enum Action {
     },
     Save(Option<String>),
     SaveIn(String, Uuid),
+    ExportJson(Uuid),
+    PickJson,
+    ImportJson {
+        backup: Box<super::outfit_backup::Backup>,
+        name: String,
+        partial: bool,
+    },
     Remove(Uuid),
     RemoveItems(Vec<Uuid>),
     Add(Uuid),
@@ -503,6 +510,62 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let original_current = current.clone();
     let mut sync = true;
     match action {
+        Action::ImportJson { backup, name, partial } => {
+            if !super::outfit_backup::valid_name(&name) {
+                return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
+            }
+            let resolved = backup.resolve(inv, inv.owner);
+            if !partial && !resolved.missing.is_empty() {
+                return Err(aurora_i18n::tr!("outfit-json-missing-changed").into());
+            }
+            // Wearing zero links would take off every clothing item and
+            // attachment, so an empty backup is refused like an unavailable one.
+            if resolved.links.is_empty() {
+                return Err(if resolved.missing.is_empty() {
+                    aurora_i18n::tr!("outfit-json-empty")
+                } else {
+                    aurora_i18n::tr!("outfit-json-none-found")
+                }
+                .into());
+            }
+            let mut links = resolved.links;
+            // As updateCOF does, keep the current required body part whenever
+            // the selected (possibly partial) outfit does not supply its type.
+            for old in current.iter().filter(|link| !link.folder) {
+                if let Some(item) = inv.items.get(&old.target)
+                    && item.asset_type == 13
+                    && !links.iter().any(|link| {
+                        inv.items
+                            .get(&link.target)
+                            .is_some_and(|it| it.asset_type == 13 && it.flags & 0xff == item.flags & 0xff)
+                    })
+                {
+                    links.push(old.clone());
+                }
+            }
+            let parent =
+                system_folder(inv, FT_MY_OUTFITS).ok_or(aurora_i18n::tr!("world-appearance-the-my-outfits-folder-is-unavailable"))?;
+            let id = Uuid::new_v4();
+            let name = name.trim().to_owned();
+            change.folder = id;
+            change.create = Some(InvFolder {
+                id,
+                parent,
+                name: name.clone(),
+                type_default: FT_OUTFIT,
+                version: 1,
+                ..Default::default()
+            });
+            change.links = links.clone();
+            links.push(OutfitLink {
+                target: id,
+                name,
+                desc: String::new(),
+                folder: true,
+                inv_type: 8,
+            });
+            change.cof = Some((cof, links));
+        }
         Action::Save(_) | Action::SaveIn(..) | Action::SaveTo(_) => {
             let my = system_folder(inv, FT_MY_OUTFITS);
             let (name, destination, parent) = match action {
@@ -531,6 +594,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             let links: Vec<_> = current.iter().filter(|l| !l.folder).cloned().collect();
             if let Some(name) = name {
+                crate::text_validation::require(crate::text_validation::Policy::Ascii, &name)?;
                 let name = name.trim();
                 if name.is_empty() || name.chars().count() > 63 {
                     return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
@@ -812,9 +876,20 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             change.links = current;
         }
-        Action::ShowOriginal(_) | Action::Favorite(_) | Action::Category(..) | Action::Folders(_) | Action::DeleteFromOutfit { .. } => {
+        Action::ShowOriginal(_)
+        | Action::Favorite(_)
+        | Action::Category(..)
+        | Action::Folders(_)
+        | Action::DeleteFromOutfit { .. }
+        | Action::ExportJson(_)
+        | Action::PickJson => {
             return Err(aurora_i18n::tr!("world-appearance-this-action-does-not-change-the-current-outfit").into());
         }
+    }
+    // Every new-outfit entry point (including imports) must satisfy the
+    // destination-name policy before any inventory requests are prepared.
+    if let Some(created) = &change.create {
+        crate::text_validation::require(crate::text_validation::Policy::Ascii, &created.name)?;
     }
     if change.folder == cof {
         drop_coalesced(inv, &mut change.links);
@@ -884,6 +959,7 @@ pub fn category_plan(
     require_outfit(inv, id)?;
     match &mut update {
         Update::Rename(name) => {
+            crate::text_validation::require_edit(crate::text_validation::Policy::Ascii, &inv.folders[&id].info.name, name)?;
             *name = name.trim().into();
             if name.is_empty() || name.chars().count() > 63 || name.chars().any(char::is_control) {
                 return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
@@ -1059,9 +1135,10 @@ pub fn sync_with_attachments(
     agent: Uuid,
     worn: &HashSet<Uuid>,
     worn_before: &HashSet<Uuid>,
+    keep: Uuid,
     attachments: Vec<AttachRequest>,
 ) -> CofSync {
-    let mut sync = sync_plan(inv, agent, worn);
+    let mut sync = sync_plan_keeping(inv, agent, worn, keep);
     for command in &mut sync.commands {
         if let NetCommand::DetachAttachments(items) = command {
             items.retain(|id| worn_before.contains(id) && !attachments.iter().any(|request| request.item_id == *id));
@@ -1079,13 +1156,21 @@ pub fn sync_with_attachments(
 }
 
 pub fn sync_plan(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> CofSync {
+    sync_plan_keeping(inv, agent, worn, Uuid::nil())
+}
+
+/// `sync_plan` that never takes `keep` off, linked or not: the Aurora bridge,
+/// which the Legacy Viewer puts back into every replaced outfit (FSLSLBridge
+/// in LLAppearanceMgr::updateCOF, llappearancemgr.cpp). It stays in `worn`,
+/// or its link would ask to wear it again at each sync.
+pub fn sync_plan_keeping(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>, keep: Uuid) -> CofSync {
     let Some(cof) = cof(inv) else {
         return CofSync::default();
     };
     // the links to objects, with those whose item is not known yet: a worn
     // object linked in the COF stays on even before its item is fetched
     let objects: HashSet<_> = super::outfit::cof_objects(inv, cof).into_iter().collect();
-    let detach: Vec<_> = worn.difference(&objects).copied().collect();
+    let detach: Vec<_> = worn.difference(&objects).copied().filter(|id| *id != keep).collect();
     let mut unknown = Vec::new();
     let mut attach = Vec::new();
     for id in objects.difference(worn) {
@@ -1125,6 +1210,58 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
     sync_plan(inv, agent, worn).commands
 }
 
+/// A forced batch with nothing left to do: its links would not change and the
+/// avatar already matches. RlvForceWear::done (rlvhelper.cpp) returns early
+/// here; an outfit write would still raise the COF version and ask for a new
+/// appearance. Read when the batch runs: a run of `@detach` queues while the
+/// first object is leaving, and has nothing to do once it has left. An object
+/// on the avatar or on its way needs no new request (`requested`:
+/// LLAttachmentsMgr::wasRequestedRecently) and is linked when it arrives
+/// (`update_attachment_inventory`). Gestures are always applied, their state
+/// is not in the links.
+pub fn force_changes_nothing(inv: &Inventory, action: &Action, worn: &HashMap<Uuid, u8>, requested: &HashSet<Uuid>) -> bool {
+    let Action::Force { remove, wear } = action else {
+        return false;
+    };
+    let original = |id: Uuid| super::inventory::actions::original(inv, id).unwrap_or(id);
+    let gesture = |id: Uuid| inv.items.get(&id).is_some_and(|it| it.asset_type == 21);
+    let settled_off = |id: &Uuid| {
+        let id = original(*id);
+        !gesture(id) && !worn.contains_key(&id)
+    };
+    let settled_on = |request: &WearRequest| {
+        let id = original(request.item);
+        !gesture(id)
+            && match inv.items.get(&id).map(|it| it.asset_type) {
+                Some(6) => match worn.get(&id) {
+                    Some(point) => request.point == 0 || request.point == *point,
+                    None => requested.contains(&id),
+                },
+                Some(_) => true,
+                None => false,
+            }
+    };
+    if !remove.iter().all(settled_off) || !wear.iter().all(settled_on) {
+        return false;
+    }
+    let (Some(cof), Ok((change, _))) = (cof(inv), plan(inv, action.clone(), worn)) else {
+        return false;
+    };
+    let arriving: HashSet<_> = wear
+        .iter()
+        .map(|request| original(request.item))
+        .filter(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 6))
+        .collect();
+    let links = |links: &[OutfitLink]| {
+        links
+            .iter()
+            .filter(|l| !arriving.contains(&l.target))
+            .map(|l| (l.target, l.folder))
+            .collect::<HashSet<_>>()
+    };
+    links(&folder_links(inv, cof)) == links(&change.links)
+}
+
 /// Explicit attachment requests retain the chosen point and replace/add mode.
 /// They are sent only after the COF update has been acknowledged. Objects
 /// are linked on arrival, so "Add" also needs its explicit rez request.
@@ -1144,6 +1281,14 @@ pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> 
             })
             .collect(),
         Action::Force { wear, .. } => wear.clone(),
+        Action::ImportJson { backup, .. } => {
+            let available: HashSet<_> = backup.resolve(inv, agent).links.into_iter().map(|link| link.target).collect();
+            backup
+                .points()
+                .into_iter()
+                .filter(|request| available.contains(&request.item))
+                .collect()
+        }
         Action::Add(item) => vec![WearRequest {
             item: *item,
             replace: false,
@@ -2496,6 +2641,7 @@ mod tests {
                 agent,
                 &worn.keys().copied().collect(),
                 &worn.keys().copied().collect(),
+                Uuid::nil(),
                 attachments,
             );
             assert_eq!(
@@ -2572,6 +2718,7 @@ mod tests {
             agent,
             &HashSet::from([item, another, removed]),
             &HashSet::from([removed]),
+            Uuid::nil(),
             attachments,
         );
         assert!(
@@ -2846,6 +2993,157 @@ mod tests {
             .is_err()
         );
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), before);
+    }
+
+    /// RlvForceWear::done: a run of forced commands costs no outfit write once
+    /// the avatar and the links are as asked, and anything still to do does.
+    #[test]
+    fn a_forced_batch_with_nothing_to_do_changes_nothing() {
+        let mut inv = fixture();
+        let cof = cof(&inv).expect("COF");
+        let (linked, other) = (Uuid::from_u128(970), Uuid::from_u128(971));
+        let shirt = Uuid::from_u128(972);
+        inv.add_items(
+            [(linked, 6, 6), (other, 6, 6), (shirt, 5, 18)]
+                .into_iter()
+                .map(|(id, asset_type, inv_type)| InvItem {
+                    id,
+                    parent: inv.root,
+                    asset_type,
+                    inv_type,
+                    flags: 4,
+                    name: "item".into(),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        inv.add_items(
+            [(980, linked, 6), (981, shirt, 18)]
+                .into_iter()
+                .map(|(id, target, inv_type)| InvItem {
+                    id: Uuid::from_u128(id),
+                    parent: cof,
+                    asset_type: 24,
+                    inv_type,
+                    asset_id: target,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let remove = |items: &[Uuid]| Action::Force {
+            remove: items.to_vec(),
+            wear: Vec::new(),
+        };
+        let wear = |item, point| Action::Force {
+            remove: Vec::new(),
+            wear: vec![WearRequest {
+                item,
+                replace: false,
+                point,
+            }],
+        };
+        let on = HashMap::from([(linked, 5)]);
+        let none = HashMap::new();
+        let nothing = |action: &Action, worn: &HashMap<Uuid, u8>| force_changes_nothing(&inv, action, worn, &HashSet::new());
+        assert!(nothing(&remove(&[other]), &on), "off already, no link");
+        assert!(!nothing(&remove(&[other]), &HashMap::from([(other, 5)])), "still on");
+        assert!(!nothing(&remove(&[linked]), &none), "its link is still there");
+        assert!(nothing(&wear(linked, 0), &on), "on already, linked");
+        assert!(nothing(&wear(linked, 5), &on), "on its point");
+        assert!(!nothing(&wear(linked, 6), &on), "to be moved");
+        assert!(!nothing(&wear(linked, 0), &none), "linked, not on the avatar");
+        assert!(nothing(&wear(other, 0), &HashMap::from([(other, 5)])), "on, linked when it arrived");
+        assert!(!nothing(&wear(other, 0), &none), "off, no request");
+        let requested = HashSet::from([other]);
+        assert!(force_changes_nothing(&inv, &wear(other, 0), &none, &requested), "on its way");
+        assert!(
+            !force_changes_nothing(&inv, &wear(other, 6), &HashMap::from([(other, 5)]), &requested),
+            "still to be moved"
+        );
+        assert!(nothing(&wear(shirt, 0), &none), "clothing already linked");
+        assert!(!nothing(&remove(&[shirt]), &none), "clothing to take off");
+        assert!(
+            !nothing(&remove(&[Uuid::from_u128(999)]), &on),
+            "an unknown item is an error to report"
+        );
+        assert!(!nothing(&Action::Remove(other), &on), "only forced batches");
+    }
+
+    /// LLAttachmentsMgr::wasRequestedRecently: the first wear goes out, its
+    /// repeats do not, and one is sent again once the request is old.
+    #[test]
+    fn repeats_of_a_forced_wear_wait_for_the_first_request() {
+        let mut world = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = fixture();
+        let item = Uuid::from_u128(990);
+        world.inventory.add_items(vec![InvItem {
+            id: item,
+            parent: world.inventory.root,
+            asset_type: 6,
+            inv_type: 6,
+            flags: 4,
+            name: "item".into(),
+            ..Default::default()
+        }]);
+        let action = Action::Force {
+            remove: Vec::new(),
+            wear: vec![WearRequest {
+                item,
+                replace: true,
+                point: 0,
+            }],
+        };
+        let start = std::time::Instant::now();
+        assert!(!world.rlva_force_settled(&action, start), "the first one goes out");
+        assert!(
+            world.rlva_force_settled(&action, start + std::time::Duration::from_secs(1)),
+            "a repeat does not"
+        );
+        assert!(
+            !world.rlva_force_settled(&action, start + std::time::Duration::from_secs(6)),
+            "sent again once old"
+        );
+    }
+
+    /// The bridge item: on while it is worn, whether the COF links it or not,
+    /// and only worn again when a link finds it really absent.
+    #[test]
+    fn cof_sync_neither_wears_again_nor_takes_off_the_kept_bridge() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let cof = cof(&inv).expect("COF");
+        let bridge = Uuid::from_u128(960);
+        let touched = |sync: &CofSync| {
+            sync.commands.iter().fold((false, false), |(worn, off), command| match command {
+                NetCommand::RezAttachments(items) => (worn || items.iter().any(|a| a.item_id == bridge), off),
+                NetCommand::DetachAttachments(items) => (worn, off || items.contains(&bridge)),
+                _ => (worn, off),
+            })
+        };
+        inv.add_items(vec![InvItem {
+            id: bridge,
+            parent: inv.root,
+            asset_type: 6,
+            inv_type: 6,
+            name: "bridge".into(),
+            ..Default::default()
+        }]);
+        let on = HashSet::from([bridge]);
+        let unlinked = sync_plan_keeping(&inv, agent, &on, bridge);
+        assert_eq!(touched(&unlinked), (false, false), "worn and not linked: it stays on");
+        assert_eq!(touched(&sync_plan(&inv, agent, &on)), (false, true), "any other object comes off");
+        inv.add_items(vec![InvItem {
+            id: Uuid::from_u128(961),
+            parent: cof,
+            asset_type: 24,
+            inv_type: 6,
+            asset_id: bridge,
+            ..Default::default()
+        }]);
+        let linked = sync_plan_keeping(&inv, agent, &on, bridge);
+        assert_eq!(touched(&linked), (false, false), "worn and linked: nothing to do");
+        let absent = sync_plan_keeping(&inv, agent, &HashSet::new(), bridge);
+        assert_eq!(touched(&absent), (true, false), "linked and absent: it is worn");
     }
 
     /// `missing_targets` reads the links in place; it finds what the copied

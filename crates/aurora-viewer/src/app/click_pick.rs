@@ -310,6 +310,7 @@ impl App {
     /// cursor without having it (`click_pick`), it asks for it and returns:
     /// `resolve_clicks` runs it again with the answer.
     fn run_click(&mut self, click: Click) {
+        let started = Instant::now();
         self.clicks.running = Some(click);
         match click {
             Click::Press => {
@@ -325,6 +326,17 @@ impl App {
             Click::Gun { at_cursor } => self.gun_press(at_cursor),
         }
         self.clicks.running = None;
+        // what the click costs the main thread, each time it runs: when it
+        // asks for the depth, then with the answer
+        let ms = started.elapsed().as_secs_f32() * 1000.0;
+        let run = if self.clicks.in_hand.is_some() {
+            "run with the depth"
+        } else if self.clicks.waiting() {
+            "asked for the depth"
+        } else {
+            "run"
+        };
+        self.note_pick(format_args!("{click:?} {run} in {ms:.2} ms"));
     }
 
     /// The cursor ray and the depth under the cursor for the click being
@@ -386,6 +398,7 @@ impl App {
             (depth, t.elapsed())
         });
         let ticket = g.renderer.request_pick(x, y);
+        self.frame_profile.trace_click();
         // LLToolCamera::handleMouseDown: displayed surfaces, including the
         // transparency overlay. Posed geometry avoids an attachment's bind pose.
         // (Alt in mouselook frees the cursor for the grab tool, not the camera.)
