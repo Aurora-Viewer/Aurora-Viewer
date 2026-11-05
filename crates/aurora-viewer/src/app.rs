@@ -522,6 +522,8 @@ pub struct App {
     particle_inject: particle_editor::Inject,
     portal_drop: Option<portals::landmark::Pending>,
     portal_journey: Option<portals::Journey>,
+    /// A non-friend portal's first crossing waits for this question.
+    portal_ask: Option<ui::portals::CrossingAsk>,
     /// A peer contains a full World; keep it off the Windows startup stack.
     portal_demo_peer: Option<Box<portals::demo::Peer>>,
     follow_recovery: Option<follow::Recovery>,
@@ -1588,6 +1590,7 @@ impl App {
             particle_inject: Default::default(),
             portal_drop: None,
             portal_journey: None,
+            portal_ask: None,
             portal_demo_peer: None,
             follow_recovery: None,
             report_abuse: Default::default(),
@@ -2888,6 +2891,7 @@ impl App {
         self.particle_inject = Default::default();
         self.portal_drop = None;
         self.portal_journey = None;
+        self.portal_ask = None;
         self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
@@ -3682,12 +3686,13 @@ impl App {
                         openid_token.to_owned(),
                     );
                 }
-                // interface sounds ready when needed (init_audio preloads)
+                // interface sounds ready when needed (init_audio preloads),
+                // and kept in memory
                 for id in self.settings.audio.ui.preload() {
-                    self.scene.sounds.want(id);
+                    self.scene.sounds.want_kept(id);
                 }
                 if let Some(id) = attention::keyword_sound(&self.settings, &self.settings.keywords) {
-                    self.scene.sounds.want(id);
+                    self.scene.sounds.want_kept(id);
                 }
                 // remembered password: the hash of the one typed (kept when
                 // the remembered one was used); otherwise forgotten
@@ -5203,6 +5208,7 @@ impl App {
         if let Some(id) = self.settings.audio.ui.resolve(s, false) {
             // RUST_LOG=info,ui_sound=debug (Firestorm UISndDebugSpamToggle)
             log::debug!(target: "ui_sound", "UISnd{} ({id})", s.entry().name);
+            self.scene.sounds.want_kept(id);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
         }
     }
@@ -7778,7 +7784,7 @@ impl App {
         let Ok(bytes) = std::fs::read(&path) else {
             return;
         };
-        match aurora_llsd::from_binary(&bytes) {
+        match aurora_llsd::from_binary_local(&bytes) {
             Ok((data, _)) if data.is_map() => {
                 log::info!("local environment of the last session restored");
                 self.world.eep.restore_local(&data);
@@ -8790,6 +8796,7 @@ impl App {
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
             self.world.group_titles = self.settings.group_titles;
+            self.world.portal_sources = self.portal_sources();
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
@@ -11371,6 +11378,28 @@ impl App {
                 }
                 self.notif_ui.open = true;
                 self.notif_ui.center.tab = ui::notification_center::Tab::History;
+            }
+            // the invitation with a fee accepted (its cost confirmed next, or
+            // too high), the L$ question denied (its nearby chat line)
+            if self.frame_count == crate::demo::notifs::FEES_ANSWER_AT && matches!(mode.as_str(), "fees-answered" | "fees-short") {
+                use crate::world::notifications::{Data, Response};
+                let answers: Vec<(u64, Response)> = self
+                    .world
+                    .notifications
+                    .list
+                    .iter()
+                    .filter_map(|n| match n.data {
+                        Data::Group { .. } => Some((n.id, Response::Accept)),
+                        Data::Permissions { caution: Some(_), .. } => Some((n.id, Response::Decline)),
+                        _ => None,
+                    })
+                    .collect();
+                for (id, answer) in answers {
+                    let (commands, _) = self.world.respond_notification(id, answer);
+                    for command in commands {
+                        self.send(command);
+                    }
+                }
             }
             // the notice's attachment saved from its card
             if self.frame_count == crate::demo::notifs::SAVE_AT
@@ -16443,6 +16472,7 @@ impl App {
                 {
                     self.answer_suitcase(ask, yes);
                 }
+                self.portal_crossing_question(&ctx, &p);
                 if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {

@@ -83,6 +83,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1\|empty` | Open the avatar display-exceptions editor |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
+| `AURORA_DEMO_PORTALS=stranger\|stranger-groups\|stranger-hidden` | A non-friend's portal under each "Show portals from" choice |
 | `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
@@ -210,6 +211,19 @@ applies when another resident's portal appears nearby.
 `keyboard-departing-allowed` starts the creator's teleport when the access
 request arrives, then changes their region after the grant is sent: the
 visitor must still receive the destination and teleport without chat focus.
+
+`AURORA_DEMO_PORTALS=stranger|stranger-groups|stranger-hidden` puts a public
+portal from a resident who is not our friend four metres ahead, then holds
+the Forward arrow from frame 600 to 810 like the keyboard modes, under the
+"Show portals from" choice it names for the run (never saved): `stranger` is
+Everyone, `stranger-groups` Friends and my groups (the resident's profile
+lists one of our groups), `stranger-hidden` Friends. The first two show the
+aperture and, on the crossing, the "Go through this portal?" question with
+the resident and the destination: Cancel stays, Go teleports, and a second
+crossing of the same portal asks no more. `stranger-hidden` shows nothing
+and walks through without a question or a teleport. Capture around frame
+760 for the question. The earlier modes (`friends`, `private-…`,
+`return…`) run with Everyone, so their non-friend portals stay visible.
 
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
@@ -4909,7 +4923,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
-| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices and a delivered purchase |
+| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open\|fees\|fees-answered\|fees-short` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$ |
 | `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
@@ -5835,6 +5849,7 @@ failure. Grid validation and any paid upload are performed by the human.
   isolated profile; closing a receipt must never send another acceptance.
 - **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
 - **`AURORA_DEMO_NOTIFS=group-notice|legacy-group-notice|group-notice-saved`**: two group notices at frame 700. Aurora Builders (no insignia: the group glyph) from Tess Touch without an attachment, then Northern Wolves (its insignia beside the title) from Orion with a "Texture kit" object attached. Each card is titled "group : subject", its text starts with "Sent by" and the sender, both names are links; the attachment row shows its icon, name and kind with "Save to inventory" beside it, or under it when a long translation leaves the name no room. `legacy-group-notice` shows them in the Legacy toasts; `group-notice-saved` saves the attachment at frame 850: the card stays out with a greyed "Saved". Capture at frame 760 (900 for `group-notice-saved`) in English and French.
+- **`AURORA_DEMO_NOTIFS=fees|fees-answered|fees-short`**: at frame 700, an invitation to Lagoon Sailing Club with a L$ 50 membership fee ("Membership fee" under its text, "Join · L$ 50" on its button) and a tip jar of Tess Touch asking to take L$ and animate the avatar: titled "Warning: access to your account", the warning then the other permission, Deny as the main button and Allow access beside it. `fees-answered` answers at frame 850: the invitation is replaced by "Join the group" naming the cost (Join / Cancel), the question is denied and the nearby chat tells it ("… has been denied permission to: Take L$ from your account."). `fees-short` asks L$ 5000: Accept at frame 850 leaves the invitation and adds "You do not have enough L$ to join this group". Capture at frame 760 (`fees`) or 900.
 - **`AURORA_DEMO_NOTIFS=purchase|purchase-open`**: a Marketplace purchase delivered at frame 700, in the grid's words, from no sender (#1604), with the demo inventory loaded just before. The nearby chat shows it as a notice (the box of items in compact rows, no "System" sender with its letter); "Received Items" in its text is a link to that folder. `purchase-open` clicks the link at frame 760: the inventory opens on its Received tab. Capture at frame 740 (`purchase`) or 820 (`purchase-open`).
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
@@ -9666,6 +9681,7 @@ What the inventory must show with these scenarios:
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
+| `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
 
@@ -9979,6 +9995,16 @@ What the inventory must show with these scenarios:
   back, the waist and the skirt of our avatar, and the large sphere behind
   the material panels, where the lines of the mesh's creases showed;
   `AURORA_DEMO_SKY=1,0.8,1.2` for a sky with strong ambient light.
+- **`AURORA_DEBUG_GEOM_DELAY=<seconds>`**: each geometry built by a job
+  (prims, sculpts, meshes, trees) waits that long on the main thread
+  before it goes to the arena (`scene/mod.rs`, `finish_geometry`). Past
+  `GEOM_KEEP_FRAMES` (600 frames) a geometry still pending is collected
+  and asked for again, so the same geometry is built twice: the case that
+  drew long stretched triangles across the scene before the second copy
+  was dropped. To see it, `AURORA_DEBUG_GEOM_DELAY=15` with
+  `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=3600`: the plaza's
+  lamp posts, material panels and large sphere load late and then look
+  as usual, without spikes or torn faces.
 - **`AURORA_DEBUG_MOTION=1`**: the motion vectors replace the image
   (`motion_debug.rs`, `shaders/motion_debug.wgsl`): the hue gives the
   direction a point moved on screen since the last frame (red left, cyan
@@ -10738,7 +10764,10 @@ What the inventory must show with these scenarios:
   itself against the scene: the spheres it holds (`index entries … unlike
   their object`) and the classes of the objects tested whatever the ray
   (`classes unlike their object`); all these counters must stay at 0. Costs
-  the full search each frame.
+  the full search each frame. A click's searches among the index's
+  candidates (`Scene::action_point`, `interaction_at_ray`) are compared the
+  same way: a `click index check` warning names any point or object that
+  differs from the search over every object.
 - **`AURORA_HOVER_LEGACY=1`**: the search for the object under the cursor
   becomes the former one again (`scene/hover.rs`): every object tested
   whatever the ray (avatar, rigged mesh) is a candidate at each stage, each
@@ -10768,7 +10797,16 @@ What the inventory must show with these scenarios:
     delay of the answer. Costs the wait of `wait` at each click.
   - With `AURORA_PROFILE=1` (or `AURORA_DEMO_CLICKS`), each click writes a
     `click pick:` line: `answered after 2 frames, 9.14 ms`, or `the read
-    waited 25.56 ms` with `wait`. In demo as on the grid.
+    waited 25.56 ms` with `wait`, and one per run of the click with what it
+    cost the main thread: `Press asked for the depth in 0.05 ms`, then
+    `Press run with the depth in 0.30 ms`. In demo as on the grid.
+  - With `AURORA_PROFILE=1`, a `click frames:` line follows each click: the
+    nine frames from the press on, separated by `|`, each with its time in
+    ms, the main thread steps of 1 ms or more, the render thread (`rt=`)
+    and the GPU (`gpu=` and its largest element). A spike in the frame
+    graph at each click shows there with its side: a main thread step
+    (`between=` is where the click runs again with its depth), the render
+    thread or the GPU.
 
 - **`AURORA_STILL_CHECK=1`**: one `still check` line per second, to find
   the cause of an image that shakes when nothing should move (camera locked
