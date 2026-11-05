@@ -24,7 +24,7 @@ pub(super) struct DragState {
     drawn: Option<(u64, (Vec3, Vec3))>,
     /// A face of what we wear under the pointer, from the last answer.
     worn: Option<(usize, u8)>,
-    pub highlighted: Option<(usize, u64)>,
+    pub highlighted: Vec<(usize, u64)>,
 }
 impl DragState {
     fn end_worn_search(&mut self, renderer: &mut Renderer) {
@@ -40,6 +40,8 @@ pub(super) struct Drop {
     object: usize,
     face: u8,
     all: bool,
+    /// With `all`: every prim of the worn linkset, not only the one hit.
+    linkset: bool,
     contents: bool,
     remove_pbr: bool,
 }
@@ -60,6 +62,43 @@ fn requires_contents(inv: &crate::world::inventory::Inventory, item: &aurora_net
 }
 // The selection is counted by prim, not by face: a no-copy resource may
 // cover several faces of one object but cannot be moved into two objects.
+/// Ctrl+Shift over what we wear: every face of its linkset. Ctrl alone would
+/// go into a worn object's contents, which it refuses, so nothing is lost.
+/// A **wanted difference** from dropTextureAllFaces, which stops at the prim
+/// hit, as the pieces of a worn mesh often have a single face.
+fn linkset_drop(worn: bool, ctrl: bool, shift: bool) -> bool {
+    worn && ctrl && shift
+}
+/// The keys of a drop on what we wear, one line each; what is held stands out.
+fn worn_drop_keys(ui: &mut egui::Ui, p: &crate::theme::Palette, shift: bool, linkset: bool) {
+    let shift_key = || crate::keybinds::Binding {
+        input: crate::keybinds::Input::key(winit::keyboard::KeyCode::ShiftLeft),
+        ctrl: false,
+        shift: false,
+        alt: false,
+    };
+    ui::widgets::keycap::legend(
+        ui,
+        p,
+        &[
+            (
+                shift_key(),
+                aurora_i18n::tr!("texture-library-worn-drop-all-faces"),
+                shift && !linkset,
+            ),
+            (
+                crate::keybinds::Binding { ctrl: true, ..shift_key() },
+                aurora_i18n::tr!("texture-library-worn-drop-linked"),
+                linkset,
+            ),
+        ],
+    );
+}
+/// The prims a drop on `idx` covers: its linkset with `linkset_drop`.
+fn drop_prims(world: &World, idx: usize, linkset: bool) -> Vec<usize> {
+    let root = contents_drop::linkset(world, idx).filter(|_| linkset);
+    root.map_or_else(|| vec![idx], |(root, _)| crate::build::family(world, root))
+}
 fn selection_copy_denied(item: &aurora_net::inventory::InvItem, agent: Uuid, objects: usize) -> bool {
     objects > 1 && permissions(item, agent) & rules::COPY == 0
 }
@@ -737,7 +776,7 @@ impl App {
     }
 
     pub(super) fn texture_library_drag_input(&mut self, ctx: &egui::Context, renderer: &mut Renderer) -> Option<Drop> {
-        self.library_drag.highlighted = None;
+        self.library_drag.highlighted.clear();
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return None;
         }
@@ -813,13 +852,16 @@ impl App {
         }
         // On release too: the last answer, a few frames old, is what was shown.
         let target = self.library_drag.worn.or(self.library_drag.target);
+        let worn = self.library_drag.worn.is_some();
+        let linkset = linkset_drop(worn, drag.ctrl, drag.shift);
+        let ctrl = drag.ctrl && !linkset;
         let allowed = target
             .and_then(|(idx, face)| self.world.objects.get(idx).map(|o| (idx, face, o)))
             .is_some_and(|(idx, face, o)| {
                 !o.is_avatar()
                     && !o.is_tree()
                     && o.te.as_ref().is_some_and(|te| (face as usize) < te.faces.len())
-                    && (if drag.ctrl {
+                    && (if ctrl {
                         // A world drop follows willObjectAcceptInventory;
                         // the Contents panel's New script rule is narrower.
                         super::inventory_drag::target_allowed(&self.world, idx, item, true).is_ok()
@@ -829,8 +871,8 @@ impl App {
             });
         let protected_asset = requires_contents(&self.world.inventory, item, self.world.agent_id);
         let mut reason = None;
-        if !allowed || drag.ctrl && self.world.inventory.items.get(&drag.item).is_some_and(|i| i.asset_type == 24) {
-            let locked = !drag.ctrl
+        if !allowed || ctrl && self.world.inventory.items.get(&drag.item).is_some_and(|i| i.asset_type == 24) {
+            let locked = !ctrl
                 && target
                     .and_then(|(idx, _)| self.world.objects.get(idx).map(|o| (idx, o)))
                     .is_some_and(|(idx, o)| !o.is_avatar() && !o.is_tree() && !self.build.can_modify(&self.world, idx));
@@ -840,15 +882,14 @@ impl App {
                 aurora_i18n::tr!("texture-library-locked")
             });
         }
-        let worn_refused =
-            !drag.ctrl && allowed && target.is_some_and(|(idx, _)| contents_drop::worn_image_refused(&self.world, idx, item));
+        let worn_refused = !ctrl && allowed && target.is_some_and(|(idx, _)| contents_drop::worn_image_refused(&self.world, idx, item));
         if worn_refused {
             reason = Some(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
         } else if allowed
             && let Some((idx, _)) = target
-            && (protected_asset || drag.ctrl)
+            && (protected_asset || ctrl)
         {
-            if protected_asset && !drag.ctrl {
+            if protected_asset && !ctrl {
                 let object = self.world.objects.get(idx)?.full_id;
                 self.build.request_contents(&self.world, idx, false);
                 if self
@@ -880,38 +921,36 @@ impl App {
         });
         if reason.is_none()
             && let Some((idx, face)) = target
-            && !drag.ctrl
+            && !ctrl
             && !drag.released
             && face < 64
         {
-            let mask = if drag.shift {
-                self.world
-                    .objects
-                    .get(idx)?
-                    .te
-                    .as_ref()?
-                    .faces
-                    .iter()
-                    .take(64)
-                    .enumerate()
-                    .fold(0, |mask, (i, _)| mask | 1u64 << i)
-            } else {
-                1u64 << face
-            };
-            self.library_drag.highlighted = Some((idx, mask));
+            for prim in drop_prims(&self.world, idx, linkset) {
+                let te = self.world.objects.get(prim).and_then(|o| o.te.as_ref());
+                let mask = if drag.shift {
+                    te.map_or(0, |te| (0..te.faces.len().min(64)).fold(0, |mask, i| mask | 1u64 << i))
+                } else {
+                    1u64 << face
+                };
+                self.library_drag.highlighted.push((prim, mask));
+            }
         }
         if !drag.released {
-            // a refusal says why first; the hint only tells what Shift adds
-            let hint = self.library_drag.worn.is_some() && !drag.ctrl && !drag.shift;
-            if let Some(text) = reason.or(hint.then(|| aurora_i18n::tr!("texture-library-worn-drop-hint"))) {
+            // a refusal says why first; over what we wear, the keys come next
+            if reason.is_some() || worn && !ctrl {
+                let p = &self.palette;
                 egui::Tooltip::always_open(
                     ctx.clone(),
                     egui::LayerId::background(),
                     egui::Id::unique("texture-world-drop-refused"),
-                    egui::PopupAnchor::Pointer,
+                    // clear of the cursor and of the badge it carries
+                    egui::PopupAnchor::Position(drag.position + egui::vec2(32.0, 28.0)),
                 )
-                .show(|ui| {
-                    ui.label(text);
+                .show(|ui| match reason {
+                    Some(reason) => {
+                        ui.label(reason);
+                    }
+                    None => worn_drop_keys(ui, p, drag.shift, linkset),
                 });
             }
         } else {
@@ -926,7 +965,8 @@ impl App {
                 object,
                 face,
                 all: drag.shift,
-                contents: drag.ctrl,
+                linkset,
+                contents: ctrl,
                 remove_pbr: self.alt,
             });
         }
@@ -936,21 +976,23 @@ impl App {
         let Some(item) = catalogue::resource(&self.world.inventory, drop.item).cloned() else {
             return;
         };
-        let Some(object) = self.world.objects.get(drop.object) else {
-            return;
-        };
-        let object_id = object.full_id;
-        let count = self
-            .media
-            .face_count(&self.world, &self.scene, drop.object)
-            .unwrap_or_else(|| self.build.num_faces(&self.world, drop.object));
-        self.build.face_counts.insert(object_id, count);
-        let faces: Vec<_> = if drop.all {
-            (0..count.min(256)).map(|i| i as u8).collect()
-        } else {
-            vec![drop.face]
-        };
-        if self.apply_inventory_resource(&item, drop.object, &faces, drop.contents, drop.remove_pbr) && !drop.contents {
+        let mut applied = false;
+        for idx in drop_prims(&self.world, drop.object, drop.all && drop.linkset) {
+            let Some(object) = self.world.objects.get(idx) else { continue };
+            let object_id = object.full_id;
+            let count = self
+                .media
+                .face_count(&self.world, &self.scene, idx)
+                .unwrap_or_else(|| self.build.num_faces(&self.world, idx));
+            self.build.face_counts.insert(object_id, count);
+            let faces: Vec<_> = if drop.all {
+                (0..count.min(256)).map(|i| i as u8).collect()
+            } else {
+                vec![drop.face]
+            };
+            applied |= self.apply_inventory_resource(&item, idx, &faces, drop.contents, drop.remove_pbr);
+        }
+        if applied && !drop.contents {
             self.texture_resource_applied(item.id);
         }
         self.flush_build();
@@ -1096,6 +1138,19 @@ impl App {
 mod tests {
     use super::*;
     use aurora_net::inventory::InvItem;
+    #[test]
+    fn only_ctrl_shift_over_what_is_worn_takes_the_whole_linkset() {
+        assert!(linkset_drop(true, true, true));
+        for (worn, ctrl, shift) in [
+            (true, false, false),
+            (true, false, true),
+            (true, true, false),
+            (false, true, true),
+            (false, false, true),
+        ] {
+            assert!(!linkset_drop(worn, ctrl, shift), "{worn} {ctrl} {shift}");
+        }
+    }
     #[test]
     fn texture_library_never_duplicates_a_no_copy_resource_across_selected_objects() {
         let agent = Uuid::from_u128(90);

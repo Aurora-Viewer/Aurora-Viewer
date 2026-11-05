@@ -39,7 +39,8 @@
 //! avatar, where a texture does nothing (dad3dNULL). Here a texture or a
 //! material dragged over the world lands on the face shown of what we wear
 //! and may edit, with the permission rules of the Texture tab
-//! (`Gesture::Drop`, app/texture_library.rs).
+//! (`Gesture::Drop`, app/texture_library.rs). Ctrl+Shift covers its whole
+//! linkset, where dropTextureAllFaces stops at the prim hit.
 //!
 //! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
 //! that pass directly: no CPU rest-pose or invisible touch-surface search.
