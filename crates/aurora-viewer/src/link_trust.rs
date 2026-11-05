@@ -5,7 +5,13 @@
 //!
 //! The trusted domains start from Firestorm's (LLUrlEntrySecondlifeURL and
 //! LLUrlEntryFirestormURL, indra/llui/llurlentry.cpp); the red cross is an
-//! Aurora addition.
+//! Aurora addition. The host is read as a browser reads it (the WHATWG URL
+//! rules of the `url` crate): an address of this computer or of the local
+//! network gets the red cross however it is written (`127.1`,
+//! `0x7f.0.0.1`, `2130706433`, `[::ffff:127.0.0.1]`, `localhost`,
+//! `nas.local`), and link previews never fetch it.
+
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Trusted domains, their subdomains included. Hosts of pages or files
 /// anyone can publish (github.io, githubusercontent.com, sites.google.com,
@@ -116,6 +122,21 @@ const THROWAWAY_HOSTING: &[&str] = &[
     "herokuapp.com",
 ];
 
+/// Suffixes of names that only exist on a local network (RFC 6761, 6762,
+/// 8375 and the common router defaults).
+const LOCAL_SUFFIXES: &[&str] = &[
+    "localhost",
+    "local",
+    "localdomain",
+    "lan",
+    "home",
+    "home.arpa",
+    "internal",
+    "intranet",
+    "corp",
+    "private",
+];
+
 /// Names a fake site borrows to look official (compared without dots and
 /// dashes, so "second-life-login.example" is caught).
 const IMPERSONATED: &[&str] = &["secondlife", "lindenlab", "firestorm", "auroraviewer", "tiliainc"];
@@ -131,25 +152,106 @@ pub enum Trust {
     Dangerous(&'static str),
 }
 
-/// The host of an http(s) URL, lowercased, as the browser will read it:
-/// what follows a user info ("https://secondlife.com@evil.example" goes to
-/// evil.example), a backslash read as "/", no port, no trailing dot.
-/// Second value: the URL hides something before an "@".
-fn host_of(url: &str) -> Option<(String, bool)> {
-    let (scheme, rest) = url.split_once("://")?;
-    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+/// The host of an http(s) URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Host {
+    /// Lowercase, IDNA names as their `xn--` form, no trailing dot.
+    Name(String),
+    Ip(IpAddr),
+}
+
+/// The host of an http(s) URL as the browser will read it (WHATWG URL
+/// parsing): what follows a user info ("https://secondlife.com@evil.example"
+/// goes to evil.example), a backslash read as "/", percent escapes decoded,
+/// an IPv4 address in any of its notations, no port. Second value: the URL
+/// hides something before an "@". `None` for another scheme or a URL the
+/// browser would not open.
+fn host_of(url: &str) -> Option<(Host, bool)> {
+    let parsed = reqwest::Url::parse(url.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
         return None;
     }
-    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or("");
-    let user_info = authority.contains('@');
-    let host = authority.rsplit('@').next().unwrap_or("");
-    // [IPv6]:port
-    let host = if let Some(v6) = host.strip_prefix('[') {
-        v6.split(']').next().unwrap_or("")
+    let user_info = !parsed.username().is_empty() || parsed.password().is_some();
+    let host = parsed.host_str()?;
+    let host = if let Some(v6) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        Host::Ip(IpAddr::V6(v6.parse().ok()?))
+    } else if let Ok(v4) = host.parse::<Ipv4Addr>() {
+        Host::Ip(IpAddr::V4(v4))
     } else {
-        host.split(':').next().unwrap_or("")
+        Host::Name(host.trim_end_matches('.').to_owned())
     };
-    Some((host.trim_end_matches('.').to_lowercase(), user_info))
+    Some((host, user_info))
+}
+
+/// Whether an address is on the internet: not this computer, a private or
+/// link-local network, a shared (carrier) range, nor a reserved,
+/// documentation or multicast one; an IPv4 address carried in IPv6
+/// (mapped, compatible, NAT64, 6to4) is judged as that IPv4 address.
+pub fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_public_v4(v4),
+        IpAddr::V6(v6) => is_public_v6(v6),
+    }
+}
+
+fn is_public_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    !(a == 0
+        || ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        // shared address space (RFC 6598)
+        || (a == 100 && (64..128).contains(&b))
+        // IETF protocol assignments, benchmarking
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 198 && (b == 18 || b == 19))
+        || ip.is_documentation()
+        || ip.is_multicast()
+        // reserved, broadcast
+        || a >= 240)
+}
+
+fn is_public_v6(ip: Ipv6Addr) -> bool {
+    let s = ip.segments();
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+        return false;
+    }
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_public_v4(v4);
+    }
+    let embedded = |hi: u16, lo: u16| Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8);
+    // IPv4-compatible (::a.b.c.d) and NAT64 (64:ff9b::a.b.c.d)
+    if s[..6] == [0; 6] || s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        return is_public_v4(embedded(s[6], s[7]));
+    }
+    // 6to4 (2002:aabb:ccdd::)
+    if s[0] == 0x2002 {
+        return is_public_v4(embedded(s[1], s[2]));
+    }
+    !((s[0] & 0xfe00) == 0xfc00 // unique local
+        || (s[0] & 0xffc0) == 0xfe80 // link-local
+        || (s[0] & 0xffc0) == 0xfec0 // site-local (deprecated)
+        || (s[0] == 0x2001 && s[1] == 0x0db8)) // documentation
+}
+
+/// A name only a local network knows: a single label ("router"), or one
+/// of `LOCAL_SUFFIXES`.
+fn is_local_name(name: &str) -> bool {
+    !name.contains('.') || in_list(name, LOCAL_SUFFIXES.iter().copied())
+}
+
+fn is_local(host: &Host) -> bool {
+    match host {
+        Host::Ip(ip) => !is_public_ip(*ip),
+        Host::Name(name) => is_local_name(name),
+    }
+}
+
+/// Whether an http(s) link leads to this computer or the local network
+/// (see `is_public_ip`), as the browser reads its host. Link previews
+/// never fetch such a link, nor follow a redirect to one.
+pub fn leads_to_local_network(url: &str) -> bool {
+    host_of(url).is_some_and(|(host, _)| is_local(&host))
 }
 
 fn in_list<'a>(host: &str, list: impl IntoIterator<Item = &'a str>) -> bool {
@@ -265,9 +367,16 @@ fn classify_with(url: &str, sites: &TrustedSites) -> Trust {
     if user_info {
         return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-address-hides-its-real-destination-behind-an"));
     }
-    if host.is_empty() {
-        return Trust::Unknown;
+    // before the trusted list: a site the user added cannot open the way
+    // to the local network either
+    if is_local(&host) {
+        return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-link-leads-to-this-computer-or-local-network"));
     }
+    let host = match host {
+        Host::Ip(_) => return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-link-leads-to-an-ip-address-instead-of")),
+        Host::Name(name) if name.is_empty() => return Trust::Unknown,
+        Host::Name(name) => name,
+    };
     if in_list(&host, sites.domains()) {
         return Trust::Trusted;
     }
@@ -275,9 +384,6 @@ fn classify_with(url: &str, sites: &TrustedSites) -> Trust {
         return Trust::Dangerous(aurora_i18n::tr!(
             "link-trust-the-site-name-contains-characters-that-may-imitate-another"
         ));
-    }
-    if host.contains(':') || host.split('.').all(|label| label.chars().all(|c| c.is_ascii_digit())) {
-        return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-link-leads-to-an-ip-address-instead-of"));
     }
     if in_list(&host, HIDDEN_DESTINATION.iter().copied()) {
         return Trust::Dangerous(aurora_i18n::tr!("link-trust-shortened-link-the-real-destination-is-hidden"));
@@ -406,6 +512,116 @@ mod tests {
         }
         // "https://evil.example\@secondlife.com": the browser goes to evil.example
         assert_eq!(classify("https://evil.example\\@secondlife.com"), Trust::Unknown);
+    }
+
+    #[test]
+    fn this_computer_and_the_local_network_are_flagged_however_written() {
+        let local = aurora_i18n::tr!("link-trust-the-link-leads-to-this-computer-or-local-network");
+        for url in [
+            "http://127.0.0.1/",
+            "http://127.1/",
+            "http://0x7f.0.0.1/",
+            "http://0x7f000001/",
+            "http://2130706433/",
+            "http://017700000001/",
+            "http://0177.0.0.1:8080/x",
+            "http://0.0.0.0/",
+            "http://10.0.0.1/",
+            "http://172.16.5.4/",
+            "http://192.168.1.1/admin",
+            "http://169.254.169.254/latest/meta-data",
+            "http://100.64.0.1/",
+            "http://%31%32%37.0.0.1/",
+            "http://[::1]/",
+            "http://[0:0:0:0:0:0:0:1]:8080/",
+            "http://[::]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:7f00:1]/",
+            "http://[::ffff:192.168.1.1]/",
+            "http://[64:ff9b::a00:1]/",
+            "http://[2002:c0a8:101::]/",
+            "http://[fe80::1]/",
+            "http://[fd12:3456::1]/",
+            "http://localhost/",
+            "http://LOCALHOST:631/",
+            "http://localhost./",
+            "http://app.localhost/",
+            "http://nas.local/",
+            "http://router.lan/",
+            "http://grafana.internal/",
+            "http://printer.home.arpa/",
+            "http://router/",
+            "https://secondlife.com@127.0.0.1/",
+        ] {
+            assert!(matches!(classify(url), Trust::Dangerous(_)), "{url}");
+            assert!(leads_to_local_network(url), "{url}");
+            if !url.contains('@') {
+                assert_eq!(classify(url), Trust::Dangerous(local), "{url}");
+            }
+        }
+        // a site the user added cannot lift it
+        let sites = TrustedSites {
+            added: vec!["nas.lan".into()],
+            removed: Vec::new(),
+        };
+        assert_eq!(classify_with("http://nas.lan/", &sites), Trust::Dangerous(local));
+        // a public address is still flagged, as an IP address
+        for url in ["http://8.8.8.8/", "http://[2606:4700::1111]/", "http://[::ffff:8.8.8.8]/"] {
+            assert!(!leads_to_local_network(url), "{url}");
+            assert_eq!(
+                classify(url),
+                Trust::Dangerous(aurora_i18n::tr!("link-trust-the-link-leads-to-an-ip-address-instead-of")),
+                "{url}"
+            );
+        }
+        for url in [
+            "https://example.com/",
+            "https://secondlife.com/",
+            "https://localhost.example.com/",
+            "https://local.example/",
+            "ftp://127.0.0.1/",
+            "not a link",
+        ] {
+            assert!(!leads_to_local_network(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn public_addresses() {
+        for ip in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "2606:4700::1111",
+            "2a00:1450::1",
+            "::ffff:8.8.8.8",
+            "64:ff9b::808:808",
+        ] {
+            assert!(is_public_ip(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.31.255.255",
+            "192.168.0.1",
+            "169.254.1.1",
+            "100.127.0.1",
+            "0.1.2.3",
+            "224.0.0.1",
+            "255.255.255.255",
+            "198.18.0.1",
+            "::1",
+            "::",
+            "fe80::1",
+            "fc00::1",
+            "fec0::1",
+            "ff02::1",
+            "::ffff:10.0.0.1",
+            "::127.0.0.1",
+            "2002:7f00:1::",
+            "2001:db8::1",
+        ] {
+            assert!(!is_public_ip(ip.parse().unwrap()), "{ip}");
+        }
     }
 
     #[test]
