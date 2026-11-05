@@ -6,7 +6,7 @@
 //! system's fonts (`fallback`).
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Once, OnceLock};
 
 pub mod fallback;
 pub mod preview;
@@ -227,6 +227,24 @@ fn xdg_font_dirs(home: Option<PathBuf>, data_home: Option<PathBuf>, data_dirs: O
 /// first, shortest way, and a loop does not use up the scan's budget.
 fn first_visit(seen: &mut std::collections::HashSet<PathBuf>, dir: &std::path::Path) -> bool {
     std::fs::canonicalize(dir).map_or(true, |real| seen.insert(real))
+}
+
+/// The installed fonts once a background scan has listed them, `None` until
+/// then (never blocks). The first call starts the scan: `system_fonts` opens
+/// every font file, which takes the frame with it on a cold disk.
+pub fn system_fonts_ready() -> Option<&'static [SystemFont]> {
+    static LIST: OnceLock<Vec<SystemFont>> = OnceLock::new();
+    static STARTED: Once = Once::new();
+    STARTED.call_once(|| {
+        let spawned = std::thread::Builder::new().name("aurora-font-list".into()).spawn(|| {
+            LIST.get_or_init(system_fonts);
+        });
+        if let Err(e) = spawned {
+            log::warn!("system fonts: no thread ({e}), the list stays empty");
+            LIST.get_or_init(Vec::new);
+        }
+    });
+    LIST.get().map(Vec::as_slice)
 }
 
 /// Regular-weight TrueType/OpenType fonts installed on the system, by family name.
@@ -1061,6 +1079,20 @@ mod tests {
                 .and_then(|n| n.to_string())
         };
         name(16).or_else(|| name(1))
+    }
+
+    #[test]
+    fn the_background_font_list_is_the_scan_s_list() {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let list = loop {
+            if let Some(list) = system_fonts_ready() {
+                break list;
+            }
+            assert!(std::time::Instant::now() < until, "the scan never ended");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let names = |fonts: &[SystemFont]| fonts.iter().map(|f| f.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(list), names(&system_fonts()));
     }
 
     #[test]
