@@ -17,6 +17,7 @@
 
 use super::fetch_priority;
 use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, Trash, classify_alpha, to_rgba};
+use super::legacy_mat::alpha_mode;
 use super::texture_budget::{self, Pressure};
 use super::texture_cache::{self, Transcoded};
 use super::texture_load::{DecodeMeter, LoadTotals, LoadWatch};
@@ -1403,6 +1404,17 @@ impl TextureStreamer {
         }
         let slot = self.entries.get(id)?.slot as usize;
         Some(self.alpha_channel_by_slot.get(slot).copied().unwrap_or(false))
+    }
+
+    /// Alpha mode of a face with no stored material, from the format of its
+    /// diffuse (LLPanelFace::createDefaultMaterial): one rule for the build
+    /// panel and for a local normal or specular map's material.
+    pub fn default_alpha_mode(&self, id: &Uuid) -> u8 {
+        if self.has_alpha_channel(id).unwrap_or(false) {
+            alpha_mode::BLEND
+        } else {
+            alpha_mode::NONE
+        }
     }
 
     pub fn describe(&self, id: &Uuid) -> String {
@@ -4308,12 +4320,15 @@ mod tests {
         s.alpha_channel_by_slot = vec![false; slot + 1];
         s.entries.insert(id, entry(None, 0.0));
         assert_eq!(s.has_alpha_channel(&id), None, "not decoded yet");
+        assert_eq!(s.default_alpha_mode(&id), alpha_mode::NONE, "not decoded yet");
         s.entries.insert(id, entry(Some(0), 0.0));
         assert_eq!(s.has_alpha_channel(&id), Some(false), "RGB");
+        assert_eq!(s.default_alpha_mode(&id), alpha_mode::NONE, "RGB");
         s.alpha_channel_by_slot[slot] = true;
         assert_eq!(s.entries[&id].alpha, AlphaKind::Opaque);
         assert_eq!(s.has_alpha_channel(&id), Some(true), "RGBA, opaque texels");
         assert_eq!(s.has_alpha(&id), Some(false));
+        assert_eq!(s.default_alpha_mode(&id), alpha_mode::BLEND, "RGBA, opaque texels");
         assert_eq!(s.has_alpha_channel(&Uuid::from_u128(2)), None, "unknown");
     }
 

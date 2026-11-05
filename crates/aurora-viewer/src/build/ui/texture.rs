@@ -352,11 +352,7 @@ impl BuildTool {
 /// texels are all opaque keeps its face in the opaque pass (`classify`).
 pub(super) fn default_legacy(env: &Env, te: &TextureFace) -> LegacyMaterial {
     LegacyMaterial {
-        diffuse_alpha_mode: if env.scene.textures.has_alpha_channel(&te.texture).unwrap_or(false) {
-            alpha_mode::BLEND
-        } else {
-            alpha_mode::NONE
-        },
+        diffuse_alpha_mode: env.scene.textures.default_alpha_mode(&te.texture),
         ..Default::default()
     }
 }

@@ -3756,11 +3756,7 @@ impl Scene {
                     .flatten();
                 let material = loaded.map(|m| (*m).clone()).or_else(|| {
                     (local_normal.is_some() || local_specular.is_some()).then(|| legacy_mat::LegacyMaterial {
-                        diffuse_alpha_mode: if self.textures.has_alpha(&tf.texture).unwrap_or(false) {
-                            legacy_mat::alpha_mode::BLEND
-                        } else {
-                            legacy_mat::alpha_mode::NONE
-                        },
+                        diffuse_alpha_mode: self.textures.default_alpha_mode(&tf.texture),
                         ..Default::default()
                     })
                 });
