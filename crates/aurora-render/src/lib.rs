@@ -23,6 +23,7 @@ pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss
 mod dof;
 mod drawn_pick;
 mod exposure;
+mod fsr;
 pub mod frame_priority;
 pub mod gpu_alloc;
 pub mod gpu_cull;

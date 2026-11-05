@@ -679,6 +679,9 @@ struct Taa {
     /// whichever one existed when they were made (`remake_taa` follows
     /// every rebuild of the targets).
     motion: Option<wgpu::TextureView>,
+    /// FSR 3.1 in the place of the TAA pass (`AURORA_FSR=1`, fsr.rs), with
+    /// the post bind group reading its image.
+    fsr: Option<(crate::fsr::Fsr, wgpu::BindGroup)>,
     parity: usize,
     reset: bool,
 }
@@ -1696,6 +1699,8 @@ pub(crate) struct Backend {
     present_modes: Vec<wgpu::PresentMode>,
     settings: RenderSettings,
     taa: Option<Taa>,
+    /// This frame's TAA jitter in pixels, y down: where it moved the image.
+    taa_jitter: glam::Vec2,
     prev_view_proj: Option<Mat4>,
     /// The last frame's projection and view, without the jitter, for the
     /// motion vectors.
@@ -3292,6 +3297,7 @@ impl Backend {
             present_modes,
             settings,
             taa: None,
+            taa_jitter: glam::Vec2::ZERO,
             prev_view_proj: None,
             prev_motion_view: None,
             frame_index: 0,
@@ -5235,6 +5241,19 @@ impl Backend {
             })
         };
         let post_bgs = [post_bg(&history[0]), post_bg(&history[1])];
+        let fsr = crate::fsr::requested().then(|| {
+            let fsr = crate::fsr::Fsr::new(
+                device,
+                self.scene_size(),
+                &crate::fsr::Inputs {
+                    color: &self.targets.color,
+                    depth: &self.targets.depth_ss,
+                    motion: motion_read,
+                },
+            );
+            let bg = post_bg(fsr.output());
+            (fsr, bg)
+        });
         Taa {
             pipeline,
             layout,
@@ -5243,6 +5262,7 @@ impl Backend {
             bind_groups,
             post_bgs,
             motion,
+            fsr,
             parity: 0,
             reset: true,
         }
@@ -5980,8 +6000,14 @@ impl Backend {
         let jittered;
         // where the scene's depth has a pixel of the image, in pixels (y down)
         let mut depth_jitter = glam::Vec2::ZERO;
-        let fu: &FrameParams = if self.taa.is_some() {
-            let i = (self.frame_index % 16) + 1;
+        let fu: &FrameParams = if let Some(taa) = &self.taa {
+            // FSR's own number of phases (ffxFsr3UpscalerGetJitterOffset)
+            let period = match &taa.fsr {
+                Some(_) => u64::from(crate::fsr::jitter_phase_count(world_size.0, world_size.0)),
+                None => 16,
+            };
+            let i = (self.frame_index % period) + 1;
+            self.taa_jitter = glam::Vec2::new(halton(i, 2), -halton(i, 3));
             let jx = halton(i, 2) * 2.0 / world_size.0 as f32;
             let jy = halton(i, 3) * 2.0 / world_size.1 as f32;
             depth_jitter = glam::Vec2::new(
@@ -8196,46 +8222,65 @@ impl Backend {
         let mut post_bg = &self.targets.post_bind_group;
         let mut post_src = &self.targets.color;
         if let Some(taa) = &mut self.taa {
-            let w = taa.parity;
-            let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
-            let u = TaaU {
-                inv_view_proj: (fu.proj * fu.view).inverse().to_cols_array_2d(),
-                prev_view_proj: prev.to_cols_array_2d(),
-                params: [
-                    if taa.reset || self.prev_view_proj.is_none() { 1.0 } else { 0.0 },
-                    0.1,
-                    world_size.0 as f32,
-                    world_size.1 as f32,
-                ],
-                motion: [if taa_motion_now() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-            };
-            self.queue.write_buffer(&taa.buffer, 0, bytemuck::bytes_of(&u));
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("taa"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &taa.history[w],
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&taa.pipeline);
-                pass.set_bind_group(0, &taa.bind_groups[w], &[]);
-                pass.draw(0..3, 0..1);
+            if let Some((fsr, fsr_post)) = &mut taa.fsr {
+                // FSR 3.1 instead of the TAA pass, from the same inputs
+                fsr.encode(
+                    &self.queue,
+                    &mut encoder,
+                    &crate::fsr::FrameInputs {
+                        view_proj: fu.proj * fu.view,
+                        prev_view_proj: self.prev_view_proj.unwrap_or(unjittered_vp),
+                        proj: f.proj,
+                        jitter: self.taa_jitter,
+                        reset: taa.reset || self.prev_view_proj.is_none(),
+                        motion_on: taa_motion_now(),
+                    },
+                );
+                taa.reset = false;
+                post_bg = fsr_post;
+                post_src = fsr.output();
+            } else {
+                let w = taa.parity;
+                let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
+                let u = TaaU {
+                    inv_view_proj: (fu.proj * fu.view).inverse().to_cols_array_2d(),
+                    prev_view_proj: prev.to_cols_array_2d(),
+                    params: [
+                        if taa.reset || self.prev_view_proj.is_none() { 1.0 } else { 0.0 },
+                        0.1,
+                        world_size.0 as f32,
+                        world_size.1 as f32,
+                    ],
+                    motion: [if taa_motion_now() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                };
+                self.queue.write_buffer(&taa.buffer, 0, bytemuck::bytes_of(&u));
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("taa"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &taa.history[w],
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_pipeline(&taa.pipeline);
+                    pass.set_bind_group(0, &taa.bind_groups[w], &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                let _ = &taa.layout;
+                taa.reset = false;
+                taa.parity = 1 - w;
+                post_bg = &taa.post_bgs[w];
+                post_src = &taa.history[w];
             }
-            let _ = &taa.layout;
-            taa.reset = false;
-            taa.parity = 1 - w;
-            post_bg = &taa.post_bgs[w];
-            post_src = &taa.history[w];
         }
         // ---- depth of field, on the resolved (and TAA-steady) image,
         // before the glow and the tone mapping (not in probe captures)
