@@ -118,7 +118,11 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
             match id {
                 0 => s.scale_uniform = value,
                 1 => s.scale_stretch_textures = value,
-                2 => s.snap = value,
+                2 => s.set_snap_mode(if value {
+                    crate::build::SnapMode::Grid
+                } else {
+                    crate::build::SnapMode::Off
+                }),
                 3 => s.actual_root = value,
                 4 => s.show_highlight = value,
                 _ => s.select_probes = value,
