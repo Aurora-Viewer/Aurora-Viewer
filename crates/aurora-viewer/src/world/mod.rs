@@ -174,7 +174,9 @@ fn dirty_east_edge(region: &mut Region, y0: u32, y1: u32) {
     if chunks_x == 0 || chunks_y == 0 || y0 >= y1 {
         return;
     }
-    let first = (y0 / terrain::CHUNK_CELLS).min(chunks_y - 1);
+    // a chunk owns its 33 vertices, so a sample on a chunk boundary is also
+    // the last vertex of the chunk below (as Heightmap::apply_patch)
+    let first = (y0.saturating_sub(1) / terrain::CHUNK_CELLS).min(chunks_y - 1);
     let last = ((y1 - 1) / terrain::CHUNK_CELLS).min(chunks_y - 1);
     for cy in first..=last {
         region.dirty_chunks.insert(cy * chunks_x + chunks_x - 1);
@@ -187,7 +189,7 @@ fn dirty_north_edge(region: &mut Region, x0: u32, x1: u32) {
     if chunks_x == 0 || chunks_y == 0 || x0 >= x1 {
         return;
     }
-    let first = (x0 / terrain::CHUNK_CELLS).min(chunks_x - 1);
+    let first = (x0.saturating_sub(1) / terrain::CHUNK_CELLS).min(chunks_x - 1);
     let last = ((x1 - 1) / terrain::CHUNK_CELLS).min(chunks_x - 1);
     for cx in first..=last {
         region.dirty_chunks.insert((chunks_y - 1) * chunks_x + cx);
@@ -2042,9 +2044,28 @@ impl World {
             east: vec![None; region.heightmap.size_y as usize + 1],
             north: vec![None; region.heightmap.size_x as usize + 1],
         };
+        // only the regions touching each line are sampled (one pass over all
+        // regions, then a few candidates per vertex)
+        let east_x = ox + region.heightmap.size_x;
+        let north_y = oy + region.heightmap.size_y;
+        let touching = |line: u32, along_x: bool| -> Vec<&Region> {
+            self.regions
+                .values()
+                .filter(|n| {
+                    let (nx, ny) = aurora_net::handle_to_origin(n.handle);
+                    if along_x {
+                        ny <= line && line < ny + n.heightmap.size_y
+                    } else {
+                        nx <= line && line < nx + n.heightmap.size_x
+                    }
+                })
+                .collect()
+        };
+        let east_regions = touching(east_x, false);
+        let north_regions = touching(north_y, true);
         for (y, sample) in edges.east.iter_mut().enumerate() {
-            let (gx, gy) = (ox + region.heightmap.size_x, oy + y as u32);
-            *sample = self.regions.values().find_map(|neighbor| {
+            let (gx, gy) = (east_x, oy + y as u32);
+            *sample = east_regions.iter().find_map(|neighbor| {
                 let (nx, ny) = aurora_net::handle_to_origin(neighbor.handle);
                 let (x, y) = (gx.checked_sub(nx)?, gy.checked_sub(ny)?);
                 if x < neighbor.heightmap.size_x && y < neighbor.heightmap.size_y {
@@ -2055,8 +2076,8 @@ impl World {
             });
         }
         for (x, sample) in edges.north.iter_mut().enumerate() {
-            let (gx, gy) = (ox + x as u32, oy + region.heightmap.size_y);
-            *sample = self.regions.values().find_map(|neighbor| {
+            let (gx, gy) = (ox + x as u32, north_y);
+            *sample = north_regions.iter().find_map(|neighbor| {
                 let (nx, ny) = aurora_net::handle_to_origin(neighbor.handle);
                 let (x, y) = (gx.checked_sub(nx)?, gy.checked_sub(ny)?);
                 if x < neighbor.heightmap.size_x && y < neighbor.heightmap.size_y {
@@ -2078,14 +2099,15 @@ impl World {
             let Some(region) = self.regions.get_mut(&candidate) else { continue };
             let (cx, cy) = aurora_net::handle_to_origin(candidate);
             let (cex, cey) = (cx + region.heightmap.size_x, cy + region.heightmap.size_y);
+            // an edge has size + 1 vertices: its last one is at cey / cex
             if cex == ox {
-                let (lo, hi) = (oy.max(cy), ey.min(cey));
+                let (lo, hi) = (oy.max(cy), ey.min(cey + 1));
                 if lo < hi {
                     dirty_east_edge(region, lo - cy, hi - cy);
                 }
             }
             if cey == oy {
-                let (lo, hi) = (ox.max(cx), ex.min(cex));
+                let (lo, hi) = (ox.max(cx), ex.min(cex + 1));
                 if lo < hi {
                     dirty_north_edge(region, lo - cx, hi - cx);
                 }
@@ -2123,7 +2145,7 @@ impl World {
             if cex == ox {
                 for &(lo, hi) in &west_edges {
                     let lo = lo.max(cy);
-                    let hi = hi.min(cey);
+                    let hi = hi.min(cey + 1);
                     if lo < hi {
                         dirty_east_edge(region, lo - cy, hi - cy);
                     }
@@ -2132,7 +2154,7 @@ impl World {
             if cey == oy {
                 for &(lo, hi) in &south_edges {
                     let lo = lo.max(cx);
-                    let hi = hi.min(cex);
+                    let hi = hi.min(cex + 1);
                     if lo < hi {
                         dirty_north_edge(region, lo - cx, hi - cx);
                     }
@@ -8623,6 +8645,8 @@ mod region_size_order_tests {
         world.ensure_region(east, (256, 256));
         let edges = world.terrain_edge_heights(west);
         assert!(edges.east.iter().all(Option::is_none));
+        // inserting the regions already dirtied edges: only the patch counts below
+        world.regions.get_mut(&west).expect("west").dirty_chunks.clear();
 
         let heights: Vec<_> = (0..256).map(|i| 40.0 + (i / 16) as f32).collect();
         world.apply(NetEvent::Terrain {
@@ -8639,6 +8663,29 @@ mod region_size_order_tests {
         assert_eq!(edges.east[15], Some(55.0));
         assert_eq!(edges.east[16], None);
         assert!(world.regions[&west].dirty_chunks.contains(&7));
+    }
+
+    #[test]
+    fn a_patch_on_a_chunk_boundary_dirties_both_chunks_that_share_the_vertex() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(east, (256, 256));
+        world.regions.get_mut(&west).expect("west").dirty_chunks.clear();
+        // east patch (0, 2): y 32..48, whose first row is the top vertex of
+        // west chunk 7 and the bottom one of chunk 15
+        world.apply(NetEvent::Terrain {
+            handle: east,
+            patches: vec![TerrainPatch {
+                x: 0,
+                y: 2,
+                size: 16,
+                heights: vec![9.0; 256],
+            }],
+        });
+        let dirty = &world.regions[&west].dirty_chunks;
+        assert!(dirty.contains(&7) && dirty.contains(&15), "{dirty:?}");
     }
 
     #[test]
@@ -8667,6 +8714,7 @@ mod region_size_order_tests {
         world.ensure_region(here, (256, 256));
         world.ensure_region(north, (256, 256));
         world.ensure_region(northeast, (256, 256));
+        world.regions.get_mut(&here).expect("here").dirty_chunks.clear();
         world.apply(NetEvent::Terrain {
             handle: north,
             patches: vec![patch(0, 0)],

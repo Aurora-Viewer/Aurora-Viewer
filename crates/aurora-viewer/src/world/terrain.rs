@@ -186,7 +186,8 @@ pub struct EdgeHeights {
 
 impl EdgeHeights {
     fn height(&self, hm: &Heightmap, x: i32, y: i32) -> f32 {
-        let at_corner = x == hm.size_x as i32 && y == hm.size_y as i32;
+        // the north-east corner is the same global point in `east` and
+        // `north`: either supplies it
         if x == hm.size_x as i32
             && let Some(height) = self.east.get(y.max(0) as usize).copied().flatten()
         {
@@ -195,11 +196,6 @@ impl EdgeHeights {
         if y == hm.size_y as i32
             && let Some(height) = self.north.get(x.max(0) as usize).copied().flatten()
         {
-            return height;
-        }
-        // If the east region has not sent the north-east corner yet, the
-        // north region can still provide that shared vertex.
-        if at_corner && let Some(height) = self.north.get(x as usize).copied().flatten() {
             return height;
         }
         hm.height(x, y)
