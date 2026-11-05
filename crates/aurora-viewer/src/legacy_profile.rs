@@ -155,7 +155,14 @@ mod tests {
     fn the_other_viewers_folders() {
         let (home, data) = (Path::new("/home/j"), Path::new("/data"));
         let windows = app_folders_in(home, data, false);
-        for app in ["BlackDragon", "Kokua", "Catznip", "Megapahit", "Aperture Viewer_x64", "Kirstens S24 DX"] {
+        for app in [
+            "BlackDragon",
+            "Kokua",
+            "Catznip",
+            "Megapahit",
+            "Aperture Viewer_x64",
+            "Kirstens S24 DX",
+        ] {
             assert!(windows.contains(&data.join(app)), "{app}");
         }
         // no XDG folder off Linux
