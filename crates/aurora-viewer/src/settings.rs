@@ -1418,7 +1418,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 32;
+const SETTINGS_VERSION: u32 = 31;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -2611,10 +2611,12 @@ impl Settings {
             // any other keeps 2048
             crate::graphics_presets::upgrade_max_texture_resolution(&mut self);
         }
-        if self.settings_version < 32 && !self.audio.enabled[VOICE_CHANNEL] {
-            // this box switched a mixer channel of its own, leaving voice
-            // connected and the microphone open: whoever unticked it wanted
-            // voice off
+        if !self.audio.enabled[VOICE_CHANNEL] {
+            // this box used to switch a mixer channel of its own, leaving
+            // voice connected and the microphone open: whoever unticked it
+            // wanted voice off. Repaired at every load, not once by version:
+            // no control ticks this channel back on, and an earlier build
+            // sharing the file can still write it
             self.audio.enabled[VOICE_CHANNEL] = true;
             self.audio.voice_enabled = false;
         }
@@ -4127,25 +4129,21 @@ mod tests {
 
     #[test]
     fn a_voice_box_unticked_before_it_meant_voice_turns_voice_off() {
-        let mut old = Settings {
-            settings_version: 31,
-            ..Settings::default()
-        };
-        old.audio.enabled[VOICE_CHANNEL] = false;
-        let audio = old.sanitized().audio;
-        assert!(!audio.voice_enabled);
-        assert!(audio.enabled[VOICE_CHANNEL], "nothing else can tick this channel back on");
+        // any version: an earlier build sharing the file can write it again
+        for version in [30, SETTINGS_VERSION] {
+            let mut old = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            old.audio.enabled[VOICE_CHANNEL] = false;
+            let audio = old.sanitized().audio;
+            assert!(!audio.voice_enabled);
+            assert!(audio.enabled[VOICE_CHANNEL], "nothing else can tick this channel back on");
+        }
         // ticked: voice stays as it was
-        let old = Settings {
-            settings_version: 31,
-            ..Settings::default()
-        };
-        assert!(old.sanitized().audio.voice_enabled);
-        // only the voice box migrates
-        let mut music = Settings {
-            settings_version: 31,
-            ..Settings::default()
-        };
+        assert!(Settings::default().sanitized().audio.voice_enabled);
+        // only the voice box repairs
+        let mut music = Settings::default();
         music.audio.enabled[4] = false;
         let audio = music.sanitized().audio;
         assert!(audio.voice_enabled && !audio.enabled[4]);
