@@ -199,6 +199,21 @@ struct GeomEntry {
 
 /// Frames an unused geometry is kept (an object may want it back soon).
 const GEOM_KEEP_FRAMES: u32 = 600;
+/// `AURORA_DEBUG_GEOM_DELAY=<seconds>`: every built geometry reaches the
+/// arena that long after its job ended, as on a slow PC in a busy region
+/// (a geometry pending longer than `GEOM_KEEP_FRAMES` is collected and
+/// built a second time).
+fn geom_arrival_delay() -> Option<std::time::Duration> {
+    static DELAY: std::sync::OnceLock<Option<std::time::Duration>> = std::sync::OnceLock::new();
+    *DELAY.get_or_init(|| {
+        std::env::var("AURORA_DEBUG_GEOM_DELAY")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|s| *s > 0.0)
+            .map(std::time::Duration::from_secs_f32)
+    })
+}
+
 /// Unused geometries looked at per frame once their time has come.
 const GEOM_FREED_PER_FRAME: usize = 256;
 /// Frames between two looks at what an avatar's attachments show of its
@@ -1034,6 +1049,8 @@ pub struct Scene {
     /// system allocator, that growth queued the main thread behind the
     /// jobs during bursts of results).
     geom_waiting_spare: Vec<(GeomKey, jobs::PreparedGeom, f32)>,
+    /// Geometry held back by `AURORA_DEBUG_GEOM_DELAY` until its time.
+    geom_delayed: VecDeque<(Instant, GeomKey, jobs::PreparedGeom, f32)>,
     /// Streaming time of the frame by part (AURORA_PROFILE `s_*`), taken by
     /// the frame profile at the end of the frame.
     pub parts: crate::frame_profile::Parts,
@@ -1571,6 +1588,7 @@ impl Scene {
             staging: None,
             geom_waiting: Vec::new(),
             geom_waiting_spare: Vec::new(),
+            geom_delayed: VecDeque::new(),
             parts: Default::default(),
             skeletons: Default::default(),
             rig_extents: Default::default(),
@@ -1877,6 +1895,12 @@ impl Scene {
         // Before, only the jobs were bounded: a chunk that became copyable
         // put all its geometry in the arena in the same frame.
         let mut placed = 0;
+        let now = Instant::now();
+        while self.geom_delayed.front().is_some_and(|d| d.0 <= now) {
+            if let Some((_, key, geom, area)) = self.geom_delayed.pop_front() {
+                self.geom_waiting.push((key, geom, area));
+            }
+        }
         let mut waiting = std::mem::replace(&mut self.geom_waiting, std::mem::take(&mut self.geom_waiting_spare));
         for (key, geom, area) in waiting.drain(..) {
             if geom.ready() && (placed == 0 || t0.elapsed() < budget / 2) {
@@ -1953,6 +1977,10 @@ impl Scene {
     /// A geometry built by a job goes to the GPU, or waits for a coming
     /// frame while another job still writes in its staging chunk.
     fn finish_geometry(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom, area: f32) {
+        if let Some(delay) = geom_arrival_delay() {
+            self.geom_delayed.push_back((Instant::now() + delay, key, geom, area));
+            return;
+        }
         if geom.ready() {
             self.place_geometry(renderer, key, geom, area);
         } else {
@@ -2137,6 +2165,7 @@ impl Scene {
         self.geom_pending = 0;
         self.geom_waiting.clear();
         self.geom_waiting_spare.clear();
+        self.geom_delayed.clear();
         self.geom_trash = Default::default();
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
