@@ -2,7 +2,6 @@ use super::*;
 use crate::scene::{Scene, avatar::AvatarLibrary};
 use crate::ui::{fonts, hud};
 use crate::world::World;
-use egui::emath::GuiRounding as _;
 use egui::{Shape, epaint::TextShape};
 
 fn context(font: &str, scale: f32) -> egui::Context {
@@ -75,11 +74,11 @@ fn a_single_line_uses_the_legacy_baseline_not_the_bottom_of_its_box() {
     // hud_render_text draws at y=1. Baseline: 500 - (12 + 1) = 487.
     for font in fonts::BUILTINS {
         for scale in [0.8, 1.0, 1.5, 2.0] {
-            for native in [1.0, 1.5] {
+            for native in [1.0, 1.25, 1.5, 2.0] {
                 let (shapes, shift) = block("Hg", font.name, scale, native, 1.0, Color32::WHITE);
                 let text = shapes.iter().find(|text| text.override_text_color.is_none()).expect("text painted");
                 assert!(
-                    (baselines(text, shift)[0] - 487.0).abs() < 0.002,
+                    (baselines(text, shift)[0] - 487.0).abs() * native <= 0.501,
                     "{} size={scale} DPI={native}",
                     font.name
                 );
@@ -100,7 +99,7 @@ fn line_steps_match_freetype_ascent_plus_descent_minus_one() {
     ] {
         for (scale, advance) in [1.0, 1.5, 2.0].into_iter().zip(advances) {
             for zoom in [1.0, 0.5] {
-                for native in [1.0, 1.5] {
+                for native in [1.0, 1.25, 1.5, 2.0] {
                     let (shapes, shift) = block("One\nTwo\nThree", font, scale, native, zoom, Color32::WHITE);
                     let text = shapes.iter().find(|text| text.override_text_color.is_none()).expect("text painted");
                     let actual = baselines(text, shift);
@@ -108,7 +107,7 @@ fn line_steps_match_freetype_ascent_plus_descent_minus_one() {
                     let expected = [last - 2.0 * advance * zoom, last - advance * zoom, last];
                     for (actual, expected) in actual.into_iter().zip(expected) {
                         assert!(
-                            (actual - expected).abs() < 0.003,
+                            (actual - expected).abs() * native <= 0.501,
                             "{font} size={scale}, zoom={zoom}, DPI={native}: {actual} vs {expected}"
                         );
                     }
@@ -140,7 +139,7 @@ fn three_independently_coloured_hud_prims_match_reference_coordinates() {
     }
     for (zoom, raw_anchors, lift) in [(1.0, [422.92, 445.42, 467.92], 13.0), (0.5, [468.46, 479.71, 490.96], 7.0)] {
         scene.lists.hud_view = Some(aurora_render::HudView::new([1600, 1000], zoom, -1.0, 1.0).in_area([32.0, 64.0, 1568.0, 964.0]));
-        for native in [1.0, 1.5] {
+        for native in [1.0, 1.25, 1.5, 2.0] {
             let ctx = context(fonts::INTER, 1.0);
             let mut shift = 0.0;
             let output = ctx.run_ui(input(native), |ui| {
@@ -154,7 +153,7 @@ fn three_independently_coloured_hud_prims_match_reference_coordinates() {
                 let actual = baselines(shape, shift)[0];
                 let expected = anchor / native - lift;
                 assert!(
-                    (actual - expected).abs() < 0.003,
+                    (actual - expected).abs() * native <= 0.501,
                     "zoom={zoom}, DPI={native}: {actual} vs {expected}"
                 );
             }
@@ -228,7 +227,7 @@ fn world_objects_use_the_same_baselines_without_changing_avatar_tags() {
     let visible: Vec<_> = shapes.iter().filter(|text| text.override_text_color.is_none()).collect();
     assert_eq!(visible.len(), 1);
     for (actual, expected) in baselines(visible[0], shift).into_iter().zip([309.0, 323.0, 337.0]) {
-        assert!((actual - expected).abs() < 0.003, "{actual} vs {expected}");
+        assert!((actual - expected).abs() <= 0.501, "{actual} vs {expected}");
     }
 }
 
@@ -237,7 +236,9 @@ fn crlf_empty_tokens_and_space_rows_follow_the_reference_tokenizer() {
     let (shapes, shift) = block("\r\n \n\nOne\r\nTwo\n", fonts::INTER, 1.0, 1.0, 1.0, Color32::WHITE);
     let text = shapes.iter().find(|text| text.override_text_color.is_none()).expect("text painted");
     assert_eq!(text.galley.job.text, " \nOne\nTwo");
-    assert_eq!(baselines(text, shift), [459.0, 473.0, 487.0]);
+    for (actual, expected) in baselines(text, shift).into_iter().zip([459.0, 473.0, 487.0]) {
+        assert!((actual - expected).abs() <= 0.501, "{actual} vs {expected}");
+    }
     assert!(block("\r\n\n", fonts::INTER, 1.0, 1.0, 1.0, Color32::WHITE).0.is_empty());
 }
 
@@ -269,4 +270,73 @@ fn shadows_are_one_physical_pixel_and_depend_on_luminance() {
             .0
             .is_empty()
     );
+}
+
+#[test]
+fn tessellated_glyphs_stay_on_physical_pixels_without_resizing_the_font() {
+    // Inspect the actual triangles, not only the ideal type baselines.
+    // egui snaps a TextShape's origin but trusts its row offsets to have
+    // remained pixel-aligned. Fractional offsets blur a raster font atlas.
+    let sample = "Visitor Gray\nFloating text Hg";
+    for font in fonts::BUILTINS {
+        for scale in [1.0, 1.5] {
+            for native in [1.0, 1.25, 1.5, 2.0] {
+                for zoom in [1.0, 0.5, 0.63] {
+                    let ctx = context(font.name, scale);
+                    let mut reference = None;
+                    let output = ctx.run_ui(input(native), |ui| {
+                        paint(
+                            &ui.ctx().layer_painter(egui::LayerId::background()),
+                            sample.into(),
+                            egui::pos2(800.23, 500.61),
+                            12.0,
+                            Color32::WHITE,
+                            zoom,
+                        );
+                        reference = Some(crate::ui::bidi::no_wrap(
+                            ui.ctx(),
+                            sample.into(),
+                            egui::FontId::proportional(12.0),
+                            Color32::WHITE,
+                        ));
+                    });
+                    let shapes = text_shapes(output);
+                    let text = shapes.iter().find(|text| text.override_text_color.is_none()).expect("text painted");
+                    let reference = reference.expect("reference layout");
+                    for (row, original) in text.galley.rows.iter().zip(&reference.rows) {
+                        assert_eq!(row.glyphs.len(), original.glyphs.len());
+                        for (glyph, before) in row.glyphs.iter().zip(&original.glyphs) {
+                            assert_eq!(glyph.advance_width, before.advance_width, "font width unchanged");
+                            assert_eq!(glyph.uv_rect.size, before.uv_rect.size, "raster size unchanged");
+                        }
+                    }
+                    let primitives = ctx.tessellate(
+                        shapes
+                            .into_iter()
+                            .map(|text| egui::epaint::ClippedShape::new(Rect::EVERYTHING, Shape::Text(text)))
+                            .collect(),
+                        native,
+                    );
+                    let mut vertices = 0;
+                    for primitive in primitives {
+                        let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive else {
+                            continue;
+                        };
+                        for vertex in &mesh.vertices {
+                            for coordinate in [vertex.pos.x, vertex.pos.y] {
+                                let pixel = coordinate * native;
+                                assert!(
+                                    (pixel - pixel.round()).abs() < 0.003,
+                                    "{} size={scale}, DPI={native}, zoom={zoom}: vertex at {pixel}",
+                                    font.name
+                                );
+                            }
+                        }
+                        vertices += mesh.vertices.len();
+                    }
+                    assert!(vertices > 0);
+                }
+            }
+        }
+    }
 }

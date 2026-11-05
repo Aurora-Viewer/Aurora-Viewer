@@ -1906,7 +1906,11 @@ attachments. It anchors the last type baseline using LLHUDText's padding
 and hud_render_text's draw offset, rather than a galley's bottom. Cached
 unscaled font metrics supply ascent/descent advances and remove UI optical
 centering. Rows wrap and center individually; HUD edit zoom changes their
-positions while glyph size stays independent. `demo_floating_text.rs` supplies
+positions while glyph size stays independent. Absolute row origins are snapped
+once to physical pixels before being expressed relative to the galley origin;
+cached glyph meshes retain their raster size and grid alignment, with at most
+half a pixel of baseline quantization and no accumulated spacing error.
+`demo_floating_text.rs` supplies
 three separately coloured HUD prims, independent baseline guides and a
 multiline world fixture (`AURORA_DEMO_FLOATING_TEXT`).
 
