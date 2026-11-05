@@ -502,6 +502,73 @@ impl Scene {
         nearest_hit(hits, |h| (h.0, h.1)).map(|(_, idx, face)| (idx, face))
     }
 
+    /// Texture/material placement uses the nearest volume face even through
+    /// transparent texels and zero TE alpha (#2362). This deliberately extends
+    /// LLToolDragAndDrop::dragOrDrop3D (indra/newview/lltooldraganddrop.cpp),
+    /// whose ordinary inventory/rez pick skips those surfaces.
+    pub fn resource_drop_face_at_ray(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        hud: bool,
+        far: f32,
+        candidates: &mut Vec<usize>,
+    ) -> Option<(usize, usize)> {
+        candidates.clear();
+        if hud {
+            let own = world.objects.index_of_uuid(&world.agent_id);
+            candidates.extend(
+                self.gpu
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, g)| (g.hud && g.owner_avatar.is_some() && g.owner_avatar == own).then_some(idx)),
+            );
+        } else {
+            self.pick.ray_candidates(ray, candidates);
+        }
+        let now = Instant::now();
+        let hits = ray_hits(candidates, |&idx| {
+            let g = self.gpu.get(idx)?;
+            let o = world.objects.get(idx)?;
+            if g.hud != hud
+                || g.rigged
+                || o.extra.reflection_probe.is_some()
+                || !self.first_person_object_visible(idx, g)
+                || !ray_may_hit(g, ray)
+            {
+                return None;
+            }
+            // Avatars/flora still occlude a resource drop, as they do a rez
+            // pick. They must not redirect a texture onto a volume behind them.
+            let (distance, face) = if g.is_avatar {
+                (
+                    ray_box(
+                        ray.0,
+                        ray.1,
+                        g.center - Vec3::new(0.35, 0.35, 1.0),
+                        g.center + Vec3::new(0.35, 0.35, 1.0),
+                    )?,
+                    None,
+                )
+            } else {
+                let volume = o.pcode == aurora_prim::params::LL_PCODE_VOLUME;
+                let mode = if volume { FacePick::Surface } else { FacePick::Inventory };
+                let hit = self.face_hit_mode(world, idx, ray, now, volume, mode)?;
+                let face = volume
+                    .then_some(hit.face)
+                    .filter(|&face| o.te.as_ref().is_some_and(|te| te.faces.get(face).is_some()));
+                (hit.t, face)
+            };
+            (distance.is_finite() && distance > 0.0 && distance <= far).then_some((distance, idx, face))
+        });
+        let (distance, idx, face) = nearest_hit(hits, |h| (h.0, h.1))?;
+        let face = face?;
+        if !hud && Self::inventory_ground(world, ray, distance).is_some() {
+            return None;
+        }
+        Some((idx, face))
+    }
+
     /// Exact edit surfaces along the whole cursor ray, including hidden and
     /// occluded prims. Reuses hover's bounds index and the rendered triangles;
     /// the wheel never waits for a GPU depth readback.
@@ -626,8 +693,15 @@ impl Scene {
                 found = true;
             }
         }
+        if let Some(point) = Self::inventory_ground(world, ray, nearest) {
+            return Some((point, None));
+        }
+        found.then_some((ray.0 + ray.1 * nearest, target))
+    }
+
+    /// Keep terrain occlusion identical for rez supports and face resources.
+    fn inventory_ground(world: &World, ray: (Vec3, Vec3), nearest: f32) -> Option<Vec3> {
         // Same heightfield refinement as picking through IGNORE objects.
-        // Only an active inventory drag queries it; release always recomputes.
         let mut previous = 0.0;
         let mut t = 0.25;
         while t <= nearest {
@@ -643,7 +717,7 @@ impl Scene {
                         lo = mid;
                     }
                 }
-                return Some((ray.0 + ray.1 * hi, None));
+                return Some(ray.0 + ray.1 * hi);
             }
             previous = t;
             if t == nearest {
@@ -651,7 +725,7 @@ impl Scene {
             }
             t = (t + 1.0).min(nearest);
         }
-        found.then_some((ray.0 + ray.1 * nearest, target))
+        None
     }
 
     /// The objects a search looks at, in index order: all of them, or the
@@ -2734,6 +2808,74 @@ pub(crate) mod tests {
             .touch_surface(&world, front, (enlarged_ray.0 + Vec3::new(0.0, 0.1, 0.2), Vec3::X))
             .unwrap();
         assert!(shifted.position.abs_diff_eq(original.position, 1e-5));
+    }
+
+    #[test]
+    fn resource_drops_target_the_nearest_transparent_face_without_changing_rez_picking() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let mut candidates = Vec::new();
+        let texture = Uuid::from_u128(8888);
+        scene.gpu[front].faces[0].tex_id = texture;
+        scene.gpu[front].faces[0].pass = Pass::Blend;
+        scene
+            .textures
+            .pick_masks
+            .insert(texture, super::super::textures::PickMask::from_rgba(1, 1, &[0; 4]).unwrap());
+        assert_eq!(scene.inventory_surface(&world, ray, 20.0, &mut candidates).unwrap().1, Some(back));
+        assert_eq!(
+            scene.resource_drop_face_at_ray(&world, ray, false, 20.0, &mut candidates),
+            Some((front, 0))
+        );
+        scene.gpu[front].is_avatar = true;
+        assert!(scene.resource_drop_face_at_ray(&world, ray, false, 20.0, &mut candidates).is_none());
+        scene.gpu[front].is_avatar = false;
+        // Fully hidden faces have no draw record, but retain pick geometry.
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
+        scene.gpu[front].faces.clear();
+        assert_eq!(
+            scene.resource_drop_face_at_ray(&world, ray, false, 20.0, &mut candidates),
+            Some((front, 0))
+        );
+        assert_eq!(scene.inventory_surface(&world, ray, 20.0, &mut candidates).unwrap().1, Some(back));
+        assert!(scene.resource_drop_face_at_ray(&world, ray, false, 2.0, &mut candidates).is_none());
+        scene.gpu[front].rigged = true;
+        assert_eq!(
+            scene.resource_drop_face_at_ray(&world, ray, false, 20.0, &mut candidates),
+            Some((back, 0))
+        );
+        scene.gpu[front].rigged = false;
+        scene.gpu[front].hud = true;
+        scene.gpu[front].owner_avatar = world.objects.index_of_uuid(&world.agent_id);
+        assert_eq!(
+            scene.resource_drop_face_at_ray(&world, ray, true, 20.0, &mut candidates),
+            Some((front, 0))
+        );
+        let owner = scene.gpu[front].owner_avatar.take();
+        assert!(scene.resource_drop_face_at_ray(&world, ray, true, 20.0, &mut candidates).is_none());
+        scene.gpu[front].owner_avatar = owner;
+        assert_eq!(
+            scene.resource_drop_face_at_ray(&world, ray, false, 20.0, &mut candidates),
+            Some((back, 0))
+        );
+        // A below-ground face cannot receive a drop through the terrain.
+        scene.gpu[front].hud = false;
+        let object = world.objects.get_mut(front).unwrap();
+        object.position = Vec3::new(140.0, 130.0, 0.0);
+        object.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        scene.gpu[front].center = object.position;
+        scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
+        let down = (Vec3::new(140.0, 130.0, 60.0), -Vec3::Z);
+        assert!(
+            scene
+                .resource_drop_face_at_ray(&world, down, false, 100.0, &mut candidates)
+                .is_none()
+        );
     }
 
     #[test]
