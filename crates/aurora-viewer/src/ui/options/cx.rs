@@ -720,6 +720,20 @@ impl<'a> Cx<'a> {
         self.row(label, hint, f, |ui, s| super::slider_whole(ui, get(s), range, suffix))
     }
 
+    /// A logarithmic slider (see [`super::slider_log`]).
+    pub fn slider_log(
+        &mut self,
+        label: &str,
+        hint: &str,
+        f: &F<f32>,
+        range: std::ops::RangeInclusive<f32>,
+        smallest: f64,
+        suffix: &str,
+    ) -> bool {
+        let get = f.get_mut;
+        self.row(label, hint, f, |ui, s| super::slider_log(ui, get(s), range, smallest, suffix))
+    }
+
     /// A slider of named levels.
     pub fn stepped(&mut self, label: &str, hint: &str, f: &F<u8>, levels: &[&str]) -> bool {
         let (p, get) = (self.p, f.get_mut);

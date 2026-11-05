@@ -708,6 +708,22 @@ fn slider_whole(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<
     .changed()
 }
 
+/// Slider whose steps grow with its value: a wide range whose small values
+/// matter most, 0 at its left end then `smallest` and up.
+fn slider_log(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<f32>, smallest: f64, suffix: &str) -> bool {
+    ui.spacing_mut().slider_width = SLIDER_W;
+    ui.add(widgets::restricted_number(
+        egui::Slider::new(v, range)
+            .suffix(suffix)
+            .custom_parser(aurora_i18n::parse_number)
+            .logarithmic(true)
+            .smallest_positive(smallest)
+            .trailing_fill(true),
+        widgets::TextPolicy::Decimal,
+    ))
+    .changed()
+}
+
 /// Stepped slider with a named level shown next to it.
 fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
     ui.spacing_mut().slider_width = SLIDER_W - 30.0;

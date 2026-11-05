@@ -290,7 +290,9 @@ impl CameraSettings {
         self.fov = fix(self.fov, 5.0f32.to_radians(), 175.0f32.to_radians(), d.fov);
         self.mouselook_zoom_fov = super::mouselook_zoom::sanitize(self.mouselook_zoom_fov);
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
-        self.smoothing = fix(self.smoothing, 0.0, 9.0, d.smoothing);
+        // the Legacy Viewer's Phototools range (floater_phototools.xml,
+        // "Cam. Smoothing"); its Preferences slider stops at 9
+        self.smoothing = fix(self.smoothing, 0.0, 300.0, d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
         self
     }
@@ -316,5 +318,27 @@ mod lens_zoom_tests {
             ..Default::default()
         };
         assert_eq!(saved.sanitized().fov, 5.0f32.to_radians());
+    }
+}
+
+#[cfg(test)]
+mod smoothing_tests {
+    use super::*;
+
+    #[test]
+    fn camera_smoothing_keeps_the_legacy_phototools_range() {
+        let with = |smoothing| {
+            CameraSettings {
+                smoothing,
+                ..Default::default()
+            }
+            .sanitized()
+            .smoothing
+        };
+        assert_eq!(with(50.0), 50.0);
+        assert_eq!(with(300.0), 300.0);
+        assert_eq!(with(400.0), 300.0);
+        assert_eq!(with(-1.0), 0.0);
+        assert_eq!(with(f32::NAN), 1.0);
     }
 }
