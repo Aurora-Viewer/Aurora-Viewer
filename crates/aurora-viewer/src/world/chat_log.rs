@@ -13,9 +13,12 @@
 //! - `format`: the text of a line and its reading back;
 //! - `names`: the file of each conversation;
 //! - `store`: the folder, the thread that writes and reads;
-//! - `transcript`: a whole file for the History window, by pages.
+//! - `transcript`: a whole file for the History window, by pages;
+//! - `import`: a Legacy Viewer's transcripts brought into the account's
+//!   folder, adding only.
 
 pub mod format;
+pub mod import;
 pub mod names;
 pub mod store;
 pub mod transcript;
@@ -40,6 +43,8 @@ pub struct Config {
     pub show_history: bool,
     /// Date in the file names (LogFileNamewithDate).
     pub dated_names: bool,
+    /// Import the Legacy Viewer's transcripts at login. On by default.
+    pub import_at_login: bool,
 }
 
 impl Default for Config {
@@ -49,6 +54,7 @@ impl Default for Config {
             log_nearby: false,
             show_history: true,
             dated_names: false,
+            import_at_login: true,
         }
     }
 }
@@ -100,6 +106,11 @@ pub struct ChatLog {
     worker: Option<store::Worker>,
     /// An erasing asked for, until its answer comes.
     erasing: Option<crossbeam_channel::Receiver<std::io::Result<usize>>>,
+    /// The Legacy Viewers' folders, when they are not the system's (tests,
+    /// demo).
+    legacy_apps: Option<Vec<PathBuf>>,
+    /// An import under way.
+    importing: Option<import::Running>,
 }
 
 impl ChatLog {
@@ -142,6 +153,9 @@ impl ChatLog {
     pub fn logout(&mut self) {
         self.epoch += 1;
         self.open = None;
+        if let Some(running) = self.importing.take() {
+            running.cancel();
+        }
     }
 
     pub fn identity(&self) -> Option<&Identity> {
@@ -223,7 +237,16 @@ impl ChatLog {
     /// Erase the transcripts of the account logged in (on this grid), after
     /// the lines already queued. False when there is no account. The answer
     /// comes through `take_erased`.
+    /// An import, a move or an erasing is under way: another one would be
+    /// refused.
+    pub fn busy(&self) -> bool {
+        self.importing.is_some() || self.moving.is_some() || self.erasing.is_some()
+    }
+
     pub fn erase(&mut self) -> bool {
+        if self.importing.is_some() {
+            return false;
+        }
         let Some(dir) = self.dir().map(Path::to_path_buf) else {
             return false;
         };
@@ -244,7 +267,7 @@ impl ChatLog {
     /// to the new folder (moveTranscriptsAndLog). False when nothing moves.
     /// The answer comes through `take_relocated`.
     pub fn relocate(&mut self, accounts: Option<PathBuf>) -> bool {
-        if self.moving.is_some() {
+        if self.moving.is_some() || self.importing.is_some() {
             return false;
         }
         let Some(open) = &self.open else {
@@ -282,6 +305,65 @@ impl ChatLog {
             self.accounts = previous;
         }
         Some(done)
+    }
+
+    /// The Legacy Viewers' folders to look in.
+    pub fn legacy_apps(&self) -> Vec<PathBuf> {
+        self.legacy_apps.clone().unwrap_or_else(crate::legacy_profile::app_folders)
+    }
+
+    /// Look in other folders than the system's (tests, demo).
+    pub fn set_legacy_apps(&mut self, apps: Vec<PathBuf>) {
+        self.legacy_apps = Some(apps);
+    }
+
+    /// Import from these folders, every file read again (the import window).
+    pub fn import(&mut self, folders: Vec<PathBuf>) -> bool {
+        self.start_import(import::Sources::Folders(folders), false)
+    }
+
+    /// Import from everything found for the account, without the files that
+    /// did not change since the last import (at login). Not on a grid whose
+    /// folders cannot be told apart: nobody would see which were read.
+    pub fn import_found(&mut self, account: import::Account) -> bool {
+        if !account.grid_known() {
+            return false;
+        }
+        let apps = self.legacy_apps();
+        self.start_import(import::Sources::Find { apps, account }, true)
+    }
+
+    fn start_import(&mut self, sources: import::Sources, skip_unchanged: bool) -> bool {
+        if self.importing.is_some() || self.moving.is_some() || self.erasing.is_some() {
+            return false;
+        }
+        let Some(dir) = self.dir().map(Path::to_path_buf) else {
+            return false;
+        };
+        let request = import::Request {
+            sources,
+            // beside the account's folder, not in it: never a transcript
+            state: dir.with_extension("legacy-import.json"),
+            dated: self.cfg.dated_names,
+            skip_unchanged,
+            dir,
+        };
+        self.importing = self.worker().and_then(|w| import::start(w.merge_port(), request));
+        self.importing.is_some()
+    }
+
+    /// Files done and files to do of the import under way.
+    pub fn import_progress(&self) -> Option<(usize, usize)> {
+        use std::sync::atomic::Ordering;
+        let running = self.importing.as_ref()?;
+        Some((running.done.load(Ordering::Relaxed), running.total.load(Ordering::Relaxed)))
+    }
+
+    /// The report of the last import, once.
+    pub fn take_imported(&mut self) -> Option<import::Report> {
+        let report = self.importing.as_ref()?.report.try_recv().ok()?;
+        self.importing = None;
+        Some(report)
     }
 
     /// The answer of the last erasing, once: the number of files removed.

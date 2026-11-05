@@ -20,6 +20,7 @@ mod layout;
 pub(crate) mod manager;
 mod manager_drag;
 pub(crate) mod motion;
+pub mod photo_quality_notice;
 pub mod safe_graphics_notice;
 
 const REMEMBERED_PASSWORD_MASK: &str = "••••••••••••••••";
@@ -88,6 +89,9 @@ pub struct LoginForm {
     /// The safe graphics offered after the GPU stopped answering, or the
     /// way back from them (`app/safe_graphics.rs`).
     pub safe_graphics: Option<safe_graphics_notice::SafeGraphics>,
+    /// "Photo quality" was switched off after the last session crashed with
+    /// it on (`app/snapshot.rs`, `photo_quality_at_start`).
+    pub photo_quality_off: bool,
 }
 
 #[derive(Default)]
@@ -99,6 +103,8 @@ pub enum LoginAction {
     DismissDriverNotice,
     /// A button of the safe graphics card.
     SafeGraphics(safe_graphics_notice::Choice),
+    /// A button of the photo quality card: turned back on (true) or read.
+    PhotoQualityOff(bool),
     #[default]
     None,
     Login,
