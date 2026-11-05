@@ -27,6 +27,10 @@ pub(super) struct BusyPause {
     /// Slow GPU frames in a row while behind.
     slow: u8,
     paused: bool,
+    /// The last GPU time counted: the renderer gives its last measure
+    /// again each frame until a new one comes, and one slow frame seen
+    /// twice is not two.
+    last_ms: Option<f32>,
     /// AURORA_DEMO_BUSY_PAUSE: a click in the window while paused, the
     /// demo's busy card is over (its window often has the focus already).
     pub(super) demo_released: bool,
@@ -35,17 +39,21 @@ pub(super) struct BusyPause {
 impl BusyPause {
     /// One frame: `behind` the window has not the focus, `allowed` the
     /// setting is on and nothing needs the 3D drawn (a photo, a headset, a
-    /// timed run), `gpu_ms` the GPU time the renderer measured last (`None`
-    /// when no new measure came). Once paused it stays so until the window
+    /// timed run), `gpu_ms` the GPU time the renderer measured last (the
+    /// same again, or `None`, while no new measure came). Once paused it stays so until the window
     /// is in front again: its own frames are then short and say nothing of
     /// the card. Returns whether the state changed.
     pub(super) fn update(&mut self, behind: bool, allowed: bool, gpu_ms: Option<f32>) -> bool {
         let was = self.paused;
+        let new = gpu_ms.filter(|&ms| self.last_ms != Some(ms));
+        if gpu_ms.is_some() {
+            self.last_ms = gpu_ms;
+        }
         if !behind || !allowed {
             self.slow = 0;
             self.paused = false;
         } else if !self.paused
-            && let Some(ms) = gpu_ms
+            && let Some(ms) = new
         {
             self.slow = if ms >= SLOW_MS { self.slow.saturating_add(1) } else { 0 };
             self.paused = self.slow >= SLOW_FRAMES;
@@ -78,7 +86,9 @@ impl App {
         let mut timed = self.capture.is_some() || self.frame_profile.enabled();
         let (mut behind, mut gpu_ms) = (!self.focused, self.last_render.gpu_ms);
         if self.demo && !self.busy_pause.demo_released && demo_from().is_some_and(|from| self.frame_count >= from) {
-            (behind, gpu_ms, timed) = (true, Some(SLOW_MS * 2.0), false);
+            // (a new measure each frame)
+            let ms = SLOW_MS * 2.0 + (self.frame_count % 2) as f32;
+            (behind, gpu_ms, timed) = (true, Some(ms), false);
         }
         let allowed = self.settings.background_gpu_pause && !timed && !vr && !self.snapshots.drawing();
         if self.busy_pause.update(behind, allowed, gpu_ms) {
@@ -132,7 +142,8 @@ mod tests {
         let mut b = BusyPause::default();
         assert!(!b.update(true, true, Some(400.0)));
         assert!(!b.paused(), "one slow frame is not a busy card");
-        assert!(b.update(true, true, Some(400.0)));
+        assert!(!b.update(true, true, Some(400.0)), "nor the same measure given again");
+        assert!(b.update(true, true, Some(410.0)));
         assert!(b.paused());
         // its own frames are short while paused: it stays paused
         assert!(!b.update(true, true, Some(0.3)));
@@ -147,11 +158,13 @@ mod tests {
         let mut b = BusyPause::default();
         b.update(true, true, Some(SLOW_MS));
         b.update(true, true, Some(20.0));
-        b.update(true, true, Some(SLOW_MS));
+        b.update(true, true, Some(SLOW_MS + 1.0));
         assert!(!b.paused());
         // no new measure leaves the count as it was
         b.update(true, true, None);
-        b.update(true, true, Some(SLOW_MS));
+        b.update(true, true, Some(SLOW_MS + 1.0));
+        assert!(!b.paused());
+        b.update(true, true, Some(SLOW_MS + 2.0));
         assert!(b.paused());
     }
 
@@ -166,8 +179,8 @@ mod tests {
             b.update(true, false, Some(900.0));
         }
         assert!(!b.paused(), "setting off, a photo, a headset or a timed run");
-        b.update(true, true, Some(900.0));
-        b.update(true, true, Some(900.0));
+        b.update(true, true, Some(901.0));
+        b.update(true, true, Some(902.0));
         assert!(b.paused());
         assert!(b.update(true, false, None), "a photo started behind: drawn again");
     }
