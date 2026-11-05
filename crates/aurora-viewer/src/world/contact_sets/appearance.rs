@@ -101,6 +101,33 @@ pub enum PlateSize {
     Reduced,
 }
 
+/// Where a set's members get a marker in the world (an Aurora addition).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerScope {
+    #[default]
+    Off,
+    /// While they stand on the parcel we stand on.
+    Parcel,
+    /// While they are in the region we are in.
+    Region,
+}
+
+/// A marker's fade-out distance when the option is first switched on, and
+/// what the setting accepts (camera to resident, in metres).
+pub const MARKER_FADE_DEFAULT: u16 = 10;
+pub const MARKER_FADE_RANGE: std::ops::RangeInclusive<u16> = 1..=128;
+
+/// The marker of one resident: the highest-priority set that has one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Marker {
+    pub scope: MarkerScope,
+    pub color: [f32; 4],
+    /// Into `ICONS`.
+    pub icon: Option<usize>,
+    /// Metres from the camera under which the marker is gone.
+    pub fade: Option<u16>,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Visuals {
     pub border: bool,
@@ -113,6 +140,8 @@ pub struct Visuals {
     pub icon: Option<usize>,
     pub replace_friend: bool,
     pub size: PlateSize,
+    pub marker: MarkerScope,
+    pub marker_fade: Option<u16>,
 }
 
 impl Visuals {
@@ -131,6 +160,15 @@ impl Visuals {
                 "expanded" => PlateSize::Expanded,
                 "reduced" => PlateSize::Reduced,
                 _ => PlateSize::Inherit,
+            },
+            marker: match v["marker"].as_str() {
+                "parcel" => MarkerScope::Parcel,
+                "region" => MarkerScope::Region,
+                _ => MarkerScope::Off,
+            },
+            marker_fade: match v["marker_fade"].as_f64() {
+                fade if fade >= 1.0 => Some((fade as u16).min(*MARKER_FADE_RANGE.end())),
+                _ => None,
             },
         }
     }
@@ -160,6 +198,17 @@ impl Visuals {
                 PlateSize::Reduced => "reduced",
             },
         );
+        v.insert(
+            "marker",
+            match self.marker {
+                MarkerScope::Off => "off",
+                MarkerScope::Parcel => "parcel",
+                MarkerScope::Region => "region",
+            },
+        );
+        if let Some(fade) = self.marker_fade {
+            v.insert("marker_fade", f64::from(fade));
+        }
         v
     }
 }
@@ -183,6 +232,7 @@ pub struct Appearance {
     pub icons: Vec<SetIcon>,
     pub replace_friend: bool,
     pub size: PlateSize,
+    pub marker: Option<Marker>,
 }
 
 static EMPTY: std::sync::LazyLock<std::sync::Arc<Appearance>> = std::sync::LazyLock::new(|| std::sync::Arc::new(Appearance::default()));
@@ -221,6 +271,9 @@ impl ContactSets {
         if visuals.icon.is_some_and(|i| i >= ICONS.len()) {
             visuals.icon = None;
         }
+        visuals.marker_fade = visuals
+            .marker_fade
+            .map(|fade| fade.clamp(*MARKER_FADE_RANGE.start(), *MARKER_FADE_RANGE.end()));
         if let Some(set) = self.sets.get_mut(name)
             && set.visuals != visuals
         {
@@ -260,6 +313,14 @@ impl ContactSets {
                 }
                 if a.size == PlateSize::Inherit {
                     a.size = v.size;
+                }
+                if a.marker.is_none() && v.marker != MarkerScope::Off {
+                    a.marker = Some(Marker {
+                        scope: v.marker,
+                        color: set.color,
+                        icon: v.icon.filter(|i| *i < ICONS.len()),
+                        fade: v.marker_fade,
+                    });
                 }
                 a.replace_friend |= v.replace_friend && v.icon.is_some_and(|i| i < ICONS.len());
                 if let Some(icon) = v.icon.filter(|i| *i < ICONS.len())

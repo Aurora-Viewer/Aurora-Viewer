@@ -926,6 +926,8 @@ pub struct Settings {
     pub show_other_name_tags: bool,
     /// LLVOAvatar::idleUpdateNameTag: fade after a continuous visible interval.
     pub temporary_name_tags: bool,
+    /// The contact sets' markers in the world (each set says where it wants one).
+    pub contact_markers: bool,
     pub name_tag_show_seconds: f32,
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
@@ -1948,6 +1950,7 @@ impl Default for Settings {
             show_friend_name_tags: true,
             show_other_name_tags: true,
             temporary_name_tags: false,
+            contact_markers: true,
             name_tag_show_seconds: 10.0,
             classic_name_tags: false,
             classic_profiles: false,

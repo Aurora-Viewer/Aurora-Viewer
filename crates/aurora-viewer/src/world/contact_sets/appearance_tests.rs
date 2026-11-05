@@ -77,6 +77,8 @@ fn contact_visuals_round_trip_and_old_files_inherit() {
         icon: Some(3),
         replace_friend: true,
         size: PlateSize::Reduced,
+        marker: MarkerScope::Off,
+        marker_fade: None,
     };
     sets.set_visuals("Example", v.clone());
     sets.set_stack_icons(true);
@@ -108,4 +110,57 @@ fn contact_visuals_picker_assets_and_labels_exist() {
         let key = appearance::ICON_LABELS[i];
         assert_ne!(aurora_i18n::text(key), key);
     }
+}
+
+#[test]
+fn contact_markers_cascade_by_priority_and_round_trip() {
+    let mut sets = ContactSets::default();
+    let id = Uuid::from_u128(1);
+    for name in ["Staff", "Friends", "Plain"] {
+        sets.add_set(name);
+        sets.add_to_set(&[id], name, |_| false);
+    }
+    sets.set_color("Staff", [1.0, 0.0, 0.0, 1.0]);
+    sets.set_color("Friends", [0.0, 0.0, 1.0, 1.0]);
+    assert_eq!(sets.appearance(&id).marker, None, "off by default");
+    sets.set_visuals(
+        "Friends",
+        Visuals {
+            marker: MarkerScope::Region,
+            marker_fade: Some(9000),
+            icon: Some(2),
+            ..Default::default()
+        },
+    );
+    let friends = sets.appearance(&id).marker.expect("marker");
+    assert_eq!(
+        friends,
+        Marker {
+            scope: MarkerScope::Region,
+            color: [0.0, 0.0, 1.0, 1.0],
+            icon: Some(2),
+            fade: Some(*appearance::MARKER_FADE_RANGE.end()),
+        }
+    );
+    // the set on top wins as a whole, its lack of a symbol included
+    sets.set_visuals(
+        "Staff",
+        Visuals {
+            marker: MarkerScope::Parcel,
+            ..Default::default()
+        },
+    );
+    sets.move_priority("Staff", true);
+    sets.move_priority("Staff", true);
+    let staff = sets.appearance(&id).marker.expect("marker");
+    assert_eq!(
+        (staff.scope, staff.color, staff.icon, staff.fade),
+        (MarkerScope::Parcel, [1.0, 0.0, 0.0, 1.0], None, None)
+    );
+
+    let visuals = sets.set("Friends").unwrap().visuals.clone();
+    assert_eq!(Visuals::read(&visuals.write()), visuals);
+    let visuals = sets.set("Staff").unwrap().visuals.clone();
+    assert_eq!(Visuals::read(&visuals.write()), visuals);
+    assert_eq!(Visuals::read(&Llsd::new_map()).marker, MarkerScope::Off, "older files");
 }

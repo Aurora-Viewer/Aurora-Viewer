@@ -145,6 +145,7 @@ const BEFORE: &[&str] = &[
     "confirm_payments",
     "payment_confirm_threshold",
     "name_tag_distance",
+    "contact_markers",
     "show_own_name_tag",
     "show_friend_name_tags",
     "show_other_name_tags",

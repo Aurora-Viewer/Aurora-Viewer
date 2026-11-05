@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 pub mod appearance;
 pub mod importing;
-pub use appearance::{Appearance, PlateSize, Visuals};
+pub use appearance::{Appearance, Marker, MarkerScope, PlateSize, Visuals};
 #[cfg(test)]
 mod appearance_tests;
 

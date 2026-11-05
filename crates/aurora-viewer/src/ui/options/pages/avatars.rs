@@ -64,6 +64,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     " m",
                 );
                 cx.toggle(
+                    tr!("ui-options-contact-markers"),
+                    tr!("ui-options-contact-markers-help"),
+                    &field!(contact_markers),
+                );
+                cx.toggle(
                     tr!("ui-options-complexity-in-name-tags"),
                     tr!("ui-options-below-the-name-from-green-to-red-based-on"),
                     &field!(tag_complexity),
