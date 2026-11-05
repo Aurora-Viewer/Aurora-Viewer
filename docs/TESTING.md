@@ -9533,6 +9533,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_TEMPORAL=0` or `alt` | GTAO without its accumulation over the frames (fixed noise, finer grain), as before |
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
+| `AURORA_TAA_MOTION=0` or `alt` | TAA reprojected through the camera alone, without the motion vectors, as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
@@ -9866,13 +9867,26 @@ What the inventory must show with these scenarios:
   (darker for the sky). The depth prepass writes them beside GTAO's
   normals (`depth_normal` in object.wgsl, from the last frame's matrices
   and joint palettes, `motion_history.rs`), so only while GTAO uses the
-  mesh normals; elsewhere, and where nothing was drawn, the camera's
-  motion alone is shown. Lip morphs and other morphs count as still. With
+  mesh normals or TAA is the anti-aliasing (`AURORA_AA=5`; without GTAO
+  TAA has its own target); elsewhere, and where nothing was drawn, the
+  camera's motion alone is shown. Lip morphs and other morphs count as
+  still. With
   `AURORA_DEMO_CAMERA=alt,640,400` capture frame 645 (the orbit: the sky
   one colour, the terrain shading through black where it crosses the
   pivot's distance); with `AURORA_DEMO_CAMERA=close,640,500,45` frame 625
   (the zoom: colours fanning out from the focus, the still objects the
   colour of the terrain behind them); frame 700 of the first is all grey.
+- **`AURORA_TAA_MOTION=0|alt`**: with TAA (`AURORA_AA=5`), its history
+  follows each pixel's motion vector by default (`shaders/taa.wgsl`), so
+  moving avatars, animesh and objects keep a steady, sharp history; where
+  the motion is exactly zero (the sky, the water and other surfaces only
+  the main pass draws, or nothing moved) it reprojects through the camera
+  and the depth as before. `0` always reprojects through the camera, the
+  old TAA; `alt` switches each second, to compare in one window. Look at
+  our avatar running (`AURORA_DEMO_DOUBLECLICK=run`) or the crowd dancing
+  (`AURORA_DEMO_CROWD=20`, `AURORA_DEMO_POS=129,134`): with `0` their
+  edges smear and shimmer while they move, with the default they stay
+  clean. A still scene is the same in both.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility
