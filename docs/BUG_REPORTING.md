@@ -263,7 +263,7 @@ reopening the window or choosing "New report" then prepares a fresh form.
 The browser does not confirm the publication to the viewer: the tester
 clicks "I have published the report" after sending on GitHub to clear the
 draft. Opening GitHub or saving a local copy does not clear it.
-The avatar name and the diagnostics are unticked at first. No SL login
+The location, the avatar name and the diagnostics are unticked at first. No SL login
 state and no full settings are serialised. The public diagnostics keep only
 the recognised warning / error categories: simply removing the URLs or
 UUIDs would not be enough to remove the names and the free texts coming
