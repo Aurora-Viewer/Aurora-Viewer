@@ -611,6 +611,9 @@ pub struct App {
     /// What the simulator was told of the static eyes animation since the
     /// last arrival (FSStaticEyes).
     static_eyes: crate::world::lookat::StaticEyes,
+    /// What the simulator was asked about the Bento idle pose: the same
+    /// rule as the static eyes, asked again after every arrival.
+    bento_idle: crate::world::lookat::StaticEyes,
     /// The world point the cursor was over last frame, and the object it
     /// lies on (the hover pick of the cursor icon), for the look-at.
     look_hover: Option<(Option<usize>, Vec3)>,
@@ -1565,6 +1568,7 @@ impl App {
             cam_key_since: [None; 10],
             look_at_privacy: None,
             static_eyes: Default::default(),
+            bento_idle: Default::default(),
             look_hover: None,
             hover_tips: Default::default(),
             look_at_fades: Default::default(),
@@ -3072,6 +3076,7 @@ impl App {
         self.region_restart.put_demo(demo);
         self.move_complete_at = None;
         self.static_eyes.on_arrival();
+        self.bento_idle.on_arrival();
         self.set_mouselook_grab(false);
         self.camera = Camera::default();
     }
@@ -3861,6 +3866,7 @@ impl App {
                 self.move_complete_at = Some(Instant::now());
                 // the simulator we land in plays none of our animations yet
                 self.static_eyes.on_arrival();
+                self.bento_idle.on_arrival();
                 self.tp_checks = vec![10.0, 3.0];
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
@@ -5181,6 +5187,16 @@ impl App {
             log::info!("static eyes: {} asked of the simulator", if start { "start" } else { "stop" });
             self.send(NetCommand::AgentAnimation {
                 anim: crate::world::lookat::STATIC_EYES,
+                start,
+            });
+        }
+        // FSPlayDefaultBentoAnimation (LLAgent::setRegion and
+        // stopCurrentAnimations in llagent.cpp, the setting's listener
+        // handlePlayBentoIdleAnimationChanged in llviewercontrol.cpp)
+        if let Some(start) = self.bento_idle.request(self.settings.bento_idle) {
+            log::info!("bento idle pose: {} asked of the simulator", if start { "start" } else { "stop" });
+            self.send(NetCommand::AgentAnimation {
+                anim: reset_skeleton::ANIM_BENTO_IDLE,
                 start,
             });
         }
