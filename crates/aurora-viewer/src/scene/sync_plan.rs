@@ -126,7 +126,12 @@ impl SyncState for FrameState<'_> {
     }
 
     fn anchored(&self, idx: usize) -> bool {
-        self.gpu.get(idx).is_some_and(|g| g.anchor.is_some())
+        // (in the seconds of AURORA_MOVING_ANCHORS=alt that leave them to
+        // the sync, what hangs from a mover is placed by it again)
+        self.gpu
+            .get(idx)
+            .and_then(|g| g.anchor)
+            .is_some_and(|a| a.slot != anchors::MOVER || anchors::movers_now())
     }
 
     fn needs_sync(&self, idx: usize, o: &Object) -> bool {
@@ -231,6 +236,7 @@ pub(super) struct SyncCtx<'a> {
     geoms: &'a FastMap<GeomKey, GeomEntry>,
     gpu: &'a [ObjGpu],
     palette_slots: &'a FastMap<Uuid, u32>,
+    anchors: &'a super::anchors::Anchors,
     skin_binds: &'a super::skin_binds::SkinBinds,
     palettes: &'a [[[f32; 4]; 4]],
     anim_boxes: &'a FastMap<Uuid, super::anim_box::AnimBox>,
@@ -375,15 +381,24 @@ impl SyncCtx<'_> {
                 matrix,
             })
         });
-        // a worn object that only follows its attachment point: placed
-        // relative to it once, the GPU does the rest
+        // a worn object that only follows its attachment point, or an object
+        // that moves by itself and what is linked below it: placed relative
+        // to it once, the GPU does the rest
         // (a Linden plant keeps its own placement, worn or not)
         let plant = super::plants::plant_model(geom_key, o, pos, rot);
         let point_anchor = (!rigged && on_gpu && plant.is_none())
             .then(|| {
-                anchors::anchored(world, o, |wearer, slot| {
-                    Scene::anchor_matrix(self.palette_slots, self.palettes.len(), wearer, slot)
-                })
+                anchors::anchored_or_moving(
+                    world,
+                    idx,
+                    o,
+                    |wearer, slot| Scene::anchor_matrix(self.palette_slots, self.palettes.len(), wearer, slot),
+                    |mover, m| {
+                        self.anchors
+                            .mover_matrix(mover, m.full_id)
+                            .filter(|&matrix| (matrix as usize) < self.palettes.len())
+                    },
+                )
             })
             .flatten();
         let unbind = unbind.unwrap_or(Mat4::IDENTITY);
@@ -616,6 +631,7 @@ impl Scene {
             geoms: &self.geoms,
             gpu: &self.gpu,
             palette_slots: &self.palette_slots,
+            anchors: &self.anchors,
             skin_binds: &self.skin_binds,
             palettes: &self.palettes,
             anim_boxes: &self.anim_boxes,

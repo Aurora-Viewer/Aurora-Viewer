@@ -1004,6 +1004,8 @@ pub struct RenderSettings {
     pub hdr: bool,
     /// Shadow map resolution per cascade (0 = shadows off).
     pub shadow_resolution: u32,
+    /// Maximum simultaneous projector shadow maps (0 disables them).
+    pub projector_shadow_limit: u8,
     /// Screen-space ambient occlusion: 0 off, 1 low, 2 high.
     pub ssao: u8,
     /// How the occlusion `ssao` turns on is computed.
@@ -1046,6 +1048,7 @@ impl Default for RenderSettings {
             tonemapper: Tonemapper::KhronosNeutral,
             hdr: true,
             shadow_resolution: 2048,
+            projector_shadow_limit: 2,
             ssao: 1,
             ao_method: AoMethod::Legacy,
             screen_indirect: false,
@@ -1326,7 +1329,7 @@ pub struct FrameParams {
     pub shadow_distance: f32,
     pub lights: Vec<PointLight>,
     /// The projectors of `lights` that cast shadows (drawn with `shadows`).
-    pub spot_shadows: [Option<SpotShadow>; 2],
+    pub spot_shadows: [Option<SpotShadow>; crate::projector_shadows::MAX_PROJECTOR_SHADOWS],
     pub clear_color: Vec4,
     pub sky: SkyParams,
     pub water: WaterParams,

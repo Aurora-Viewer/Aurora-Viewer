@@ -220,8 +220,9 @@ pub fn preview_discard(mut width: u32, mut height: u32) -> u8 {
     discard
 }
 fn read_for(path: &Path, want: impl FnOnce(&[u8]) -> u8) -> Option<Transcoded> {
-    let mut file = std::fs::File::open(path).ok()?;
-    let file_len = file.metadata().ok()?.len();
+    // (sealed: only the chunks of the levels read are decrypted)
+    let mut file = crate::cache::reader(path).ok()?;
+    let file_len = file.len();
     let mut head = vec![0u8; (HEADER + MAX_LEVELS * 8).min(file_len as usize)];
     file.read_exact(&mut head).ok()?;
     let parsed = parse(&head, file_len, want(&head))?;
@@ -399,6 +400,45 @@ mod tests {
             panic!("a BC7 chain");
         };
         assert_eq!((c.discard, c.levels.len()), (5, 1));
+    }
+
+    /// Sealed like every cache file: a chain over several chunks reads back
+    /// whole, and from its end, the same as a plain one.
+    #[test]
+    fn a_sealed_file_reads_like_a_clear_one() {
+        let big = Meta {
+            info: J2kInfo {
+                width: 512,
+                height: 256,
+                components: 4,
+                levels: 5,
+            },
+            ..meta(0)
+        };
+        let chain: Vec<_> = (0..6u32)
+            .map(|l| {
+                let (w, h) = (512 >> l, 256 >> l);
+                (
+                    w,
+                    h,
+                    (0..TexelFormat::Bc7.level_bytes(w, h)).map(|i| (i * 7 + l as u64) as u8).collect(),
+                )
+            })
+            .collect();
+        let bytes = encode(&big, None, &chain).expect("file");
+        assert!(bytes.len() > 2 * aurora_assets::sealed::CHUNK, "spans several chunks");
+        let clear = file("big-clear.bc7", &bytes);
+        let sealed = clear.with_file_name("big-sealed.bc7");
+        crate::cache::write(&sealed, &bytes).expect("sealed");
+        assert!(aurora_assets::sealed::is_sealed(&std::fs::read(&sealed).expect("file")));
+        for want in [0, 3, 5] {
+            assert_eq!(read(&sealed, want), read(&clear, want), "level {want}");
+        }
+        let Some(Transcoded::Bc7(c)) = read(&sealed, 3) else {
+            panic!("a BC7 chain");
+        };
+        assert_eq!(c.levels, chain[3..]);
+        assert_eq!(read_preview(&sealed), read_preview(&clear));
     }
 
     #[test]

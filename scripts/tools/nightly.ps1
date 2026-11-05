@@ -87,15 +87,30 @@ function Get-BetasToPrune([string[]]$Tags, [int]$Keep) {
     @($sorted[$Keep..($sorted.Count - 1)] | ForEach-Object { $_.Tag })
 }
 
-# The release policy line a beta carries: the newest stable tag's
-# thresholds, so the choices the team made at that release still apply to
-# beta testers, under the beta's own version (scripts/write-update-policy.ps1
-# checks the line against its tag).
-function Get-PolicyLine([string[]]$StableTagMessage, [string]$Version) {
+# The release policy line a beta carries: for each threshold, the higher of
+# the newest stable tag's and of `update-policy.json` at the tagged commit
+# ($Defaults), as a release would take them (tools/update-policy.ps1), so the
+# choices the team made still apply to beta testers, under the beta's own
+# version (scripts/write-update-policy.ps1 checks the line against its tag).
+# A minimum the beta itself does not reach (0.9.2 for 0.9.2-beta…) is left
+# out: the updater refuses a floor above the version it offers.
+function Get-PolicyLine([string[]]$StableTagMessage, [string]$Version, $Defaults = $null) {
     $line = @($StableTagMessage | Where-Object { $_ -like 'Aurora-Update-Policy: *' })
     if ($line.Count -gt 1) { throw 'Several policies in the tag.' }
-    if ($line.Count -eq 0) { return $null }
-    $policy = $line[0].Substring('Aurora-Update-Policy: '.Length) | ConvertFrom-Json
-    $policy.version = $Version
-    'Aurora-Update-Policy: ' + ($policy | ConvertTo-Json -Compress)
+    $previous = if ($line.Count -eq 1) { $line[0].Substring('Aurora-Update-Policy: '.Length) | ConvertFrom-Json }
+    $fields = 'minimum_supported_version', 'cache_invalidation_before', 'settings_reset_before'
+    $set = @($fields | Where-Object { $Defaults -and $Defaults.$_ })
+    if (-not $previous -and $set.Count -eq 0) { return $null }
+    $core = ($Version -split '-')[0]
+    $policy = [ordered]@{ schema = 1; version = $Version }
+    foreach ($field in $fields) {
+        $policy[$field] = $null
+        foreach ($value in @($previous.$field, $Defaults.$field) | Where-Object { $_ }) {
+            if ($value -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw "Invalid threshold: $field." }
+            if ([version]$value -gt [version]$core) { continue }
+            if ($field -eq 'minimum_supported_version' -and $Version -ne $core -and [version]$value -eq [version]$core) { continue }
+            if (-not $policy[$field] -or [version]$value -gt [version]$policy[$field]) { $policy[$field] = $value }
+        }
+    }
+    'Aurora-Update-Policy: ' + ([pscustomobject]$policy | ConvertTo-Json -Compress)
 }

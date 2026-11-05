@@ -19,7 +19,7 @@ pub(crate) mod default_motions;
 pub mod describe;
 pub mod drawn;
 pub mod fetch_priority;
-mod flexible;
+pub(crate) mod flexible;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -695,6 +695,13 @@ pub struct SceneStats {
     pub posed: usize,
     /// Worn objects placed by the GPU (anchors.rs): not visited by the sync.
     pub anchored: usize,
+    /// Flexible prims whose mesh was swept again this frame, and those
+    /// simulated with their mesh held because no view shows them
+    /// (flexible.rs).
+    pub flexies: usize,
+    pub flexies_held: usize,
+    /// Objects that move by themselves placed from a mover (anchors.rs).
+    pub movers: usize,
     /// Skeletons built again this frame (a shape, an attachment or their
     /// age changed), out of `posed` (AURORA_PROFILE).
     pub skeletons_rebuilt: usize,
@@ -761,6 +768,9 @@ pub struct Scene {
     job_rx: crossbeam_channel::Receiver<JobResult>,
     geoms: FastMap<GeomKey, GeomEntry>,
     flexibles: FastMap<usize, flexible::State>,
+    /// The plane (point, normal) of the mirror the last frame drew, for the
+    /// flexible prims only it shows (flexible.rs).
+    pub mirror_plane: Option<(Vec3, Vec3)>,
     /// Grass tufts drawn, and the terrain they were placed on (plants.rs).
     grass: HashMap<usize, plants::GrassBuilt>,
     pub textures: TextureStreamer,
@@ -1390,12 +1400,21 @@ impl Scene {
         }
     }
 
-    pub fn selection_pulse(&self, now: Instant) -> f32 {
+    pub fn selection_pulse(&self, now: Instant, repeat: bool) -> f32 {
         if self.selection_faces.is_empty() {
             return 0.0;
         }
         self.selection_changed.map_or(0.0, |at| {
-            let remaining = (1.0 - now.saturating_duration_since(at).as_secs_f32() / 0.7).clamp(0.0, 1.0);
+            let period = std::time::Duration::from_millis(700);
+            let elapsed = now.saturating_duration_since(at);
+            // Drag feedback repeats the ordinary selection flash without
+            // changing its mask or rebuilding invisible-face records.
+            let elapsed = if repeat {
+                std::time::Duration::from_nanos((elapsed.as_nanos() % period.as_nanos()) as u64)
+            } else {
+                elapsed
+            };
+            let remaining = (1.0 - elapsed.as_secs_f32() / period.as_secs_f32()).clamp(0.0, 1.0);
             0.18 * remaining * remaining
         })
     }
@@ -1417,6 +1436,7 @@ impl Scene {
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),
             geoms: Default::default(),
             flexibles: Default::default(),
+            mirror_plane: None,
             grass: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
             meshes: MeshStreamer::new(cache_dir.clone()),
@@ -2890,6 +2910,7 @@ impl Scene {
         step(&mut slow, "anchors");
         self.sync_flexibles(renderer, world, &synced, now, view);
         self.sync_grass_ground(renderer, world, now, &mut synced);
+        let t_part = self.parts.lap(Part::SyncFlexibles, t_part);
         step(&mut slow, "flexibles");
         self.sync_photo_isolation(renderer, world, &synced);
         // GPU object table: bounds and flags of what was synced (unchanged
@@ -3671,8 +3692,15 @@ impl Scene {
                     .get(&o.key)
                     .and_then(|s| s.iter().rev().find(|(f, _)| *f as usize == fi))
                     .map(|(_, ov)| ov)
-                    .filter(|_| o.local_appearance(fi).is_none());
-                let m = meshes::render_material(&self.materials.resolve(&mid), ov);
+                    .filter(|_| {
+                        o.local_appearance(fi)
+                            .and_then(crate::world::objects::LocalAppearance::surface)
+                            .is_none()
+                    });
+                let mut m = meshes::render_material(&self.materials.resolve(&mid), ov);
+                if let Some(appearance) = o.local_appearance(fi) {
+                    appearance.apply_pbr(&mut m);
+                }
                 // glTF materials replace the legacy shininess
                 rec.flags[0] &= !flags::LEGACY_MAT;
                 rec.flags[0] |= flags::PBR;
@@ -3722,7 +3750,9 @@ impl Scene {
             }
             // legacy material (LLMaterial) of the texture entry
             let mut legacy_alpha = plant.map(|_| legacy_mat::alpha_mode::MASK);
-            if mat_id.is_none() && !tf.material_id.is_nil() {
+            let local_normal = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Normal);
+            let local_specular = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Specular);
+            if mat_id.is_none() && (!tf.material_id.is_nil() || local_normal.is_some() || local_specular.is_some()) {
                 g.material_ids.push(tf.material_id);
                 let cap = world.regions.get(&o.key.region).and_then(|r| {
                     r.caps.get("RenderMaterials").map(|url| legacy_mat::RegionCap {
@@ -3730,7 +3760,23 @@ impl Scene {
                         limits: r.materials_limits,
                     })
                 });
-                if let Some(lm) = self.legacy_mats.get(&tf.material_id, cap) {
+                let loaded = (!tf.material_id.is_nil())
+                    .then(|| self.legacy_mats.get(&tf.material_id, cap))
+                    .flatten();
+                let material = loaded.map(|m| (*m).clone()).or_else(|| {
+                    (local_normal.is_some() || local_specular.is_some()).then(|| legacy_mat::LegacyMaterial {
+                        diffuse_alpha_mode: if self.textures.has_alpha(&tf.texture).unwrap_or(false) {
+                            legacy_mat::alpha_mode::BLEND
+                        } else {
+                            legacy_mat::alpha_mode::NONE
+                        },
+                        ..Default::default()
+                    })
+                });
+                if let Some(mut lm) = material {
+                    if let Some(appearance) = o.local_appearance(fi) {
+                        appearance.apply_legacy(&mut lm);
+                    }
                     rec.flags[0] |= flags::LEGACY_MAT;
                     aux_tex[0] = lm.normal_map;
                     aux_tex[1] = lm.specular_map;
@@ -3948,12 +3994,19 @@ impl Scene {
                             .get(&o.key)
                             .and_then(|s| s.iter().rev().find(|(face, _)| *face as usize == fi))
                             .map(|(_, ov)| ov)
-                            .filter(|_| o.local_appearance(fi).is_none());
+                            .filter(|_| {
+                                o.local_appearance(fi)
+                                    .and_then(crate::world::objects::LocalAppearance::surface)
+                                    .is_none()
+                            });
                         let status = self
                             .materials
                             .peek(&mid)
                             .map_or(meshes::MaterialStatus::Pending, meshes::MaterialStatus::Loaded);
-                        let m = meshes::render_material(&status, ov);
+                        let mut m = meshes::render_material(&status, ov);
+                        if let Some(appearance) = o.local_appearance(fi) {
+                            appearance.apply_pbr(&mut m);
+                        }
                         maps = [
                             maps[0],
                             m.base_color_texture,
@@ -4344,8 +4397,9 @@ impl Scene {
             if since.elapsed().as_secs() >= 10 {
                 let (kept, wrong) = std::mem::take(&mut self.anchors.kept_centres);
                 let (anchors, wrong_anchors) = std::mem::take(&mut self.anchors.kept_anchors);
+                let (moved, wrong_moved) = std::mem::take(&mut self.anchors.mover_placed);
                 log::info!(
-                    "impostor pictures: {taken} taken, {stale} with the pose of an earlier frame | anchored centres kept: {kept}, {wrong} not where their anchor puts them | anchors kept: {anchors}, {wrong_anchors} not what their wearer gives"
+                    "impostor pictures: {taken} taken, {stale} with the pose of an earlier frame | anchored centres kept: {kept}, {wrong} not where their anchor puts them | anchors kept: {anchors}, {wrong_anchors} not what their wearer gives | placed from a mover: {moved}, {wrong_moved} not where the sync would put them"
                 );
                 self.picture_check = (0, 0, Some(Instant::now()));
             }
@@ -6933,15 +6987,34 @@ mod tests {
         let selected = HashMap::from([(7, 1 << 3)]);
         scene.set_face_selection(&mut world, selected.clone());
         let at = scene.selection_changed.unwrap();
-        assert!((scene.selection_pulse(at) - 0.18).abs() < 1e-6);
-        assert!(scene.selection_pulse(at + std::time::Duration::from_millis(350)) < 0.05);
+        assert!((scene.selection_pulse(at, false) - 0.18).abs() < 1e-6);
+        assert!(scene.selection_pulse(at + std::time::Duration::from_millis(350), false) < 0.05);
         scene.set_face_selection(&mut world, selected);
         assert_eq!(scene.selection_changed, Some(at));
-        assert_eq!(scene.selection_pulse(at + std::time::Duration::from_millis(700)), 0.0);
+        assert_eq!(scene.selection_pulse(at + std::time::Duration::from_millis(700), false), 0.0);
         scene.reveal_selected_faces();
-        assert!(scene.selection_pulse(Instant::now()) > 0.17);
+        assert!(scene.selection_pulse(Instant::now(), false) > 0.17);
         scene.set_face_selection(&mut world, HashMap::new());
-        assert_eq!(scene.selection_pulse(Instant::now()), 0.0);
+        assert_eq!(scene.selection_pulse(Instant::now(), false), 0.0);
+    }
+
+    #[test]
+    fn face_drop_hover_repeats_the_selection_flash_until_feedback_ends() {
+        use std::time::Duration;
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.set_face_selection(&mut world, HashMap::from([(7, 1 << 3)]));
+        let at = scene.selection_changed.unwrap();
+        for cycle in 0..10 {
+            let start = at + Duration::from_millis(cycle * 700);
+            assert!((scene.selection_pulse(start, true) - 0.18).abs() < 1e-6);
+            assert!(scene.selection_pulse(start + Duration::from_millis(600), true) < 0.01);
+        }
+        let later = at + Duration::from_secs(7);
+        assert_eq!(scene.selection_pulse(later, false), 0.0, "ordinary selection must not keep looping");
+        scene.set_face_selection(&mut world, HashMap::new());
+        assert_eq!(scene.selection_pulse(later, true), 0.0, "leaving the face removes the effect");
     }
 
     /// The GPU culling (reference of cull.wgsl, `gpu_cull::face_bins`) takes
@@ -7049,7 +7122,7 @@ mod tests {
             &[aurora_render::shadow_cull::CASTER_PLANES_ALL; 3],
             0.0,
             [Mat4::IDENTITY; 3],
-            [None; 2],
+            [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS],
             flags,
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];
