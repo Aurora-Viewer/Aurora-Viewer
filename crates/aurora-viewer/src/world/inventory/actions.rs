@@ -12,6 +12,19 @@ pub const COPY: u32 = 0x8000;
 pub const MODIFY: u32 = 0x4000;
 pub const TRANSFER: u32 = 0x2000;
 pub const MOVE: u32 = 0x80000;
+/// Copy, modify and transfer: what LLViewerInventoryItem::getProtectedAssetUUID
+/// (indra/newview/llviewerinventory.cpp) asks before an asset UUID is shown.
+pub const FULL: u32 = COPY | MODIFY | TRANSFER;
+
+/// Whether an asset UUID met outside its inventory item (a material map)
+/// may be shown: a built-in texture, or an item of the inventory holding it
+/// with full permissions, like the UUID field of LLFloaterTexturePicker
+/// (indra/newview/lltexturectrl.cpp).
+pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
+    use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
+    [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
+        || inv.items.values().any(|it| it.asset_id == asset && it.owner_mask & FULL == FULL)
+}
 
 pub fn parent(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     inv.folders
