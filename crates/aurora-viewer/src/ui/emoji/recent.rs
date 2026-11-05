@@ -13,6 +13,7 @@ use super::Emoji;
 use crate::theme::Palette;
 use crossbeam_channel::Sender;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const FILE: &str = "recent_emojis.json";
 /// `maxCountR` of LLFloaterEmojiPicker::loadState, and the `max_visible` of
@@ -24,6 +25,7 @@ const GAP: f32 = 2.0;
 pub const HEIGHT: f32 = CELL + GAP;
 
 const VARIATION: char = '\u{FE0F}';
+static WRITER: AtomicU64 = AtomicU64::new(0);
 
 /// Whether `c`, followed by `next`, is an emoji worth remembering: what the
 /// emoji list knows, without what only counts as one when asked to (© or an
@@ -36,6 +38,16 @@ fn is_emoji(c: char, next: Option<char>) -> bool {
     // the list also answers for the bare form of what wants the selector;
     // from U+2600 the picker itself writes them without it (❤)
     emojis::get(&text).is_some_and(|e| e.as_str() == text || next == Some(VARIATION) || c >= '\u{2600}')
+}
+
+/// `c` as text: with its selector when it is only an emoji with one (⏱,
+/// ©), so that it reads as an emoji again when sent.
+fn written(c: char) -> String {
+    let mut text = c.to_string();
+    if c < '\u{2600}' && emojis::get(&text).is_some_and(|e| e.as_str() != text) {
+        text.push(VARIATION);
+    }
+    text
 }
 
 /// `list` with the emojis of `text` in front, the last one first; whether
@@ -60,7 +72,8 @@ fn parsed(bytes: &[u8]) -> Result<Vec<char>, serde_json::Error> {
     let saved: Vec<char> = serde_json::from_slice(bytes)?;
     let mut list = Vec::with_capacity(MAX);
     for c in saved {
-        if is_emoji(c, None) && !list.contains(&c) && list.len() < MAX {
+        // kept without their selector: one was there when they were sent
+        if is_emoji(c, Some(VARIATION)) && !list.contains(&c) && list.len() < MAX {
             list.push(c);
         }
     }
@@ -82,12 +95,14 @@ fn read(path: &Path) -> Vec<char> {
     }
 }
 
-fn write(path: &Path, list: &[char]) -> Result<(), Box<dyn std::error::Error>> {
+/// `writer` names its temporary file: a logout's writer may still be
+/// finishing as the next login of the account starts its own.
+fn write(path: &Path, list: &[char], writer: u64) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = serde_json::to_vec(list)?;
     if let Some(folder) = path.parent() {
         std::fs::create_dir_all(folder)?;
     }
-    let temporary = path.with_extension("json.tmp");
+    let temporary = path.with_extension(format!("json.{writer}.tmp"));
     std::fs::write(&temporary, bytes)?;
     std::fs::rename(&temporary, path)?;
     Ok(())
@@ -108,9 +123,10 @@ impl Recent {
     pub fn load(path: PathBuf) -> Recent {
         let list = read(&path);
         let (writer, writes) = crossbeam_channel::unbounded::<Vec<char>>();
+        let id = WRITER.fetch_add(1, Ordering::Relaxed);
         let spawned = std::thread::Builder::new().name("aurora-recent-emojis".into()).spawn(move || {
             for list in writes {
-                if let Err(error) = write(&path, &list) {
+                if let Err(error) = write(&path, &list, id) {
                     log::warn!("Cannot save the recent emojis: {error}");
                 }
             }
@@ -176,10 +192,10 @@ impl Recent {
     }
 }
 
-/// `text` with `c` in place of the characters `from..to`.
-fn spliced(text: &str, from: usize, to: usize, c: char) -> String {
+/// `text` with `emoji` in place of the characters `from..to`.
+fn spliced(text: &str, from: usize, to: usize, emoji: &str) -> String {
     let mut out: String = text.chars().take(from).collect();
-    out.push(c);
+    out.push_str(emoji);
     out.extend(text.chars().skip(to));
     out
 }
@@ -193,8 +209,9 @@ pub fn insert(ctx: &egui::Context, id: egui::Id, text: &mut String, c: char) {
         let (a, b) = (r.primary.index.0.min(count), r.secondary.index.0.min(count));
         (a.min(b), a.max(b))
     });
-    *text = spliced(text, from, to, c);
-    let after = egui::text::CCursor::new(from + 1);
+    let emoji = written(c);
+    *text = spliced(text, from, to, &emoji);
+    let after = egui::text::CCursor::new(from + emoji.chars().count());
     state.cursor.set_char_range(Some(egui::text::CCursorRange::one(after)));
     egui::TextEdit::store_state(ctx, id, state);
     ctx.memory_mut(|m| m.request_focus(id));
@@ -251,6 +268,24 @@ mod tests {
     }
 
     #[test]
+    fn an_emoji_that_needs_its_selector_survives_the_file_and_the_row() {
+        let mut list = Vec::new();
+        assert!(remember(&mut list, "⏱\u{FE0F} ↔\u{FE0F} ©\u{FE0F}"));
+        assert_eq!(list, ['©', '↔', '⏱']);
+        let saved = serde_json::to_vec(&list).expect("a list");
+        assert_eq!(parsed(&saved).expect("a list"), list);
+        // picked from the row and sent again, it counts again
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        insert(&ctx, egui::Id::unique("selector"), &mut text, '⏱');
+        assert_eq!(text, "⏱\u{FE0F}");
+        assert!(remember(&mut list, &text));
+        assert_eq!(list, ['⏱', '©', '↔']);
+        assert_eq!(written('😂'), "😂");
+        assert_eq!(written('❤'), "❤");
+    }
+
+    #[test]
     fn a_saved_list_is_kept_to_what_can_show() {
         assert_eq!(parsed("[\"😂\",\"a\",\"😂\",\"👍\"]".as_bytes()).expect("a list"), ['😂', '👍']);
         assert!(parsed(b"{").is_err());
@@ -260,7 +295,7 @@ mod tests {
     fn the_list_comes_back_from_its_file() {
         let folder = std::env::temp_dir().join(format!("aurora-recent-emojis-{}", std::process::id()));
         let path = folder.join(FILE);
-        write(&path, &['😂', '👍']).expect("written");
+        write(&path, &['😂', '👍'], 0).expect("written");
         assert_eq!(read(&path), ['😂', '👍']);
         let _ = std::fs::remove_dir_all(&folder);
         assert!(read(&path).is_empty());
@@ -268,9 +303,9 @@ mod tests {
 
     #[test]
     fn a_pick_goes_at_the_caret_and_over_the_selection() {
-        assert_eq!(spliced("héllo", 2, 2, '😂'), "hé😂llo");
-        assert_eq!(spliced("héllo", 1, 4, '😂'), "h😂o");
-        assert_eq!(spliced("", 0, 0, '😂'), "😂");
+        assert_eq!(spliced("héllo", 2, 2, "😂"), "hé😂llo");
+        assert_eq!(spliced("héllo", 1, 4, "😂"), "h😂o");
+        assert_eq!(spliced("", 0, 0, "😂"), "😂");
     }
 
     #[test]
