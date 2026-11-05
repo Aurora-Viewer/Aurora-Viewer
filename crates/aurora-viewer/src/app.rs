@@ -9507,6 +9507,11 @@ impl App {
             {
                 *selected_faces.entry(idx).or_default() |= 1u64 << face;
             }
+            // The UI pass retains drag feedback for the next world frame.
+            // Merge it before sync/list construction, alongside real selection.
+            if let Some((idx, mask)) = self.library_drag.highlighted {
+                *selected_faces.entry(idx).or_default() |= mask;
+            }
             self.scene.set_face_selection(&mut self.world, selected_faces);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
@@ -10162,11 +10167,14 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: self
-                .imports
-                .local_status
-                .pulse(Instant::now(), self.settings.reduce_motion)
-                .unwrap_or_else(|| self.scene.selection_pulse(Instant::now())),
+            selection_pulse: if self.library_drag.highlighted.is_some() {
+                self.scene.selection_pulse(Instant::now(), true)
+            } else {
+                self.imports
+                    .local_status
+                    .pulse(Instant::now(), self.settings.reduce_motion)
+                    .unwrap_or_else(|| self.scene.selection_pulse(Instant::now(), false))
+            },
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
