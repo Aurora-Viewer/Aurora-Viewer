@@ -164,7 +164,7 @@ fn graphics_card(cx: &mut Cx) {
     });
 }
 
-/// Other programs' overlays (Steam, RivaTuner, Epic…): their Vulkan layers
+/// Other programs' overlays (OBS's game capture, Steam, RivaTuner, Epic…): their Vulkan layers
 /// are kept out at startup unless allowed (`aurora_render::vulkan_layers`),
 /// so the choice applies at the next start. `AURORA_VULKAN_LAYERS=keep`
 /// loads them all.
