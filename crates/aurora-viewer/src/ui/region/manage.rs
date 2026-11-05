@@ -843,6 +843,7 @@ fn swatches(
                         s.texture.open(&title, *id);
                     }
                 }
+                s.texture.drop_target_slot(ui, rect, materials, can, i);
             });
         }
         ui.add_enabled_ui(can && can_cancel, |ui| {

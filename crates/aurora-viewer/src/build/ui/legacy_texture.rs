@@ -113,9 +113,23 @@ fn compact_glow(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
 }
 
 fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env, sel: &[Sel]) {
-    let bp: Vec<_> = sel.iter().map(|x| tool.face_legacy(env, world, x.idx, x.face, &x.te)).collect();
+    let bp: Vec<_> = sel
+        .iter()
+        .map(|x| {
+            let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
+            if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
+                appearance.apply_legacy(material.get_or_insert_with(|| default_legacy(env, &x.te)));
+            }
+            material
+        })
+        .collect();
     let water = sel.iter().all(|x| is_hide_water(&x.te, bp[0].as_ref()));
-    let (diffuse, diffuse_mixed) = same(sel.iter().map(|x| x.te.texture));
+    let (diffuse, diffuse_mixed) = same(sel.iter().map(|x| {
+        world
+            .objects
+            .get(x.idx)
+            .map_or(x.te.texture, |object| object.visual_texture_face(x.face as usize).texture)
+    }));
     let (normal, normal_mixed) = same(bp.iter().map(|m| m.as_ref().map(|m| m.normal_map).unwrap_or_default()));
     let (spec, spec_mixed) = same(bp.iter().map(|m| m.as_ref().map(|m| m.specular_map).unwrap_or_default()));
     let normal = normal.filter(|id| !id.is_nil());
@@ -145,7 +159,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         ),
     ] {
         let mut map = child(ui, canvas, 0.0, y, 60.0, 76.0, &format!("legacy-map-{target:?}"));
-        material_map(&mut map, p, tool, env, id, mixed, caption, target, !water, 60.0);
+        material_map(&mut map, p, tool, world, env, id, mixed, caption, target, !water, 60.0);
     }
     let (rgb, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
     let mut diffuse_tint = child(ui, canvas, 64.0, 0.0, 40.0, 76.0, "legacy-diffuse-tint");
@@ -350,7 +364,7 @@ pub(super) fn pbr_surface(
 ) {
     let (canvas, _) = ui.allocate_exact_size(vec2(ui.available_width(), 224.0), egui::Sense::hover());
     let mut material = child(ui, canvas, 0.0, 0.0, 60.0, 76.0, "legacy-pbr-material");
-    material_asset(&mut material, p, tool, asset, mixed, model, 60.0);
+    material_asset(&mut material, p, tool, world, asset, mixed, model, 60.0);
     for (x, y, id, caption, channel) in [
         (64.0, 0.0, mat.base_color_texture, aurora_i18n::tr!("common-color"), 0),
         (0.0, 74.0, mat.normal_texture, aurora_i18n::tr!("build-ui-texture-normal"), 1),
@@ -362,6 +376,7 @@ pub(super) fn pbr_surface(
             &mut map,
             p,
             tool,
+            world,
             env,
             id,
             false,
