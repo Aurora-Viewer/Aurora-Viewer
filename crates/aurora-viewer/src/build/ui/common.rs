@@ -335,6 +335,7 @@ pub fn swatch(
             egui::Stroke::new(1.0, stroke),
             egui::StrokeKind::Inside,
         );
+        crate::ui::widgets::local_texture::asset(ui, p, rect, id);
         if !caption.is_empty() {
             ui.add_sized(
                 [size, 14.0],

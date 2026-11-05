@@ -789,7 +789,7 @@ fn identity(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
                 charter_limit: 1023,
                 insignia_card: true,
             };
-            if identity_cards(ui, c, info, Rating::Switch, fields) {
+            if identity_cards(ui, c, info, Rating::Switch, fields, &mut st.admin.texture) {
                 st.admin.texture.open(aurora_i18n::tr!("ui-group-admin-insignia"), info.insignia);
             }
         });
@@ -848,7 +848,14 @@ pub(super) struct IdentityFields {
 /// The cards of a group's identity (LLPanelGroupGeneral's editable part,
 /// the creation panel's fields): the insignia, the charter, then search,
 /// rating, enrollment and fee. True when "Change the insignia" was clicked.
-pub(super) fn identity_cards(ui: &mut egui::Ui, c: &mut Ctx, info: &mut GroupInfo, rating: Rating, fields: IdentityFields) -> bool {
+pub(super) fn identity_cards(
+    ui: &mut egui::Ui,
+    c: &mut Ctx,
+    info: &mut GroupInfo,
+    rating: Rating,
+    fields: IdentityFields,
+    picker: &mut TexturePicker,
+) -> bool {
     let p = c.p;
     let IdentityFields {
         ident,
@@ -872,7 +879,8 @@ pub(super) fn identity_cards(ui: &mut egui::Ui, c: &mut Ctx, info: &mut GroupInf
                     if !info.insignia.is_nil() {
                         c.wanted_images.insert(info.insignia);
                     }
-                    widgets::picture(ui, p, c.images.get(&info.insignia), Vec2::splat(96.0), "users-group", "");
+                    let picture = widgets::picture(ui, p, c.images.get(&info.insignia), Vec2::splat(96.0), "users-group", "");
+                    picker.drop_target(ui, picture.rect, false, ident);
                     ui.vertical(|ui| {
                         change = widgets::action_button_if(
                             ui,

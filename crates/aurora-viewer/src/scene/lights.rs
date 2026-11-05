@@ -236,7 +236,7 @@ impl Scene {
             let mut position = center;
             let mut projector = None;
             let mut texture = None;
-            if let Some(image) = o.extra.light_image.filter(|i| !i.texture.is_nil())
+            if let Some(image) = o.visual_light_image().filter(|i| !i.texture.is_nil())
                 && let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0)
             {
                 // the frustum leaves the prim itself, not its drawn bounds;

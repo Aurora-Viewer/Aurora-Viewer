@@ -1347,6 +1347,76 @@ fn navigation_sets_the_resize_floor_and_settings_glyph_stays_square() {
     assert!((window.height() - after).abs() < 1.0);
 }
 
+/// An inventory texture released on a slot of the Texture tab applies to
+/// the selected faces, like the picker (LLTextureCtrl::handleDragAndDrop,
+/// #2296); a material or a release beside the slot changes nothing.
+#[test]
+fn a_texture_dropped_on_a_texture_slot_applies_to_the_selected_faces() {
+    use super::super::PickTarget;
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let mut inspector = material_inspector();
+    inspector.tool.tab = 3;
+    inspector.tool.ui.tex_tab = 0;
+    let idx = inspector.tool.sel_prims(&inspector.world)[0];
+    let agent = inspector.world.agent_id;
+    let all = crate::build::contents_drop::UNRESTRICTED;
+    let (texture, material, asset) = (
+        uuid::Uuid::from_u128(0x0002_2961),
+        uuid::Uuid::from_u128(0x0002_2962),
+        uuid::Uuid::from_u128(0x0002_2963),
+    );
+    for (id, kind) in [(texture, 0), (material, 57)] {
+        inspector.world.inventory.items.insert(
+            id,
+            aurora_net::inventory::InvItem {
+                id,
+                asset_type: kind,
+                inv_type: kind,
+                asset_id: asset,
+                owner: agent,
+                base_mask: all,
+                owner_mask: all,
+                ..Default::default()
+            },
+        );
+    }
+    for _ in 0..5 {
+        inspector.show(vec![]);
+    }
+    let slot = |inspector: &Inspector| {
+        inspector.ctx.data(|d| {
+            d.get_temp::<egui::Rect>(egui::Id::unique(("material_preview", format!("{:?}", PickTarget::Diffuse))))
+                .expect("diffuse slot")
+        })
+    };
+    let diffuse = |inspector: &Inspector| inspector.world.objects.get(idx).unwrap().te.as_ref().unwrap().face(0).texture;
+    let drop = |inspector: &mut Inspector, item: uuid::Uuid, pos: egui::Pos2| {
+        egui::DragAndDrop::set_payload(&inspector.ctx, crate::ui::inventory::InvDrag(item));
+        inspector.show(vec![egui::Event::PointerMoved(pos)]);
+        inspector.show(vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ]);
+        egui::DragAndDrop::clear_payload(&inspector.ctx);
+        inspector.show(vec![]);
+    };
+    let before = diffuse(&inspector);
+    assert_ne!(before, asset);
+    let rect = slot(&inspector);
+    drop(&mut inspector, material, rect.center());
+    drop(&mut inspector, texture, rect.right_bottom() + vec2(30.0, 30.0));
+    assert_eq!(diffuse(&inspector), before, "a material, or a release beside the slot");
+    assert!(inspector.tool.ui.slot_drop.is_none());
+    drop(&mut inspector, texture, rect.center());
+    assert_eq!(diffuse(&inspector), asset);
+    assert!(!inspector.tool.ui.picker.open, "a drop does not open the picker");
+}
+
 #[test]
 fn material_previews_are_larger_above_their_options_and_open_the_correct_picker() {
     let _inline = crate::scene::jobs::execute_inline_on_this_thread();
