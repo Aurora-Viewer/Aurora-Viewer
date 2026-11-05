@@ -4238,6 +4238,10 @@ toggled by the configurable `avatar_studio` toolbar command or the wolf menu's
 Build > Avatar Studio entry, before Poser and IK Edit. Both share the same
 toggle and active indication. Left-drag orbits;
 right-drag adjusts the avatar-relative focus height without avatar-height bounds.
+Right clicks retain the native avatar and attachment context menus. The shared
+10-point right-gesture threshold separates a click from a focus-height drag;
+dragging never opens a menu on release. Attachment editing keeps native
+left-button selection/manipulator input while the build tools are open.
 Middle-button dragging translates eye and target together in the viewing
 plane, with a separate smoothed two-dimensional offset. The offset uses
 the camera's right/up axes so orbiting preserves screen composition; Reset
