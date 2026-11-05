@@ -10632,7 +10632,10 @@ What the inventory must show with these scenarios:
   itself against the scene: the spheres it holds (`index entries … unlike
   their object`) and the classes of the objects tested whatever the ray
   (`classes unlike their object`); all these counters must stay at 0. Costs
-  the full search each frame.
+  the full search each frame. A click's searches among the index's
+  candidates (`Scene::action_point`, `interaction_at_ray`) are compared the
+  same way: a `click index check` warning names any point or object that
+  differs from the search over every object.
 - **`AURORA_HOVER_LEGACY=1`**: the search for the object under the cursor
   becomes the former one again (`scene/hover.rs`): every object tested
   whatever the ray (avatar, rigged mesh) is a candidate at each stage, each
@@ -10662,7 +10665,16 @@ What the inventory must show with these scenarios:
     delay of the answer. Costs the wait of `wait` at each click.
   - With `AURORA_PROFILE=1` (or `AURORA_DEMO_CLICKS`), each click writes a
     `click pick:` line: `answered after 2 frames, 9.14 ms`, or `the read
-    waited 25.56 ms` with `wait`. In demo as on the grid.
+    waited 25.56 ms` with `wait`, and one per run of the click with what it
+    cost the main thread: `Press asked for the depth in 0.05 ms`, then
+    `Press run with the depth in 0.30 ms`. In demo as on the grid.
+  - With `AURORA_PROFILE=1`, a `click frames:` line follows each click: the
+    nine frames from the press on, separated by `|`, each with its time in
+    ms, the main thread steps of 1 ms or more, the render thread (`rt=`)
+    and the GPU (`gpu=` and its largest element). A spike in the frame
+    graph at each click shows there with its side: a main thread step
+    (`between=` is where the click runs again with its depth), the render
+    thread or the GPU.
 
 - **`AURORA_STILL_CHECK=1`**: one `still check` line per second, to find
   the cause of an image that shakes when nothing should move (camera locked

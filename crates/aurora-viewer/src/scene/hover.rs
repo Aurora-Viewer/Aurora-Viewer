@@ -262,6 +262,12 @@ impl PickIndex {
         self.candidates(&Probe { ray, depth: None }, out);
     }
 
+    /// The objects near the ray or around `point` on it: those a click's
+    /// search can meet (`Scene::action_point`, `interaction_at_ray`).
+    pub fn point_candidates(&self, ray: (Vec3, Vec3), point: Option<Vec3>, out: &mut Vec<usize>) {
+        self.candidates(&Probe { ray, depth: point }, out);
+    }
+
     /// The objects whose bounds reach the box `min`..`max`, those without
     /// bounds included (`foot_support`).
     pub fn box_candidates(&self, min: Vec3, max: Vec3, out: &mut Vec<usize>) {
@@ -704,8 +710,9 @@ impl HoverCache {
     }
 }
 
-/// AURORA_HOVER_CHECK=1: every answer is compared with the full search.
-fn check_enabled() -> bool {
+/// AURORA_HOVER_CHECK=1: every answer is compared with the full search
+/// (the clicks' too, picking.rs).
+pub(super) fn check_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_HOVER_CHECK").is_some())
 }
@@ -844,7 +851,7 @@ impl super::Scene {
         if let Some((t, idx)) = self.blend_hit(world, ray, point, far, None) {
             return (Some(ray.0 + ray.1 * t), Some(idx));
         }
-        (point, point.and_then(|point| self.interaction_at_ray(world, point, ray, false)))
+        (point, point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, None)))
     }
 
     /// The class of an object for the hover search ([`class`]), from what

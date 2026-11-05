@@ -1616,17 +1616,33 @@ impl Scene {
             return depth;
         }
         let ray = ray?;
-        let point = if self.ignored_before(world, ray, depth, far, Instant::now(), None) {
-            self.point_behind_ignored_mode(world, ray, far, Instant::now(), None, FacePick::Left)
+        // Only the objects the ray can meet (hover.rs, `PickIndex`): the
+        // steps walked every object of the region, 2 to 4 ms a click with
+        // 23,000 of them, a spike in the frame graph at each click. Same
+        // tests, same order, same answer (AURORA_HOVER_CHECK compares).
+        let mut candidates = Vec::new();
+        self.pick.point_candidates(ray, depth, &mut candidates);
+        let point = self.action_point_among(world, ray, depth, far, Some(&candidates));
+        if super::hover::check_enabled() {
+            let full = self.action_point_among(world, ray, depth, far, None);
+            if full != point {
+                log::warn!("click index check: action point {point:?} from the index, {full:?} from every object");
+            }
+        }
+        point
+    }
+
+    /// `action_point` over the objects of `among` (None: all).
+    fn action_point_among(&self, world: &World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32, among: Option<&[usize]>) -> Option<Vec3> {
+        let point = if self.ignored_before(world, ray, depth, far, Instant::now(), among) {
+            self.point_behind_ignored_mode(world, ray, far, Instant::now(), among, FacePick::Left)
         } else {
             depth
         };
-        let point = self.transparent_action_point_mode(world, ray, point, true, far, None, FacePick::Left);
+        let point = self.transparent_action_point_mode(world, ray, point, true, far, among, FacePick::Left);
         // Unlike HUDs and worn clickers, world Blend faces let alpha-zero
         // texels through (#1574). Hover keeps its existing geometric policy.
-        let mut candidates = Vec::new();
-        self.pick.ray_candidates(ray, &mut candidates);
-        self.blend_hit_mode(world, ray, point, far, Some(&candidates), FacePick::LeftBlend)
+        self.blend_hit_mode(world, ray, point, far, among, FacePick::LeftBlend)
             .map(|(t, _)| ray.0 + ray.1 * t)
             .or(point)
     }
@@ -1703,8 +1719,18 @@ impl Scene {
     /// LLViewerWindow::cursorIntersect / LLVOVolume::lineSegmentIntersect:
     /// identify the hit surface, not the smallest overlapping prim box. The
     /// depth point bounds the ray so terrain and avatars still occlude objects.
+    /// Among the objects around the ray and the point (`action_point`).
     pub fn interaction_at_ray(&self, world: &World, point: Vec3, ray: (Vec3, Vec3), include_hidden: bool) -> Option<usize> {
-        self.interaction_at_ray_among(world, point, ray, include_hidden, None)
+        let mut candidates = Vec::new();
+        self.pick.point_candidates(ray, Some(point), &mut candidates);
+        let idx = self.interaction_at_ray_among(world, point, ray, include_hidden, Some(&candidates));
+        if super::hover::check_enabled() {
+            let full = self.interaction_at_ray_among(world, point, ray, include_hidden, None);
+            if full != idx {
+                log::warn!("click index check: object {idx:?} at {point:?} from the index, {full:?} from every object");
+            }
+        }
+        idx
     }
 
     /// `interaction_at_ray` over the objects of `among` (None: all).
@@ -2168,6 +2194,9 @@ pub(crate) mod tests {
         for idx in [front, back] {
             scene.gpu[idx].geom = Some(key);
             scene.gpu[idx].faces.push(face);
+            // (no bounds yet: a candidate of every search, as the sync
+            // indexes it; a test that sets bounds indexes them again)
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
         }
         (world, scene, front, back)
     }
