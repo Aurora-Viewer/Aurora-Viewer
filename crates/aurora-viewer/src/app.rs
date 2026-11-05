@@ -4357,7 +4357,12 @@ impl App {
             }
             Action::Gestures => ui::widgets::toggle_floater(&self.egui_ctx, "gestures", &mut self.panels.gestures),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
-            Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
+            Action::WorldMap => {
+                if !self.panels.world_map {
+                    self.worldmap_ui.focus_search_on_open();
+                }
+                ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+            }
             Action::TeleportHistory => self.toggle_teleport_history(),
             // World.TeleportHome: the bar's Home, with its confirmation
             Action::TeleportHome => {
