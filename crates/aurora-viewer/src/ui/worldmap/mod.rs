@@ -69,6 +69,9 @@ pub struct WorldMapUi {
     zoom_pivot: Option<Vec2>,
     was_open: bool,
     focus_search: bool,
+    /// The next opening comes from a script (llMapDestination): it must not
+    /// take the keyboard.
+    opened_by_script: bool,
     tiles_complete: bool,
     search: String,
     selected: Option<(u32, u32)>,
@@ -97,6 +100,7 @@ impl Default for WorldMapUi {
             zoom_pivot: None,
             was_open: false,
             focus_search: false,
+            opened_by_script: false,
             tiles_complete: false,
             search: String::new(),
             selected: None,
@@ -139,9 +143,10 @@ struct MapInput {
 }
 
 impl WorldMapUi {
-    /// Request focus for the search when a user opens the map.
-    pub fn focus_search_on_open(&mut self) {
-        self.focus_search = true;
+    /// The map is about to open for a script (llMapDestination), not for
+    /// the user: its search does not take the keyboard.
+    pub fn open_for_script(&mut self) {
+        self.opened_by_script = true;
     }
 
     /// AURORA_DEMO_MAP=search:<text>: the region search, as if typed.
@@ -186,8 +191,11 @@ impl WorldMapUi {
             return actions;
         }
         if !self.was_open {
-            // LLFloaterWorldMap::onOpen: back on our position, items reloaded
+            // LLFloaterWorldMap::onOpen: back on our position, items reloaded,
+            // and the location editor takes the keyboard when the user opened
+            // the map (from the toolbar, a menu, Ctrl+M or a "show on map")
             self.was_open = true;
+            self.focus_search = !std::mem::take(&mut self.opened_by_script);
             self.pan = Vec2::ZERO;
             self.target_pan = Vec2::ZERO;
             self.zoom = (opts.world_scale.max(1.0) / 256.0).log2().clamp(ZOOM_MIN, ZOOM_MAX);
@@ -1574,7 +1582,7 @@ mod focus_tests {
     fn opening_the_map_focuses_search_and_types_in_both_layouts() {
         for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
             let mut bench = Bench::new(style);
-            bench.map.focus_search_on_open();
+            // opened by the user (toolbar, menu, Ctrl+M)
             bench.frame(true, vec![]);
             let focused = match style {
                 WorldMapStyle::Legacy => bench.ctx.memory(|memory| memory.focused().is_some()),
@@ -1594,6 +1602,8 @@ mod focus_tests {
     fn programmatic_map_open_does_not_take_keyboard_focus() {
         for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
             let mut bench = Bench::new(style);
+            // llMapDestination
+            bench.map.open_for_script();
             bench.frame(true, vec![]);
             let focused = match style {
                 WorldMapStyle::Legacy => bench.ctx.memory(|memory| memory.focused().is_some()),
