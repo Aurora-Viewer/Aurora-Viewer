@@ -47,6 +47,11 @@ pub const KNOWN: &[Hook] = &[
         advice: "if the image is lost, add aurora-viewer.exe to RivaTuner with Application detection level None",
     },
     Hook {
+        file: "we-graphics-hook64.dll",
+        program: "Wallpaper Engine's capture hook (a copy of OBS Studio's game capture)",
+        advice: "if the image is lost, close Wallpaper Engine or turn off its capture while Aurora runs",
+    },
+    Hook {
         file: "graphics-hook64.dll",
         program: "OBS Studio game capture (or a program built on it)",
         advice: "if the image is lost, capture the window with Window Capture instead of Game Capture",

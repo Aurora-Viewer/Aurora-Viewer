@@ -914,6 +914,64 @@ mod tests {
     }
 
     #[test]
+    fn delete_after_inventory_rez_targets_the_world_until_the_inventory_is_clicked_again() {
+        use crate::build::{BuildSettings, BuildTool, FLAGS_CREATE_SELECTED, Mods, Tool};
+        use aurora_net::{NetCommand, NetEvent, build::BuildCmd};
+
+        for classic in [false, true] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            h.add_trash();
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(id(8100), false);
+            let folder = h.world.inventory.items[&id(8100)].parent;
+            assert!(h.ctx.egui_wants_keyboard_input());
+
+            let mut build = BuildTool::default();
+            let mut settings = BuildSettings::default();
+            build.open_build(Tool::Create);
+            h.st.release_world_drag_focus(&h.ctx);
+            build.edit_inventory_rez(&h.world);
+            let (handle, mut object) = crate::demo::events()
+                .into_iter()
+                .find_map(|event| match event {
+                    NetEvent::ObjectUpdates { handle, objects } => objects
+                        .into_iter()
+                        .find(|o| o.pcode == aurora_prim::params::LL_PCODE_VOLUME && o.parent_id == 0)
+                        .map(|o| (handle, o)),
+                    _ => None,
+                })
+                .expect("demo world object");
+            object.owner_id = h.world.agent_id;
+            object.update_flags |= FLAGS_CREATE_SELECTED | crate::ui::context::flags::OBJECT_YOU_OWNER;
+            let local_id = object.local_id;
+            h.world.objects.upsert(handle, object);
+            build.update(&mut h.world, &settings, None, (0.0, 0.0), true, Mods::default());
+
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            assert!(h.st.dialog.is_none());
+            crate::build::ui::shortcuts(&h.ctx, &mut build, &mut h.world, &mut settings);
+            assert!(build.out.iter().any(|command| matches!(
+                command,
+                NetCommand::Build(BuildCmd::DeRez { local_ids, destination, .. })
+                    if *local_ids == vec![local_id] && *destination == aurora_net::build::derez::TRASH
+            )));
+            assert_eq!(h.world.inventory.items[&id(8100)].parent, folder);
+
+            let mut release = delete_key(Default::default());
+            if let Event::Key { pressed, .. } = &mut release {
+                *pressed = false;
+            }
+            h.frame(vec![release]);
+            h.select(id(8100), false);
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![id(8100)]));
+        }
+    }
+
+    #[test]
     fn inventory_keyboard_uses_only_the_focused_folder_window() {
         let mut h = Harness::new();
         h.st.open_folder_window(id(8000));
