@@ -2003,6 +2003,8 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Interface
 
+- 🔧 [#2473](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2473) Region Tracker window and map/menu entry points; per-account tracked-region list, map-name/avatar-count refresh, maturity and online/down/unknown display.
+
 - 🟡 IMs announced as the sender starts typing, unread count in the window title (feedback board post #170; human request, 2026-11-02; task `im-window-title`; no issue; [PR #2050](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/2050); validated by the human in demo on 2026-11-02). Port of FSAnnounceIncomingIM (LLIMMgr::processIMTypingCore, typingNameCallback, indra/newview/llimview.cpp) and FSShowMessageCountInWindowTitle (LLIMWellChiclet::updateApplicationWindowTitle, llchiclet.cpp), both off as in the Legacy Viewer, in Preferences › Chat: a resident's IM_TYPING_START with no conversation open opens it with "Incoming message from <name>" (unread, never in the transcript nor toasted, the new conversation sound; not for blocked residents, nor strangers under "Only friends and groups can IM me", nor under RLVa @recvim), and the automatic response goes at that moment; the window title reads "(<n>) Aurora Viewer …" while IMs, group chats or conferences wait unread (99+ above 99). Demo `AURORA_DEMO_IM_ANNOUNCE=1|prefs`.
   - ⬜ Grid check by the human, both switches on: a friend starts typing an IM with no conversation open (it opens with "Incoming message from …" before the message; the title shows "(1) …", then "(2) …"), then in do not disturb (the reply goes as they start typing, once).
 

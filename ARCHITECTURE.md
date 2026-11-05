@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+`world/region_tracker.rs` stores the Legacy Viewer compatible per-account
+region list and maps world-map replies to online, down and unknown statuses
+with avatar counts. `ui/region_tracker.rs` displays the watched regions,
+persists additions and removals, and opens the world map for a selected region.
+The tracker requests unknown region names and known-region avatar counts
+through `world/worldmap.rs`, which throttles each request to once per minute.
+
 World texture/material drops use `Scene::resource_drop_face_at_ray` for one
 consistent object/face hit, including zero-alpha and transparent texel surfaces,
 with HUD ownership, sidedness, distance and terrain occlusion retained. The

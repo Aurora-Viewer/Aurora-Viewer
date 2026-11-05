@@ -957,6 +957,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "worldmap",
             &mut panels.world_map,
         );
+        flip_window(
+            ui,
+            p,
+            "location-filled",
+            aurora_i18n::tr!("toolbar-command-region-tracker"),
+            super::region_tracker::WINDOW,
+            &mut panels.region_tracker,
+        );
         // menu_viewer.xml: Stream Title (its window keeps the history of
         // the titles), then Landmark this Place, after the maps
         flip_window(
@@ -2100,6 +2108,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => toggle("worldmap", &mut panels.world_map),
+        "regiontracker" => toggle(super::region_tracker::WINDOW, &mut panels.region_tracker),
         "places" => toggle("places", &mut panels.places),
         "search" => toggle(super::search::WINDOW, &mut panels.search),
         "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
