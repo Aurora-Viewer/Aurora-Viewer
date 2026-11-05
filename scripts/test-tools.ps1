@@ -13,7 +13,31 @@ if ($ConsoleFixture) {
         $ErrorActionPreference = 'Stop'
         Assert-ToolsTest $Interactive 'The fixture requires a real console.'
         $raw = $Host.UI.RawUI
+        # On Linux the console has no buffer to read or set: test-tools-console.py
+        # runs this fixture on a pseudo-terminal, and writes the screen it models
+        # to $env:AURORA_TEST_SCREEN (first line: the cursor state) when asked.
+        function Get-PtyDump {
+            Remove-Item -LiteralPath $env:AURORA_TEST_SCREEN -ErrorAction SilentlyContinue
+            [Console]::Out.Write("$([char]27)]9999;dump$([char]7)")
+            [Console]::Out.Flush()
+            $deadline = (Get-Date).AddSeconds(10)
+            while (-not (Test-Path -LiteralPath $env:AURORA_TEST_SCREEN)) {
+                if ((Get-Date) -gt $deadline) { throw 'The pseudo-terminal did not answer.' }
+                Start-Sleep -Milliseconds 10
+            }
+            Get-Content -LiteralPath $env:AURORA_TEST_SCREEN -Encoding UTF8
+        }
+        function Test-CursorShown {
+            if ($IsLinux) { (Get-PtyDump | Select-Object -First 1) -eq 'cursor=1' } else { [Console]::CursorVisible }
+        }
         function Set-TestSize([int]$Width, [int]$Height) {
+            if ($IsLinux) {
+                Clear-Host
+                stty rows $Height cols $Width
+                Start-Sleep -Milliseconds 300
+                Clear-Host
+                return
+            }
             Clear-Host
             $raw.BufferSize = [Management.Automation.Host.Size]::new([Math]::Max($Width, $raw.BufferSize.Width), [Math]::Max($Height, $raw.BufferSize.Height))
             $raw.WindowSize = [Management.Automation.Host.Size]::new($Width, $Height)
@@ -21,6 +45,7 @@ if ($ConsoleFixture) {
             Clear-Host
         }
         function Get-TestScreen {
+            if ($IsLinux) { return Get-PtyDump | Select-Object -Skip 1 }
             $cells = $raw.GetBufferContents([Management.Automation.Host.Rectangle]::new(0, 0, $raw.WindowSize.Width - 1, $raw.WindowSize.Height - 1))
             for ($y = 0; $y -lt $cells.GetLength(0); $y++) {
                 $line = [Text.StringBuilder]::new()
@@ -44,14 +69,14 @@ if ($ConsoleFixture) {
                     $selected = @($screen | Where-Object { $_.Contains([string][char]0x203A) })
                     Assert-ToolsTest ($selected.Count -eq 1) "Selection must occupy exactly one row: $($dimensions -join 'x'), key $script:keyIndex."
                     Assert-ToolsTest ($selected[0] -match "Option-$($expected[$script:keyIndex])(?:\D|$)") 'Highlight and selected item must agree.'
-                    Assert-ToolsTest (-not [Console]::CursorVisible) 'The cursor must stay hidden while navigating.'
+                    Assert-ToolsTest (-not (Test-CursorShown)) 'The cursor must stay hidden while navigating.'
                     $key = $keys[$script:keyIndex++]
                     if ($key -eq 'Resize') { Set-TestSize 40 12 }
                     [pscustomobject]@{ Key = $key; KeyChar = [char]0 }
                 }
                 $pick = Show-Menu 'Choose an option' $items { Show-Logo 'Test'; 1..25 | ForEach-Object { Write-Color 'Long preceding transcript' muted } }
                 Assert-ToolsTest ($pick.Key -eq '1') 'Home and Enter must choose the first item.'
-                Assert-ToolsTest ([Console]::CursorVisible) 'Menu exit must restore the previous cursor state.'
+                Assert-ToolsTest (Test-CursorShown) 'Menu exit must restore the previous cursor state.'
             }
         }
         Set-TestSize 80 18
@@ -60,7 +85,7 @@ if ($ConsoleFixture) {
         $KeySource = { throw 'Injected keyboard failure' }
         $failed = $false
         try { Show-Menu 'Failure' $items } catch { $failed = $true }
-        Assert-ToolsTest ($failed -and [Console]::CursorVisible) 'Failure must also restore the cursor.'
+        Assert-ToolsTest ($failed -and (Test-CursorShown)) 'Failure must also restore the cursor.'
         $KeySource = { [pscustomobject]@{ Key = 'D'; KeyChar = 'd' } }
         $letter = Show-Menu 'Shortcut' @(@{ Key = 'd'; Label = 'Direct'; Hint = '' })
         Assert-ToolsTest ($letter.Key -eq 'd') 'Letter shortcuts must still work.'
@@ -117,10 +142,15 @@ New-Item -ItemType Directory -Path $fixture -Force | Out-Null
 try {
     $output = Join-Path $fixture 'console.txt'
     $engine = (Get-Process -Id $PID).Path
-    $process = Start-Process -FilePath $engine -WindowStyle Hidden -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-ConsoleFixture', '-OutputFile', "`"$output`"") -PassThru
-    if (-not $process.WaitForExit(60000)) { $process.Kill(); throw "Console test timed out: $(Get-Content -Raw -LiteralPath $output)" }
-    Assert-ToolsTest ($process.ExitCode -eq 0) "Console failure: $(Get-Content -Raw -LiteralPath $output)"
+    if ($IsLinux) {
+        python3 (Join-Path $PSScriptRoot 'test-tools-console.py') (Join-Path $fixture 'screen.txt') $engine '-NoProfile' '-File' $PSCommandPath '-ConsoleFixture' '-OutputFile' $output
+        Assert-ToolsTest ($LASTEXITCODE -eq 0) "Console failure: $(Get-Content -Raw -LiteralPath $output -ErrorAction SilentlyContinue)"
+    } else {
+        $process = Start-Process -FilePath $engine -WindowStyle Hidden -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-ConsoleFixture', '-OutputFile', "`"$output`"") -PassThru
+        if (-not $process.WaitForExit(60000)) { $process.Kill(); throw "Console test timed out: $(Get-Content -Raw -LiteralPath $output)" }
+        Assert-ToolsTest ($process.ExitCode -eq 0) "Console failure: $(Get-Content -Raw -LiteralPath $output)"
+    }
     Get-Content -LiteralPath $output
 
     # Load the entry-point helpers without executing installation or its menu.

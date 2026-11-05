@@ -27,14 +27,14 @@ if (Test-Path $local) {
     exit
 }
 
-# Saved alone in %TEMP% by the one-liner: fetch every file of scripts/tools
+# Saved alone in the temporary folder by the one-liner: fetch every file of scripts/tools
 # into a fresh folder, then run the installation. main's commit is read
 # once, here, and every file comes from that commit: a push to main during
 # the download cannot mix two versions of the tools.
 $repo = 'Aurora-Viewer/Aurora-Viewer'
 $commit = (Invoke-RestMethod "https://api.github.com/repos/$repo/commits/main").sha
 if ($commit -notmatch '^[0-9a-f]{40}$') { throw "Could not read the commit of main ($commit)." }
-$dir = Join-Path $env:TEMP 'aurora-tools'
+$dir = Join-Path ([IO.Path]::GetTempPath()) 'aurora-tools'
 if (Test-Path $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
 New-Item -ItemType Directory -Path $dir | Out-Null
 Write-Host "Downloading the Aurora tools ($($commit.Substring(0, 9)))…"
