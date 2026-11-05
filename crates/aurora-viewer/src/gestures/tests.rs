@@ -465,3 +465,143 @@ fn gesture_preload_is_checked_once_before_steps_start() {
     );
     assert!(!manager.is_playing(item));
 }
+
+/// One key press as the window handler sees it on Windows: winit has
+/// already set the modifiers the key itself changes, and the levels are
+/// raised after the mask is taken (app.rs `window_event`).
+fn press(levels: &mut u8, code: winit::keyboard::KeyCode, key: u8, repeat: bool, ctrl: bool, shift: bool, alt: bool) -> Option<u32> {
+    let before = *levels;
+    *levels = keys::modifier_levels_after(before, code, true);
+    keys::gesture_mask(key, before, repeat, ctrl, shift, alt)
+}
+
+fn release(levels: &mut u8, code: winit::keyboard::KeyCode) {
+    *levels = keys::modifier_levels_after(*levels, code, false);
+}
+
+#[test]
+fn modifier_key_alone_triggers_its_gesture_like_legacy_viewer() {
+    use winit::keyboard::KeyCode;
+    // LLKeyboardWin32::currentMask reads the key levels before
+    // LLKeyboard::handleTranslatedKeyDown raises the pressed key's: Shift
+    // alone is mask 0, while winit already reports Shift as held
+    let mut m = Manager::default();
+    for (n, key, mask) in [(1, keys::KEY_SHIFT, 0), (2, keys::KEY_CONTROL, 0), (3, keys::KEY_SHIFT, 1)] {
+        let id = Uuid::from_u128(n);
+        m.entries.insert(
+            id,
+            Entry {
+                asset: Uuid::nil(),
+                definition: Gesture {
+                    key,
+                    mask,
+                    ..Default::default()
+                },
+            },
+        );
+        m.active.insert(id);
+    }
+    let mut levels = 0;
+    // Shift alone plays the Shift gesture; its auto-repeats keep Shift
+    let mask = press(&mut levels, KeyCode::ShiftLeft, keys::KEY_SHIFT, false, false, true, false);
+    assert_eq!(mask, Some(0));
+    assert_eq!(m.key_trigger(keys::KEY_SHIFT, 0), Some(Uuid::from_u128(1)));
+    let repeat = press(&mut levels, KeyCode::ShiftLeft, keys::KEY_SHIFT, true, false, true, false);
+    assert_eq!(repeat, Some(4));
+    assert_eq!(m.key_trigger(keys::KEY_SHIFT, 4), None, "a held Shift plays once");
+    // the right Shift while the left one is held: the Shift level is up
+    assert_eq!(
+        press(&mut levels, KeyCode::ShiftRight, keys::KEY_SHIFT, false, false, true, false),
+        Some(4)
+    );
+    // either side's release lowers the one level, as LLKeyboard::mKeyLevel
+    release(&mut levels, KeyCode::ShiftRight);
+    assert_eq!(levels, 0);
+    release(&mut levels, KeyCode::ShiftLeft);
+    // pressed again after its release, Shift is alone again
+    assert_eq!(
+        press(&mut levels, KeyCode::ShiftRight, keys::KEY_SHIFT, false, false, true, false),
+        Some(0)
+    );
+    release(&mut levels, KeyCode::ShiftRight);
+    // Ctrl alone plays the Ctrl gesture
+    assert_eq!(
+        press(&mut levels, KeyCode::ControlLeft, keys::KEY_CONTROL, false, true, false, false),
+        Some(0)
+    );
+    assert_eq!(m.key_trigger(keys::KEY_CONTROL, 0), Some(Uuid::from_u128(2)));
+    // Ctrl held, then Shift: Ctrl+Shift
+    let ctrl_shift = press(&mut levels, KeyCode::ShiftLeft, keys::KEY_SHIFT, false, true, true, false);
+    assert_eq!(ctrl_shift, Some(1));
+    assert_eq!(m.key_trigger(keys::KEY_SHIFT, 1), Some(Uuid::from_u128(3)));
+    release(&mut levels, KeyCode::ShiftLeft);
+    release(&mut levels, KeyCode::ControlLeft);
+    // Shift held, then Ctrl: Shift+Ctrl
+    press(&mut levels, KeyCode::ShiftLeft, keys::KEY_SHIFT, false, false, true, false);
+    assert_eq!(
+        press(&mut levels, KeyCode::ControlRight, keys::KEY_CONTROL, false, true, true, false),
+        Some(4)
+    );
+    // other keys keep every modifier held with them
+    assert_eq!(press(&mut levels, KeyCode::KeyG, b'G', false, true, true, false), Some(5));
+    assert_eq!(keys::modifier_levels_after(0, KeyCode::KeyG, true), 0);
+}
+
+#[test]
+fn one_level_per_modifier_comes_down_with_either_side() {
+    use winit::keyboard::KeyCode;
+    // with both Shift keys down Windows sends no release for the first one
+    // let go: the last release still lowers the one Shift level, as
+    // LLKeyboard::mKeyLevel, so Shift alone plays again afterwards
+    let mut levels = 0;
+    press(&mut levels, KeyCode::ShiftLeft, keys::KEY_SHIFT, false, false, true, false);
+    press(&mut levels, KeyCode::ShiftRight, keys::KEY_SHIFT, false, false, true, false);
+    // (no release event for ShiftLeft)
+    release(&mut levels, KeyCode::ShiftRight);
+    assert_eq!(levels, 0);
+    assert_eq!(
+        press(&mut levels, KeyCode::ShiftLeft, keys::KEY_SHIFT, false, false, true, false),
+        Some(0)
+    );
+    release(&mut levels, KeyCode::ShiftLeft);
+    // each modifier keeps its own level
+    press(&mut levels, KeyCode::ControlRight, keys::KEY_CONTROL, false, true, false, false);
+    assert_eq!(
+        press(&mut levels, KeyCode::AltLeft, keys::KEY_ALT, false, true, false, true),
+        Some(1)
+    );
+    release(&mut levels, KeyCode::ControlRight);
+    release(&mut levels, KeyCode::AltLeft);
+    assert_eq!(levels, 0);
+}
+
+#[test]
+fn alt_pressed_alone_is_a_gesture_key_but_alt_with_a_key_is_not() {
+    use winit::keyboard::KeyCode;
+    let mut levels = 0;
+    // no Alt held: every key may play
+    assert_eq!(press(&mut levels, KeyCode::KeyG, b'G', false, false, false, false), Some(0));
+    // Alt alone, first press: no modifier, as the Legacy Viewer sends it
+    assert_eq!(
+        press(&mut levels, KeyCode::AltLeft, keys::KEY_ALT, false, false, false, true),
+        Some(0)
+    );
+    // its auto-repeats, the other Alt and Alt+key carry Alt: no gesture
+    assert_eq!(press(&mut levels, KeyCode::AltLeft, keys::KEY_ALT, true, false, false, true), None);
+    assert_eq!(
+        press(&mut levels, KeyCode::AltRight, keys::KEY_ALT, false, false, false, true),
+        None
+    );
+    assert_eq!(press(&mut levels, KeyCode::KeyG, b'G', false, false, false, true), None);
+    assert_eq!(
+        press(&mut levels, KeyCode::ShiftLeft, keys::KEY_SHIFT, false, false, true, true),
+        None
+    );
+    // Ctrl held, then Alt: Alt's first press, with Ctrl
+    let mut levels = 0;
+    press(&mut levels, KeyCode::ControlLeft, keys::KEY_CONTROL, false, true, false, false);
+    assert_eq!(
+        press(&mut levels, KeyCode::AltLeft, keys::KEY_ALT, false, true, false, true),
+        Some(1)
+    );
+}
