@@ -108,6 +108,7 @@ const BEFORE: &[&str] = &[
     "fps_limit",
     "background_fps_cap",
     "background_fps_limit",
+    "background_gpu_pause",
     // Interface
     "language",
     "language_is_public",

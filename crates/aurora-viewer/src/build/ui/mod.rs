@@ -186,6 +186,8 @@ pub struct FloaterState {
     pub confirm: Option<Confirm>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
+    /// A texture or material dropped on a Texture tab slot, applied next frame.
+    pub slot_drop: Option<(PickTarget, Uuid)>,
     texture_edit: Option<texture_preview::Session>,
     /// ObjectMedia data fetched for the selection, and the objects asked.
     pub media_data: HashMap<Uuid, ObjectMediaData>,
@@ -260,7 +262,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
         if let Some(command) = Shortcut::from_key(key, mods, tool.open) {
             // The picker owns Escape in stages (pipette, then dialog).
             // Leave its event intact instead of consuming a no-op Close.
-            if command == Shortcut::Close && tool.ui.color_picker.is_open() {
+            if command == Shortcut::Close && (tool.ui.color_picker.is_open() || crate::ui::texture_picker::pipette::armed(ctx)) {
                 continue;
             }
             if !repeat || matches!(command, Shortcut::History(_)) {
@@ -425,6 +427,10 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    if let Some((target, asset)) = tool.ui.slot_drop.take() {
+        let sel = texture::selected(tool, world);
+        tool.apply_texture(world, env, target, asset, &sel);
+    }
     toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {
         ctx.copy_text(tool.copy_keys(world, s, mods.shift));
