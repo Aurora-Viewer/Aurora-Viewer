@@ -4711,6 +4711,20 @@ dock in icons and labels, the left toolbar in labels). Capture at frame 780.
 run only, without opening the editor. With Aurora bars, the empty bottom
 dock must be invisible while nearby chat remains available (#1631).
 
+Combine the face modes below with `AURORA_DEMO_ACTIONS=face-drops`, which
+seeds the static action cubes without running the action-click scenario.
+`AURORA_DEMO_TEXTURE_LIBRARY`: `face-hover` holds an inventory texture over a
+synthetic cube without changing the build selection. `face-hover-transparent`
+uses zero-alpha faces; `face-hover-material` carries a PBR material and
+`face-hover-all` holds Shift. Capture at frame 700: only the target face (or all
+faces with Shift) must have the ordinary selection overlay. Keep hovering to
+check that its 700 ms flash repeats; capture several cycles (for example frames
+660,680,702,722,744,764 at 60 FPS). `face-drop-transparent`
+releases at frame 730; `face-cancel` cancels with Escape and `face-ui` moves over
+the library. Capture at frame 750 to check the overlay is cleared. Suffixes can
+be combined, for example `face-hover-material-transparent-all`. `face-hover-contents`
+holds Ctrl: no face overlay, since the cargo goes into contents.
+
 `AURORA_DEMO_TEXTURE_LIBRARY`: `preview-controls` opens a 620 × 720 texture inspector and material
 editor side by side (use `AURORA_WINDOW_SIZE=1600,1000`, capture after frame 740).
 The material has a dirty, isolated draft; test its parameters, map pickers, Save,
@@ -8995,7 +9009,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
-| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
+| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
 | `AURORA_DEMO_SOUND_OCCLUSION=1` | Three looping sounds: in the open, behind a wall, shut in a box; each one's occlusion in the log |
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
@@ -9282,7 +9296,10 @@ What the inventory must show with these scenarios:
   `ask` (or `1`) starts a parcel media on `media.example.com`, which the
   filter asks about (the question is up from the first frames; nothing
   loads until it is answered), `first` the same with the first use's
-  explanation and its "Do not filter media" button, `music` starts the
+  explanation and its "Do not filter media" button, `data` the same on a
+  `data:` page (asked about under the domain "data"), `script` on a
+  `javascript:` URL (refused without a question, told in the local chat;
+  so are `file:` and `blob:`), `music` starts the
   parcel music on `radio.example.org` (the log has no `parcel music:` line
   before the answer), `list` puts three sites in the list of Preferences ›
   Preferences › Media (`AURORA_DEMO_OPTIONS=media`). In the demo the
@@ -9291,11 +9308,12 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
   profile's filter is on. `worn` puts media on `media.example.com` on the
   object worn on our back (that of `AURORA_DEMO_WORN`), `hud` on a worn HUD
-  screen: no question, as "Trust my worn items" is on (the log has no
-  `media filter: asking about` line). `worn-ask` / `hud-ask` turn that
-  option off for the run, and the question comes; `worn-blocked` /
-  `hud-blocked` put the site in the list as blocked: refused without a
-  question, told in the local chat.
+  screen, both worn from an inventory item we made: no question, as "Trust
+  my worn items" is on (the log has no `media filter: asking about` line).
+  `worn-gift` / `hud-gift` make that item someone else's creation, and the
+  question comes; `worn-ask` / `hud-ask` turn the option off for the run,
+  and the question comes; `worn-blocked` / `hud-blocked` put the site in
+  the list as blocked: refused without a question, told in the local chat.
 - **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|blacklist-ignored|avatar-menu|avatar-menu-mixed|avatar-menu-pie`** exercises Sound Explorer
   with a looping object, triggered avatar and default collision sound. `1`
   keeps the default filters; `all` shows avatars, collisions and repeated
@@ -9536,6 +9554,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_TEMPORAL=0` or `alt` | GTAO without its accumulation over the frames (fixed noise, finer grain), as before |
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
+| `AURORA_TAA_MOTION=0` or `alt` | TAA reprojected through the camera alone, without the motion vectors, as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
@@ -9572,16 +9591,17 @@ What the inventory must show with these scenarios:
   `vkCreateInstance` one second after start (#901). Unless Preferences ›
   Graphics › Overlays › "Allow other programs' overlays" is on (read from
   `settings.json` at start, applied at the next start), it also disables
-  the other overlays' layers: the Steam overlay
+  the other overlays' layers: OBS Studio's game capture
+  (`VK_LAYER_OBS_HOOK`, `DISABLE_VULKAN_OBS_CAPTURE=1`, which also keeps
+  out Wallpaper Engine's copy; in most GPU device-lost reports, #2443),
+  the Steam overlay
   (`DISABLE_VK_LAYER_VALVE_steam_overlay_1`), RivaTuner (`DISABLE_RTSS_LAYER`),
   the Epic Games overlay (`EOS_OVERLAY_DISABLE_VULKAN_WIN64`), Twitch Studio,
   FPS Monitor and PlayClaw. The log says so
   (`Vulkan layers kept out of the viewer`, each layer with its program,
   and whether overlays are allowed). `keep` leaves the environment
-  as it is. OBS Studio's game capture (`VK_LAYER_OBS_HOOK`, and Wallpaper
-  Engine's copy, which declares the same variable), ReShade and the GPU
-  drivers' own layers are never disabled; `DISABLE_VULKAN_OBS_CAPTURE=1`,
-  set by the user, disables OBS's. Overlays that inject a DLL into the
+  as it is. ReShade and the GPU drivers' own layers are never disabled;
+  OBS's Window Capture needs no layer and keeps working. Overlays that inject a DLL into the
   running viewer instead (Discord) cannot be kept out: the log names them
   when they arrive (`overlay hook loaded in the viewer`). To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
@@ -9868,13 +9888,26 @@ What the inventory must show with these scenarios:
   (darker for the sky). The depth prepass writes them beside GTAO's
   normals (`depth_normal` in object.wgsl, from the last frame's matrices
   and joint palettes, `motion_history.rs`), so only while GTAO uses the
-  mesh normals; elsewhere, and where nothing was drawn, the camera's
-  motion alone is shown. Lip morphs and other morphs count as still. With
+  mesh normals or TAA is the anti-aliasing (`AURORA_AA=5`; without GTAO
+  TAA has its own target); elsewhere, and where nothing was drawn, the
+  camera's motion alone is shown. Lip morphs and other morphs count as
+  still. With
   `AURORA_DEMO_CAMERA=alt,640,400` capture frame 645 (the orbit: the sky
   one colour, the terrain shading through black where it crosses the
   pivot's distance); with `AURORA_DEMO_CAMERA=close,640,500,45` frame 625
   (the zoom: colours fanning out from the focus, the still objects the
   colour of the terrain behind them); frame 700 of the first is all grey.
+- **`AURORA_TAA_MOTION=0|alt`**: with TAA (`AURORA_AA=5`), its history
+  follows each pixel's motion vector by default (`shaders/taa.wgsl`), so
+  moving avatars, animesh and objects keep a steady, sharp history; where
+  the motion is exactly zero (the sky, the water and other surfaces only
+  the main pass draws, or nothing moved) it reprojects through the camera
+  and the depth as before. `0` always reprojects through the camera, the
+  old TAA; `alt` switches each second, to compare in one window. Look at
+  our avatar running (`AURORA_DEMO_DOUBLECLICK=run`) or the crowd dancing
+  (`AURORA_DEMO_CROWD=20`, `AURORA_DEMO_POS=129,134`): with `0` their
+  edges smear and shimmer while they move, with the default they stay
+  clean. A still scene is the same in both.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility
