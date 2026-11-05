@@ -1056,7 +1056,7 @@ fn friend_menu(
     if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
         actions.push(ContactsAction::OfferTeleport(id));
     }
-    if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport")) {
+    if menu::item(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport")) {
         st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
     if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {

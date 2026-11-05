@@ -22,8 +22,9 @@ const TOOL: f32 = 30.0;
 /// conversation's bubble with a plus, apart from the friendship offer's
 /// `user-plus`.
 pub(super) const ADD_PEOPLE_ICON: &str = "message-circle-plus";
-/// Requesting a teleport, the icon of the avatar menus' row.
-pub(super) const REQUEST_TELEPORT_ICON: &str = "plane-arrival-filled";
+/// Requesting a teleport, wherever it is offered: a car comes to fetch you,
+/// apart from the paper plane of the offer beside it.
+pub(super) const REQUEST_TELEPORT_ICON: &str = "car-filled";
 
 /// What the head says of the conversation shown.
 struct Identity {
