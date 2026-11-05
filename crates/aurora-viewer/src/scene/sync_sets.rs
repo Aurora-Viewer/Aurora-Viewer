@@ -894,7 +894,9 @@ impl SyncSets {
         let mut stack = std::mem::take(&mut self.tree_stack);
         stack.push((root, depth(objects, root)));
         while let Some((idx, d)) = stack.pop() {
-            if self.listed.mark(idx) {
+            // (a root the GPU places from its own mover, anchors.rs: only
+            // what moves below it is listed)
+            if (idx != root || !state.anchored(root)) && self.listed.mark(idx) {
                 list.items.push((idx, d));
             }
             let Some(o) = objects.get(idx) else {

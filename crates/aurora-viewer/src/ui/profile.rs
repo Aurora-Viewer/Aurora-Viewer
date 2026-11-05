@@ -420,6 +420,24 @@ impl ProfileUi {
         }
     }
 
+    /// Our profile on its main tab, raised, where the picture just applied
+    /// shows. No reload, unlike `open`: its answer could carry the picture
+    /// from before the save, which the Legacy Viewer only asks again once
+    /// saved (onCommitProfileImage's callback).
+    pub fn open_main(&mut self, world: &mut World) {
+        let me = world.agent_id;
+        world.profiles.want(me);
+        world.social.want_name(me);
+        match self.windows.iter_mut().find(|w| w.id == me) {
+            Some(w) => {
+                w.open = true;
+                w.raise = true;
+                w.tab = TAB_SL;
+            }
+            None => self.windows.push(Window::new(me)),
+        }
+    }
+
     /// Our profile is open on its Picks tab (Avatar.IsPicksTabOpen,
     /// LLAvatarActions::myPicksTabVisible).
     pub fn picks_shown(&self, me: Uuid) -> bool {
@@ -1563,6 +1581,8 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
                 super::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Avatar(id)),
             );
         }
+        let ctx = ui.ctx().clone();
+        super::context::admin_submenu(ui, p, world, id, |a| super::context::request(&ctx, a));
     });
 }
 

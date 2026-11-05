@@ -23,6 +23,20 @@ use super::skin::Layout;
 use crate::theme::Palette;
 use egui::{Color32, RichText, Vec2};
 
+/// Advanced › Admin's entries (menu_viewer.xml, the Admin menu).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminAction {
+    TakeCopy,
+    ForceOwnerToMe,
+    ForceOwnerPermissive,
+    Delete,
+    Lock,
+    AssetIds,
+    ParcelForceOwnerToMe,
+    ClaimPublicLand,
+    SaveRegionState,
+}
+
 #[derive(Default)]
 pub enum BarAction {
     ToggleVr,
@@ -68,6 +82,8 @@ pub enum BarAction {
     ToggleFlyOverride,
     /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
     PhotoToDisk,
+    /// The toolbar's Photo roll: the reel's quick view on its newest photo.
+    PhotoRoll,
     /// Our profile on its Picks tab, or closed when Picks is shown
     /// (Avatar.TogglePicks, llviewermenu.cpp).
     MyPicks,
@@ -81,6 +97,9 @@ pub enum BarAction {
     ToggleQuickjump,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Request Admin Status (true) / Leave Admin Status (false).
+    AdminStatus(bool),
+    Admin(AdminAction),
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -272,6 +291,15 @@ pub struct StatusInfo<'a> {
     /// console, estate managers).
     pub release_notes: bool,
     pub region_console: bool,
+    /// The god level the region gave us: Advanced › Request / Leave Admin
+    /// Status.
+    pub god_level: u8,
+    /// Objects are selected: Admin › Object's entries act on them.
+    pub admin_objects: bool,
+    /// The region answers GodlikeMessage and StateSave: OpenSim ignores
+    /// both (no handler in LLClientView's subscribers), so Get Asset IDs,
+    /// Claim Public Land and Save Region State are left out there.
+    pub admin_requests: bool,
     /// The grid sent a message at login (Contents › Message of the day).
     pub motd: bool,
     /// The help page of the grid info (OpenSim), with the grid's name:
@@ -1225,6 +1253,21 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     &mut panels.sim_console,
                 );
             }
+            // Advanced › Request Admin Status (Ctrl+Alt+G) / Leave Admin
+            // Status (Advanced.RequestAdminStatus / LeaveAdminStatus): asked
+            // of the region, which grants it or not
+            if st.god_level == 0 {
+                if menu::item_keys(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-request"), "Ctrl+Alt+G") {
+                    *action = BarAction::AdminStatus(true);
+                }
+            } else if menu::item(ui, p, "crown", aurora_i18n::tr!("god-mode-leave")) {
+                *action = BarAction::AdminStatus(false);
+            }
+            // Advanced › Admin (menu_viewer.xml), while the region keeps
+            // our god level
+            if st.god_level > 0 {
+                admin_menu(ui, p, st.admin_objects, st.admin_requests, action);
+            }
             // Advanced › Quiet Snapshots (PlayModeUISndSnapshot)
             let quiet = aurora_i18n::tr!("photo-quiet-snapshots");
             if menu::check(ui, p, "camera-off", quiet, st.quiet_snapshots, true) {
@@ -2116,6 +2159,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
+        "photo_roll" => return BarAction::PhotoRoll,
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
         // Floater.Toggle quickprefs
         "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
@@ -2340,6 +2384,7 @@ fn tool_button(
     label: &str,
     tip: &str,
     active: bool,
+    usable: bool,
     look: ButtonLook,
     unread: usize,
     flash: f32,
@@ -2350,9 +2395,10 @@ fn tool_button(
     let icon_size = look.icon;
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    // a saved Firestorm command Aurora does not run yet: very dimmed, with
-    // neither face nor pill under the pointer, as in the window
-    let ready = super::toolbar::ready(command);
+    // a saved Legacy Viewer command Aurora does not run yet, or one with
+    // nothing to do now: very dimmed, with neither face nor pill under the
+    // pointer, as in the window
+    let ready = super::toolbar::ready(command) && usable;
     // `locked`: RLVa would refuse its action, greyed without a hover face
     let hovered = ready && !locked && resp.hovered();
     if let Some(fill) = tool_fill(p, ready && active, hovered).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
@@ -2919,6 +2965,8 @@ pub(crate) fn toolbar_row(
             toolbar.water_walk_active
         } else if b.command == "picks" {
             toolbar.picks_active
+        } else if b.command == "photo_roll" {
+            toolbar.photo_roll_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
         } else if b.command == "RFO" {
@@ -2938,6 +2986,8 @@ pub(crate) fn toolbar_row(
             && row.unread > 0
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
+        // the Photo roll's button, dimmed while the session has no photo
+        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty);
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -2946,6 +2996,8 @@ pub(crate) fn toolbar_row(
             )
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
+        } else if !usable {
+            format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("photo-reel-none"))
         } else {
             super::toolbar::label(b).to_owned()
         };
@@ -2967,6 +3019,7 @@ pub(crate) fn toolbar_row(
             super::toolbar::label(b),
             &tip,
             active,
+            usable,
             look(b),
             count,
             // the Grid status button flashes on a new entry of the feed
@@ -2980,8 +3033,9 @@ pub(crate) fn toolbar_row(
         );
         rects.push(response.rect);
         toolbar.button(&response, row.bar, row.style, b, p, row.locked);
-        if !super::toolbar::ready(&b.command) {
-            // a saved Firestorm command Aurora does not have yet
+        if !super::toolbar::ready(&b.command) || !usable {
+            // a saved Legacy Viewer command Aurora does not have yet, or one
+            // with nothing to do now
             continue;
         }
         if b.command == "favorites" {
@@ -3222,6 +3276,76 @@ pub fn bottom_bar(
         super::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);
     }
     (out, action, resp.response.rect.top(), width_committed)
+}
+
+/// Advanced › Admin: the Object, Parcel and Region entries of the Legacy
+/// Viewer's Admin menu (menu_viewer.xml; handle_force_ownership,
+/// handle_force_delete, handle_object_lock, handle_claim_public_land…).
+fn admin_menu(ui: &mut egui::Ui, p: &Palette, objects: bool, requests: bool, action: &mut BarAction) {
+    let mut row = |ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool, a: AdminAction| {
+        if ui.add_enabled_ui(enabled, |ui| menu::item(ui, p, icon, label)).inner {
+            *action = BarAction::Admin(a);
+        }
+    };
+    menu::submenu(ui, p, "shield-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+        menu::submenu(ui, p, "cube", aurora_i18n::tr!("admin-object"), true, |ui| {
+            row(
+                ui,
+                "copy-filled",
+                aurora_i18n::tr!("admin-take-copy"),
+                objects,
+                AdminAction::TakeCopy,
+            );
+            row(
+                ui,
+                "user-filled",
+                aurora_i18n::tr!("admin-force-owner"),
+                objects,
+                AdminAction::ForceOwnerToMe,
+            );
+            row(
+                ui,
+                "key-filled",
+                aurora_i18n::tr!("admin-force-permissive"),
+                objects,
+                AdminAction::ForceOwnerPermissive,
+            );
+            row(ui, "trash-filled", aurora_i18n::tr!("admin-delete"), objects, AdminAction::Delete);
+            row(ui, "lock-filled", aurora_i18n::tr!("admin-lock"), objects, AdminAction::Lock);
+            if requests {
+                row(ui, "id-filled", aurora_i18n::tr!("admin-asset-ids"), objects, AdminAction::AssetIds);
+            }
+        });
+        menu::submenu(ui, p, "map-pin-filled", aurora_i18n::tr!("admin-parcel"), true, |ui| {
+            row(
+                ui,
+                "user-filled",
+                aurora_i18n::tr!("admin-force-owner"),
+                true,
+                AdminAction::ParcelForceOwnerToMe,
+            );
+            if requests {
+                row(
+                    ui,
+                    "flag-filled",
+                    aurora_i18n::tr!("admin-claim-public-land"),
+                    true,
+                    AdminAction::ClaimPublicLand,
+                );
+            }
+        });
+        if requests {
+            menu::submenu(ui, p, "world-filled", aurora_i18n::tr!("admin-region"), true, |ui| {
+                row(
+                    ui,
+                    "device-floppy-filled",
+                    aurora_i18n::tr!("admin-save-region-state"),
+                    true,
+                    AdminAction::SaveRegionState,
+                );
+            });
+        }
+    });
 }
 
 #[cfg(test)]
@@ -3672,6 +3796,16 @@ mod tests {
         panels.snapshot = false;
         assert!(super::super::toolbar::ready("snapshot_to_disk"));
         assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
+        assert!(!panels.snapshot);
+    }
+
+    #[test]
+    fn photo_roll_opens_the_quick_view_without_photo_mode() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.snapshot = false;
+        assert!(super::super::toolbar::ready("photo_roll"));
+        assert!(matches!(run_command(&ctx, "photo_roll", &mut panels), BarAction::PhotoRoll));
         assert!(!panels.snapshot);
     }
 

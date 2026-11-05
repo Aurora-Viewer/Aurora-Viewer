@@ -49,7 +49,8 @@ pub struct Place<'a> {
 }
 
 /// canLandFreezeOrEjectMultiple and canEstateKickOrTeleportHomeMultiple
-/// for one resident (we are never godlike). Freeze and eject: the region's
+/// for one resident (a god counts as an estate manager, `moderation_place`,
+/// so both "gods can always kick"). Freeze and eject: the region's
 /// owner, an estate manager, the owner of the parcel under them, or a
 /// member of the group owning it with "Eject and freeze". The estate
 /// entries: the region's owner or an estate manager.
@@ -114,7 +115,8 @@ impl World {
             .find(|p| in_parcel(&p.bitmap, origin, global));
         Some(Place {
             region_owner: info.owner,
-            estate_manager: info.is_estate_manager,
+            // LLViewerRegion::canManageEstate counts a god
+            estate_manager: info.is_estate_manager || self.god_level > 0,
             overlay,
             parcel,
         })
@@ -130,9 +132,15 @@ impl World {
 
     /// Who we are, for the rule.
     pub fn moderation_agent(&self) -> AgentRights<'_> {
+        self.agent_rights()
+    }
+
+    /// Who we are for the land rules: our groups and our god level.
+    pub fn agent_rights(&self) -> AgentRights<'_> {
         AgentRights {
             id: self.agent_id,
             groups: &self.groups.groups,
+            god: self.god_level > 0,
         }
     }
 }
@@ -177,7 +185,11 @@ mod tests {
 
     #[test]
     fn region_owner_and_estate_managers_moderate_any_land() {
-        let agent = AgentRights { id: ME, groups: &[] };
+        let agent = AgentRights {
+            id: ME,
+            groups: &[],
+            god: false,
+        };
         let mut p = place(1, None);
         assert_eq!(rights(&p, &agent), Rights::default(), "someone else's parcel and region");
         p.region_owner = ME;
@@ -203,7 +215,11 @@ mod tests {
 
     #[test]
     fn our_parcel_by_the_overlay_and_its_ban_list() {
-        let agent = AgentRights { id: ME, groups: &[] };
+        let agent = AgentRights {
+            id: ME,
+            groups: &[],
+            god: false,
+        };
         // PARCEL_SELF with the border bits of the overlay cell
         assert_eq!(
             rights(&place(3 | 0xC0, None), &agent),
@@ -230,7 +246,11 @@ mod tests {
     fn group_land_needs_the_eject_and_freeze_power() {
         let land = parcel(GROUP);
         let groups = member(powers::LAND_ADMIN);
-        let agent = AgentRights { id: ME, groups: &groups };
+        let agent = AgentRights {
+            id: ME,
+            groups: &groups,
+            god: false,
+        };
         assert!(needs_parcel(&place(2, None)));
         assert!(!rights(&place(2, None), &agent).allowed, "the parcel is not known yet");
         assert!(!needs_parcel(&place(2, Some(&land))));
@@ -243,7 +263,11 @@ mod tests {
             }
         );
         let groups = member(powers::LAND_ADMIN | powers::LAND_MANAGE_BANNED);
-        let agent = AgentRights { id: ME, groups: &groups };
+        let agent = AgentRights {
+            id: ME,
+            groups: &groups,
+            god: false,
+        };
         assert_eq!(
             rights(&place(2, Some(&land)), &agent),
             Rights {
@@ -253,13 +277,21 @@ mod tests {
             }
         );
         let groups = member(powers::LAND_MANAGE_BANNED);
-        let agent = AgentRights { id: ME, groups: &groups };
+        let agent = AgentRights {
+            id: ME,
+            groups: &groups,
+            god: false,
+        };
         assert!(!rights(&place(2, Some(&land)), &agent).allowed, "banning alone is not ejecting");
     }
 
     #[test]
     fn no_overlay_yet_leaves_only_the_region_rights() {
-        let agent = AgentRights { id: ME, groups: &[] };
+        let agent = AgentRights {
+            id: ME,
+            groups: &[],
+            god: false,
+        };
         let p = Place {
             region_owner: OTHER,
             estate_manager: false,

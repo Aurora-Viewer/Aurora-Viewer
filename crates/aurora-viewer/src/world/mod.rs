@@ -10,6 +10,7 @@ pub mod body;
 pub mod bubble_chat;
 pub mod calling_cards;
 
+mod arrival_wait;
 pub mod beacons;
 pub mod bridge;
 pub mod calls;
@@ -111,6 +112,8 @@ pub mod worldmap;
 mod automated_chat_tests;
 #[cfg(test)]
 mod flash_tests;
+#[cfg(test)]
+mod god_mode_tests;
 #[cfg(test)]
 mod group_notice_tests;
 #[cfg(test)]
@@ -444,6 +447,9 @@ pub struct World {
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
+    /// The god level the region gave us (GrantGodlikePowers, Advanced ›
+    /// Request Admin Status): 0 none; shown on the navigation bar.
+    pub god_level: u8,
     /// What the simulator killed while the photo mode held the world still
     /// (`freeze_motion`): each object's key and id, removed on thaw.
     held_kills: Vec<(ObjKey, Uuid)>,
@@ -618,6 +624,8 @@ pub struct World {
     /// The parcels and accounts of the group whose "Land and L$" tab shows.
     pub group_money: group_money::GroupMoney,
     arrived_once: bool,
+    /// Since when a teleport or crossing awaits its arrival (`arrival_wait.rs`).
+    arrival_wait_since: Option<Instant>,
     /// The instant messages kept while offline were asked for (once per
     /// login).
     offline_im_requested: bool,
@@ -775,6 +783,7 @@ impl World {
             environment_answers: Vec::new(),
             health: 100.0,
             frozen: false,
+            god_level: 0,
             held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -856,6 +865,7 @@ impl World {
             experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
+            arrival_wait_since: None,
             offline_im_requested: false,
             group_titles: Default::default(),
             region_alerts: Default::default(),
@@ -1119,6 +1129,7 @@ impl World {
         self.cancel_friend_join();
         self.map.cancel_avatar_teleport();
         self.teleporting = true;
+        self.arrival_wait_since = None;
         self.tp_show_progress = show_progress;
         self.tp_failed = false;
         self.tp_progress = 0.05;
@@ -1157,6 +1168,11 @@ impl World {
                 &l.raw["agent_region_access"].to_string_value(),
             )
         });
+        // a god may set and enter any rating (LLAgentAccess::canSetMaturity,
+        // canAccessAdult: isGodlike() first)
+        if self.god_level > 0 {
+            access.max = aurora_net::search::SIM_ACCESS_ADULT;
+        }
         if let Some(preferred) = self.maturity.preferred {
             access.preferred = preferred.min(access.max);
         }
@@ -1921,6 +1937,22 @@ impl World {
 
     /// A notice of the viewer in the nearby chat, about `topic` (the icon
     /// of its compact row, #741).
+    /// set_god_level (llviewermenu.cpp): the level the region granted, said
+    /// as the EnteringGodMode / LeavingGodMode notifications say it.
+    pub fn set_god_level(&mut self, level: u8) {
+        let old = std::mem::replace(&mut self.god_level, level);
+        if old == level {
+            return;
+        }
+        let text = if level > 0 {
+            aurora_i18n::tr!("god-mode-entering", level = i64::from(level))
+        } else {
+            aurora_i18n::tr!("god-mode-leaving", level = i64::from(old))
+        };
+        log::info!("admin status: god level {old} -> {level}");
+        self.system_notice(text, notice_topics::Topic::Region);
+    }
+
     pub fn system_notice(&mut self, text: impl Into<String>, topic: notice_topics::Topic) {
         let line = ChatLine {
             time: SystemTime::now(),
@@ -2349,6 +2381,10 @@ impl World {
                 // back in a region left moments ago: its objects first, its
                 // simulator only sends what changed since
                 self.unpark_region(handle);
+                None
+            }
+            NetEvent::GodLevel(level) => {
+                self.set_god_level(level);
                 None
             }
             NetEvent::RegionHandshake(info) => {
@@ -5643,6 +5679,7 @@ mod appearance_tests {
 mod motion_tests {
     use super::*;
     use aurora_net::objects::TerseUpdate;
+    use std::time::Duration;
 
     #[test]
     fn animation_signals_keep_continuous_time_until_an_observed_stop() {
@@ -5714,6 +5751,51 @@ mod motion_tests {
         world.main_region = Some(handle);
         world.ensure_region(handle, (256, 256));
         (world, update, handle)
+    }
+
+    /// A teleport the region never confirms: the wait ends after the Legacy
+    /// Viewer's delay, with a notice and a usable world, and a late confirmation
+    /// is still taken. A crossing ends the same way, without "teleport failed".
+    #[test]
+    fn an_arrival_never_confirmed_stops_waiting_after_its_delay() {
+        let (mut world, handle) = teleport_fixture();
+        let start = Instant::now();
+        assert!(!world.arrival_overdue(start, 1), "nothing awaited");
+
+        world.begin_teleport(true);
+        world.movement_complete = false;
+        assert!(!world.arrival_overdue(start, 1));
+        assert!(!world.arrival_overdue(start + Duration::from_secs(18), 1));
+        assert!(world.arrival_overdue(start + Duration::from_secs(19), 1));
+        world.give_up_arrival();
+        assert!(!world.teleporting && world.tp_failed && world.movement_complete);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(20), 1), "the wait is over");
+
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(220.0, 230.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert_eq!(
+            world.agent.position,
+            Vec3::new(220.0, 230.0, 30.0),
+            "a late confirmation is still taken"
+        );
+
+        world.tp_failed = false;
+        world.movement_complete = false;
+        world.crossing = true;
+        assert!(!world.arrival_overdue(start, 0));
+        assert!(world.arrival_overdue(start + Duration::from_secs(16), 0));
+        world.give_up_arrival();
+        assert!(!world.crossing && world.movement_complete);
+        assert!(!world.teleporting && !world.tp_failed, "a crossing is no failed teleport");
+
+        // A new teleport starts its own wait, whatever was running.
+        world.begin_teleport(true);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(100), 0));
+        world.begin_teleport(true);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(200), 0));
     }
 
     fn teleport_fixture() -> (World, RegionHandle) {

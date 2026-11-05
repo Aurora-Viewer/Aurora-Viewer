@@ -414,7 +414,8 @@ impl App {
                     if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
                         return;
                     }
-                    if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY == 0 {
+                    // a god reads any (LLPreviewNotecard::loadAsset)
+                    if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY == 0 && self.world.god_level == 0 {
                         self.inventory_preview(
                             id,
                             it.asset_id,
@@ -631,7 +632,12 @@ impl App {
                 self.world.inventory.apply(reply.contents);
                 self.world.inventory.created_folders(reply.folders);
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
-                    let sync = crate::world::appearance::sync_plan(&self.world.inventory, self.world.agent_id, &self.outfit_sync_worn());
+                    let sync = crate::world::appearance::sync_plan_keeping(
+                        &self.world.inventory,
+                        self.world.agent_id,
+                        &self.world.outfit_attachment_items(),
+                        self.bridge_runtime.item(),
+                    );
                     for cmd in sync.commands {
                         self.send(cmd);
                     }

@@ -688,6 +688,59 @@ fn preexisting_create_flags_are_never_selected_after_ownership_arrives() {
 }
 
 #[test]
+fn inventory_rez_leaves_create_and_edits_only_the_new_object() {
+    for keep_tool in [false, true] {
+        let (mut world, mut tool, mut settings) = fixture();
+        settings.keep_tool = keep_tool;
+        let old = object(&world, 99610);
+        world.objects.get_mut(old).unwrap().update_flags |= FLAGS_CREATE_SELECTED;
+        tool.click_select(&mut world, &settings, Some(old), false);
+        tool.set_tool(Tool::Create);
+        assert!(tool.creation_preview_enabled(&settings, false, Mods::default()));
+        tool.edit_inventory_rez(&world);
+        assert_eq!(tool.tool, Tool::Edit);
+        assert!(!tool.creation_preview_enabled(&settings, false, Mods::default()));
+        assert!(tool.open && tool.selection.is_empty());
+        // The old flagged object is not mistaken for a delayed rez reply.
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
+        assert!(tool.selection.is_empty());
+
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = 99940;
+        update.full_id = crate::demo::action_id(99940);
+        update.parent_id = 0;
+        update.owner_id = Uuid::nil();
+        update.update_flags = FLAGS_CREATE_SELECTED | crate::ui::context::flags::OBJECT_YOU_OWNER;
+        let handle = world.objects.get(old).unwrap().key.region;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
+        assert_eq!(tool.tool, Tool::Edit);
+        assert_eq!(selected(&tool), [99940]);
+        assert_eq!(settings.keep_tool, keep_tool);
+        assert!(tool.out.iter().any(|command| matches!(
+            command,
+            NetCommand::Build(BuildCmd::Select { local_ids, .. }) if local_ids == &[99940]
+        )));
+    }
+}
+
+#[test]
+fn primitive_creation_still_honors_keep_tool() {
+    for keep_tool in [false, true] {
+        let (mut world, mut tool, mut settings) = fixture();
+        settings.keep_tool = keep_tool;
+        tool.set_tool(Tool::Create);
+        let point = world.agent.position + Vec3::X * 5.0;
+        tool.place(&mut world, &settings, Some(point), None, (0.0, 0.0));
+        assert_eq!(tool.tool, if keep_tool { Tool::Create } else { Tool::Edit });
+    }
+}
+
+#[test]
 fn creation_rez_group_reaches_prim_plant_and_demo_properties() {
     let (mut world, mut tool, mut settings) = fixture();
     for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {

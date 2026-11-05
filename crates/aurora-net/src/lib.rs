@@ -15,6 +15,7 @@ pub mod experience;
 pub mod fetch;
 mod fetch_pace;
 pub mod freeze;
+pub mod god;
 pub mod group_money;
 pub mod groups;
 pub mod home;

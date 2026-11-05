@@ -27,6 +27,22 @@ pub static DISK_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 pub static DISK_WRITTEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 const MAGIC: &[u8; 4] = b"AOC2";
+
+/// The key the files are sealed with (`aurora_assets::sealed`), the one of
+/// the viewer's disk cache: set by the viewer before any session. Without
+/// it (this crate's tests) the files are written as they are.
+static SEAL: std::sync::OnceLock<aurora_assets::sealed::Key> = std::sync::OnceLock::new();
+
+pub fn seal_with(key: aurora_assets::sealed::Key) {
+    let _ = SEAL.set(key);
+}
+
+fn open_file(file: Vec<u8>) -> std::io::Result<Vec<u8>> {
+    match SEAL.get() {
+        Some(key) => key.open(file),
+        None => Ok(file),
+    }
+}
 /// Entries beyond this are not kept (very dense regions).
 const MAX_ENTRIES: usize = 60_000;
 
@@ -80,8 +96,9 @@ impl RegionObjectCache {
             .ok()
             .and_then(|d| {
                 DISK_READ.fetch_add(d.len() as u64, std::sync::atomic::Ordering::Relaxed);
-                Self::decode(&d)
+                open_file(d).ok()
             })
+            .and_then(|d| Self::decode(&d))
             .unwrap_or_default();
         if !entries.is_empty() {
             // used: keep it in the rolling cache
@@ -257,6 +274,14 @@ impl Snapshot {
     }
 
     fn replace_file(&self, content: &[u8]) -> std::io::Result<()> {
+        let sealed;
+        let content = match SEAL.get() {
+            Some(key) => {
+                sealed = key.seal(content)?;
+                &sealed[..]
+            }
+            None => content,
+        };
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir)?;
         }

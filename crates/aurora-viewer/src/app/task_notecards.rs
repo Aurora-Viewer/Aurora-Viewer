@@ -15,7 +15,14 @@ pub(super) struct TaskNotecard {
 }
 
 /// Permissions of the item and its containing object are both required.
-fn editor_item(mut item: InvItem, agent: Uuid, member: bool, manipulate: bool, object_editable: bool) -> InvItem {
+/// The notecard as we may use it: our rights on it, no modify on an object
+/// we cannot edit; a god reads and edits any (LLTaskNotecardBridge::openItem
+/// and LLPreviewNotecard::loadAsset: isGodlike()).
+fn editor_item(mut item: InvItem, agent: Uuid, member: bool, manipulate: bool, object_editable: bool, god: bool) -> InvItem {
+    if god {
+        item.owner_mask |= rules::COPY | rules::MODIFY;
+        return item;
+    }
     item.owner_mask = if item.owner == agent || (item.group_owned && manipulate) {
         item.owner_mask
     } else {
@@ -74,6 +81,7 @@ impl App {
             group.is_some(),
             group.is_some_and(|g| g.powers & GP_OBJECT_MANIPULATE != 0),
             self.build.contents_editable(&self.world, idx),
+            self.world.god_level > 0,
         ))
     }
 
@@ -355,7 +363,7 @@ mod tests {
     #[test]
     fn item_permissions_and_object_permissions_are_both_required() {
         let agent = Uuid::from_u128(2);
-        let metadata = editor_item(item(), agent, false, false, false);
+        let metadata = editor_item(item(), agent, false, false, false, false);
         assert_eq!(metadata.owner_mask, rules::COPY);
         let note = TaskNotecard::new(metadata);
         assert_eq!(note.state.preview_text, Some(Ok(String::new())));
@@ -363,13 +371,21 @@ mod tests {
         let mut foreign = item();
         foreign.owner = Uuid::from_u128(8);
         foreign.group_mask = rules::COPY;
-        assert_eq!(editor_item(foreign.clone(), agent, false, false, true).owner_mask, 0);
-        assert_eq!(editor_item(foreign.clone(), agent, true, false, true).owner_mask, rules::COPY);
+        assert_eq!(editor_item(foreign.clone(), agent, false, false, true, false).owner_mask, 0);
+        assert_eq!(
+            editor_item(foreign.clone(), agent, true, false, true, false).owner_mask,
+            rules::COPY
+        );
         foreign.group_owned = true;
         assert_eq!(
-            editor_item(foreign, agent, true, true, true).owner_mask,
+            editor_item(foreign.clone(), agent, true, true, true, false).owner_mask,
             rules::COPY | rules::MODIFY
         );
+        // a god reads and edits a stranger's no-copy notecard
+        foreign.group_owned = false;
+        foreign.group_mask = 0;
+        let god = editor_item(foreign, agent, false, false, false, true).owner_mask;
+        assert_eq!(god & (rules::COPY | rules::MODIFY), rules::COPY | rules::MODIFY);
     }
 
     #[test]

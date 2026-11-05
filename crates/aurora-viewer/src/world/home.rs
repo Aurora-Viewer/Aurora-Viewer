@@ -37,13 +37,14 @@ pub fn start_position(centre: Vec3, half_height: f32, region: (f32, f32), land: 
 }
 
 impl World {
-    /// LLWorldEnableSetHomeLocation: the agent's region allows it
-    /// (REGION_FLAGS_ALLOW_SET_HOME). Aurora has no god mode, which the
-    /// Legacy Viewer also lets through.
+    /// LLWorldEnableSetHomeLocation: a god, or the agent's region allows it
+    /// (REGION_FLAGS_ALLOW_SET_HOME).
     pub fn can_set_home(&self) -> bool {
-        self.main()
-            .and_then(|r| r.info.as_ref())
-            .is_some_and(|i| i.region_flags & REGION_ALLOW_SET_HOME != 0)
+        self.god_level > 0
+            || self
+                .main()
+                .and_then(|r| r.info.as_ref())
+                .is_some_and(|i| i.region_flags & REGION_ALLOW_SET_HOME != 0)
     }
 
     /// LLWorldSetHomeLocation: the request for the agent's place; the

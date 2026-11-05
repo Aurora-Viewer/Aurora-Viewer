@@ -85,7 +85,7 @@ impl App {
         }
         if self.demo
             && self.frame_count == 650
-            && std::env::var("AURORA_DEMO_WEARABLE").is_ok_and(|mode| mode.ends_with(":save"))
+            && std::env::var("AURORA_DEMO_WEARABLE").is_ok_and(|mode| mode.ends_with(":save") || mode.ends_with(":local-save"))
             && let Some(command) = self.wearable_ui.save(&self.world, None)
         {
             self.demo_save_wearable(command);
