@@ -10,10 +10,6 @@ pub const TELEPORT_SOURCE: Uuid = Uuid::from_u128(0xa6780003_0000_0000_0000_0000
 pub const SOUND_SOURCE: Uuid = Uuid::from_u128(0xa6780004_0000_0000_0000_000000000004);
 pub const SOUND_OWNER: Uuid = Uuid::from_u128(0xa6780005_0000_0000_0000_000000000005);
 
-pub fn dialog(source: Uuid) -> NetEvent {
-    dialog_on(source, -678)
-}
-
 /// A script dialog on its own channel: dialogs from one object replace each
 /// other only on the same channel (LLScriptFloaterManager), so a flood that
 /// should stack uses a channel per prompt.

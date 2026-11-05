@@ -113,7 +113,7 @@ fn anti_spam_stops_dialogs_before_attention_and_keeps_other_sources_usable() {
     w.apply(demo::dialog_on(demo::DIALOG_SOURCE, 15));
     assert_eq!(w.chat.len(), messages, "a blocked event must not create another warning");
     assert!(!w.mutes.is_muted_id(&demo::DIALOG_SOURCE));
-    w.apply(demo::dialog(demo::SOUND_SOURCE));
+    w.apply(demo::dialog_on(demo::SOUND_SOURCE, -678));
     assert_eq!(w.notifications.list.len(), 11);
     w.anti_spam.unblock(Queue::ScriptDialog, demo::DIALOG_SOURCE);
     w.apply(demo::dialog_on(demo::DIALOG_SOURCE, 16));
@@ -233,7 +233,7 @@ fn anti_spam_owned_objects_are_exempt_unless_requested() {
     object.full_id = demo::DIALOG_SOURCE;
     w.objects.upsert(handle, object);
     for _ in 0..15 {
-        w.apply(demo::dialog(demo::DIALOG_SOURCE));
+        w.apply(demo::dialog_on(demo::DIALOG_SOURCE, -678));
     }
     assert!(w.anti_spam.entries.is_empty());
     w.anti_spam.configure(Settings {
@@ -241,7 +241,7 @@ fn anti_spam_owned_objects_are_exempt_unless_requested() {
         ..w.anti_spam.settings
     });
     for _ in 0..11 {
-        w.apply(demo::dialog(demo::DIALOG_SOURCE));
+        w.apply(demo::dialog_on(demo::DIALOG_SOURCE, -678));
     }
     assert!(w.anti_spam.is_blocked(Queue::ScriptDialog, demo::DIALOG_SOURCE));
 }
@@ -408,7 +408,7 @@ fn anti_spam_chat_own_objects_rate_category_and_global_mode() {
     }
     assert!(w.anti_spam.is_blocked(Queue::Chat, demo::DIALOG_SOURCE));
     assert!(!w.anti_spam.is_blocked(Queue::ScriptDialog, demo::DIALOG_SOURCE));
-    w.apply(demo::dialog(demo::DIALOG_SOURCE));
+    w.apply(demo::dialog_on(demo::DIALOG_SOURCE, -678));
     assert_eq!(w.notifications.list.len(), 1);
     w.anti_spam.configure(Settings {
         global: true,
