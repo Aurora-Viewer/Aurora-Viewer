@@ -1187,7 +1187,7 @@ pub(super) fn execute(
             });
             submit(plan);
         }
-        Command::Delete(ids, purge) => st.dialog = Some(EditDialog::Delete(ids, purge)),
+        Command::Delete(ids, purge) => super::delete::open(inv, st, ids, purge, prefs, facts, actions),
         Command::Share(ids) => {
             st.share_items = ids;
             st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);

@@ -586,9 +586,9 @@ mod tests {
         let mut st = InventoryUi::default();
         st.begin_replace_links(crate::world::inventory::demo::BIG_LINKED);
         st.fetch_all = false;
-        let prefs = InventoryPreferences::default();
+        let mut prefs = InventoryPreferences::default();
         let facts = Facts::default();
-        let frame = |st: &mut InventoryUi| {
+        let mut frame = |st: &mut InventoryUi| {
             let output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 800.0))),
@@ -601,7 +601,7 @@ mod tests {
                         &Icons::default(),
                         &inv,
                         st,
-                        &prefs,
+                        &mut prefs,
                         &facts,
                         &Default::default(),
                         &mut Vec::new(),
@@ -639,9 +639,9 @@ mod tests {
         let mut st = InventoryUi::default();
         st.begin_replace_links(crate::world::inventory::demo::BIG_LINKED);
         st.fetch_all = false;
-        let prefs = InventoryPreferences::default();
+        let mut prefs = InventoryPreferences::default();
         let facts = Facts::default();
-        let frame = |st: &mut InventoryUi, events: Vec<egui::Event>, drag: Option<Uuid>| {
+        let mut frame = |st: &mut InventoryUi, events: Vec<egui::Event>, drag: Option<Uuid>| {
             let mut actions = Vec::new();
             let output = ctx.run_ui(
                 egui::RawInput {
@@ -659,7 +659,7 @@ mod tests {
                         &Icons::default(),
                         &inv,
                         st,
-                        &prefs,
+                        &mut prefs,
                         &facts,
                         &Default::default(),
                         &mut actions,

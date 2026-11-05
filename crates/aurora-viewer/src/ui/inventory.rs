@@ -518,6 +518,9 @@ pub struct InventoryUi {
     thumbnail_notice: Option<progress::Notice>,
     pub message: String,
     pub dialog: Option<EditDialog>,
+    /// The "Do not show again" box of the open move-to-Trash confirmation
+    /// (`delete::open`); None while the dialog has none.
+    delete_ignore: Option<bool>,
     folder_color: Option<folder_colors::Picker>,
     move_to: Option<move_to::MoveTo>,
     pub links_filter: Option<Uuid>,
@@ -1370,7 +1373,7 @@ fn status(
                 .color(p.muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            delete::button(ui, p, inv, st, prefs, facts);
+            delete::button(ui, p, inv, st, prefs, facts, actions);
             if st.busy() {
                 ui.add(egui::Spinner::new().size(14.0).color(p.violet));
             }

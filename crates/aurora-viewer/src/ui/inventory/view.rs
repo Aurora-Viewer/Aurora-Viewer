@@ -364,6 +364,10 @@ pub struct InventoryPreferences {
     pub recent_hours: u32,
     pub warn_task_move: bool,
     pub warn_scripted_task_move: bool,
+    /// DeleteItems: a selection going to the Trash is asked first (its "Do
+    /// not show again" box turns this off; on by default). A purge from the
+    /// Trash always asks, like PurgeSelectedItems.
+    pub confirm_delete: bool,
     /// The rights Aurora's rows show (its "CMT" menu).
     pub rights: super::permissions::Rights,
     /// Aurora's window shows the selection's details: the card at the
@@ -408,6 +412,7 @@ impl Default for InventoryPreferences {
             recent_hours: 0,
             warn_task_move: true,
             warn_scripted_task_move: true,
+            confirm_delete: true,
             rights: Default::default(),
             show_details: true,
             folder_colors_enabled: true,
@@ -1873,6 +1878,7 @@ mod tests {
         assert!(!prefs.received_sort.folders_by_name);
         assert!(prefs.received_sort.system_first);
         assert!(prefs.show_details, "the details stay shown until hidden");
+        assert!(prefs.confirm_delete, "existing preferences keep asking before deletion");
         let changed = InventoryPreferences {
             sort: Sort {
                 by_date: false,
@@ -1891,6 +1897,7 @@ mod tests {
                 ..Default::default()
             },
             show_details: false,
+            confirm_delete: false,
             ..prefs
         };
         let json = serde_json::to_string(&changed).expect("serialize preferences");
