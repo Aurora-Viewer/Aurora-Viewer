@@ -572,7 +572,7 @@ pub(super) fn card(
                 // an invitation with a fee names it on its button
                 Data::Group { fee, .. } if *fee > 0 => {
                     buttons.push((
-                        aurora_i18n::tr!("ui-group-profile-join-fee", fee = aurora_i18n::integer(i64::from(*fee))).into(),
+                        aurora_i18n::tr!("ui-group-profile-join-fee", fee = aurora_i18n::integer(i64::from(*fee))),
                         Response::Accept,
                         true,
                     ));
