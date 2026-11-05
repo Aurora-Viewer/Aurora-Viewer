@@ -3,8 +3,8 @@
 `ui/toolbar/commands.rs` records explicitly identified main-menu entries with live
 checks and availability; selection dispatches one enabled entry through its original
 menu handler. Layout overrides preserve semantic IDs across locales and new commands.
-`ui/toolbar/appearance.rs` owns per-command presentation and the virtualized Tabler
-icon picker. `ui/bars/top.rs` shares the toolbar renderer and drag payload with the
+`ui/toolbar/appearance.rs` owns per-button presentation and the virtualized Tabler
+icon picker; menu entries have overrides independent of their toolbar copies. `ui/bars/top.rs` shares the toolbar renderer and drag payload with the
 bottom and side bars. Global toolbar preferences also hold main-menu order and the
 reversible SLURL address-bar visibility.
 

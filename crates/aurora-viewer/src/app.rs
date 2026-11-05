@@ -15151,6 +15151,9 @@ impl App {
                     if !matches!(top_action, BarAction::None) {
                         a.bar = top_action;
                     }
+                    if classic_bars {
+                        area.min.y = area.min.y.max(ui.available_rect_before_wrap().top());
+                    }
                 }
                 let (room, side_action) = ui::bars::side::bars(
                     ui,

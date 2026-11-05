@@ -260,7 +260,11 @@ fn show_children(
             continue;
         }
         let button = &entry.button;
-        let appearance = settings.appearance.get(&button.command).cloned().unwrap_or_default();
+        let appearance = settings
+            .appearance
+            .get(&super::appearance::menu_key(&button.command))
+            .cloned()
+            .unwrap_or_default();
         let icon = appearance.icon.as_deref().unwrap_or(&button.icon);
         let label = super::label(button);
         let mode = appearance.mode.unwrap_or(super::ButtonMode::IconsWithText);
@@ -290,7 +294,7 @@ fn show_children(
                 from: None,
             });
         }
-        toolbar.appearance_context(&response, p, button, settings.locked);
+        toolbar.menu_appearance_context(&response, p, button, settings.locked);
         if !entry.group && response.clicked() && entry.enabled {
             request(ui.ctx(), &button.command);
             ui.close();

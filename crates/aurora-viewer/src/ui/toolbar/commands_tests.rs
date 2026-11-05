@@ -283,7 +283,14 @@ fn a_menu_entry_right_click_opens_its_appearance_editor_and_saves_its_own_mode()
         .center();
     bench.pointer(text_mode, Some(true));
     bench.pointer(text_mode, Some(false));
-    assert_eq!(bench.settings.appearance[IMPORT].mode, Some(ButtonMode::TextOnly));
+    assert_eq!(
+        bench.settings.appearance[&appearance::menu_key(IMPORT)].mode,
+        Some(ButtonMode::TextOnly)
+    );
+    assert!(
+        !bench.settings.appearance.contains_key(IMPORT),
+        "the toolbar copy keeps its own bar default"
+    );
     assert!(commands::take_request(&bench.ctx).is_none(), "customizing never activates Import");
 }
 

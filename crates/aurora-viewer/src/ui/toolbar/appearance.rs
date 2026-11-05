@@ -20,6 +20,7 @@ pub struct Appearance {
 #[derive(Default)]
 pub(super) struct Editor {
     button: Option<ToolButton>,
+    key: String,
     search: String,
     icons: Vec<String>,
 }
@@ -31,9 +32,19 @@ impl Editor {
 
     pub fn select(&mut self, button: &ToolButton) {
         self.button = Some(button.clone());
+        self.key = button.command.clone();
         self.search.clear();
         self.icons = icons::names();
     }
+
+    fn select_as(&mut self, button: &ToolButton, key: &str) {
+        self.select(button);
+        self.key = key.to_owned();
+    }
+}
+
+pub fn menu_key(command: &str) -> String {
+    format!("menu-entry:{command}")
 }
 
 pub fn publish(ctx: &egui::Context, settings: &ToolbarSettings) {
@@ -60,9 +71,17 @@ impl ToolbarUi {
     }
 
     pub fn appearance_context(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool) {
+        self.appearance_context_for(response, p, button, locked, &button.command);
+    }
+
+    pub fn menu_appearance_context(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool) {
+        self.appearance_context_for(response, p, button, locked, &menu_key(&button.command));
+    }
+
+    fn appearance_context_for(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool, key: &str) {
         menu::context_menu_of_button(response, p, |ui| {
             if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"), !locked) {
-                self.appearance_editor.select(button);
+                self.appearance_editor.select_as(button, key);
             }
             if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-edit")) {
                 self.open = true;
@@ -88,8 +107,9 @@ impl ToolbarUi {
         let Some(button) = self.appearance_editor.button.clone() else {
             return;
         };
+        let key = self.appearance_editor.key.clone();
         let mut open = true;
-        let mut value = settings.appearance.get(&button.command).cloned().unwrap_or_default();
+        let mut value = settings.appearance.get(&key).cloned().unwrap_or_default();
         let before = value.clone();
         widgets::Floater::new(
             "toolbar_button_appearance",
@@ -162,7 +182,7 @@ impl ToolbarUi {
             });
         });
         if value != before {
-            self.pending = Some(Edit::Appearance(button.command, value));
+            self.pending = Some(Edit::Appearance(key, value));
         }
         if !open {
             self.appearance_editor.button = None;

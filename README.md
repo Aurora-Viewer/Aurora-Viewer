@@ -969,8 +969,8 @@ another submenu; a group cannot be moved inside itself.
 
 Each bar has its own alignment, sizing and icon / label mode. Right-click a
 button or menu entry and choose **Button appearance** to override just that
-command: icon, label, both, or the bar's default. The searchable icon grid picks
-another bundled or skin icon; **Restore default icon** clears that override.
+command: icon, label, both, or the bar's default. The menu entry and its toolbar copy have independent overrides. The searchable
+icon grid picks another bundled or skin icon; **Restore default icon** clears that override.
 The fixed report-bug button retains its right-click version copy: customize its
 **Report a bug** entry from the catalogue.
 
