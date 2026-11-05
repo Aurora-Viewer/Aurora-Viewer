@@ -100,11 +100,31 @@ What each part tells the one who fixes it:
 - **Overlay hooks**: the overlay or capture programs that injected their
   hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
   game capture), named from the viewer's fixed list only.
+- **Vulkan layers on offer**: the `VK_LAYER_*` names the Vulkan loader offers
+  to the viewer, noted at the very start, so a crash while Vulkan starts has
+  them too.
+- **GPU errors**: the errors wgpu reported, first of each in the order they
+  came: `out-of-memory` or the wgpu operation that failed
+  (`Queue::write_buffer`). Their messages stay in the local log.
 - **Last state**: screen, frame rate, frame time, window size, graphics
   preset, memory, video memory used / budget, texture memory pressure,
   objects, avatars, regions, as noted every 2 seconds, and the swapchain
   recreations of the last 10 seconds (window resizes among them), frozen
-  when the graphics card is lost.
+  when the graphics card is lost. It also tells the cause of a GPU loss
+  apart from another: the graphics switches on (shadows level, contact
+  shadows, ambient occlusion, SSR, anti-aliasing, bloom, indirect light,
+  probes, render scale, draw distance, VR, and photo when one was drawn in
+  the last 10 seconds), the window state
+  (focused, background, minimized, occluded), the latest GPU frame time,
+  the longest one of the last 10 seconds with the pass that took most of it
+  and its ambient occlusion and contact shadows,
+  the texture uploads (count, MB), the seconds since the login began, in
+  the world and since the region changed, what was still loading, how the
+  loss was seen (the
+  reason wgpu gave, the class of its message, the first place that saw it),
+  how long the GPU held the render thread past 2 seconds (no row otherwise:
+  a reset that comes sooner shows in **GPU work at the loss**), the other Aurora viewers on the card (from the viewer registry, not in demo),
+  and the card's memory in use by all programs and by the others (Windows). Fixed words and numbers only.
 - **Recent warnings and errors**: the last 20, as
   `-<seconds before the end> s | level | Rust module | kind`, repeats folded
   (`(x3)`); the messages themselves stay in the local log.

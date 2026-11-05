@@ -1559,6 +1559,10 @@ pub enum NetCommand {
     },
     Login(Box<LoginRequest>),
     Logout,
+    /// The viewer stopped waiting for a teleport or crossing to be confirmed:
+    /// agent updates resume, as LLAgent's teleport state back at
+    /// TELEPORT_NONE lets send_agent_update through.
+    ArrivalGivenUp,
     Chat {
         message: String,
         channel: i32,
