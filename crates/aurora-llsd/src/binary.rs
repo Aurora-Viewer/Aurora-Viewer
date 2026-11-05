@@ -144,11 +144,19 @@ impl<'a> Reader<'a> {
 /// far larger than its encoding.
 /// Past that, the parse fails with [`LlsdError::TooLarge`].
 pub fn from_binary(data: &[u8]) -> Result<(Llsd, usize), LlsdError> {
-    let mut r = Reader {
-        data,
-        pos: 0,
-        budget: Budget::for_input(data.len()),
-    };
+    parse(data, Budget::for_input(data.len())).map(|(v, used, _)| (v, used))
+}
+
+/// [`from_binary`] for files the viewer wrote itself (the inventory cache,
+/// the saved environment): the same per-byte rule, without the fixed cap,
+/// which a large inventory exceeds.
+pub fn from_binary_local(data: &[u8]) -> Result<(Llsd, usize), LlsdError> {
+    parse(data, Budget::for_local_input(data.len())).map(|(v, used, _)| (v, used))
+}
+
+/// The value, the bytes consumed and the budget left.
+fn parse(data: &[u8], budget: Budget) -> Result<(Llsd, usize, Budget), LlsdError> {
+    let mut r = Reader { data, pos: 0, budget };
     r.budget.charge(VALUE_COST)?;
     if data.starts_with(HEADER) {
         r.pos = HEADER.len();
@@ -157,7 +165,7 @@ pub fn from_binary(data: &[u8]) -> Result<(Llsd, usize), LlsdError> {
         }
     }
     let v = r.value(0)?;
-    Ok((v, r.pos))
+    Ok((v, r.pos, r.budget))
 }
 
 fn write(v: &Llsd, out: &mut Vec<u8>) {
@@ -288,6 +296,63 @@ mod tests {
             .map(|i| llsd_map! {"offset" => i, "size" => i * 2, "name" => format!("joint{i}")})
             .collect::<Vec<_>>();
         assert_eq!(from_binary(&to_binary(&Llsd::Array(rows))).unwrap().0.len(), 20_000);
+    }
+
+    /// A document shaped like the viewer's inventory cache
+    /// (`Inventory::save_cache`): `{version, folders, items}`, `count` items
+    /// of 23 fields with short keys, built from one encoded item.
+    fn inventory_cache(count: usize) -> Vec<u8> {
+        let u = Uuid::from_u128(0x1234_5678_9abc_def0_1234_5678_9abc_def0);
+        let item = to_binary(&llsd_map! {
+            "id" => u, "parent" => u, "name" => "Wooden chair (copy)", "desc" => "",
+            "asset_type" => 6, "inv_type" => 6, "asset_id" => u, "flags" => 0,
+            "favorite" => false, "thumbnail" => Uuid::nil(), "base_mask" => -1, "owner_mask" => -1,
+            "last_owner" => u, "group_id" => Uuid::nil(), "group_owned" => false,
+            "sale_type" => 0, "sale_price" => 10, "creator" => u, "created_at" => 1_700_000_000,
+            "owner" => u, "group_mask" => 0, "everyone_mask" => 0, "next_owner_mask" => 581632,
+        });
+        let head = to_binary(&llsd_map! {"version" => 3, "folders" => Llsd::Array(vec![])});
+        // splice an "items" entry into the map: one more key, then the array
+        let mut b = vec![b'{'];
+        b.extend_from_slice(&3u32.to_be_bytes());
+        b.extend_from_slice(&head[5..head.len() - 1]);
+        b.push(b'k');
+        b.extend_from_slice(&5u32.to_be_bytes());
+        b.extend_from_slice(b"items[");
+        b.extend_from_slice(&(count as u32).to_be_bytes());
+        for _ in 0..count {
+            b.extend_from_slice(&item);
+        }
+        b.extend_from_slice(b"]}");
+        b
+    }
+
+    #[test]
+    fn inventory_cache_shape_stays_far_under_the_per_byte_rule() {
+        let doc = inventory_cache(2000);
+        let (v, used, left) = parse(&doc, Budget::for_local_input(doc.len())).unwrap();
+        assert_eq!(used, doc.len());
+        assert_eq!(v["items"].len(), 2000);
+        assert_eq!(v["version"].as_i32(), 3);
+        let spent = Budget::for_local_input(doc.len()).left - left.left;
+        let ratio = spent as f64 / doc.len() as f64;
+        println!(
+            "inventory cache: {} bytes per item, {ratio:.2} bytes of tree per byte",
+            doc.len() / 2000
+        );
+        assert!(ratio < 8.0, "{ratio}");
+    }
+
+    #[test]
+    fn the_viewers_own_files_have_no_fixed_cap() {
+        // 100,000 items: about 300 MB of estimated tree, over the cap
+        let doc = inventory_cache(100_000);
+        assert!(matches!(from_binary(&doc), Err(LlsdError::TooLarge)));
+        let (v, used) = from_binary_local(&doc).unwrap();
+        assert_eq!(used, doc.len());
+        assert_eq!(v["items"].len(), 100_000);
+        // the per-byte rule still holds there
+        assert!(matches!(from_binary_local(&array_of(1 << 20, b"!")), Err(LlsdError::TooLarge)));
     }
 
     #[test]

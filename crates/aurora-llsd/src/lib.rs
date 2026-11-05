@@ -11,7 +11,7 @@ mod xml_llsd;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-pub use binary::{from_binary, to_binary};
+pub use binary::{from_binary, from_binary_local, to_binary};
 pub use notation::{from_notation, to_notation};
 pub use xml_llsd::{from_xml, from_xml_element, to_pretty_xml_string, to_serialized_xml, to_xml, to_xml_string};
 
@@ -31,7 +31,9 @@ pub type Map = BTreeMap<String, Llsd>;
 
 /// Upper bound on the estimated heap a binary or notation parse may build,
 /// whatever the input size. Real mesh sections are mostly binary blobs and
-/// stay near their own size, far below this.
+/// stay near their own size, far below this. Files the viewer wrote itself
+/// ([`binary::from_binary_local`]) keep only the per-byte rule: a large
+/// inventory cache is well over it.
 pub const MAX_PARSED_BYTES: usize = 128 * 1024 * 1024;
 /// Estimated heap allowed per input byte. Real LLSD (blobs, strings, reals,
 /// maps with named keys) stays under 8.
@@ -45,17 +47,21 @@ pub(crate) const VALUE_COST: usize = size_of::<Llsd>();
 pub(crate) const MAP_ENTRY_COST: usize = 2 * (size_of::<String>() + size_of::<Llsd>());
 
 /// Estimated heap left to a parse, charged before each allocation it makes,
-/// so the tree stays proportional to the input with a hard cap.
+/// so the tree stays proportional to the input (with a hard cap, except for
+/// the viewer's own files).
 pub(crate) struct Budget {
-    left: usize,
+    pub(crate) left: usize,
 }
 
 impl Budget {
     pub(crate) fn for_input(len: usize) -> Self {
-        let left = len
-            .saturating_mul(PARSED_BYTES_PER_INPUT_BYTE)
-            .saturating_add(PARSED_BYTES_FLOOR)
-            .min(MAX_PARSED_BYTES);
+        let left = Self::for_local_input(len).left.min(MAX_PARSED_BYTES);
+        Budget { left }
+    }
+
+    /// The per-byte rule alone, for files the viewer wrote itself.
+    pub(crate) fn for_local_input(len: usize) -> Self {
+        let left = len.saturating_mul(PARSED_BYTES_PER_INPUT_BYTE).saturating_add(PARSED_BYTES_FLOOR);
         Budget { left }
     }
 
@@ -81,6 +87,8 @@ mod budget_tests {
         // a whole decompressed mesh section (32 MB) gets the cap, not 512 MB
         assert_eq!(Budget::for_input(32 << 20).left, MAX_PARSED_BYTES);
         assert_eq!(Budget::for_input(usize::MAX).left, MAX_PARSED_BYTES);
+        // the viewer's own files keep the per-byte rule only
+        assert_eq!(Budget::for_local_input(32 << 20).left, (512 << 20) + PARSED_BYTES_FLOOR);
         let mut b = Budget::for_input(0);
         assert!(b.charge_values(PARSED_BYTES_FLOOR / VALUE_COST).is_ok());
         assert!(matches!(b.charge(1), Err(LlsdError::TooLarge)));
