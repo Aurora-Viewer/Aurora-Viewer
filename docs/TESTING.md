@@ -9569,16 +9569,17 @@ What the inventory must show with these scenarios:
   `vkCreateInstance` one second after start (#901). Unless Preferences ›
   Graphics › Overlays › "Allow other programs' overlays" is on (read from
   `settings.json` at start, applied at the next start), it also disables
-  the other overlays' layers: the Steam overlay
+  the other overlays' layers: OBS Studio's game capture
+  (`VK_LAYER_OBS_HOOK`, `DISABLE_VULKAN_OBS_CAPTURE=1`, which also keeps
+  out Wallpaper Engine's copy; in most GPU device-lost reports, #2443),
+  the Steam overlay
   (`DISABLE_VK_LAYER_VALVE_steam_overlay_1`), RivaTuner (`DISABLE_RTSS_LAYER`),
   the Epic Games overlay (`EOS_OVERLAY_DISABLE_VULKAN_WIN64`), Twitch Studio,
   FPS Monitor and PlayClaw. The log says so
   (`Vulkan layers kept out of the viewer`, each layer with its program,
   and whether overlays are allowed). `keep` leaves the environment
-  as it is. OBS Studio's game capture (`VK_LAYER_OBS_HOOK`, and Wallpaper
-  Engine's copy, which declares the same variable), ReShade and the GPU
-  drivers' own layers are never disabled; `DISABLE_VULKAN_OBS_CAPTURE=1`,
-  set by the user, disables OBS's. Overlays that inject a DLL into the
+  as it is. ReShade and the GPU drivers' own layers are never disabled;
+  OBS's Window Capture needs no layer and keeps working. Overlays that inject a DLL into the
   running viewer instead (Discord) cannot be kept out: the log names them
   when they arrive (`overlay hook loaded in the viewer`). To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
