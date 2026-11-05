@@ -13112,12 +13112,7 @@ impl App {
             }
             BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
             BarAction::ToggleAddressBar => {
-                let visible = !self
-                    .settings
-                    .toolbar
-                    .as_ref()
-                    .and_then(|toolbar| toolbar.address_visible)
-                    .unwrap_or(true);
+                let visible = !ui::toolbar::appearance::settings(&self.egui_ctx).address_visible.unwrap_or(true);
                 self.set_address_bar_visible(visible);
             }
             BarAction::ToggleFriendsOnly => {

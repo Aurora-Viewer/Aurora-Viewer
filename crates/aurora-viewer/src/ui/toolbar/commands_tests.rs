@@ -307,7 +307,7 @@ fn a_real_menu_drag_can_return_an_entry_to_another_submenu() {
     for _ in 0..6 {
         bench.pointer(build, None);
     }
-    let child = rect(&bench, "menu:common-build/poser-title").center();
+    let child = rect(&bench, "menu:common-build/poser-title").center_top() + Vec2::new(0.0, 3.0);
     for _ in 0..3 {
         bench.pointer(child, None);
     }

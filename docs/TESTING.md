@@ -4700,8 +4700,9 @@ main-menu catalogue and all four edges without changing saved toolbar settings.
 in the top bar and other menu commands on the sides. `appearance` opens Import's
 per-button editor with the icon picker filtered to stars. `menu-layout` opens the
 Aurora menu at frame 540, with Import and the SLURL switch moved to its root.
-`address` keeps the address island visible beside the customized top bar. Capture
-at frame 620; verify that top buttons do not overlap the account or status islands.
+`address` clicks the SLURL button at frames 300 and 500: capture at 420 and 620
+to see the selected current URL, then the closed address island. Other modes use
+frame 620; top buttons must not overlap the account or status islands.
 The configurable SLURL shortcut is Ctrl+L by default: it reopens a hidden address
 bar and selects the current URL; the toolbar button toggles it in either direction.
 

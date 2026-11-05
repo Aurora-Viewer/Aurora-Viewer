@@ -514,7 +514,7 @@ pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
                 icon: None,
             },
         );
-        settings.address_visible = Some(mode == "address");
+        settings.address_visible = Some(mode == "address" && settings.address_visible.unwrap_or(false));
         settings.locked = false;
         return;
     }
@@ -579,6 +579,21 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
                 state.edit_button(&entry.button);
                 state.appearance_editor.filter("star");
             }
+        }
+        if mode == "address"
+            && matches!(frame, 300 | 301 | 500 | 501)
+            && let Some(response) = ctx.read_response(crate::ui::bars::tool_button_id("location_bar"))
+        {
+            let pos = response.rect.center();
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: matches!(frame, 300 | 500),
+                    modifiers: Default::default(),
+                },
+            ];
         }
         if mode == "menu-layout"
             && matches!(frame, 540 | 541)
