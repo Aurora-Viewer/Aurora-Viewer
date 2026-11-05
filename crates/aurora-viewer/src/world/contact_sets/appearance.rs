@@ -112,6 +112,16 @@ pub enum MarkerScope {
     Region,
 }
 
+/// What a set's marker looks like. Either becomes a plate's round badge
+/// when it lands.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerShape {
+    #[default]
+    Circle,
+    /// A 45° square.
+    Diamond,
+}
+
 /// A marker's fade-out distance when the option is first switched on, and
 /// what the setting accepts (our avatar to the resident, in metres).
 pub const MARKER_FADE_DEFAULT: u16 = 10;
@@ -121,6 +131,7 @@ pub const MARKER_FADE_RANGE: std::ops::RangeInclusive<u16> = 1..=128;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Marker {
     pub scope: MarkerScope,
+    pub shape: MarkerShape,
     pub color: [f32; 4],
     /// Into `ICONS`.
     pub icon: Option<usize>,
@@ -141,6 +152,7 @@ pub struct Visuals {
     pub replace_friend: bool,
     pub size: PlateSize,
     pub marker: MarkerScope,
+    pub marker_shape: MarkerShape,
     pub marker_fade: Option<u16>,
 }
 
@@ -165,6 +177,10 @@ impl Visuals {
                 "parcel" => MarkerScope::Parcel,
                 "region" => MarkerScope::Region,
                 _ => MarkerScope::Off,
+            },
+            marker_shape: match v["marker_shape"].as_str() {
+                "diamond" => MarkerShape::Diamond,
+                _ => MarkerShape::Circle,
             },
             marker_fade: match v["marker_fade"].as_f64() {
                 fade if fade >= 1.0 => Some((fade as u16).min(*MARKER_FADE_RANGE.end())),
@@ -204,6 +220,13 @@ impl Visuals {
                 MarkerScope::Off => "off",
                 MarkerScope::Parcel => "parcel",
                 MarkerScope::Region => "region",
+            },
+        );
+        v.insert(
+            "marker_shape",
+            match self.marker_shape {
+                MarkerShape::Circle => "circle",
+                MarkerShape::Diamond => "diamond",
             },
         );
         if let Some(fade) = self.marker_fade {
@@ -317,6 +340,7 @@ impl ContactSets {
                 if a.marker.is_none() && v.marker != MarkerScope::Off {
                     a.marker = Some(Marker {
                         scope: v.marker,
+                        shape: v.marker_shape,
                         color: set.color,
                         icon: v.icon.filter(|i| *i < ICONS.len()),
                         fade: v.marker_fade,

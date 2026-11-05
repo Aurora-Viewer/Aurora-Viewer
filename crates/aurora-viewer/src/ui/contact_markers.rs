@@ -1,6 +1,6 @@
 //! Markers over contact-set members (`world/contact_markers.rs` says who
-//! and where): a glass disc with a border and a symbol in the set's colour,
-//! seen through everything in the world. Near a resident it lands on their
+//! and where): a glass disc or diamond with a border and a symbol in the
+//! set's colour, seen through everything in the world. Near a resident it lands on their
 //! name plate and becomes a badge, and stays painted there: a plate behind a
 //! wall is hidden, the badge of the marker is not. Off screen or behind the camera it
 //! stops at the edge of the room the bars leave and gains a chevron toward
@@ -11,8 +11,8 @@ use crate::scene::Scene;
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_markers::{Entry, Sighting, Tracker, ease_direction, in_scope, proximity_alpha};
-use crate::world::contact_sets::Marker;
 use crate::world::contact_sets::appearance::ICONS;
+use crate::world::contact_sets::{Marker, MarkerShape};
 use egui::{Color32, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
 use glam::{DVec3, Vec3, Vec4};
 use std::collections::HashSet;
@@ -21,10 +21,15 @@ use uuid::Uuid;
 
 /// The disc: larger than a plate's badge, which it shrinks to on landing.
 const RADIUS: f32 = 12.0;
-/// The dot of a set without a symbol.
+/// Half the diagonal of the diamond: the same surface as near as it reads.
+const DIAMOND_RADIUS: f32 = 14.0;
+/// The dot of a set without a symbol, and its diamond.
 const DOT: f32 = 3.5;
-/// Symbol size for a disc of `RADIUS`.
+const DIAMOND_DOT: f32 = 5.5;
+/// Symbol size at full size.
 const GLYPH: f32 = 13.0;
+/// Points of a diamond's outline, in fours: its corners are among them.
+const DIAMOND_POINTS: usize = 32;
 const BORDER: f32 = 1.25;
 /// Opacity of the border over the glass.
 const BORDER_ALPHA: f32 = 0.85;
@@ -45,7 +50,7 @@ const CHEVRON_STROKE: f32 = 2.0;
 const CHEVRON_GAP: f32 = 5.0;
 /// How far from the room's edge a pinned marker stands: its chevron stays
 /// in the room, whichever way it points.
-const EDGE_MARGIN: f32 = RADIUS + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
+const EDGE_MARGIN: f32 = DIAMOND_RADIUS + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
 /// Points between the head and the disc.
 const GAP: f32 = 6.0;
 /// Points between the top of a name plate and the disc: the plate's
@@ -172,6 +177,13 @@ pub fn draw(
     }
 }
 
+fn full_radius(shape: MarkerShape) -> f32 {
+    match shape {
+        MarkerShape::Circle => RADIUS,
+        MarkerShape::Diamond => DIAMOND_RADIUS,
+    }
+}
+
 /// Where a marker stands this frame.
 struct Placed {
     at: Pos2,
@@ -212,8 +224,9 @@ fn place(
             (0.5 - clip.y / clip.w * 0.5) * proj.height / proj.ppp,
         );
         let tag = tags.iter().find(|tag| tag.id == *id);
-        let rest = GAP + RADIUS;
-        let lift = tag.map_or(rest, |tag| (on_screen.y - tag.rect.top() + PLATE_GAP + RADIUS).max(rest));
+        let full = full_radius(entry.marker.shape);
+        let rest = GAP + full;
+        let lift = tag.map_or(rest, |tag| (on_screen.y - tag.rect.top() + PLATE_GAP + full).max(rest));
         // no slide up from the head on the frame it appears
         if entry.presence == 0.0 {
             entry.lift = lift;
@@ -229,14 +242,14 @@ fn place(
                 entry.drop_merge();
                 return Some(Placed {
                     at,
-                    radius: RADIUS,
+                    radius: full,
                     merge: 0.0,
                     edge: None,
                 });
             };
             return Some(Placed {
                 at: at + (slot.center() - at) * merge,
-                radius: RADIUS + (slot.width() * 0.5 - RADIUS) * merge,
+                radius: full + (slot.width() * 0.5 - full) * merge,
                 merge,
                 edge: None,
             });
@@ -252,7 +265,7 @@ fn place(
     let way = vec2(way.x, way.y);
     Some(Placed {
         at: super::minimap::edge_point(center, inner, way),
-        radius: RADIUS,
+        radius: full_radius(entry.marker.shape),
         merge: 0.0,
         edge: Some(way),
     })
@@ -269,9 +282,22 @@ fn symbol(painter: &egui::Painter, icon: &str, at: Pos2, size: f32, color: Color
     painter.add(mesh);
 }
 
-/// The chevron beside a pinned disc, pointing along `way`.
-fn chevron(at: Pos2, way: Vec2) -> Vec<Pos2> {
-    let base = at + way * (RADIUS + CHEVRON_GAP);
+/// A 45° square, clockwise from the right as `Shape::convex_polygon` wants,
+/// rounding into a circle of the same reach as `round` goes from 0 to 1: a
+/// diamond lands on a plate's round badge.
+fn diamond(at: Pos2, radius: f32, round: f32) -> Vec<Pos2> {
+    (0..DIAMOND_POINTS)
+        .map(|i| {
+            let way = Vec2::angled(std::f32::consts::TAU * i as f32 / DIAMOND_POINTS as f32);
+            let square = 1.0 / (way.x.abs() + way.y.abs());
+            at + way * radius * (square + (1.0 - square) * round)
+        })
+        .collect()
+}
+
+/// The chevron beside a pinned marker, pointing along `way`.
+fn chevron(at: Pos2, radius: f32, way: Vec2) -> Vec<Pos2> {
+    let base = at + way * (radius + CHEVRON_GAP);
     let tip = base + way * CHEVRON;
     vec![base + way.rot90() * CHEVRON_WING, tip, base - way.rot90() * CHEVRON_WING]
 }
@@ -285,33 +311,41 @@ fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker,
     let ink = crate::interface_colors::on_panel(color).gamma_multiply(alpha);
     let blur = blur && p.panel_alpha < 255;
     let tint = if blur {
-        painter.add(aurora_render::glass_region(
-            Rect::from_center_size(at, Vec2::splat(radius * 2.0)),
-            radius,
-            alpha * (1.0 - merge),
-            GLASS_SHADE,
-        ));
+        let rect = Rect::from_center_size(at, Vec2::splat(radius * 2.0));
+        let opacity = alpha * (1.0 - merge);
+        painter.add(match marker.shape {
+            MarkerShape::Circle => aurora_render::glass_region(rect, radius, opacity, GLASS_SHADE),
+            MarkerShape::Diamond => aurora_render::glass_diamond(rect, opacity, GLASS_SHADE),
+        });
         f32::from(p.panel_alpha) / 255.0 * GLASS_TINT
     } else {
         1.0
     };
     let tint = tint + (BADGE_TINT - tint) * merge;
+    let panel = p.panel.to_opaque().gamma_multiply(tint * alpha);
     // a plate's badge has no border: it goes as the marker lands
-    painter.add(Shape::circle_filled(at, radius, p.panel.to_opaque().gamma_multiply(tint * alpha)));
-    painter.add(Shape::circle_stroke(
-        at,
-        radius,
-        Stroke::new(BORDER, ink.gamma_multiply(BORDER_ALPHA * (1.0 - merge))),
-    ));
-    let scale = radius / RADIUS;
-    match marker.icon.and_then(|i| ICONS.get(i)) {
-        Some(icon) => symbol(painter, icon, at, GLYPH * scale, ink),
-        None => {
+    let border = Stroke::new(BORDER, ink.gamma_multiply(BORDER_ALPHA * (1.0 - merge)));
+    match marker.shape {
+        MarkerShape::Circle => {
+            painter.add(Shape::circle_filled(at, radius, panel));
+            painter.add(Shape::circle_stroke(at, radius, border));
+        }
+        MarkerShape::Diamond => {
+            painter.add(Shape::convex_polygon(diamond(at, radius, merge), panel, border));
+        }
+    }
+    let scale = radius / full_radius(marker.shape);
+    match (marker.icon.and_then(|i| ICONS.get(i)), marker.shape) {
+        (Some(icon), _) => symbol(painter, icon, at, GLYPH * scale, ink),
+        (None, MarkerShape::Circle) => {
             painter.add(Shape::circle_filled(at, DOT * scale, ink));
+        }
+        (None, MarkerShape::Diamond) => {
+            painter.add(Shape::convex_polygon(diamond(at, DIAMOND_DOT * scale, merge), ink, Stroke::NONE));
         }
     }
     if let Some(way) = edge {
-        let points = chevron(at, way);
+        let points = chevron(at, radius, way);
         let backing = p.bar.to_opaque().gamma_multiply(0.55 * alpha);
         painter.add(Shape::line(points.clone(), Stroke::new(CHEVRON_STROKE + 2.0, backing)));
         painter.add(Shape::line(points, Stroke::new(CHEVRON_STROKE, color.gamma_multiply(alpha))));
@@ -320,24 +354,47 @@ fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker,
 
 /// The marker of a set in its editor: on screen, then pinned to an edge.
 pub fn preview(ui: &mut egui::Ui, p: &Palette, marker: &Marker) {
-    let pinned_width = RADIUS * 2.0 + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
-    let size = vec2(RADIUS * 3.0 + pinned_width, RADIUS * 2.0 + 4.0);
+    let radius = full_radius(marker.shape);
+    let pinned_width = radius * 2.0 + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
+    let size = vec2(radius * 3.0 + pinned_width, radius * 2.0 + 4.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let y = rect.center().y;
     let placed = |x: f32, edge| Placed {
         at: pos2(x, y),
-        radius: RADIUS,
+        radius,
         merge: 0.0,
         edge,
     };
-    paint(&painter, p, &placed(rect.left() + RADIUS, None), marker, 1.0, false);
+    paint(&painter, p, &placed(rect.left() + radius, None), marker, 1.0, false);
     paint(
         &painter,
         p,
-        &placed(rect.left() + RADIUS * 4.0, Some(Vec2::RIGHT)),
+        &placed(rect.left() + radius * 4.0, Some(Vec2::RIGHT)),
         marker,
         1.0,
         false,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_diamond_stands_on_its_corners_and_rounds_into_a_circle() {
+        let at = pos2(100.0, 50.0);
+        let square = diamond(at, 10.0, 0.0);
+        assert_eq!(square.len() % 4, 0);
+        for (i, corner) in [vec2(10.0, 0.0), vec2(0.0, 10.0), vec2(-10.0, 0.0), vec2(0.0, -10.0)]
+            .into_iter()
+            .enumerate()
+        {
+            assert!((square[i * DIAMOND_POINTS / 4] - (at + corner)).length() < 1e-3);
+        }
+        // the middle of a side, nearer than the corners
+        let side = square[DIAMOND_POINTS / 8] - at;
+        assert!((side.length() - 10.0 / 2.0_f32.sqrt()).abs() < 1e-3);
+        assert!(diamond(at, 10.0, 1.0).iter().all(|point| (point.distance(at) - 10.0).abs() < 1e-3));
+    }
 }

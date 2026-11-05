@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::world::contact_sets::appearance::{ICON_LABELS, ICONS, MARKER_FADE_DEFAULT, MARKER_FADE_RANGE};
-use crate::world::contact_sets::{MarkerScope, PlateSize, Visuals};
+use crate::world::contact_sets::{MarkerScope, MarkerShape, PlateSize, Visuals};
 
 pub(super) fn editor(ui: &mut egui::Ui, p: &Palette, world: &mut World, name: &str, original: &Visuals) {
     let mut v = original.clone();
@@ -46,6 +46,13 @@ pub(super) fn editor(ui: &mut egui::Ui, p: &Palette, world: &mut World, name: &s
             .color(p.muted),
     );
     if v.marker != MarkerScope::Off {
+        ui.label(aurora_i18n::tr!("contact-visual-marker-shape"));
+        for (shape, key) in [
+            (MarkerShape::Circle, "contact-visual-marker-shape-circle"),
+            (MarkerShape::Diamond, "contact-visual-marker-shape-diamond"),
+        ] {
+            widgets::radio_value(ui, p, &mut v.marker_shape, shape, aurora_i18n::text(key));
+        }
         let mut fades = v.marker_fade.is_some();
         if widgets::switch_labeled(ui, p, &mut fades, aurora_i18n::tr!("contact-visual-marker-fade")).changed() {
             v.marker_fade = fades.then_some(MARKER_FADE_DEFAULT);

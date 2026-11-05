@@ -1,12 +1,12 @@
 //! Contact-set markers (AURORA_DEMO_CONTACT_MARKERS=region|parcel|fade,
-//! docs/TESTING.md): three sets, two with a symbol and one with the plain
-//! dot, and four residents known only by their coarse
+//! docs/TESTING.md): three sets, two with a symbol and one with a plain
+//! dot, Family in circles and the others in diamonds, and four residents known only by their coarse
 //! location: one circling the region, one behind the camera, one far to
 //! the side and one of unknown altitude. With AURORA_DEMO_TAGS, plate
 //! residents join the sets.
 
 use super::HANDLE;
-use crate::world::contact_sets::{MarkerScope, Visuals};
+use crate::world::contact_sets::{MarkerScope, MarkerShape, Visuals};
 use aurora_net::NetEvent;
 use glam::Vec3;
 use uuid::Uuid;
@@ -54,19 +54,27 @@ pub fn seed(world: &mut crate::world::World) {
     let plates = crate::demo::tags::MARKER_RESIDENTS;
     let sets = &mut world.contact_sets;
     sets.keep_in_memory();
-    for (name, color, members, icon) in [
+    for (name, color, members, icon, marker_shape) in [
         (
             aurora_i18n::tr!("demo-family"),
             [0.957, 0.447, 0.714, 1.0],
             vec![plates[0], plates[1], SIDE],
             Some(0),
+            MarkerShape::Circle,
         ),
-        ("Clubbing", [0.369, 0.918, 0.831, 1.0], vec![plates[2], CIRCLING], None),
+        (
+            "Clubbing",
+            [0.369, 0.918, 0.831, 1.0],
+            vec![plates[2], CIRCLING],
+            None,
+            MarkerShape::Diamond,
+        ),
         (
             aurora_i18n::tr!("demo-shop"),
             [0.988, 0.827, 0.302, 1.0],
             vec![BEHIND, UNKNOWN_ALTITUDE],
             Some(1),
+            MarkerShape::Diamond,
         ),
     ] {
         sets.add_set(name);
@@ -76,6 +84,7 @@ pub fn seed(world: &mut crate::world::World) {
             name,
             Visuals {
                 marker: scope,
+                marker_shape,
                 marker_fade: fade,
                 icon,
                 ..Default::default()

@@ -78,6 +78,7 @@ fn contact_visuals_round_trip_and_old_files_inherit() {
         replace_friend: true,
         size: PlateSize::Reduced,
         marker: MarkerScope::Off,
+        marker_shape: MarkerShape::Circle,
         marker_fade: None,
     };
     sets.set_visuals("Example", v.clone());
@@ -127,6 +128,7 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
         "Friends",
         Visuals {
             marker: MarkerScope::Region,
+            marker_shape: MarkerShape::Diamond,
             marker_fade: Some(9000),
             icon: Some(2),
             ..Default::default()
@@ -137,6 +139,7 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
         friends,
         Marker {
             scope: MarkerScope::Region,
+            shape: MarkerShape::Diamond,
             color: [0.0, 0.0, 1.0, 1.0],
             icon: Some(2),
             fade: Some(*appearance::MARKER_FADE_RANGE.end()),
@@ -162,5 +165,7 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
     assert_eq!(Visuals::read(&visuals.write()), visuals);
     let visuals = sets.set("Staff").unwrap().visuals.clone();
     assert_eq!(Visuals::read(&visuals.write()), visuals);
+    assert_eq!(staff.shape, MarkerShape::Circle, "the set's own shape, not the other's");
     assert_eq!(Visuals::read(&Llsd::new_map()).marker, MarkerScope::Off, "older files");
+    assert_eq!(Visuals::read(&Llsd::new_map()).marker_shape, MarkerShape::Circle);
 }

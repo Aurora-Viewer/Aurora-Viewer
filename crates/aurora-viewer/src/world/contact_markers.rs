@@ -218,6 +218,7 @@ mod tests {
     const ID: Uuid = Uuid::from_u128(1);
     const MARKER: Marker = Marker {
         scope: MarkerScope::Region,
+        shape: crate::world::contact_sets::MarkerShape::Circle,
         color: [1.0, 0.0, 0.0, 1.0],
         icon: None,
         fade: None,
