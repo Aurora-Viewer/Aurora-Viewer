@@ -19,7 +19,7 @@ pub struct State {
 
 impl App {
     pub(super) fn joystick_status(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        if !self.joystick.active {
+        if !flycam_status_shown(self.joystick.active, self.interface.hidden) {
             return;
         }
         let room = crate::ui::layout::work_area(ctx);
@@ -406,5 +406,27 @@ impl App {
         {
             self.toggle_joystick_flycam();
         }
+    }
+}
+
+/// The flycam pill goes with the interface (Alt+Shift+U, immersive mode), as
+/// the Legacy Viewer hides its Flycam button (LLPanelStandStopFlying) with
+/// HideUIControls (LLViewToggleUI::confirm, llviewermenu.cpp, and
+/// LLAgentCamera::changeCameraToDefault, llagentcamera.cpp); the flycam
+/// itself keeps running.
+fn flycam_status_shown(active: bool, interface_hidden: bool) -> bool {
+    active && !interface_hidden
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flycam_status_goes_with_the_hidden_interface() {
+        assert!(flycam_status_shown(true, false));
+        assert!(!flycam_status_shown(true, true), "hidden or immersive");
+        assert!(!flycam_status_shown(false, false));
+        assert!(!flycam_status_shown(false, true));
     }
 }
