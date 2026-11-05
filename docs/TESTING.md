@@ -6998,7 +6998,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `target` of the worktree, dev profile, then restoration of the normal binary
   at its Git version; no tag or release published. `AURORA_UPDATE_TEST_ROOT` is
   only accepted for an exe in its `install` subfolder, with an
-  `aurora-update-test.json` marker defining a loopback HTTP feed. Settings,
+  `aurora-update-test.json` marker defining a loopback HTTP feed and the
+  public half of the throwaway key the release is signed with (`update_key`,
+  [Update signature](UPDATES.md#update-signature)). Settings,
   cache and logs are isolated under this root; login and credential vault inert.
   `AURORA_UPDATE_TEST_VERSION` is reserved for these binaries and refused in
   release or with `AURORA_VERSION_TAG`. The synthetic binaries refuse any normal

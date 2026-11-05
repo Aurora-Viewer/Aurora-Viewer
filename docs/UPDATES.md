@@ -66,6 +66,8 @@ main a few days before a stable version, to catch crashes before everyone.
   yet) asks for a manual approval of every release, which a build every
   12 hours cannot wait for. Its step must skip the tags with a pre-release
   part (`-`). Beta testers are told to expect an unknown-publisher warning.
+  The update manifest is another matter: betas carry a signed one like
+  every release ([Update signature](#update-signature)), with no approval.
 
 `scripts/test-nightly.ps1` holds the fixture tests of the versions, the
 next tag, the pruning and the policy line; the Nightly workflow runs them on
@@ -86,6 +88,9 @@ The Release workflow publishes together:
 - `Aurora-Viewer-vX.Y.Z-windows-x64-symbols.zip` and its `.zip.sha256`: the
   exe's crash symbols ([crash reports](BUG_REPORTING.md#crash-symbols)),
   never downloaded by the viewer, which looks for the package's exact name;
+- `aurora-update-manifest.json` and `aurora-update-manifest.json.sig`: the
+  [signed manifest](#update-signature) of the zip and of the policy, added
+  by the sign job, which then publishes the release (created as a draft);
 - then `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` and its `.tar.gz.sha256`,
   built on Ubuntu 24.04 by a second job once the release exists: a failed
   Linux build leaves the Windows release published.
@@ -125,6 +130,89 @@ installation. Platforms other than Windows remain out of scope. The current
 ZIP is kept: Velopack was studied, but its chain of packages and installers
 is not that of the Aurora releases.
 
+## Update signature
+
+Anyone able to publish a GitHub release could otherwise ship a package, or
+a policy that blocks the login, to every viewer that updates. Each release
+therefore carries `aurora-update-manifest.json`: its version, then the
+name, size and SHA-256 of the Windows zip and of `aurora-update-policy.json`,
+signed with Ed25519 (`aurora-update-manifest.json.sig`, the signature in
+hex). The viewer holds the public keys (`UPDATE_KEYS`,
+`crates/aurora-updater/src/signature.rs`) and accepts a release only when:
+
+- the manifest and its signature are there and the signature holds against
+  one of those keys (a list, so that a key can be replaced: the new one is
+  added in a release still signed with the old one);
+- the manifest names the release's version;
+- the zip has the manifest's size, and its download the manifest's SHA-256
+  (the `.sha256` files stay for people checking a download by hand; the
+  viewer no longer reads them);
+- the policy has the manifest's bytes, and is there exactly when the
+  manifest lists it.
+
+Otherwise it logs `update refused: …` and offers nothing: the check fails as
+an integrity failure (shown on a manual check; an automatic check only logs
+it and does not block the login), and a package that does not match at
+download is not installed. Linux and macOS read the policy the same way.
+The media plugins pack needs no manifest: its size and SHA-256 are compiled
+into the viewer. Viewers published before this change do not check
+signatures; nothing changes for them.
+
+**Signing.** The Release workflow creates the release as a draft. Its
+`sign` job runs in the GitHub environment `release`, the only place that
+holds the private key (secret `UPDATE_SIGNING_KEY`): it downloads the zip
+and the policy from the draft, writes and signs the manifest with
+`aurora-update-sign`, uploads both files and publishes the draft. Without
+the secret the job fails and the release stays a draft. A pull request's
+dry run signs nothing and says so. The tool refuses a key whose public half
+is not in `UPDATE_KEYS`, and while that list is empty a build with
+`AURORA_VERSION_TAG` (the Release workflow) does not compile: no release can
+go out that its viewers could never update from.
+
+**Setting up the key** (a maintainer with admin rights, once, before the
+first signed release):
+
+1. Generate the key on your own PC, into a folder only you can read and
+   outside the repository:
+
+   ```powershell
+   cargo run -p aurora-updater --bin aurora-update-sign -- keygen --out <private folder>urora-update-key.txt
+   ```
+
+   The private key goes to that file and is never shown. The tool prints a
+   `key("…")` line: the public key.
+2. Paste that line into `UPDATE_KEYS` in
+   `crates/aurora-updater/src/signature.rs`, replacing the TODO, in a pull
+   request.
+3. In the repository's Settings › Environments, create the environment
+   `release`. Under "Deployment branches and tags", choose "Selected
+   branches and tags" and add the branch `main` (the nightly betas come
+   from it) and the tag pattern `v*` (the stable tags). Make sure the tag
+   ruleset lets only administrators (and the nightly's GitHub Actions) create
+   `v*` tags, betas included: a workflow started by a tag runs that tag's
+   own copy of the workflow, so whoever may push a `v*` tag may reach the
+   key. Required reviewers would stop the nightly betas at every run: leave
+   them out, or accept approving each beta.
+4. Add the private key as a secret **of that environment** (never a
+   repository secret, which every workflow could read), without it appearing
+   on screen:
+
+   ```powershell
+   Get-Content -Raw -LiteralPath <private folder>urora-update-key.txt | gh secret set UPDATE_SIGNING_KEY --env release --repo Aurora-Viewer/Aurora-Viewer
+   ```
+
+5. Keep the key file offline (an encrypted backup); delete other copies.
+   Without it, no release can be signed for the installed viewers any
+   more: each would have to be updated by hand. A key that leaks is
+   replaced the same way as an old one (new key added, then the old one
+   removed), as soon as possible.
+
+`aurora-update-sign verify --manifest aurora-update-manifest.json --tag
+vX.Y.Z <zip> <policy>` checks a downloaded release against the compiled
+keys. `scripts/test-update.ps1` signs its local release with a throwaway
+key that stays in memory; only its public half goes into the test
+configuration (`update_key`), trusted on that loopback feed alone.
+
 ## Replacement and rollback
 
 Download, hash and extraction run in the background. Extraction refuses
@@ -158,7 +246,9 @@ up the successful transactions after the helper has finished.
 ## Validation
 
 `cargo test -p aurora-updater`: loopback HTTP server and throwaway packages
-for SemVer, required update, tampered hash, incomplete transfer,
+for SemVer, required update, signed manifest (missing or altered signature,
+wrong key, another version, altered or removed policy, altered package),
+tampered hash, incomplete transfer,
 cancellation, dangerous ZIP, lock, backup and rollback of the package and of
 the data. `scripts/test-update-policy.ps1` checks the release choices, their
 carry-over into an annotated tag and the refusal of an invalid threshold,
