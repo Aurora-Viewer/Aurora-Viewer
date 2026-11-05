@@ -8,6 +8,7 @@
 
 use super::hud::{NameTag, Projector};
 use crate::scene::Scene;
+use crate::settings::MarkerAnchor;
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_markers::{Entry, Sighting, Tracker, ease_direction, in_scope, proximity_alpha};
@@ -139,6 +140,7 @@ pub fn draw(
     eye: Vec3,
     tags: &[NameTag],
     tracker: &mut Tracker,
+    anchor: MarkerAnchor,
     shown: bool,
 ) {
     // what says where residents are stays hidden with the mini-map
@@ -159,7 +161,7 @@ pub fn draw(
         .filter_map(|(id, entry)| {
             let alpha = entry.presence * proximity_alpha(entry.position.distance(world.agent.position), entry.marker.fade);
             let distance = entry.position.distance(eye);
-            let placed = place(id, entry, scene, proj, screen.center(), inner, tags, distance, dt)?;
+            let placed = place(id, entry, scene, proj, screen.center(), inner, tags, anchor, distance, dt)?;
             (alpha > 0.0).then_some((distance, placed, entry.marker, alpha))
         })
         .collect();
@@ -203,14 +205,18 @@ fn place(
     center: Pos2,
     inner: Rect,
     tags: &[NameTag],
+    anchor: MarkerAnchor,
     distance: f32,
     dt: f32,
 ) -> Option<Placed> {
     let root = proj.view_proj * entry.position.extend(1.0);
     let head = proj.view_proj * scene.name_tag_anchor(id, entry.position).extend(1.0);
+    let above = anchor == MarkerAnchor::AboveName;
     // as `Projector::project_name_tag`: above the root, not above a head
     // that perspective moves sideways
-    let clip = if root.w > 0.05 && head.w > 0.05 {
+    let clip = if !above {
+        root
+    } else if root.w > 0.05 && head.w > 0.05 {
         Vec4::new(root.x / root.w * head.w, head.y, head.z, head.w)
     } else {
         head
@@ -226,7 +232,11 @@ fn place(
         let tag = tags.iter().find(|tag| tag.id == *id);
         let full = full_radius(entry.marker.shape);
         let rest = GAP + full;
-        let lift = tag.map_or(rest, |tag| (on_screen.y - tag.rect.top() + PLATE_GAP + full).max(rest));
+        let lift = match tag {
+            _ if !above => 0.0,
+            Some(tag) => (on_screen.y - tag.rect.top() + PLATE_GAP + full).max(rest),
+            None => rest,
+        };
         // no slide up from the head on the frame it appears
         if entry.presence == 0.0 {
             entry.lift = lift;

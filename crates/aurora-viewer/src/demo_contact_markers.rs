@@ -1,4 +1,4 @@
-//! Contact-set markers (AURORA_DEMO_CONTACT_MARKERS=region|parcel|fade,
+//! Contact-set markers (AURORA_DEMO_CONTACT_MARKERS=region|parcel|fade|body,
 //! docs/TESTING.md): three sets, two with a symbol and one with a plain
 //! dot, Family in circles and the others in diamonds, and four residents known only by their coarse
 //! location: one circling the region, one behind the camera, one far to
@@ -27,6 +27,7 @@ enum Mode {
     Region,
     Parcel,
     Fade,
+    Body,
 }
 
 fn mode() -> Option<Mode> {
@@ -34,12 +35,20 @@ fn mode() -> Option<Mode> {
     *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_CONTACT_MARKERS").ok()?.trim() {
         "parcel" => Some(Mode::Parcel),
         "fade" => Some(Mode::Fade),
+        "body" => Some(Mode::Body),
         _ => Some(Mode::Region),
     })
 }
 
 pub fn active() -> bool {
     mode().is_some()
+}
+
+/// `body`: markers on the avatars' centre of mass, for this run.
+pub fn apply_preferences(settings: &mut crate::settings::Settings) {
+    if mode() == Some(Mode::Body) {
+        settings.contact_marker_anchor = crate::settings::MarkerAnchor::Body;
+    }
 }
 
 /// The sets of the scenario, for this run: nothing is saved.

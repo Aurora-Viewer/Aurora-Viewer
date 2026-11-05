@@ -15,6 +15,16 @@ pub mod stream_list;
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
 /// row per message, no pictures), a messenger's bubbles (`ui/chat/bubbles.rs`)
 /// or the lines of Firestorm's conversations (the legacy style).
+/// Where a contact-set marker stands on an avatar (`ui/contact_markers.rs`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MarkerAnchor {
+    /// Above the name plate, or the head without one.
+    #[default]
+    AboveName,
+    /// On the avatar's centre of mass (its pelvis, the root of the skeleton).
+    Body,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChatStyle {
     #[default]
@@ -928,6 +938,7 @@ pub struct Settings {
     pub temporary_name_tags: bool,
     /// The contact sets' markers in the world (each set says where it wants one).
     pub contact_markers: bool,
+    pub contact_marker_anchor: MarkerAnchor,
     pub name_tag_show_seconds: f32,
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
@@ -1951,6 +1962,7 @@ impl Default for Settings {
             show_other_name_tags: true,
             temporary_name_tags: false,
             contact_markers: true,
+            contact_marker_anchor: MarkerAnchor::AboveName,
             name_tag_show_seconds: 10.0,
             classic_name_tags: false,
             classic_profiles: false,

@@ -14933,6 +14933,7 @@ impl App {
                     self.camera.position,
                     &self.name_tags,
                     &mut self.contact_markers,
+                    self.settings.contact_marker_anchor,
                     self.settings.contact_markers && !held && (!self.interface.immersive || self.settings.immersive_name_tags),
                 );
                 if !self.camera.mouselook() && !held {
@@ -17949,6 +17950,7 @@ impl ApplicationHandler for App {
                     self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
             }
+            crate::demo::contact_markers::apply_preferences(&mut self.settings);
             if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
                 self.panels.ao = false;
             }

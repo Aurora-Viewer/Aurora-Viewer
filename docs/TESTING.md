@@ -9080,7 +9080,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall`, `height` or `render` | Name plates in all their states, at the three distances; occlusion, stable height and manual rendering limits |
-| `AURORA_DEMO_CONTACT_MARKERS=region`, `parcel` or `fade` | Contact-set markers in the world, on loaded and coarse residents |
+| `AURORA_DEMO_CONTACT_MARKERS=region`, `parcel`, `fade` or `body` | Contact-set markers in the world, on loaded and coarse residents |
 | `AURORA_DEMO_CHAT_BUBBLES=1`, `typing` or `talk` | With `AURORA_DEMO_TAGS`: the residents talk, chat bubbles above the heads for this run; `typing`: the typing dots too; `talk`: as Preferences say |
 | `AURORA_DEMO_STAFF=1` | A few demo residents count as Aurora team members or Linden Lab employees: their plate's light and their tag |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
@@ -9180,7 +9180,8 @@ What the inventory must show with these scenarios:
   altitude (at our own height). With `AURORA_DEMO_TAGS=voice`, Nova, Orion
   and Vega join the sets: the marker sits above their plate, shows through the
   wall, and under 15 m from the camera lands on the plate as a badge. `parcel`: members only on our parcel (the demo's region is cut
-  into four); `fade`: markers gone within 12 m of our avatar.
+  into four); `fade`: markers gone within 12 m of our avatar;
+  `body`: markers on the avatars' centre of mass, for this run.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),
