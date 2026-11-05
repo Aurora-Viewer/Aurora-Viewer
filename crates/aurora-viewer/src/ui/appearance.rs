@@ -60,7 +60,8 @@ pub struct AppearanceUi {
     select_name: bool,
     adding: bool,
     add_search: String,
-    reverse_sort: bool,
+    /// The order of the outfits, kept in the settings (`app.rs`).
+    pub sort: crate::world::outfit_folders::Sort,
     pub pending: Option<(Uuid, bool)>,
     pub pending_actor: Uuid,
     pub saved_new: bool,
@@ -146,7 +147,7 @@ struct Prepared {
 struct Shown {
     generation: u64,
     search: String,
-    reverse: bool,
+    sort: crate::world::outfit_folders::Sort,
     closed: u64,
     order: crate::world::outfit_folders::Order,
     entries: Vec<crate::world::outfit_folders::Entry>,
@@ -442,13 +443,13 @@ impl AppearanceUi {
         let fresh = self.shown.as_ref().is_some_and(|shown| {
             shown.generation == inv.generation
                 && shown.search == self.search
-                && shown.reverse == self.reverse_sort
+                && shown.sort == self.sort
                 && shown.closed == self.closed_version
                 && shown.order == order
         });
         if !fresh {
             let needle = self.search.trim().to_lowercase();
-            let tree = tree(inv, &needle, self.reverse_sort, order);
+            let tree = tree(inv, &needle, self.sort, order);
             let total = tree.iter().filter(|e| !e.group).count();
             let mut entries = Vec::with_capacity(tree.len());
             let mut hidden_below = None;
@@ -464,7 +465,7 @@ impl AppearanceUi {
             self.shown = Some(Shown {
                 generation: inv.generation,
                 search: self.search.clone(),
-                reverse: self.reverse_sort,
+                sort: self.sort,
                 closed: self.closed_version,
                 order,
                 entries,
@@ -1647,14 +1648,40 @@ pub fn show(
                     "sort-ascending-2-filled",
                     aurora_i18n::tr!("ui-appearance-sort-outfits"),
                     |ui| {
-                        for (reverse, icon, label) in [
-                            (false, "sort-ascending-letters", aurora_i18n::tr!("ui-appearance-name-a-z")),
-                            (true, "sort-descending-letters", aurora_i18n::tr!("ui-appearance-name-z-a")),
+                        use crate::world::outfit_folders::SortBy;
+                        for (by, icon, label) in [
+                            (
+                                SortBy::NameAscending,
+                                "sort-ascending-letters",
+                                aurora_i18n::tr!("ui-appearance-name-a-z"),
+                            ),
+                            (
+                                SortBy::NameDescending,
+                                "sort-descending-letters",
+                                aurora_i18n::tr!("ui-appearance-name-z-a"),
+                            ),
+                            (SortBy::Newest, "clock-filled", aurora_i18n::tr!("ui-appearance-date-newest-first")),
+                            (SortBy::Oldest, "clock-filled", aurora_i18n::tr!("ui-appearance-date-oldest-first")),
                         ] {
-                            if menu::check(ui, p, icon, label, st.reverse_sort == reverse, true) {
-                                st.reverse_sort = reverse;
+                            if menu::check(ui, p, icon, label, st.sort.by == by, true) {
+                                st.sort.by = by;
                             }
                         }
+                        menu::separator(ui, p);
+                        menu::toggle(
+                            ui,
+                            p,
+                            "star-filled",
+                            aurora_i18n::tr!("ui-appearance-favorites-to-top"),
+                            &mut st.sort.favorites_first,
+                        );
+                        menu::toggle(
+                            ui,
+                            p,
+                            "photo-filled",
+                            aurora_i18n::tr!("ui-appearance-images-to-top"),
+                            &mut st.sort.images_first,
+                        );
                     },
                 );
             });
@@ -2089,6 +2116,26 @@ mod tests {
         let (_, landscape) = preview_rects(frame, egui::vec2(400.0, 180.0), true);
         assert!(landscape.min.x > 0.0);
         assert_eq!(landscape.min.y, 0.0);
+    }
+
+    #[test]
+    fn the_outfit_sort_defaults_to_name_and_is_saved() {
+        use crate::settings::Settings;
+        use crate::world::outfit_folders::{Sort, SortBy};
+        let old: Settings = serde_json::from_str("{}").expect("old settings");
+        assert_eq!(old.appearance_outfit_sort, Sort::default());
+        let sort = Sort {
+            by: SortBy::Newest,
+            favorites_first: true,
+            images_first: false,
+        };
+        let settings = Settings {
+            appearance_outfit_sort: sort,
+            ..Default::default()
+        };
+        let saved = serde_json::to_vec(&settings).expect("save settings");
+        let restored: Settings = serde_json::from_slice(&saved).expect("restore settings");
+        assert_eq!(restored.appearance_outfit_sort, sort);
     }
 
     #[test]
@@ -3519,7 +3566,7 @@ mod tests {
         let beach = st.shown_outfits(inv);
         assert_eq!(beach.len(), 3);
         assert!(beach.iter().all(|id| name(inv, id).contains("beach")));
-        st.reverse_sort = true;
+        st.sort.by = crate::world::outfit_folders::SortBy::NameDescending;
         let reversed = st.shown_outfits(inv);
         assert_eq!(reversed.iter().rev().copied().collect::<Vec<_>>(), beach);
     }

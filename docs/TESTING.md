@@ -4979,7 +4979,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
-| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
+| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit, sorted by date, favorites or images |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
@@ -8483,11 +8483,14 @@ descriptions, chat, notice bodies and local filenames continue to accept Unicode
 The same rules apply in both interface styles. The agent uses demo mode only;
 the human verifies actual saved inventory names on the grid.
 
-**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`** — with
-`AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names like
-"Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
+**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]`**
+— with `AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names
+like "Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
 clothes, objects and body parts, a thumbnail id (never loaded offline) on
-one in four. `closed` leaves the window closed; `scroll` turns the wheel
+one in four, and a date a day apart in an order unrelated to the names.
+`newest` and `oldest` start on that date order, `favorites` (one outfit in
+five is then a favorite) and `images` turn on the matching Sort outfits
+toggle, for this run's settings like any choice of the menu. `closed` leaves the window closed; `scroll` turns the wheel
 over the list or gallery of the default window from frame 700, down then up
 every 300 frames; `locate` presses the locate button of the current outfit
 banner at start: the gallery or list scrolls to the worn outfit, selects
