@@ -16,8 +16,25 @@ pub(super) struct DragState {
     ray: Option<(Vec3, Vec3)>,
     checked: Option<Instant>,
     target: Option<(usize, u8)>,
+    /// What the CPU search stops at, the avatars' boxes aside: bounds what
+    /// the faces drawn may designate.
+    found: Option<Vec3>,
+    /// The faces drawn under the pointer, asked at the pace of the surface
+    /// search, and the ray they were asked for.
+    drawn: Option<(u64, (Vec3, Vec3))>,
+    /// A face of what we wear under the pointer, from the last answer.
+    worn: Option<(usize, u8)>,
     pub highlighted: Option<(usize, u64)>,
 }
+impl DragState {
+    fn end_worn_search(&mut self, renderer: &mut Renderer) {
+        if let Some((ticket, _)) = self.drawn.take() {
+            renderer.forget_drawn(ticket);
+        }
+        self.worn = None;
+    }
+}
+
 pub(super) struct Drop {
     item: Uuid,
     object: usize,
@@ -702,12 +719,32 @@ impl App {
         self.texture_library.pending_refresh.clear();
         true
     }
-    pub(super) fn texture_library_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<Drop> {
+    /// The face of what we wear that the faces drawn designate, if any
+    /// (scene/drawn.rs): the CPU search leaves worn meshes to them.
+    fn worn_drop_face(&self, drawn: &aurora_render::Drawn, ray: (Vec3, Vec3)) -> Option<(usize, u8)> {
+        let shown = self.scene.designated(
+            &self.world,
+            crate::scene::drawn::Gesture::Drop,
+            drawn,
+            Some(ray),
+            self.library_drag.found,
+            None,
+            self.build.open,
+        )?;
+        let wearer = super::inventory_drag::wearer(&self.world, shown.idx)?;
+        let own = self.world.objects.get(wearer)?.full_id == self.world.agent_id;
+        own.then_some((shown.idx, u8::try_from(shown.face?).ok()?))
+    }
+
+    pub(super) fn texture_library_drag_input(&mut self, ctx: &egui::Context, renderer: &mut Renderer) -> Option<Drop> {
         self.library_drag.highlighted = None;
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return None;
         }
-        let drag = ui::inventory::world_drag(ctx)?;
+        let Some(drag) = ui::inventory::world_drag(ctx) else {
+            self.library_drag.end_worn_search(renderer);
+            return None;
+        };
         let item = catalogue::resource(&self.world.inventory, drag.item)?;
         let asset = catalogue::asset(item);
         if asset.is_nil() {
@@ -750,8 +787,32 @@ impl App {
             self.library_drag.target = surface.map(|(idx, face)| (idx, face as u8));
             self.library_drag.ray = Some(ray);
             self.library_drag.checked = Some(Instant::now());
+            if hud.is_some() {
+                self.library_drag.end_worn_search(renderer);
+            } else {
+                // What stands before a worn face: land above all, which the
+                // faces drawn do not tell. An avatar's box holds what it wears.
+                let found = self
+                    .scene
+                    .inventory_surface(&self.world, ray, self.settings.draw_distance, &mut self.library_drag.candidates);
+                let avatar = found
+                    .and_then(|(_, idx)| self.world.objects.get(idx?))
+                    .is_some_and(|o| o.is_avatar());
+                self.library_drag.found = found.filter(|_| !avatar).map(|(point, _)| point);
+                if self.library_drag.drawn.is_none() {
+                    let ticket = renderer.request_drawn(position.0, position.1, aurora_render::DrawnMode::Interaction);
+                    self.library_drag.drawn = Some((ticket, ray));
+                }
+            }
         }
-        let target = self.library_drag.target;
+        if let Some((ticket, asked)) = self.library_drag.drawn
+            && let Some(drawn) = renderer.take_drawn(ticket)
+        {
+            self.library_drag.drawn = None;
+            self.library_drag.worn = self.worn_drop_face(&drawn, asked);
+        }
+        // On release too: the last answer, a few frames old, is what was shown.
+        let target = self.library_drag.worn.or(self.library_drag.target);
         let allowed = target
             .and_then(|(idx, face)| self.world.objects.get(idx).map(|o| (idx, face, o)))
             .is_some_and(|(idx, face, o)| {
@@ -853,6 +914,7 @@ impl App {
             }
         } else {
             egui::DragAndDrop::clear_payload(ctx);
+            self.library_drag.end_worn_search(renderer);
             if reason.is_some() {
                 return None;
             }

@@ -34,6 +34,13 @@
 //! worn by our own avatar lets a left click through even when scripted, as
 //! in the Legacy Viewer: a press on our mesh body steers our avatar.
 //!
+//! **Wanted difference from the Legacy Viewer, inventory drops.** There,
+//! LLToolDragAndDrop::pick treats any attachment outside the HUD as its
+//! avatar, where a texture does nothing (dad3dNULL). Here a texture or a
+//! material dragged over the world lands on the face shown of what we wear
+//! and may edit, with the permission rules of the Texture tab
+//! (`Gesture::Drop`, app/texture_library.rs).
+//!
 //! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
 //! that pass directly: no CPU rest-pose or invisible touch-surface search.
 //!
@@ -53,6 +60,8 @@ pub enum Gesture {
     Menu,
     /// Build tools: selection.
     Build,
+    /// A texture or a material dragged over the world, on what is worn.
+    Drop,
 }
 
 /// What a gesture needs to know of the object of a drawn face.
@@ -93,6 +102,8 @@ pub fn reaches(gesture: Gesture, s: Status, build_open: bool) -> bool {
         // attachment in front of an avatar rather than the avatar
         Gesture::Menu => s.posed_by_gpu || s.worn || s.avatar,
         Gesture::Build => s.posed_by_gpu && s.selectable,
+        // `selectable` carries RLVa's edit restrictions
+        Gesture::Drop => s.worn && s.selectable,
     }
 }
 
@@ -287,6 +298,29 @@ mod tests {
                 assert_eq!(reaches(Gesture::Build, target, build), target.selectable);
             }
         }
+    }
+
+    #[test]
+    fn a_drop_reaches_what_is_worn_and_editable_and_nothing_else() {
+        let worn = Status { worn: true, ..RIGGED };
+        assert!(reaches(Gesture::Drop, worn, false), "rigged or not");
+        let worn_prim = Status {
+            posed_by_gpu: false,
+            ..worn
+        };
+        assert!(reaches(Gesture::Drop, worn_prim, false), "a worn prim too");
+        assert!(!reaches(Gesture::Drop, RIGGED, false), "an animesh is a world object");
+        let locked = Status { selectable: false, ..worn };
+        assert!(!reaches(Gesture::Drop, locked, false), "not editable");
+        let ignored = Status { ignored: true, ..worn };
+        assert!(!reaches(Gesture::Drop, ignored, false));
+        let avatar = Status {
+            avatar: true,
+            worn: false,
+            posed_by_gpu: false,
+            ..RIGGED
+        };
+        assert!(!reaches(Gesture::Drop, avatar, false));
     }
 
     #[test]

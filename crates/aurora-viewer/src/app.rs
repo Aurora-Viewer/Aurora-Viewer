@@ -10567,7 +10567,7 @@ impl App {
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
-                    library_drop = self.texture_library_drag_input(ui.ctx(), &gfx.renderer);
+                    library_drop = self.texture_library_drag_input(ui.ctx(), &mut gfx.renderer);
                 }
             }
             // after every window: their text fields have been drawn
