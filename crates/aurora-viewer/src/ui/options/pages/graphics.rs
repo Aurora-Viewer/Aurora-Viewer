@@ -240,6 +240,11 @@ fn frames_per_second(cx: &mut Cx) {
                 tr!("status-fps"),
             );
         });
+        cx.unfolded().toggle(
+            tr!("ui-options-pause-when-card-busy"),
+            tr!("ui-options-pause-when-card-busy-tip"),
+            &field!(background_gpu_pause),
+        );
     });
 }
 
@@ -539,6 +544,23 @@ fn light(cx: &mut Cx) {
                 tr!("ui-options-projector-shadows"),
                 tr!("ui-options-projector-shadows-help"),
                 &field!(projector_shadows),
+            );
+            let enabled = cx.s.projector_shadows;
+            cx.row(
+                tr!("ui-options-projector-shadow-limit"),
+                tr!("ui-options-projector-shadow-limit-help"),
+                &field!(projector_shadow_limit),
+                |ui, s| {
+                    ui.add_enabled(
+                        enabled,
+                        egui::Slider::new(
+                            &mut s.projector_shadow_limit,
+                            1..=aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8,
+                        )
+                        .trailing_fill(true),
+                    )
+                    .changed()
+                },
             );
             cx.toggle(
                 tr!("ui-options-contact-shadows"),
