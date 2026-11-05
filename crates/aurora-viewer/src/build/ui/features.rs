@@ -370,6 +370,7 @@ fn light_section(
             on,
         )
         .on_hover_text(aurora_i18n::tr!("common-texture"));
+        super::texture::texture_drop::slot(ui, p, tool, world, r.rect, PickTarget::LightTexture, on);
         let demo_picker = egui::Id::unique("demo_light_texture_picker_opened");
         let demo_open = env.demo
             && on

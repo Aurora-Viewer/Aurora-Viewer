@@ -66,6 +66,9 @@ fn can_preview(inv: &Inventory, id: Uuid) -> bool {
 
 #[derive(Default)]
 pub struct TexturePicker {
+    drop_target: Option<super::resource_drop::Target>,
+    drop_slot: usize,
+    dropped_slot: Option<usize>,
     pub open: bool,
     pipette_id: Option<egui::Id>,
     pipette_error: bool,
@@ -107,6 +110,49 @@ pub struct TexturePicker {
 }
 
 impl TexturePicker {
+    /// Register an editable thumbnail for the same choice path as this picker.
+    pub(crate) fn drop_target(&mut self, ui: &egui::Ui, rect: egui::Rect, materials: bool, enabled: bool) {
+        self.drop_target_slot(ui, rect, materials, enabled, 0);
+    }
+
+    /// Keep a drop's target separate from an open picker's target. A refused
+    /// drop must not redirect that picker's next choice or Cancel.
+    pub(crate) fn drop_target_slot(&mut self, ui: &egui::Ui, rect: egui::Rect, materials: bool, enabled: bool, slot: usize) {
+        let Some(target) = super::resource_drop::Target::hovered(ui, rect, materials, enabled) else {
+            return;
+        };
+        self.drop_target = Some(target);
+        self.drop_slot = slot;
+    }
+
+    pub(crate) fn dropped_slot(&self) -> Option<usize> {
+        self.dropped_slot
+    }
+
+    fn preview_drop(&mut self, ui: &egui::Ui, p: &Palette, world: &World, rect: egui::Rect) {
+        if let Some(target) = super::resource_drop::Target::hovered(ui, rect, self.materials, true)
+            && let Some(resource) = target.receive(ui.ctx(), p, &world.inventory, |_| true)
+        {
+            self.select(
+                resource.asset,
+                Some(resource.item.id),
+                can_preview(&world.inventory, resource.item.id),
+            );
+            self.tree.opened(resource.asset);
+        }
+    }
+
+    fn take_swatch_drop(&mut self, ctx: &egui::Context, p: &Palette, inv: &Inventory) -> Option<Uuid> {
+        self.dropped_slot = None;
+        let resource = self.drop_target.take()?.receive(ctx, p, inv, |_| true)?;
+        self.dropped_slot = Some(self.drop_slot);
+        self.open = false;
+        self.stop_pipette(ctx);
+        self.cancelled = false;
+        self.preview = None;
+        Some(resource.asset)
+    }
+
     pub fn open(&mut self, title: &str, current: Uuid) {
         self.open = true;
         self.pipette_id = Some(egui::Id::unique("texture_picker_session").with(Uuid::new_v4()));
@@ -191,8 +237,9 @@ impl TexturePicker {
         world: &mut World,
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> Option<Uuid> {
-        if !self.open {
-            return None;
+        if let Some(asset) = self.take_swatch_drop(ctx, p, &world.inventory) {
+            self.live_value = asset;
+            return Some(asset);
         }
         let accepted = self.show(ctx, p, world, images);
         let value = accepted.or_else(|| if self.cancelled { Some(self.original) } else { self.take_preview() })?;
@@ -264,6 +311,9 @@ impl TexturePicker {
     ) -> Option<Uuid> {
         self.preview = None;
         self.cancelled = false;
+        if let Some(asset) = self.take_swatch_drop(ctx, p, &world.inventory) {
+            return Some(asset);
+        }
         self.pipette_input(ctx, &world.inventory);
         if !self.open {
             return None;
@@ -326,6 +376,7 @@ impl TexturePicker {
                         if self.selected.is_some_and(|id| world.local_assets.contains_key(&id)) {
                             widgets::local_texture::paint(ui, p, response.rect);
                         }
+                        self.preview_drop(ui, p, world, response.rect);
                         return;
                     }
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
@@ -385,6 +436,7 @@ impl TexturePicker {
                     if self.selected.is_some_and(|id| world.local_assets.contains_key(&id)) {
                         widgets::local_texture::paint(ui, p, rect);
                     }
+                    self.preview_drop(ui, p, world, rect);
                 });
                 ui.vertical(|ui| {
                     ui.label(
@@ -818,6 +870,61 @@ fn wearable_demo_input() -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn direct_thumbnail_drops_apply_the_same_asset_to_each_slot_without_opening_a_picker() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let item = Uuid::from_u128(0xd001);
+        let asset = Uuid::from_u128(0xd002);
+        world.inventory.items.insert(
+            item,
+            aurora_net::inventory::InvItem {
+                id: item,
+                asset_id: asset,
+                asset_type: 0,
+                inv_type: 0,
+                owner_mask: actions::COPY,
+                ..Default::default()
+            },
+        );
+        let mut picker = TexturePicker::default();
+        let mut ui = PickerUi::new();
+        let rect = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(100.0, 100.0));
+        let mut choices = Vec::new();
+        let draw = |picker: &mut TexturePicker, world: &mut World, choices: &mut Vec<Uuid>, ctx: &egui::Context, p: &Palette| {
+            egui::Area::new(egui::Id::unique("thumbnail_drop_test"))
+                .fixed_pos(rect.min)
+                .show(ctx, |ui| {
+                    let (rect, _) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+                    picker.drop_target(ui, rect, false, true);
+                });
+            if let Some(asset) = picker.show_live(ctx, p, world, &HashMap::new()) {
+                choices.push(asset);
+            }
+        };
+        ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut choices, ctx, p));
+        for _ in 0..2 {
+            egui::DragAndDrop::set_payload(&ui.ctx, super::super::inventory::InvDrag(item));
+            ui.frame(vec![egui::Event::PointerMoved(rect.center())], |ctx, p| {
+                draw(&mut picker, &mut world, &mut choices, ctx, p)
+            });
+            ui.frame(
+                vec![egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }],
+                |ctx, p| draw(&mut picker, &mut world, &mut choices, ctx, p),
+            );
+            assert!(!picker.open);
+        }
+        assert_eq!(
+            choices,
+            vec![asset, asset],
+            "each slot gets its own commit, even when a previous slot chose the same asset"
+        );
+    }
+
     use super::*;
 
     #[test]

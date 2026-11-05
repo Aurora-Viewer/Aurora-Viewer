@@ -10,7 +10,7 @@
 #[path = "legacy_texture.rs"]
 mod legacy_texture;
 #[path = "texture_drop.rs"]
-mod texture_drop;
+pub(super) mod texture_drop;
 
 use super::common::{Edit, check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
@@ -146,8 +146,10 @@ impl BuildTool {
     }
 
     /// Apply inventory cargo to explicitly picked faces, leaving selection and
-    /// other texture-entry properties unchanged. A texture on PBR replaces its
-    /// base map; Alt restores the legacy face, as dropTextureOneFace does.
+    /// other texture-entry properties unchanged. Follow the displayed shading
+    /// mode: a Blinn-Phong preview edits its diffuse while retaining PBR.
+    /// Otherwise a texture on PBR replaces its base map; Alt removes PBR,
+    /// as dropTextureOneFace does.
     pub fn apply_inventory_surface(
         &mut self,
         world: &mut World,
@@ -178,6 +180,7 @@ impl BuildTool {
             self.apply_texture(world, env, PickTarget::PbrMaterial, asset, &selected);
             return;
         }
+        let blinn_phong = world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview);
         let mut legacy = Vec::new();
         let mut updates = Vec::new();
         for face in selected {
@@ -189,6 +192,8 @@ impl BuildTool {
                         asset: Some(Uuid::nil()),
                         over: None,
                     });
+                    legacy.push(face);
+                } else if blinn_phong {
                     legacy.push(face);
                 } else {
                     let mut over = BuildTool::gltf_override(world, idx, face.face);
@@ -367,11 +372,6 @@ pub(super) fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
 }
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
-    // a slot's drop (LLTextureCtrl::doDrop, then onCommit to the selection)
-    if let Some((target, asset)) = tool.ui.slot_drop.take() {
-        let sel = selected(tool, world);
-        tool.apply_texture(world, env, target, asset, &sel);
-    }
     if super::legacy::active(ui) {
         legacy_texture::show(ui, p, tool, world, s, env);
         return;

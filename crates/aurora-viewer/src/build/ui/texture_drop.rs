@@ -9,13 +9,11 @@ use super::{PickTarget, Sel};
 use crate::build::BuildTool;
 use crate::build::contents_drop;
 use crate::theme::Palette;
-use crate::ui::inventory::InvDrag;
 use crate::world::World;
 use crate::world::inventory::actions as rules;
 use aurora_net::inventory::InvItem;
 use std::collections::BTreeSet;
 
-const AT_TEXTURE: i32 = 0;
 const AT_MATERIAL: i32 = 57;
 
 /// Why a slot refuses the item held over it.
@@ -38,8 +36,7 @@ pub(super) enum Refusal {
 pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &InvItem) -> Result<(), Refusal> {
     let cargo = match target {
         PickTarget::PbrMaterial => item.asset_type == AT_MATERIAL,
-        PickTarget::Diffuse | PickTarget::Normal | PickTarget::Specular | PickTarget::PbrMap(_) => item.asset_type == AT_TEXTURE,
-        PickTarget::Sculpt | PickTarget::LightTexture => false,
+        _ => matches!(item.asset_type, 0 | 15),
     };
     if !cargo {
         return Err(Refusal::Cargo);
@@ -66,40 +63,30 @@ pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &Inv
 /// The drop over one slot: the copy cursor and outline while the item held
 /// is accepted, the refusal and its reason otherwise. On release an accepted
 /// item becomes the slot's choice, applied by the tab before it draws.
-pub(super) fn slot(ui: &egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, rect: egui::Rect, target: PickTarget, enabled: bool) {
-    if !ui.rect_contains_pointer(rect) {
-        return;
-    }
-    let Some(cargo) = egui::DragAndDrop::payload::<InvDrag>(ui.ctx()) else {
-        return;
-    };
-    let Some(item) = world.inventory.items.get(&cargo.0) else {
-        return;
-    };
-    // like the Legacy Viewer, not while the picker previews choices
-    let verdict = if enabled && ui.is_enabled() && !tool.ui.picker.open {
-        allowed(world, &super::selected(tool, world), target, item)
-    } else {
-        Err(Refusal::Cargo)
-    };
-    let cursor = if verdict.is_ok() {
-        egui::CursorIcon::Copy
-    } else {
-        egui::CursorIcon::NotAllowed
-    };
-    crate::ui::inventory::drag::feedback(ui.ctx(), cursor);
-    crate::ui::inventory::tree::drop_outline(ui, p, rect, verdict.is_ok());
-    if verdict == Err(Refusal::Restricted) {
-        egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), ui.scope_id().with("texture-drop-refused"), rect).show(|ui| {
-            ui.label(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
-        });
-    }
-    if !ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
-        return;
-    }
-    egui::DragAndDrop::clear_payload(ui.ctx());
-    if verdict.is_ok() {
-        tool.ui.slot_drop = Some((target, item.asset_id));
+pub(in crate::build::ui) fn slot(
+    ui: &egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &World,
+    rect: egui::Rect,
+    target: PickTarget,
+    enabled: bool,
+) {
+    if let Some(drop) = crate::ui::resource_drop::Target::hovered(ui, rect, target == PickTarget::PbrMaterial, enabled)
+        && let Some(resource) = drop.receive(ui.ctx(), p, &world.inventory, |item| {
+            let verdict = allowed(world, &super::selected(tool, world), target, item);
+            if verdict == Err(Refusal::Restricted) {
+                egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), ui.scope_id().with("texture-drop-refused"), rect).show(|ui| {
+                    ui.label(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
+                });
+            }
+            verdict.is_ok()
+        })
+    {
+        // The direct drop is the latest choice; a previous picker cannot
+        // subsequently restore the value captured before it.
+        tool.dismiss_texture_picker();
+        tool.ui.slot_drop = Some((target, resource.asset));
     }
 }
 

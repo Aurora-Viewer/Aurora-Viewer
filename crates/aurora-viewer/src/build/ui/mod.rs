@@ -427,6 +427,10 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    if let Some((target, asset)) = tool.ui.slot_drop.take() {
+        let sel = texture::selected(tool, world);
+        tool.apply_texture(world, env, target, asset, &sel);
+    }
     toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {
         ctx.copy_text(tool.copy_keys(world, s, mods.shift));

@@ -1,4 +1,5 @@
 use super::*;
+const AT_TEXTURE: i32 = 0;
 use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_YOU_OWNER};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -68,7 +69,7 @@ fn a_slot_takes_a_texture_and_the_material_slot_a_material() {
     assert_eq!(allowed(&w, &sel, PickTarget::PbrMaterial, &material), Ok(()));
     assert_eq!(allowed(&w, &sel, PickTarget::PbrMaterial, &texture), Err(Refusal::Cargo));
     for target in [PickTarget::Sculpt, PickTarget::LightTexture] {
-        assert_eq!(allowed(&w, &sel, target, &texture), Err(Refusal::Cargo), "not a Texture tab slot");
+        assert_eq!(allowed(&w, &sel, target, &texture), Ok(()), "editable object texture slot");
     }
     // a no-copy texture still goes on a prim in the world (PERM_NONE filter)
     assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &item(&w, NO_COPY_TEXTURE)), Ok(()));
