@@ -26,11 +26,12 @@ pub(super) enum Space {
     Local,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
     Axis(usize),
     Plane(usize),
     Ring(usize),
+    Roll,
 }
 
 #[derive(Clone, Copy)]
@@ -104,6 +105,17 @@ impl Geometry {
         self.pivot + (u * t.cos() + a.cross(u) * t.sin()) * self.length
     }
 
+    fn view_ring(&self, t: f32) -> Vec3 {
+        self.pivot + (self.cam.left * t.cos() + self.cam.up * t.sin()) * self.length * 1.2
+    }
+
+    fn part_axis(&self, part: Part) -> Vec3 {
+        match part {
+            Part::Axis(i) | Part::Plane(i) | Part::Ring(i) => self.axis(i),
+            Part::Roll => -self.cam.direction_to(self.pivot),
+        }
+    }
+
     fn pick(&self, pointer: Pos2) -> Option<Part> {
         let mut best = (8.0, None);
         for axis in 0..3 {
@@ -143,7 +155,23 @@ impl Geometry {
                 }
             }
         }
-        best.1
+        if best.1.is_some() {
+            return best.1;
+        }
+        if self.tool != Tool::Rotate {
+            return None;
+        }
+        for k in 0..96 {
+            let t = std::f32::consts::TAU / 96.0;
+            if let (Some(a), Some(b)) = (
+                self.cam.project(self.view_ring(k as f32 * t)),
+                self.cam.project(self.view_ring((k + 1) as f32 * t)),
+            ) && seg_distance(pointer, a, b).0 < 8.0
+            {
+                return Some(Part::Roll);
+            }
+        }
+        None
     }
 
     fn draw(&self, ctx: &egui::Context, palette: &Palette, active: Option<Part>) {
@@ -195,6 +223,18 @@ impl Geometry {
                 }
             }
         }
+        if self.tool == Tool::Rotate {
+            let color = fade(palette.amber, if active == Some(Part::Roll) { 1.0 } else { 0.3 });
+            for k in 0..96 {
+                let t = std::f32::consts::TAU / 96.0;
+                p.line_cased(
+                    self.view_ring(k as f32 * t),
+                    self.view_ring((k + 1) as f32 * t),
+                    color,
+                    if active == Some(Part::Roll) { 6.0 } else { 4.0 },
+                );
+            }
+        }
     }
 }
 
@@ -215,14 +255,12 @@ struct Drag {
 impl Drag {
     fn new(geometry: Geometry, part: Part, pointer: Pos2, pose: Pose) -> Option<Self> {
         let (o, d) = geometry.cam.ray(pointer.x * geometry.cam.ppp, pointer.y * geometry.cam.ppp);
-        let axis = geometry.axis(match part {
-            Part::Axis(i) | Part::Plane(i) | Part::Ring(i) => i,
-        });
+        let axis = geometry.part_axis(part);
         let pivot = geometry.pivot;
         let motion = match part {
             Part::Axis(_) => Motion::Axis(nearest_on_line(o, d, pivot, pivot + axis)?),
             Part::Plane(_) => Motion::Plane(ray_plane(o, d, pivot, axis)?),
-            Part::Ring(_) if axis.dot(d).abs() > 0.15 => Motion::Ring {
+            Part::Ring(_) | Part::Roll if axis.dot(d).abs() > 0.15 => Motion::Ring {
                 start: (ray_plane(o, d, pivot, axis)? - pivot).try_normalize()?,
                 last: 0.0,
                 total: 0.0,
@@ -253,6 +291,7 @@ impl Drag {
                     radius,
                 }
             }
+            Part::Roll => return None,
         };
         Some(Self {
             geometry,
@@ -265,9 +304,7 @@ impl Drag {
     fn update(&mut self, pointer: Pos2) -> Option<Pose> {
         let g = &self.geometry;
         let (o, d) = g.cam.ray(pointer.x * g.cam.ppp, pointer.y * g.cam.ppp);
-        let axis = g.axis(match self.part {
-            Part::Axis(i) | Part::Plane(i) | Part::Ring(i) => i,
-        });
+        let axis = g.part_axis(self.part);
         let mut pose = self.pose;
         let angle = match &mut self.motion {
             Motion::Axis(start) => {
