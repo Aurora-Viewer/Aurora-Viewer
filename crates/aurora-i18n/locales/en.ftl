@@ -3904,6 +3904,10 @@ ui-options-avatar-physics-help = The breasts, belly and butt of avatars wearing 
 ui-options-avatar-physics-detail = Avatar physics detail
 ui-options-avatar-physics-detail-help = At 1 every avatar moves; lower, avatars small on screen keep their shape; 0 stops the physics (RenderAvatarPhysicsLODFactor)
 ui-options-limit-when-unfocused = Limit when unfocused
+ui-options-pause-when-card-busy = Pause the 3D when the card is overloaded
+ui-options-pause-when-card-busy-tip = When another program keeps the graphics card busy while Aurora is behind, Aurora stops drawing the world until you click on it, so the card is not reset. Turned off, Aurora can close with "the graphics card was lost". Enabled by default
+busy-pause-notice = 3D paused: the graphics card is busy with another program. Click to resume.
+busy-pause-window-title = { $title } — Paused
 ui-land-sound-restrict-voice-chat-to-this-parcel = Restrict voice chat to this parcel
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = Restrict gesture and object sounds to this parcel
 common-limits = Limits
@@ -12697,7 +12701,7 @@ wearable-changed = This appearance item changed or is no longer worn. Open it ag
 wearable-error = This appearance asset could not be read or saved.
 wearable-readonly = This item cannot be modified.
 wearable-texture-permissions = Choose an inventory texture with Copy permission and, for transferable clothing, Transfer permission.
-wearable-local-preview = Local textures are a private preview. Upload the texture and select it from inventory before saving.
+wearable-local-preview = Saving keeps the local texture references without uploading the images.
 wearable-loading = Loading appearance item…
 wearable-saving = Saving…
 wearable-saved = Appearance item saved.
@@ -13141,3 +13145,11 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
+
+picker-pipette-hint = Click an object face to select its texture or material from your inventory.
+
+picker-pipette-no-texture = No copyable texture found in your inventory.
+
+picker-pipette-no-material = No copyable material found in your inventory.
+
+local-texture-preview-hint = Local texture — preview from a file on this computer.

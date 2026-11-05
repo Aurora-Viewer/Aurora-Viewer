@@ -66,6 +66,11 @@ pub fn color_params(kind: u8) -> Option<[i32; 3]> {
 }
 
 fn texture_allowed(world: &World, draft: &Draft, texture: Uuid) -> bool {
+    // LLPanelEditWearable / LLWearable::exportStream permit saving local
+    // bitmap references too. Saving a wearable does not upload its images.
+    if let Some((_, material)) = world.local_assets.get(&texture) {
+        return !material;
+    }
     let kind = draft.edited.kind;
     let required = crate::world::inventory::actions::COPY
         | if draft.item.base_mask & crate::world::inventory::actions::TRANSFER != 0 {
@@ -73,15 +78,14 @@ fn texture_allowed(world: &World, draft: &Draft, texture: Uuid) -> bool {
         } else {
             0
         };
-    !world.local_assets.contains_key(&texture)
-        && (texture == crate::world::inventory::wearable::default_texture(kind)
-            || texture.is_nil() && matches!(kind, 1 | 13 | 14 | 16)
-            || texture == crate::scene::avatar::IMG_INVISIBLE && kind == 13
-            || world
-                .inventory
-                .items
-                .values()
-                .any(|item| matches!(item.asset_type, 0 | 15) && item.asset_id == texture && item.owner_mask & required == required))
+    texture == crate::world::inventory::wearable::default_texture(kind)
+        || texture.is_nil() && matches!(kind, 1 | 13 | 14 | 16)
+        || texture == crate::scene::avatar::IMG_INVISIBLE && kind == 13
+        || world
+            .inventory
+            .items
+            .values()
+            .any(|item| matches!(item.asset_type, 0 | 15) && item.asset_id == texture && item.owner_mask & required == required)
 }
 
 /// The texture an inventory entry dragged onto a texture swatch carries: a
@@ -102,10 +106,7 @@ pub fn dragged_texture(world: &World, item: Uuid) -> Option<Uuid> {
 /// (LLTextureCtrl::allowDrop refuses a disabled control), so the drop
 /// highlight never promises what `State::set_texture` then refuses.
 pub fn accepts_texture(world: &World, draft: &Draft, slot: u32, texture: Uuid) -> bool {
-    draft.pending.is_none()
-        && draft.can_modify(world)
-        && slots(draft.edited.kind).contains(&slot)
-        && (world.local_assets.get(&texture).is_some_and(|(_, material)| !material) || texture_allowed(world, draft, texture))
+    draft.pending.is_none() && draft.can_modify(world) && slots(draft.edited.kind).contains(&slot) && texture_allowed(world, draft, texture)
 }
 
 pub fn has_local_textures(world: &World, draft: &Draft) -> bool {
@@ -253,6 +254,13 @@ impl State {
                     .iter()
                     .find(|param| param.kind == original.kind)
                     .map_or(String::new(), |param| param.group.into());
+                self.local_textures.extend(
+                    original
+                        .textures
+                        .values()
+                        .filter(|texture| world.local_assets.contains_key(texture))
+                        .copied(),
+                );
                 self.draft = Some(Draft {
                     item,
                     edited: original.clone(),
@@ -314,7 +322,11 @@ impl State {
 
     pub fn update(&mut self, world: &mut World) {
         let mut changed = false;
-        if let Some(draft) = &mut self.draft {
+        // Keep the serialized draft intact until the save reply. Removing a
+        // local file meanwhile is reconciled with the acknowledged asset next.
+        if let Some(draft) = &mut self.draft
+            && draft.pending.is_none()
+        {
             // LLLocalBitmap::updateUserLayers replaces removed local maps.
             // Restore this slot's original instead of fetching a private ID.
             draft.edited.textures.retain(|slot, texture| {
@@ -323,7 +335,11 @@ impl State {
                     let Some(original) = draft.original.textures.get(slot) else {
                         return false;
                     };
-                    *texture = *original;
+                    *texture = if *original == *texture {
+                        crate::world::inventory::wearable::default_texture(draft.edited.kind)
+                    } else {
+                        *original
+                    };
                 }
                 true
             });
@@ -332,7 +348,11 @@ impl State {
                     let Some(original) = draft.original.textures.get(slot) else {
                         return false;
                     };
-                    *texture = *original;
+                    *texture = if *original == *texture {
+                        crate::world::inventory::wearable::default_texture(draft.edited.kind)
+                    } else {
+                        *original
+                    };
                 }
                 true
             });
@@ -473,10 +493,6 @@ impl State {
         if draft.pending.is_some() {
             return None;
         }
-        if has_local_textures(world, draft) || draft.edited.textures.values().any(|texture| self.local_textures.contains(texture)) {
-            self.message = aurora_i18n::tr!("wearable-local-preview").into();
-            return None;
-        }
         let current = world.inventory.items.get(&draft.item.id)?;
         if !valid || current.asset_id != draft.item.asset_id || !worn(world, current.id) {
             self.message = aurora_i18n::tr!("wearable-save-denied").into();
@@ -525,6 +541,7 @@ impl State {
                 let new = item.id;
                 draft.item = item.clone();
                 draft.original = draft.edited.clone();
+                self.preview.cache(item.id, item.asset_id, draft.edited.clone());
                 world.inventory.add_items(vec![item]);
                 self.copy_name = None;
                 self.message = aurora_i18n::tr!("wearable-saved").into();

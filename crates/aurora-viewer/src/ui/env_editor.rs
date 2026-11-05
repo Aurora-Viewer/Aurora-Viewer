@@ -588,6 +588,7 @@ impl EnvEditorUi {
                 ui.painter()
                     .rect_stroke(rect, radius, egui::Stroke::new(1.0, p.violet), egui::StrokeKind::Inside);
             }
+            widgets::local_texture::asset(ui, p, rect, Some(id));
             if resp.clicked() {
                 self.open_texture(slot, label, id);
             }
