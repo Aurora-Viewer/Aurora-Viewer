@@ -17,6 +17,8 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2};
 
+use crate::pipeline_cache::CachedPipelines;
+
 const LUMA_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
@@ -253,7 +255,7 @@ fn pipeline(
             })
         })
         .collect();
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&pl),
         vertex: wgpu::VertexState {
@@ -331,12 +333,28 @@ impl Fsr {
         let l_reactivity = layout(
             device,
             "fsr reactivity",
-            &[tex(2, true), tex(3, false), tex(4, true), tex(5, true), tex(6, true), storage(7, true), storage(8, false)],
+            &[
+                tex(2, true),
+                tex(3, false),
+                tex(4, true),
+                tex(5, true),
+                tex(6, true),
+                storage(7, true),
+                storage(8, false),
+            ],
         );
         let l_accumulate = layout(
             device,
             "fsr accumulate",
-            &[tex(2, true), tex(3, true), tex(4, true), tex(5, true), tex(6, true), tex(7, true), storage(8, false)],
+            &[
+                tex(2, true),
+                tex(3, true),
+                tex(4, true),
+                tex(5, true),
+                tex(6, true),
+                tex(7, true),
+                storage(8, false),
+            ],
         );
         let m_prepare = module(device, "fsr prepare", include_str!("shaders/fsr/prepare_inputs.wgsl"));
         let m_pyramids = module(device, "fsr pyramids", include_str!("shaders/fsr/pyramids.wgsl"));
@@ -432,7 +450,10 @@ impl Fsr {
         let dilated_motion = view(device, "fsr dilated motion", size, MOTION_FORMAT);
         let dilated_depth = view(device, "fsr dilated depth", size, DEPTH_FORMAT);
         let farthest = view(device, "fsr farthest depth", size, LUMA_FORMAT);
-        let luma = [view(device, "fsr luma", size, LUMA_FORMAT), view(device, "fsr luma", size, LUMA_FORMAT)];
+        let luma = [
+            view(device, "fsr luma", size, LUMA_FORMAT),
+            view(device, "fsr luma", size, LUMA_FORMAT),
+        ];
         let farthest_mip1 = view(device, "fsr farthest depth mip 1", half, LUMA_FORMAT);
         let levels = SHADING_CHANGE_LEVELS.min(32 - half.0.max(half.1).leading_zeros());
         let spd = device.create_texture(&wgpu::TextureDescriptor {
@@ -515,7 +536,11 @@ impl Fsr {
                 ),
                 downsample: std::array::from_fn(|i| {
                     let above = &spd_levels[i.min(spd_levels.len() - 1)];
-                    common(&l_tex3, "fsr downsample", &[entry_tex(2, above), entry_tex(3, above), entry_tex(4, above)])
+                    common(
+                        &l_tex3,
+                        "fsr downsample",
+                        &[entry_tex(2, above), entry_tex(3, above), entry_tex(4, above)],
+                    )
                 }),
                 shading_change: common(
                     &l_tex3,
@@ -660,7 +685,13 @@ impl Fsr {
             &p.prepare,
             &g.prepare,
         );
-        run(encoder, "fsr farthest depth", &[&self.farthest_mip1], &p.farthest_mip1, &g.farthest_mip1);
+        run(
+            encoder,
+            "fsr farthest depth",
+            &[&self.farthest_mip1],
+            &p.farthest_mip1,
+            &g.farthest_mip1,
+        );
         run(
             encoder,
             "fsr shading change pyramid",
@@ -677,7 +708,13 @@ impl Fsr {
                 &g.downsample[level - 1],
             );
         }
-        run(encoder, "fsr shading change", &[&self.shading_change], &p.shading_change, &g.shading_change);
+        run(
+            encoder,
+            "fsr shading change",
+            &[&self.shading_change],
+            &p.shading_change,
+            &g.shading_change,
+        );
         run(
             encoder,
             "fsr prepare reactivity",
@@ -692,7 +729,13 @@ impl Fsr {
             &p.luma_instability,
             &g.luma_instability,
         );
-        run(encoder, "fsr accumulate", &[&self.internal[w], &self.output], &p.accumulate, &g.accumulate);
+        run(
+            encoder,
+            "fsr accumulate",
+            &[&self.internal[w], &self.output],
+            &p.accumulate,
+            &g.accumulate,
+        );
         if self.rcas.is_some() {
             run(encoder, "fsr rcas", &[&self.output], &p.rcas, &g.rcas);
         }
@@ -829,7 +872,7 @@ mod tests {
                     },
                     &msl,
                 )
-                    .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
+                .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
             }
         }
     }
@@ -840,4 +883,3 @@ mod tests {
         assert_eq!(std::mem::size_of::<FsrU>(), 272);
     }
 }
-
