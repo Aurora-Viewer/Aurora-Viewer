@@ -90,7 +90,7 @@ pub(super) fn show(
     let tools = match st.selected {
         None => 1,
         Some(_) if group => 3,
-        Some(_) => 4,
+        Some(_) => 5,
     } + 1
         + usize::from(snooze.is_some());
     egui::Frame::new()
@@ -160,6 +160,17 @@ pub(super) fn show(
                             call_tool(ui, p, icons, world, st, actions);
                             if tool(ui, p, icons, "send-filled", aurora_i18n::tr!("common-offer-teleport"), true, false) {
                                 actions.push(ConvAction::OfferTeleport(other));
+                            }
+                            if tool(
+                                ui,
+                                p,
+                                icons,
+                                super::head::REQUEST_TELEPORT_ICON,
+                                aurora_i18n::tr!("common-request-teleport"),
+                                super::head::can_request_teleport(world, &other),
+                                false,
+                            ) {
+                                crate::ui::context::request(ui.ctx(), CtxAction::RequestTeleport(other));
                             }
                             if tool(ui, p, icons, "user-filled", aurora_i18n::tr!("common-profile"), true, false) {
                                 actions.push(ConvAction::Profile(other));
@@ -338,6 +349,17 @@ pub(super) fn more_items(
             Some(other) => {
                 if workspace && menu::item(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport")) {
                     actions.push(ConvAction::OfferTeleport(other));
+                }
+                if workspace
+                    && menu::item_if(
+                        ui,
+                        p,
+                        super::head::REQUEST_TELEPORT_ICON,
+                        aurora_i18n::tr!("common-request-teleport"),
+                        super::head::can_request_teleport(world, &other),
+                    )
+                {
+                    crate::ui::context::request(ui.ctx(), CtxAction::RequestTeleport(other));
                 }
                 if workspace && menu::item(ui, p, super::head::ADD_PEOPLE_ICON, aurora_i18n::tr!("ui-call-add-people")) {
                     actions.push(ConvAction::PickPeople(other));

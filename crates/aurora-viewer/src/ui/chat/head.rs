@@ -22,6 +22,8 @@ const TOOL: f32 = 30.0;
 /// conversation's bubble with a plus, apart from the friendship offer's
 /// `user-plus`.
 pub(super) const ADD_PEOPLE_ICON: &str = "message-circle-plus";
+/// Requesting a teleport, the icon of the avatar menus' row.
+pub(super) const REQUEST_TELEPORT_ICON: &str = "plane-arrival-filled";
 
 /// What the head says of the conversation shown.
 struct Identity {
@@ -225,8 +227,8 @@ pub(super) fn show(
                 st.members_open = !st.members_open;
             }
         }
-        // a resident: their profile, and a teleport offer to join us (the
-        // teleport button of FSFloaterIM's toolbar)
+        // a resident: their profile, and a teleport offered or requested (one
+        // menu button in FSFloaterIM's toolbar, two buttons here)
         (Some(other), _) => {
             if tool(ui, p, slot(), "user-filled", aurora_i18n::tr!("common-profile"), Tone::Plain).clicked() {
                 actions.push(ConvAction::Profile(other));
@@ -240,6 +242,24 @@ pub(super) fn show(
             }
             if tool(ui, p, slot(), "send-filled", aurora_i18n::tr!("common-offer-teleport"), Tone::Plain).clicked() {
                 actions.push(ConvAction::OfferTeleport(other));
+            }
+            // the other direction, greyed like the avatar menus' item
+            let request = if can_request_teleport(world, &other) {
+                Tone::Plain
+            } else {
+                Tone::Off
+            };
+            if tool(
+                ui,
+                p,
+                slot(),
+                REQUEST_TELEPORT_ICON,
+                aurora_i18n::tr!("common-request-teleport"),
+                request,
+            )
+            .clicked()
+            {
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RequestTeleport(other));
             }
         }
     }
@@ -332,6 +352,12 @@ pub(super) fn show(
     } else if cut {
         r.on_hover_text(&who.title);
     }
+}
+
+/// A teleport can be requested from anyone but a friend known to be offline
+/// (LLAvatarActions::canRequestTeleport, indra/newview/llavataractions.cpp).
+pub(super) fn can_request_teleport(world: &World, other: &Uuid) -> bool {
+    world.social.friends.iter().find(|f| f.id == *other).is_none_or(|f| f.online)
 }
 
 /// People can be added to a conversation with a resident or a

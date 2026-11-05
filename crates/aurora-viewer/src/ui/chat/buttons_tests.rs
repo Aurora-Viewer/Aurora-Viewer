@@ -540,6 +540,13 @@ fn the_head_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
             "{style:?}: teleport"
         );
+        h.press(control_id(&format!("head-{}", super::head::REQUEST_TELEPORT_ICON)));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx)
+                .iter()
+                .any(|a| matches!(a, crate::ui::context::CtxAction::RequestTeleport(id) if *id == BOB)),
+            "{style:?}: request a teleport"
+        );
         h.press(control_id("head-x"));
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
@@ -570,6 +577,14 @@ fn the_head_acts() {
             assert!(ok, "{style:?}: … › {row}");
         }
         h.press(control_id("head-dots-filled"));
+        h.press_text(aurora_i18n::tr!("common-request-teleport"));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx)
+                .iter()
+                .any(|a| matches!(a, crate::ui::context::CtxAction::RequestTeleport(id) if *id == BOB)),
+            "{style:?}: … › request a teleport"
+        );
+        h.press(control_id("head-dots-filled"));
         h.press_text(aurora_i18n::tr!("common-become-friends"));
         assert!(
             crate::ui::context::take_requests(&h.frames.ctx)
@@ -595,6 +610,15 @@ fn the_head_acts() {
         assert!(
             h.shown(control_id("head-user-plus")).is_none(),
             "{style:?}: a friend is not offered friendship"
+        );
+        // LLAvatarActions::canRequestTeleport: not from a friend known to be
+        // offline, greyed where the offer stays
+        h.world.social.friends[0].online = false;
+        h.settle();
+        h.press(control_id(&format!("head-{}", super::head::REQUEST_TELEPORT_ICON)));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx).is_empty(),
+            "{style:?}: no request to an offline friend"
         );
         h.world.social.friends.clear();
         // a role group: members, no adding (like Firestorm)
@@ -1994,6 +2018,13 @@ fn the_window_of_tabs_still_acts() {
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
             "{style:?}: teleport"
+        );
+        h.press(classic_id(super::head::REQUEST_TELEPORT_ICON));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx)
+                .iter()
+                .any(|a| matches!(a, crate::ui::context::CtxAction::RequestTeleport(id) if *id == BOB)),
+            "{style:?}: request a teleport"
         );
         h.press(classic_id("x"));
         assert!(
