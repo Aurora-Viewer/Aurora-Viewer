@@ -32,20 +32,10 @@ impl Tree {
 
     #[cfg(test)]
     pub fn prepare(&mut self, inv: &mut Inventory, agent: Uuid, materials: bool, query: &str) {
-        self.prepare_root(inv, agent, materials, 0, query, inv.root, view::Sort::default());
+        self.prepare_root(inv, agent, materials, query, inv.root, view::Sort::default());
     }
 
-    #[allow(clippy::too_many_arguments)] // the filters of one listing
-    pub fn prepare_root(
-        &mut self,
-        inv: &mut Inventory,
-        agent: Uuid,
-        materials: bool,
-        permissions: u32,
-        query: &str,
-        root: Uuid,
-        sort: view::Sort,
-    ) {
+    pub fn prepare_root(&mut self, inv: &mut Inventory, agent: Uuid, materials: bool, query: &str, root: Uuid, sort: view::Sort) {
         self.fetch(inv);
         let prefs = InventoryPreferences {
             sort,
@@ -57,7 +47,6 @@ impl Tree {
             } else {
                 (1 << INV_TEXTURE) | (1 << INV_SNAPSHOT)
             },
-            permissions,
             ..Default::default()
         };
         self.view

@@ -9,6 +9,7 @@ use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::inventory::{Inventory, actions};
 use crate::world::{LocalAssetRequest, World};
+use aurora_net::inventory::InvItem;
 use egui::{RichText, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -57,6 +58,12 @@ fn inventory_asset(inv: &Inventory, id: Uuid, materials: bool) -> Option<Uuid> {
     }
 }
 
+/// Whether the item misses one of the rights `required` (agent_mask: the
+/// same reading as the Texture tab's slots).
+fn lacks_rights(item: &InvItem, agent: Uuid, required: u32) -> bool {
+    crate::build::contents_drop::agent_mask(item, agent) & required != required
+}
+
 fn can_preview(inv: &Inventory, id: Uuid) -> bool {
     let Some(original) = actions::original(inv, id) else { return false };
     inv.items
@@ -100,7 +107,8 @@ pub struct TexturePicker {
     extra_buttons: bool,
     /// Only callers with a client-only application path expose local assets.
     pub(crate) allow_local: bool,
-    /// Rights an inventory item needs here (LLTextureCtrl's immediate filter).
+    /// Rights an inventory item needs here. LLTextureCtrl's immediate filter
+    /// hides the others; they stay listed here, greyed out.
     pub(crate) required_permissions: u32,
     uuid_text: String,
     /// Intentional choices, separate from OK so callers can opt into preview.
@@ -134,7 +142,9 @@ impl TexturePicker {
 
     fn preview_drop(&mut self, ui: &egui::Ui, p: &Palette, world: &World, rect: egui::Rect) {
         if let Some(target) = super::resource_drop::Target::hovered(ui, rect, self.materials, true)
-            && let Some(resource) = target.receive(ui.ctx(), p, &world.inventory, |item| self.has_rights(item))
+            && let Some(resource) = target.receive(ui.ctx(), p, &world.inventory, |item| {
+                !lacks_rights(item, world.agent_id, self.required_permissions)
+            })
         {
             self.select(
                 resource.asset,
@@ -146,17 +156,13 @@ impl TexturePicker {
         }
     }
 
-    fn has_rights(&self, item: &aurora_net::inventory::InvItem) -> bool {
-        item.owner_mask & self.required_permissions == self.required_permissions
-    }
-
-    fn take_swatch_drop(&mut self, ctx: &egui::Context, p: &Palette, inv: &Inventory) -> Option<Uuid> {
+    fn take_swatch_drop(&mut self, ctx: &egui::Context, p: &Palette, inv: &Inventory, agent: Uuid) -> Option<Uuid> {
         self.dropped_slot = None;
         let required = self.required_permissions;
         let resource = self
             .drop_target
             .take()?
-            .receive(ctx, p, inv, |item| item.owner_mask & required == required)?;
+            .receive(ctx, p, inv, |item| !lacks_rights(item, agent, required))?;
         self.dropped_slot = Some(self.drop_slot);
         self.open = false;
         self.stop_pipette(ctx);
@@ -252,7 +258,7 @@ impl TexturePicker {
         world: &mut World,
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> Option<Uuid> {
-        if let Some(asset) = self.take_swatch_drop(ctx, p, &world.inventory) {
+        if let Some(asset) = self.take_swatch_drop(ctx, p, &world.inventory, world.agent_id) {
             self.live_value = asset;
             return Some(asset);
         }
@@ -331,7 +337,7 @@ impl TexturePicker {
         ctx.data_mut(|data| data.remove::<(egui::Rect, egui::Rect)>(egui::Id::unique("picker_selected_row")));
         self.preview = None;
         self.cancelled = false;
-        if let Some(asset) = self.take_swatch_drop(ctx, p, &world.inventory) {
+        if let Some(asset) = self.take_swatch_drop(ctx, p, &world.inventory, world.agent_id) {
             return Some(asset);
         }
         self.pipette_input(ctx, &world.inventory);
@@ -533,7 +539,6 @@ impl TexturePicker {
                 &mut world.inventory,
                 world.agent_id,
                 self.materials,
-                self.required_permissions,
                 &self.filter,
                 root,
                 super::inventory::view::picker_sort(ctx),
@@ -619,6 +624,7 @@ impl TexturePicker {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for index in range {
                         let inv = &world.inventory;
+                        let agent = world.agent_id;
                         let local = index < local_count;
                         let (id, depth, folder, row_open, name, asset) = if local {
                             if index == 0 {
@@ -658,7 +664,12 @@ impl TexturePicker {
                             } else {
                                 self.selected_item == Some(id)
                             };
-                        let enabled = folder || asset.is_some();
+                        let locked = !local
+                            && !folder
+                            && actions::original(inv, id)
+                                .and_then(|id| inv.items.get(&id))
+                                .is_some_and(|item| lacks_rights(item, agent, self.required_permissions));
+                        let enabled = folder || asset.is_some() && !locked;
                         let (rect, response) = ui.allocate_exact_size(
                             Vec2::new(ui.available_width(), 22.0),
                             if enabled { egui::Sense::click() } else { egui::Sense::hover() },
@@ -698,7 +709,11 @@ impl TexturePicker {
                                 icon.id(),
                                 egui::Rect::from_center_size(egui::pos2(x + 7.0, rect.center().y), Vec2::splat(14.0)),
                                 egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                                if selected { p.on_accent } else { p.violet_light },
+                                match (selected, enabled) {
+                                    (true, _) => p.on_accent,
+                                    (false, true) => p.violet_light,
+                                    (false, false) => p.muted_dim,
+                                },
                             );
                         }
                         x += 20.0;
@@ -715,6 +730,11 @@ impl TexturePicker {
                             },
                         );
                         let response = if cut { response.on_hover_text(&name) } else { response };
+                        let response = if locked {
+                            response.on_hover_text(aurora_i18n::tr!("build-ui-texture-drop-restricted"))
+                        } else {
+                            response
+                        };
                         if response.clicked() {
                             if folder {
                                 if local {
@@ -922,6 +942,21 @@ fn wearable_demo_input() -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn a_worn_object_greys_out_a_texture_without_copy_and_transfer() {
+        let agent = Uuid::from_u128(0xd0);
+        let both = actions::COPY | actions::TRANSFER;
+        let item = |owner_mask| aurora_net::inventory::InvItem {
+            owner: agent,
+            owner_mask,
+            ..Default::default()
+        };
+        assert!(!lacks_rights(&item(both), agent, both), "no-modify is enough");
+        assert!(lacks_rights(&item(actions::COPY), agent, both));
+        assert!(lacks_rights(&item(actions::TRANSFER), agent, both));
+        assert!(!lacks_rights(&item(0), agent, 0), "nothing required off a worn object");
+    }
+
     #[test]
     fn direct_thumbnail_drops_apply_the_same_asset_to_each_slot_without_opening_a_picker() {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));

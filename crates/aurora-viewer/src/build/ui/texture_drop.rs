@@ -117,7 +117,9 @@ pub(in crate::build::ui) fn slot(
         refusal = verdict.err().or((!drop.enabled()).then_some(Refusal::Disabled));
         verdict.is_ok()
     });
-    if let Some(refusal) = refusal {
+    // Nothing editable selected: the tab says so already.
+    let told = refusal == Some(Refusal::Object) && super::selected(tool, world).is_empty();
+    if let Some(refusal) = refusal.filter(|_| !told) {
         egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), ui.scope_id().with("texture-drop-refused"), rect).show(|ui| {
             ui.label(refusal.text(target));
         });
