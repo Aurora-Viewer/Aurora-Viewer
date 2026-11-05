@@ -328,6 +328,8 @@ pub struct App {
     gfx: Option<Gfx>,
     /// The restored size, position and maximize state before fullscreen.
     fullscreen_restore: Option<WindowedGeometry>,
+    /// `settings.window_fullscreen` as last applied to the window.
+    fullscreen_applied: bool,
     /// The window of a lost GPU device, kept on screen until the new one has
     /// presented its first image (gpu_recovery.rs).
     retired_window: Option<Arc<Window>>,
@@ -1358,6 +1360,7 @@ impl App {
             net,
             gfx: None,
             fullscreen_restore: None,
+            fullscreen_applied: false,
             retired_window: None,
             gpu_losses: Default::default(),
             egui_ctx,
@@ -5873,6 +5876,9 @@ impl App {
     }
 
     /// Apply the saved setting after Preferences changes, or after a shortcut.
+    /// Runs only when the setting moved away from what was last applied: a
+    /// full screen the system entered or left by itself (the macOS green
+    /// button, a window manager's rule) is left alone.
     fn apply_fullscreen_setting(&mut self) {
         if self.capture.is_some() || forced_window_size().is_some() {
             return;
@@ -5881,12 +5887,22 @@ impl App {
             return;
         };
         let entering = self.settings.window_fullscreen;
+        self.fullscreen_applied = entering;
         if window.fullscreen().is_some() == entering {
             return;
         }
 
         if entering {
-            let restore = WindowedGeometry::from_window(&window);
+            // a maximized window keeps the normal size and position already
+            // recorded (record_window_geometry), not the maximized ones
+            let restore = if window.is_maximized() {
+                WindowedGeometry {
+                    maximized: true,
+                    ..WindowedGeometry::from_settings(&self.settings)
+                }
+            } else {
+                WindowedGeometry::from_window(&window)
+            };
             restore.save(&mut self.settings);
             self.fullscreen_restore = Some(restore);
             window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(window.current_monitor())));
@@ -17290,8 +17306,10 @@ impl ApplicationHandler for App {
             position: pos.map(|(x, y)| winit::dpi::PhysicalPosition::new(x, y)),
             // Automated captures must not steal the user's keyboard focus.
             active: !capture,
-            fullscreen: (!capture && self.settings.window_fullscreen).then(|| winit::window::Fullscreen::Borderless(monitor.clone())),
+            fullscreen: (!capture && forced_window_size().is_none() && self.settings.window_fullscreen)
+                .then(|| winit::window::Fullscreen::Borderless(monitor.clone())),
         };
+        self.fullscreen_applied = plan.fullscreen.is_some();
         let window = match self.open_window(event_loop, &plan) {
             Ok(w) => w,
             Err(e) => {
@@ -19912,7 +19930,13 @@ impl ApplicationHandler for App {
                     ))
         );
         if fullscreen_toggle {
-            self.settings.window_fullscreen = !self.settings.window_fullscreen;
+            // from what the window is: out of a system full screen (the macOS
+            // green button), the first press leaves it
+            let full = self
+                .gfx
+                .as_ref()
+                .map_or(self.settings.window_fullscreen, |g| g.window.fullscreen().is_some());
+            self.settings.window_fullscreen = !full;
             self.apply_fullscreen_setting();
             return;
         }
@@ -20354,11 +20378,7 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         crate::crash::pumped();
         self.sync_minimized_mute();
-        if self
-            .gfx
-            .as_ref()
-            .is_some_and(|g| g.window.fullscreen().is_some() != self.settings.window_fullscreen)
-        {
+        if self.settings.window_fullscreen != self.fullscreen_applied {
             self.apply_fullscreen_setting();
         }
         self.record_window_geometry();
