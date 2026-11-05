@@ -220,6 +220,7 @@ mod tests {
         scope: MarkerScope::Region,
         shape: crate::world::contact_sets::MarkerShape::Circle,
         color: [1.0, 0.0, 0.0, 1.0],
+        border: None,
         icon: None,
         fade: None,
     };

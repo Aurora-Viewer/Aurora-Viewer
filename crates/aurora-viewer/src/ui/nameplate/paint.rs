@@ -20,6 +20,11 @@ const TINT_GLASS: (f32, f32) = (0.52, 0.42);
 const TINT_PLAIN: (f32, f32) = (0.74, 0.62);
 /// Opacity of the light border, and of the far pill's.
 const BORDER: (f32, f32) = (0.14, 0.10);
+/// The light border of a plate, shared with the contact-set markers.
+pub(crate) fn plain_border(p: &Palette) -> Color32 {
+    p.ink.gamma_multiply(BORDER.0)
+}
+
 /// Under the pointer (#473): how far the surface goes toward the ink, and
 /// the opacity the border gains. Faint: the plate answers, it does not flash.
 const HOVER_LIGHT: f32 = 0.12;

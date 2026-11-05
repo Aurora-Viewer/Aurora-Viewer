@@ -31,9 +31,8 @@ const DIAMOND_DOT: f32 = 5.5;
 const GLYPH: f32 = 13.0;
 /// Points of a diamond's outline, in fours: its corners are among them.
 const DIAMOND_POINTS: usize = 32;
-const BORDER: f32 = 1.25;
-/// Opacity of the border over the glass.
-const BORDER_ALPHA: f32 = 0.85;
+/// The width of a plate's border.
+const BORDER: f32 = 1.0;
 /// The glass of a world label (`widgets::paint_world_label`).
 const GLASS_TINT: f32 = 0.65;
 /// Opacity of the disc once landed, as a plate's badge.
@@ -333,8 +332,12 @@ fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker,
     };
     let tint = tint + (BADGE_TINT - tint) * merge;
     let panel = p.panel.to_opaque().gamma_multiply(tint * alpha);
-    // a plate's badge has no border: it goes as the marker lands
-    let border = Stroke::new(BORDER, ink.gamma_multiply(BORDER_ALPHA * (1.0 - merge)));
+    // the resident's plate border, the plain one without a set's; a plate's
+    // badge has none: it goes as the marker lands
+    let border = marker
+        .border
+        .map_or_else(|| crate::ui::nameplate::plain_border(p), super::colors::set_color);
+    let border = Stroke::new(BORDER, border.gamma_multiply(alpha * (1.0 - merge)));
     match marker.shape {
         MarkerShape::Circle => {
             painter.add(Shape::circle_filled(at, radius, panel));

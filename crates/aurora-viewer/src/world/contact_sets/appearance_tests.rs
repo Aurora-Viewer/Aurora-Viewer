@@ -141,6 +141,7 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
             scope: MarkerScope::Region,
             shape: MarkerShape::Diamond,
             color: [0.0, 0.0, 1.0, 1.0],
+            border: None,
             icon: Some(2),
             fade: Some(*appearance::MARKER_FADE_RANGE.end()),
         }
@@ -166,6 +167,17 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
     let visuals = sets.set("Staff").unwrap().visuals.clone();
     assert_eq!(Visuals::read(&visuals.write()), visuals);
     assert_eq!(staff.shape, MarkerShape::Circle, "the set's own shape, not the other's");
+    // the border is the plate's, even from a set that gives no marker
+    assert_eq!(staff.border, None);
+    sets.set_color("Plain", [0.0, 1.0, 0.0, 1.0]);
+    sets.set_visuals(
+        "Plain",
+        Visuals {
+            border: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(sets.appearance(&id).marker.expect("marker").border, Some([0.0, 1.0, 0.0, 1.0]));
     assert_eq!(Visuals::read(&Llsd::new_map()).marker, MarkerScope::Off, "older files");
     assert_eq!(Visuals::read(&Llsd::new_map()).marker_shape, MarkerShape::Circle);
 }

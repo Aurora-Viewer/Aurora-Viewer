@@ -92,6 +92,8 @@ pub fn seed(world: &mut crate::world::World) {
         sets.set_visuals(
             name,
             Visuals {
+                // Family's marker takes its plate border, the others the plain one
+                border: icon == Some(0),
                 marker: scope,
                 marker_shape,
                 marker_fade: fade,

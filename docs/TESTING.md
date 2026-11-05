@@ -9173,7 +9173,8 @@ What the inventory must show with these scenarios:
   typing) and Iris (compact pill).
 - **`AURORA_DEMO_CONTACT_MARKERS`** (`demo_contact_markers.rs`): three
   contact sets with a marker, for this run only: Family (heart, circles),
-  Shop (star, diamonds) and Clubbing (no symbol, diamonds), and four residents known only
+  Shop (star, diamonds) and Clubbing (no symbol, diamonds), Family alone with
+  a coloured border (the set's nameplate border; the others the plain one), and four residents known only
   by their coarse location, sent once a second: one circling the region in
   40 s (the marker glides, then pins to each edge in turn), one behind the
   camera (pinned, with its chevron), one far to the side, and one of unknown

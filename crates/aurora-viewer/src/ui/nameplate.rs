@@ -23,6 +23,7 @@ mod linden;
 pub(crate) mod mark;
 mod mesh;
 mod paint;
+pub(crate) use paint::plain_border;
 pub(crate) mod playground;
 #[cfg(test)]
 mod tests;
