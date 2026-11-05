@@ -167,6 +167,9 @@ pub mod object_menu;
 /// Boxes for the build tools' snap to objects (AURORA_DEMO_OBJECT_SNAP).
 #[path = "demo_object_snap.rs"]
 pub mod object_snap;
+/// AURORA_DEMO_OIT_COLUMN: a tall translucent textured column of nested tubes.
+#[path = "demo_oit_column.rs"]
+pub mod oit_column;
 /// AURORA_DEMO_OUTFIT_RESTORE: the login restore of the outfit against a
 /// region that puts part of it back by itself.
 #[path = "demo_outfit_restore.rs"]
@@ -5875,6 +5878,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
     ev.extend(alpha_mask_ab::events());
+    ev.extend(oit_column::events());
     ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
     ev.extend(land_beside_events());
@@ -8499,6 +8503,9 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
 /// Pixels of a procedural demo texture (RGBA8, 64×64; the hair demo's 256×256).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if let Some(texture) = alpha_mask_ab::texture(id) {
+        return Some(texture);
+    }
+    if let Some(texture) = oit_column::texture(id) {
         return Some(texture);
     }
     if let Some(pixels) = texture_library::texture(id) {
