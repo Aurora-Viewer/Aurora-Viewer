@@ -9004,6 +9004,12 @@ ui-options-aurora-move-hologram-moving = Moving object
 ui-options-aurora-move-hologram-start = Where it started
 ui-options-aurora-use-bridge = Use the Aurora bridge
 ui-options-aurora-use-bridge-help = A small scripted attachment that Aurora makes and wears for you: position lock, avatar heights in the radar, script and object information, pose requests and shared portals. Off, Aurora no longer makes or wears it and takes off a worn one: these features are then unavailable.
+ui-options-aurora-portal-sources = Show portals from
+ui-options-aurora-portal-sources-help = Portals that other residents open near you with their Aurora bridge. Your own portals and the way back from your trips always show. The first time you walk through a portal from someone who is not your friend, Aurora asks before you go. With groups, a resident counts once the grid lists them in one of your groups (their profile or a loaded member list).
+ui-options-aurora-portal-sources-nobody = Nobody
+ui-options-aurora-portal-sources-friends = Friends
+ui-options-aurora-portal-sources-groups = Friends and my groups
+ui-options-aurora-portal-sources-everyone = Everyone
 ui-options-aurora-gaze = Gaze
 ui-options-aurora-aim = Where your gaze goes
 ui-options-aurora-aim-help = Your avatar looks at the exact point under the cursor, or turns its head toward the cursor's side like the Legacy Viewer.
@@ -12608,6 +12614,9 @@ portal-destination-hidden = Hidden destination
 portal-restricted = You do not have access
 portal-step-away = Move away, then return to enter
 portal-walk-through = Walk through to teleport
+portal-cross-title = Go through this portal?
+portal-cross-text = { $name } opened this portal. It leads to { $destination }.
+portal-cross-go = Go
 ui-appearance-selected-outfits = { $count } outfits selected
 
 # Spell checker and auto-replace (#675)

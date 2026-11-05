@@ -83,6 +83,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1\|empty` | Open the avatar display-exceptions editor |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
+| `AURORA_DEMO_PORTALS=stranger\|stranger-groups\|stranger-hidden` | A non-friend's portal under each "Show portals from" choice |
 | `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
@@ -210,6 +211,19 @@ applies when another resident's portal appears nearby.
 `keyboard-departing-allowed` starts the creator's teleport when the access
 request arrives, then changes their region after the grant is sent: the
 visitor must still receive the destination and teleport without chat focus.
+
+`AURORA_DEMO_PORTALS=stranger|stranger-groups|stranger-hidden` puts a public
+portal from a resident who is not our friend four metres ahead, then holds
+the Forward arrow from frame 600 to 810 like the keyboard modes, under the
+"Show portals from" choice it names for the run (never saved): `stranger` is
+Everyone, `stranger-groups` Friends and my groups (the resident's profile
+lists one of our groups), `stranger-hidden` Friends. The first two show the
+aperture and, on the crossing, the "Go through this portal?" question with
+the resident and the destination: Cancel stays, Go teleports, and a second
+crossing of the same portal asks no more. `stranger-hidden` shows nothing
+and walks through without a question or a teleport. Capture around frame
+760 for the question. The earlier modes (`friends`, `private-…`,
+`return…`) run with Everyone, so their non-friend portals stay visible.
 
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
