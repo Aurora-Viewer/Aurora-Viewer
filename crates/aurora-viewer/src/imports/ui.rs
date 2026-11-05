@@ -139,6 +139,7 @@ pub enum Action {
     StageLocalUploads,
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
+    MapDrop(Uuid, usize, crate::ui::resource_drop::Target),
     Zoom(Uuid, Option<usize>),
     LargeMap(Uuid, usize),
     Remove(Uuid),
@@ -590,13 +591,14 @@ fn texture(
     }
     if *target != 0 {
         if let Some(model) = model {
-            aurora_render::preview::paint(
+            let response = aurora_render::preview::paint(
                 ui,
                 ui.scope_id().with(("texture_preview", id)),
                 model.clone(),
                 view,
                 Vec2::new(ui.available_width(), 260.0),
             );
+            widgets::local_texture::paint(ui, p, response.rect);
             preview_camera_controls(ui, p, view);
         } else {
             ui.spinner();
@@ -638,6 +640,7 @@ fn texture(
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             widgets::PICTURE_TINT,
         );
+        widgets::local_texture::paint(ui, p, rect);
     } else {
         ui.spinner();
     }

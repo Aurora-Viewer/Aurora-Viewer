@@ -26,6 +26,16 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-04 — Aurora 0.9.1: steadier logins, teleports and outfits
+A region slow to confirm your arrival no longer ends the session, and a refused two-factor code no longer locks the login out of the code field. Outfit changes send one appearance request at a time, for the newest version, so products and RLVa that change the outfit quickly no longer drown your appearance in failed updates. A key the viewer never saw pressed no longer makes your avatar jump or fly up after you switch windows. Imported Windlight skies save to the inventory.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.1)
+
+## 2026-11-04 — Photo roll, projector shadows, smoother busy places
+Photo mode keeps the session's last 10 photos in a small stack in the viewfinder: look through them, then upload, e-mail or delete one. Choose how many projectors cast shadows, from 1 to 16, in Preferences › Graphics › Light (2 by default). In busy regions, objects that spin or move by themselves are placed by the graphics card, flexible prims out of view hold their mesh, and the frame's buffer writes go out together: more frames per second, the same image.
+
+## 2026-11-04 — Building, avatars and crash reports
+Paper lanterns and other tortured spheres keep their shape, Legacy construction gets Tilt, Radius and Revolutions back, and objects rezzed from the inventory can be edited and focused right away. Worn objects follow animations that move their attachment point, an avatar hidden by an animation leaves the screen as on the Legacy Viewer, and the Poser works on every shape. Crash reports after a lost graphics card say what was in play. Thanks to anne-skydancer, Gaalrauch, Marakiinfinity and Odessa-Draekavik.
+
 ## 2026-11-04 — Aurora 0.9.0: OpenSim and Hypergrid, for real
 On OpenSim grids your avatar now bakes and is seen as you dress it, the land of large regions goes past 256 m, and the inventory, outfits and profiles save on grids without AIS. Buy and prices use the grid's own currency and money symbol. After a Hypergrid teleport Aurora follows the grid you are on, asks before a trip that would leave worn items behind, and offers to add an unknown grid from a link.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.0)

@@ -3683,8 +3683,15 @@ impl Scene {
                     .get(&o.key)
                     .and_then(|s| s.iter().rev().find(|(f, _)| *f as usize == fi))
                     .map(|(_, ov)| ov)
-                    .filter(|_| o.local_appearance(fi).is_none());
-                let m = meshes::render_material(&self.materials.resolve(&mid), ov);
+                    .filter(|_| {
+                        o.local_appearance(fi)
+                            .and_then(crate::world::objects::LocalAppearance::surface)
+                            .is_none()
+                    });
+                let mut m = meshes::render_material(&self.materials.resolve(&mid), ov);
+                if let Some(appearance) = o.local_appearance(fi) {
+                    appearance.apply_pbr(&mut m);
+                }
                 // glTF materials replace the legacy shininess
                 rec.flags[0] &= !flags::LEGACY_MAT;
                 rec.flags[0] |= flags::PBR;
@@ -3734,7 +3741,9 @@ impl Scene {
             }
             // legacy material (LLMaterial) of the texture entry
             let mut legacy_alpha = plant.map(|_| legacy_mat::alpha_mode::MASK);
-            if mat_id.is_none() && !tf.material_id.is_nil() {
+            let local_normal = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Normal);
+            let local_specular = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Specular);
+            if mat_id.is_none() && (!tf.material_id.is_nil() || local_normal.is_some() || local_specular.is_some()) {
                 g.material_ids.push(tf.material_id);
                 let cap = world.regions.get(&o.key.region).and_then(|r| {
                     r.caps.get("RenderMaterials").map(|url| legacy_mat::RegionCap {
@@ -3742,7 +3751,23 @@ impl Scene {
                         limits: r.materials_limits,
                     })
                 });
-                if let Some(lm) = self.legacy_mats.get(&tf.material_id, cap) {
+                let loaded = (!tf.material_id.is_nil())
+                    .then(|| self.legacy_mats.get(&tf.material_id, cap))
+                    .flatten();
+                let material = loaded.map(|m| (*m).clone()).or_else(|| {
+                    (local_normal.is_some() || local_specular.is_some()).then(|| legacy_mat::LegacyMaterial {
+                        diffuse_alpha_mode: if self.textures.has_alpha(&tf.texture).unwrap_or(false) {
+                            legacy_mat::alpha_mode::BLEND
+                        } else {
+                            legacy_mat::alpha_mode::NONE
+                        },
+                        ..Default::default()
+                    })
+                });
+                if let Some(mut lm) = material {
+                    if let Some(appearance) = o.local_appearance(fi) {
+                        appearance.apply_legacy(&mut lm);
+                    }
                     rec.flags[0] |= flags::LEGACY_MAT;
                     aux_tex[0] = lm.normal_map;
                     aux_tex[1] = lm.specular_map;
@@ -3960,12 +3985,19 @@ impl Scene {
                             .get(&o.key)
                             .and_then(|s| s.iter().rev().find(|(face, _)| *face as usize == fi))
                             .map(|(_, ov)| ov)
-                            .filter(|_| o.local_appearance(fi).is_none());
+                            .filter(|_| {
+                                o.local_appearance(fi)
+                                    .and_then(crate::world::objects::LocalAppearance::surface)
+                                    .is_none()
+                            });
                         let status = self
                             .materials
                             .peek(&mid)
                             .map_or(meshes::MaterialStatus::Pending, meshes::MaterialStatus::Loaded);
-                        let m = meshes::render_material(&status, ov);
+                        let mut m = meshes::render_material(&status, ov);
+                        if let Some(appearance) = o.local_appearance(fi) {
+                            appearance.apply_pbr(&mut m);
+                        }
                         maps = [
                             maps[0],
                             m.base_color_texture,
