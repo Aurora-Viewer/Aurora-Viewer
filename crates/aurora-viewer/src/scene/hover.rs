@@ -851,7 +851,10 @@ impl super::Scene {
         if let Some((t, idx)) = self.blend_hit(world, ray, point, far, None) {
             return (Some(ray.0 + ray.1 * t), Some(idx));
         }
-        (point, point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, None)))
+        (
+            point,
+            point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, None)),
+        )
     }
 
     /// The class of an object for the hover search ([`class`]), from what
