@@ -286,7 +286,10 @@ pub(super) fn show(
     let hot = hovered.filter(|&index| current.get(index).is_some_and(|e| e.enabled));
     let mut primary_released = false;
     let mut secondary_released = false;
-    let panel = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+    // OverridePieColors and PieMenuOpacity (PieMenu::draw)
+    let override_opacity = crate::ui::surface_opacity::pie();
+    let alpha = override_opacity.map_or(p.panel_alpha, |o| (f32::from(p.panel_alpha) * o).round() as u8);
+    let panel = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), alpha);
     egui::Area::new(egui::Id::unique("world_pie_menu"))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min)
@@ -300,7 +303,8 @@ pub(super) fn show(
             if p.panel_alpha < 255 {
                 // a square with fully rounded corners is the disc
                 let disc = egui::Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
-                painter.add(aurora_render::glass_panel(disc, radius, Color32::TRANSPARENT));
+                let blur = override_opacity.map_or(1.0, |o| o * o);
+                painter.add(aurora_render::glass_panel_faded(disc, radius, Color32::TRANSPARENT, blur));
             }
             for index in 0..SLICES {
                 ring_segment(
