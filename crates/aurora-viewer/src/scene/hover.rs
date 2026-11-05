@@ -861,11 +861,21 @@ impl super::Scene {
         if o.extra.reflection_probe.is_some() {
             return c | class::OFF_POINT;
         }
-        if o.click_action == crate::interaction::code::IGNORE {
-            c |= class::IGNORE;
-        }
-        if !g.is_avatar && (self.see_through_face(g, false) || self.has_blend_face(world, idx)) {
-            c |= class::SEE_THROUGH;
+        // A rigged mesh of the world never answers the exact tests of the
+        // first two steps: its CPU triangles are in the bind pose
+        // (`face_hit_mode`, `face_distance` leave it out), so set to
+        // IGNORE or with a blended face it cannot stop the ray nor be the
+        // surface. In a crowd most of the objects tested whatever the ray
+        // are such meshes (hair, clothes): about 2,900 of them went through
+        // `transparent_action_point` at each search, 0.3-0.6 ms, and, worn,
+        // their sway disturbed a kept answer (`PickIndex::left_out`).
+        if !(g.rigged && !g.hud) {
+            if o.click_action == crate::interaction::code::IGNORE {
+                c |= class::IGNORE;
+            }
+            if !g.is_avatar && (self.see_through_face(g, false) || self.has_blend_face(world, idx)) {
+                c |= class::SEE_THROUGH;
+            }
         }
         // (what `interaction_at_ray` leaves out whatever the point)
         if g.is_avatar || (g.owner_avatar.is_some() && o.volume.is_mesh()) {
@@ -1517,34 +1527,31 @@ mod tests {
         assert_eq!(scene.pick.classes[back], class::KNOWN);
         assert_eq!(scene.hover.candidates.see_through, [front]);
         // It gets a see-through face and a script. Its rest triangles are
-        // in front, but only its GPU-posed surface may intercept a click.
+        // in front, but only its GPU-posed surface may intercept a click:
+        // no step can find it, so none tests it.
         world.objects.get_mut(back).unwrap().update_flags = 1 << 7;
         scene.gpu[back].faces[0].te_alpha = 0.5;
         scene.pick.changed(back);
         world.objects.take_touched(&mut Vec::new());
         assert_eq!(both(&mut scene, &world), Some(front));
-        assert_eq!(scene.pick.classes[back], class::KNOWN | class::SEE_THROUGH);
-        assert_eq!(scene.hover.candidates.see_through, [front, back]);
+        assert_eq!(scene.pick.classes[back], class::KNOWN);
+        assert_eq!(scene.hover.candidates.see_through, [front]);
         assert_eq!(scene.hover.candidates.point, [front]);
-        // set to IGNORE since the last sync: the search hears of it from
-        // the objects updated, and goes behind it
+        // set to IGNORE since the last sync: its rest triangles cannot stop
+        // the ray either
         world.objects.get_mut(back).unwrap().click_action = crate::interaction::code::IGNORE;
         assert_eq!(both(&mut scene, &world), Some(front));
-        assert_eq!(scene.pick.classes[back], class::KNOWN | class::IGNORE | class::SEE_THROUGH);
-        assert_eq!(scene.hover.candidates.ignore, [front, back]);
-        // opaque again, by a texture that changed its alpha class
-        world.objects.take_touched(&mut Vec::new());
-        scene.gpu[back].faces[0].te_alpha = 1.0;
-        scene.pick.changed(back);
-        both(&mut scene, &world);
-        assert_eq!(scene.pick.classes[back], class::KNOWN | class::IGNORE);
+        assert_eq!(scene.pick.classes[back], class::KNOWN);
+        assert_eq!(scene.hover.candidates.ignore, [front]);
         // a class the index was not told of is repaired by the sweep
-        scene.pick.set_class(back, class::KNOWN);
+        world.objects.take_touched(&mut Vec::new());
+        scene.pick.set_class(back, class::KNOWN | class::IGNORE | class::SEE_THROUGH);
         for _ in 0..scene.pick.entries.len().div_ceil(CLASSES_SWEPT_PER_SEARCH) {
             scene.work_out_hover_classes(&world);
         }
-        assert_eq!(scene.pick.classes[back], class::KNOWN | class::IGNORE);
+        assert_eq!(scene.pick.classes[back], class::KNOWN);
         assert_eq!(scene.hover.repaired, 1);
+        assert_eq!(both(&mut scene, &world), Some(front));
     }
 
     #[test]
