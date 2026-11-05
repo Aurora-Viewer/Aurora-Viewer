@@ -7,6 +7,8 @@ use uuid::Uuid;
 const TEXTURE: u128 = 78001;
 const NO_COPY_TEXTURE: u128 = 78002;
 const MATERIAL: u128 = 78003;
+const NO_MODIFY_TEXTURE: u128 = 78004;
+const NO_TRANSFER_TEXTURE: u128 = 78005;
 
 /// The demo's action object 970, owned and modifiable by the agent, its
 /// face 0 selected, and three items: a full-permission texture, a no-copy
@@ -28,6 +30,8 @@ fn world() -> (World, Vec<Sel>) {
         (TEXTURE, AT_TEXTURE, all),
         (NO_COPY_TEXTURE, AT_TEXTURE, all & !rules::COPY),
         (MATERIAL, AT_MATERIAL, all),
+        (NO_MODIFY_TEXTURE, AT_TEXTURE, all & !rules::MODIFY),
+        (NO_TRANSFER_TEXTURE, AT_TEXTURE, all & !rules::TRANSFER),
     ] {
         let id = Uuid::from_u128(n);
         w.inventory.items.insert(
@@ -38,7 +42,7 @@ fn world() -> (World, Vec<Sel>) {
                 inv_type: kind,
                 asset_id: Uuid::from_u128(n + 500),
                 owner: agent,
-                base_mask: all,
+                base_mask: mask,
                 owner_mask: mask,
                 name: format!("Item {n}"),
                 ..Default::default()
@@ -114,4 +118,78 @@ fn a_worn_object_takes_only_a_copy_and_transfer_texture() {
         assert_eq!(allowed(&w, &sel, target, &no_copy), Err(Refusal::Restricted), "{target:?}");
     }
     assert_eq!(allowed(&w, &sel, PickTarget::PbrMap(0), &no_copy), Ok(()));
+}
+
+fn wear(w: &mut World, idx: usize) {
+    let avatar = w.objects.index_of_uuid(&w.agent_id).expect("the agent's avatar");
+    let avatar_id = w.objects.get(avatar).expect("the agent's avatar").key.local_id;
+    let o = w.objects.get_mut(idx).expect("selected prim");
+    o.parent_id = avatar_id;
+    o.state = 1;
+}
+
+/// The texture's own modify right does not matter on a worn object: only
+/// the object's, and copy and transfer on the texture.
+#[test]
+fn a_worn_object_takes_a_no_modify_texture_with_copy_and_transfer() {
+    let (mut w, sel) = world();
+    wear(&mut w, sel[0].idx);
+    let no_modify = item(&w, NO_MODIFY_TEXTURE);
+    assert_eq!(no_modify.base_mask & rules::MODIFY, 0);
+    for target in [PickTarget::Diffuse, PickTarget::Normal, PickTarget::Specular] {
+        assert_eq!(allowed(&w, &sel, target, &no_modify), Ok(()), "{target:?}");
+        for refused in [NO_COPY_TEXTURE, NO_TRANSFER_TEXTURE] {
+            assert_eq!(
+                allowed(&w, &sel, target, &item(&w, refused)),
+                Err(Refusal::Restricted),
+                "{target:?}"
+            );
+        }
+    }
+    let idx = sel[0].idx;
+    assert!(!contents_drop::worn_image_refused(&w, idx, &no_modify));
+    assert!(contents_drop::worn_image_refused(&w, idx, &item(&w, NO_COPY_TEXTURE)));
+    assert!(contents_drop::worn_image_refused(&w, idx, &item(&w, NO_TRANSFER_TEXTURE)));
+    // the base rule keeps guarding what goes into a worn object's contents
+    assert_eq!(contents_drop::accepts(&w, idx, &no_modify), Err("rez-contents-denied"));
+}
+
+#[test]
+fn a_worn_object_you_cannot_modify_refuses_every_texture() {
+    let (mut w, sel) = world();
+    wear(&mut w, sel[0].idx);
+    // FLAGS_ALLOW_INVENTORY_DROP must not let a no-modify worn object through
+    w.objects.get_mut(sel[0].idx).expect("selected prim").update_flags = OBJECT_YOU_OWNER | (1 << 16);
+    assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &item(&w, TEXTURE)), Err(Refusal::Object));
+    assert_eq!(
+        allowed(&w, &sel, PickTarget::Diffuse, &item(&w, NO_MODIFY_TEXTURE)),
+        Err(Refusal::Object)
+    );
+    assert!(!contents_drop::worn_image_refused(&w, sel[0].idx, &item(&w, TEXTURE)));
+}
+
+#[test]
+fn only_a_worn_selection_narrows_the_picker() {
+    let (mut w, sel) = world();
+    assert_eq!(picker_permissions(&w, &sel, PickTarget::Diffuse), 0);
+    wear(&mut w, sel[0].idx);
+    let both = rules::COPY | rules::TRANSFER;
+    for target in [PickTarget::Diffuse, PickTarget::Normal, PickTarget::Specular] {
+        assert_eq!(picker_permissions(&w, &sel, target), both, "{target:?}");
+    }
+    assert_eq!(picker_permissions(&w, &sel, PickTarget::PbrMaterial), 0);
+    assert_eq!(picker_permissions(&w, &sel, PickTarget::PbrMap(0)), 0);
+}
+
+#[test]
+fn every_refusal_has_a_reason() {
+    for (refusal, target) in [
+        (Refusal::Cargo, PickTarget::Diffuse),
+        (Refusal::Cargo, PickTarget::PbrMaterial),
+        (Refusal::Restricted, PickTarget::Diffuse),
+        (Refusal::Object, PickTarget::Diffuse),
+        (Refusal::Disabled, PickTarget::Diffuse),
+    ] {
+        assert!(!refusal.text(target).is_empty(), "{refusal:?}");
+    }
 }

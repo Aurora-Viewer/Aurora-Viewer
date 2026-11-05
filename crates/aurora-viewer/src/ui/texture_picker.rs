@@ -100,6 +100,8 @@ pub struct TexturePicker {
     extra_buttons: bool,
     /// Only callers with a client-only application path expose local assets.
     pub(crate) allow_local: bool,
+    /// Rights an inventory item needs here (LLTextureCtrl's immediate filter).
+    pub(crate) required_permissions: u32,
     uuid_text: String,
     /// Intentional choices, separate from OK so callers can opt into preview.
     preview: Option<Uuid>,
@@ -132,7 +134,7 @@ impl TexturePicker {
 
     fn preview_drop(&mut self, ui: &egui::Ui, p: &Palette, world: &World, rect: egui::Rect) {
         if let Some(target) = super::resource_drop::Target::hovered(ui, rect, self.materials, true)
-            && let Some(resource) = target.receive(ui.ctx(), p, &world.inventory, |_| true)
+            && let Some(resource) = target.receive(ui.ctx(), p, &world.inventory, |item| self.has_rights(item))
         {
             self.select(
                 resource.asset,
@@ -144,9 +146,17 @@ impl TexturePicker {
         }
     }
 
+    fn has_rights(&self, item: &aurora_net::inventory::InvItem) -> bool {
+        item.owner_mask & self.required_permissions == self.required_permissions
+    }
+
     fn take_swatch_drop(&mut self, ctx: &egui::Context, p: &Palette, inv: &Inventory) -> Option<Uuid> {
         self.dropped_slot = None;
-        let resource = self.drop_target.take()?.receive(ctx, p, inv, |_| true)?;
+        let required = self.required_permissions;
+        let resource = self
+            .drop_target
+            .take()?
+            .receive(ctx, p, inv, |item| item.owner_mask & required == required)?;
         self.dropped_slot = Some(self.drop_slot);
         self.open = false;
         self.stop_pipette(ctx);
@@ -174,6 +184,7 @@ impl TexturePicker {
         self.allow_none = false;
         self.extra_buttons = false;
         self.allow_local = false;
+        self.required_permissions = 0;
         self.uuid_text = current.to_string();
         self.uuid_error = false;
         self.footer_height = 0.0;
@@ -522,6 +533,7 @@ impl TexturePicker {
                 &mut world.inventory,
                 world.agent_id,
                 self.materials,
+                self.required_permissions,
                 &self.filter,
                 root,
                 super::inventory::view::picker_sort(ctx),
