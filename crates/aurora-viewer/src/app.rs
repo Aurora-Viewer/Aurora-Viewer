@@ -12588,6 +12588,11 @@ impl App {
                                 .alt_focus(point, Some(object), ray, &mut self.world.agent, &self.settings.camera);
                         }
                     }
+                    crate::build::demo::Step::TexGenToggle => {
+                        // TEM_TEX_GEN_MASK / TEX_GEN_PLANAR (LLTextureEntry)
+                        self.build.edit_faces(&mut self.world, |f, _, _| f.media_flags ^= 0x02);
+                        self.flush_build();
+                    }
                     crate::build::demo::Step::CloseView => {
                         if let Some(idx) = self.build.sel_prims(&self.world).first().copied()
                             && let Some((point, _, _)) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)
@@ -18662,7 +18667,8 @@ impl ApplicationHandler for App {
                     || physics
                     || invisible_manipulation
                     || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
-                let mapping = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-mapping,"));
+                let mapping =
+                    std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-mapping,") || v.starts_with("faces-texgen,"));
                 let mut events = if complex {
                     crate::demo::complex_face_selection_events()
                 } else if mapping {

@@ -1964,6 +1964,14 @@ shader draws its stand-in, the same frame and cross. On the grid the
 texture is fetched the first time Select face is chosen and replaces the
 stand-in once loaded.
 
+`faces-texgen,object:99620` textures the cubes as `faces-mapping`, frames
+the 2 m cube A closely, selects its side face at 625 and switches that
+face's mapping Default ↔ Planar at 655 with the Texture tab's edit. Capture
+at 650 then 690: the tiles and the face-select pattern both go from three
+large turned repeats to the dense planar grid (two repeats per metre times
+3 × 2). On a 0.5 m prim, the default size, the two mappings are the same
+by the Legacy Viewer's formula, so the switch shows no change there.
+
 `faces-complex,object:99620` adds a closed torus, a mesh of which a single
 face comprises three curved islands with holes, and a cut hollow cylinder.
 It selects the torus at 625 and adds the face of the mesh with Shift at 645.
