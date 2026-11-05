@@ -9092,6 +9092,48 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count }個のファイルを消去しました。
     }
 ui-options-chat-logs-erase-failed = 一部のファイルを消去できませんでした。
+ui-options-chat-logs-busy = 履歴はインポート、移動、または消去の処理中です。しばらくしてからもう一度お試しください。
+ui-options-chat-logs-import-login = ログイン時にインポート
+ui-options-chat-logs-import-login-help = ログインのたびに、前回のインポート以降にLegacy Viewerがこのアカウントに書き込んだ内容を追加します。Legacy Viewerのファイルは読み取るだけです。既定ではオンです。
+ui-options-chat-logs-import-login-off = この履歴が戻らないよう、ログイン時のインポートをオフにしました。
+ui-options-chat-logs-imported-at-login = Legacy Viewerのチャット履歴：{ $files ->
+    [one] { $files }件の会話
+   *[other] { $files }件の会話
+    }に{ $count ->
+    [one] { $count }件のメッセージを追加しました。
+   *[other] { $count }件のメッセージを追加しました。
+    }止めるには、「ログイン時にインポート」をオフにしてください（環境設定 › チャット › 履歴）。
+ui-options-chat-logs-import = Legacy Viewerからインポート…
+ui-options-chat-logs-import-title = Legacy Viewerのチャット履歴をインポート
+ui-options-chat-logs-import-text = 会話はこのアカウントのファイルに時系列で追加され、すでにあるメッセージは飛ばされるため、再度インポートしても新しい分だけが追加されます。Legacy Viewerのファイルは読み取るだけです。
+ui-options-chat-logs-import-searching = Legacy Viewerの履歴を探しています…
+ui-options-chat-logs-import-none = このアカウントのLegacy Viewerの履歴は見つかりませんでした。別の場所にある場合は、そのフォルダを選択してください。
+ui-options-chat-logs-import-files = { $count ->
+    [one] 会話ファイル{ $count }個
+   *[other] 会話ファイル{ $count }個
+    }
+ui-options-chat-logs-import-same = Auroraはすでにこのフォルダを使用しているため、インポートするものはありません。
+ui-options-chat-logs-import-empty = このフォルダに会話ファイルはありません。
+ui-options-chat-logs-import-choose = フォルダを選択…
+ui-options-chat-logs-import-confirm = インポート
+ui-options-chat-logs-importing = インポート中：{ $total }個中{ $done }個のファイル
+ui-options-chat-logs-imported = { $files ->
+    [one] { $files }件の会話
+   *[other] { $files }件の会話
+    }に{ $count ->
+    [one] { $count }件のメッセージを追加しました。
+   *[other] { $count }件のメッセージを追加しました。
+    }
+ui-options-chat-logs-import-reopen = 進行中の会話には、次に開いたときに表示されます。
+ui-options-chat-logs-import-nothing = 新しくインポートするものはありません。
+ui-options-chat-logs-import-failed = { $count ->
+    [one] { $count }個のファイルをインポートできず、変更しませんでした。もう一度インポートして再試行してください。
+   *[other] { $count }個のファイルをインポートできず、変更しませんでした。もう一度インポートして再試行してください。
+    }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] 時刻のないテキストファイル{ $count }個をインポートしませんでした。時刻なしで記録された会話の可能性があります。
+   *[other] 時刻のないテキストファイル{ $count }個をインポートしませんでした。時刻なしで記録された会話の可能性があります。
+    }
 ui-chat-filter-conversation = 会話を絞り込む（Ctrl＋F：検索）
 ui-chat-filter = フィルタ…
 ui-chat-find = この会話を検索…

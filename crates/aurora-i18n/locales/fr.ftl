@@ -9098,6 +9098,48 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count } fichiers effacés.
     }
 ui-options-chat-logs-erase-failed = Certains fichiers n'ont pas pu être effacés.
+ui-options-chat-logs-busy = L'historique est occupé par un import, un déplacement ou un effacement : réessayez dans un instant.
+ui-options-chat-logs-import-login = Importer à la connexion
+ui-options-chat-logs-import-login-help = À chaque connexion, ajoute ce que le Legacy Viewer a écrit pour ce compte depuis le dernier import. Ses fichiers sont seulement lus. Activé par défaut.
+ui-options-chat-logs-import-login-off = L'import à la connexion est maintenant désactivé, pour que cet historique ne revienne pas.
+ui-options-chat-logs-imported-at-login = Historique du Legacy Viewer : { $count ->
+    [one] { $count } message ajouté
+   *[other] { $count } messages ajoutés
+    } à { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    } Pour arrêter, désactivez Importer à la connexion (Préférences › Chat › Historique).
+ui-options-chat-logs-import = Importer depuis le Legacy Viewer…
+ui-options-chat-logs-import-title = Importer l'historique de chat du Legacy Viewer
+ui-options-chat-logs-import-text = Les conversations sont ajoutées aux fichiers de ce compte par ordre chronologique et les messages déjà présents sont ignorés : importer à nouveau n'ajoute que les nouveautés. Les fichiers du Legacy Viewer sont seulement lus.
+ui-options-chat-logs-import-searching = Recherche de l'historique du Legacy Viewer…
+ui-options-chat-logs-import-none = Aucun historique du Legacy Viewer trouvé pour ce compte. S'il est ailleurs, choisissez son dossier.
+ui-options-chat-logs-import-files = { $count ->
+    [one] { $count } fichier de conversation
+   *[other] { $count } fichiers de conversation
+    }
+ui-options-chat-logs-import-same = Aurora utilise déjà ce dossier : il n'y a rien à importer.
+ui-options-chat-logs-import-empty = Aucun fichier de conversation dans ce dossier.
+ui-options-chat-logs-import-choose = Choisir un dossier…
+ui-options-chat-logs-import-confirm = Importer
+ui-options-chat-logs-importing = Import : { $done } fichiers sur { $total }
+ui-options-chat-logs-imported = { $count ->
+    [one] { $count } message ajouté
+   *[other] { $count } messages ajoutés
+    } à { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    }
+ui-options-chat-logs-import-reopen = Une conversation déjà en cours les affichera à sa prochaine ouverture.
+ui-options-chat-logs-import-nothing = Rien de nouveau à importer.
+ui-options-chat-logs-import-failed = { $count ->
+    [one] { $count } fichier n'a pas pu être importé et reste inchangé : importez à nouveau pour réessayer.
+   *[other] { $count } fichiers n'ont pas pu être importés et restent inchangés : importez à nouveau pour réessayer.
+    }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] { $count } fichier texte sans heure a été laissé de côté : c'est peut-être une conversation enregistrée sans l'heure.
+   *[other] { $count } fichiers texte sans heure ont été laissés de côté : ce sont peut-être des conversations enregistrées sans l'heure.
+    }
 ui-chat-filter-conversation = Filtrer la conversation (Ctrl+F : rechercher)
 ui-chat-filter = Filtrer…
 ui-chat-find = Rechercher dans cette conversation…

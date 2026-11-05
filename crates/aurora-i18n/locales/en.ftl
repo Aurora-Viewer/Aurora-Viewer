@@ -9105,6 +9105,48 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count } files erased.
     }
 ui-options-chat-logs-erase-failed = Some files could not be erased.
+ui-options-chat-logs-busy = The history is busy with an import, a move or an erasing: try again in a moment.
+ui-options-chat-logs-import-login = Import at login
+ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import. Its files are only read. On by default.
+ui-options-chat-logs-import-login-off = Import at login is now off, so that this history does not come back.
+ui-options-chat-logs-imported-at-login = Chat history from the Legacy Viewer: { $count ->
+    [one] { $count } message added
+   *[other] { $count } messages added
+    } to { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    } To stop this, turn off Import at login (Preferences › Chat › History).
+ui-options-chat-logs-import = Import from the Legacy Viewer…
+ui-options-chat-logs-import-title = Import chat history from the Legacy Viewer
+ui-options-chat-logs-import-text = Conversations are added to this account's files in time order, and the messages already there are skipped, so importing again adds only what is new. The Legacy Viewer's files are only read.
+ui-options-chat-logs-import-searching = Looking for the Legacy Viewer's history…
+ui-options-chat-logs-import-none = No Legacy Viewer history was found for this account. If it is somewhere else, choose its folder.
+ui-options-chat-logs-import-files = { $count ->
+    [one] { $count } conversation file
+   *[other] { $count } conversation files
+    }
+ui-options-chat-logs-import-same = Aurora already uses this folder: there is nothing to import.
+ui-options-chat-logs-import-empty = No conversation files in this folder.
+ui-options-chat-logs-import-choose = Choose a folder…
+ui-options-chat-logs-import-confirm = Import
+ui-options-chat-logs-importing = Importing: { $done } of { $total } files
+ui-options-chat-logs-imported = { $count ->
+    [one] { $count } message added
+   *[other] { $count } messages added
+    } to { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    }
+ui-options-chat-logs-import-reopen = A conversation already in progress shows them the next time it opens.
+ui-options-chat-logs-import-nothing = Nothing new to import.
+ui-options-chat-logs-import-failed = { $count ->
+    [one] { $count } file could not be imported and was left as it was: import again to retry.
+   *[other] { $count } files could not be imported and were left as they were: import again to retry.
+    }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] { $count } text file has no timestamps and was left out: it may be a conversation logged without them.
+   *[other] { $count } text files have no timestamps and were left out: they may be conversations logged without them.
+    }
 ui-chat-filter-conversation = Filter the conversation (Ctrl+F: find)
 ui-chat-filter = Filter…
 ui-chat-find = Find in this conversation…

@@ -49,6 +49,7 @@ mod buy_currency;
 mod buy_land;
 mod camera_presets;
 mod chat_commands;
+mod chat_import;
 mod click_pick;
 mod color_picker;
 mod contents_copy;
@@ -1007,6 +1008,7 @@ pub struct App {
     neighbours_refused: bool,
     /// The cache and transcript folders being chosen (app/folders.rs).
     folders: folders::Folders,
+    chat_import: chat_import::ChatImport,
     /// The settings backup being written or read (app/settings_backup.rs).
     settings_backup: settings_backup::Job,
     /// The stream list being exported or imported (app/stream_list.rs).
@@ -1420,6 +1422,7 @@ impl App {
             favorites_access_applied: None,
             favorite_images: Default::default(),
             history_ui: Default::default(),
+            chat_import: Default::default(),
             perf: PerfData::default(),
             monitor: ui::monitor::Monitor::default(),
             monitor_feed: monitor::MonitorFeed::default(),
@@ -2688,6 +2691,9 @@ impl App {
             log_nearby: s.log_nearby,
             show_history: s.log_show_history,
             dated_names: s.log_dated_names,
+            // the demo never reads the PC's real Legacy Viewer folders: its
+            // import scenario starts its own import on its own files
+            import_at_login: s.log_import_at_login && !self.demo,
         };
         // the demo keeps no transcripts unless its scenario asks for them:
         // a run must not change what the next one shows
@@ -2957,6 +2963,7 @@ impl App {
         self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
+        self.chat_import_closed();
         self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
@@ -8677,6 +8684,7 @@ impl App {
             self.world.notify_deliveries(&deliveries);
         }
         self.world.poll_transcripts();
+        self.poll_chat_import();
         self.update_hover_height();
         self.update_avatar_health();
         if self.demo {
@@ -14382,7 +14390,17 @@ impl App {
         }
         if let Some(done) = self.world.chat_log.take_erased() {
             self.options_ui.chat_log_status = match done {
-                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
+                Ok(count) if self.settings.log_import_at_login => {
+                    // what was erased must not come back at the next login
+                    self.settings.log_import_at_login = false;
+                    self.folders.settings_changed = true;
+                    format!(
+                        "{} {}",
+                        aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
+                        aurora_i18n::tr!("ui-options-chat-logs-import-login-off")
+                    )
+                }
+                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count).to_owned(),
                 Err(e) => {
                     log::warn!("conversation transcripts: erasing failed ({e})");
                     aurora_i18n::tr!("ui-options-chat-logs-erase-failed").to_owned()
@@ -14519,8 +14537,18 @@ impl App {
                 log::warn!("cannot open the transcripts folder: {e}");
             }
         }
+        if res.find_legacy_logs {
+            self.chat_import_opened();
+        }
+        if let Some(folders) = res.import_legacy_logs.take() {
+            self.chat_import_start(folders);
+        }
         if res.erase_chat_logs {
-            self.options_ui.chat_log_status.clear();
+            self.options_ui.chat_log_status = if self.world.chat_log.busy() {
+                aurora_i18n::tr!("ui-options-chat-logs-busy").to_owned()
+            } else {
+                String::new()
+            };
             self.world.chat_log.erase();
         }
         if let Some((folder, choice)) = res.folder {
@@ -18718,6 +18746,34 @@ impl ApplicationHandler for App {
                         self.world.im_messages.clear();
                     }
                     Mode::Offline => {}
+                    Mode::Import(stage) => {
+                        use chatlog::ImportStage;
+                        let legacy = self.world.chat_log.dir().map(chatlog::legacy_root);
+                        if let Some(root) = &legacy
+                            && let Err(e) = chatlog::seed_legacy(root, &self.world.own_name(), stage)
+                        {
+                            log::warn!("demo Legacy Viewer transcripts not written: {e}");
+                        }
+                        let apps = legacy.into_iter().filter(|_| stage != ImportStage::None).collect();
+                        self.world.chat_log.set_legacy_apps(apps);
+                        // a conversation open on its history alone, which an
+                        // import brings up to date
+                        self.world.social.session_mut(chatlog::PEER);
+                        if stage == ImportStage::Login {
+                            if let Some((account, _)) = self.chat_import_account() {
+                                self.world.chat_log.import_found(account);
+                            }
+                        } else {
+                            self.panels.settings = true;
+                            self.options_ui.open(ui::options::Page::Chat, 3);
+                            self.chat_import_opened();
+                            if stage == ImportStage::Same
+                                && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
+                            {
+                                self.chat_import_chosen(dir);
+                            }
+                        }
+                    }
                     Mode::Im | Mode::Find | Mode::History { .. } => {
                         self.world.apply(chatlog::new_message(me));
                     }
