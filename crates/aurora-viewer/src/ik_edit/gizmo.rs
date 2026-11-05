@@ -26,6 +26,9 @@ pub(super) enum Space {
     Local,
 }
 
+/// FSManipRotateJoint's roll ring, at `mRadiusMeters * 1.2` around the rings.
+const VIEW_RING: f32 = 1.2;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
     Axis(usize),
@@ -105,13 +108,16 @@ impl Geometry {
         self.pivot + (u * t.cos() + a.cross(u) * t.sin()) * self.length
     }
 
+    /// Drawn in the screen plane, so it stays a circle off-centre and rolled.
     fn view_ring(&self, t: f32) -> Vec3 {
-        self.pivot + (self.cam.left * t.cos() + self.cam.up * t.sin()) * self.length * 1.2
+        self.pivot + (self.cam.left * t.cos() + self.cam.up * t.sin()) * self.length * VIEW_RING
     }
 
     fn part_axis(&self, part: Part) -> Vec3 {
         match part {
             Part::Axis(i) | Part::Plane(i) | Part::Ring(i) => self.axis(i),
+            // LL_ROT_ROLL turns about mCenterToCamNorm; the signed ring angle
+            // makes the sign of the axis irrelevant to the drag direction.
             Part::Roll => -self.cam.direction_to(self.pivot),
         }
     }
@@ -158,6 +164,8 @@ impl Geometry {
         if best.1.is_some() {
             return best.1;
         }
+        // Like FSManipRotateJoint::highlightManipulators, roll only when no
+        // axis ring is near, on a band outside them: the interior stays free.
         if self.tool != Tool::Rotate {
             return None;
         }

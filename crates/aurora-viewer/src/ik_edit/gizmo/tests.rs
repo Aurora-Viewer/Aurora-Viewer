@@ -118,14 +118,28 @@ fn bone_gizmo_camera_roll_ring_picks_after_axis_rings_and_rotates_in_screen_plan
         assert_eq!(g.pick(start), Some(Part::Roll));
         let inside = g.cam.project(g.pivot + g.cam.left * g.length * 0.8).unwrap();
         assert_ne!(g.pick(inside), Some(Part::Roll));
+        for axis in 0..3 {
+            let on_ring = g.cam.project(g.ring(axis, 0.3)).unwrap();
+            assert!(matches!(g.pick(on_ring), Some(Part::Ring(_))));
+        }
+        let mut moving = g;
+        moving.tool = Tool::Move;
+        assert_ne!(moving.pick(start), Some(Part::Roll));
 
+        // The axis is the camera-to-joint line, in world space.
         let axis = g.part_axis(Part::Roll);
+        assert!(axis.cross(g.pivot - g.cam.eye).length() < 1e-4);
         let mut drag = Drag::new(g, Part::Roll, start, pose).expect("view-facing roll drag");
         let moved = drag.update(sweep).expect("screen-plane rotation");
-        let positive = Quat::from_axis_angle(axis, std::f32::consts::FRAC_PI_2) * pose.rotation;
-        let negative = Quat::from_axis_angle(axis, -std::f32::consts::FRAC_PI_2) * pose.rotation;
         assert_eq!(moved.position, pose.position);
-        assert!(moved.rotation.dot(positive).abs() > 0.99999 || moved.rotation.dot(negative).abs() > 0.99999);
+        // A quarter turn about that axis, in the pointer's direction: the
+        // joint's point under the start of the drag ends under the pointer.
+        let turn = moved.rotation * pose.rotation.inverse();
+        assert!((turn.to_axis_angle().1.abs() - std::f32::consts::FRAC_PI_2).abs() < 1e-3);
+        let carried = turn * (g.view_ring(0.0) - g.pivot);
+        assert!(carried.distance(g.view_ring(std::f32::consts::FRAC_PI_2) - g.pivot) < g.length * 1e-3);
+        let back = drag.update(start).expect("back to the start");
+        assert!(back.rotation.dot(pose.rotation).abs() > 0.99999);
     }
 }
 
