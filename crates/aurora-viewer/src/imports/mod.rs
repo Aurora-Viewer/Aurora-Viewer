@@ -752,6 +752,8 @@ impl Imports {
         }
         options
     }
+    // LLInventoryModel::findUserDefinedCategoryUUIDForType (llinventorymodel.cpp):
+    // a user lock keeps the folder in place; it does not redirect uploads (#1981).
     fn default_folder(world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences, kind: Kind) -> Uuid {
         use crate::world::inventory::actions;
         let folder = prefs.upload_folders[kind.folder_slot()];

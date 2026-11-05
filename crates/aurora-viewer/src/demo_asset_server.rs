@@ -128,7 +128,7 @@ fn serve(stream: TcpStream, resolve: &Resolve, link: &Link) {
         }
         std::thread::sleep(link.delay);
         let asked = parse_request(&head);
-        let file = asked.and_then(|(kind, id, range)| Some((std::fs::read(resolve(kind, &id)?).ok()?, range)));
+        let file = asked.and_then(|(kind, id, range)| Some((crate::cache::read(resolve(kind, &id)?).ok()?, range)));
         let (status, headers, body) = match &file {
             Some((data, range)) => reply(data, *range),
             None => ("404 Not Found", String::new(), &[][..]),

@@ -3901,6 +3901,10 @@ ui-options-avatar-physics-help = 物理演算レイヤーを着用したアバ�
 ui-options-avatar-physics-detail = アバター物理演算の詳細度
 ui-options-avatar-physics-detail-help = 1ではすべてのアバターが動きます。値を下げると画面上で小さいアバターは形状を保ちます。0で物理演算を停止します（RenderAvatarPhysicsLODFactor）。
 ui-options-limit-when-unfocused = 非アクティブ時に制限
+ui-options-pause-when-card-busy = グラフィックカードが過負荷のとき3Dを一時停止
+ui-options-pause-when-card-busy-tip = Auroraが背面にある間に別のプログラムがグラフィックカードを占有しているとき、カードがリセットされないよう、クリックするまでAuroraはワールドの描画を止めます。オフにすると、Auroraが「グラフィックカードが失われました」で終了することがあります。デフォルトで有効
+busy-pause-notice = 3Dを一時停止中：グラフィックカードが別のプログラムで使用中です。クリックで再開します。
+busy-pause-window-title = { $title } — 一時停止中
 ui-land-sound-restrict-voice-chat-to-this-parcel = ボイスチャットをこの区画に制限
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = ジェスチャーとオブジェクトのサウンドをこの区画に制限
 common-limits = 制限
@@ -12669,7 +12673,7 @@ wearable-changed = この容姿のアイテムは変更されたか、もう着�
 wearable-error = この容姿のアセットを読み取りまたは保存できませんでした。
 wearable-readonly = このアイテムは修正できません。
 wearable-texture-permissions = コピーの権限があり、譲渡可能な衣類の場合は譲渡の権限もあるインベントリのテクスチャを選択してください。
-wearable-local-preview = ローカルテクスチャは自分だけのプレビューです。保存する前にテクスチャをアップロードし、インベントリから選択してください。
+wearable-local-preview = 保存するとローカルテクスチャの参照が保持されます。画像はアップロードされません。
 wearable-loading = 容姿のアイテムを読み込んでいます…
 wearable-saving = 保存しています…
 wearable-saved = 容姿のアイテムを保存しました。
@@ -13111,3 +13115,11 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
+
+picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。
+
+picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
+
+local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
