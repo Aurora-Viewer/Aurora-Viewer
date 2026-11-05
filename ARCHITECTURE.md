@@ -1501,7 +1501,8 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ HUMANS.md                    guide for humans: PRs, merge, build
 ├─ ARCHITECTURE.md              this file
 ├─ TASKS.md                     task tracking: in progress / to do / finished since the last release (older: docs/TASKS_ARCHIVE.md)
-├─ LICENSE, NOTICE.md           GPLv3, third-party licences
+├─ LICENSE, NOTICE.md           GPLv3, copyright notice, third-party licences
+├─ TRADEMARKS.md                use of the name and logo by modified versions, official downloads
 ├─ aurora-tools.cmd             development tools (double-click): scripts/tools
 ├─ assets/
 │  ├─ branding/                 logos (colour, white, black, violet, teal, on navy), SVG + PNG, aurora.ico
