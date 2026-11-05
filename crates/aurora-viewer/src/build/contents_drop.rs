@@ -33,7 +33,7 @@ const FT_MARKETPLACE: i32 = 53;
 /// FLAGS_ALLOW_INVENTORY_DROP (llprimitive.h).
 const ALLOW_INVENTORY_DROP: u32 = 1 << 16;
 /// PERM_ITEM_UNRESTRICTED (llpermissionsflags.h).
-const UNRESTRICTED: u32 = rules::MODIFY | rules::COPY | rules::TRANSFER;
+pub(crate) const UNRESTRICTED: u32 = rules::MODIFY | rules::COPY | rules::TRANSFER;
 
 /// One item sent into an object's contents.
 #[derive(Debug)]
@@ -71,7 +71,7 @@ pub fn copyable(item: &InvItem, agent: Uuid) -> bool {
     agent_mask(item, agent) & rules::COPY != 0
 }
 
-fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
+pub(crate) fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
     if item.owner == agent && !item.group_owned {
         item.owner_mask
     } else {
@@ -81,7 +81,7 @@ fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
 
 /// The root of the prim `idx`'s linkset, and whether it is worn (its root
 /// sits on an avatar). `None` for an avatar or a broken parent chain.
-fn linkset(world: &World, idx: usize) -> Option<(usize, bool)> {
+pub(crate) fn linkset(world: &World, idx: usize) -> Option<(usize, bool)> {
     let mut current = idx;
     for _ in 0..64 {
         let o = world.objects.get(current)?;

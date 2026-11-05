@@ -192,7 +192,10 @@ impl BuyCurrencyUi {
     /// currencyKey, after the field changed (validateNonNegativeS32: digits
     /// that fit an S32).
     fn typed(&mut self, now: Instant) {
-        self.text.retain(|c| c.is_ascii_digit());
+        if !widgets::TextPolicy::Digits.accepts(&self.text) {
+            self.text = amount_text(self.amount);
+            return;
+        }
         let value = if self.text.is_empty() {
             Some(0)
         } else {
@@ -390,12 +393,12 @@ impl BuyCurrencyUi {
             // the amount leaves while the helper holds the purchase (updateUI)
             ui.add_enabled_ui(!buying, |ui| {
                 row(ui, p, aurora_i18n::tr!("currency-you-want-to-buy"), |ui| {
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut self.text)
+                    let field = widgets::restricted_text_field(ui, true, &mut self.text, widgets::TextPolicy::Digits, |b, _| {
+                        egui::TextEdit::singleline(b)
                             .desired_width(96.0)
                             .char_limit(10)
-                            .align(egui::Align2::RIGHT_TOP),
-                    );
+                            .align(egui::Align2::RIGHT_TOP)
+                    });
                     ui.label(RichText::new(aurora_i18n::currency()).color(p.muted));
                     if field.changed() {
                         self.typed(Instant::now());
@@ -701,13 +704,16 @@ mod tests {
     }
 
     #[test]
-    fn field_keeps_digits_that_fit() {
+    fn field_rejects_mixed_text_and_overflow_without_changing_the_previous_amount() {
         let mut ui = form();
         let t = Instant::now();
+        type_amount(&mut ui, "456", t);
         type_amount(&mut ui, "12a3", t);
-        assert_eq!((ui.amount, ui.text.as_str()), (123, "123"));
+        assert_eq!((ui.amount, ui.text.as_str()), (456, "456"));
+        type_amount(&mut ui, "12桜3", t);
+        assert_eq!((ui.amount, ui.text.as_str()), (456, "456"));
         type_amount(&mut ui, "99999999999", t);
-        assert_eq!((ui.amount, ui.text.as_str()), (123, "123"));
+        assert_eq!((ui.amount, ui.text.as_str()), (456, "456"));
     }
 
     #[test]

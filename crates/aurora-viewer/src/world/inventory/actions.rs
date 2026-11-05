@@ -12,6 +12,19 @@ pub const COPY: u32 = 0x8000;
 pub const MODIFY: u32 = 0x4000;
 pub const TRANSFER: u32 = 0x2000;
 pub const MOVE: u32 = 0x80000;
+/// Copy, modify and transfer: what LLViewerInventoryItem::getProtectedAssetUUID
+/// (indra/newview/llviewerinventory.cpp) asks before an asset UUID is shown.
+pub const FULL: u32 = COPY | MODIFY | TRANSFER;
+
+/// Whether an asset UUID met outside its inventory item (a material map)
+/// may be shown: a built-in texture, or an item of the inventory holding it
+/// with full permissions, like the UUID field of LLFloaterTexturePicker
+/// (indra/newview/lltexturectrl.cpp).
+pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
+    use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
+    [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
+        || inv.items.values().any(|it| it.asset_id == asset && it.owner_mask & FULL == FULL)
+}
 
 pub fn parent(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     inv.folders
@@ -221,6 +234,22 @@ pub fn set_favorites(inv: &Inventory, ids: &[Uuid], favorite: bool) -> Result<Mu
 }
 
 pub fn patch(inv: &Inventory, id: Uuid, body: Llsd) -> Result<Mutation, String> {
+    // Metadata edits can also originate in previews/imports, without the
+    // inventory properties field's prevalidation.
+    if body.has("name") && body["name"].to_string_value() != name(inv, id) {
+        crate::text_validation::require_edit(
+            crate::text_validation::Policy::PrintableNoPipe,
+            &name(inv, id),
+            &body["name"].to_string_value(),
+        )?;
+    }
+    if body.has("desc") && inv.items.get(&id).is_none_or(|item| body["desc"].to_string_value() != item.desc) {
+        crate::text_validation::require_edit(
+            crate::text_validation::Policy::MultilineNoPipe,
+            inv.items.get(&id).map_or("", |item| item.desc.as_str()),
+            &body["desc"].to_string_value(),
+        )?;
+    }
     let old = parent(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
     let mut refresh = vec![old];
     if body.has("parent_id") {
@@ -244,6 +273,8 @@ pub fn name(inv: &Inventory, id: Uuid) -> String {
         .unwrap_or_default()
 }
 pub fn clean_name(name: &str) -> Result<String, String> {
+    // Shared with received names and RLVa paths: character prevalidation
+    // belongs to the editor, not to this structural/length check.
     let name = name.trim();
     if name.is_empty() || name.chars().any(|c| c.is_control() || c == '|') {
         return Err(aurora_i18n::tr!("world-inventory-actions-enter-a-valid-name").into());
@@ -256,7 +287,9 @@ pub fn create_folder(parent: Uuid, name: &str) -> Result<Mutation, String> {
         operations: vec![Operation::Folder {
             id,
             parent,
-            name: clean_name(name)?,
+            // Names can come from translated defaults or object/file labels,
+            // rather than an edit. Keep creation usable after prevalidation.
+            name: crate::text_validation::generated_name(&clean_name(name)?, 63),
             type_default: -1,
         }],
         refresh: vec![parent, id],

@@ -621,7 +621,9 @@ impl Editor {
                 } else {
                     self.clip.sample()
                 },
-                suppress_live: self.clip.waiting_source() && self.animations.suppress_live,
+                // keys are posed on the rest skeleton: a disabled track shows it, and
+                // the live pose cannot reach a capture
+                suppress_live: !self.clip.waiting_source() || self.animations.suppress_live,
                 goals: self
                     .goals
                     .iter()

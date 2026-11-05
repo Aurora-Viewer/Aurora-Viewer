@@ -18,7 +18,11 @@ mod threads;
 mod watchdog;
 mod window;
 
-pub use watchdog::{State, note as note_state, watch_window};
+#[cfg(test)]
+pub(crate) use summary::state_value as summary_state_value;
+#[cfg(test)]
+pub(crate) use watchdog::WINDOW_STATES;
+pub use watchdog::{State, note as note_state, pumped, watch_window};
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -246,7 +250,24 @@ fn start_inner() -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+    note_vulkan_layers(&dir);
     Ok(())
+}
+
+/// The Vulkan layers on offer go to `vulkan-layers.txt` as soon as they are
+/// known, on a thread of their own: a crash while Vulkan starts, before any
+/// note of the state, is where the report needs them most (#2241).
+fn note_vulkan_layers(dir: &Path) {
+    let dir = dir.to_owned();
+    let spawned = std::thread::Builder::new().name("aurora-crash-facts".into()).spawn(move || {
+        let names = aurora_render::vulkan_layers::loaded_names();
+        if !names.is_empty() {
+            let _ = std::fs::write(dir.join("vulkan-layers.txt"), names.join(","));
+        }
+    });
+    if let Err(error) = spawned {
+        eprintln!("the Vulkan layers are not noted for a crash report: {error}");
+    }
 }
 
 pub fn update(theme: &crate::theme::Theme, settings: &crate::settings::Settings) {
@@ -303,7 +324,7 @@ pub fn failure(message: &str) {
 }
 
 /// The GPU has kept a frame for `seconds` while the window still answers:
-/// `gpu-stall.txt` (with the render thread's stack on Windows), so a
+/// `gpu-stall.txt` (with the render thread's stack on Windows and Linux), so a
 /// session ended now is reported as such. [`gpu_answered`] takes it back.
 pub fn gpu_stalled(seconds: u64) {
     if let Some(session) = SESSION.get() {
@@ -380,6 +401,10 @@ pub fn gpu_closed() {
 }
 
 pub fn gpu_answered() {
+    // first, so that a stall's stacks still being read do not bring the
+    // file back once it is removed
+    #[cfg(target_os = "linux")]
+    watchdog::gpu_answered();
     if let Some(session) = SESSION.get() {
         let _ = std::fs::remove_file(session.dir.join("gpu-stall.txt"));
     }

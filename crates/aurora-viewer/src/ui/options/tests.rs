@@ -77,6 +77,7 @@ const BEFORE: &[&str] = &[
     "shadow_quality",
     "shadows",
     "projector_shadows",
+    "projector_shadow_limit",
     "contact_shadows",
     "ssao",
     "ao_method",
@@ -107,6 +108,7 @@ const BEFORE: &[&str] = &[
     "fps_limit",
     "background_fps_cap",
     "background_fps_limit",
+    "background_gpu_pause",
     // Interface
     "language",
     "language_is_public",

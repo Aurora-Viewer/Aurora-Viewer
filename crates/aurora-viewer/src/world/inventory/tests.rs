@@ -687,7 +687,10 @@ fn names_are_trimmed_bounded_and_cannot_inject_legacy_asset_headers() {
     assert_eq!(clean_name("  Chemise  ").expect("name"), "Chemise");
     assert!(clean_name("Chemise\ntype 0").is_err());
     assert!(clean_name("A|B").is_err());
-    assert_eq!(clean_name(&"é".repeat(90)).expect("bounded name").chars().count(), 63);
+    assert_eq!(clean_name(&"a".repeat(90)).expect("bounded name").len(), 63);
+    for name in ["Café", "桜", "龙", "Name 桜龙"] {
+        assert_eq!(clean_name(name).expect("received name"), name);
+    }
 }
 
 #[test]
@@ -752,4 +755,35 @@ fn a_link_can_be_pasted_into_an_outfit_folder_but_a_copy_cannot() {
     assert!(paste_allowed(&inv, &mixed, id(9701), false, true, &none, &none));
     let change = paste(&inv, &mixed, id(9701), false, true, &none, &none).expect("the wearable is linked");
     assert_eq!(change.operations.len(), 1, "only the wearable");
+}
+
+#[test]
+fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
+    let mut inv = Inventory::default();
+    let asset = id(9801);
+    assert!(!asset_uuid_shown(&inv, asset), "not in the inventory");
+    assert!(asset_uuid_shown(&inv, aurora_prim::te::BLANK_TEXTURE));
+    assert!(asset_uuid_shown(&inv, aurora_prim::te::TRANSPARENT_TEXTURE));
+    for missing in [COPY, MODIFY, TRANSFER] {
+        inv.items.insert(
+            id(9802),
+            InvItem {
+                id: id(9802),
+                asset_id: asset,
+                owner_mask: FULL & !missing,
+                ..Default::default()
+            },
+        );
+        assert!(!asset_uuid_shown(&inv, asset), "missing permission {missing:x}");
+    }
+    inv.items.insert(
+        id(9803),
+        InvItem {
+            id: id(9803),
+            asset_id: asset,
+            owner_mask: FULL,
+            ..Default::default()
+        },
+    );
+    assert!(asset_uuid_shown(&inv, asset), "a second item gives full permissions");
 }

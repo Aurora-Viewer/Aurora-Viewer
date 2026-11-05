@@ -218,10 +218,12 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports, world:
         if let Some(old) = imports.folders.editing.clone() {
             ui.horizontal(|ui| {
                 ui.label(aurora_i18n::tr!("import-folders-path"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut imports.folders.edited_path)
-                        .desired_width(260.0)
-                        .char_limit(4095),
+                widgets::restricted_text_field(
+                    ui,
+                    true,
+                    &mut imports.folders.edited_path,
+                    widgets::TextPolicy::PrintableNoPipe,
+                    |b, _| egui::TextEdit::singleline(b).desired_width(260.0).char_limit(4095),
                 );
                 let parsed = folders::parse_path(&imports.folders.edited_path);
                 if tool_button(ui, p, aurora_i18n::tr!("common-apply"), parsed.is_some()).clicked()
@@ -300,12 +302,13 @@ fn file_row(
             let field = ui
                 .add_enabled_ui(enabled, |ui| {
                     let text = if root.is_some() { &mut edit.text } else { &mut target };
-                    ui.add_sized(
-                        Vec2::new(path_width, 26.0),
-                        egui::TextEdit::singleline(text)
+                    widgets::restricted_text_field(ui, true, text, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                        egui::TextEdit::singleline(b)
                             .char_limit(4095)
-                            .hint_text(root.unwrap_or_default()),
-                    )
+                            .hint_text(root.unwrap_or_default())
+                            .desired_width(path_width)
+                            .min_size(Vec2::new(0.0, 26.0))
+                    })
                 })
                 .inner
                 .on_hover_text(format!("{target}\n{}", aurora_i18n::tr!("import-folders-path-help")));

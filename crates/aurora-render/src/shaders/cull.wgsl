@@ -8,8 +8,8 @@
 //   4..6    shadow cascades, casters drawn depth only (opaque faces)
 //   7..9    water reflection, mirror, reflection probe face
 //   10..12  shadow cascades, casters drawn with the alpha test
-//   13..14  shadow maps of the two projectors that cast shadows
-//   15      water exclusion surfaces (no scene colour, shadow or reflection)
+//   13..28  projector shadow maps (up to the configured budget)
+//   29      water exclusion surfaces (no scene colour, shadow or reflection)
 // Bins keep the record order (no atomics on the slots): coplanar faces drawn
 // in the same pass keep the same winner from one frame to the next.
 //   cs_classify: bin mask of each face, face count of each bin per workgroup;
@@ -23,8 +23,8 @@
 // The tests mirror Scene::build_lists (CPU path) and `gpu_cull::face_bins`.
 // The Hi-Z sphere test (hiz_test.wgsl) is prepended to this module.
 
-const BINS: u32 = 16u;
-const BIN_WATER_EXCLUSION: u32 = 15u;
+const BINS: u32 = 30u;
+const BIN_WATER_EXCLUSION: u32 = 29u;
 const MAIN_BINS: u32 = 4u;
 const BIN_SHADOW: u32 = 4u;
 const BIN_REFL_WATER: u32 = 7u;
@@ -34,18 +34,18 @@ const BIN_SHADOW_ALPHA: u32 = 10u;
 const BIN_SPOT: u32 = 13u;
 // argument regions after the bins: occlusion phase 1 and phase 2 prepass
 // lists of each main bin (own counts)
-const REGION_PRE1: u32 = 16u;
-const REGION_PRE2: u32 = 20u;
+const REGION_PRE1: u32 = 30u;
+const REGION_PRE2: u32 = 34u;
 
 // counts: bin sizes, then statistics
-const COUNT_VISIBLE: u32 = 16u;
-const COUNT_TRIANGLES: u32 = 17u;
-const COUNT_HIDDEN: u32 = 18u;
-const COUNT_PRE1: u32 = 19u;
-const COUNT_PRE2: u32 = 23u;
+const COUNT_VISIBLE: u32 = 30u;
+const COUNT_TRIANGLES: u32 = 31u;
+const COUNT_HIDDEN: u32 = 32u;
+const COUNT_PRE1: u32 = 33u;
+const COUNT_PRE2: u32 = 37u;
 // profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
 // rigged casters (avatars and rigged meshes), then their triangles
-const COUNT_SHADOW: u32 = 27u;
+const COUNT_SHADOW: u32 = 41u;
 const SHADOW_STATS: u32 = 9u;
 
 // planes of a cascade's caster volume (CullFrame.shadow_planes)
@@ -97,7 +97,7 @@ const F_SHADOW_STATS: u32 = 64u;
 // every caster drawn with the alpha test (AURORA_SHADOW_LEGACY)
 const F_SHADOW_ALPHA_ALL: u32 = 128u;
 // projector shadow map k is drawn
-const F_SPOT: u32 = 256u;
+const F_SPOT: u32 = 65536u;
 const F_WATER_AIR: u32 = 1024u;
 // blended faces that are not rigged cast too (off: AURORA_BLEND_SHADOWS=0)
 const F_BLEND_CASTS: u32 = 2048u;
@@ -153,8 +153,8 @@ struct CullFrame {
     water_air: array<vec4<f32>, 6>,
     mirror: array<vec4<f32>, 6>,
     probe: array<vec4<f32>, 6>,
-    // frustums of the two projector shadow maps
-    spots: array<vec4<f32>, 12>,
+    // frustums of the projector shadow maps
+    spots: array<vec4<f32>, 96>,
     cascades: array<mat4x4<f32>, 3>,
     // per cascade, SHADOW_PLANES planes (inside: positive) around what can
     // cast a shadow the main view samples in that cascade
@@ -188,7 +188,7 @@ struct OcclParams {
 @group(0) @binding(4) var<storage, read_write> masks: array<u32>;
 // per workgroup and bin: face count, then (after cs_scan) offset
 @group(0) @binding(5) var<storage, read_write> group_data: array<u32>;
-@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 40>;
+@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 52>;
 // DrawIndexedIndirect: index_count, instance_count, first_index, base_vertex, first_instance
 @group(0) @binding(7) var<storage, read_write> args: array<u32>;
 @group(0) @binding(8) var<uniform> occl: OcclParams;
@@ -410,7 +410,7 @@ fn face_mask(i: u32) -> u32 {
     }
     // casters of the projectors' shadow maps, all drawn with the alpha test
     if (caster) {
-        for (var k = 0u; k < 2u; k++) {
+        for (var k = 0u; k < 16u; k++) {
             if ((fl & (F_SPOT << k)) != 0u && spot_in(k, c, r)) {
                 m |= 1u << (BIN_SPOT + k);
             }
@@ -514,11 +514,22 @@ fn cs_scan(@builtin(local_invocation_index) lid: u32, @builtin(workgroup_id) wid
 }
 
 // One 8-bit counter per bin, four bins per lane (128 threads: at most 128).
-fn pack_bins(m: u32) -> vec4<u32> {
-    var v = vec4<u32>(0u);
+struct BinPack {
+    low: vec4<u32>,
+    high: vec4<u32>,
+}
+
+fn pack_bins(m: u32) -> BinPack {
+    var v: BinPack;
+    v.low = vec4<u32>(0u);
+    v.high = vec4<u32>(0u);
     for (var b = 0u; b < BINS; b++) {
         if (((m >> b) & 1u) != 0u) {
-            v[b >> 2u] += 1u << ((b & 3u) * 8u);
+            if (b < 16u) {
+                v.low[b >> 2u] += 1u << ((b & 3u) * 8u);
+            } else {
+                v.high[(b - 16u) >> 2u] += 1u << ((b & 3u) * 8u);
+            }
         }
     }
     return v;
@@ -533,7 +544,7 @@ fn write_args(slot: u32, f: CullFace, rec: u32, instances: u32) {
     args[a + 4u] = rec;
 }
 
-var<workgroup> ranks: array<vec4<u32>, 128>;
+var<workgroup> ranks: array<BinPack, 128>;
 
 @compute @workgroup_size(128)
 fn cs_scatter(
@@ -551,18 +562,22 @@ fn cs_scatter(
     workgroupBarrier();
     // inclusive prefix sum of the packed counters (no carry between fields)
     for (var off = 1u; off < 128u; off <<= 1u) {
-        var add = vec4<u32>(0u);
+        var add: BinPack;
+        add.low = vec4<u32>(0u);
+        add.high = vec4<u32>(0u);
         if (lid >= off) {
             add = ranks[lid - off];
         }
         workgroupBarrier();
-        ranks[lid] += add;
+        ranks[lid].low += add.low;
+        ranks[lid].high += add.high;
         workgroupBarrier();
     }
     if (m == 0u) {
         return;
     }
-    let excl = ranks[lid] - own;
+    let low = ranks[lid].low - own.low;
+    let high = ranks[lid].high - own.high;
     let f = faces[i];
     let cap = frame.sizes.z;
     let occlusion = (frame.sizes.w & F_OCCLUSION) != 0u;
@@ -570,7 +585,13 @@ fn cs_scatter(
         if (((m >> b) & 1u) == 0u) {
             continue;
         }
-        let rank = (excl[b >> 2u] >> ((b & 3u) * 8u)) & 0xffu;
+        var packed: u32;
+        if (b < 16u) {
+            packed = low[b >> 2u];
+        } else {
+            packed = high[(b - 16u) >> 2u];
+        }
+        let rank = (packed >> ((b & 3u) * 8u)) & 0xffu;
         let pos = group_data[wid.x * BINS + b] + rank;
         write_args(b * cap + pos, f, i, 1u);
         if (b < MAIN_BINS && occlusion) {

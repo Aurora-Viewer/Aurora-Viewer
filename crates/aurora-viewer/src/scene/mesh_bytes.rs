@@ -108,7 +108,7 @@ impl MeshBytes {
         // same file must not cross)
         static WRITING: Mutex<()> = Mutex::new(());
         let _one = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(mut held) = std::fs::read(path).ok().and_then(MeshBytes::decode) else {
+        let Some(mut held) = crate::cache::read(path).ok().and_then(MeshBytes::decode) else {
             return crate::cache::write(path, &self.encode());
         };
         let before = (held.whole, held.parts.len(), held.held());
@@ -259,7 +259,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("aurora-mesh-save-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("dir");
         let path = dir.join("asset.mesh");
-        let read = || MeshBytes::decode(std::fs::read(&path).expect("file")).expect("cache file");
+        let read = || MeshBytes::decode(crate::cache::read(&path).expect("file")).expect("cache file");
 
         // a whole asset on disk, then a few of its blocks
         let whole = part(0, 6000);
