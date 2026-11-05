@@ -1,28 +1,27 @@
 //! The button back to the latest messages (#558): it rises over the bottom
-//! of a conversation once the reader has scrolled away from its end, says
-//! how many messages came in since, and brings the end back in sight. The
-//! Legacy Viewer has none: its history only follows the end while it is
-//! there (FSChatHistory::appendMessage, mScrollToBottom).
+//! of a conversation once others wrote while the reader was away from its
+//! end, says how many messages came in since, and brings the end back in
+//! sight. Scrolled up with nothing new, it stays hidden, never over the
+//! text being read (#2364). The Legacy Viewer has none: its history only
+//! follows the end while it is there (FSChatHistory::appendMessage,
+//! mScrollToBottom).
 
 use crate::theme::Palette;
 use crate::ui::widgets;
 
-/// Further from the end than this share of the height in sight, the button
-/// shows even when nothing came in.
-const AWAY: f32 = 0.5;
 const HEIGHT: f32 = 28.0;
 /// Its gap above the bottom of the lines.
 const MARGIN: f32 = 10.0;
 /// How far it rises while it fades in.
 const RISE: f32 = 6.0;
 
-/// The button over the bottom of `area`, the lines in sight, when the end is
-/// `below` points under them or `arrived` messages came in since the reader
-/// left it. True when it was clicked.
-pub(super) fn show(ui: &mut egui::Ui, p: &Palette, id: egui::Id, area: egui::Rect, below: f32, arrived: usize) -> bool {
-    // away for two frames running: a conversation just shown stands off its
-    // end for one frame, until the scroll area sticks to it
-    let away = arrived > 0 || below > area.height() * AWAY;
+/// The button over the bottom of `area`, the lines in sight, when `arrived`
+/// messages from others came in since the reader left the end. True when it
+/// was clicked.
+pub(super) fn show(ui: &mut egui::Ui, p: &Palette, id: egui::Id, area: egui::Rect, arrived: usize) -> bool {
+    // for two frames running: a conversation just shown stands off its end
+    // for one frame, until the scroll area sticks to it
+    let away = arrived > 0;
     let away_id = id.with("away");
     let frames = if away {
         ui.data(|d| d.get_temp::<u8>(away_id)).unwrap_or(0).saturating_add(1)
@@ -35,11 +34,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, id: egui::Id, area: egui::Rec
     // while it fades out, the words it had (the count is gone at once)
     let label_id = id.with("label");
     let label = if wanted {
-        let label = if arrived > 0 {
-            aurora_i18n::tr!("ui-chat-latest-new", count = arrived)
-        } else {
-            aurora_i18n::tr!("ui-chat-latest").to_owned()
-        };
+        let label = aurora_i18n::tr!("ui-chat-latest-new", count = arrived);
         ui.data_mut(|d| d.insert_temp(label_id, label.clone()));
         label
     } else {
