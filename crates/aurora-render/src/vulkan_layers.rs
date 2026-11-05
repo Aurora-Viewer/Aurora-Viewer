@@ -211,7 +211,12 @@ mod tests {
     fn crashing_and_overlay_layers_are_disabled_by_default() {
         let names = names(&to_disable(None, false, |_| false));
         assert_eq!(&names[..2], ["VK_LAYER_OW_OVERLAY", "VK_LAYER_OW_OBS_HOOK"]);
-        for overlay in ["VK_LAYER_OBS_HOOK", "VK_LAYER_VALVE_steam_overlay", "VK_LAYER_RTSS", "VK_LAYER_EOS_Overlay"] {
+        for overlay in [
+            "VK_LAYER_OBS_HOOK",
+            "VK_LAYER_VALVE_steam_overlay",
+            "VK_LAYER_RTSS",
+            "VK_LAYER_EOS_Overlay",
+        ] {
             assert!(names.contains(&overlay), "{overlay}");
         }
         assert_eq!(names.len(), CRASHING.len() + OVERLAYS.len());
