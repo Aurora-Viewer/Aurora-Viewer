@@ -8487,19 +8487,20 @@ the human verifies actual saved inventory names on the grid.
 — with `AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names
 like "Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
 clothes, objects and body parts, a thumbnail id (never loaded offline) on
-one in four, and a date a day apart in an order unrelated to the names.
-`newest` and `oldest` start on that date order, `favorites` (one outfit in
-five is then a favorite) and `images` turn on the matching Sort outfits
-toggle, for this run's settings like any choice of the menu. `closed` leaves the window closed; `scroll` turns the wheel
-over the list or gallery of the default window from frame 700, down then up
-every 300 frames; `locate` presses the locate button of the current outfit
-banner at start: the gallery or list scrolls to the worn outfit, selects
-it and flashes it for 1.6 s (the flash is gone by frame 620, the selection
-stays). With `AURORA_PROFILE=1`, read `ui` of `perf summary`
-(and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8 ms with
-the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms open and
-2.5 ms closed before the wardrobe's links were walked only on inventory
-changes and only the rows in sight laid out.
+one in four, and dates a day apart that do not follow the names. `newest`
+and `oldest` start on that date order, `favorites` (one outfit in five is
+then a favorite) and `images` turn on the matching Sort outfits toggle,
+saved in the demo profile like any choice of the menu, so a later run
+without a mode starts on it. `closed` leaves the window closed; `scroll`
+turns the wheel over the list or gallery of the default window from frame
+700, down then up every 300 frames; `locate` presses the locate button of
+the current outfit banner at start: the gallery or list scrolls to the worn
+outfit, selects it and flashes it for 1.6 s (the flash is gone by frame
+620, the selection stays). With `AURORA_PROFILE=1`, read `ui` of `perf
+summary` (and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8
+ms with the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms
+open and 2.5 ms closed before the wardrobe's links were walked only on
+inventory changes and only the rows in sight laid out.
 
 The demo objects use distinct points (skull, left ear,
 left ring finger, left foot and top-right HUD), shown in the

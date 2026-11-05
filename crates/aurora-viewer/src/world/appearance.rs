@@ -1618,8 +1618,8 @@ pub fn demo_outfit_mode(mode: &str) -> bool {
 /// A large wardrobe for the Appearance demo: `count` outfits with generated
 /// names, 20 to 60 links each to a pool of generated clothes, objects and
 /// body parts, a thumbnail (never loaded offline) on one in four, and a
-/// date unrelated to the name; with the `favorites` mode, one in five is a
-/// favorite.
+/// date that does not follow the names; with the `favorites` mode, one in
+/// five is a favorite.
 pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
     use super::inventory::Folder;
     let Some(my) = system_folder(inv, FT_MY_OUTFITS) else {
@@ -1656,7 +1656,7 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
     let mut outfits = Vec::with_capacity(count);
     for i in 0..count {
         let id = Uuid::from_u128(2_000_000 + i as u128);
-        // a day apart, in an order that has nothing to do with the names
+        // a day apart: the names sort by style first, so not in their order
         let saved = 1_700_000_000 + ((i * 7919) % count.max(1)) as i64 * 86_400;
         let name = format!("{} {} {:04}", STYLES[i % STYLES.len()], KINDS[(i / 7) % KINDS.len()], i);
         inv.folders.insert(

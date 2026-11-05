@@ -2155,6 +2155,50 @@ mod tests {
     }
 
     #[test]
+    fn the_sort_menu_sets_each_order_and_both_toggles() {
+        use crate::world::outfit_folders::SortBy;
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let mut st = AppearanceUi::default();
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let rect = ctx.memory(|m| m.area_rect(egui::Id::unique("appearance"))).expect("appearance");
+        // the sort button ends the row of the filter
+        let filter = label_position(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-filter-outfits"));
+        let button = egui::pos2(rect.right() - 28.0, filter.y);
+        let open = |ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi| {
+            let none = egui::Modifiers::NONE;
+            modified_click(ctx, world, st, button, none, egui::PointerButton::Primary);
+            for _ in 0..4 {
+                draw(ctx, world, st, None);
+            }
+        };
+        for (label, by) in [
+            (aurora_i18n::tr!("ui-appearance-date-newest-first"), SortBy::Newest),
+            (aurora_i18n::tr!("ui-appearance-date-oldest-first"), SortBy::Oldest),
+            (aurora_i18n::tr!("ui-appearance-name-z-a"), SortBy::NameDescending),
+            (aurora_i18n::tr!("ui-appearance-name-a-z"), SortBy::NameAscending),
+        ] {
+            open(&ctx, &mut world, &mut st);
+            click_menu(&ctx, &mut world, &mut st, label);
+            assert_eq!(st.sort.by, by, "{label}");
+        }
+        for expected in [true, false] {
+            open(&ctx, &mut world, &mut st);
+            click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-favorites-to-top"));
+            assert_eq!(st.sort.favorites_first, expected);
+            open(&ctx, &mut world, &mut st);
+            click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-images-to-top"));
+            assert_eq!(st.sort.images_first, expected);
+            assert_eq!(st.sort.by, SortBy::NameAscending, "the toggles keep the order");
+        }
+    }
+
+    #[test]
     fn outfit_preview_option_toggles_both_ways_in_the_gallery_menu() {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
