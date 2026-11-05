@@ -1257,10 +1257,17 @@ Privacy. Questions about it: [contact@aurora-viewer.org](mailto:contact@aurora-v
 
 ## License
 
+Copyright © 2026 the Aurora Viewer contributors.
+
 Aurora Viewer is free software under the
 [GNU General Public License v3](LICENSE). Parts of it are ported
 from the Second Life viewer and Firestorm (originally LGPL 2.1); see
 [NOTICE.md](NOTICE.md) for details and third-party licenses.
+
+The name and the wolf logo identify the team's own builds: a modified version
+takes its own name and icon, see [TRADEMARKS.md](TRADEMARKS.md). The only
+official downloads are on [aurora-viewer.org](https://aurora-viewer.org) and in
+this repository's [releases](https://github.com/Aurora-Viewer/Aurora-Viewer/releases).
 
 Aurora Viewer is not affiliated with Linden Lab or the Firestorm project.
 Second Life® is a trademark of Linden Research, Inc.
