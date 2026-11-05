@@ -9113,7 +9113,7 @@ ui-options-chat-logs-erased = { $count ->
 ui-options-chat-logs-erase-failed = Some files could not be erased.
 ui-options-chat-logs-busy = The history is busy with an import, a move or an erasing: try again in a moment.
 ui-options-chat-logs-import-login = Import at login
-ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import. Its files are only read. On by default.
+ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import, for the conversations saved above. Its files are only read. On by default.
 ui-options-chat-logs-import-login-off = Import at login is now off, so that this history does not come back.
 ui-options-chat-logs-imported-at-login = Chat history from the Legacy Viewer: { $count ->
     [one] { $count } message added

@@ -7638,9 +7638,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     two runs, the result line ends on "Nothing new to import" and the file
     left out. `import:login`: what Import at login does, no window, and
     the notice it leaves in the nearby chat (messages and conversations
-    added, where to turn it off). Outside this mode the demo never imports
-    at login, whatever the setting: it would read the PC's real Legacy
-    Viewer folders.
+    added, where to turn it off). As Save nearby chat is off by default,
+    the seeded nearby chat file stays out of this import, while `import:run`
+    takes it. Outside this mode the demo never imports at login, whatever
+    the setting: it would read the PC's real Legacy Viewer folders.
     `import:same`: the list also has the folder Aurora writes to, unticked
     and greyed. `import:none`: no folder found, the window says so
     and offers the folder dialog.
