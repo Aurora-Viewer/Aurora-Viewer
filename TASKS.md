@@ -1,6 +1,7 @@
 # Aurora Viewer — task tracking
 
 - 🟡 Sort outfits by date, favorites and images ([#2347](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2347), feedback posts 205, 159 and 185; task `outfit-date-sort`, 2026-11-05): the Sort outfits menu of Appearance gains Date: newest first (Legacy Viewer: `FSOutfitListSortOrder`, date taken as in `get_outfit_tab_creation_date`, indra/newview/lloutfitslist.cpp), Favorites to top (list and gallery) and Images to top (gallery). Aurora additions: Date: oldest first, the date orders in the gallery too, the two toggles combining with each other and with any order, and one saved choice for both views (`appearance_outfit_sort`). Folders have no date, so an outfit's date is its newest direct link: when it was last saved, not when it was first made. Outfits with no date stay last; groups stay by name. Demo: `AURORA_DEMO_OUTFITS=<count>,newest|oldest|favorites|images`.
+  - ✅ Verified in demo by the human (2026-11-05, `AURORA_DEMO_APPEARANCE=outfits`, `AURORA_DEMO_OUTFITS=40`): the four orders, both toggles, favorites changed live, and the choice kept across a restart, in the list and the gallery.
   - ⬜ To verify on the grid: on a large wardrobe, Date: newest first puts a just-saved outfit on top, and the order settles once the inventory has loaded.
   - ⬜ Later: date modified and last worn (#2347) are not covered; the server keeps no last-worn date.
 
