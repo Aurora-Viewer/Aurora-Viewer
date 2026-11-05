@@ -361,7 +361,16 @@ impl LibraryUi {
                 let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
                 let before = window.texture.display;
-                texture_view::toolbar(ui, p, &item, dimensions, &mut window.texture.display, actions);
+                texture_view::toolbar(
+                    ui,
+                    p,
+                    &item,
+                    &world.inventory,
+                    world.god_level > 0,
+                    dimensions,
+                    &mut window.texture.display,
+                    actions,
+                );
                 // the picture in exactly the room the description, the
                 // buttons and the notes leave
                 let (mut view, foot) = widgets::above_footer(ui);

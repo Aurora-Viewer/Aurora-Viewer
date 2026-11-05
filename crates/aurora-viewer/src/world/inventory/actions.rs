@@ -20,9 +20,9 @@ pub const FULL: u32 = COPY | MODIFY | TRANSFER;
 /// may be shown: a built-in texture, or an item of the inventory holding it
 /// with full permissions, like the UUID field of LLFloaterTexturePicker
 /// (indra/newview/lltexturectrl.cpp).
-pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
+pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid, god: bool) -> bool {
     use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
-    [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
+    god || [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
         || inv.items.values().any(|it| it.asset_id == asset && it.owner_mask & FULL == FULL)
 }
 
