@@ -2,8 +2,10 @@
 //! LLViewToggleUI, llviewermenu.cpp, and LLViewerWindow::setUIVisibility,
 //! llviewerwindow.cpp, originally LGPL 2.1) and the bars in mouselook
 //! (LLAgent::changeCameraToMouselook, FSShowInterfaceInMouselook). Hidden,
-//! the interface keeps the world with its name tags, the HUDs, the toasts
-//! and the chat lines; the bars go, and the windows open then
+//! the interface keeps the world and the HUDs; the bars, the avatars' name
+//! tags with their chat bubbles, the chat lines, the toasts, the look-at
+//! crosshairs and the mouselook crosshair go, as everything the Legacy
+//! Viewer draws in its UI layer, and the windows open then
 //! (`widgets::hide_windows`) come back with it. With the islands, a hint
 //! says how to bring it back, and a screen edge hovered shows its bars for
 //! as long as the pointer stays on them (the bars mockup); with Firestorm's
@@ -166,6 +168,21 @@ impl Interface {
             self.peek_sides[i] = at[i] || (self.peek_sides[i] && (on[i] || f.menu_open));
         }
         self.peek_sides
+    }
+
+    /// The view is cleared of what the Legacy Viewer draws in its UI layer
+    /// (LLViewerWindow::setUIVisibility hides the root view's children): the
+    /// interface hidden, not immersive mode, which keeps the chat and has
+    /// its own name tag button.
+    pub fn clears_view(&self) -> bool {
+        self.hidden && !self.immersive
+    }
+
+    /// The avatars' name tags (and the chat bubbles under them) are drawn:
+    /// none while the interface is hidden; in immersive mode, as its button
+    /// says (`immersive_tags`).
+    pub fn name_tags(&self, immersive_tags: bool) -> bool {
+        if self.immersive { immersive_tags } else { !self.hidden }
     }
 
     /// Seconds left to the hint at `now` (the islands' look), while shown;
@@ -391,6 +408,22 @@ mod tests {
             bottom_top: 806.0,
             menu_open: false,
         }
+    }
+
+    /// Hidden, the view is cleared and the name tags go, as in the Legacy
+    /// Viewer; immersive mode keeps its chat and follows its tag button.
+    #[test]
+    fn hidden_clears_the_view_and_immersive_keeps_its_choices() {
+        let mut ui = Interface::default();
+        assert!(!ui.clears_view());
+        assert!(ui.name_tags(false), "shown: the tags whatever immersive's choice");
+        ui.hidden = true;
+        assert!(ui.clears_view());
+        assert!(!ui.name_tags(true));
+        ui.immersive = true;
+        assert!(!ui.clears_view());
+        assert!(ui.name_tags(true));
+        assert!(!ui.name_tags(false));
     }
 
     const BOTH: Shown = Shown { top: true, bottom: true };
