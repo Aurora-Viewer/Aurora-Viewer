@@ -429,6 +429,7 @@ fn emoji_picker(
     };
     let mut close = false;
     let mut escape = false;
+    let mut starred = false;
     let shown = egui::Area::new(Id::unique("chat_island_emoji_picker"))
         .fade_in(false)
         .order(egui::Order::Foreground)
@@ -437,7 +438,11 @@ fn emoji_picker(
         .show(ui.ctx(), |ui| {
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(300.0);
-                let picked = emoji.picker(ui, p, icons);
+                let picked = emoji.picker(ui, p, icons, chat.recent_emojis.favorites());
+                if let Some(c) = picked.favorite {
+                    chat.recent_emojis.toggle_favorite(c);
+                    starred = true;
+                }
                 if let Some(c) = picked.chosen {
                     chat.input.push(c);
                     close = !ui.input(|i| i.modifiers.shift);
@@ -445,7 +450,8 @@ fn emoji_picker(
                 escape = picked.escape;
             });
         });
-    let away = shown.response.clicked_elsewhere() && !ui.rect_contains_pointer(button.expand(4.0));
+    // the emoji's menu can hang outside the picker: its click stays in it
+    let away = shown.response.clicked_elsewhere() && !starred && !ui.rect_contains_pointer(button.expand(4.0));
     if escape {
         // the field gets the keyboard back, its caret where it was
         chat.bar_emoji_open = false;

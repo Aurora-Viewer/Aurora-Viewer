@@ -216,7 +216,10 @@ pub(super) fn show(
                     .show(ui.ctx(), |ui| {
                         crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                             ui.set_width(300.0);
-                            let picked = emoji.picker(ui, p, icons);
+                            let picked = emoji.picker(ui, p, icons, st.recent_emojis.favorites());
+                            if let Some(c) = picked.favorite {
+                                st.recent_emojis.toggle_favorite(c);
+                            }
                             if let Some(c) = picked.chosen {
                                 draft.push(c);
                                 close = !ui.input(|i| i.modifiers.shift);
