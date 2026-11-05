@@ -86,6 +86,7 @@ impl Preset {
                 max_particles: 256,
                 shadow_quality: 0,
                 projector_shadows: false,
+                projector_shadow_limit: 2,
                 ssao: 0,
                 ao_method: 0,
                 gtao_quality: 2,
@@ -113,6 +114,7 @@ impl Preset {
                 max_particles: 2048,
                 shadow_quality: 0,
                 projector_shadows: false,
+                projector_shadow_limit: 2,
                 ssao: 0,
                 ao_method: 0,
                 gtao_quality: 2,
@@ -141,6 +143,7 @@ impl Preset {
                 max_particles: 4096,
                 shadow_quality: 0,
                 projector_shadows: false,
+                projector_shadow_limit: 2,
                 ssao: 1,
                 ao_method: 1,
                 gtao_quality: 0,
@@ -171,6 +174,7 @@ impl Preset {
                 max_particles: 4096,
                 shadow_quality: 2,
                 projector_shadows: false,
+                projector_shadow_limit: 2,
                 ssao: 1,
                 ao_method: 1,
                 gtao_quality: 2,
@@ -207,6 +211,7 @@ impl Preset {
                 max_particles: 8192,
                 shadow_quality: 4,
                 projector_shadows: true,
+                projector_shadow_limit: 2,
                 ssao: 2,
                 ao_method: 1,
                 gtao_quality: 3,
@@ -509,6 +514,8 @@ pub struct Values {
     pub max_particles: u32,
     pub shadow_quality: u8,
     pub projector_shadows: bool,
+    #[serde(default = "default_projector_shadow_limit")]
+    pub projector_shadow_limit: u8,
     pub ssao: u8,
     /// 0 Legacy, 1 GTAO (`Settings::ao_method`).
     pub ao_method: u8,
@@ -534,6 +541,10 @@ pub struct Values {
     #[serde(default = "max_texture_resolution")]
     pub max_texture_resolution: u32,
     pub effects: Effects,
+}
+
+fn default_projector_shadow_limit() -> u8 {
+    2
 }
 
 fn hdr_on() -> bool {
@@ -580,6 +591,11 @@ impl Values {
             max_complexity: slider::to_limit(slider::from_limit(self.max_complexity)),
             sharpen: round(self.sharpen, 0.05),
             avatar_physics_detail: round(self.avatar_physics_detail, 0.05),
+            projector_shadow_limit: if self.projector_shadows && self.shadow_quality > 0 {
+                self.projector_shadow_limit
+            } else {
+                2
+            },
             ao_method,
             gtao_quality: if ao_method == 1 { self.gtao_quality } else { 2 },
             effects,
@@ -596,6 +612,7 @@ impl Values {
             max_particles: s.max_particles,
             shadow_quality: s.shadow_quality,
             projector_shadows: s.projector_shadows,
+            projector_shadow_limit: s.projector_shadow_limit,
             ssao: s.ssao,
             ao_method: s.ao_method,
             gtao_quality: s.gtao_quality,
@@ -630,6 +647,9 @@ impl Values {
         s.shadow_quality = self.shadow_quality;
         s.shadows = self.shadow_quality > 0;
         s.projector_shadows = self.projector_shadows;
+        s.projector_shadow_limit = self
+            .projector_shadow_limit
+            .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         s.ssao = self.ssao;
         s.ao_method = self.ao_method;
         s.gtao_quality = self.gtao_quality;
@@ -656,6 +676,23 @@ impl Values {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn projector_shadow_budget_is_saved_with_custom_presets_and_old_presets_keep_two() {
+        let mut settings = Settings::default();
+        Preset::Deluxe.apply(&mut settings);
+        settings.projector_shadow_limit = 10;
+        assert_eq!(Preset::matching(&settings), None);
+        let saved = serde_json::to_value(Values::read(&settings)).expect("save custom preset");
+        let restored: Values = serde_json::from_value(saved.clone()).expect("restore custom preset");
+        Preset::Low.apply(&mut settings);
+        restored.write(&mut settings);
+        assert_eq!(settings.projector_shadow_limit, 10);
+        let mut old = saved;
+        old.as_object_mut().expect("preset object").remove("projector_shadow_limit");
+        let old: Values = serde_json::from_value(old).expect("older preset");
+        assert_eq!(old.projector_shadow_limit, 2);
+    }
+
     use super::*;
 
     #[test]

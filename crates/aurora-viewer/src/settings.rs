@@ -1177,9 +1177,11 @@ pub struct Settings {
     pub(crate) former_look_at_range: Option<f32>,
     /// 0 off, 1 low, 2 medium, 3 high, 4 ultra
     pub shadow_quality: u8,
-    /// The two projectors that weigh most on screen cast shadows
-    /// (Firestorm RenderShadowDetail 2, "Sun/Moon + Projectors", its default).
+    /// Projectors cast shadows within the configured budget
+    /// (Legacy Viewer RenderShadowDetail 2, "Sun/Moon + Projectors").
     pub projector_shadows: bool,
+    /// Maximum simultaneous projector shadows, independent of local-light count.
+    pub projector_shadow_limit: u8,
     /// Screen-space contact shadows of the sun or the moon, beyond the
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
@@ -1225,6 +1227,11 @@ pub struct Settings {
     /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
     pub background_fps_limit: u32,
+    /// A window behind whose GPU frames crawl (another program in front
+    /// keeps the card busy) stops drawing its 3D until it has the focus
+    /// again, before Windows resets the card (app/busy_pause.rs). On by
+    /// default; not in the Legacy Viewer.
+    pub background_gpu_pause: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
@@ -2021,6 +2028,7 @@ impl Default for Settings {
             former_look_at_range: None,
             shadow_quality: 3,
             projector_shadows: true,
+            projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,
             render_scale_percent: 100,
@@ -2035,6 +2043,7 @@ impl Default for Settings {
             graphics_saved_active: None,
             background_fps_cap: true,
             background_fps_limit: 15,
+            background_gpu_pause: true,
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
@@ -2178,6 +2187,15 @@ pub fn cache_dir() -> PathBuf {
         return for_mode(chosen.to_path_buf());
     }
     for_mode(default_cache_root())
+}
+
+/// The folder of the sealed asset cache (cache.rs), inside [`cache_dir`].
+/// A folder of its own: the earlier versions keep files of another format
+/// right in [`cache_dir`], so that one never reads the other's files.
+pub const ASSET_STORE: &str = "store";
+
+pub fn asset_cache_dir() -> PathBuf {
+    cache_dir().join(ASSET_STORE)
 }
 
 pub(crate) fn default_cache_root() -> PathBuf {
@@ -2669,6 +2687,9 @@ impl Settings {
             HoverTips::default().delay
         };
         self.shadow_quality = self.shadow_quality.min(4);
+        self.projector_shadow_limit = self
+            .projector_shadow_limit
+            .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         self.antialiasing = self.antialiasing.min(6);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
@@ -2869,6 +2890,7 @@ impl Settings {
             },
             hdr: self.hdr_emissive,
             shadow_resolution: self.shadow_params().0,
+            projector_shadow_limit: if self.projector_shadows { self.projector_shadow_limit } else { 0 },
             ssao: self.ssao,
             ao_method: if self.ao_method == 1 {
                 AoMethod::Gtao {
@@ -3044,6 +3066,30 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn projector_shadow_budget_survives_restart_and_clamps_untrusted_values() {
+        use super::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("old preferences");
+        assert_eq!(old.projector_shadow_limit, 2);
+        for (requested, expected) in [(0, 1), (2, 2), (10, 10), (255, 16)] {
+            let settings = Settings {
+                projector_shadow_limit: requested,
+                ..Settings::default()
+            }
+            .sanitized();
+            let bytes = serde_json::to_vec(&settings).expect("save preferences");
+            let restored: Settings = serde_json::from_slice(&bytes).expect("restore preferences");
+            assert_eq!(restored.projector_shadow_limit, expected);
+            assert_eq!(restored.render_settings().projector_shadow_limit, expected);
+        }
+        let disabled = Settings {
+            projector_shadows: false,
+            projector_shadow_limit: 10,
+            ..Settings::default()
+        };
+        assert_eq!(disabled.render_settings().projector_shadow_limit, 0);
+    }
+
     #[test]
     fn auto_accept_inventory_defaults_off_and_preserves_saved_choices() {
         assert!(!super::Settings::default().auto_accept_inventory);

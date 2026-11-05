@@ -671,10 +671,11 @@ impl App {
                         .imports
                         .local_appearance_targets
                         .iter()
-                        .filter(|(_, appearance)| appearance.entry() == id)
+                        .filter(|(_, appearance)| appearance.contains(id))
                         .map(|((id, _), _)| *id)
                         .collect();
                     self.imports.clear_appearance_targets(&mut self.world.objects, &targets, Some(id));
+                    self.build.forget_local_picker_asset(id);
                     if let Some(index) = self.imports.entries.iter().position(|e| e.id == id) {
                         let mut entry = self.imports.entries.remove(index);
                         if let Some(Source::Mesh(draft)) = &mut entry.source {
@@ -702,6 +703,11 @@ impl App {
                 }
                 Action::MapInventory(id, slot) => {
                     self.imports.open_map_picker(id, slot);
+                }
+                Action::MapDrop(id, slot, target) => {
+                    if let Some(resource) = target.receive(ctx, palette, &self.world.inventory, |_| true) {
+                        self.imports.drop_map(id, slot, resource.asset);
+                    }
                 }
             }
         }

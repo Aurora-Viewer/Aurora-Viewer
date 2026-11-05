@@ -118,7 +118,7 @@ mod native {
             let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
             writer.write_image_data(&rgba).map_err(|error| error.to_string())?;
         }
-        crate::cache::write(&path, &bytes).map_err(|error| error.to_string())?;
+        crate::cache::write_plain(&path, &bytes).map_err(|error| error.to_string())?;
         Ok((path, rgba))
     }
 

@@ -220,14 +220,7 @@ pub fn attach_frame(world: &World, wearer: &Object, point: u8) -> AttachFrame {
         return AttachFrame { pos, rot, hud };
     }
     if let Some(a) = ap {
-        let joint_world = a.joint.and_then(|j| {
-            world
-                .avatar_poses
-                .get(&wearer.full_id)
-                .and_then(|p| p.get(j))
-                .map(|delta| *delta * a.rest_joint)
-        });
-        let (position, rotation) = a.frame(joint_world);
+        let (position, rotation) = a.posed_frame(world.avatar_poses.get(&wearer.full_id).map(Vec::as_slice));
         pos = position - lib.pelvis;
         rot = rotation;
     }
@@ -909,6 +902,114 @@ impl Scene {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    /// #1694: animation keys can move the attachment point without moving
+    /// its bone. Both the GPU anchor and the CPU placement must follow it,
+    /// including children, nonzero rest offsets and a shaped parent bone.
+    #[test]
+    fn bento_attachment_point_animation_moves_rigid_linksets() {
+        use super::super::anim::{BoundAnim, Controller, SkeletonBase};
+        use aurora_assets::anim::{JointMotion, PosKey, RotKey};
+        use std::time::Duration;
+
+        let lib = Arc::new(AvatarLibrary::load());
+        let rig = &lib.rig;
+        let mut world = World::new(lib.clone());
+        for ev in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(ev);
+        }
+        let wearer_idx = world.objects.index_of_uuid(&crate::demo::DEMO_AGENT).expect("wearer");
+        let root = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == crate::demo::worn::ROOT)
+            .unwrap()
+            .0;
+        let child = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == crate::demo::worn::CHILD)
+            .unwrap()
+            .0;
+        let start = Instant::now();
+        for name in ["Right Hand", "Chest", "Left Ring Finger", "Avatar Center"] {
+            let point = *lib.attach_names.iter().find(|(_, n)| n.as_str() == name).unwrap().0;
+            let joint = rig.names[name];
+            let parent = rig.parent[joint];
+            world.objects.get_mut(root).unwrap().state = point.rotate_left(4);
+            let position = rig.local_pos[joint] + Vec3::new(0.25, -0.3, 0.6);
+            let rotation = Quat::from_rotation_y(0.9) * Quat::from_rotation_z(-0.4);
+            let mut animation = crate::demo::idle_animation();
+            animation.ease_in = 0.0;
+            animation.joints = vec![JointMotion {
+                joint_name: name.into(),
+                priority: 4,
+                rot_keys: vec![RotKey { time: 0.0, rotation }],
+                pos_keys: vec![PosKey { time: 0.0, position }],
+            }];
+            let animation = Arc::new(BoundAnim::bind(animation, rig));
+            for shaped in [false, true] {
+                let mut base = SkeletonBase {
+                    local_pos: rig.local_pos.clone(),
+                    scale: rig.scale.clone(),
+                };
+                if shaped && let Some(parent) = parent {
+                    base.scale[parent] = Vec3::new(1.4, 0.7, 1.2);
+                    base.local_pos[parent] += Vec3::new(0.03, -0.02, 0.05);
+                }
+                let mut controller = Controller::for_control_avatar();
+                let id = Uuid::from_u128(1694);
+                controller.sync(&[crate::world::PlayingAnimation::from_signal(id, 1, start, None)], start, |_| {
+                    Some(animation.clone())
+                });
+                let mut palette = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+                let now = start + Duration::from_millis(500);
+                controller.evaluate(rig, now, Some(&base), &mut palette);
+                let posed: Vec<_> = palette[..rig.len()].iter().map(Mat4::from_cols_array_2d).collect();
+                world.avatar_poses.insert(
+                    crate::demo::DEMO_AGENT,
+                    posed.iter().zip(&rig.default_world_inv).map(|(m, inv)| *m * *inv).collect(),
+                );
+                let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
+                if let Some(parent) = parent {
+                    assert!(posed[parent].abs_diff_eq(rest[parent], 1e-5), "the parent bone stays still");
+                }
+                let (expected_pos, expected_rot) = parent.map_or((position, rotation), |p| {
+                    let (_, rot, _) = rest[p].to_scale_rotation_translation();
+                    (rest[p].transform_point3(position), rot * rotation)
+                });
+                assert!(
+                    posed[joint].w_axis.truncate().abs_diff_eq(expected_pos, 1e-5),
+                    "animation reaches {name}"
+                );
+                let wearer = world.objects.get(wearer_idx).unwrap();
+                let (wp, wr, _) = Scene::object_transform(&world, wearer_idx, now, 0).unwrap();
+                let expected = Mat4::from_rotation_translation(wr * expected_rot, wp + wr * (expected_pos - lib.pelvis));
+                let frame = attach_frame(&world, wearer, point);
+                let anchor = Mat4::from_rotation_translation(wr * frame.rot, wp + wr * frame.pos);
+                assert!(
+                    anchor.abs_diff_eq(expected, 1e-4),
+                    "{name}: rigid attachment ignores its animated point (shaped={shaped})"
+                );
+                for idx in [root, child] {
+                    let o = world.objects.get(idx).unwrap();
+                    let (a, lp, lr) = anchored(&world, o, |_, slot| Some(slot as u32)).unwrap();
+                    assert_eq!(a.slot, lib.attach_points[&point].anchor.unwrap());
+                    let local = Mat4::from_scale_rotation_translation(o.scale, lr, lp);
+                    let (pos, rot, hud) = Scene::object_transform(&world, idx, now, 0).unwrap();
+                    assert!(!hud);
+                    assert!((anchor * local).abs_diff_eq(expected * local, 1e-4));
+                    assert!(Mat4::from_scale_rotation_translation(o.scale, rot, pos).abs_diff_eq(expected * local, 1e-4));
+                }
+                // HUDs stay in screen space, independently of all body keys.
+                let hud = attach_frame(&world, wearer, 35);
+                world.avatar_poses.clear();
+                let rest_hud = attach_frame(&world, world.objects.get(wearer_idx).unwrap(), 35);
+                assert!(hud.hud && rest_hud.hud);
+                assert_eq!((hud.pos, hud.rot), (rest_hud.pos, rest_hud.rot));
+            }
+        }
+    }
 
     #[test]
     fn attachment_rotations_place_spine_and_chest_linksets_in_rest_and_animated_poses() {
