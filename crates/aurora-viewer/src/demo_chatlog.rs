@@ -191,7 +191,8 @@ pub fn seed_legacy(root: &Path, own_name: &str, stage: ImportStage) -> std::io::
     std::fs::write(path.ok_or_else(|| std::io::Error::other("no file name"))?, text)?;
     std::fs::write(
         dir.join("Demo Club (group).txt"),
-        line(day * 3, &peer, s[0]) + &line(day * 2, own_name, s[1]),
+        // the last two are the group's history written again at a login
+        line(day * 3, &peer, s[0]) + &line(day * 2, own_name, s[1]) + &line(day, &peer, s[0]) + &line(day, own_name, s[1]),
     )?;
     std::fs::write(dir.join("chat-2026-10-12.txt"), line(day * 9, &peer, s[2]))?;
     // told in the result line, not imported

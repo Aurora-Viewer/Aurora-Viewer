@@ -7551,7 +7551,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   - `import`: the import of a Legacy Viewer's chat history over a synthetic
     folder, `chat_logs\demo-legacy-viewer\<demo account>\`, rewritten at each
     launch. It holds Nova's conversation (a month older, with one message
-    Aurora's file has too), a group, a dated nearby chat file, a
+    Aurora's file has too), a group whose history was written again at a
+    login (two lines that must stay out), a dated nearby chat file, a
     `search_history.txt` that must stay out and an `Old Friend.txt` without
     timestamps, which the result line counts as left out. `import`:
     Preferences › Chat, History, with the import window listing that folder,
