@@ -25,10 +25,15 @@ fn pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu() {
     // binding-array path is covered by scene_shader_is_valid; sampling is unchanged.
     let terrain_vertex = env[..env.find("fn vs_terrain(").unwrap()].rfind("@vertex").unwrap();
     let tangent = &env[env.find("fn terrain_transform_tangent(").unwrap()..terrain_vertex];
-    let functions = format!("{}\n{tangent}\n{}", wgsl_function(object, "terrain_direction"), &env[start..end])
-        .replace("tex_pages[loc >> 16u]", "tex_pages")
-        .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
-        .replace("let ramp_loc = tex_loc[6u];", "let ramp_loc = 0u;");
+    let functions = format!(
+        "{}\n{}\n{tangent}\n{}",
+        wgsl_function(object, "terrain_direction"),
+        wgsl_function(object, "terrain_tangent"),
+        &env[start..end]
+    )
+    .replace("tex_pages[loc >> 16u]", "tex_pages")
+    .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
+    .replace("let ramp_loc = tex_loc[6u];", "let ramp_loc = 0u;");
     let source = format!(
         r#"
 {}
@@ -88,7 +93,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
     }}
     if (id.x >= 15u && id.x < 23u) {{
         let parent = records[input.record];
-        let raw = vec4<f32>(terrain_direction(vec4<u32>(round(parent.anim_xf * 255.0))), 1.0);
+        let raw = vec4<f32>(terrain_tangent(parent.anim_xf), 1.0);
         input.tangent0 = terrain_transform_tangent(records[parent.tex.x], input.normal, raw);
     }}
     let material = terrain_material(input, vec3<f32>(0.01, 0.0, 0.0), vec3<f32>(0.0, 0.01, 0.0), vec2<f32>(0.0), vec2<f32>(0.0), false, lin_clamp);
@@ -153,7 +158,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         records.push(DrawRecord {
             tex: [20 + i; 4],
             anim: frame.joints.map(u32::from),
-            anim_xf: frame.weights.map(|b| f32::from(b) / 255.0),
+            anim_xf: frame.weights.map(|w| f32::from(w) / 65535.0),
             ..Default::default()
         });
     }

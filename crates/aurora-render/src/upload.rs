@@ -805,8 +805,8 @@ mod tests {
 
     #[test]
     fn mesh_ranges_follow_each_other() {
-        // 3 vertices of 24 bytes, a skin stream of 8, 5 indices padded to 6
-        assert_eq!(mesh_ranges(3, 5, true), [(0, 72), (72, 24), (96, 12)]);
+        // 3 vertices of 24 bytes, a skin stream of 12, 5 indices padded to 6
+        assert_eq!(mesh_ranges(3, 5, true), [(0, 72), (72, 36), (108, 12)]);
         assert_eq!(mesh_ranges(3, 6, false), [(0, 72), (72, 0), (72, 12)]);
         // every offset and size suits a buffer copy
         for r in mesh_ranges(7, 9, true) {
