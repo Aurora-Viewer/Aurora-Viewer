@@ -460,6 +460,14 @@ impl Scene {
     /// independent of lighting, texture pixels, selection and modify rights.
     /// Candidate bounds and rendered triangles avoid a GPU readback.
     pub fn color_at_ray(&self, world: &World, ray: (Vec3, Vec3), hud: bool, far: f32) -> Option<(Uuid, [f32; 3])> {
+        let (idx, face) = self.pipette_face_at_ray(world, ray, hud, far)?;
+        let object = world.objects.get(idx)?;
+        let color = object.te.as_ref()?.faces.get(face)?.color;
+        Some((object.full_id, [color[0], color[1], color[2]]))
+    }
+
+    /// LLToolPipette's nearest volume face, shared by color and asset pickers.
+    pub fn pipette_face_at_ray(&self, world: &World, ray: (Vec3, Vec3), hud: bool, far: f32) -> Option<(usize, usize)> {
         let mut candidates = Vec::new();
         if hud {
             let own = world.objects.index_of_uuid(&world.agent_id);
@@ -488,10 +496,10 @@ impl Scene {
             if !hit.t.is_finite() || !hud && hit.t > far {
                 return None;
             }
-            let color = o.te.as_ref()?.faces.get(hit.face)?.color;
-            Some((hit.t, idx, o.full_id, [color[0], color[1], color[2]]))
+            o.te.as_ref()?.faces.get(hit.face)?;
+            Some((hit.t, idx, hit.face))
         });
-        nearest_hit(hits, |h| (h.0, h.1)).map(|(_, _, id, rgb)| (id, rgb))
+        nearest_hit(hits, |h| (h.0, h.1)).map(|(_, idx, face)| (idx, face))
     }
 
     /// Exact edit surfaces along the whole cursor ray, including hidden and
