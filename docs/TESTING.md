@@ -4711,6 +4711,8 @@ dock in icons and labels, the left toolbar in labels). Capture at frame 780.
 run only, without opening the editor. With Aurora bars, the empty bottom
 dock must be invisible while nearby chat remains available (#1631).
 
+Combine the face modes below with `AURORA_DEMO_ACTIONS=face-drops`, which
+seeds the static action cubes without running the action-click scenario.
 `AURORA_DEMO_TEXTURE_LIBRARY`: `face-hover` holds an inventory texture over a
 synthetic cube without changing the build selection. `face-hover-transparent`
 uses zero-alpha faces; `face-hover-material` carries a PBR material and
