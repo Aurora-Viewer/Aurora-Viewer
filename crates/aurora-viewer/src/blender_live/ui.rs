@@ -13,7 +13,8 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
         aurora_i18n::tr!("blender-live-title"),
         egui::pos2(70.0, 110.0),
         Vec2::new(560.0, 660.0),
-    );
+    )
+    .steady_size();
     floater.min_size = Vec2::new(460.0, 350.0);
     floater.show(ctx, p, &mut open, |ui| {
         let font = egui::FontId::proportional(16.0);

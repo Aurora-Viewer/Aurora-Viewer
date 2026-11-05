@@ -14,11 +14,30 @@ pub(crate) fn assert_window_steady<S>(
     id: &str,
     sizes: &[egui::Vec2],
     bottom: &str,
+    new: impl FnMut() -> S,
+    show: impl FnMut(&mut S, &egui::Context, &Palette),
+) {
+    assert_window_steady_at_scales(
+        id,
+        sizes,
+        bottom,
+        &[(1.0, 1.0), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4), (1.0, 2.0)],
+        new,
+        show,
+    );
+}
+
+/// Exercise a steady floater at the supplied `(zoom, text scale)` pairs.
+pub(crate) fn assert_window_steady_at_scales<S>(
+    id: &str,
+    sizes: &[egui::Vec2],
+    bottom: &str,
+    scales: &[(f32, f32)],
     mut new: impl FnMut() -> S,
     mut show: impl FnMut(&mut S, &egui::Context, &Palette),
 ) {
     let p = crate::theme::Theme::default().palette();
-    for (zoom, text) in [(1.0f32, 1.0f32), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4), (1.0, 2.0)] {
+    for &(zoom, text) in scales {
         for &size in sizes {
             let mut frames = Frames::new();
             crate::theme::Theme::default().apply(&frames.ctx, text);
