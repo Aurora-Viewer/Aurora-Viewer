@@ -857,13 +857,6 @@ fn full_size(e: &Entry) -> Option<(u32, u32)> {
     }
 }
 
-/// Width of a texture's UI copy decoded at `discard` or coarser: no finer
-/// than the level that fits 256 px (`texture_cache::preview_discard`).
-fn ui_width(width: u32, height: u32, discard: u8) -> u32 {
-    let level = texture_cache::preview_discard(width, height).max(discard);
-    width.div_ceil(1 << level.min(31))
-}
-
 /// Bytes of a texture's mip chain at a discard level, about (a third more
 /// than its level 0); 0 while its size is not known.
 fn bytes_at(e: &Entry, discard: u8) -> u64 {
@@ -1203,8 +1196,13 @@ impl PreviewSource {
         {
             return Some(image(w, h, pixels));
         }
+        let wanted = self.size.map(|(width, height)| {
+            let discard = texture_cache::preview_discard(width, height).max(self.decoded.unwrap_or(0));
+            texture_cache::discard_size(width, height, discard)
+        });
         if let Some(texture_cache::Transcoded::Bc7(cached)) = texture_cache::read_preview(&self.blocks)
             && let Some((w, h, blocks)) = cached.levels.first()
+            && wanted.is_none_or(|wanted| texture_cache::preview_is_fine_enough((*w, *h), wanted))
             && let Some(rgba) = aurora_render::bc7::decode_level(blocks, *w, *h)
         {
             return Some(image(*w, *h, rgba));
@@ -1903,7 +1901,7 @@ impl TextureStreamer {
             let source = self.preview_source(&id);
             self.ui_previews.request(id, source, jobs);
         }
-        self.note_usage(&id, 256.0);
+        self.note_usage_fixed(&id, 256.0);
     }
 
     pub fn release_transient_ui_image(&mut self, id: &Uuid) {
@@ -1927,8 +1925,14 @@ impl TextureStreamer {
     /// Width of the finest UI copy of a texture (its full size halved until
     /// it fits 256 px), once its header is known.
     pub fn ui_image_width(&self, id: &Uuid) -> Option<u32> {
+        self.ui_image_size(id).map(|(width, _)| width)
+    }
+
+    /// Dimensions of the finest copy requested for an interface image.
+    pub fn ui_image_size(&self, id: &Uuid) -> Option<(u32, u32)> {
         let (width, height) = self.full_size(id)?;
-        Some(ui_width(width, height, 0))
+        let discard = texture_cache::preview_discard(width, height);
+        Some(texture_cache::discard_size(width, height, discard))
     }
 
     /// Keep loading a texture whose UI copy came out `have` px wide, from
@@ -1937,15 +1941,24 @@ impl TextureStreamer {
     /// copy comes through `take_ui_image`, from the next upload, or from a
     /// worker when a finer level is already resident.
     pub fn refine_ui_image(&mut self, id: Uuid, have: u32, jobs: &Jobs) {
-        self.note_usage(&id, 256.0);
+        self.refine_ui_image_size(id, (have, have), jobs);
+    }
+
+    pub fn refine_ui_image_size(&mut self, id: Uuid, have: (u32, u32), jobs: &Jobs) {
+        self.note_usage_fixed(&id, 256.0);
         if self.ui_ready.contains_key(&id) {
             return;
         }
         let finer = self
             .entries
             .get(&id)
-            .and_then(|e| Some(ui_width(e.info?.width, e.info?.height, e.decoded?)))
-            .is_some_and(|width| width > have);
+            .and_then(full_size)
+            .zip(self.entries.get(&id).and_then(|e| e.decoded))
+            .is_some_and(|((width, height), decoded)| {
+                let discard = texture_cache::preview_discard(width, height).max(decoded);
+                let target = texture_cache::discard_size(width, height, discard);
+                target.0 > have.0 || target.1 > have.1
+            });
         if finer {
             let source = self.preview_source(&id);
             self.ui_previews.request(id, source, jobs);
@@ -4025,6 +4038,18 @@ mod tests {
     }
 
     #[test]
+    fn interface_image_resolution_is_not_lowered_by_memory_pressure() {
+        let id = Uuid::from_u128(2);
+        for step in 0..=texture_budget::MAX_PRESSURE {
+            let mut s = pressed(step, vec![(2, large(Some(0)))]);
+            s.set_max_resolution(512);
+            s.note_usage_fixed(&id, 256.0);
+            let (want, _) = wanted(2048.0, None, &s.entries[&id], texture_budget::dropped(step));
+            assert_eq!(want, discard_for(2048.0, 256.0, None), "pressure step {step}");
+        }
+    }
+
+    #[test]
     fn textures_finer_than_the_maximum_are_lowered_without_memory_pressure() {
         let id = |n| Uuid::from_u128(n);
         let mut s = pressed(
@@ -4968,12 +4993,14 @@ mod tests {
     /// resident level gives a coarser copy (still to be refined).
     #[test]
     fn ui_copy_width_follows_the_level_held() {
-        assert_eq!(ui_width(1024, 768, 0), 256);
-        assert_eq!(ui_width(1024, 768, 2), 256);
-        assert_eq!(ui_width(1024, 768, 4), 64);
-        assert_eq!(ui_width(128, 128, 0), 128);
-        assert_eq!(ui_width(128, 128, 1), 64);
-        assert_eq!(ui_width(300, 200, 1), 150);
+        assert_eq!(
+            texture_cache::discard_size(1024, 768, texture_cache::preview_discard(1024, 768)),
+            (256, 192)
+        );
+        assert_eq!(texture_cache::discard_size(1024, 768, 4), (64, 48));
+        assert_eq!(texture_cache::discard_size(128, 128, 0), (128, 128));
+        assert_eq!(texture_cache::discard_size(128, 128, 1), (64, 64));
+        assert_eq!(texture_cache::discard_size(300, 200, 1), (150, 100));
     }
 
     #[test]
