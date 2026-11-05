@@ -195,6 +195,11 @@ fn frames_per_second(cx: &mut Cx) {
             tr!("ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing"),
             &field!(vsync),
         );
+        cx.wide().toggle(
+            tr!("ui-options-borderless-fullscreen"),
+            tr!("ui-options-borderless-fullscreen-help"),
+            &field!(window_fullscreen),
+        );
         // the limits show under their switches: the value is what the
         // switch is turned on for
         cx.unfolded().toggle(
