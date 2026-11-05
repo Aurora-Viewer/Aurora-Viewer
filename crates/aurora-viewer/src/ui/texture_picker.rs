@@ -57,21 +57,6 @@ fn inventory_asset(inv: &Inventory, id: Uuid, materials: bool) -> Option<Uuid> {
     }
 }
 
-/// LLFloaterTexturePicker::onSelectionChange reveals the asset key only
-/// when Copy, Modify and Transfer are all granted to the current agent.
-fn can_reveal_uuid(inv: &Inventory, id: Uuid, agent: Uuid) -> bool {
-    let Some(original) = actions::original(inv, id).and_then(|id| inv.items.get(&id)) else {
-        return false;
-    };
-    let mask = if !agent.is_nil() && original.owner == agent {
-        original.owner_mask
-    } else {
-        original.everyone_mask
-    };
-    let full = actions::COPY | actions::MODIFY | actions::TRANSFER;
-    mask & full == full
-}
-
 fn can_preview(inv: &Inventory, id: Uuid) -> bool {
     let Some(original) = actions::original(inv, id) else { return false };
     inv.items
@@ -328,9 +313,7 @@ impl TexturePicker {
             world.local_assets.contains_key(asset)
                 || [BLANK_TEXTURE, TRANSPARENT_TEXTURE, BLANK_MATERIAL].contains(asset)
                 || crate::scene::avatar::BAKES.iter().any(|(_, _, magic)| magic == asset)
-                || self
-                    .selected_item
-                    .is_some_and(|id| can_reveal_uuid(&world.inventory, id, world.agent_id))
+                || actions::asset_uuid_shown(&world.inventory, *asset)
         });
         self.uuid_text = shown.unwrap_or_default().to_string();
     }
@@ -1687,17 +1670,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn texture_uuid_requires_full_effective_permissions_and_resolves_links() {
+    fn texture_uuid_uses_the_shared_asset_rule_and_resolves_links() {
         let mut inv = Inventory::default();
         let agent = Uuid::from_u128(91);
         let item = Uuid::from_u128(92);
         let link = Uuid::from_u128(93);
+        let asset = Uuid::from_u128(96);
         let full = actions::COPY | actions::MODIFY | actions::TRANSFER;
         inv.items.insert(
             item,
             aurora_net::inventory::InvItem {
                 id: item,
                 owner: agent,
+                asset_id: asset,
                 owner_mask: full,
                 ..Default::default()
             },
@@ -1712,19 +1697,20 @@ pub(crate) mod tests {
                 ..Default::default()
             },
         );
-        assert!(can_reveal_uuid(&inv, link, agent));
+        assert_eq!(inventory_asset(&inv, link, false), Some(asset));
+        assert!(actions::asset_uuid_shown(&inv, asset));
         for missing in [actions::COPY, actions::MODIFY, actions::TRANSFER] {
             inv.items.get_mut(&item).unwrap().owner_mask = full & !missing;
-            assert!(!can_reveal_uuid(&inv, link, agent));
+            assert!(!actions::asset_uuid_shown(&inv, asset));
         }
         let original = inv.items.get_mut(&item).unwrap();
         original.owner_mask = full;
         original.owner = Uuid::from_u128(94);
-        assert!(!can_reveal_uuid(&inv, link, agent));
+        assert!(actions::asset_uuid_shown(&inv, asset));
         inv.items.get_mut(&item).unwrap().everyone_mask = full;
-        assert!(can_reveal_uuid(&inv, link, agent));
+        assert!(actions::asset_uuid_shown(&inv, asset));
         inv.items.remove(&item);
-        assert!(!can_reveal_uuid(&inv, link, agent));
+        assert!(!actions::asset_uuid_shown(&inv, asset));
     }
 
     #[test]
