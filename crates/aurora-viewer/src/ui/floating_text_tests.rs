@@ -31,7 +31,10 @@ fn glyph_shift(ctx: &egui::Context, size: f32) -> f32 {
     })
 }
 
-fn text_shapes(output: egui::FullOutput) -> Vec<TextShape> {
+fn text_shapes(mut output: egui::FullOutput) -> Vec<TextShape> {
+    // Headless fixtures inspect geometry without uploading textures to a
+    // renderer. Explicitly discard those deltas, as egui requires on drop.
+    output.textures_delta.clear();
     output
         .shapes
         .into_iter()
