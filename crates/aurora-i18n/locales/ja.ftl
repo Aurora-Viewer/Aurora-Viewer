@@ -7405,6 +7405,7 @@ ui-options-privacy-policy-open = 読む
 ui-options-bars = バー
 ui-options-at-startup = 起動時
 ui-options-no-system-font = なし（同梱フォント）
+ui-options-system-fonts-searching = フォントを検索中…
 ui-options-system-font-help = 同梱フォントの代わりに、このコンピュータにインストールされたフォントを使用
 ui-options-preview = プレビュー
 ui-options-skin-folder = スキンのフォルダ
