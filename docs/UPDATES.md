@@ -46,7 +46,9 @@ main a few days before a stable version, to catch crashes before everyone.
   below the stable version of its number, so a beta tester moves on to
   v0.7.7 (or any later stable) once it is out, then to the next betas.
   The beta's update policy takes over the thresholds of the newest stable
-  tag (`Aurora-Update-Policy` line), under its own version.
+  tag (`Aurora-Update-Policy` line), under its own version, raised to those
+  of `update-policy.json` at the tagged commit, as a release does; a
+  minimum the beta itself does not reach is left out.
 - **Retention.** `scripts/nightly-prune.ps1` keeps the ten newest betas and
   deletes the older ones with their tags; stable releases and other
   pre-releases are never touched.

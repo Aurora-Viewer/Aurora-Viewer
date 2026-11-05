@@ -21,14 +21,19 @@ name: macOS
 # run) on one, everything else and the demo frame on the other. Two and not
 # three: an organisation has five macOS runners at once, and the queue
 # builds up to three entries side by side.
+#
+# The queue and main may run them on the team's Mac mini instead (see
+# mac-runner), never a pull request.
 on:
   pull_request:
   merge_group:
   push:
     branches: [main]
 
-# a push to main is never cancelled: its cache build takes a quarter of an
-# hour, and the next merge would otherwise cancel it again and again
+# a push to main that has started is never cancelled: its cache build takes
+# a quarter of an hour, and the next merge would otherwise cancel it again
+# and again. A push still waiting is replaced by the next one all the same
+# (one pending run per group): see the timeouts in ci.yml
 concurrency:
   group: macos-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
@@ -55,26 +60,100 @@ jobs:
         with:
           platform: macos
 
+  mac-runner:
+    # The runners of the two jobs below, in the queue and on main: the
+    # team's Mac mini (label aurora-mac, two runners, each with its build
+    # folder kept between runs) for each of its runners online and idle,
+    # GitHub's otherwise, so that nothing waits for a machine that is off.
+    # Two entries that pick at the same moment may both count the same idle
+    # runner: one then waits for it. Never on pull requests: they could run
+    # anyone's code on it (the Mac also refuses them itself, with a job
+    # hook). RUNNERS_TOKEN: see windows-runner in ci.yml.
+    #
+    # main writes GitHub's macOS cache, the one the queue falls back on
+    # when the Mac is off. When that cache is missing for main's manifests
+    # and rustc (a dependency or the toolchain changed), the rest job stays
+    # on GitHub's runner and writes it, and the Mac takes the interface one.
+    name: pick the macOS runners
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      rest: ${{ steps.pick.outputs.rest }}
+      interface: ${{ steps.pick.outputs.interface }}
+    steps:
+      # the files of the cache key (.github/actions/rust-cache), on main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'push'
+        with:
+          sparse-checkout: |
+            Cargo.lock
+            Cargo.toml
+            crates/*/Cargo.toml
+            rust-toolchain.toml
+          sparse-checkout-cone-mode: false
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.RUNNERS_TOKEN }}
+          CACHE_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          MANIFESTS: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/*/Cargo.toml', 'rust-toolchain.toml') }}
+        run: |
+          github='"macos-15"'
+          mac='["self-hosted", "aurora-mac"]'
+          free=0
+          if [ -n "$GH_TOKEN" ]; then
+            free=$(gh api "repos/$REPO/actions/runners" --jq '[.runners[] | select(.status == "online" and (.busy | not) and any(.labels[]; .name == "aurora-mac"))] | length') || free=0
+          fi
+          rest=$github
+          interface=$github
+          if [ "$free" -ge 1 ]; then rest=$mac; fi
+          if [ "$free" -ge 2 ]; then interface=$mac; fi
+          if [ "$EVENT" = push ] && [ "$rest" = "$mac" ]; then
+            rustup toolchain install stable --profile minimal --no-self-update > /dev/null 2>&1 || true
+            rustc=$(rustc +stable -V | awk '{ print $2 "-" substr($3, 2) }')
+            key="cargo-v1-macos-tests-macOS-ARM64-$rustc-${MANIFESTS:0:16}"
+            # an error counts as found: the Mac then runs main as usual
+            found=$(GH_TOKEN=$CACHE_TOKEN gh api "repos/$REPO/actions/caches?ref=refs/heads/main&key=$key" --jq '.total_count') || found=1
+            echo "GitHub's cache $key: $found"
+            if [ "$found" = 0 ]; then
+              rest=$github
+              interface=$mac
+            fi
+          fi
+          echo "idle Mac runners: $free; rest: $rest; interface: $interface"
+          echo "rest=$rest" >> "$GITHUB_OUTPUT"
+          echo "interface=$interface" >> "$GITHUB_OUTPUT"
+
   macos:
     name: clippy, tests, demo (macOS, rest)
-    needs: scope
-    if: needs.scope.outputs.needed == 'true'
+    needs: [scope, mac-runner]
+    # mac-runner is skipped on pull requests: run anyway
+    if: ${{ !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.needed == 'true' }}
     # Apple Silicon (arm64), the only Macs Aurora supports
-    runs-on: macos-15
+    runs-on: ${{ needs.mac-runner.outputs.rest && fromJSON(needs.mac-runner.outputs.rest) || 'macos-15' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
+      - name: Self-hosted runner
+        if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/mac-runner
       - name: Rust stable
         run: |
           rustup update stable --no-self-update
           rustup component add clippy
       # caches are written from main only (see ci.yml); one cache for the
-      # two macOS jobs, written by this one
+      # two macOS jobs, written by this one. The Mac keeps its own build
+      # folder instead (.github/actions/mac-runner)
       - uses: ./.github/actions/rust-cache
         id: cache
+        if: runner.environment == 'github-hosted'
         with:
           name: macos-tests
       # dead code is the Windows job's: Windows-only helpers build here
@@ -88,12 +167,13 @@ jobs:
       # dependencies (about 8 minutes saved, then 3 for the demo) even when
       # a test fails
       - name: Build the tests and the viewer (cache)
-        if: github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.cache.outputs.cache-hit != 'true'
         run: |
           cargo test --profile ci --workspace --locked --no-run
           cargo build --profile ci --locked -p aurora-viewer
       - name: Save the Rust cache
-        if: github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}
@@ -142,18 +222,22 @@ jobs:
     # libtest filter and its `--skip` are exact complements, so every test
     # runs in one job and only one.
     name: tests (macOS, interface)
-    needs: scope
-    if: github.event_name != 'pull_request' && needs.scope.outputs.needed == 'true'
-    runs-on: macos-15
+    needs: [scope, mac-runner]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.scope.result == 'success' && needs.scope.outputs.needed == 'true' }}
+    runs-on: ${{ needs.mac-runner.outputs.interface && fromJSON(needs.mac-runner.outputs.interface) || 'macos-15' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
+      - name: Self-hosted runner
+        if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/mac-runner
       - name: Rust stable
         run: rustup update stable --no-self-update
       - uses: ./.github/actions/rust-cache
+        if: runner.environment == 'github-hosted'
         with:
           name: macos-tests
       - name: Tests (interface)

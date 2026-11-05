@@ -1210,6 +1210,58 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
     sync_plan(inv, agent, worn).commands
 }
 
+/// A forced batch with nothing left to do: its links would not change and the
+/// avatar already matches. RlvForceWear::done (rlvhelper.cpp) returns early
+/// here; an outfit write would still raise the COF version and ask for a new
+/// appearance. Read when the batch runs: a run of `@detach` queues while the
+/// first object is leaving, and has nothing to do once it has left. An object
+/// on the avatar or on its way needs no new request (`requested`:
+/// LLAttachmentsMgr::wasRequestedRecently) and is linked when it arrives
+/// (`update_attachment_inventory`). Gestures are always applied, their state
+/// is not in the links.
+pub fn force_changes_nothing(inv: &Inventory, action: &Action, worn: &HashMap<Uuid, u8>, requested: &HashSet<Uuid>) -> bool {
+    let Action::Force { remove, wear } = action else {
+        return false;
+    };
+    let original = |id: Uuid| super::inventory::actions::original(inv, id).unwrap_or(id);
+    let gesture = |id: Uuid| inv.items.get(&id).is_some_and(|it| it.asset_type == 21);
+    let settled_off = |id: &Uuid| {
+        let id = original(*id);
+        !gesture(id) && !worn.contains_key(&id)
+    };
+    let settled_on = |request: &WearRequest| {
+        let id = original(request.item);
+        !gesture(id)
+            && match inv.items.get(&id).map(|it| it.asset_type) {
+                Some(6) => match worn.get(&id) {
+                    Some(point) => request.point == 0 || request.point == *point,
+                    None => requested.contains(&id),
+                },
+                Some(_) => true,
+                None => false,
+            }
+    };
+    if !remove.iter().all(settled_off) || !wear.iter().all(settled_on) {
+        return false;
+    }
+    let (Some(cof), Ok((change, _))) = (cof(inv), plan(inv, action.clone(), worn)) else {
+        return false;
+    };
+    let arriving: HashSet<_> = wear
+        .iter()
+        .map(|request| original(request.item))
+        .filter(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 6))
+        .collect();
+    let links = |links: &[OutfitLink]| {
+        links
+            .iter()
+            .filter(|l| !arriving.contains(&l.target))
+            .map(|l| (l.target, l.folder))
+            .collect::<HashSet<_>>()
+    };
+    links(&folder_links(inv, cof)) == links(&change.links)
+}
+
 /// Explicit attachment requests retain the chosen point and replace/add mode.
 /// They are sent only after the COF update has been acknowledged. Objects
 /// are linked on arrival, so "Add" also needs its explicit rez request.
@@ -2941,6 +2993,116 @@ mod tests {
             .is_err()
         );
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), before);
+    }
+
+    /// RlvForceWear::done: a run of forced commands costs no outfit write once
+    /// the avatar and the links are as asked, and anything still to do does.
+    #[test]
+    fn a_forced_batch_with_nothing_to_do_changes_nothing() {
+        let mut inv = fixture();
+        let cof = cof(&inv).expect("COF");
+        let (linked, other) = (Uuid::from_u128(970), Uuid::from_u128(971));
+        let shirt = Uuid::from_u128(972);
+        inv.add_items(
+            [(linked, 6, 6), (other, 6, 6), (shirt, 5, 18)]
+                .into_iter()
+                .map(|(id, asset_type, inv_type)| InvItem {
+                    id,
+                    parent: inv.root,
+                    asset_type,
+                    inv_type,
+                    flags: 4,
+                    name: "item".into(),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        inv.add_items(
+            [(980, linked, 6), (981, shirt, 18)]
+                .into_iter()
+                .map(|(id, target, inv_type)| InvItem {
+                    id: Uuid::from_u128(id),
+                    parent: cof,
+                    asset_type: 24,
+                    inv_type,
+                    asset_id: target,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let remove = |items: &[Uuid]| Action::Force {
+            remove: items.to_vec(),
+            wear: Vec::new(),
+        };
+        let wear = |item, point| Action::Force {
+            remove: Vec::new(),
+            wear: vec![WearRequest {
+                item,
+                replace: false,
+                point,
+            }],
+        };
+        let on = HashMap::from([(linked, 5)]);
+        let none = HashMap::new();
+        let nothing = |action: &Action, worn: &HashMap<Uuid, u8>| force_changes_nothing(&inv, action, worn, &HashSet::new());
+        assert!(nothing(&remove(&[other]), &on), "off already, no link");
+        assert!(!nothing(&remove(&[other]), &HashMap::from([(other, 5)])), "still on");
+        assert!(!nothing(&remove(&[linked]), &none), "its link is still there");
+        assert!(nothing(&wear(linked, 0), &on), "on already, linked");
+        assert!(nothing(&wear(linked, 5), &on), "on its point");
+        assert!(!nothing(&wear(linked, 6), &on), "to be moved");
+        assert!(!nothing(&wear(linked, 0), &none), "linked, not on the avatar");
+        assert!(nothing(&wear(other, 0), &HashMap::from([(other, 5)])), "on, linked when it arrived");
+        assert!(!nothing(&wear(other, 0), &none), "off, no request");
+        let requested = HashSet::from([other]);
+        assert!(force_changes_nothing(&inv, &wear(other, 0), &none, &requested), "on its way");
+        assert!(
+            !force_changes_nothing(&inv, &wear(other, 6), &HashMap::from([(other, 5)]), &requested),
+            "still to be moved"
+        );
+        assert!(nothing(&wear(shirt, 0), &none), "clothing already linked");
+        assert!(!nothing(&remove(&[shirt]), &none), "clothing to take off");
+        assert!(
+            !nothing(&remove(&[Uuid::from_u128(999)]), &on),
+            "an unknown item is an error to report"
+        );
+        assert!(!nothing(&Action::Remove(other), &on), "only forced batches");
+    }
+
+    /// LLAttachmentsMgr::wasRequestedRecently: the first wear goes out, its
+    /// repeats do not, and one is sent again once the request is old.
+    #[test]
+    fn repeats_of_a_forced_wear_wait_for_the_first_request() {
+        let mut world = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = fixture();
+        let item = Uuid::from_u128(990);
+        world.inventory.add_items(vec![InvItem {
+            id: item,
+            parent: world.inventory.root,
+            asset_type: 6,
+            inv_type: 6,
+            flags: 4,
+            name: "item".into(),
+            ..Default::default()
+        }]);
+        let action = Action::Force {
+            remove: Vec::new(),
+            wear: vec![WearRequest {
+                item,
+                replace: true,
+                point: 0,
+            }],
+        };
+        let start = std::time::Instant::now();
+        assert!(!world.rlva_force_settled(&action, start), "the first one goes out");
+        assert!(
+            world.rlva_force_settled(&action, start + std::time::Duration::from_secs(1)),
+            "a repeat does not"
+        );
+        assert!(
+            !world.rlva_force_settled(&action, start + std::time::Duration::from_secs(6)),
+            "sent again once old"
+        );
     }
 
     /// The bridge item: on while it is worn, whether the COF links it or not,

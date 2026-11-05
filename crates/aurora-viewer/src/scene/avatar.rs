@@ -69,6 +69,9 @@ pub struct AttachPoint {
     pub local_position: Vec3,
     pub rest_joint: Mat4,
     pub joint: Option<usize>,
+    /// The point's own animated rig joint and its rest world matrix.
+    /// `joint` remains the parent bone, also used by hand-contact IK.
+    pub animated_joint: Option<(usize, Mat4)>,
     /// Anchor of the wearer's palette holding the posed point (anchors.rs);
     /// None for a HUD point, or past the anchors a palette has.
     pub anchor: Option<u8>,
@@ -79,6 +82,24 @@ pub struct AttachPoint {
 }
 
 impl AttachPoint {
+    /// LLViewerJointAttachment::setupDrawable parents worn objects to the
+    /// attachment joint itself. Its animation keys can move independently
+    /// of the bone above it (#1694). Pose entries map rest to posed space.
+    pub(crate) fn posed_frame(self, pose: Option<&[Mat4]>) -> (Vec3, Quat) {
+        if let Some((joint, rest)) = self.animated_joint
+            && let Some(delta) = pose.and_then(|p| p.get(joint))
+        {
+            let (_, rotation, position) = (*delta * rest).to_scale_rotation_translation();
+            return (position, rotation.normalize());
+        }
+        // Before a full pose is available, retain the bone/rest fallback.
+        let bone = self
+            .joint
+            .and_then(|j| pose.and_then(|p| p.get(j)))
+            .map(|delta| *delta * self.rest_joint);
+        self.frame(bone)
+    }
+
     /// LLXformMatrix::update: inherit the bone's scaled child offset and
     /// world rotation, with unit scale on the attachment joint itself.
     pub(crate) fn frame(self, joint_world: Option<Mat4>) -> (Vec3, Quat) {
@@ -283,6 +304,7 @@ impl AvatarLibrary {
                                     local_position: pos,
                                     rest_joint: Mat4::from_translation(jp),
                                     joint: None,
+                                    animated_joint: None,
                                     anchor: None,
                                     group: c.attr("group").and_then(|v| v.parse().ok()).unwrap_or(0),
                                     pie_slice: c.attr("pie_slice").and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -330,6 +352,13 @@ impl AvatarLibrary {
             .map(|(_, name, joint, pos, rot)| (name, joint, pos, rot))
             .collect();
         rig.add_attachment_points(&point_joints);
+        for (id, point) in &mut attach_points {
+            if !point.hud
+                && let Some(joint) = attach_names.get(id).and_then(|name| rig.names.get(name)).copied()
+            {
+                point.animated_joint = Some((joint, rig.default_world_inv[joint].inverse()));
+            }
+        }
         let rig = std::sync::Arc::new(rig);
         // one anchor per body point, in id order, after the root's
         let mut anchor_points: Vec<u8> = attach_points.iter().filter(|(_, ap)| !ap.hud).map(|(id, _)| *id).collect();
@@ -461,7 +490,7 @@ mod tests {
         };
         let nose = point("Nose");
         let head = rig.names["mHead"];
-        assert_eq!(nose.joint, Some(head), "rigid attachments still hang from the bone");
+        assert_eq!(nose.joint, Some(head), "the parent bone stays available to IK");
         let nose_joint = rig.names["Nose"];
         assert_eq!(rig.parent[nose_joint], Some(head));
         // Bound at the point's rest frame, as an uploader does.
@@ -491,6 +520,30 @@ mod tests {
         assert_eq!(rig.skin_bind("mHead", ib), (head, ib));
         assert_eq!(rig.skin_bind("obsolete_joint", ib), (rig.pelvis, ib));
         assert_eq!(rig.skin_bind("Center", ib), (rig.pelvis, ib));
+    }
+
+    #[test]
+    fn unkeyed_attachment_points_keep_bone_placement_and_missing_pose_fallbacks() {
+        let lib = AvatarLibrary::load();
+        let rig = &lib.rig;
+        let mut rot = rig.local_rot.clone();
+        let mut scale = rig.scale.clone();
+        let chest = rig.names["mChest"];
+        rot[chest] = Quat::from_rotation_y(0.4);
+        scale[chest] = Vec3::new(1.3, 0.8, 1.2);
+        let world = rig.world_with(&rot, Vec3::new(0.1, 0.0, -0.2), &rig.local_pos, &scale);
+        let pose: Vec<_> = world.iter().zip(&rig.default_world_inv).map(|(m, inv)| *m * *inv).collect();
+        for point in lib.attach_points.values().filter(|p| !p.hud) {
+            let (joint, _) = point.animated_joint.expect("every body point has its own joint");
+            let expected = point.frame(point.joint.map(|j| world[j]));
+            for result in [point.posed_frame(Some(&pose)), point.posed_frame(Some(&pose[..joint]))] {
+                assert!(result.0.abs_diff_eq(expected.0, 1e-5));
+                assert!(result.1.abs_diff_eq(expected.1, 1e-5) || result.1.abs_diff_eq(-expected.1, 1e-5));
+            }
+            assert_eq!(point.posed_frame(None), point.frame(None));
+            assert_eq!(point.posed_frame(Some(&[])), point.frame(None));
+        }
+        assert!(lib.attach_points.values().filter(|p| p.hud).all(|p| p.animated_joint.is_none()));
     }
 
     /// #1492: a worn animesh posed by animations that turn attachment
