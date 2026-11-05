@@ -145,10 +145,10 @@ struct FrameU {
     /// World to the clip space of each projector shadow map.
     spot_vp: [[[f32; 4]; 4]; SPOT_SHADOWS],
     /// Light of each projector shadow map (-1: none).
-    spot_lights: [i32; 4],
+    spot_lights: [[i32; 4]; SPOT_SHADOWS / 4],
     /// What each map leaves of its shadows unlit: 1 - fade (spotLightF's
     /// shadow_fade).
-    spot_fade: [f32; 4],
+    spot_fade: [[f32; 4]; SPOT_SHADOWS / 4],
     /// x: 1 when the shading takes the contact shadows (main view only).
     contact: [f32; 4],
     /// x: common.wgsl FEATURE_* bits, the same in every pass.
@@ -451,8 +451,9 @@ impl Smaa {
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
-    f.spot_shadows.map(|s| {
+fn spot_shadow_views(f: &FrameParams, limit: usize) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+    std::array::from_fn(|k| {
+        let s = f.spot_shadows[k].filter(|_| k < limit);
         let s = s.filter(|_| f.shadows)?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
@@ -1566,6 +1567,7 @@ pub(crate) struct Backend {
     shadow_buffers: Vec<wgpu::Buffer>,
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
+    shadow_count: u8,
     /// Opaque casters shared between the cascades (shadow_merge.rs).
     shadow_merge: crate::shadow_merge::ShadowMerge,
     post_buffer: wgpu::Buffer,
@@ -1643,6 +1645,8 @@ pub(crate) struct Backend {
     /// Each frame's submission, read by the main thread before the next
     /// frame reads its input (pacing.rs).
     gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
+    /// Where the replay of the journal stages its buffer writes.
+    write_staging: crate::write_staging::WriteStaging,
 }
 
 impl Drop for Backend {
@@ -2904,7 +2908,7 @@ impl Backend {
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
         let shadow_size = 2048u32;
-        let shadow_view = Self::make_shadow_atlas(&device, shadow_size);
+        let shadow_view = Self::make_shadow_atlas(&device, shadow_size, 2);
         let shadow_merge = crate::shadow_merge::ShadowMerge::new(&device, &shadow_view, shadow_size, SHADOW_FORMAT);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow"),
@@ -3152,6 +3156,7 @@ impl Backend {
             shadow_buffers,
             shadow_bind_groups,
             shadow_size,
+            shadow_count: 2,
             shadow_merge,
             post_buffer,
             post_sampler,
@@ -3200,21 +3205,24 @@ impl Backend {
             msaa_supported,
             lost,
             gpu_frames,
+            write_staging: Default::default(),
         };
         r.rebuild_bind_groups();
         Ok(r)
     }
 
-    /// Shadow atlas of 2x2 tiles of `size` (cascade i in tile (i % 2, i / 2)),
+    /// Shadow atlas, two cascade tiles wide (cascade i at (i % 2, i / 2)),
     /// all rendered in one pass: the bindless texture group, which wgpu checks
     /// element by element for every pass binding it, is bound once instead of
-    /// once per cascade. The fourth tile is unused.
-    fn make_shadow_atlas(device: &wgpu::Device, size: u32) -> wgpu::TextureView {
+    /// once per cascade. Half-size projector maps fill the fourth tile, then
+    /// additional rows below it (projector_shadows.rs).
+    fn make_shadow_atlas(device: &wgpu::Device, size: u32, count: u8) -> wgpu::TextureView {
+        let (width, height) = crate::projector_shadows::atlas_size(size, count);
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shadow atlas"),
             size: wgpu::Extent3d {
-                width: size * 2,
-                height: size * 2,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -4952,10 +4960,19 @@ impl Backend {
             .shadow_resolution
             .clamp(512, 8192)
             .min(self.device.limits().max_texture_dimension_2d / 2);
-        let shadows_dirty = s.shadow_resolution > 0 && res != self.shadow_size;
+        let count = crate::projector_shadows::effective_limit(res, s.projector_shadow_limit, self.device.limits().max_texture_dimension_2d);
+        let shadows_dirty = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
         if shadows_dirty {
-            self.shadow_view = Self::make_shadow_atlas(&self.device, res);
+            self.shadow_view = Self::make_shadow_atlas(&self.device, res, count);
             self.shadow_size = res;
+            self.shadow_count = count;
+            let (width, height) = crate::projector_shadows::atlas_size(res, count);
+            log::info!(
+                "projector shadow budget: requested {}, effective {count}, map {} px, atlas {width}x{height} ({} MiB)",
+                s.projector_shadow_limit,
+                res / 2,
+                u64::from(width) * u64::from(height) * 4 / (1024 * 1024)
+            );
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
         self.settings = s;
@@ -5316,11 +5333,16 @@ impl Backend {
                 u.light_projectors[i / 32] |= 1 << (i % 32);
             }
         }
-        u.spot_lights = [-1; 4];
-        for (k, (spot, vp)) in spot_shadow_views(f).into_iter().enumerate().filter_map(|(k, v)| Some((k, v?))) {
+        u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(k, v)| Some((k, v?)))
+        {
             u.spot_vp[k] = vp.to_cols_array_2d();
-            u.spot_lights[k] = spot.light as i32;
-            u.spot_fade[k] = 1.0 - spot.fade.clamp(0.0, 1.0);
+            u.spot_lights[k / 4][k % 4] = spot.light as i32;
+            u.projectors[spot.light as usize].tex[1] = k as u32 + 1;
+            u.spot_fade[k / 4][k % 4] = 1.0 - spot.fade.clamp(0.0, 1.0);
         }
         u
     }
@@ -5694,11 +5716,15 @@ impl Backend {
         // cannot be drawn.
         let t_writes = Instant::now();
         let (recorded, counts) = (writes.bytes(), writes.counts());
-        writes.replay(&mut TrackedSink {
+        // its buffer writes copied from one staging buffer (write_staging.rs)
+        let mut queue_sink = TrackedSink {
             queue: &self.queue,
             lost: &self.lost,
             frame: index,
-        });
+        };
+        let mut sink = self.write_staging.sink(&self.device, &mut queue_sink, writes.buffer_bytes() as u64);
+        writes.replay(&mut sink);
+        let staged = sink.finish();
         let replay_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
         let upload_cmds = frame_uploads.take_commands();
         let writes_ms = t_writes.elapsed().as_secs_f32() * 1000.0;
@@ -5707,8 +5733,8 @@ impl Backend {
             // textures, megabytes of records, an arena that grows)
             let [buffers, textures, submits] = counts;
             log::info!(
-                "frame writes took {writes_ms:.1} ms: {} KB in {buffers} buffer and {textures} texture writes, {submits} submits \
-                 ({replay_ms:.1} ms), staged copies finished in {:.1} ms",
+                "frame writes took {writes_ms:.1} ms: {} KB in {buffers} buffer ({staged} through the journal staging) and \
+                 {textures} texture writes, {submits} submits ({replay_ms:.1} ms), staged copies finished in {:.1} ms",
                 recorded >> 10,
                 writes_ms - replay_ms
             );
@@ -6212,7 +6238,7 @@ impl Backend {
             );
         }
         // projector shadow maps of the frame (none without shadows)
-        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f).map(|v| v.map(|(_, m)| m));
+        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f, self.shadow_count as usize).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
@@ -6925,7 +6951,7 @@ impl Backend {
                                 if vp.is_none() {
                                     continue;
                                 }
-                                let (x, y) = (size + k as u32 * half, size);
+                                let (x, y) = crate::projector_shadows::map_origin(size, k);
                                 pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
                                 pass.set_scissor_rect(x, y, half, half);
                                 pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);

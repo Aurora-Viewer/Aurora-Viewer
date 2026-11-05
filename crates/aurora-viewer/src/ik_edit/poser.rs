@@ -298,6 +298,10 @@ impl Editor {
                         if selective && *edited {
                             continue;
                         }
+                        // a joint the file drives is the file's, not the capture's
+                        if current.rotations[bone].dot(pose.rotations[bone]).abs() < 0.9999999 {
+                            current.origin[bone] = world.avatar_lib.rig.local_rot[bone];
+                        }
                         current.rotations[bone] = pose.rotations[bone];
                         if !rotations {
                             current.positions[bone] = pose.positions[bone];

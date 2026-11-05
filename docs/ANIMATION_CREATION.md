@@ -1,7 +1,7 @@
 # Create native animations
 
-Open **Build > IK Edit > Animations**, then **Create an animation from this
-pose**. The creation mode uses the same skeleton, move/rotation tools,
+Open **Build > IK Edit > Animations**, then **Create an animation**. The
+creation mode uses the same skeleton, move/rotation tools,
 world/local gizmo, Ctrl rotation, symmetry and hand/foot IK handles.
 Its Pose, Animations and Visible bones tabs keep posing, timing and display
 controls separate. **Return to IK contacts** restores the existing contact
@@ -9,9 +9,12 @@ definitions and their enable states.
 
 ## Record keys
 
-The initial frame records the displayed pose, including the current IK
-result. Choose a frame with the slider or adjacent numeric field, pose the
-avatar, then record it:
+The initial frame records the rest skeleton with your IK contacts solved on
+it. An animation is built from there: what plays on the avatar is not part of
+it, and while creating, the avatar shows the rest skeleton and your keys. Manual
+joint edits made in the contact editor stay there; pose them here. Choose a
+frame with the slider or adjacent numeric field, pose the avatar, then record
+it:
 
 - **Key this bone** records the selected joint. When its IK chain is being
   edited, the affected ancestors are recorded too; symmetry includes the
@@ -39,8 +42,8 @@ per axis. An invalid capture reports an error without writing a partial key.
 **Bones / priority** enables each track and sets its priority independently.
 `-1` inherits the global animation priority. Disabling a track excludes it
 from preview/export while keeping its keys in the draft. Turning off the final
-track releases all keyed preview channels; exporting still requires an active
-track with keys.
+track shows the rest skeleton; exporting still requires an active track with
+keys.
 
 **Playback settings** contains:
 
@@ -59,9 +62,9 @@ the file and validates the complete result before saving or preparing import.
 
 Return to IK contacts to adjust prim targets, bone targets or virtual
 controls. In Animations, choose the destination **Frame (.anim)** and
-**Capture current IK pose** to add the displayed result to the current draft.
-This bakes the real skeletal pose; the LSL companion supplies live target
-following during play.
+**Capture current IK pose** to add your contacts, solved on the rest skeleton,
+to the current draft. This bakes the real skeletal pose; the LSL companion
+supplies live target following during play.
 
 Creating another animation retains the previous draft in the draft selector.
 Up to sixteen drafts remain available during the viewer session, including

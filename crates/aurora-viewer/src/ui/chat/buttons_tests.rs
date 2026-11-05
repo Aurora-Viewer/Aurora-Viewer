@@ -1008,6 +1008,59 @@ fn nearby_bar_paragraph_chord_keeps_focus_and_volume_shortcuts() {
     assert_eq!(sent.chat_type, aurora_net::ChatType::Whisper);
 }
 
+/// A long conversation just opened still measures the rows above the end,
+/// a few per frame, and their estimates were too tall: the content shrank
+/// under a wheel turned at the end, and the scroll area, held against the
+/// end, swallowed it (5 of 250 points left, on a Mac mini). However many
+/// rows a frame measures, the wheel scrolls its whole distance.
+#[test]
+fn a_wheel_while_rows_are_measured_scrolls_its_whole_distance() {
+    struct Budget;
+    impl Drop for Budget {
+        fn drop(&mut self) {
+            super::view::measure_rows_per_frame(None);
+        }
+    }
+    let _budget = Budget;
+    let mut missed = Vec::new();
+    for rows in [1, 3, 8] {
+        super::view::measure_rows_per_frame(Some(rows));
+        for style in ALL {
+            let mut h = H::new(style);
+            for i in 0..80 {
+                h.world
+                    .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("earlier message {i}")));
+                h.world
+                    .conversation_line(JANE, line("Bob", BOB, ChatKind::Im, &format!("another message {i}")));
+            }
+            h.open(Some(JANE));
+            for _ in 0..30 {
+                h.frame(Vec::new());
+            }
+            assert!(h.st.views[&Some(JANE)].below() < 1.0, "{style:?}, {rows} rows: at the end");
+            let at = h.text_rect("another message 79").center();
+            h.frame(vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 250.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
+                    modifiers: Default::default(),
+                },
+            ]);
+            for _ in 0..60 {
+                h.frame(Vec::new());
+            }
+            let below = h.st.views[&Some(JANE)].below();
+            if (below - 250.0).abs() >= 1.0 {
+                missed.push(format!("{style:?}, {rows} rows a frame: {below} of 250 points"));
+            }
+        }
+    }
+    assert!(missed.is_empty(), "{missed:#?}");
+}
+
 /// Incoming group messages must leave the original sender available to
 /// block, both at the live end and while reading older messages (#557).
 #[test]
@@ -1031,17 +1084,13 @@ fn incoming_messages_keep_chat_context_menus_open() {
                     h.frame(Vec::new());
                 }
                 if older {
-                    let at = h.text_rect("another message 79").center();
-                    h.frame(vec![
-                        egui::Event::PointerMoved(at),
-                        egui::Event::MouseWheel {
-                            unit: egui::MouseWheelUnit::Point,
-                            delta: egui::vec2(0.0, 250.0),
-                            phase: egui::TouchPhase::Move,
-                            source: egui::MouseWheelSource::Unknown,
-                            modifiers: Default::default(),
-                        },
-                    ]);
+                    // This tests menu retention away from the live end. Set
+                    // that precondition through the view's navigation rather
+                    // than aiming a wheel event at the last, possibly clipped row.
+                    h.st.views
+                        .get_mut(&Some(GROUP))
+                        .expect("the conversation is laid out")
+                        .scroll_to(80);
                     for _ in 0..30 {
                         h.frame(Vec::new());
                     }

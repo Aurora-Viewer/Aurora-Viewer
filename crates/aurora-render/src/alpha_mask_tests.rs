@@ -3,6 +3,7 @@ use crate::pipeline_cache::CachedPipelines;
 use wgpu::util::DeviceExt;
 
 #[test]
+#[ignore = "requires a GPU"]
 fn mask_rejection_preserves_gpu_colour_and_sample_depth() {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
     let mut fragments = String::new();

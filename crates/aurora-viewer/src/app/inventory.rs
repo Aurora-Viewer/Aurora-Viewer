@@ -631,7 +631,12 @@ impl App {
                 self.world.inventory.apply(reply.contents);
                 self.world.inventory.created_folders(reply.folders);
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
-                    let sync = crate::world::appearance::sync_plan(&self.world.inventory, self.world.agent_id, &self.outfit_sync_worn());
+                    let sync = crate::world::appearance::sync_plan_keeping(
+                        &self.world.inventory,
+                        self.world.agent_id,
+                        &self.world.outfit_attachment_items(),
+                        self.bridge_runtime.item(),
+                    );
                     for cmd in sync.commands {
                         self.send(cmd);
                     }
