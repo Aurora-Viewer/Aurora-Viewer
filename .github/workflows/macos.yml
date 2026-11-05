@@ -173,7 +173,9 @@ jobs:
           cargo build --profile ci --locked -p aurora-viewer
       - name: Save the Rust cache
         if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.cache.outputs.cache-hit != 'true'
+        # a cache that is not saved only slows the next run: never a red job
         timeout-minutes: 10
+        continue-on-error: true
         uses: ./.github/actions/rust-cache/save
         with:
           key: ${{ steps.cache.outputs.key }}

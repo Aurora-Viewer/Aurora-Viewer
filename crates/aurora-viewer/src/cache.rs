@@ -29,20 +29,81 @@ pub const DIRS: [&str; 9] = [
 /// Bytes written to the cache since the last walk.
 static WRITTEN: AtomicU64 = AtomicU64::new(0);
 
-/// Write a cache file (counted towards the size limit).
+/// The key the cache files are sealed with (cache_key.rs). Read once, on
+/// the first use: the app asks for it at startup, before any streamer.
+pub fn key() -> &'static aurora_assets::sealed::Key {
+    static KEY: std::sync::OnceLock<aurora_assets::sealed::Key> = std::sync::OnceLock::new();
+    KEY.get_or_init(crate::cache_key::load)
+}
+
+/// Write a cache file, sealed (counted towards the size limit).
 pub fn write(path: impl AsRef<Path>, data: &[u8]) -> std::io::Result<()> {
-    crate::atomic_file::publish(path.as_ref(), data)?;
-    WRITTEN.fetch_add(data.len() as u64, Ordering::Relaxed);
-    crate::disk_io::written(origin_of(path.as_ref()), data.len());
+    publish(path.as_ref(), &key().seal(data)?)
+}
+
+/// Write a cache file as it is: for what leaves the viewer as a file (the
+/// pictures copied from the chat, pasted as files elsewhere).
+pub fn write_plain(path: impl AsRef<Path>, data: &[u8]) -> std::io::Result<()> {
+    publish(path.as_ref(), data)
+}
+
+fn publish(path: &Path, file: &[u8]) -> std::io::Result<()> {
+    crate::atomic_file::publish(path, file)?;
+    WRITTEN.fetch_add(file.len() as u64, Ordering::Relaxed);
+    crate::disk_io::written(origin_of(path), file.len());
     Ok(())
+}
+
+/// Read a cache file whole. A file sealed under another key or damaged is
+/// an error, like a missing one: a cache miss.
+pub fn read(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
+    let d = std::fs::read(path.as_ref())?;
+    crate::disk_io::read(origin_of(path.as_ref()), d.len());
+    key().open(d)
 }
 
 /// Read a cache file and mark it as used.
 pub fn read_touch(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
-    let d = std::fs::read(path.as_ref())?;
-    crate::disk_io::read(origin_of(path.as_ref()), d.len());
+    let d = read(path.as_ref())?;
     touch(path.as_ref());
     Ok(d)
+}
+
+/// A cache file for reads at given places (only those chunks are decrypted).
+pub fn reader(path: impl AsRef<Path>) -> std::io::Result<aurora_assets::sealed::Reader<std::fs::File>> {
+    aurora_assets::sealed::Reader::new(std::fs::File::open(path)?, key())
+}
+
+/// Delete the cache folders of the earlier format, which the versions
+/// before the store left in `old_root` (the cache folder, the store inside it),
+/// in the background. They come back if such a version runs again, and go
+/// again at the next start.
+pub fn remove_unsealed(old_root: PathBuf) {
+    let found: Vec<PathBuf> = DIRS.iter().map(|d| old_root.join(d)).filter(|d| d.is_dir()).collect();
+    if found.is_empty() {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("aurora-cache-unsealed".into()).spawn(move || {
+        let started = Instant::now();
+        let mut files = Vec::new();
+        for d in &found {
+            walk(d, &mut files);
+        }
+        let mut freed = 0u64;
+        for (path, len, _) in &files {
+            if std::fs::remove_file(path).is_ok() {
+                freed += len;
+            }
+        }
+        for d in &found {
+            let _ = std::fs::remove_dir_all(d);
+        }
+        log::info!(
+            "cache: {} MB of the earlier format removed in {:.1} s",
+            freed / (1024 * 1024),
+            started.elapsed().as_secs_f32()
+        );
+    });
 }
 
 /// What a cache file holds, by the folder it is in (the disk statistics).

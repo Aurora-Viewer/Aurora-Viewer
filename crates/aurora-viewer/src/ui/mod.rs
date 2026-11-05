@@ -105,6 +105,7 @@ pub mod region_message_prompt;
 pub mod region_restart;
 pub mod remote_object;
 pub mod report_abuse;
+pub(crate) mod resource_drop;
 pub mod rlva;
 pub mod script_queue;
 pub mod scripts;
