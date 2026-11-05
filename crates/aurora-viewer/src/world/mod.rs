@@ -3033,6 +3033,17 @@ impl World {
                         buttons,
                     }
                 };
+                // LLScriptFloaterManager::onAddNotification replaces the
+                // previous script floater for this object and channel; its
+                // removal sends no ScriptDialogReply.
+                self.notifications.list.retain(|notification| {
+                    !matches!(
+                        &notification.data,
+                        notifications::Data::Dialog { object, channel: old_channel, .. }
+                            | notifications::Data::TextBox { object, channel: old_channel, .. }
+                            if *object == object_id && *old_channel == channel
+                    )
+                });
                 let title = format!("{object_name} ({owner_name})");
                 let id = self.notifications.push(notifications::Kind::Script, title, message, data);
                 self.link_object_notification(id, object_id, &object_name, &owner_name);
@@ -7110,6 +7121,62 @@ mod motion_tests {
         assert!(matches!(commands.as_slice(), [aurora_net::NetCommand::ScriptDialogReply {
             sender: Some(to), object_id: object, channel: -42, index: 0, label,
         }] if *to == sender && *object == object_id && label == "  ✓ Original text  "));
+    }
+
+    #[test]
+    fn script_dialogs_replace_only_the_same_object_and_channel_without_reply() {
+        let (mut world, _, _) = fixture();
+        let sender = ([127, 0, 0, 1], 13000).into();
+        let object = Uuid::from_u128(0x4321);
+        let other_object = Uuid::from_u128(0x4322);
+        let event = |object_id, channel, textbox, message: &'static str| NetEvent::ScriptDialog {
+            sender,
+            object_id,
+            object_name: "Test object".into(),
+            owner_name: "Owner".into(),
+            message: message.into(),
+            channel,
+            buttons: if textbox { vec!["!!llTextBox!!".into()] } else { vec!["OK".into()] },
+        };
+        let old_dialog = world.apply(event(object, 12, false, "old dialog"));
+        let other_channel = world.apply(event(object, 13, false, "other channel"));
+        let other_object_dialog = world.apply(event(other_object, 12, false, "other object"));
+        let old_box = world.apply(event(object, 14, true, "old box"));
+        let replacement = world.apply(event(object, 12, true, "new box"));
+        assert!(old_dialog.is_none() && other_channel.is_none() && other_object_dialog.is_none());
+        assert!(old_box.is_none() && replacement.is_none());
+        assert_eq!(world.notifications.list.len(), 4);
+        assert!(world.notifications.list.iter().all(|n| n.id != 1));
+        assert!(
+            world
+                .notifications
+                .list
+                .iter()
+                .any(|n| matches!(n.data, notifications::Data::Dialog { object: id, channel: 13, .. } if id == object))
+        );
+        assert!(
+            world
+                .notifications
+                .list
+                .iter()
+                .any(|n| matches!(n.data, notifications::Data::Dialog { object: id, channel: 12, .. } if id == other_object))
+        );
+        assert!(
+            world
+                .notifications
+                .list
+                .iter()
+                .any(|n| matches!(n.data, notifications::Data::TextBox { object: id, channel: 14, .. } if id == object))
+        );
+        assert!(
+            world
+                .notifications
+                .list
+                .iter()
+                .any(|n| matches!(n.data, notifications::Data::TextBox { object: id, channel: 12, .. } if id == object))
+        );
+        assert!(world.notifications.list.iter().all(|n| n.body != "old dialog"));
+        assert!(world.notifications.list.iter().any(|n| n.body == "old box"));
     }
 
     #[test]
