@@ -301,8 +301,9 @@ fn call_tool(ui: &mut egui::Ui, p: &Palette, icons: &crate::ui::icons::Icons, wo
 }
 
 /// The other actions of the conversation: what Firestorm's IM toolbar has
-/// and Aurora does not do yet stays in it, greyed. The workspace's head
-/// (`head.rs`) has no teleport button: its offer is here.
+/// and Aurora does not do yet stays in it, greyed. The teleport rows repeat
+/// the workspace head's buttons (`head.rs`), and keep the request within
+/// reach when a narrow head drops its button.
 pub(super) fn more_menu(
     ui: &mut egui::Ui,
     p: &Palette,

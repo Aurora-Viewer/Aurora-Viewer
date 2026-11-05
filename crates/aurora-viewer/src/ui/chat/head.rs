@@ -244,23 +244,29 @@ pub(super) fn show(
             if tool(ui, p, slot(), "send-filled", aurora_i18n::tr!("common-offer-teleport"), Tone::Plain).clicked() {
                 actions.push(ConvAction::OfferTeleport(other));
             }
-            // the other direction, greyed like the avatar menus' item
-            let request = if can_request_teleport(world, &other) {
-                Tone::Plain
-            } else {
-                Tone::Off
-            };
-            if tool(
-                ui,
-                p,
-                slot(),
-                REQUEST_TELEPORT_ICON,
-                aurora_i18n::tr!("common-request-teleport"),
-                request,
-            )
-            .clicked()
-            {
-                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RequestTeleport(other));
+            // the other direction, greyed for an offline friend as
+            // FSFloaterIM::changed greys teleport_btn; a head too narrow
+            // for it leaves it to the row of the "…" menu
+            let friend = world.social.is_friend(&other);
+            let slots = 7 + usize::from(!friend) + usize::from(can_add_people(world, &other));
+            if request_fits(width, slots) {
+                let request = if can_request_teleport(world, &other) {
+                    Tone::Plain
+                } else {
+                    Tone::Off
+                };
+                if tool(
+                    ui,
+                    p,
+                    slot(),
+                    REQUEST_TELEPORT_ICON,
+                    aurora_i18n::tr!("common-request-teleport"),
+                    request,
+                )
+                .clicked()
+                {
+                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RequestTeleport(other));
+                }
             }
         }
     }
@@ -353,6 +359,12 @@ pub(super) fn show(
     } else if cut {
         r.on_hover_text(&who.title);
     }
+}
+
+/// Whether a head of `width` keeps its picture clear of `slots` buttons, the
+/// request's among them.
+pub(super) fn request_fits(width: f32, slots: usize) -> bool {
+    8.0 + slots as f32 * (TOOL + 2.0) + 12.0 + PIC <= width
 }
 
 /// A teleport can be requested from anyone but a friend known to be offline
