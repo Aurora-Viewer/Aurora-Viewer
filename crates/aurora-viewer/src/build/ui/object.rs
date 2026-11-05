@@ -1099,6 +1099,7 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             enabled,
         )
     });
+    super::texture::texture_drop::slot(ui, p, tool, world, r.rect, super::PickTarget::Sculpt, enabled);
     if r.clicked() {
         tool.ui
             .picker
