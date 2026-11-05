@@ -438,8 +438,8 @@ pub(crate) mod tests {
         // 90 s of stereo or 180 s of mono at 44.1 kHz; OpenSim's 60 s stereo uploads fit
         assert_eq!(MAX_CLIP_SOURCE_SAMPLES, 90 * 44_100 * 2);
         assert_eq!(MAX_CLIP_SOURCE_SAMPLES, 180 * 44_100);
-        assert!(60 * 48_000 * 2 <= MAX_CLIP_SOURCE_SAMPLES);
-        assert!(91 * 44_100 * 2 > MAX_CLIP_SOURCE_SAMPLES);
+        const { assert!(60 * 48_000 * 2 <= MAX_CLIP_SOURCE_SAMPLES) };
+        const { assert!(91 * 44_100 * 2 > MAX_CLIP_SOURCE_SAMPLES) };
     }
 
     #[test]
