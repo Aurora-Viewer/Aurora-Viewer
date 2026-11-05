@@ -1552,7 +1552,7 @@ fn search_rows(
                 let mut open = row.open;
                 folder_row(ui, p, icons, inv, row.id, &mut open, st, prefs, facts, actions);
                 if open != row.open {
-                    st.result_tree.toggle(row.id, st.tab);
+                    st.result_tree.set_open(&st.view, row.id, st.tab, open);
                 }
             } else {
                 item_row(ui, p, icons, inv, &row.id, st, prefs, facts, actions);

@@ -100,6 +100,15 @@ impl PlainTree {
         }
     }
 
+    /// Close a folder and every folder in it, so that it opens again one
+    /// level deep: LLFolderViewFolder::setOpen opens the folder alone, and
+    /// the Legacy Viewer's subfolders start each session closed.
+    pub fn collapse(&mut self, view: &ViewCache, inv: &Inventory, id: Uuid) {
+        for id in folders(view, inv, id, true, true) {
+            self.set_open(id, false);
+        }
+    }
+
     pub fn open_all(&mut self, ids: impl IntoIterator<Item = Uuid>) {
         for id in ids {
             self.set_open(id, true);
@@ -362,8 +371,10 @@ fn rows(
                 Kind::Folder { open } => {
                     let mut now = open;
                     folder_row(ui, p, icons, inv, row.id, &mut now, st, prefs, facts, actions);
-                    if now != open {
-                        st.plain.set_open(row.id, now);
+                    if now && !open {
+                        st.plain.set_open(row.id, true);
+                    } else if open && !now {
+                        st.plain.collapse(&st.view, inv, row.id);
                     }
                 }
                 Kind::Item => item_row(ui, p, icons, inv, &row.id, st, prefs, facts, actions),
@@ -549,6 +560,26 @@ mod tests {
         assert!(!tree.is_open(id(20)), "another window's scope stays unchanged");
         tree.expand(&view, &inv, inv.root, true, false, true);
         assert!(!tree.is_open(id(3)), "the hidden Library stays closed");
+    }
+
+    #[test]
+    fn a_closed_folder_reopens_one_level_deep_in_this_and_the_next_session() {
+        let (inv, view, _) = fixture();
+        let ctx = egui::Context::default();
+        let key = egui::Id::unique("test_one_level");
+        let mut tree = PlainTree::default();
+        tree.persist(&ctx, key);
+        tree.open_all([id(1), id(10), id(11)]);
+        tree.persist(&ctx, key);
+        tree.collapse(&view, &inv, id(10));
+        assert!(tree.is_open(id(1)), "its parent stays open");
+        tree.set_open(id(10), true);
+        tree.prepare(&view, &inv, inv.root, true, true);
+        assert_eq!(listed(&tree)[2], (11, 2, Kind::Folder { open: false }));
+        tree.persist(&ctx, key);
+        let mut next = PlainTree::default();
+        next.persist(&ctx, key);
+        assert!(next.is_open(id(10)) && !next.is_open(id(11)));
     }
 
     #[test]
