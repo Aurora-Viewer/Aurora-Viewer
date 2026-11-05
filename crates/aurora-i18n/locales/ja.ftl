@@ -8990,6 +8990,12 @@ ui-options-aurora-move-hologram-moving = 移動中のオブジェクト
 ui-options-aurora-move-hologram-start = 開始位置
 ui-options-aurora-use-bridge = Auroraブリッジを使用
 ui-options-aurora-use-bridge-help = Auroraが作成して装着する小さなスクリプト付きアタッチメントです：位置のロック、レーダーのアバターの高度、スクリプトとオブジェクトの情報、ポーズのリクエスト、共有ポータル。オフにすると、Auroraはブリッジを作成も装着もせず、装着中のものを取り外します。これらの機能は使えなくなります。
+ui-options-aurora-portal-sources = ポータルを表示する相手
+ui-options-aurora-portal-sources-help = 他の住人がAuroraブリッジで近くに開いたポータルです。自分のポータルと、移動先からの帰り道は常に表示されます。フレンドではない人のポータルを初めて通り抜けるときは、移動する前に確認します。グループの場合、グリッドがその住人を自分のグループのいずれかに載せていれば（プロフィールまたは読み込まれたメンバー一覧）、対象になります。
+ui-options-aurora-portal-sources-nobody = なし
+ui-options-aurora-portal-sources-friends = フレンド
+ui-options-aurora-portal-sources-groups = フレンドと自分のグループ
+ui-options-aurora-portal-sources-everyone = 全員
 ui-options-aurora-gaze = 視線
 ui-options-aurora-aim = 視線の向かう先
 ui-options-aurora-aim-help = アバターがカーソルの下の正確な点を見るか、レガシービューアのようにカーソルの側へ頭を向けます。
@@ -12582,6 +12588,9 @@ portal-destination-hidden = 非表示の行き先
 portal-restricted = アクセス権がありません
 portal-step-away = 一度離れてから戻ると入れます
 portal-walk-through = 通り抜けるとテレポートします
+portal-cross-title = このポータルを通り抜けますか？
+portal-cross-text = { $name }がこのポータルを開きました。行き先は{ $destination }です。
+portal-cross-go = 移動
 ui-appearance-selected-outfits = { $count }個のアウトフィットを選択しています
 
 # Spell checker and auto-replace (#675)

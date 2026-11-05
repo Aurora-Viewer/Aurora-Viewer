@@ -8996,6 +8996,12 @@ ui-options-aurora-move-hologram-moving = Objet déplacé
 ui-options-aurora-move-hologram-start = Point de départ
 ui-options-aurora-use-bridge = Utiliser le bridge Aurora
 ui-options-aurora-use-bridge-help = Un petit objet scripté qu’Aurora crée et vous fait porter : verrouillage de position, altitudes des avatars dans le radar, infos des scripts et des objets, demandes de pose et portails partagés. Désactivé, Aurora ne le crée plus, ne le porte plus et retire celui qui est porté : ces fonctions sont alors indisponibles.
+ui-options-aurora-portal-sources = Afficher les portails de
+ui-options-aurora-portal-sources-help = Les portails que d’autres résidents ouvrent près de vous avec leur bridge Aurora. Vos propres portails et le chemin du retour de vos voyages s’affichent toujours. La première fois que vous traversez le portail de quelqu’un qui n’est pas votre ami, Aurora vous demande avant de partir. Avec les groupes, un résident compte dès que la grille l’indique dans l’un de vos groupes (son profil ou une liste de membres chargée).
+ui-options-aurora-portal-sources-nobody = Personne
+ui-options-aurora-portal-sources-friends = Amis
+ui-options-aurora-portal-sources-groups = Amis et mes groupes
+ui-options-aurora-portal-sources-everyone = Tout le monde
 ui-options-aurora-gaze = Regard
 ui-options-aurora-aim = Où va votre regard
 ui-options-aurora-aim-help = Votre avatar regarde le point exact sous le curseur, ou tourne la tête vers le côté du curseur comme le Legacy Viewer.
@@ -12603,6 +12609,9 @@ portal-destination-hidden = Destination masquée
 portal-restricted = Vous n’avez pas accès
 portal-step-away = Éloignez-vous, puis revenez pour entrer
 portal-walk-through = Traversez pour vous téléporter
+portal-cross-title = Traverser ce portail ?
+portal-cross-text = { $name } a ouvert ce portail. Il mène à { $destination }.
+portal-cross-go = Y aller
 ui-appearance-selected-outfits = { $count } tenues sélectionnées
 
 # Spell checker and auto-replace (#675)
