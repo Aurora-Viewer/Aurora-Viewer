@@ -571,7 +571,12 @@ impl AgentState {
             return;
         }
         let dt = dt.min(0.1);
-        let fwd = self.forward();
+        let use_mouselook_pitch = mouselook && self.flying && !self.is_sitting();
+        let fwd = if use_mouselook_pitch {
+            (self.body_rotation() * Quat::from_rotation_y(-self.pitch)) * Vec3::X
+        } else {
+            self.forward()
+        };
         let left = Vec3::new(-fwd.y, fwd.x, 0.0);
         let mut dir = Vec3::ZERO;
         if input.forward {
@@ -601,6 +606,8 @@ impl AgentState {
             1.0
         };
         let mut horiz = dir.normalize_or_zero() * speed * nudge;
+        let pitched_flight = if use_mouselook_pitch { horiz.z } else { 0.0 };
+        horiz = horiz.with_z(0.0);
         let floor = ground.map(|g| g + STAND);
         let mut pos = self.server_pos;
         let mut vz = self.server_vel.z;
@@ -612,7 +619,7 @@ impl AgentState {
                 -4.0
             } else {
                 0.0
-            };
+            } + pitched_flight;
         } else if grounded {
             vz = if input.up { 5.0 } else { 0.0 };
         } else {
@@ -797,9 +804,15 @@ impl AgentState {
         let at = cam.forward();
         let left = cam.view_up().cross(at).normalize_or(Vec3::Y);
         let cam_up = at.cross(left).normalize_or(Vec3::Z);
+        // The Legacy Viewer sends the pitched frame rotation in mouselook; the drawn body stays yaw-only.
+        let body_rotation = if cam.mouselook() && !self.is_sitting() {
+            Quat::from_rotation_z(self.yaw) * Quat::from_rotation_y(-self.pitch)
+        } else {
+            self.body_rotation()
+        };
         AgentControls {
             control_flags: self.control_flags(input, cam.mouselook()),
-            body_rotation: self.body_rotation(),
+            body_rotation,
             head_rotation: cam.head_rotation(self),
             camera_center: cam.position,
             camera_at: at,
@@ -957,6 +970,32 @@ mod tests {
         assert_ne!(flags & control::LEFT_POS, 0);
         assert_ne!(flags & control::UP_POS, 0);
         assert_ne!(flags & control::FLY, 0);
+    }
+
+    #[test]
+    fn local_mouselook_flight_follows_pitch_while_walking_stays_level() {
+        let input = MoveInput {
+            forward: true,
+            ..Default::default()
+        };
+        for (pitch, rises) in [(0.55, true), (-0.55, false)] {
+            let mut flyer = AgentState {
+                flying: true,
+                pitch,
+                server_pos: Vec3::Z * 0.84,
+                ..Default::default()
+            };
+            flyer.simulate_locally(&input, true, Some(0.0), 0.1, false);
+            assert_eq!(flyer.server_pos.z > 0.84, rises, "pitch {pitch}");
+        }
+
+        let mut walker = AgentState {
+            pitch: 0.55,
+            server_pos: Vec3::Z * 0.84,
+            ..Default::default()
+        };
+        walker.simulate_locally(&input, true, Some(0.0), 0.1, false);
+        assert_eq!(walker.server_pos.z, 0.84, "walking stays level in mouselook");
     }
 
     #[test]
