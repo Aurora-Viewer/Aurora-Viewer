@@ -15,6 +15,9 @@
 //!   faces-picker-badges-local | faces-picker-material-badges-local: applied local previews.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
+//!   faces-mapping: one face on each of three textured surfaces (repeats,
+//!   offset and rotation; planar mapping; a PBR base color transform), for
+//!   the face-select pattern.
 //!   create-delete | create-ready: create and select a basic prim, then
 //!   delete it (ready leaves the new prim for the human).
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
@@ -524,6 +527,10 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             235 if matches!(parts[0], "faces-close" | "faces-complex") || parts[0].starts_with("faces-picker") => vec![Step::CloseView],
             _ if parts[0] == "faces-ready" => Vec::new(),
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
+            240 if parts[0] == "faces-mapping" => pick(99620, u8::MAX, false),
+            260 if parts[0] == "faces-mapping" => pick(99621, u8::MAX, true),
+            280 if parts[0] == "faces-mapping" => pick(99622, u8::MAX, true),
+            _ if parts[0] == "faces-mapping" => Vec::new(),
             240 => pick(99620, u8::MAX, false),
             250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
                 if parts[0].starts_with("faces-picker-material") {

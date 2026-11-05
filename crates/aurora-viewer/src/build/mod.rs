@@ -2380,7 +2380,8 @@ impl BuildTool {
         Some((s.move_hologram, self.manip.move_ghost()?))
     }
 
-    fn face_mode(&self) -> bool {
+    /// The Edit tool in Select face mode (LLSelectMgr::getTEMode).
+    pub fn face_mode(&self) -> bool {
         self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
     }
 
