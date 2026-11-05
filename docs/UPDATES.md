@@ -176,7 +176,7 @@ first signed release):
    outside the repository:
 
    ```powershell
-   cargo run -p aurora-updater --bin aurora-update-sign -- keygen --out <private folder>urora-update-key.txt
+   cargo run -p aurora-updater --bin aurora-update-sign -- keygen --out <private folder>\aurora-update-key.txt
    ```
 
    The private key goes to that file and is never shown. The tool prints a
@@ -198,7 +198,7 @@ first signed release):
    on screen:
 
    ```powershell
-   Get-Content -Raw -LiteralPath <private folder>urora-update-key.txt | gh secret set UPDATE_SIGNING_KEY --env release --repo Aurora-Viewer/Aurora-Viewer
+   Get-Content -Raw -LiteralPath <private folder>\aurora-update-key.txt | gh secret set UPDATE_SIGNING_KEY --env release --repo Aurora-Viewer/Aurora-Viewer
    ```
 
 5. Keep the key file offline (an encrypted backup); delete other copies.
