@@ -39,6 +39,9 @@ impl App {
                     return;
                 }
                 self.build.deselect_all(&self.world);
+                // the deselections are only queued: send them before STAND_UP
+                // so the seat is deselected first, as in the Legacy Viewer
+                self.flush_build();
                 self.send(stand);
             }
             // onStopFlyingButtonClick: gAgent.setFlying(false)

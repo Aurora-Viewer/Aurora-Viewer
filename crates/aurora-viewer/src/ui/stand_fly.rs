@@ -90,15 +90,15 @@ pub fn buttons(s: &State) -> Buttons {
 
 /// The panel, centred above `bottom_top` (the top of the bottom bar).
 ///
-/// Its area is kept every frame, empty without a button: egui stacks an
-/// area above those that existed before it, and the Legacy Viewer's panel
-/// lies in the toolbars' layer, under the windows. Created with the bars on
-/// the first frame in world, it stays under the windows opened after.
+/// It lies under the windows, like the Legacy Viewer's panel in the toolbars'
+/// layer: the background layer, as the chat console's lines, so a click on it
+/// never brings it above a window that overlaps it (a click raises an area
+/// within its own layer only).
 pub fn show(ctx: &egui::Context, p: &Palette, shown: Buttons, bottom_top: f32) -> Option<Action> {
     let screen = ctx.content_rect();
     let mut action = None;
     egui::Area::new(Id::unique("stand_stop_flying"))
-        .order(egui::Order::Middle)
+        .order(egui::Order::Background)
         .pivot(egui::Align2::CENTER_BOTTOM)
         .fixed_pos(egui::pos2(screen.center().x.round(), (bottom_top - GAP).round()))
         .constrain(false)
