@@ -1182,6 +1182,8 @@ pub struct Settings {
     /// Projectors cast shadows within the configured budget
     /// (Legacy Viewer RenderShadowDetail 2, "Sun/Moon + Projectors").
     pub projector_shadows: bool,
+    /// Include lights worn by other residents (Preferences › Graphics).
+    pub others_attached_lights: bool,
     /// Maximum simultaneous projector shadows, independent of local-light count.
     pub projector_shadow_limit: u8,
     /// Screen-space contact shadows of the sun or the moon, beyond the
@@ -2027,6 +2029,7 @@ impl Default for Settings {
             former_look_at_range: None,
             shadow_quality: 3,
             projector_shadows: true,
+            others_attached_lights: true,
             projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,

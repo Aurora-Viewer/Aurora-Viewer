@@ -10098,6 +10098,7 @@ impl App {
                     self.settings.projector_shadow_limit,
                     gfx.renderer.max_texture_dimension(),
                 ),
+                others_attached_lights: self.settings.others_attached_lights,
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
