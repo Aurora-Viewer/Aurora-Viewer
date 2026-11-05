@@ -317,6 +317,38 @@ fn poser_shape_changes_rebase_pose_and_undo_onto_the_new_rest() {
     session.history(false);
     assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
     assert!((session.pose.positions[hip] - (rig.local_pos[hip] + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+    session.history(true);
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (old_hip + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+
+    // A redo entry follows the rest too: undo, return to the first shape, redo.
+    session.history(false);
+    session.rebase(initial_rest);
+    session.history(true);
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest]).length() < 1e-5);
+    assert!((session.pose.positions[hip] - old_hip).length() < 1e-5);
+}
+
+#[test]
+fn poser_rebase_from_a_flat_rest_axis_takes_the_new_rest_scale() {
+    // Shape sliders can drive a joint's rest scale to zero on one axis
+    // (#1249); the pose's ratio to it must not blow the joint up.
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let chest = rig.names["CHEST"];
+    let rest = crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    };
+    let mut flat = rest.clone();
+    flat.scale[chest].x = 0.0;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.rebase(Arc::new(flat));
+    session.rebase(Arc::new(rest));
+    assert!(session.pose.scales[chest].is_finite());
+    assert!((session.pose.scales[chest] - rig.scale[chest]).length() < 1e-5);
 }
 fn assert_attached(rig: &Rig, pose: &SubjectPose, reference: &SubjectPose, model: Mat4) {
     let matrices = pose.matrices(rig, model);

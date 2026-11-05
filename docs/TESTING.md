@@ -3203,7 +3203,10 @@ That ignored test creates and removes its own isolated profile.
   Don't ask again). `square-head` sets our Head Shape slider to 100 at frame
   300, which mirrors the forehead joints' scale on one axis (#1249): capture
   620 must show the pose on (status "Posing", Stop button) and the head
-  turned, as in `self`. Library widens the native window; settings and
+  turned, as in `self`. `shape-change` edits the head as in `self`, then
+  sets our Height slider (visual param 33) to 100 at frame 600 through
+  `world.preview_shape` (#2415): capture 620 must show the taller shape at
+  once, the head still turned and the pose on. Library widens the native window; settings and
   the remaining modes select the corresponding controls. The other modes
   count as a ready bridge; `bridge-*` modes open the subject menu at 440 with
   the peer's Ask disabled and the matching hint (starting, query script
