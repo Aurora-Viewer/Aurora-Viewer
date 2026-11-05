@@ -11180,6 +11180,7 @@ texture-library-copy = Copy allowed
 texture-library-no-copy = No copy: applying moves this item to the object.
 texture-library-wait-inventory = Loading the object contents. Try the drop again when they are ready.
 texture-library-locked = This surface cannot receive this texture or material.
+texture-library-worn-drop-hint = Hold Shift to apply to all faces
 texture-library-applied = Texture or material applied.
 texture-library-no-results = No matching resources.
 texture-library-demo-wood = Wood

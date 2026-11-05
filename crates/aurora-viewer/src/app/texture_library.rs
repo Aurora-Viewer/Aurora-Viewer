@@ -901,7 +901,9 @@ impl App {
             self.library_drag.highlighted = Some((idx, mask));
         }
         if !drag.released {
-            if let Some(reason) = reason {
+            // a refusal says why first; the hint only tells what Shift adds
+            let hint = self.library_drag.worn.is_some() && !drag.ctrl && !drag.shift;
+            if let Some(text) = reason.or(hint.then(|| aurora_i18n::tr!("texture-library-worn-drop-hint"))) {
                 egui::Tooltip::always_open(
                     ctx.clone(),
                     egui::LayerId::background(),
@@ -909,7 +911,7 @@ impl App {
                     egui::PopupAnchor::Pointer,
                 )
                 .show(|ui| {
-                    ui.label(reason);
+                    ui.label(text);
                 });
             }
         } else {

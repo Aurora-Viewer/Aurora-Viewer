@@ -11164,6 +11164,7 @@ texture-library-copy = コピー可
 texture-library-no-copy = コピー不可：適用するとこのアイテムはオブジェクトに移動します。
 texture-library-wait-inventory = オブジェクトの中身を読み込んでいます。準備ができたら、もう一度ドロップしてください。
 texture-library-locked = この面はこのテクスチャまたはマテリアルを受け付けません。
+texture-library-worn-drop-hint = Shift を押すとすべての面に適用します
 texture-library-applied = テクスチャまたはマテリアルを適用しました。
 texture-library-no-results = 一致するリソースはありません。
 texture-library-demo-wood = 木
