@@ -182,6 +182,70 @@ fn legacy_build_collapse_restores_geometry_and_scrolling_keeps_the_tabs_visible(
 }
 
 #[test]
+fn legacy_selection_shows_the_link_or_the_faces_of_one_prim() {
+    let mut inspector = legacy();
+    for event in crate::demo::selection_cycle_events() {
+        inspector.world.apply(event);
+    }
+    let prim = |inspector: &Inspector, id| inspector.world.objects.index_of_uuid(&crate::demo::action_id(id)).unwrap();
+    let (root, child) = (prim(&inspector, 99610), prim(&inspector, 99611));
+    let link = |n: usize| aurora_i18n::tr!("build-ui-tools-link-number", n = n);
+    let faces = |list: &str| aurora_i18n::tr!("build-ui-tools-faces", list = list);
+    let shown = |inspector: &mut Inspector, text: &str| inspector.show(vec![]).1.iter().any(|(t, _)| t == text);
+    let line = |inspector: &Inspector| {
+        inspector
+            .tool
+            .legacy_part_line(&inspector.world, &inspector.settings, Mods::default())
+    };
+
+    // A whole linkset: several prims, no line (enable_link_count = false).
+    inspector.settings.edit_linked = false;
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(child), false);
+    assert!(inspector.tool.sel_prims(&inspector.world).len() > 1);
+    assert_eq!(line(&inspector), None);
+
+    // One linked prim: its link number, on screen too.
+    inspector.settings.edit_linked = true;
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(child), false);
+    assert_eq!(line(&inspector), Some(link(2)));
+    assert!(shown(&mut inspector, &link(2)));
+
+    // Several linked prims: no number, though the first still has one.
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(root), true);
+    assert_eq!(line(&inspector), None);
+    assert!(!shown(&mut inspector, &link(1)) && !shown(&mut inspector, &link(2)));
+
+    // The root is link 1.
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(root), false);
+    assert_eq!(line(&inspector), Some(link(1)));
+
+    // The face tool wins over the link number.
+    inspector.tool.edit_mode = EditMode::Face;
+    assert_eq!(line(&inspector), Some(faces("ALL_SIDES")));
+    let key = inspector.tool.selection[0];
+    let count = inspector.tool.num_faces(&inspector.world, root);
+    assert!(count >= 3, "a demo root with several faces");
+    inspector.tool.faces.insert(key, vec![2, 0]);
+    assert_eq!(line(&inspector), Some(faces("0, 2")));
+    assert!(shown(&mut inspector, &faces("0, 2")));
+    inspector.tool.faces.insert(key, (0..count as u8).collect());
+    assert_eq!(line(&inspector), Some(faces("ALL_SIDES")));
+
+    // Outside both, nothing.
+    inspector.tool.edit_mode = EditMode::Move;
+    inspector.settings.edit_linked = false;
+    assert_eq!(line(&inspector), None);
+}
+
+#[test]
 fn legacy_build_setting_roundtrips_without_replacing_the_aurora_arrangement() {
     let mut settings = BuildSettings::default();
     assert!(!settings.legacy_window);
