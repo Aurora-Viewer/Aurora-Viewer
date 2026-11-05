@@ -7741,7 +7741,7 @@ impl App {
         let Ok(bytes) = std::fs::read(&path) else {
             return;
         };
-        match aurora_llsd::from_binary(&bytes) {
+        match aurora_llsd::from_binary_local(&bytes) {
             Ok((data, _)) if data.is_map() => {
                 log::info!("local environment of the last session restored");
                 self.world.eep.restore_local(&data);
