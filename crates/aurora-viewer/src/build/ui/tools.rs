@@ -536,4 +536,30 @@ impl BuildTool {
         faces.dedup();
         faces.into_iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
     }
+
+    /// The line above the Legacy window's counts: the faces of the one selected
+    /// prim under the face tool, else its link number under Edit linked parts.
+    /// Port of the link_num_obj_count text of LLFloaterTools::refresh
+    /// (indra/newview/llfloatertools.cpp, originally LGPL 2.1).
+    pub fn legacy_part_line(&self, world: &World, s: &BuildSettings, mods: Mods) -> Option<String> {
+        if self.sel_prims(world).len() != 1 {
+            return None;
+        }
+        if self.tool == Tool::Edit && self.effective_mode(mods) == EditMode::Face {
+            let idx = self.selection.first().and_then(|key| world.objects.index_of(key))?;
+            let picked = self.faces.get(&world.objects.get(idx)?.key).map_or(0, Vec::len);
+            let list = if picked == 0 || picked >= self.num_faces(world, idx) {
+                // The LSL constant, untranslated in the Legacy Viewer too.
+                "ALL_SIDES".to_string()
+            } else {
+                self.selected_face_numbers(world)
+            };
+            return Some(aurora_i18n::tr!("build-ui-tools-faces", list = list));
+        }
+        if !s.edit_linked {
+            return None;
+        }
+        let n = self.selected_link_number(world)?;
+        Some(aurora_i18n::tr!("build-ui-tools-link-number", n = n))
+    }
 }

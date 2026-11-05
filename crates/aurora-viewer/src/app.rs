@@ -179,6 +179,54 @@ struct Gfx {
     maximize_on_show: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WindowedGeometry {
+    width: u32,
+    height: u32,
+    position: Option<(i32, i32)>,
+    maximized: bool,
+}
+
+impl WindowedGeometry {
+    fn from_settings(settings: &Settings) -> Self {
+        Self {
+            width: settings.window_width,
+            height: settings.window_height,
+            position: settings.window_x.zip(settings.window_y),
+            maximized: settings.window_maximized,
+        }
+    }
+
+    fn from_window(window: &Window) -> Self {
+        let size = window.inner_size();
+        let scale = window.scale_factor();
+        Self {
+            width: (size.width as f64 / scale).round() as u32,
+            height: (size.height as f64 / scale).round() as u32,
+            position: window.outer_position().ok().map(|p| (p.x, p.y)),
+            maximized: window.is_maximized(),
+        }
+    }
+
+    fn apply(self, window: &Window) {
+        window.set_fullscreen(None);
+        window.set_maximized(false);
+        if let Some((x, y)) = self.position {
+            window.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+        }
+        let _ = window.request_inner_size(winit::dpi::LogicalSize::new(self.width, self.height));
+        window.set_maximized(self.maximized);
+    }
+
+    fn save(self, settings: &mut Settings) {
+        settings.window_width = self.width;
+        settings.window_height = self.height;
+        settings.window_x = self.position.map(|p| p.0);
+        settings.window_y = self.position.map(|p| p.1);
+        settings.window_maximized = self.maximized;
+    }
+}
+
 /// Teleport screen state (also the login loading screen fading out).
 struct TpOverlay {
     start: Instant,
@@ -324,6 +372,10 @@ pub struct App {
     palette: Palette,
     net: NetClient,
     gfx: Option<Gfx>,
+    /// The restored size, position and maximize state before fullscreen.
+    fullscreen_restore: Option<WindowedGeometry>,
+    /// `settings.window_fullscreen` as last applied to the window.
+    fullscreen_applied: bool,
     /// The window of a lost GPU device, kept on screen until the new one has
     /// presented its first image (gpu_recovery.rs).
     retired_window: Option<Arc<Window>>,
@@ -1049,6 +1101,26 @@ fn shortcut_while_typing(typing: bool, mods: Mods, code: KeyCode, logical: Optio
     typing && (mods.ctrl || mods.alt) && bound && !crate::keybinds::text_field_keeps_key(code, logical, mods)
 }
 
+fn fullscreen_shortcut(
+    pressed: bool,
+    repeat: bool,
+    code: KeyCode,
+    mods: Mods,
+    text_owner: bool,
+    capturing: bool,
+    altgr_text: bool,
+) -> bool {
+    pressed
+        && !repeat
+        && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter)
+        && mods.alt
+        && !mods.ctrl
+        && !mods.shift
+        && !text_owner
+        && !capturing
+        && !altgr_text
+}
+
 /// The shortcut wins over the focused widget, so egui must not also treat
 /// the key as editing. Find, the script editor and a document save still
 /// own their chords (the checks in the key handler).
@@ -1332,6 +1404,8 @@ impl App {
             palette,
             net,
             gfx: None,
+            fullscreen_restore: None,
+            fullscreen_applied: false,
             retired_window: None,
             gpu_losses: Default::default(),
             egui_ctx,
@@ -5760,7 +5834,11 @@ impl App {
         if !self.net.wait_viewer_stats(Duration::from_secs(2)) {
             log::debug!("the last viewer statistics report was still being posted at exit");
         }
-        if let Some(g) = self.gfx.as_ref().filter(|_| forced_window_size().is_none()) {
+        if let Some(g) = self
+            .gfx
+            .as_ref()
+            .filter(|g| forced_window_size().is_none() && g.window.fullscreen().is_none())
+        {
             self.settings.window_maximized = g.window.is_maximized();
             // when maximized, keep the restored size / position recorded below
             if !self.settings.window_maximized && !g.window.is_minimized().unwrap_or(false) {
@@ -5826,7 +5904,7 @@ impl App {
         let Some(g) = &self.gfx else {
             return;
         };
-        if g.window.is_maximized() || g.window.is_minimized().unwrap_or(false) {
+        if g.window.fullscreen().is_some() || g.window.is_maximized() || g.window.is_minimized().unwrap_or(false) {
             return;
         }
         let s = g.window.inner_size();
@@ -5840,6 +5918,49 @@ impl App {
             self.settings.window_x = Some(p.x);
             self.settings.window_y = Some(p.y);
         }
+    }
+
+    /// Apply the saved setting after Preferences changes, or after a shortcut.
+    /// Runs only when the setting moved away from what was last applied: a
+    /// full screen the system entered or left by itself (the macOS green
+    /// button, a window manager's rule) is left alone.
+    fn apply_fullscreen_setting(&mut self) {
+        if self.capture.is_some() || forced_window_size().is_some() {
+            return;
+        }
+        let Some(window) = self.gfx.as_ref().map(|g| g.window.clone()) else {
+            return;
+        };
+        let entering = self.settings.window_fullscreen;
+        self.fullscreen_applied = entering;
+        if window.fullscreen().is_some() == entering {
+            return;
+        }
+
+        if entering {
+            // a maximized window keeps the normal size and position already
+            // recorded (record_window_geometry), not the maximized ones
+            let restore = if window.is_maximized() {
+                WindowedGeometry {
+                    maximized: true,
+                    ..WindowedGeometry::from_settings(&self.settings)
+                }
+            } else {
+                WindowedGeometry::from_window(&window)
+            };
+            restore.save(&mut self.settings);
+            self.fullscreen_restore = Some(restore);
+            window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(window.current_monitor())));
+        } else {
+            let restore = self
+                .fullscreen_restore
+                .take()
+                .unwrap_or_else(|| WindowedGeometry::from_settings(&self.settings));
+            restore.save(&mut self.settings);
+            restore.apply(&window);
+        }
+        self.geom_changed = None;
+        self.settings.save();
     }
 
     /// Navigation bar: teleport to a typed / pasted place (SLURL, Region/x/y/z,
@@ -9511,6 +9632,11 @@ impl App {
             {
                 *selected_faces.entry(idx).or_default() |= 1u64 << face;
             }
+            // The UI pass retains drag feedback for the next world frame.
+            // Merge it before sync/list construction, alongside real selection.
+            if let Some((idx, mask)) = self.library_drag.highlighted {
+                *selected_faces.entry(idx).or_default() |= mask;
+            }
             self.scene.set_face_selection(&mut self.world, selected_faces);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
@@ -10166,11 +10292,14 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: self
-                .imports
-                .local_status
-                .pulse(Instant::now(), self.settings.reduce_motion)
-                .unwrap_or_else(|| self.scene.selection_pulse(Instant::now())),
+            selection_pulse: if self.library_drag.highlighted.is_some() {
+                self.scene.selection_pulse(Instant::now(), true)
+            } else {
+                self.imports
+                    .local_status
+                    .pulse(Instant::now(), self.settings.reduce_motion)
+                    .unwrap_or_else(|| self.scene.selection_pulse(Instant::now(), false))
+            },
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
@@ -17311,8 +17440,10 @@ impl ApplicationHandler for App {
             position: pos.map(|(x, y)| winit::dpi::PhysicalPosition::new(x, y)),
             // Automated captures must not steal the user's keyboard focus.
             active: !capture,
-            fullscreen: None,
+            fullscreen: (!capture && forced_window_size().is_none() && self.settings.window_fullscreen)
+                .then(|| winit::window::Fullscreen::Borderless(monitor.clone())),
         };
+        self.fullscreen_applied = plan.fullscreen.is_some();
         let window = match self.open_window(event_loop, &plan) {
             Ok(w) => w,
             Err(e) => {
@@ -17377,7 +17508,7 @@ impl ApplicationHandler for App {
         self.gfx = Some(Gfx {
             window,
             shown: false,
-            maximize_on_show: self.settings.window_maximized && !capture,
+            maximize_on_show: self.settings.window_maximized && !self.settings.window_fullscreen && !capture,
             renderer,
             egui_state,
         });
@@ -19913,6 +20044,36 @@ impl ApplicationHandler for App {
                             self.settings.keybinds.triggered(&Input::key(code), key_mods).is_some(),
                         ))
         );
+        let fullscreen_toggle = matches!(
+            &event,
+            WindowEvent::KeyboardInput { event: ke, .. }
+                if matches!(ke.physical_key, PhysicalKey::Code(code)
+                    if fullscreen_shortcut(
+                        ke.state == ElementState::Pressed,
+                        ke.repeat,
+                        code,
+                        key_mods,
+                        self.egui_ctx.egui_wants_keyboard_input()
+                            || egui::Popup::is_any_open(&self.egui_ctx)
+                            || self.web_has_focus()
+                            || self.media.focus.is_some(),
+                        self.options_ui.capture.is_some()
+                            || self.options_ui.joystick_capturing()
+                            || self.exit_prompt.open,
+                        self.altgr_text_input(ke),
+                    ))
+        );
+        if fullscreen_toggle {
+            // from what the window is: out of a system full screen (the macOS
+            // green button), the first press leaves it
+            let full = self
+                .gfx
+                .as_ref()
+                .map_or(self.settings.window_fullscreen, |g| g.window.fullscreen().is_some());
+            self.settings.window_fullscreen = !full;
+            self.apply_fullscreen_setting();
+            return;
+        }
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
@@ -20351,6 +20512,9 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         crate::crash::pumped();
         self.sync_minimized_mute();
+        if self.settings.window_fullscreen != self.fullscreen_applied {
+            self.apply_fullscreen_setting();
+        }
         self.record_window_geometry();
         self.attention_window();
         self.external_links();
@@ -20469,7 +20633,7 @@ fn restart_with_vr() {
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, UiActions, capture_files, frame_cap};
+    use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
 
@@ -20511,6 +20675,59 @@ mod tests {
         // a second handle appearing counts as growth too
         let picture = ui_follow_step(Some(grown), [Some([128, 128]), Some([32, 32])], later + second).unwrap();
         assert_eq!(picture.until, later + second + UI_FOLLOWED);
+    }
+
+    #[test]
+    fn alt_enter_toggles_fullscreen_only_when_unclaimed() {
+        use crate::keybinds::Mods;
+        use winit::keyboard::KeyCode;
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        assert!(fullscreen_shortcut(true, false, KeyCode::Enter, alt, false, false, false));
+        assert!(fullscreen_shortcut(true, false, KeyCode::NumpadEnter, alt, false, false, false));
+        assert!(!fullscreen_shortcut(false, false, KeyCode::Enter, alt, false, false, false));
+        assert!(!fullscreen_shortcut(true, true, KeyCode::Enter, alt, false, false, false));
+        assert!(!fullscreen_shortcut(true, false, KeyCode::Enter, alt, true, false, false));
+        assert!(!fullscreen_shortcut(true, false, KeyCode::Enter, alt, false, true, false));
+        assert!(!fullscreen_shortcut(
+            true,
+            false,
+            KeyCode::Enter,
+            Mods { ctrl: true, ..alt },
+            false,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn fullscreen_restore_geometry_keeps_the_saved_normal_window_state() {
+        let mut settings = Settings {
+            window_width: 1234,
+            window_height: 765,
+            window_x: Some(-1920),
+            window_y: Some(75),
+            window_maximized: true,
+            ..Settings::default()
+        };
+        let restore = WindowedGeometry::from_settings(&settings);
+        assert_eq!(
+            restore,
+            WindowedGeometry {
+                width: 1234,
+                height: 765,
+                position: Some((-1920, 75)),
+                maximized: true,
+            }
+        );
+
+        settings.window_width = 1920;
+        settings.window_height = 1080;
+        settings.window_maximized = false;
+        restore.save(&mut settings);
+        assert_eq!(WindowedGeometry::from_settings(&settings), restore);
     }
 
     /// #2287: only the made-up press is dropped; real keys and every release
