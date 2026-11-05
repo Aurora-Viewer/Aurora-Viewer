@@ -56,7 +56,7 @@ openxr = "0.22"
 xr-static-loader = ["openxr/static"]
 
 [dev-dependencies]
-naga = { version = "30", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in", "spv-out", "msl-out"] }
 aurora-assets = { path = "../aurora-assets" }
 rayon = "1.12.0"
 

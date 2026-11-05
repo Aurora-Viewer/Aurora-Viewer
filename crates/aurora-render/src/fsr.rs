@@ -804,9 +804,33 @@ mod tests {
         ] {
             let source = format!("{common}\n{pass}");
             let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
-            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
+            let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
                 .validate(&module)
                 .unwrap_or_else(|e| panic!("{e:?}"));
+            // what the drivers get: Vulkan's SPIR-V and Metal's MSL, one
+            // entry point at a time (as wgpu writes them)
+            for ep in &module.entry_points {
+                let spv = naga::back::spv::PipelineOptions {
+                    shader_stage: ep.stage,
+                    entry_point: ep.name.clone(),
+                };
+                naga::back::spv::write_vec(&module, &info, &naga::back::spv::Options::default(), Some(&spv))
+                    .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
+                let msl = naga::back::msl::PipelineOptions {
+                    entry_point: Some((ep.stage, ep.name.clone())),
+                    ..Default::default()
+                };
+                naga::back::msl::write_string(
+                    &module,
+                    &info,
+                    &naga::back::msl::Options {
+                        lang_version: (2, 4),
+                        ..Default::default()
+                    },
+                    &msl,
+                )
+                    .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
+            }
         }
     }
 
@@ -816,3 +840,4 @@ mod tests {
         assert_eq!(std::mem::size_of::<FsrU>(), 272);
     }
 }
+

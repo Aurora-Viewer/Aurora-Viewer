@@ -213,6 +213,9 @@ fn compute_upsampled_color_and_weight(params: Params, data: ptr<function, Data>)
     let kernel_bias_min = max(1.0, (1.0 + kernel_bias_max) * 0.3);
     let kernel_bias_weight = min(1.0 - params.disocclusion * 0.5, min(1.0 - params.shading_change, sat((*data).history_weight * 5.0)));
     let kernel_bias = mix(kernel_bias_min, kernel_bias_max, kernel_bias_weight);
+    // the box in a local: naga 30's SPIR-V writer loses a pointer to a
+    // member of a pointed-to struct passed on to a call
+    var clip: RectificationBox;
     idx = 0;
     for (var row = 0; row < 3; row++) {
         for (var col = 0; col < 3; col++) {
@@ -228,11 +231,12 @@ fn compute_upsampled_color_and_weight(params: Params, data: ptr<function, Data>)
             }
             let rectification_curve_bias = -2.3;
             let box_weight = exp(rectification_curve_bias * dot(sample_offset, sample_offset)) * on_screen;
-            box_add_sample(row == 0 && col == 0, &(*data).clip, samples[idx], box_weight);
+            box_add_sample(row == 0 && col == 0, &clip, samples[idx], box_weight);
             idx++;
         }
     }
-    box_compute_variance(&(*data).clip);
+    box_compute_variance(&clip);
+    (*data).clip = clip;
     (*data).upsampled_weight *= f32((*data).upsampled_weight > EPSILON);
     if ((*data).upsampled_weight > EPSILON) {
         // normalized for the deringing (colours are compared)
