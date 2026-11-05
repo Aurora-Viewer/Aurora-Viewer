@@ -1,15 +1,18 @@
 //! Toolbar customization after LLToolBar::handleRightMouseDown,
 //! LLToolBarView::handleDropTool and LLFloaterToybox (indra/llui/lltoolbar.cpp,
 //! indra/newview/{lltoolbarview,llfloatertoybox}.cpp, originally LGPL 2.1).
-//! Three toolbars, as Firestorm's: the bottom one (Firestorm's bar or the
-//! dock of the islands), the left and the right ones; a command stands in
-//! one of them at most. Each has Firestorm's button mode, alignment and
-//! layout style (menu_toolbars_horizontal.xml / _vertical.xml).
-//! Moves commit on release; dropping back in the window removes a button.
-//! At the human's request, the layout and lock are shared by all accounts,
-//! unlike Firestorm's per-account toolbar persistence.
+//! Four toolbars: the bottom dock/bar, top row and the left/right sides;
+//! a command stands in one of them at most. Main-menu commands retain their
+//! original handlers and live checks through an explicitly identified catalogue.
+//! Each bar has its own presentation, alignment and layout; individual commands
+//! can override their icon and presentation in bars and the main menu.
+//! Moves commit on release; dropping back in the catalogue removes a button.
+//! Layout, appearance and lock are shared by all accounts at the human's request,
+//! unlike the Legacy Viewer's per-account toolbar persistence.
 
+pub(crate) mod appearance;
 mod catalogue;
+pub(crate) mod commands;
 mod editor;
 
 pub use catalogue::COMMANDS;
@@ -28,13 +31,14 @@ pub enum Bar {
     Bottom,
     Left,
     Right,
+    Top,
 }
 
 impl Bar {
-    pub const ALL: [Bar; 3] = [Bar::Bottom, Bar::Left, Bar::Right];
+    pub const ALL: [Bar; 4] = [Bar::Bottom, Bar::Left, Bar::Right, Bar::Top];
 
     pub fn vertical(self) -> bool {
-        self != Bar::Bottom
+        matches!(self, Bar::Left | Bar::Right)
     }
 
     fn index(self) -> usize {
@@ -42,6 +46,7 @@ impl Bar {
             Bar::Bottom => 0,
             Bar::Left => 1,
             Bar::Right => 2,
+            Bar::Top => 3,
         }
     }
 }
@@ -117,7 +122,7 @@ impl BarStyle {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolbarSettings {
     /// The bottom toolbar. None follows the skin; Some([]) deliberately
@@ -133,6 +138,37 @@ pub struct ToolbarSettings {
     pub bottom_style: BarStyle,
     pub left_style: BarStyle,
     pub right_style: BarStyle,
+    pub top: Vec<ToolButton>,
+    pub top_style: BarStyle,
+    pub appearance: std::collections::BTreeMap<String, appearance::Appearance>,
+    /// Explicit menu placements; commands absent here follow their native menu.
+    pub menu_layout: std::collections::BTreeMap<String, Vec<String>>,
+    /// None preserves the existing visible address bar.
+    pub address_visible: Option<bool>,
+}
+
+impl Default for ToolbarSettings {
+    fn default() -> Self {
+        Self {
+            buttons: None,
+            locked: false,
+            vr_button_migrated: false,
+            left: Vec::new(),
+            right: Vec::new(),
+            bottom_style: Default::default(),
+            left_style: Default::default(),
+            right_style: Default::default(),
+            top: vec![ToolButton {
+                command: "location_bar".into(),
+                icon: "map-pin-filled".into(),
+                tooltip: String::new(),
+            }],
+            top_style: Default::default(),
+            appearance: Default::default(),
+            menu_layout: Default::default(),
+            address_visible: None,
+        }
+    }
 }
 
 impl ToolbarSettings {
@@ -142,7 +178,7 @@ impl ToolbarSettings {
         }
         self.vr_button_migrated = true;
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-        if !self.left.iter().chain(&self.right).any(|b| b.command == "vr_view")
+        if !self.left.iter().chain(&self.right).chain(&self.top).any(|b| b.command == "vr_view")
             && let Some(buttons) = &mut self.buttons
             && !buttons.is_empty()
             && !buttons.iter().any(|b| b.command == "vr_view")
@@ -168,6 +204,7 @@ impl ToolbarSettings {
             Bar::Bottom => self.buttons(layout),
             Bar::Left => &self.left,
             Bar::Right => &self.right,
+            Bar::Top => &self.top,
         }
     }
 
@@ -176,6 +213,7 @@ impl ToolbarSettings {
             Bar::Bottom => self.bottom_style,
             Bar::Left => self.left_style,
             Bar::Right => self.right_style,
+            Bar::Top => self.top_style,
         }
     }
 
@@ -184,6 +222,7 @@ impl ToolbarSettings {
             Bar::Bottom => &mut self.bottom_style,
             Bar::Left => &mut self.left_style,
             Bar::Right => &mut self.right_style,
+            Bar::Top => &mut self.top_style,
         }
     }
 
@@ -194,14 +233,14 @@ impl ToolbarSettings {
             .find(|&bar| self.bar(bar, layout).iter().any(|b| b.command == command))
     }
 
-    /// No empty command, and each command once over the three toolbars
+    /// No empty command, and each command once over the four toolbars
     /// (the bottom one first).
     pub fn sanitize(&mut self) {
         let mut seen = std::collections::HashSet::new();
         if let Some(buttons) = &mut self.buttons {
             buttons.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
         }
-        for side in [&mut self.left, &mut self.right] {
+        for side in [&mut self.left, &mut self.right, &mut self.top] {
             side.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
         }
     }
@@ -221,6 +260,8 @@ enum Edit {
     Clear,
     Lock,
     Style(Bar, BarStyle),
+    Appearance(String, appearance::Appearance),
+    MenuInsert(String, String, usize),
 }
 
 /// Windows whose toolbar button lights while they are open
@@ -298,11 +339,18 @@ pub struct ToolbarUi {
     confirm: Option<bool>,
     /// The window's filter.
     search: String,
+    appearance_editor: appearance::Editor,
 }
 
 /// Built-in labels stay live when the language changes, including saved
 /// buttons; a skin may rename a command, and keeps its name.
 pub fn label(button: &ToolButton) -> &str {
+    if button.command.starts_with(commands::PREFIX)
+        && let Some(key) = button.tooltip.strip_prefix('@')
+        && let Some(text) = aurora_i18n::lookup(key)
+    {
+        return text;
+    }
     match catalogue::find(&button.command) {
         Some(command)
             if button.tooltip.is_empty()
@@ -368,12 +416,35 @@ fn insertion(rects: &[Rect], pos: egui::Pos2, vertical: bool) -> usize {
 }
 
 impl ToolbarUi {
+    /// Closed menus with no menu-command buttons need no per-frame traversal.
+    pub fn needs_commands(&self, ctx: &egui::Context, settings: Option<&ToolbarSettings>) -> bool {
+        self.open
+            || egui::Popup::is_any_open(ctx)
+            || commands::catalogue(ctx).entries.is_empty()
+            || settings.is_some_and(|settings| {
+                settings
+                    .buttons
+                    .iter()
+                    .flatten()
+                    .chain(&settings.top)
+                    .chain(&settings.left)
+                    .chain(&settings.right)
+                    .any(|button| button.command.starts_with(commands::PREFIX))
+            })
+    }
+
     /// The right-click menu of a toolbar or of one of its buttons:
     /// Firestorm's (menu_toolbars_horizontal.xml, _vertical.xml), with
     /// Aurora's microphone options and favourites access.
     pub fn context(&mut self, response: &Response, p: &Palette, bar: Bar, style: Style, button: Option<&ToolButton>, locked: bool) {
         // Buttons such as Favorites also own a left-click dropdown.
         menu::context_menu_of_button(response, p, |ui| {
+            if let Some(button) = button
+                && !locked
+                && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"))
+            {
+                self.appearance_editor.select(button);
+            }
             if !locked && let Some(button) = button {
                 if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-remove")) {
                     self.pending = Some(Edit::Remove(button.command.clone()));
@@ -502,6 +573,44 @@ impl ToolbarUi {
                 settings.locked = !settings.locked;
                 return true;
             }
+            Edit::Appearance(command, appearance) => {
+                if settings.locked {
+                    return false;
+                }
+                let old = settings.appearance.get(&command).cloned().unwrap_or_default();
+                if old == appearance {
+                    return false;
+                }
+                if appearance == Default::default() {
+                    settings.appearance.remove(&command);
+                } else {
+                    settings.appearance.insert(command, appearance);
+                }
+                return true;
+            }
+            Edit::MenuInsert(parent, command, rank) => {
+                if settings.locked {
+                    return false;
+                }
+                let catalogue = commands::current();
+                if !catalogue.can_place(&command, &parent, &settings.menu_layout) {
+                    return false;
+                }
+                let old = settings.menu_layout.clone();
+                let children: Vec<_> = catalogue
+                    .children(&parent, &settings.menu_layout)
+                    .iter()
+                    .map(|entry| entry.button.command.clone())
+                    .collect();
+                let before = children.iter().take(rank).filter(|id| **id == command).count();
+                let mut children: Vec<_> = children.into_iter().filter(|id| *id != command).collect();
+                children.insert(rank.saturating_sub(before).min(children.len()), command.clone());
+                for items in settings.menu_layout.values_mut() {
+                    items.retain(|id| *id != command);
+                }
+                settings.menu_layout.insert(parent, children);
+                return settings.menu_layout != old;
+            }
             // Firestorm keeps its alignment and modes menus while locked
             Edit::Style(bar, next) => {
                 let style = settings.style_mut(bar);
@@ -517,6 +626,10 @@ impl ToolbarUi {
                 let changed = settings.buttons.is_some()
                     || !settings.left.is_empty()
                     || !settings.right.is_empty()
+                    || settings.top != ToolbarSettings::default().top
+                    || !settings.appearance.is_empty()
+                    || !settings.menu_layout.is_empty()
+                    || settings.address_visible.is_some()
                     || Bar::ALL.iter().any(|&b| settings.style(b) != BarStyle::default());
                 *settings = ToolbarSettings {
                     locked: settings.locked,
@@ -526,7 +639,7 @@ impl ToolbarUi {
             }
             _ => {}
         }
-        let old: [Vec<ToolButton>; 3] = Bar::ALL.map(|bar| settings.bar(bar, layout).to_vec());
+        let old: [Vec<ToolButton>; 4] = Bar::ALL.map(|bar| settings.bar(bar, layout).to_vec());
         let mut next = old.clone();
         match edit {
             Edit::Insert(bar, button, rank) => {
@@ -545,18 +658,21 @@ impl ToolbarUi {
                 }
             }
             Edit::Clear => next.iter_mut().for_each(Vec::clear),
-            Edit::Restore | Edit::Lock | Edit::Style(..) => unreachable!(),
+            Edit::Restore | Edit::Lock | Edit::Style(..) | Edit::Appearance(..) | Edit::MenuInsert(..) => {
+                unreachable!()
+            }
         }
         if next == old {
             return false;
         }
-        let [bottom, left, right] = next;
+        let [bottom, left, right, top] = next;
         // an untouched bottom toolbar keeps following the skin
         if bottom != old[0] {
             settings.buttons = Some(bottom);
         }
         settings.left = left;
         settings.right = right;
+        settings.top = top;
         true
     }
 }
@@ -609,3 +725,6 @@ pub use editor::{demo_events, demo_settings};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod commands_tests;

@@ -51,6 +51,7 @@ fn placed_tip(bar: Bar, islands: bool) -> &'static str {
         Bar::Bottom => aurora_i18n::tr!("toolbar-in-bottom"),
         Bar::Left => aurora_i18n::tr!("toolbar-in-left"),
         Bar::Right => aurora_i18n::tr!("toolbar-in-right"),
+        Bar::Top => aurora_i18n::tr!("toolbar-in-top"),
     }
 }
 
@@ -136,6 +137,7 @@ fn style_row(ui: &mut egui::Ui, p: &Palette, bar: Bar, islands: bool, saved: Bar
         Bar::Bottom => aurora_i18n::tr!("toolbar-bar-bottom"),
         Bar::Left => aurora_i18n::tr!("toolbar-bar-left"),
         Bar::Right => aurora_i18n::tr!("toolbar-bar-right"),
+        Bar::Top => aurora_i18n::tr!("toolbar-bar-top"),
     };
     let mut out = None;
     ui.horizontal(|ui| {
@@ -208,10 +210,11 @@ impl ToolbarUi {
         let islands = self.islands;
         let dragged = egui::DragAndDrop::payload::<Drag>(ctx);
         let was_open = self.open;
+        let mut open = self.open;
         widgets::Floater::new(WINDOW, aurora_i18n::tr!("toolbar-title"), default_pos(ctx), Vec2::new(w, 420.0))
             .help(aurora_i18n::tr!("toolbar-help-modes"))
             .auto_height()
-            .show(ctx, p, &mut self.open, |ui| {
+            .show(ctx, p, &mut open, |ui| {
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = 8.0;
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
@@ -224,7 +227,15 @@ impl ToolbarUi {
                     .size(12.0)
                     .color(p.muted),
                 );
-                let all = super::catalogue(layout);
+                let mut all = super::catalogue(layout);
+                all.extend(
+                    super::commands::catalogue(ui.ctx())
+                        .entries
+                        .iter()
+                        .filter(|entry| !entry.info && !entry.separator && entry.button.command.starts_with(super::commands::PREFIX))
+                        .map(|entry| entry.button.clone()),
+                );
+                all.sort_by_cached_key(|button| super::sort_key(super::label(button)));
                 let hint = aurora_i18n::tr!("toolbar-search", count = all.len().to_string());
                 // in a row: the field's own layout would take the window's height
                 ui.horizontal(|ui| {
@@ -274,6 +285,7 @@ impl ToolbarUi {
                                 state
                             };
                             let response = tile(ui, p, rect, button, state);
+                            self.appearance_context(&response, p, button, settings.locked);
                             ui.ctx()
                                 .data_mut(|d| d.insert_temp(egui::Id::unique(("toolbar_catalogue", &button.command)), rect));
                             match state {
@@ -306,7 +318,7 @@ impl ToolbarUi {
                 let mut card = crate::ui::sheet::card_begin(ui);
                 card.child.spacing_mut().item_spacing.y = 8.0;
                 for bar in Bar::ALL {
-                    if (bar == Bar::Bottom || !settings.bar(bar, layout).is_empty())
+                    if (matches!(bar, Bar::Bottom | Bar::Top) || !settings.bar(bar, layout).is_empty())
                         && let Some(next) = style_row(&mut card.child, p, bar, islands, settings.style(bar))
                     {
                         self.pending = Some(Edit::Style(bar, next));
@@ -334,6 +346,8 @@ impl ToolbarUi {
                     });
                 });
             });
+        self.open = open;
+        self.show_appearance(ctx, p, settings);
         // a toolbar button dropped on the window goes back to it
         // (LLFloaterToybox::handleDragAndDrop on its read-only toolbar)
         let window = ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW)));
@@ -445,6 +459,65 @@ fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::P
 /// bar's labels. Never saved.
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
+    if matches!(mode, "chrome" | "appearance" | "menu-layout" | "address") {
+        let catalogue = super::commands::current();
+        let button = |id: &str| {
+            catalogue.find(id).map(|entry| entry.button.clone()).or_else(|| {
+                super::catalogue::find(id).map(|command| ToolButton {
+                    command: id.into(),
+                    icon: command.icon.into(),
+                    tooltip: String::new(),
+                })
+            })
+        };
+        settings.top = [
+            "location_bar",
+            "menu:common-build/import-menu",
+            "menu:common-world/common-environment",
+        ]
+        .into_iter()
+        .filter_map(button)
+        .collect();
+        settings.left = [
+            "menu:common-world/ui-bars-animation-explorer",
+            "menu:common-world/avatar-render-title",
+        ]
+        .into_iter()
+        .filter_map(button)
+        .collect();
+        settings.right = ["menu:common-advanced/quiet", "menu:common-world/common-world-map"]
+            .into_iter()
+            .filter_map(button)
+            .collect();
+        settings.menu_layout.clear();
+        settings
+            .menu_layout
+            .insert(String::new(), vec!["menu:common-build/import-menu".into(), "location_bar".into()]);
+        settings.appearance.insert(
+            "menu:common-build/import-menu".into(),
+            super::appearance::Appearance {
+                mode: Some(ButtonMode::IconsWithText),
+                icon: Some("star-filled".into()),
+            },
+        );
+        settings.appearance.insert(
+            "inventory".into(),
+            super::appearance::Appearance {
+                mode: Some(ButtonMode::TextOnly),
+                icon: None,
+            },
+        );
+        settings.appearance.insert(
+            "people".into(),
+            super::appearance::Appearance {
+                mode: Some(ButtonMode::IconsWithText),
+                icon: None,
+            },
+        );
+        settings.address_visible = Some(mode == "address");
+        settings.locked = false;
+        return;
+    }
     if matches!(mode, "empty-left" | "empty-right") {
         let bottom = settings.buttons(layout).to_vec();
         settings.buttons = Some(Vec::new());
@@ -497,6 +570,33 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     let Some(mode) = demo_mode() else {
         return Vec::new();
     };
+    if matches!(mode, "chrome" | "appearance" | "menu-layout" | "address") {
+        if frame == 300 {
+            state.open = mode == "chrome";
+            if mode == "appearance"
+                && let Some(entry) = super::commands::catalogue(ctx).find("menu:common-build/import-menu")
+            {
+                state.edit_button(&entry.button);
+                state.appearance_editor.filter("star");
+            }
+        }
+        if mode == "menu-layout"
+            && matches!(frame, 540 | 541)
+            && let Some(response) = ctx.read_response(egui::Id::unique("bars_island_menu"))
+        {
+            let pos = response.rect.center();
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 540,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        return Vec::new();
+    }
     if matches!(mode, "side" | "empty-left" | "empty-right") {
         return Vec::new();
     }

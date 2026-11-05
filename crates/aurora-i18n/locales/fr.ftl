@@ -94,14 +94,14 @@ owned-land-area = { $actual } m² · { $billable } m² facturables
 owned-land-total = Total : { $actual } m² · { $billable } m² facturables
 owned-land-contributions = Contributions foncières aux groupes
 owned-land-contribution = { $area } m²
-toolbar-edit = Boutons de la barre…
-toolbar-title = Boutons de la barre
+toolbar-edit = Personnaliser les boutons et menus…
+toolbar-title = Boutons et menus
 toolbar-remove = Retirer ce bouton
 toolbar-locked = Verrouiller
 toolbar-locked-bars = Verrouiller les barres
-toolbar-help = Glissez un bouton vers le dock ou une barre latérale ; déposez-le ici pour le retirer. Clic droit sur une barre : mêmes réglages.
-toolbar-help-classic = Glissez un bouton vers la barre du bas ou une barre latérale ; déposez-le ici pour le retirer. Clic droit sur une barre : mêmes réglages.
-toolbar-help-modes = Les boutons s’affichent comme ici, ou en icônes seules, selon les réglages de chaque barre.
+toolbar-help = Glissez les boutons ou les options du menu vers les barres du haut, du bas ou des côtés. Ramenez un bouton ici pour le retirer. Clic droit sur un bouton pour changer son apparence.
+toolbar-help-classic = Glissez les boutons ou les options du menu vers les barres du haut, du bas ou des côtés. Ramenez un bouton ici pour le retirer. Clic droit sur un bouton pour changer son apparence.
+toolbar-help-modes = Choisissez une icône, un libellé, les deux ou le défaut de la barre pour chaque bouton. Glissez les options dans le menu Aurora pour le réorganiser.
 toolbar-search = Chercher une commande ({ $count })
 toolbar-in-dock = Dans le dock
 toolbar-in-bottom = Dans la barre du bas
@@ -13146,3 +13146,13 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+# Main menu and toolbar customization
+toolbar-button-appearance = Apparence du bouton
+toolbar-button-default = Par défaut pour cette barre / ce menu
+toolbar-icon-default = Rétablir l’icône par défaut
+toolbar-icon-search = Rechercher une icône…
+toolbar-in-top = Dans la barre du haut
+toolbar-bar-top = Barre du haut
+toolbar-drop-here = Déposer ici
+toolbar-location-bar = Barre d’adresse SLURL

@@ -10,6 +10,25 @@ use crate::camera::CameraPreset;
 use std::time::Instant;
 
 impl App {
+    /// A hidden address field can always be brought back from its configurable
+    /// shortcut. Opening refreshes the SLURL and obeys location privacy.
+    pub(super) fn set_address_bar_visible(&mut self, visible: bool) {
+        self.settings.toolbar.get_or_insert_default().address_visible = Some(visible);
+        self.panels.nav_edit = if visible && !self.world.rlva.has("showloc") {
+            Some(crate::slurl::make(&self.world.region_name(), self.world.agent.position))
+        } else {
+            None
+        };
+        self.panels.nav_edit_new = self.panels.nav_edit.is_some();
+        if self.panels.nav_edit.is_none() {
+            self.egui_ctx
+                .memory_mut(|memory| memory.surrender_focus(egui::Id::unique("nav_location_edit")));
+        }
+        if !self.demo {
+            self.settings.save();
+        }
+    }
+
     /// Communicate › Friends / Groups / Contact Sets (togglePeoplePanel,
     /// llviewermenu.cpp): People closes when that tab shows, otherwise it
     /// opens, or expands, on the tab.

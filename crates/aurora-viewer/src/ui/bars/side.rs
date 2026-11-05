@@ -58,7 +58,7 @@ pub fn room_beside(room: Rect, bar: Bar, island: Rect) -> Rect {
     match bar {
         Bar::Left => room.min.x = room.min.x.max(island.right() + MARGIN),
         Bar::Right => room.max.x = room.max.x.min(island.left() - MARGIN),
-        Bar::Bottom => {}
+        Bar::Bottom | Bar::Top => {}
     }
     room
 }

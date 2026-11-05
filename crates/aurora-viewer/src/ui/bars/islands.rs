@@ -11,7 +11,7 @@
 //! Appearance › "Top and bottom bars" brings Firestorm's bars back
 //! (`top_bars`, unchanged).
 
-use super::{BarAction, BellState, StatusInfo, clock, main_menus, paint_icon, status_color, status_menu_body, status_shape, status_tip};
+use super::{BarAction, BellState, StatusInfo, clock, paint_icon, status_color, status_menu_body, status_shape, status_tip};
 use crate::theme::Palette;
 use crate::ui::Panels;
 use crate::ui::icons::Icons;
@@ -242,6 +242,8 @@ pub fn top(
     media: crate::ui::audio::MediaState,
     notif: &mut crate::ui::notifications::NotifUi,
     bell: BellState,
+    toolbar: &mut crate::ui::toolbar::ToolbarUi,
+    settings: &crate::ui::toolbar::ToolbarSettings,
 ) -> (BarAction, crate::ui::audio::AudioAction) {
     let mut action = BarAction::None;
     let ctx = ui.ctx().clone();
@@ -266,14 +268,21 @@ pub fn top(
         right = thumbs.left() - MARGIN;
     }
     let left = screen.left() + MARGIN;
-    let menu_rect = row(screen, left, left + PAD * 2.0 + SLOT);
+    let main_button = super::top::button("aurora_menu", "wolf");
+    let bug_button = super::top::button("report_bug", "bug-filled");
+    let menu_rect = row(screen, left, left + PAD * 2.0 + super::top::width(ui, settings, &main_button));
     // the bug report in an island of its own after the wolf's (the human's
     // request: in one island the two read as one button); hidden, the place
     // follows the wolf 8 px away
-    let bug_rect = st
-        .show_bug_report
-        .then(|| row(screen, menu_rect.right() + MARGIN, menu_rect.right() + MARGIN + PAD * 2.0 + SLOT));
+    let bug_rect = st.show_bug_report.then(|| {
+        row(
+            screen,
+            menu_rect.right() + MARGIN,
+            menu_rect.right() + MARGIN + PAD * 2.0 + super::top::width(ui, settings, &bug_button),
+        )
+    });
     let span = row(screen, bug_rect.unwrap_or(menu_rect).right() + MARGIN, right);
+    let span = super::top::reserve(ui, settings, span);
     let (place_rect, detail) = super::place::layout(ui, st, span);
 
     // each island is an area of its own: the pointer over it is over the
@@ -315,23 +324,18 @@ pub fn top(
     area(&ctx, p, "menu", menu_rect, |ui| {
         // a right click on the island or its buttons: show the bug button
         let back = ui.interact(menu_rect, Id::unique("bars_island_menu_back"), Sense::click());
-        menu_options(&back, p, st, &mut action);
-        let wolf = Rect::from_min_size(
-            Pos2::new(menu_rect.left() + PAD, menu_rect.center().y - SLOT / 2.0),
-            Vec2::splat(SLOT),
-        );
-        let resp = ui.interact(wolf, Id::unique("bars_island_menu"), Sense::click());
-        menu_options(&resp, p, st, &mut action);
-        let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
-        slot_face(ui, p, wolf, resp.hovered() || open, false);
-        paint_icon(ui, icons, "wolf", wolf, 18.0, p.ink);
+        menu_options(&back, p, st, &mut action, toolbar, settings.locked);
+        let wolf = menu_rect.shrink(PAD);
+        let resp = super::top::native(ui, p, icons, settings, &main_button, wolf, Id::unique("bars_island_menu"));
+        menu_options(&resp, p, st, &mut action, toolbar, settings.locked);
+        toolbar.source(&resp, p, &main_button, settings.locked);
         menu::dropdown_placed(
             &resp,
             p,
-            egui::PopupCloseBehavior::CloseOnClick,
+            egui::PopupCloseBehavior::CloseOnClickOutside,
             Some((egui::RectAlign::BOTTOM_START, 10.0)),
             |ui| {
-                menu::searchable(ui, p, |ui| main_menus(ui, p, panels, st, &mut action, true));
+                menu::searchable(ui, p, |ui| crate::ui::toolbar::commands::show(ui, p, toolbar, settings, ""));
             },
         );
         resp.on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
@@ -341,21 +345,24 @@ pub fn top(
             // its right click copies the version (the wolf's menu still
             // hides it)
             let back = ui.interact(bug_rect, Id::unique("bars_island_bug_back"), Sense::click());
-            let bug = Rect::from_center_size(bug_rect.center(), Vec2::splat(SLOT));
-            let resp = icon_slot(ui, p, icons, bug, Id::unique("bars_island_bug"), "bug-filled", true);
+            let bug = bug_rect.shrink(PAD);
+            let resp = super::top::native(ui, p, icons, settings, &bug_button, bug, Id::unique("bars_island_bug"));
+            toolbar.source(&resp, p, &bug_button, settings.locked);
             if back.secondary_clicked() || resp.secondary_clicked() {
                 action = BarAction::CopyVersion;
             }
-            if resp.on_hover_text(aurora_i18n::tr!("bug-title")).clicked() {
+            if resp.clicked() {
                 action = BarAction::ReportBug;
             }
         });
     }
-    area(&ctx, p, "place", place_rect, |ui| {
-        if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail) {
-            action = a;
-        }
-    });
+    if settings.address_visible.unwrap_or(true) {
+        area(&ctx, p, "place", place_rect, |ui| {
+            if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail) {
+                action = a;
+            }
+        });
+    }
     // the favourites' row (F2) under the place island: the windows stay
     // under it too
     let row_id = Id::unique("bars_favorites_row_bottom");
@@ -374,8 +381,25 @@ pub fn top(
 /// Right-click menu of the menu island: the bug report button, also in
 /// Preferences › Interface ("Report a bug in the top bar", on by default
 /// during the alpha).
-fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+fn menu_options(
+    resp: &egui::Response,
+    p: &Palette,
+    st: &StatusInfo,
+    action: &mut BarAction,
+    toolbar: &mut crate::ui::toolbar::ToolbarUi,
+    locked: bool,
+) {
     menu::context_menu_of_button(resp, p, |ui| {
+        if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"), !locked) {
+            toolbar.edit_button(&crate::ui::skin::ToolButton {
+                command: "aurora_menu".into(),
+                icon: "wolf".into(),
+                tooltip: String::new(),
+            });
+        }
+        if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-edit")) {
+            toolbar.open = true;
+        }
         if menu::check(ui, p, "bug-filled", aurora_i18n::tr!("bug-toolbar"), st.show_bug_report, true) {
             *action = BarAction::ShowBugButton(!st.show_bug_report);
         }
@@ -1108,11 +1132,11 @@ fn rate_text(kbps: f32) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::{IslandsLook, StatusInfo};
     use super::*;
 
-    fn status(stretch: bool, bug: bool) -> StatusInfo<'static> {
+    pub(crate) fn status(stretch: bool, bug: bool) -> StatusInfo<'static> {
         StatusInfo {
             location_hidden: false,
             show_bug_report: bug,
@@ -1219,6 +1243,8 @@ mod tests {
                     Default::default(),
                     &mut notif,
                     BellState::default(),
+                    &mut crate::ui::toolbar::ToolbarUi::default(),
+                    &crate::ui::toolbar::ToolbarSettings::default(),
                 );
             });
             out.textures_delta.clear();
@@ -1241,7 +1267,7 @@ mod tests {
         for width in [1280.0, 1536.0, 1920.0] {
             for bug in [true, false] {
                 for stretch in [true, false] {
-                    let (_, rect, _) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
+                    let (ctx, rect, _) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
                     let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
                     let case = format!("{width} bug {bug} stretch {stretch}");
                     assert_eq!((menu.left(), menu.top(), menu.height()), (MARGIN, MARGIN, HEIGHT), "{case}");
@@ -1257,7 +1283,12 @@ mod tests {
                     } else {
                         menu
                     };
-                    assert_eq!(place.left() - before_place.right(), MARGIN, "{case}");
+                    let top = ctx
+                        .data(|data| data.get_temp::<Rect>(Id::unique("custom_top_toolbar_rect")))
+                        .expect("top toolbar reserved");
+                    assert_eq!(top.left() - before_place.right(), MARGIN, "{case}");
+                    assert_eq!(top.width(), PAD * 2.0 + SLOT, "{case}");
+                    assert_eq!(place.left() - top.right(), MARGIN, "{case}");
                     let pairs = [(account, system), (system, bell)];
                     for (a, b) in pairs {
                         assert_eq!(b.left() - a.right(), MARGIN, "{case}: {a:?} {b:?}");
@@ -1375,6 +1406,8 @@ mod tests {
                             Default::default(),
                             &mut notif,
                             BellState::default(),
+                            &mut crate::ui::toolbar::ToolbarUi::default(),
+                            &crate::ui::toolbar::ToolbarSettings::default(),
                         );
                     });
                     out.textures_delta.clear();
@@ -1451,6 +1484,8 @@ mod tests {
                 Default::default(),
                 &mut notif,
                 BellState::default(),
+                &mut crate::ui::toolbar::ToolbarUi::default(),
+                &crate::ui::toolbar::ToolbarSettings::default(),
             )
             .0;
         });
@@ -1803,6 +1838,8 @@ mod tests {
                         Default::default(),
                         &mut crate::ui::notifications::NotifUi::default(),
                         BellState::default(),
+                        &mut crate::ui::toolbar::ToolbarUi::default(),
+                        &crate::ui::toolbar::ToolbarSettings::default(),
                     );
                 });
                 out.textures_delta.clear();
@@ -1873,6 +1910,8 @@ mod tests {
                 Default::default(),
                 &mut notif,
                 BellState::default(),
+                &mut crate::ui::toolbar::ToolbarUi::default(),
+                &crate::ui::toolbar::ToolbarSettings::default(),
             );
             crate::ui::layout::set_work_area(ui.ctx(), work_area(screen, screen.bottom() - 60.0));
             let view = crate::ui::perf::PerfView { data: &data, gpu: &gpu };

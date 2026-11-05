@@ -14,6 +14,10 @@
 //! the sub-menus list their matching entries in place, under their path;
 //! the arrow keys select among them and Enter clicks the selected one.
 
+mod command;
+pub use super::toolbar::commands::identified;
+pub use command::command;
+
 use crate::theme::Palette;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
 
@@ -425,13 +429,39 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
 
 #[allow(clippy::too_many_arguments)]
 fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool, sense: Sense) -> egui::Response {
+    row_presented(ui, p, lead, label, label, enabled, end, open, sense)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn row_presented(
+    ui: &mut Ui,
+    p: &Palette,
+    lead: Lead,
+    label: &str,
+    display: &str,
+    enabled: bool,
+    end: End,
+    open: bool,
+    sense: Sense,
+) -> egui::Response {
+    if super::toolbar::commands::scanning() {
+        let icon = match lead {
+            Lead::Icon(icon) => icon,
+            _ => "circle-filled",
+        };
+        let checked = match end {
+            End::Check(value) | End::CheckKeys(value, _) => Some(value),
+            _ => None,
+        };
+        return super::toolbar::commands::row(ui, icon, label, enabled, end == End::Caret, checked);
+    }
     if !filter_row(ui, p, label) {
         return hidden(ui);
     }
     let keyed = if enabled && sense.senses_click() { keyboard_row() } else { None };
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    let galley = ui.painter().layout_no_wrap(display.to_owned(), font, ink);
     let keys = match end {
         End::Keys(keys) | End::CheckKeys(_, keys) => {
             let color = if enabled { p.muted } else { p.muted_dim };
@@ -583,6 +613,38 @@ pub(crate) fn editable_row(
         Sense::hover()
     };
     row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, false, sense)
+}
+
+/// An icon-only command remains searchable and accessible by its full label.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn command_row(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    mode: super::toolbar::ButtonMode,
+    enabled: bool,
+    checked: Option<bool>,
+    editable: bool,
+) -> egui::Response {
+    let (icon, display) = command_content(icon, label, mode);
+    let sense = if editable {
+        Sense::click_and_drag()
+    } else if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let end = checked.map_or(End::None, End::Check);
+    row_presented(ui, p, Lead::Icon(icon), label, display, enabled, end, false, sense)
+}
+
+fn command_content<'a>(icon: &'a str, label: &'a str, mode: super::toolbar::ButtonMode) -> (&'a str, &'a str) {
+    use super::toolbar::ButtonMode;
+    (
+        if mode == ButtonMode::TextOnly { "" } else { icon },
+        if mode == ButtonMode::IconsOnly { "" } else { label },
+    )
 }
 
 /// One absolute cell of an editable menu toolbar, including its empty cells.
@@ -755,7 +817,7 @@ const TAG_PAD: f32 = 6.0;
 /// clicked (the menu closes).
 pub fn item_detail(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str) -> bool {
     let clicked = row(ui, p, icon, label, true, End::Keys(detail), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked
@@ -765,7 +827,7 @@ pub fn item_detail(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &s
 /// clicked (the menu closes).
 pub fn item_tag(ui: &mut Ui, p: &Palette, icon: &str, label: &str, tag: &str) -> bool {
     let clicked = row(ui, p, icon, label, true, End::Tag(tag), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked
@@ -773,6 +835,9 @@ pub fn item_tag(ui: &mut Ui, p: &Palette, icon: &str, label: &str, tag: &str) ->
 
 /// The title of a group of entries: small capitals, muted.
 pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
+    if super::toolbar::commands::scanning() {
+        return;
+    }
     if filtering() {
         return;
     }
@@ -831,7 +896,7 @@ pub fn item(ui: &mut Ui, p: &Palette, icon: &str, label: &str) -> bool {
 /// Entry greyed out when `enabled` is false (Firestorm's on_enable).
 pub fn item_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -> bool {
     let clicked = row(ui, p, icon, label, enabled, End::None, false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked && enabled
@@ -841,7 +906,7 @@ pub fn item_if(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool)
 /// (the menu closes).
 pub fn item_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, keys: &str) -> bool {
     let clicked = row(ui, p, icon, label, true, End::Keys(keys), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked
@@ -855,7 +920,7 @@ pub fn item_tip(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool
     if !tip.is_empty() {
         resp.on_hover_text(tip);
     }
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked && enabled
@@ -869,7 +934,7 @@ pub fn todo(ui: &mut Ui, p: &Palette, icon: &str, label: &str) {
 /// Check entry (menu_item_check); true when clicked (the menu closes).
 pub fn check(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bool, enabled: bool) -> bool {
     let clicked = row(ui, p, icon, label, enabled, End::Check(checked), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked && enabled
@@ -879,7 +944,7 @@ pub fn check(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bool, e
 /// true when clicked (the menu closes).
 pub fn check_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bool, enabled: bool, keys: &str) -> bool {
     let clicked = row(ui, p, icon, label, enabled, End::CheckKeys(checked, keys), false).clicked();
-    if clicked {
+    if clicked && !super::toolbar::commands::scanning() {
         ui.close();
     }
     clicked && enabled
@@ -903,6 +968,24 @@ pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool,
 /// [`submenu`] that returns its own row, for a heading that is also an
 /// action when clicked (the import menu).
 pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) -> egui::Response {
+    command_submenu(ui, p, icon, label, super::toolbar::ButtonMode::IconsWithText, enabled, body)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn command_submenu(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    mode: super::toolbar::ButtonMode,
+    enabled: bool,
+    body: impl FnOnce(&mut Ui),
+) -> egui::Response {
+    if super::toolbar::commands::scanning() {
+        let response = super::toolbar::commands::row(ui, icon, label, enabled, true, None);
+        super::toolbar::commands::descend(ui, enabled, body);
+        return response;
+    }
     // a search lists the entries of an available sub-menu in place
     if enabled && filtering() {
         FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.push(label.to_owned())));
@@ -912,7 +995,18 @@ pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enable
     }
     let id = ui.next_auto_id();
     let open = enabled && Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(id));
-    let resp = row(ui, p, icon, label, enabled, End::Caret, open);
+    let (icon, display) = command_content(icon, label, mode);
+    let resp = row_presented(
+        ui,
+        p,
+        Lead::Icon(icon),
+        label,
+        display,
+        enabled,
+        End::Caret,
+        open,
+        Sense::click_and_drag(),
+    );
     if enabled {
         egui::containers::menu::SubMenu::new().show(ui, &resp, body);
     }
@@ -923,7 +1017,7 @@ pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enable
 pub fn swatch(ui: &mut Ui, p: &Palette, color: Color32, label: &str) -> bool {
     let resp = row(ui, p, "", label, true, End::None, false);
     dot(ui, p, &resp, color);
-    if resp.clicked() {
+    if resp.clicked() && !super::toolbar::commands::scanning() {
         ui.close();
     }
     resp.clicked()
@@ -1073,6 +1167,10 @@ pub(crate) fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
 
 /// Thin line between groups of entries.
 pub fn separator(ui: &mut Ui, p: &Palette) {
+    if super::toolbar::commands::scanning() {
+        super::toolbar::commands::information("", "", true);
+        return;
+    }
     if filtering() {
         return;
     }
@@ -1084,6 +1182,10 @@ pub fn separator(ui: &mut Ui, p: &Palette) {
 
 /// Muted line that is not an action (an avatar's complexity…).
 pub fn info(ui: &mut Ui, p: &Palette, icon: &str, text: &str) {
+    if super::toolbar::commands::scanning() {
+        super::toolbar::commands::information(icon, text, false);
+        return;
+    }
     info_line(
         ui,
         icon,

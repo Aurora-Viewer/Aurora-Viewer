@@ -94,14 +94,14 @@ owned-land-area = { $actual }㎡・課金対象{ $billable }㎡
 owned-land-total = 合計：{ $actual }㎡・課金対象{ $billable }㎡
 owned-land-contributions = グループへの土地の貢献
 owned-land-contribution = { $area }㎡
-toolbar-edit = ツールバーのボタン…
-toolbar-title = ツールバーのボタン
+toolbar-edit = ボタンとメニューをカスタマイズ…
+toolbar-title = ボタンとメニュー
 toolbar-remove = このボタンを削除
 toolbar-locked = ロック
 toolbar-locked-bars = バーをロック
-toolbar-help = ボタンをドックまたはサイドバーにドラッグします。ここに戻すと削除されます。バーを右クリックしても同じ設定ができます。
-toolbar-help-classic = ボタンを下部バーまたはサイドバーにドラッグします。ここに戻すと削除されます。バーを右クリックしても同じ設定ができます。
-toolbar-help-modes = ボタンは各バーの設定に応じて、ここに表示されている形かアイコンのみで表示されます。
+toolbar-help = ボタンやメニュー項目を上下左右のバーにドラッグできます。ここに戻すとバーから削除できます。右クリックで表示を変更します。
+toolbar-help-classic = ボタンやメニュー項目を上下左右のバーにドラッグできます。ここに戻すとバーから削除できます。右クリックで表示を変更します。
+toolbar-help-modes = 各ボタンをアイコン、テキスト、両方、バーの既定から選べます。Auroraメニュー内の項目もドラッグして並べ替えられます。
 toolbar-search = コマンドを検索（{ $count }）
 toolbar-in-dock = ドック内
 toolbar-in-bottom = 下部のバー内
@@ -13123,3 +13123,13 @@ picker-pipette-no-texture = コピー可能なテクスチャがインベント�
 picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
+
+# Main menu and toolbar customization
+toolbar-button-appearance = ボタンの表示
+toolbar-button-default = このバー／メニューの既定
+toolbar-icon-default = 既定のアイコンに戻す
+toolbar-icon-search = アイコンを検索…
+toolbar-in-top = 上部ツールバーに配置済み
+toolbar-bar-top = 上部ツールバー
+toolbar-drop-here = ここにドロップ
+toolbar-location-bar = SLURLアドレスバー

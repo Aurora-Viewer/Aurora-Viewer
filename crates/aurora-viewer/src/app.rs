@@ -4359,6 +4359,7 @@ impl App {
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
+            Action::AddressBar => self.set_address_bar_visible(true),
             // World.TeleportHome: the bar's Home, with its confirmation
             Action::TeleportHome => {
                 self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
@@ -13110,6 +13111,15 @@ impl App {
                     .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
             }
             BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
+            BarAction::ToggleAddressBar => {
+                let visible = !self
+                    .settings
+                    .toolbar
+                    .as_ref()
+                    .and_then(|toolbar| toolbar.address_visible)
+                    .unwrap_or(true);
+                self.set_address_bar_visible(visible);
+            }
             BarAction::ToggleFriendsOnly => {
                 let on = !self.world.friends_only();
                 self.world.set_friends_only(on);
@@ -14895,22 +14905,10 @@ impl App {
                     bottom_top: self.interface.last_room.map_or(screen_rect.bottom() - 56.0, |(_, bottom)| bottom),
                     menu_open: egui::Popup::is_any_open(&ctx),
                 });
-                if chrome.top {
-                    let (bar, audio_action) = ui::bars::top_bars(
-                        ui,
-                        &p,
-                        icons,
-                        layout,
-                        &mut self.panels,
-                        &status,
-                        &mut self.settings.audio,
-                        &mut self.audio_ui,
-                        media,
-                        &mut self.notif_ui,
-                        bell,
-                    );
-                    a.bar = bar;
-                    a.audio = Some(audio_action);
+                if self.toolbar_ui.needs_commands(&ctx, self.settings.toolbar.as_ref())
+                    || (self.demo && std::env::var_os("AURORA_DEMO_TOOLBAR").is_some())
+                {
+                    ui::bars::collect_menu(ui, &p, &mut self.panels, &status);
                 }
                 // AURORA_DEMO_BARS: the mockup's voice (connected; talking
                 // with `voice`) and chat island width, for this run only and
@@ -15031,6 +15029,26 @@ impl App {
                 } else {
                     self.dock_layout.of(layout, autohide_chat_bar)
                 };
+                self.toolbar_ui.prepare(&ctx, toolbar_settings);
+                if chrome.top {
+                    let (bar, audio_action) = ui::bars::top_bars(
+                        ui,
+                        &p,
+                        icons,
+                        layout,
+                        &mut self.panels,
+                        &status,
+                        &mut self.settings.audio,
+                        &mut self.audio_ui,
+                        media,
+                        &mut self.notif_ui,
+                        bell,
+                        &mut self.toolbar_ui,
+                        toolbar_settings,
+                    );
+                    a.bar = bar;
+                    a.audio = Some(audio_action);
+                }
                 // the feed is polled while its button stands on a toolbar
                 // (LLFloaterGridStatus::checkGridStatusRSS, hasCommand)
                 self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
@@ -15122,6 +15140,23 @@ impl App {
                     style: Default::default(),
                     editing: self.toolbar_ui.open && !toolbar_settings.locked,
                 };
+                if chrome.top {
+                    let top_action = ui::bars::top::show(
+                        ui,
+                        &p,
+                        icons,
+                        bar_layout,
+                        &mut self.toolbar_ui,
+                        toolbar_settings,
+                        &mut self.panels,
+                        &mut mic,
+                        &side_row,
+                        classic_bars,
+                    );
+                    if !matches!(top_action, BarAction::None) {
+                        a.bar = top_action;
+                    }
+                }
                 let (room, side_action) = ui::bars::side::bars(
                     ui,
                     &p,
@@ -15144,6 +15179,10 @@ impl App {
                     area = room;
                 }
                 ui::layout::set_work_area(ui.ctx(), area);
+                let menu_action = ui::bars::dispatch_menu(ui, &p, &mut self.panels, &status);
+                if !matches!(menu_action, BarAction::None) {
+                    a.bar = menu_action;
+                }
                 ui::chat::thumbnails::show(
                     ui,
                     &p,

@@ -170,6 +170,34 @@ pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str
     })
 }
 
+/// Resolve a persisted semantic message key without allocating a fallback.
+pub fn lookup(key: &str) -> Option<&'static str> {
+    current()
+        .plain
+        .get(key)
+        .or_else(|| catalogs()[english()].plain.get(key))
+        .map(|text| wrap(text))
+}
+
+/// Recover the key of a borrowed plain label for command metadata. Exact string
+/// addresses disambiguate equal translations belonging to different messages.
+pub fn key_of(text: &str) -> Option<&'static str> {
+    static KEYS: OnceLock<HashMap<(usize, usize), &'static str>> = OnceLock::new();
+    KEYS.get_or_init(|| {
+        catalogs()
+            .iter()
+            .flat_map(|catalog| {
+                catalog
+                    .plain
+                    .iter()
+                    .map(|(key, value)| ((value.as_ptr() as usize, value.len()), key.as_str()))
+            })
+            .collect()
+    })
+    .get(&(text.as_ptr() as usize, text.len()))
+    .copied()
+}
+
 pub fn text(key: &'static str) -> &'static str {
     wrap(plain(current(), key))
 }

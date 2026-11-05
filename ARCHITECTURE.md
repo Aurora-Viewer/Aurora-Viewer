@@ -1,5 +1,14 @@
 # Aurora Viewer architecture
 
+`ui/toolbar/commands.rs` records explicitly identified main-menu entries with live
+checks and availability; selection dispatches one enabled entry through its original
+menu handler. Layout overrides preserve semantic IDs across locales and new commands.
+`ui/toolbar/appearance.rs` owns per-command presentation and the virtualized Tabler
+icon picker. `ui/bars/top.rs` shares the toolbar renderer and drag payload with the
+bottom and side bars. Global toolbar preferences also hold main-menu order and the
+reversible SLURL address-bar visibility.
+
+
 `ui/widgets/local_texture.rs` shares local asset/image identity and the Local previews eye badge across texture controls. Swatches keep their original click and drag response; the mark is painted inside their lower-right corner, including pending images.
 
 `world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.

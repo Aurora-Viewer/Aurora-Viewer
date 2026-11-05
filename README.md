@@ -459,7 +459,7 @@ are planned or in progress: they are not in the viewer yet.
   Legacy layout one click away in Preferences › Aurora (bars, people,
   chat lines, inventory, places, search, About Land, Region / Estate, photos,
   controls and more).
-- **Arrange it your way**: customizable bottom, left and right toolbars,
+- **Arrange it your way**: customizable top, bottom, left and right toolbars,
   favourites in a menu, row or dock, and windows that move over the whole
   screen. The Legacy Viewer's toolbar buttons are all there: Quick
   preferences, a built-in web browser on a home page you choose, the voice
@@ -716,7 +716,7 @@ The texture memory budget is set automatically from the detected VRAM.
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
 - **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
-  customizable bottom and side toolbars, classic layout options, Aurora
+  customizable toolbars on all four edges and a rearrangeable main menu, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
   Linden Lab marks; double-click walk / run / teleport and content-rating controls
@@ -958,20 +958,33 @@ for block comments, and Tab / Shift+Tab to indent or outdent the selected
 lines. The arrows in the margin fold the blocks between braces; the Edit menu
 offers Collapse all / Expand all.
 
-### Toolbar buttons
+### Buttons and menus
 
-Right-click a toolbar and choose **Toolbar buttons…** to open the command
-catalogue. Drag buttons onto the bottom dock / bar or the left and right
-bars, between bars, or along a bar to reorder them. Empty side bars show
-drop zones while dragging a button. Right-click a button to remove it, or
-drop it back into the catalogue.
+Right-click a toolbar and choose **Customize buttons and menus…** to open the
+command catalogue. Drag a command or a submenu from the Aurora menu to the top,
+bottom, left or right bar. Drag along a bar to reorder buttons, between bars to
+move them, or back into the catalogue to remove them. Empty bars show drop zones
+while dragging. Drag inside the Aurora menu to reorder entries or move them into
+another submenu; a group cannot be moved inside itself.
 
-Each bar has its own alignment, button sizing and icon / label mode. The
-chosen buttons, order, styles and lock are shared by all accounts in the
-same local profile. The catalogue also restores the defaults or clears all
-bars. An older per-account layout is adopted from the first account used
-after the update. Preferences › Aurora offers the glass island and classic
-bar layouts, including where favourites appear.
+Each bar has its own alignment, sizing and icon / label mode. Right-click a
+button or menu entry and choose **Button appearance** to override just that
+command: icon, label, both, or the bar's default. The searchable icon grid picks
+another bundled or skin icon; **Restore default icon** clears that override.
+The fixed report-bug button retains its right-click version copy: customize its
+**Report a bug** entry from the catalogue.
+
+The **SLURL address bar** button shows or hides the current address island. Opening
+it refreshes and selects the current SLURL, ready to copy or replace with a
+destination. **Ctrl+L** also opens it; this shortcut is configurable. Location
+privacy restrictions still apply.
+
+Buttons, menu order, presentation and lock are shared by all accounts in the same
+local profile. Lock prevents moving or removing commands and changing individual
+button overrides. The catalogue restores
+defaults or clears the bars. Existing per-account layouts are adopted from the
+first account used after the update. Preferences › Aurora offers glass islands
+and the classic bar layout, including where favourites appear.
 
 ### Inventory
 

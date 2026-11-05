@@ -333,6 +333,12 @@ impl Bench {
                 ..Default::default()
             },
             |ui| {
+                self.state.prepare(&self.ctx, &self.settings);
+                bars::top::reserve(
+                    ui,
+                    &self.settings,
+                    Rect::from_min_size(egui::pos2(8.0, 8.0), Vec2::new(884.0, 36.0)),
+                );
                 bars::bottom_bar(
                     ui,
                     &p,
@@ -370,6 +376,18 @@ impl Bench {
                     style: Style::default(),
                     editing: false,
                 };
+                bars::top::show(
+                    ui,
+                    &p,
+                    &Icons::default(),
+                    &layout,
+                    &mut self.state,
+                    &self.settings,
+                    &mut self.panels,
+                    &mut bars::MicButton::default(),
+                    &row,
+                    !self.islands,
+                );
                 bars::side::bars(
                     ui,
                     &p,
@@ -470,6 +488,7 @@ fn favorites_left_grid_and_right_toolbar_menu_stay_separate_on_every_bar() {
                 Bar::Bottom => bench.settings.buttons = Some(vec![button("favorites")]),
                 Bar::Left => bench.settings.left = vec![button("favorites")],
                 Bar::Right => bench.settings.right = vec![button("favorites")],
+                Bar::Top => bench.settings.top = vec![button("favorites")],
             }
             bench.frame(vec![]);
             bench.frame(vec![]);
@@ -877,12 +896,12 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 75);
-    assert_eq!(COMMANDS.len(), 75);
+    assert_eq!(all.len(), 78);
+    assert_eq!(COMMANDS.len(), 78);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 75, "each command once");
+    assert_eq!(ids.len(), 78, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
@@ -900,7 +919,7 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
             assert_ne!(command.label_in(language), command.key, "{}: no label in {language}", command.id);
         }
         // Speak, Favorites and the AO's toggle have buttons of their own
-        if matches!(command.id, "speak" | "favorites") {
+        if matches!(command.id, "speak" | "favorites" | "aurora_menu") {
             continue;
         }
         let mut panels = Panels::from_settings(&crate::settings::Settings::default());

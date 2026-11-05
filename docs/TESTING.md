@@ -4694,7 +4694,18 @@ enabled. Grid validation is performed by the human, without sharing credentials.
 Keep a Build/Inspect selection while requests are arriving: it must stay selected.
 Objects outside the viewer's received scene cannot be enumerated by this window.
 
-`AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
+`AURORA_DEMO_TOOLBAR=chrome|appearance|menu-layout|address` exercises the shared
+main-menu catalogue and all four edges without changing saved toolbar settings.
+`chrome` opens the editor over mixed icon/text buttons, with Import and Environment
+in the top bar and other menu commands on the sides. `appearance` opens Import's
+per-button editor with the icon picker filtered to stars. `menu-layout` opens the
+Aurora menu at frame 540, with Import and the SLURL switch moved to its root.
+`address` keeps the address island visible beside the customized top bar. Capture
+at frame 620; verify that top buttons do not overlap the account or status islands.
+The configurable SLURL shortcut is Ctrl+L by default: it reopens a hidden address
+bar and selects the current URL; the toolbar button toggles it in either direction.
+
+`AURORA_DEMO_TOOLBAR`: `1` opens the "Buttons and menus" window at frame 300;
 `drag` holds Friends over the toolbar with an insertion marker (the empty
 side toolbars show where a button can go), `add` releases it, `reorder`
 moves Preferences beside Inventory, and `menu` opens a button's context

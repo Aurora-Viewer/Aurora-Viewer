@@ -746,7 +746,14 @@ pub(crate) fn inventory_link_name(base: &str) -> &'static str {
 
 /// Whether `name` is an embedded icon or one of the skin's aliases.
 pub(crate) fn embedded(name: &str) -> bool {
-    OUTLINE.iter().chain(FILLED).chain(INVENTORY_LINKS).any(|(n, _)| *n == name) || ALIASES.iter().any(|(alias, _)| *alias == name)
+    OUTLINE
+        .iter()
+        .chain(FILLED)
+        .chain(INVENTORY_LINKS)
+        .chain(BRAND_SVGS)
+        .chain(PNGS)
+        .any(|(n, _)| *n == name)
+        || ALIASES.iter().any(|(alias, _)| *alias == name)
 }
 
 /// Raster size of SVG icons (crisp up to ~2x UI scale at 24 px).
@@ -764,6 +771,17 @@ static GLOBAL: std::sync::RwLock<Option<HashMap<String, egui::TextureHandle>>> =
 /// Icon from the current skin, by name.
 pub fn global(name: &str) -> Option<egui::TextureHandle> {
     GLOBAL.read().ok()?.as_ref()?.get(name).cloned()
+}
+
+/// Available bundled and skin icons for the button appearance picker.
+pub fn names() -> Vec<String> {
+    let mut names: Vec<_> = GLOBAL
+        .read()
+        .ok()
+        .and_then(|icons| icons.as_ref().map(|icons| icons.keys().cloned().collect()))
+        .unwrap_or_default();
+    names.sort_unstable();
+    names
 }
 
 #[derive(Default)]

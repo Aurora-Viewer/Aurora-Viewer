@@ -94,14 +94,14 @@ owned-land-area = { $actual } m² · { $billable } m² billable
 owned-land-total = Total: { $actual } m² · { $billable } m² billable
 owned-land-contributions = Land contributions to groups
 owned-land-contribution = { $area } m²
-toolbar-edit = Toolbar buttons…
-toolbar-title = Toolbar buttons
+toolbar-edit = Customize buttons and menus…
+toolbar-title = Buttons and menus
 toolbar-remove = Remove this button
 toolbar-locked = Locked
 toolbar-locked-bars = Lock the bars
-toolbar-help = Drag a button to the dock or to a side bar; drop it back here to remove it. Right-click a bar for the same settings.
-toolbar-help-classic = Drag a button to the bottom bar or to a side bar; drop it back here to remove it. Right-click a bar for the same settings.
-toolbar-help-modes = Buttons appear as shown here, or as icons only, depending on each bar's settings.
+toolbar-help = Drag buttons or menu entries to the top, bottom or side bars. Drop a button back here to remove it. Right-click any button to change its appearance.
+toolbar-help-classic = Drag buttons or menu entries to the top, bottom or side bars. Drop a button back here to remove it. Right-click any button to change its appearance.
+toolbar-help-modes = Choose icons, labels, both, or the bar default for each button. Drag entries inside the Aurora menu to rearrange it.
 toolbar-search = Find a command ({ $count })
 toolbar-in-dock = In the dock
 toolbar-in-bottom = In the bottom bar
@@ -13150,3 +13150,13 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+
+# Main menu and toolbar customization
+toolbar-button-appearance = Button appearance
+toolbar-button-default = Default for this bar / menu
+toolbar-icon-default = Restore default icon
+toolbar-icon-search = Find an icon…
+toolbar-in-top = In the top toolbar
+toolbar-bar-top = Top toolbar
+toolbar-drop-here = Drop here
+toolbar-location-bar = SLURL address bar

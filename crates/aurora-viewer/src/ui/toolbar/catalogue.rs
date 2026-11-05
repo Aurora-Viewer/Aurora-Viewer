@@ -27,6 +27,9 @@ macro_rules! commands {
 /// Every command, in no particular order (the window sorts them by their
 /// label in the interface's language, like LLFloaterToybox::postBuild).
 pub const COMMANDS: &[Command] = commands![
+    "report_bug", "bug-filled", "bug-title", true;
+    "location_bar", "map-pin-filled", "toolbar-location-bar", true;
+    "aurora_menu", "wolf", "ui-bars-aurora-menu", true;
     // Aurora's toolbar before PR 6
     "conversations", "Command_Chat_Icon", "common-conversations", true;
     "speak", "Command_Speak_Icon", "ui-skin-speak", true;
