@@ -76,14 +76,20 @@ impl App {
             (240, "fly" | "land" | "fly-rlva") if !self.world.agent.flying => self.toggle_fly(),
             (300, "object") => self.demo_sit_on_nearest_prim(),
             // RLVa restrictions arriving once seated / flying
-            (300, "locked") => self.world.rlva_console_input("@unsit=n"),
-            (300, "fly-rlva") => self.world.rlva_console_input("@fly=n"),
+            (300, "locked" | "fly-rlva") => {
+                // the global opt-in, for this run only (the demo never saves)
+                self.settings.rlva_enabled = true;
+                self.world.rlva_configure(true);
+                self.world.rlva_console_input(if mode == "locked" { "@unsit=n" } else { "@fly=n" });
+            }
             (480, "stand") => self.stand_fly_action(Action::Stand),
             (480, "land") => self.stand_fly_action(Action::StopFlying),
             (470 | 560, _) => log::info!(
-                "demo stand/fly panel: seated {}, flying {}, buttons {:?}",
+                "demo stand/fly panel: seated {}, flying {}, RLVa fly {}, unsit {}, buttons {:?}",
                 self.world.agent.is_sitting(),
                 self.world.agent.flying,
+                self.world.rlva.has("fly"),
+                self.world.rlva.has("unsit"),
                 self.stand_fly_buttons()
             ),
             _ => {}
