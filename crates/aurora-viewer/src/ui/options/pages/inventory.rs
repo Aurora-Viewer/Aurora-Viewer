@@ -34,6 +34,11 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("common-display"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-show-library"), "", &field!(inventory.show_library));
         cx.toggle(
+            tr!("inventory-hover-tooltips"),
+            tr!("inventory-hover-tooltips-help"),
+            &field!(inventory.show_hover_tooltips),
+        );
+        cx.toggle(
             tr!("inventory-hover-pictures"),
             tr!("inventory-hover-pictures-help"),
             &field!(inventory.thumbnail_tooltips),

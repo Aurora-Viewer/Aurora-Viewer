@@ -38,6 +38,10 @@ impl State {
             self.since = None;
             return;
         };
+        if !prefs.show_hover_tooltips {
+            self.since = None;
+            return;
+        }
         if response.ctx.is_being_dragged(response.id) || response.ctx.input(|i| i.pointer.any_down()) {
             self.since = None;
             return;
