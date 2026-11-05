@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+World texture/material drops use `Scene::resource_drop_face_at_ray` for one
+consistent object/face hit, including zero-alpha and transparent texel surfaces,
+with HUD ownership, sidedness, distance and terrain occlusion retained. The
+drag's transient face mask joins the regular selection before scene sync and
+draw-list construction; the UI pass clears it on refusal, release or departure.
+While a resource stays over an accepted face, the ordinary 700 ms selection
+flash repeats through its render uniform without changing face records.
+The shared resource picker reveals the current resource's source and scrolls
+its virtual list to the selected row on opening or following a new face (#2362).
+
 `ui/widgets/local_texture.rs` shares local asset/image identity and the Local previews eye badge across texture controls. Swatches keep their original click and drag response; the mark is painted inside their lower-right corner, including pending images.
 
 `world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.

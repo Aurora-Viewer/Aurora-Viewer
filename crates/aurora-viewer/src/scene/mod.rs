@@ -1400,12 +1400,21 @@ impl Scene {
         }
     }
 
-    pub fn selection_pulse(&self, now: Instant) -> f32 {
+    pub fn selection_pulse(&self, now: Instant, repeat: bool) -> f32 {
         if self.selection_faces.is_empty() {
             return 0.0;
         }
         self.selection_changed.map_or(0.0, |at| {
-            let remaining = (1.0 - now.saturating_duration_since(at).as_secs_f32() / 0.7).clamp(0.0, 1.0);
+            let period = std::time::Duration::from_millis(700);
+            let elapsed = now.saturating_duration_since(at);
+            // Drag feedback repeats the ordinary selection flash without
+            // changing its mask or rebuilding invisible-face records.
+            let elapsed = if repeat {
+                std::time::Duration::from_nanos((elapsed.as_nanos() % period.as_nanos()) as u64)
+            } else {
+                elapsed
+            };
+            let remaining = (1.0 - elapsed.as_secs_f32() / period.as_secs_f32()).clamp(0.0, 1.0);
             0.18 * remaining * remaining
         })
     }
@@ -6978,15 +6987,34 @@ mod tests {
         let selected = HashMap::from([(7, 1 << 3)]);
         scene.set_face_selection(&mut world, selected.clone());
         let at = scene.selection_changed.unwrap();
-        assert!((scene.selection_pulse(at) - 0.18).abs() < 1e-6);
-        assert!(scene.selection_pulse(at + std::time::Duration::from_millis(350)) < 0.05);
+        assert!((scene.selection_pulse(at, false) - 0.18).abs() < 1e-6);
+        assert!(scene.selection_pulse(at + std::time::Duration::from_millis(350), false) < 0.05);
         scene.set_face_selection(&mut world, selected);
         assert_eq!(scene.selection_changed, Some(at));
-        assert_eq!(scene.selection_pulse(at + std::time::Duration::from_millis(700)), 0.0);
+        assert_eq!(scene.selection_pulse(at + std::time::Duration::from_millis(700), false), 0.0);
         scene.reveal_selected_faces();
-        assert!(scene.selection_pulse(Instant::now()) > 0.17);
+        assert!(scene.selection_pulse(Instant::now(), false) > 0.17);
         scene.set_face_selection(&mut world, HashMap::new());
-        assert_eq!(scene.selection_pulse(Instant::now()), 0.0);
+        assert_eq!(scene.selection_pulse(Instant::now(), false), 0.0);
+    }
+
+    #[test]
+    fn face_drop_hover_repeats_the_selection_flash_until_feedback_ends() {
+        use std::time::Duration;
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.set_face_selection(&mut world, HashMap::from([(7, 1 << 3)]));
+        let at = scene.selection_changed.unwrap();
+        for cycle in 0..10 {
+            let start = at + Duration::from_millis(cycle * 700);
+            assert!((scene.selection_pulse(start, true) - 0.18).abs() < 1e-6);
+            assert!(scene.selection_pulse(start + Duration::from_millis(600), true) < 0.01);
+        }
+        let later = at + Duration::from_secs(7);
+        assert_eq!(scene.selection_pulse(later, false), 0.0, "ordinary selection must not keep looping");
+        scene.set_face_selection(&mut world, HashMap::new());
+        assert_eq!(scene.selection_pulse(later, true), 0.0, "leaving the face removes the effect");
     }
 
     /// The GPU culling (reference of cull.wgsl, `gpu_cull::face_bins`) takes
