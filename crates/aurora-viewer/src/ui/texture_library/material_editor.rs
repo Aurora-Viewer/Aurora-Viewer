@@ -403,7 +403,9 @@ impl Editor {
         let Some(cargo) = egui::DragAndDrop::payload::<InvDrag>(ui.ctx()) else {
             return;
         };
-        let texture = world.inventory.items.get(&cargo.0).filter(|it| is_texture(it));
+        let texture = rules::original(&world.inventory, cargo.0)
+            .and_then(|id| world.inventory.items.get(&id))
+            .filter(|it| is_texture(it));
         let allowed = ui.is_enabled() && texture.is_some_and(map_source);
         crate::ui::inventory::drag::feedback(
             ui.ctx(),
@@ -421,6 +423,8 @@ impl Editor {
         match texture {
             Some(item) if allowed => {
                 *map_mut(value, slot) = Some(item.asset_id);
+                self.picker.open = false;
+                self.map_slot = None;
                 self.message.clear();
             }
             // TooltipTextureRestrictedDrop

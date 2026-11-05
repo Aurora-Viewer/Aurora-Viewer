@@ -6,6 +6,14 @@
 
 `ui/texture_picker/pipette.rs` routes a transient world sample to the picker session that armed it, independently of its opening window. `app/texture_picker.rs` samples the nearest volume face through the shared scene pipette ray query; inventory copy permissions, material assets and reversible previews remain owned by the picker.
 
+`ui/resource_drop.rs` resolves inventory and resource-inspector cargo for editable
+texture/material previews, including links, snapshots and blank materials. It
+owns hover feedback and consumes accepted/refused releases. `TexturePicker`
+can defer a thumbnail's drop until the same UI pass has inventory access, then
+uses the caller's ordinary choice path without opening a dialog. World texture
+drops follow the object's local Blinn-Phong preview while preserving PBR data;
+Alt retains explicit material removal.
+
 `scene/avatar.rs::AttachPoint` retains the parent bone for IK and the
 point's own rig joint/rest matrix for placement. `anchors::attach_frame`
 reads the latter's pose, so animation keys on an attachment point move
@@ -1398,7 +1406,7 @@ Features exposes flexible and physics columns above light/projector and probe
 controls. `build/ui/legacy_texture.rs` follows `FSPanelFace` and
 `panel_fs_tools_texture.xml`: three visible PBR/Blinn-Phong/Media tabs, vertical
 classic maps or the PBR map/tint grid on the left, inline parameters on the right,
-then channel tabs above the Scale/Offset/Rotation columns. The shared compact tab
+then channel tabs above the Scale/Offset/Rotation columns. `build/ui/texture_drop.rs` takes an inventory texture or material dropped on any slot of either layout (LLTextureCtrl::handleDragAndDrop with FSPanelFace's filters) and applies it like the picker. The shared compact tab
 strip preserves the theme at inspector density. Face repeats, sync, planar
 alignment and mapping form the footer. UV writers, permission checks, pickers and
 simulator commands stay shared with Aurora.

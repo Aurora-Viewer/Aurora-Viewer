@@ -2137,6 +2137,7 @@ ui-inventory-thumbnail-choose-object-picture = Choisir : Image pour l’objet
 build-ui-texture-choose-material = Choisir : matériau
 build-ui-texture-choose-normal-map = Choisir : normale
 build-ui-texture-choose-specular-map = Choisir : spéculaire
+build-ui-texture-drop-restricted = Seules les textures avec les droits de copie et de transfert sans restriction sont autorisées.
 build-ui-texture-choose-texture = Choisir : texture
 build-ui-features-choose-light-texture = Choisir : texture de la lumière
 build-ui-object-choose-sculpt-map = Choisir : texture de la sculptie

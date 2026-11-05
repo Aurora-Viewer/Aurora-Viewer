@@ -1496,6 +1496,38 @@ mod tests {
     }
 
     #[test]
+    fn blinn_phong_surface_drop_keeps_pbr_and_other_faces_unchanged() {
+        fixture(|world, tool, env, prims| {
+            let idx = prims[0];
+            let material = Uuid::from_u128(1907);
+            let map = Uuid::from_u128(1908);
+            tool.apply_inventory_surface(world, env, idx, &[1], material, true, false);
+            let original = BuildTool::gltf_override(world, idx, 1);
+            let other = texture(world, idx, 0);
+            world.objects.set_blinn_phong_preview(idx, true);
+            tool.out.clear();
+            tool.apply_inventory_surface(world, env, idx, &[1], map, false, false);
+            assert_eq!(texture(world, idx, 1), map);
+            assert_eq!(texture(world, idx, 0), other);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 1), Some(material));
+            assert_eq!(BuildTool::gltf_override(world, idx, 1), original);
+            assert!(!tool.out.iter().any(
+                |cmd| matches!(cmd, aurora_net::NetCommand::Build(crate::build::BuildCmd::Cap { cap, .. }) if cap == "ModifyMaterialParams")
+            ));
+
+            world.objects.set_blinn_phong_preview(idx, false);
+            let pbr_map = Uuid::from_u128(1909);
+            tool.apply_inventory_surface(world, env, idx, &[1], pbr_map, false, false);
+            assert_eq!(texture(world, idx, 1), map);
+            assert_eq!(BuildTool::gltf_override(world, idx, 1).textures[0], pbr_map);
+            world.objects.set_blinn_phong_preview(idx, true);
+            tool.apply_inventory_surface(world, env, idx, &[1], pbr_map, false, true);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 1), None);
+            assert_eq!(texture(world, idx, 1), pbr_map);
+        });
+    }
+
+    #[test]
     fn texture_library_drop_rejects_unmodifiable_objects_and_invalid_faces() {
         fixture(|world, tool, env, prims| {
             let idx = prims[0];
