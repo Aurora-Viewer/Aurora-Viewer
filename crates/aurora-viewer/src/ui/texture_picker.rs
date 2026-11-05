@@ -12,6 +12,7 @@ use crate::world::{LocalAssetRequest, World};
 use egui::{RichText, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+pub(crate) mod pipette;
 mod tree;
 
 /// IT_TEXTURE, IT_SNAPSHOT, IT_MATERIAL (llinventorytype.h).
@@ -66,6 +67,9 @@ fn can_preview(inv: &Inventory, id: Uuid) -> bool {
 #[derive(Default)]
 pub struct TexturePicker {
     pub open: bool,
+    pipette_id: Option<egui::Id>,
+    pipette_error: bool,
+    pipette_lookup: Option<(u64, Uuid, Option<Uuid>)>,
     title: String,
     filter: String,
     /// Asset of the selected item.
@@ -105,6 +109,9 @@ pub struct TexturePicker {
 impl TexturePicker {
     pub fn open(&mut self, title: &str, current: Uuid) {
         self.open = true;
+        self.pipette_id = Some(egui::Id::unique("texture_picker_session").with(Uuid::new_v4()));
+        self.pipette_error = false;
+        self.pipette_lookup = None;
         self.title = title.to_owned();
         self.filter.clear();
         self.selected = (!current.is_nil()).then_some(current);
@@ -160,6 +167,15 @@ impl TexturePicker {
 
     pub(crate) fn take_preview(&mut self) -> Option<Uuid> {
         self.preview.take()
+    }
+
+    pub(crate) fn forget_local_asset(&mut self, id: Uuid) {
+        if self.selected == Some(id) {
+            self.selected = None;
+            self.selected_item = None;
+            self.preview = None;
+            self.uuid_text.clear();
+        }
     }
 
     /// LLTextureCtrl TEXTURE_CHANGE / SELECT / CANCEL (lltexturectrl.cpp):
@@ -223,6 +239,7 @@ impl TexturePicker {
     }
 
     fn select(&mut self, asset: Uuid, item: Option<Uuid>, preview: bool) {
+        self.pipette_error = false;
         self.uuid_text = asset.to_string();
         self.uuid_error = false;
         self.selected = Some(asset);
@@ -247,6 +264,7 @@ impl TexturePicker {
     ) -> Option<Uuid> {
         self.preview = None;
         self.cancelled = false;
+        self.pipette_input(ctx, &world.inventory);
         if !self.open {
             return None;
         }
@@ -305,7 +323,9 @@ impl TexturePicker {
                         #[cfg(test)]
                         ui.ctx()
                             .data_mut(|data| data.insert_temp(egui::Id::unique("picker_material_scene"), response.rect));
-                        let _ = response;
+                        if self.selected.is_some_and(|id| world.local_assets.contains_key(&id)) {
+                            widgets::local_texture::paint(ui, p, response.rect);
+                        }
                         return;
                     }
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
@@ -362,6 +382,9 @@ impl TexturePicker {
                             p.muted,
                         );
                     }
+                    if self.selected.is_some_and(|id| world.local_assets.contains_key(&id)) {
+                        widgets::local_texture::paint(ui, p, rect);
+                    }
                 });
                 ui.vertical(|ui| {
                     ui.label(
@@ -391,6 +414,7 @@ impl TexturePicker {
                             ui.available_width(),
                         ));
                     }
+                    self.pipette_button(ui, p);
                 });
             });
             ui.add_space(8.0);
@@ -406,6 +430,9 @@ impl TexturePicker {
             );
             if self.source == 1 && !self.allow_local {
                 self.source = 0;
+            }
+            if self.source != 0 {
+                self.stop_pipette(ctx);
             }
             let inv = &world.inventory;
             if self.library_lookup.map(|(generation, root, _)| (generation, root)) != Some((inv.generation, inv.root)) {
@@ -713,7 +740,13 @@ impl TexturePicker {
                     }
                 });
             }
-            let message = if self.uuid_error {
+            let message = if self.pipette_error {
+                if self.materials {
+                    aurora_i18n::tr!("picker-pipette-no-material")
+                } else {
+                    aurora_i18n::tr!("picker-pipette-no-texture")
+                }
+            } else if self.uuid_error {
                 aurora_i18n::tr!("ui-texture-picker-invalid-uuid")
             } else if self.selected_item.is_some_and(|id| !can_preview(&world.inventory, id)) {
                 aurora_i18n::tr!("ui-texture-picker-confirm-no-copy")
@@ -731,8 +764,10 @@ impl TexturePicker {
                 status.left_center(),
                 status.width(),
                 egui::FontId::proportional(11.0),
-                if self.uuid_error { p.danger } else { p.muted },
+                if self.uuid_error || self.pipette_error { p.danger } else { p.muted },
             );
+            ui.interact(status, ui.scope_id().with("picker_status"), egui::Sense::hover())
+                .on_hover_text(message);
             ui.allocate_ui_with_layout(
                 Vec2::new(ui.available_width(), 26.0),
                 egui::Layout::right_to_left(egui::Align::Center),
@@ -766,6 +801,9 @@ impl TexturePicker {
         if !open || chosen.is_some() {
             self.open = false;
         }
+        if !self.open {
+            self.stop_pipette(ctx);
+        }
         chosen
     }
 }
@@ -781,6 +819,166 @@ fn wearable_demo_input() -> bool {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn pipette_is_shared_by_plain_build_and_material_pickers_and_restores_on_cancel() {
+        for mode in 0..3 {
+            let mut ui = PickerUi::new();
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut picker = TexturePicker::default();
+            let original = Uuid::from_u128(70);
+            let asset = Uuid::from_u128(71);
+            let item = Uuid::from_u128(72);
+            world.inventory.items.insert(
+                item,
+                aurora_net::inventory::InvItem {
+                    id: item,
+                    asset_id: asset,
+                    inv_type: if mode == 2 { INV_MATERIAL } else { INV_TEXTURE },
+                    owner_mask: actions::COPY,
+                    name: "Sampled asset".into(),
+                    ..Default::default()
+                },
+            );
+            match mode {
+                0 => picker.open("Profile texture", original),
+                1 => picker.open_with_defaults("Object texture", original, None, true),
+                _ => picker.open_materials("Material", original),
+            }
+            let mut changes = Vec::new();
+            let draw = |picker: &mut TexturePicker, world: &mut World, changes: &mut Vec<Uuid>, ctx: &egui::Context, p: &Palette| {
+                if let Some(value) = picker.show_live(ctx, p, world, &HashMap::new()) {
+                    changes.push(value);
+                }
+            };
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+            ui.click(aurora_i18n::tr!("color-picker-pipette"), |ctx, p| {
+                draw(&mut picker, &mut world, &mut changes, ctx, p)
+            });
+            assert!(pipette::armed(&ui.ctx));
+            assert_eq!(pipette::needs_sample(&ui.ctx, (10.0, 20.0)), Some(mode == 2));
+            assert_eq!(pipette::needs_sample(&ui.ctx, (10.0, 20.0)), None);
+            pipette::sample(&ui.ctx, Some((Uuid::from_u128(80), 3, asset)));
+            // A fast press/release must survive until the next UI frame.
+            pipette::release(&ui.ctx);
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+            assert_eq!(picker.selected, Some(asset));
+            assert_eq!(picker.selected_item, Some(item));
+            assert_eq!(changes, [asset]);
+            assert!(!pipette::armed(&ui.ctx));
+            assert!(picker.open);
+            ui.click(aurora_i18n::tr!("common-cancel"), |ctx, p| {
+                draw(&mut picker, &mut world, &mut changes, ctx, p)
+            });
+            assert_eq!(changes, [asset, original]);
+        }
+    }
+
+    #[test]
+    fn pipette_rejects_missing_and_no_copy_assets_and_stops_on_escape_close_or_source_change() {
+        let mut ui = PickerUi::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut picker = TexturePicker::default();
+        let original = Uuid::from_u128(90);
+        let asset = Uuid::from_u128(91);
+        let item = Uuid::from_u128(92);
+        picker.open("Texture", original);
+        ui.settle(|ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        ui.click(aurora_i18n::tr!("color-picker-pipette"), |ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        for present in [false, true] {
+            if present {
+                world.inventory.items.insert(
+                    item,
+                    aurora_net::inventory::InvItem {
+                        id: item,
+                        asset_id: asset,
+                        inv_type: INV_TEXTURE,
+                        ..Default::default()
+                    },
+                );
+                world.inventory.generation += 1;
+            }
+            pipette::sample(&ui.ctx, Some((Uuid::from_u128(100), 0, asset)));
+            ui.settle(|ctx, p| {
+                picker.show(ctx, p, &mut world, &HashMap::new());
+            });
+            assert!(picker.pipette_error);
+            assert!(pipette::failed(&ui.ctx));
+            assert_eq!(picker.selected, Some(original));
+            assert_eq!(picker.take_preview(), None);
+        }
+        ui.frame(
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            |ctx, p| {
+                picker.show(ctx, p, &mut world, &HashMap::new());
+            },
+        );
+        assert!(!pipette::armed(&ui.ctx));
+        assert!(picker.open);
+        ui.click(aurora_i18n::tr!("color-picker-pipette"), |ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        picker.allow_local = true;
+        picker.show_local_tab();
+        ui.settle(|ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        assert!(!pipette::armed(&ui.ctx));
+        picker.source = 0;
+        ui.settle(|ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        ui.click(aurora_i18n::tr!("color-picker-pipette"), |ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        ui.close(|ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        assert!(!pipette::armed(&ui.ctx));
+    }
+
+    #[test]
+    fn pipette_accepts_blank_material_and_does_not_deliver_to_a_reopened_picker() {
+        let mut picker = TexturePicker::default();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        picker.open_materials("Material", Uuid::from_u128(110));
+        // Exercise the same owner routing with a sample after release.
+        let mut ui = PickerUi::new();
+        ui.settle(|ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        ui.click(aurora_i18n::tr!("color-picker-pipette"), |ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        pipette::sample(&ui.ctx, Some((Uuid::nil(), 0, BLANK_MATERIAL)));
+        pipette::release(&ui.ctx);
+        picker.pipette_input(&ui.ctx, &world.inventory);
+        assert_eq!(picker.take_preview(), Some(BLANK_MATERIAL));
+        assert!(!picker.pipette_error);
+        ui.settle(|ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        ui.click(aurora_i18n::tr!("color-picker-pipette"), |ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        pipette::sample(&ui.ctx, Some((Uuid::nil(), 0, BLANK_MATERIAL)));
+        picker.open("Other caller", Uuid::nil());
+        ui.settle(|ctx, p| {
+            picker.show(ctx, p, &mut world, &HashMap::new());
+        });
+        assert_eq!(picker.selected, None);
+        assert!(!pipette::armed(&ui.ctx));
+    }
 
     pub(crate) struct PickerUi {
         ctx: egui::Context,
