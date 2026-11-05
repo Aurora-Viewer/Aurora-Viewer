@@ -328,6 +328,8 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
+    /// Latest accepted nearby-chat origin per object; bounded by chat history.
+    pub chat_objects: HashMap<Uuid, crate::slapp::RemoteObject>,
     /// What each avatar said lately, for the bubbles above its head.
     pub bubble_chat: bubble_chat::BubbleChat,
     /// Follows `chat` for the view.
@@ -719,6 +721,7 @@ impl World {
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
+            chat_objects: HashMap::new(),
             bubble_chat: Default::default(),
             chat_clock: Default::default(),
             chat_unread: 0,
@@ -4047,6 +4050,42 @@ impl World {
                     },
                 );
             }
+        }
+        // LLViewerChat::getObjectImSLURL uses the message's owner and
+        // position, even when the speaking object is not in the scene.
+        if matches!(kind, ChatKind::Object(_)) && !c.source_id.is_nil() {
+            if self.chat_objects.len() >= MAX_CHAT && !self.chat_objects.contains_key(&c.source_id) {
+                let retained: HashSet<_> = self.chat.iter().map(|line| line.source).collect();
+                self.chat_objects.retain(|id, _| retained.contains(id));
+            }
+            let region = self
+                .objects
+                .index_of_uuid(&c.source_id)
+                .and_then(|idx| self.objects.get(idx))
+                .and_then(|o| self.regions.get(&o.key.region))
+                .or_else(|| self.main());
+            let slurl = region
+                .filter(|r| !r.name.is_empty() && c.position.is_finite())
+                .map(|r| {
+                    format!(
+                        "{}/{:.0}/{:.0}/{:.0}",
+                        crate::slurl::encode(&r.name),
+                        c.position.x.round(),
+                        c.position.y.round(),
+                        c.position.z.round()
+                    )
+                })
+                .unwrap_or_default();
+            self.chat_objects.insert(
+                c.source_id,
+                crate::slapp::RemoteObject {
+                    id: c.source_id,
+                    name: from.clone(),
+                    owner: c.owner_id,
+                    group_owned: false,
+                    slurl,
+                },
+            );
         }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
