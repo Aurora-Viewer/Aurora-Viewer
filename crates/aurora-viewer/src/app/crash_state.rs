@@ -57,8 +57,17 @@ pub(super) struct KeptState {
 impl KeptState {
     /// What to note now, if anything: the fresh state while the GPU answers;
     /// at the loss, the last state before it (the fresh one when the GPU was
-    /// lost before the first note); after it, nothing.
-    fn next(&mut self, lost: bool, swapchain_10s: u64, fresh: impl FnOnce() -> crate::crash::State) -> Option<crate::crash::State> {
+    /// lost before the first note); after it, nothing. The tightest headroom
+    /// (`headroom_min_mb`, the sampler's cached minimum of the last minute)
+    /// is taken at the loss itself: a dip between the last note and the loss
+    /// is the one the row is there to show.
+    fn next(
+        &mut self,
+        lost: bool,
+        swapchain_10s: u64,
+        headroom_min_mb: Option<i64>,
+        fresh: impl FnOnce() -> crate::crash::State,
+    ) -> Option<crate::crash::State> {
         if self.lost {
             return None;
         }
@@ -66,6 +75,9 @@ impl KeptState {
             self.lost = true;
             let mut kept = self.last.take().unwrap_or_else(fresh);
             kept.swapchain_10s = swapchain_10s;
+            if headroom_min_mb.is_some() {
+                kept.vram_headroom_min_mb = headroom_min_mb;
+            }
             return Some(kept);
         }
         let state = fresh();
@@ -93,7 +105,10 @@ impl App {
         self.crash_state_at = Some(now);
         let swapchain_10s = self.crash_swapchain.note(now, aurora_render::present::recreations(), lost);
         let mut kept = std::mem::take(&mut self.crash_kept);
-        let next = kept.next(lost, swapchain_10s, || self.crash_state_now(renderer, window, swapchain_10s));
+        let headroom_min_mb = renderer.video_memory.tightest_headroom().map(|b| b >> 20);
+        let next = kept.next(lost, swapchain_10s, headroom_min_mb, || {
+            self.crash_state_now(renderer, window, swapchain_10s)
+        });
         self.crash_kept = kept;
         if let Some(state) = next {
             crate::crash::note_state(state);
@@ -190,22 +205,49 @@ mod tests {
     #[test]
     fn the_report_keeps_the_last_state_before_the_gpu_was_lost() {
         let mut kept = KeptState::default();
-        assert_eq!(kept.next(false, 0, || state(90.0, 0)), Some(state(90.0, 0)));
-        assert_eq!(kept.next(false, 3, || state(85.0, 3)), Some(state(85.0, 3)));
+        assert_eq!(kept.next(false, 0, None, || state(90.0, 0)), Some(state(90.0, 0)));
+        assert_eq!(kept.next(false, 3, None, || state(85.0, 3)), Some(state(85.0, 3)));
         // lost: the notice takes the focus and the frame rate falls to the
         // background limit; the report keeps the frame before, with the
         // recreations counted up to the loss
-        assert_eq!(kept.next(true, 5, || panic!("no fresh state once lost")), Some(state(85.0, 5)));
+        assert_eq!(
+            kept.next(true, 5, None, || panic!("no fresh state once lost")),
+            Some(state(85.0, 5))
+        );
         assert!(kept.done());
         // the seconds the viewer takes to close change nothing
-        assert_eq!(kept.next(true, 5, || state(15.0, 5)), None);
-        assert_eq!(kept.next(false, 9, || state(15.0, 9)), None);
+        assert_eq!(kept.next(true, 5, None, || state(15.0, 5)), None);
+        assert_eq!(kept.next(false, 9, None, || state(15.0, 9)), None);
     }
 
     #[test]
     fn a_gpu_lost_before_the_first_note_still_gives_a_state() {
         let mut kept = KeptState::default();
-        assert_eq!(kept.next(true, 2, || state(60.0, 0)), Some(state(60.0, 2)));
-        assert_eq!(kept.next(true, 2, || state(15.0, 2)), None);
+        assert_eq!(kept.next(true, 2, None, || state(60.0, 0)), Some(state(60.0, 2)));
+        assert_eq!(kept.next(true, 2, None, || state(15.0, 2)), None);
+    }
+
+    #[test]
+    fn a_headroom_dip_between_the_last_note_and_the_loss_is_reported() {
+        let noted = |headroom| crate::crash::State {
+            vram_headroom_min_mb: headroom,
+            ..state(85.0, 3)
+        };
+        let mut kept = KeptState::default();
+        assert_eq!(kept.next(false, 3, Some(120), || noted(Some(120))), Some(noted(Some(120))));
+        // the sampler sees the budget overrun after that note, then the loss
+        let at_loss = kept.next(true, 5, Some(-40), || panic!("no fresh state once lost"));
+        let expected = crate::crash::State {
+            vram_headroom_min_mb: Some(-40),
+            ..state(85.0, 5)
+        };
+        assert_eq!(at_loss, Some(expected));
+        // without a reading at the loss, the last noted one stays
+        let mut kept = KeptState::default();
+        kept.next(false, 3, Some(120), || noted(Some(120)));
+        assert_eq!(
+            kept.next(true, 3, None, || panic!("no fresh state once lost")),
+            Some(noted(Some(120)))
+        );
     }
 }
