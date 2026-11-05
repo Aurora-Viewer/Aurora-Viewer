@@ -62,6 +62,18 @@ use egui::{Color32, RichText};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+/// Where a message was last sent from, for "Enter returns to the last chat
+/// field used".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ChatField {
+    /// The chat bar at the bottom.
+    #[default]
+    Bar,
+    /// A conversation's field: `None` the nearby chat, `Some` an IM or a
+    /// group chat.
+    Conversation(Option<uuid::Uuid>),
+}
+
 #[derive(Default)]
 pub struct ChatUi {
     pub input: String,
@@ -74,6 +86,14 @@ pub struct ChatUi {
     /// The local chat field keeps the keyboard after a message is sent
     /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
     pub keep_focus: bool,
+    /// Enter on an empty field gives the keyboard back in every
+    /// conversation, not only the nearby chat (Preferences › Chat, Aurora's).
+    pub enter_toggles: bool,
+    /// Enter from the world goes back to `last_field` (Preferences › Chat,
+    /// Aurora's): `start_chat`.
+    pub enter_last_field: bool,
+    /// The chat field a message was last sent from.
+    last_field: ChatField,
     /// The chat bar shows only while it is used (Preferences › Chat; the
     /// Legacy Viewer's AutohideChatBar, #1009): `bar_shown`.
     pub autohide: bool,
@@ -434,6 +454,41 @@ impl ChatUi {
     /// not count, a keyboard request does.
     pub fn in_use(&self) -> bool {
         self.focus_request || (!self.bar_hidden && (self.has_focus || !self.input.trim().is_empty()))
+    }
+
+    /// Enter from the world (start_chat, indra/newview/llviewerinput.cpp):
+    /// the chat bar takes the keyboard. With "Enter returns to the last chat
+    /// field used", the conversation last talked in takes it instead while
+    /// its window is open: its own window, or the Conversations window
+    /// (`conversations_open`, expanded) on its tab. `exists`: the IM or
+    /// group conversation is still there.
+    pub fn start_chat(&mut self, ctx: &egui::Context, conversations_open: bool, exists: impl Fn(&uuid::Uuid) -> bool) {
+        if self.enter_last_field
+            && let ChatField::Conversation(to) = self.last_field
+            && to.as_ref().is_none_or(exists)
+        {
+            if self.popped.contains(to) {
+                // a conversation in its own window is only there
+                if self.popped.shown(to) {
+                    self.popped.raise(to, true);
+                    return;
+                }
+            } else if conversations_open && !super::widgets::floater_minimized(ctx, "conversations") {
+                self.selected = to;
+                self.contacts = false;
+                self.show_profile = false;
+                self.conv_focus_request = true;
+                super::widgets::bring_floater_front(ctx, "conversations");
+                return;
+            }
+        }
+        self.focus_request = true;
+    }
+
+    /// A conversation's field (`None`: nearby chat) was used: clicked or
+    /// focused, or a message sent from it.
+    pub(crate) fn used_conversation(&mut self, to: Option<uuid::Uuid>) {
+        self.last_field = ChatField::Conversation(to);
     }
 
     /// The nearby chat is in its own window (#910): the chat island's
@@ -3347,13 +3402,21 @@ fn classic_pane(
     }
     let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
     gif_picker::popup(ui.ctx(), p, icons, st, anchor, 4.0, conv_input, ChatType::Normal, actions);
-    if st.conv_focus_request {
-        st.conv_focus_request = false;
+    // the Enter that asked for the keyboard (start_chat) is not one typed in
+    // the field (compose.rs, Aurora's style, does the same)
+    let focusing = std::mem::take(&mut st.conv_focus_request);
+    if focusing {
         resp.request_focus();
         cursor_to_end(ui.ctx(), conv_input, &draft);
     }
+    // clicked into, or given the keyboard: the field last used
+    if resp.gained_focus() {
+        st.used_conversation(st.selected);
+    }
     let mut sent = false;
-    if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt)) {
+    if send_clicked
+        || (!focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
+    {
         let text = st.suggest.expand(st.selected, draft.trim());
         if !text.is_empty() {
             sent = true;
@@ -3378,9 +3441,15 @@ fn classic_pane(
                 }
                 Some(to) => actions.push(ConvAction::Im { to, text }),
             }
+            st.used_conversation(st.selected);
         }
         draft.clear();
-        resp.request_focus();
+        let local = st.selected.is_none();
+        if compose::returns_to_world(local, st.enter_toggles, st.keep_focus, sent, send_clicked) {
+            resp.surrender_focus();
+        } else {
+            resp.request_focus();
+        }
     }
     st.typing_field = Some(typing::Field {
         to: st.selected.filter(|id| !world.is_group_session(id) && (resp.has_focus() || sent)),
@@ -4032,6 +4101,9 @@ pub(crate) fn bar_input(
         }
     }
     st.has_focus = resp.has_focus();
+    if resp.gained_focus() {
+        st.last_field = ChatField::Bar;
+    }
     // The editor leaves ordinary Enter to this send path.
     let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
@@ -4041,6 +4113,7 @@ pub(crate) fn bar_input(
         resp.surrender_focus();
     }
     if enter && !st.input.trim().is_empty() {
+        st.last_field = ChatField::Bar;
         st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
         let (shout, whisper) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
         let (channel, message) = parse_channel(&st.suggest.expand(None, st.input.trim()));
@@ -4069,6 +4142,90 @@ pub(crate) fn bar_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Enter from the world: the chat bar, unless "Enter returns to the
+    /// last chat field used" sends it back to the conversation last talked
+    /// in while its window is open and the conversation still exists.
+    #[test]
+    fn enter_returns_to_the_last_chat_field_used_only_when_asked_and_open() {
+        let ctx = egui::Context::default();
+        let group = uuid::Uuid::from_u128(7);
+        let gone = uuid::Uuid::from_u128(8);
+        let exists = |id: &uuid::Uuid| *id == group;
+        let fresh = |last: ChatField, on: bool| ChatUi {
+            last_field: last,
+            enter_last_field: on,
+            ..ChatUi::default()
+        };
+        // off: always the chat bar
+        let mut st = fresh(ChatField::Conversation(Some(group)), false);
+        st.start_chat(&ctx, true, exists);
+        assert!(st.focus_request && !st.conv_focus_request);
+        // on, last talked in the group, Conversations open: its tab
+        let mut st = fresh(ChatField::Conversation(Some(group)), true);
+        st.start_chat(&ctx, true, exists);
+        assert!(!st.focus_request && st.conv_focus_request && st.selected == Some(group));
+        // the nearby chat in Conversations
+        let mut st = fresh(ChatField::Conversation(None), true);
+        st.selected = Some(group);
+        st.start_chat(&ctx, true, exists);
+        assert!(st.conv_focus_request && st.selected.is_none());
+        // Conversations closed, the conversation gone, or the bar last: the bar
+        for (last, open) in [
+            (ChatField::Conversation(Some(group)), false),
+            (ChatField::Conversation(Some(gone)), true),
+            (ChatField::Bar, true),
+        ] {
+            let mut st = fresh(last, true);
+            st.start_chat(&ctx, open, exists);
+            assert!(st.focus_request && !st.conv_focus_request, "{last:?} open {open}");
+        }
+        // a conversation in its own window: raised there while shown, the
+        // bar once it is put away
+        let mut st = fresh(ChatField::Conversation(Some(group)), true);
+        st.popped.pop_out(Some(group), false, false, false);
+        st.start_chat(&ctx, true, exists);
+        assert!(!st.focus_request && !st.conv_focus_request && st.selected.is_none());
+        st.popped.set_hidden(Some(group), true);
+        st.start_chat(&ctx, true, exists);
+        assert!(st.focus_request);
+    }
+
+    /// Sending from a conversation's field is remembered, the chat bar too.
+    #[test]
+    fn the_last_field_follows_where_a_message_was_sent() {
+        let mut st = ChatUi::default();
+        assert_eq!(st.last_field, ChatField::Bar);
+        st.used_conversation(Some(uuid::Uuid::from_u128(3)));
+        assert_eq!(st.last_field, ChatField::Conversation(Some(uuid::Uuid::from_u128(3))));
+        st.used_conversation(None);
+        assert_eq!(st.last_field, ChatField::Conversation(None));
+    }
+
+    /// Enter in a conversation's field. By default, like the Legacy
+    /// Viewer's nearby chat window: an empty Enter keeps the keyboard, a
+    /// message lets it go in the nearby chat only without "Keep the chat bar
+    /// active". "Enter toggles typing" gives every conversation the chat
+    /// bar's rule. The Send button always keeps it.
+    #[test]
+    fn enter_in_a_conversation_returns_to_the_world_by_its_rule() {
+        use super::compose::returns_to_world;
+        // (local, toggles, keep_focus, sent, send_clicked) -> back to the world
+        for local in [true, false] {
+            for keep in [true, false] {
+                assert!(
+                    !returns_to_world(local, false, keep, false, false),
+                    "an empty Enter keeps it by default"
+                );
+                assert!(returns_to_world(local, true, keep, false, false), "an empty Enter toggles it back");
+                assert!(!returns_to_world(local, true, keep, true, true), "the Send button keeps it");
+            }
+            assert!(!returns_to_world(local, true, true, true, false), "kept after sending");
+            assert!(returns_to_world(local, true, false, true, false), "let go after sending");
+        }
+        assert!(returns_to_world(true, false, false, true, false), "nearby: CloseChatOnReturn");
+        assert!(!returns_to_world(false, false, false, true, false), "an IM keeps it by default");
+    }
 
     fn nearby(apart: bool, shown: bool, minimized: bool, front: bool, focused: bool, tab_visible: bool) -> NearbyChatView {
         NearbyChatView {

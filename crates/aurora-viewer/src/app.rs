@@ -4493,7 +4493,12 @@ impl App {
             Action::ResetCameraAngles => self.reset_camera_angles(),
             Action::FocusSelection => self.look_at_selection(false),
             Action::ZoomSelection => self.look_at_selection(true),
-            Action::Chat => self.chat_ui.focus_request = true,
+            Action::Chat => {
+                let world = &self.world;
+                self.chat_ui.start_chat(&self.egui_ctx, self.panels.chat, |id| {
+                    world.social.has_session(id) || world.groups.sessions.contains_key(id)
+                });
+            }
             Action::ToggleMic => self.toggle_mic(),
             // the shortcuts of the windows, like their toolbar buttons: a
             // minimized window expands (LLFloaterReg::toggleInstance)
@@ -15510,6 +15515,8 @@ impl App {
                 self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
+                self.chat_ui.enter_toggles = self.settings.chat_enter_toggles;
+                self.chat_ui.enter_last_field = self.settings.chat_enter_last_field;
                 // the chat fields' suggestions (#980); the residents around
                 // only while a nearby field lists or predicts them
                 let suggest = &mut self.chat_ui.suggest;
