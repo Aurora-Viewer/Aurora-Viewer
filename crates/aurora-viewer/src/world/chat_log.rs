@@ -237,6 +237,12 @@ impl ChatLog {
     /// Erase the transcripts of the account logged in (on this grid), after
     /// the lines already queued. False when there is no account. The answer
     /// comes through `take_erased`.
+    /// An import, a move or an erasing is under way: another one would be
+    /// refused.
+    pub fn busy(&self) -> bool {
+        self.importing.is_some() || self.moving.is_some() || self.erasing.is_some()
+    }
+
     pub fn erase(&mut self) -> bool {
         if self.importing.is_some() {
             return false;

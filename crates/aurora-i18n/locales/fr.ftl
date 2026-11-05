@@ -9070,6 +9070,7 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count } fichiers effacés.
     }
 ui-options-chat-logs-erase-failed = Certains fichiers n'ont pas pu être effacés.
+ui-options-chat-logs-busy = L'historique est occupé par un import, un déplacement ou un effacement : réessayez dans un instant.
 ui-options-chat-logs-import-login = Importer à la connexion
 ui-options-chat-logs-import-login-help = À chaque connexion, ajoute ce que le Legacy Viewer a écrit pour ce compte depuis le dernier import. Ses fichiers sont seulement lus. Activé par défaut.
 ui-options-chat-logs-import-login-off = L'import à la connexion est maintenant désactivé, pour que cet historique ne revienne pas.

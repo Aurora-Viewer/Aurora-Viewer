@@ -156,7 +156,9 @@ fn kind(path: &Path) -> Kind {
         .and_then(|f| f.take(store::LOG_RECALL_SIZE).read_to_end(&mut head))
         .is_err()
     {
-        return Kind::NoStamp;
+        // unreadable now (locked, denied): its merge fails and is counted
+        // as failed, which says to import again, not as left out
+        return Kind::Transcript;
     }
     let head = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&head);
     let head = String::from_utf8_lossy(head);

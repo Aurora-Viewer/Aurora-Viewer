@@ -14271,7 +14271,11 @@ impl App {
             self.chat_import_start(folders);
         }
         if res.erase_chat_logs {
-            self.options_ui.chat_log_status.clear();
+            self.options_ui.chat_log_status = if self.world.chat_log.busy() {
+                aurora_i18n::tr!("ui-options-chat-logs-busy").to_owned()
+            } else {
+                String::new()
+            };
             self.world.chat_log.erase();
         }
         if let Some((folder, choice)) = res.folder {

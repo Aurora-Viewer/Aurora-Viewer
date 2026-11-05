@@ -77,6 +77,11 @@ impl App {
                 if self.settings.chat_log_location == location {
                     return;
                 }
+                // the files could not move now: keep the folder they are in
+                if self.world.chat_log.busy() {
+                    self.options_ui.chat_log_status = aurora_i18n::tr!("ui-options-chat-logs-busy").to_owned();
+                    return;
+                }
                 self.options_ui.chat_log_status.clear();
                 let previous = std::mem::replace(&mut self.settings.chat_log_location, location);
                 if self.world.chat_log.relocate(chat_log_root(&self.settings.chat_log_location)) {

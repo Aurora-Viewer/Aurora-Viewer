@@ -9064,6 +9064,7 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count }個のファイルを消去しました。
     }
 ui-options-chat-logs-erase-failed = 一部のファイルを消去できませんでした。
+ui-options-chat-logs-busy = 履歴はインポート、移動、または消去の処理中です。しばらくしてからもう一度お試しください。
 ui-options-chat-logs-import-login = ログイン時にインポート
 ui-options-chat-logs-import-login-help = ログインのたびに、前回のインポート以降にLegacy Viewerがこのアカウントに書き込んだ内容を追加します。Legacy Viewerのファイルは読み取るだけです。既定ではオンです。
 ui-options-chat-logs-import-login-off = この履歴が戻らないよう、ログイン時のインポートをオフにしました。
