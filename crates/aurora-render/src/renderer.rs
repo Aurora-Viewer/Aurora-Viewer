@@ -448,6 +448,33 @@ impl Smaa {
     }
 }
 
+/// The irradiance pass of LLReflectionMapManager: direct light only, without
+/// the sky ambient (LLSettingsVOSky::applySpecial) nor the hemisphere colours
+/// the surfaces of a sky with a probe ambiance take it from (shade_pbr); no
+/// clouds (LLDrawPoolWLSky::renderDeferred); the sky's blue_horizon and
+/// blue_density at their HSL lightness (RenderDesaturateIrradiance,
+/// draw_color), so that the sky does not tint the world's ambient blue; the
+/// `lights` local lights times `light_scale` (mLightScale).
+fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
+    let lightness = |c: [f32; 4]| {
+        let l = (c[0].max(c[1]).max(c[2]) + c[0].min(c[1]).min(c[2])) * 0.5;
+        [l, l, l, c[3]]
+    };
+    u.sky_blue_horizon = lightness(u.sky_blue_horizon);
+    u.sky_blue_density = lightness(u.sky_blue_density);
+    let no_light = |c: [f32; 4]| [0.0, 0.0, 0.0, c[3]];
+    u.sky_ambient = no_light(u.sky_ambient);
+    u.sky_zenith = no_light(u.sky_zenith);
+    u.sky_horizon = no_light(u.sky_horizon);
+    u.ground_color = no_light(u.ground_color);
+    u.sky_cloud_color[3] = 0.0;
+    for light in &mut u.lights[..lights] {
+        for channel in &mut light.color_falloff[..3] {
+            *channel *= light_scale;
+        }
+    }
+}
+
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
@@ -6259,20 +6286,7 @@ impl Backend {
                 self.probe_irr_faces = 0;
             }
             if irr_capture {
-                // the irradiance pass of LLReflectionMapManager: no ambient
-                // (LLSettingsVOSky::applySpecial), no clouds
-                // (LLDrawPoolWLSky::renderDeferred) and, RenderDesaturateIrradiance,
-                // the sky's blue_horizon and blue_density at their HSL
-                // lightness (draw_color), so that the sky does not tint the
-                // world's ambient blue
-                let lightness = |c: [f32; 4]| {
-                    let l = (c[0].max(c[1]).max(c[2]) + c[0].min(c[1]).min(c[2])) * 0.5;
-                    [l, l, l, c[3]]
-                };
-                u.sky_blue_horizon = lightness(u.sky_blue_horizon);
-                u.sky_blue_density = lightness(u.sky_blue_density);
-                u.sky_ambient = [0.0, 0.0, 0.0, u.sky_ambient[3]];
-                u.sky_cloud_color[3] = 0.0;
+                irradiance_pass_uniforms(&mut u, c.light_scale, f.lights.len().min(MAX_LIGHTS));
                 let r = crate::probes::IRR_CAPTURE_RES as f32;
                 u.screen = [r, r, 1.0 / r, 1.0 / r];
                 self.queue.write_buffer(&self.refl_buffers[8], 0, bytemuck::bytes_of(&u));
@@ -8920,6 +8934,33 @@ mod tests {
         assert!(!taa_motion_applied(Some(" off "), 5));
         assert!(taa_motion_applied(Some("alt"), 4));
         assert!(!taa_motion_applied(Some("alt"), 5));
+    }
+
+    #[test]
+    fn the_irradiance_pass_has_no_ambient_and_scales_the_local_lights() {
+        let mut u: Box<FrameU> = bytemuck::zeroed_box();
+        u.sky_ambient = [0.5, 0.5, 0.5, 0.7];
+        u.sky_zenith = [0.4, 0.4, 0.4, 1.0];
+        u.sky_horizon = [0.3, 0.3, 0.3, 1.0];
+        u.ground_color = [0.2, 0.2, 0.2, 1.0];
+        u.sky_blue_horizon = [0.2, 0.4, 0.8, 0.9];
+        u.sky_cloud_color = [1.0, 1.0, 1.0, 0.5];
+        u.sun_color = [3.0, 3.0, 3.0, 1.0];
+        u.lights[0].color_falloff = [1.0, 0.5, 0.25, 0.75];
+        u.lights[1].color_falloff = [1.0, 1.0, 1.0, 0.5];
+        irradiance_pass_uniforms(&mut u, 0.1, 1);
+        // no ambient, whichever way the shaders read it (w is not a light)
+        assert_eq!(u.sky_ambient, [0.0, 0.0, 0.0, 0.7]);
+        assert_eq!(u.sky_zenith, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(u.sky_horizon, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(u.ground_color, [0.0, 0.0, 0.0, 1.0]);
+        // desaturated sky, no clouds, the sun untouched
+        assert_eq!(u.sky_blue_horizon, [0.5, 0.5, 0.5, 0.9]);
+        assert_eq!(u.sky_cloud_color[3], 0.0);
+        assert_eq!(u.sun_color, [3.0, 3.0, 3.0, 1.0]);
+        // the lights of the frame's list, their falloff kept
+        assert_eq!(u.lights[0].color_falloff, [0.1, 0.05, 0.025, 0.75]);
+        assert_eq!(u.lights[1].color_falloff, [1.0, 1.0, 1.0, 0.5]);
     }
 
     #[test]
