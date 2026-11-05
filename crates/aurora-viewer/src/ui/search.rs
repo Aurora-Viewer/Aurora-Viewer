@@ -22,6 +22,7 @@ mod details;
 use super::place_details::Ctx;
 use super::web_view::WebView;
 use super::widgets::{self, ActionKind, Floater};
+use crate::settings::ClockZone;
 use crate::theme::Palette;
 use crate::world::search::{Key, List, RatingBoxes, Request, Row, RowIcon, SearchSettings, Status, Tab, Value};
 use aurora_net::search::{
@@ -241,15 +242,70 @@ fn columns(tab: Tab) -> Vec<(&'static str, f32)> {
 }
 
 /// The text of a cell and whether it is a figure (written against the right
-/// edge of its column).
-fn cell_text(v: &Value) -> (String, bool) {
+/// edge of its column); an event's date in `zone`.
+fn cell_text(v: &Value, zone: ClockZone) -> (String, bool) {
     match v {
         Value::None => (String::new(), false),
         Value::Int(i) => (i.to_string(), true),
         Value::Real(r) => (aurora_i18n::number_text(&format!("{r:.1}")), true),
         Value::Text(t) => (t.clone(), false),
-        Value::Dated { text, .. } => (text.clone(), false),
+        Value::Dated { text, unix } => (event_date_text(text, i64::from(*unix), zone), false),
     }
+}
+
+/// The date parts of an event's start in `zone` (`land::slt_parts`'s
+/// order): the clock's choice of SLT or local time (#1754).
+pub(crate) fn event_parts(unix: i64, zone: ClockZone) -> (i64, usize, i64, usize, i64, i64, i64) {
+    super::land::parts_at(unix, super::bars::clock::offset(zone, unix))
+}
+
+/// An event's date as the list and the details write it. In SLT, the
+/// directory's own text ("11/04 14:00"), as the Legacy Viewer shows it
+/// (FSPanelSearchEvents' "date" column, LLPanelEventInfo's mTimeStr). In
+/// local time, the same "MM/DD HH:MM" worked out from the event's UTC time,
+/// with the zone ("11/04 23:00 CET"): the Legacy Viewer's clock has no
+/// local time, Aurora's events follow Aurora's clock. Without a time, the
+/// directory's text.
+pub(crate) fn event_date_text(server: &str, unix: i64, zone: ClockZone) -> String {
+    if zone == ClockZone::Slt || unix <= 0 {
+        return server.to_owned();
+    }
+    let offset = super::bars::clock::offset(zone, unix);
+    zoned_date_text(unix, offset, &super::bars::clock::zone_name(zone, unix))
+}
+
+/// The hours of an event in `zone`: "16:00–17:00", the start alone
+/// without a duration, and "(+1)" after an end on a later day
+/// ("23:00–01:00 (+1)"). The end takes the zone's offset at its own time,
+/// so an event over a daylight saving switch ends at the hour the clock
+/// will then show.
+pub(crate) fn event_hours(start: i64, minutes: u32, zone: ClockZone) -> String {
+    event_hours_at(start, minutes, |t| super::bars::clock::offset(zone, t))
+}
+
+/// `event_hours` with the zone's offset at a time.
+fn event_hours_at(start: i64, minutes: u32, offset: impl Fn(i64) -> i64) -> String {
+    let at = |t: i64| {
+        let local = t + offset(t);
+        (local.div_euclid(86400), (local.rem_euclid(86400)) / 60)
+    };
+    let (day, from) = at(start);
+    let first = format!("{:02}:{:02}", from / 60, from % 60);
+    if minutes == 0 {
+        return first;
+    }
+    let (end_day, to) = at(start + i64::from(minutes) * 60);
+    let range = format!("{first}–{:02}:{:02}", to / 60, to % 60);
+    match end_day - day {
+        0 => range,
+        days => format!("{range} (+{days})"),
+    }
+}
+
+/// "MM/DD HH:MM <zone>" at `offset` seconds from UTC.
+fn zoned_date_text(unix: i64, offset: i64, zone: &str) -> String {
+    let (_, month, day, _, hour, minute, _) = super::land::parts_at(unix, offset);
+    format!("{month:02}/{day:02} {hour:02}:{minute:02} {zone}")
 }
 
 /// "> 100 found" when a next page exists, else the number of rows.
@@ -1018,8 +1074,9 @@ fn paint_row(ui: &egui::Ui, p: &Palette, row: &Row, cells: &[Rect], font: &egui:
     }
     let left = egui::pos2(name_cell.left() + 26.0, name_cell.center().y);
     let cut = widgets::paint_elided(ui, &row.name, left, name_cell.right() - left.x - 4.0, font.clone(), p.ink);
+    let zone = super::bars::clock::zone();
     for (value, cell) in row.values.iter().zip(cells.iter().skip(1)) {
-        let (text, figure) = cell_text(value);
+        let (text, figure) = cell_text(value, zone);
         if text.is_empty() {
             continue;
         }
@@ -1152,13 +1209,90 @@ mod tests {
 
     #[test]
     fn cells_and_counts() {
-        assert_eq!(cell_text(&Value::Int(2500)), ("2500".to_owned(), true));
-        assert_eq!(cell_text(&Value::None), (String::new(), false));
+        assert_eq!(cell_text(&Value::Int(2500), ClockZone::Slt), ("2500".to_owned(), true));
+        assert_eq!(cell_text(&Value::None, ClockZone::Local), (String::new(), false));
         let dated = Value::Dated {
             text: "10/12 18:00".into(),
             unix: 5,
         };
-        assert_eq!(cell_text(&dated), ("10/12 18:00".to_owned(), false));
+        assert_eq!(cell_text(&dated, ClockZone::Slt), ("10/12 18:00".to_owned(), false));
         assert_eq!(row_icon(RowIcon::Auction), "gavel");
+    }
+
+    /// The date parts `slt_parts` gave before #1754 (SLT offset added,
+    /// then the civil date), kept here to compare with.
+    fn slt_parts_before(secs: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
+        let t = secs + crate::world::chat_log::format::pacific_offset_hours(secs) * 3600;
+        let days = t.div_euclid(86400);
+        let tod = t.rem_euclid(86400);
+        let (y, m, d) = aurora_net::profile::civil_from_days(days);
+        let wday = (days + 4).rem_euclid(7) as usize;
+        (y, m as usize, i64::from(d), wday, tod / 3600, (tod / 60) % 60, tod % 60)
+    }
+
+    /// #1754, the clock in SLT (its default): every event date stays the
+    /// directory's own text and every part the SLT one, each half hour of
+    /// 2026, both daylight saving switches included.
+    #[test]
+    fn event_dates_in_slt_are_unchanged() {
+        for t in (1_767_225_600..1_798_761_600_i64).step_by(1800) {
+            let server = "11/04 14:00";
+            assert_eq!(event_date_text(server, t, ClockZone::Slt), server, "{t}");
+            let dated = Value::Dated {
+                text: server.into(),
+                unix: t as u32,
+            };
+            assert_eq!(cell_text(&dated, ClockZone::Slt), (server.to_owned(), false), "{t}");
+            assert_eq!(event_parts(t, ClockZone::Slt), slt_parts_before(t), "{t}");
+            assert_eq!(super::super::land::slt_parts(t), slt_parts_before(t), "{t}");
+        }
+        // an event without a time keeps its text in local time too
+        assert_eq!(event_date_text("11/04 14:00", 0, ClockZone::Local), "11/04 14:00");
+    }
+
+    /// #1754, the clock in local time: the date and hour worked out in the
+    /// zone, which ends the text; the day changes where local midnight is.
+    #[test]
+    fn event_dates_in_local_time() {
+        // 2026-11-04 22:00 UTC: 14:00 PST, 23:00 in Paris
+        assert_eq!(zoned_date_text(1_793_829_600, 3600, "CET"), "11/04 23:00 CET");
+        // 2026-11-05 07:30 UTC: 23:30 on 11/04 in SLT, 16:30 on 11/05 in Tokyo
+        assert_eq!(zoned_date_text(1_793_863_800, -8 * 3600, "PST"), "11/04 23:30 PST");
+        assert_eq!(zoned_date_text(1_793_863_800, 9 * 3600, "JST"), "11/05 16:30 JST");
+        assert_eq!(zoned_date_text(1_793_863_800, -5 * 3600 - 1800, "UTC−5:30"), "11/05 02:00 UTC−5:30");
+        // the machine's own zone, as the clock names it
+        let t = 1_793_829_600;
+        use super::super::bars::clock::{offset, zone_name};
+        let own = zoned_date_text(t, offset(ClockZone::Local, t), &zone_name(ClockZone::Local, t));
+        assert_eq!(event_date_text("11/04 14:00", t, ClockZone::Local), own);
+        let dated = Value::Dated {
+            text: "11/04 14:00".into(),
+            unix: t as u32,
+        };
+        assert_eq!(cell_text(&dated, ClockZone::Local), (own, false));
+        assert_eq!(zone_name(ClockZone::Slt, t), "SLT");
+    }
+
+    /// The details' hours from start to end (#1754 follow-up: a range, not
+    /// "· 1:00", read as a zone's offset).
+    #[test]
+    fn event_hours_from_start_to_end() {
+        // 2026-11-04 16:00 UTC, an hour: in GMT, in SLT (08:00 PST)
+        let start = 1_793_808_000;
+        assert_eq!(event_hours_at(start, 60, |_| 0), "16:00–17:00");
+        assert_eq!(event_hours_at(start, 60, |_| -8 * 3600), "08:00–09:00");
+        assert_eq!(event_hours_at(start, 90, |_| 3600), "17:00–18:30");
+        // no duration: the start alone
+        assert_eq!(event_hours_at(start, 0, |_| 0), "16:00");
+        // past midnight, and over two days
+        assert_eq!(event_hours_at(start, 9 * 60, |_| 0), "16:00–01:00 (+1)");
+        assert_eq!(event_hours_at(start, 8 * 60, |_| 0), "16:00–00:00 (+1)");
+        assert_eq!(event_hours_at(start, 50 * 60, |_| 0), "16:00–18:00 (+2)");
+        // an end after the daylight saving switch of 2026-11-01 (09:00
+        // UTC): 23:00 PDT to 01:00 PST is three real hours
+        let before = 1_793_520_000 - 2 * 3600; // 2026-11-01 06:00 UTC, 23:00 PDT on 10/31
+        assert_eq!(event_hours(before, 180, ClockZone::Slt), "23:00–01:00 (+1)");
+        // the clock's zone
+        assert_eq!(event_hours(start, 60, ClockZone::Slt), "08:00–09:00");
     }
 }

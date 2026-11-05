@@ -9432,6 +9432,7 @@ search-aurora-next-page = Next 100 results
 search-aurora-previous-page = Previous 100 results
 search-aurora-tomorrow = Tomorrow
 search-aurora-event-time = { $day } · { $time } SLT
+search-aurora-event-time-zone = { $day } · { $time } { $zone }
 search-aurora-slt = SLT
 search-aurora-linden = L$ { $amount }
 search-aurora-auction = Auction

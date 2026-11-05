@@ -5010,6 +5010,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo; `teleport` opens the offline link test |
+| `AURORA_DEMO_EVENT_TIMES=1` | The demo events start from the next hour, to try their times in SLT and local time |
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_WEB_BROWSER=<page>` | Toolbar web browser window open at start on this page |
@@ -7545,7 +7546,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   island, its left and right edges on the island's, down to the work
   area's bottom; the compact view where it stands); the clock (#453):
   `clocklocal` (local time instead of the saved time, so a click on the
-  clock does not change it in that run), `noseconds` (without its
+  clock does not change it in that run), `clockslt` (SLT the same way),
+  `noseconds` (without its
   seconds), `clock12` / `clock24` (12 / 24 hours instead of the saved
   format; Auto writes the `clock:` log line at startup with the system's
   12 or 24 hours). In demo the network's graphs show a synthetic minute of
@@ -8108,6 +8110,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   A text containing `page` (for example `people:page`) answers a full
   page: "> 100 found" and the Next button; a text containing
   `xyz` finds nothing ("'xyz' not found").
+- **`AURORA_DEMO_EVENT_TIMES=1`** (with `AURORA_DEMO_SEARCH=events`): the
+  demo events start at the next whole hour, then 2, 5, 8, 12 and 26 hours
+  later, instead of their fixed October dates, so the list reads "Today"
+  and "Tomorrow" and crosses midnight. A left click on the clock switches
+  every event time between SLT and local time (#1754): the Legacy look's
+  Date column and the details' Date field ("11/04 14:00" in SLT, the
+  directory's text; "11/04 23:00 CET" in local time), Aurora's event cards
+  ("Today · 14:00 SLT" / "Today · 23:00 CET", the day following local
+  midnight) and the date banner of the details: the hours from start to
+  end ("16:00–17:00", "23:00–01:00 (+1)" past midnight) over the zone.
 - **`AURORA_DEMO_SEARCH_WEB=<page>`**: the address the Web tab loads in
   demo (a local `file:///…` page is enough to try back, forward,
   reload and the address). Set it to `teleport` for the bundled offline
