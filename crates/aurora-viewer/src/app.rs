@@ -14579,6 +14579,8 @@ impl App {
                         let reset = self.personal_lighting(&ctx, &p, true);
                         self.env_actions(reset);
                     }
+                    // Incoming pose consent still needs to be answerable over the full-frame photo.
+                    self.poser_consent_ui(&ctx, &p);
                     // the exit's question still shows over the photo mode
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     return a;
