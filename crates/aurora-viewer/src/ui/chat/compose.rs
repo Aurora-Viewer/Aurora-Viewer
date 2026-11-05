@@ -20,10 +20,11 @@ const TYPING_H: f32 = 18.0;
 pub(super) const BOX_H: f32 = 42.0;
 const BUTTON: f32 = 28.0;
 
-/// What the field takes under the messages: typing line, box and margin.
-pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>) -> f32 {
+/// What the field takes under the messages: typing line, box, the recent
+/// emojis and margin.
+pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>, recent: f32) -> f32 {
     let field = egui::Id::unique(("conv_input", conversation));
-    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + 12.0
+    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + recent + 12.0
 }
 
 /// The volume of what we say in the nearby chat.
@@ -193,6 +194,16 @@ pub(super) fn show(
                     .inner
                 });
             let resp = field.inner;
+            // ---- the recent emojis, under the box
+            if st.recent_emojis.shown() {
+                let (row, _) = ui.allocate_exact_size(
+                    egui::vec2(width - 28.0, crate::ui::emoji::recent::HEIGHT - ui.spacing().item_spacing.y),
+                    egui::Sense::hover(),
+                );
+                if let Some(c) = st.recent_emojis.row(ui, p, emoji, row, conv_input) {
+                    crate::ui::emoji::recent::insert(ui.ctx(), conv_input, &mut draft, c);
+                }
+            }
             if st.emoji_open && super::popout::claim_picker(ui.ctx()) {
                 let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
                 let mut close = false;

@@ -188,6 +188,7 @@ const BEFORE: &[&str] = &[
     "chat_timestamps_nearby",
     "chat_timestamps_im",
     "show_chat_channel",
+    "show_recent_emojis",
     "compact_automated_chat",
     "compact_im_system_lines",
     "chat_keep_focus",
