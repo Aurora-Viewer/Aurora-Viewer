@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+`ui/widgets/local_texture.rs` shares local asset/image identity and the Local previews eye badge across texture controls. Swatches keep their original click and drag response; the mark is painted inside their lower-right corner, including pending images.
+
+`world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.
+
+`ui/texture_picker/pipette.rs` routes a transient world sample to the picker session that armed it, independently of its opening window. `app/texture_picker.rs` samples the nearest volume face through the shared scene pipette ray query; inventory copy permissions, material assets and reversible previews remain owned by the picker.
+
 `ui/resource_drop.rs` resolves inventory and resource-inspector cargo for editable
 texture/material previews, including links, snapshots and blank materials. It
 owns hover feedback and consumes accepted/refused releases. `TexturePicker`
@@ -7,12 +13,6 @@ can defer a thumbnail's drop until the same UI pass has inventory access, then
 uses the caller's ordinary choice path without opening a dialog. World texture
 drops follow the object's local Blinn-Phong preview while preserving PBR data;
 Alt retains explicit material removal.
-
-`ui/widgets/local_texture.rs` shares local asset/image identity and the Local previews eye badge across texture controls. Swatches keep their original click and drag response; the mark is painted inside their lower-right corner, including pending images.
-
-`world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.
-
-`ui/texture_picker/pipette.rs` routes a transient world sample to the picker session that armed it, independently of its opening window. `app/texture_picker.rs` samples the nearest volume face through the shared scene pipette ray query; inventory copy permissions, material assets and reversible previews remain owned by the picker.
 
 `scene/avatar.rs::AttachPoint` retains the parent bone for IK and the
 point's own rig joint/rest matrix for placement. `anchors::attach_frame`
