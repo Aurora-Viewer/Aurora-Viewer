@@ -626,6 +626,8 @@ pub struct World {
     offline_im_requested: bool,
     /// Which group titles the name tags show (from the settings).
     pub group_titles: names::GroupTitles,
+    /// Whose shared portals are shown (from the settings, `portals::Sources`).
+    pub portal_sources: portals::Sources,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
     /// Bumps, pushes and hits (collisions.rs).
@@ -862,6 +864,7 @@ impl World {
             arrival_wait_since: None,
             offline_im_requested: false,
             group_titles: Default::default(),
+            portal_sources: Default::default(),
             region_alerts: Default::default(),
             collisions: Default::default(),
             fly_after_teleport: false,
