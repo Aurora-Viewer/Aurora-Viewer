@@ -260,7 +260,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
         if let Some(command) = Shortcut::from_key(key, mods, tool.open) {
             // The picker owns Escape in stages (pipette, then dialog).
             // Leave its event intact instead of consuming a no-op Close.
-            if command == Shortcut::Close && tool.ui.color_picker.is_open() {
+            if command == Shortcut::Close && (tool.ui.color_picker.is_open() || crate::ui::texture_picker::pipette::armed(ctx)) {
                 continue;
             }
             if !repeat || matches!(command, Shortcut::History(_)) {

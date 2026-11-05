@@ -359,7 +359,11 @@ fn light_section(
             p,
             env.images,
             &mut tool.ui.wanted_images,
-            img.map(|i| i.texture),
+            world
+                .objects
+                .get(idx)
+                .and_then(|object| object.visual_light_image())
+                .map(|image| image.texture),
             if legacy { "" } else { aurora_i18n::tr!("common-texture") },
             swatch_size,
             false,

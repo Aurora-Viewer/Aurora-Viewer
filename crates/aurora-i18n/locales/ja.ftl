@@ -12673,7 +12673,7 @@ wearable-changed = この容姿のアイテムは変更されたか、もう着�
 wearable-error = この容姿のアセットを読み取りまたは保存できませんでした。
 wearable-readonly = このアイテムは修正できません。
 wearable-texture-permissions = コピーの権限があり、譲渡可能な衣類の場合は譲渡の権限もあるインベントリのテクスチャを選択してください。
-wearable-local-preview = ローカルテクスチャは自分だけのプレビューです。保存する前にテクスチャをアップロードし、インベントリから選択してください。
+wearable-local-preview = 保存するとローカルテクスチャの参照が保持されます。画像はアップロードされません。
 wearable-loading = 容姿のアイテムを読み込んでいます…
 wearable-saving = 保存しています…
 wearable-saved = 容姿のアイテムを保存しました。
@@ -13115,3 +13115,11 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
+
+picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。
+
+picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
+
+local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
