@@ -467,12 +467,18 @@ impl AnimationClock {
     }
 }
 
+/// Advanced › Animation Speed steps (LLAdvancedAnimTenFaster / Slower):
+/// 0.1..=2.0, rounded to one decimal so repeated steps never drift.
 pub fn adjusted_animation_speed(speed: f32, change: f32) -> f32 {
     (((speed + change) * 10.0).round() / 10.0).clamp(0.1, 2.0)
 }
 
+/// The factor one skeleton plays at: Slow Motion Animations sets our avatar
+/// to 0.2 (handleSlowMotionAnimation), every other one follows the global
+/// speed. Unlike the Legacy Viewer, a later global step does not silently
+/// undo a ticked Slow Motion.
 pub fn effective_animation_speed(speed: f32, slow_motion: bool, is_ours: bool) -> f32 {
-    speed.clamp(0.1, 2.0) * if slow_motion && is_ours { 0.2 } else { 1.0 }
+    if slow_motion && is_ours { 0.2 } else { speed.clamp(0.1, 2.0) }
 }
 
 impl Motion {
@@ -848,7 +854,9 @@ impl Controller {
     }
 
     /// Set the keyframe clock rate without changing the current animation phase.
+    /// An import preview follows its own timeline, so it plays at 1.0.
     pub fn set_time_factor(&mut self, factor: f32, now: Instant) {
+        let factor = if self.preview_start.is_some() { 1.0 } else { factor };
         self.animation_clock.set_factor(factor, now);
     }
 
@@ -2311,9 +2319,49 @@ mod tests {
         assert_eq!(adjusted_animation_speed(2.0, 0.1), 2.0);
         assert_eq!(adjusted_animation_speed(0.2, -0.1), 0.1);
         assert_eq!(adjusted_animation_speed(0.1, -0.1), 0.1);
-        assert_eq!(effective_animation_speed(1.5, true, true), 0.3);
+        // ten steps down then ten up land exactly back on 1.0 (no f32 drift)
+        let mut speed = 1.0;
+        for _ in 0..10 {
+            speed = adjusted_animation_speed(speed, -0.1);
+        }
+        assert_eq!(speed, 0.1);
+        for _ in 0..9 {
+            speed = adjusted_animation_speed(speed, 0.1);
+        }
+        assert_eq!(speed, 1.0);
+        assert_eq!(effective_animation_speed(1.5, true, true), 0.2);
         assert_eq!(effective_animation_speed(1.5, true, false), 1.5);
         assert_eq!(effective_animation_speed(1.5, false, true), 1.5);
+    }
+
+    /// The import preview's timeline drives its own clock: the session speed
+    /// must not scale the sampled pose against the preview's seek bar.
+    #[test]
+    fn animation_speed_leaves_the_import_preview_timeline_alone() {
+        let rig = rig();
+        let animation = Arc::new(BoundAnim::bind(
+            Animation {
+                base_priority: 1,
+                duration: 8.0,
+                emote_name: String::new(),
+                loop_in: 0.0,
+                loop_out: 8.0,
+                looping: true,
+                ease_in: 0.0,
+                ease_out: 0.0,
+                hand_pose: 0,
+                joints: Vec::new(),
+            },
+            &rig,
+        ));
+        let start = Instant::now();
+        let id = Uuid::from_u128(0xB0B);
+        let mut controller = Controller::default();
+        controller.set_preview_clock(Some((Some(id), start)));
+        controller.set_time_factor(0.2, start);
+        let sample = start + Duration::from_secs(3);
+        controller.sync(&[signal(id, 1, start)], sample, |_| Some(animation.clone()));
+        assert!((controller.playing(sample)[0].2 - 3.0).abs() < 1e-6);
     }
 
     /// The rig at rest must give the SL joint world matrices (own scale
