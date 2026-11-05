@@ -505,13 +505,15 @@ impl App {
     }
 
     /// Whether this frame's 3D drawing is paused behind
-    /// (texture_budget::Background::paused): not for a frame that carries a
-    /// part of a photo. No part is asked while the drawing is paused
-    /// (`snapshot::PausedWait`), but the pause can begin after the part of
-    /// the frame was asked, or while one asked is still on its way: drawn
-    /// paused, it was only sky (the empty lists, at a sixteenth of its size).
+    /// (texture_budget::Background::paused, busy_pause.rs): not for a frame
+    /// that carries a part of a photo. No part is asked while the drawing is
+    /// paused for memory (`snapshot::PausedWait`), but the pause can begin
+    /// after the part of the frame was asked, or while one asked is still on
+    /// its way; the busy card's pause only ends after the frame of a photo's
+    /// first part. Drawn paused, it was only sky (the empty lists, at a
+    /// sixteenth of its size).
     pub(super) fn scene_paused(&self) -> bool {
-        self.scene.textures.drawing_paused() && self.snapshots.capturing.is_none()
+        self.drawing_paused() && self.snapshots.capturing.is_none()
     }
 
     /// Whether the photo mode holds the world still.
