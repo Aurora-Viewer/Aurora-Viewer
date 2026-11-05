@@ -46,6 +46,8 @@ impl App {
     /// The import window opens: look for the viewers' folders.
     pub(super) fn chat_import_opened(&mut self) {
         self.options_ui.chat_import = ui::options::ChatImportUi { open: true, found: None };
+        // a folder chosen in an earlier opening must not join this list
+        self.chat_import.looking.clear();
         self.look_for_chat_logs(None);
     }
 
@@ -63,6 +65,12 @@ impl App {
     }
 
     pub(super) fn chat_import_start(&mut self, folders: Vec<PathBuf>) {
+        // refused now (the import at login, a move, an erasing): the window
+        // stays, to try again
+        if self.world.chat_log.busy() {
+            self.options_ui.chat_log_status = aurora_i18n::tr!("ui-options-chat-logs-busy").to_owned();
+            return;
+        }
         self.options_ui.chat_log_status.clear();
         self.options_ui.chat_import.open = false;
         self.world.chat_log.import(folders);
@@ -92,7 +100,22 @@ impl App {
         let Some(report) = self.world.import_report.take() else {
             return;
         };
-        self.options_ui.chat_log_status = import_status(&report);
+        // the import at login runs every session: its line in the
+        // preferences only when something failed, the notice says the rest
+        if !report.at_login || report.failed > 0 {
+            self.options_ui.chat_log_status = import_status(&report);
+        }
+        if report.at_login && report.added > 0 {
+            // on by default: say what came in, and where to turn it off
+            self.world.system_notice(
+                aurora_i18n::tr!(
+                    "ui-options-chat-logs-imported-at-login",
+                    count = report.added,
+                    files = report.changed.len()
+                ),
+                crate::world::notice_topics::Topic::Info,
+            );
+        }
         self.history_ui.imported(&report.changed);
         self.demo_chat_import_done();
     }

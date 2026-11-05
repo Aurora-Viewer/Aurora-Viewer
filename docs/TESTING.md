@@ -83,6 +83,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1\|empty` | Open the avatar display-exceptions editor |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
+| `AURORA_DEMO_PORTALS=stranger\|stranger-groups\|stranger-hidden` | A non-friend's portal under each "Show portals from" choice |
 | `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
@@ -210,6 +211,19 @@ applies when another resident's portal appears nearby.
 `keyboard-departing-allowed` starts the creator's teleport when the access
 request arrives, then changes their region after the grant is sent: the
 visitor must still receive the destination and teleport without chat focus.
+
+`AURORA_DEMO_PORTALS=stranger|stranger-groups|stranger-hidden` puts a public
+portal from a resident who is not our friend four metres ahead, then holds
+the Forward arrow from frame 600 to 810 like the keyboard modes, under the
+"Show portals from" choice it names for the run (never saved): `stranger` is
+Everyone, `stranger-groups` Friends and my groups (the resident's profile
+lists one of our groups), `stranger-hidden` Friends. The first two show the
+aperture and, on the crossing, the "Go through this portal?" question with
+the resident and the destination: Cancel stays, Go teleports, and a second
+crossing of the same portal asks no more. `stranger-hidden` shows nothing
+and walks through without a question or a teleport. Capture around frame
+760 for the question. The earlier modes (`friends`, `private-…`,
+`return…`) run with Everyone, so their non-friend portals stay visible.
 
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
@@ -4711,6 +4725,20 @@ dock in icons and labels, the left toolbar in labels). Capture at frame 780.
 run only, without opening the editor. With Aurora bars, the empty bottom
 dock must be invisible while nearby chat remains available (#1631).
 
+Combine the face modes below with `AURORA_DEMO_ACTIONS=face-drops`, which
+seeds the static action cubes without running the action-click scenario.
+`AURORA_DEMO_TEXTURE_LIBRARY`: `face-hover` holds an inventory texture over a
+synthetic cube without changing the build selection. `face-hover-transparent`
+uses zero-alpha faces; `face-hover-material` carries a PBR material and
+`face-hover-all` holds Shift. Capture at frame 700: only the target face (or all
+faces with Shift) must have the ordinary selection overlay. Keep hovering to
+check that its 700 ms flash repeats; capture several cycles (for example frames
+660,680,702,722,744,764 at 60 FPS). `face-drop-transparent`
+releases at frame 730; `face-cancel` cancels with Escape and `face-ui` moves over
+the library. Capture at frame 750 to check the overlay is cleared. Suffixes can
+be combined, for example `face-hover-material-transparent-all`. `face-hover-contents`
+holds Ctrl: no face overlay, since the cargo goes into contents.
+
 `AURORA_DEMO_TEXTURE_LIBRARY`: `preview-controls` opens a 620 × 720 texture inspector and material
 editor side by side (use `AURORA_WINDOW_SIZE=1600,1000`, capture after frame 740).
 The material has a dirty, isolated draft; test its parameters, map pickers, Save,
@@ -4895,7 +4923,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
-| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices and a delivered purchase |
+| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open\|fees\|fees-answered\|fees-short` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$ |
 | `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
@@ -5821,6 +5849,7 @@ failure. Grid validation and any paid upload are performed by the human.
   isolated profile; closing a receipt must never send another acceptance.
 - **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
 - **`AURORA_DEMO_NOTIFS=group-notice|legacy-group-notice|group-notice-saved`**: two group notices at frame 700. Aurora Builders (no insignia: the group glyph) from Tess Touch without an attachment, then Northern Wolves (its insignia beside the title) from Orion with a "Texture kit" object attached. Each card is titled "group : subject", its text starts with "Sent by" and the sender, both names are links; the attachment row shows its icon, name and kind with "Save to inventory" beside it, or under it when a long translation leaves the name no room. `legacy-group-notice` shows them in the Legacy toasts; `group-notice-saved` saves the attachment at frame 850: the card stays out with a greyed "Saved". Capture at frame 760 (900 for `group-notice-saved`) in English and French.
+- **`AURORA_DEMO_NOTIFS=fees|fees-answered|fees-short`**: at frame 700, an invitation to Lagoon Sailing Club with a L$ 50 membership fee ("Membership fee" under its text, "Join · L$ 50" on its button) and a tip jar of Tess Touch asking to take L$ and animate the avatar: titled "Warning: access to your account", the warning then the other permission, Deny as the main button and Allow access beside it. `fees-answered` answers at frame 850: the invitation is replaced by "Join the group" naming the cost (Join / Cancel), the question is denied and the nearby chat tells it ("… has been denied permission to: Take L$ from your account."). `fees-short` asks L$ 5000: Accept at frame 850 leaves the invitation and adds "You do not have enough L$ to join this group". Capture at frame 760 (`fees`) or 900.
 - **`AURORA_DEMO_NOTIFS=purchase|purchase-open`**: a Marketplace purchase delivered at frame 700, in the grid's words, from no sender (#1604), with the demo inventory loaded just before. The nearby chat shows it as a notice (the box of items in compact rows, no "System" sender with its letter); "Received Items" in its text is a link to that folder. `purchase-open` clicks the link at frame 760: the inventory opens on its Received tab. Capture at frame 740 (`purchase`) or 820 (`purchase-open`).
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
@@ -7598,7 +7627,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   - `import`: the import of a Legacy Viewer's chat history over a synthetic
     folder, `chat_logs\demo-legacy-viewer\<demo account>\`, rewritten at each
     launch. It holds Nova's conversation (a month older, with one message
-    Aurora's file has too), a group, a dated nearby chat file, a
+    Aurora's file has too), a group whose history was written again at a
+    login (two lines that must stay out), a dated nearby chat file, a
     `search_history.txt` that must stay out and an `Old Friend.txt` without
     timestamps, which the result line counts as left out. `import`:
     Preferences › Chat, History, with the import window listing that folder,
@@ -7606,7 +7636,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     window shows Nova's merged file by time, without the shared message
     twice, and the open conversation shows the added lines. `import:again`:
     two runs, the result line ends on "Nothing new to import" and the file
-    left out. `import:login`: what Import at login does, no window.
+    left out. `import:login`: what Import at login does, no window, and
+    the notice it leaves in the nearby chat (messages and conversations
+    added, where to turn it off). Outside this mode the demo never imports
+    at login, whatever the setting: it would read the PC's real Legacy
+    Viewer folders.
     `import:same`: the list also has the folder Aurora writes to, unticked
     and greyed. `import:none`: no folder found, the window says so
     and offers the folder dialog.
@@ -9017,7 +9051,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
-| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
+| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
 | `AURORA_DEMO_SOUND_OCCLUSION=1` | Three looping sounds: in the open, behind a wall, shut in a box; each one's occlusion in the log |
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
@@ -9304,7 +9338,10 @@ What the inventory must show with these scenarios:
   `ask` (or `1`) starts a parcel media on `media.example.com`, which the
   filter asks about (the question is up from the first frames; nothing
   loads until it is answered), `first` the same with the first use's
-  explanation and its "Do not filter media" button, `music` starts the
+  explanation and its "Do not filter media" button, `data` the same on a
+  `data:` page (asked about under the domain "data"), `script` on a
+  `javascript:` URL (refused without a question, told in the local chat;
+  so are `file:` and `blob:`), `music` starts the
   parcel music on `radio.example.org` (the log has no `parcel music:` line
   before the answer), `list` puts three sites in the list of Preferences ›
   Preferences › Media (`AURORA_DEMO_OPTIONS=media`). In the demo the
@@ -9313,11 +9350,12 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
   profile's filter is on. `worn` puts media on `media.example.com` on the
   object worn on our back (that of `AURORA_DEMO_WORN`), `hud` on a worn HUD
-  screen: no question, as "Trust my worn items" is on (the log has no
-  `media filter: asking about` line). `worn-ask` / `hud-ask` turn that
-  option off for the run, and the question comes; `worn-blocked` /
-  `hud-blocked` put the site in the list as blocked: refused without a
-  question, told in the local chat.
+  screen, both worn from an inventory item we made: no question, as "Trust
+  my worn items" is on (the log has no `media filter: asking about` line).
+  `worn-gift` / `hud-gift` make that item someone else's creation, and the
+  question comes; `worn-ask` / `hud-ask` turn the option off for the run,
+  and the question comes; `worn-blocked` / `hud-blocked` put the site in
+  the list as blocked: refused without a question, told in the local chat.
 - **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|blacklist-ignored|avatar-menu|avatar-menu-mixed|avatar-menu-pie`** exercises Sound Explorer
   with a looping object, triggered avatar and default collision sound. `1`
   keeps the default filters; `all` shows avatars, collisions and repeated
@@ -9558,6 +9596,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_TEMPORAL=0` or `alt` | GTAO without its accumulation over the frames (fixed noise, finer grain), as before |
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
+| `AURORA_TAA_MOTION=0` or `alt` | TAA reprojected through the camera alone, without the motion vectors, as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
@@ -9570,6 +9609,7 @@ What the inventory must show with these scenarios:
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
+| `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
 
@@ -9594,16 +9634,17 @@ What the inventory must show with these scenarios:
   `vkCreateInstance` one second after start (#901). Unless Preferences ›
   Graphics › Overlays › "Allow other programs' overlays" is on (read from
   `settings.json` at start, applied at the next start), it also disables
-  the other overlays' layers: the Steam overlay
+  the other overlays' layers: OBS Studio's game capture
+  (`VK_LAYER_OBS_HOOK`, `DISABLE_VULKAN_OBS_CAPTURE=1`, which also keeps
+  out Wallpaper Engine's copy; in most GPU device-lost reports, #2443),
+  the Steam overlay
   (`DISABLE_VK_LAYER_VALVE_steam_overlay_1`), RivaTuner (`DISABLE_RTSS_LAYER`),
   the Epic Games overlay (`EOS_OVERLAY_DISABLE_VULKAN_WIN64`), Twitch Studio,
   FPS Monitor and PlayClaw. The log says so
   (`Vulkan layers kept out of the viewer`, each layer with its program,
   and whether overlays are allowed). `keep` leaves the environment
-  as it is. OBS Studio's game capture (`VK_LAYER_OBS_HOOK`, and Wallpaper
-  Engine's copy, which declares the same variable), ReShade and the GPU
-  drivers' own layers are never disabled; `DISABLE_VULKAN_OBS_CAPTURE=1`,
-  set by the user, disables OBS's. Overlays that inject a DLL into the
+  as it is. ReShade and the GPU drivers' own layers are never disabled;
+  OBS's Window Capture needs no layer and keeps working. Overlays that inject a DLL into the
   running viewer instead (Discord) cannot be kept out: the log names them
   when they arrive (`overlay hook loaded in the viewer`). To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
@@ -9882,6 +9923,16 @@ What the inventory must show with these scenarios:
   back, the waist and the skirt of our avatar, and the large sphere behind
   the material panels, where the lines of the mesh's creases showed;
   `AURORA_DEMO_SKY=1,0.8,1.2` for a sky with strong ambient light.
+- **`AURORA_DEBUG_GEOM_DELAY=<seconds>`**: each geometry built by a job
+  (prims, sculpts, meshes, trees) waits that long on the main thread
+  before it goes to the arena (`scene/mod.rs`, `finish_geometry`). Past
+  `GEOM_KEEP_FRAMES` (600 frames) a geometry still pending is collected
+  and asked for again, so the same geometry is built twice: the case that
+  drew long stretched triangles across the scene before the second copy
+  was dropped. To see it, `AURORA_DEBUG_GEOM_DELAY=15` with
+  `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=3600`: the plaza's
+  lamp posts, material panels and large sphere load late and then look
+  as usual, without spikes or torn faces.
 - **`AURORA_DEBUG_MOTION=1`**: the motion vectors replace the image
   (`motion_debug.rs`, `shaders/motion_debug.wgsl`): the hue gives the
   direction a point moved on screen since the last frame (red left, cyan
@@ -9890,13 +9941,26 @@ What the inventory must show with these scenarios:
   (darker for the sky). The depth prepass writes them beside GTAO's
   normals (`depth_normal` in object.wgsl, from the last frame's matrices
   and joint palettes, `motion_history.rs`), so only while GTAO uses the
-  mesh normals; elsewhere, and where nothing was drawn, the camera's
-  motion alone is shown. Lip morphs and other morphs count as still. With
+  mesh normals or TAA is the anti-aliasing (`AURORA_AA=5`; without GTAO
+  TAA has its own target); elsewhere, and where nothing was drawn, the
+  camera's motion alone is shown. Lip morphs and other morphs count as
+  still. With
   `AURORA_DEMO_CAMERA=alt,640,400` capture frame 645 (the orbit: the sky
   one colour, the terrain shading through black where it crosses the
   pivot's distance); with `AURORA_DEMO_CAMERA=close,640,500,45` frame 625
   (the zoom: colours fanning out from the focus, the still objects the
   colour of the terrain behind them); frame 700 of the first is all grey.
+- **`AURORA_TAA_MOTION=0|alt`**: with TAA (`AURORA_AA=5`), its history
+  follows each pixel's motion vector by default (`shaders/taa.wgsl`), so
+  moving avatars, animesh and objects keep a steady, sharp history; where
+  the motion is exactly zero (the sky, the water and other surfaces only
+  the main pass draws, or nothing moved) it reprojects through the camera
+  and the depth as before. `0` always reprojects through the camera, the
+  old TAA; `alt` switches each second, to compare in one window. Look at
+  our avatar running (`AURORA_DEMO_DOUBLECLICK=run`) or the crowd dancing
+  (`AURORA_DEMO_CROWD=20`, `AURORA_DEMO_POS=129,134`): with `0` their
+  edges smear and shimmer while they move, with the default they stay
+  clean. A still scene is the same in both.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility
@@ -10628,7 +10692,10 @@ What the inventory must show with these scenarios:
   itself against the scene: the spheres it holds (`index entries … unlike
   their object`) and the classes of the objects tested whatever the ray
   (`classes unlike their object`); all these counters must stay at 0. Costs
-  the full search each frame.
+  the full search each frame. A click's searches among the index's
+  candidates (`Scene::action_point`, `interaction_at_ray`) are compared the
+  same way: a `click index check` warning names any point or object that
+  differs from the search over every object.
 - **`AURORA_HOVER_LEGACY=1`**: the search for the object under the cursor
   becomes the former one again (`scene/hover.rs`): every object tested
   whatever the ray (avatar, rigged mesh) is a candidate at each stage, each
@@ -10658,7 +10725,16 @@ What the inventory must show with these scenarios:
     delay of the answer. Costs the wait of `wait` at each click.
   - With `AURORA_PROFILE=1` (or `AURORA_DEMO_CLICKS`), each click writes a
     `click pick:` line: `answered after 2 frames, 9.14 ms`, or `the read
-    waited 25.56 ms` with `wait`. In demo as on the grid.
+    waited 25.56 ms` with `wait`, and one per run of the click with what it
+    cost the main thread: `Press asked for the depth in 0.05 ms`, then
+    `Press run with the depth in 0.30 ms`. In demo as on the grid.
+  - With `AURORA_PROFILE=1`, a `click frames:` line follows each click: the
+    nine frames from the press on, separated by `|`, each with its time in
+    ms, the main thread steps of 1 ms or more, the render thread (`rt=`)
+    and the GPU (`gpu=` and its largest element). A spike in the frame
+    graph at each click shows there with its side: a main thread step
+    (`between=` is where the click runs again with its depth), the render
+    thread or the GPU.
 
 - **`AURORA_STILL_CHECK=1`**: one `still check` line per second, to find
   the cause of an image that shakes when nothing should move (camera locked

@@ -156,7 +156,9 @@ fn kind(path: &Path) -> Kind {
         .and_then(|f| f.take(store::LOG_RECALL_SIZE).read_to_end(&mut head))
         .is_err()
     {
-        return Kind::NoStamp;
+        // unreadable now (locked, denied): its merge fails and is counted
+        // as failed, which says to import again, not as left out
+        return Kind::Transcript;
     }
     let head = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&head);
     let head = String::from_utf8_lossy(head);
@@ -272,6 +274,8 @@ struct Message {
     range: Range<usize>,
     key: String,
     at: i64,
+    /// The stamp's minute and who said what, for a dated message.
+    said: Option<(i64, String)>,
 }
 
 /// The messages of a file: a line starting with a space or an empty one
@@ -292,6 +296,7 @@ fn messages(bytes: &[u8]) -> Vec<Message> {
         pos = end + 1;
     }
     let mut at = i64::MIN;
+    let mut said = None;
     ranges
         .into_iter()
         .map(|mut range| {
@@ -304,6 +309,7 @@ fn messages(bytes: &[u8]) -> Vec<Message> {
                     // a line without a date is placed after the one before it
                     let minute = entry.time.map(|t| unix(t) / 60);
                     at = minute.unwrap_or(at);
+                    said = minute.map(|minute| (minute, format!("{}\0{}", entry.from, entry.text)));
                     // the minute, whether the stamp is 12 or 24 hours and has
                     // seconds; a stamp without a date as it is
                     match minute {
@@ -311,9 +317,17 @@ fn messages(bytes: &[u8]) -> Vec<Message> {
                         None => format!("{}\0{}\0{}", entry.stamp, entry.from, entry.text),
                     }
                 }
-                None => String::from_utf8_lossy(message).into_owned(),
+                None => {
+                    said = None;
+                    String::from_utf8_lossy(message).into_owned()
+                }
             };
-            Message { range, key, at }
+            Message {
+                range,
+                key,
+                at,
+                said: said.take(),
+            }
         })
         .collect()
 }
@@ -329,26 +343,62 @@ fn put(out: &mut Vec<u8>, bytes: &[u8], message: &Message) {
     }
 }
 
+/// Which of `theirs` are group chat history written again. Opening a group
+/// chat fetches the recent messages from the server, and
+/// LLIMSession::addMessagesFromServerHistory (indra/newview/llimview.cpp)
+/// logs them with the moment of the fetch, so the same lines come back under
+/// a new stamp at each login. A minute is taken for that only when it has at
+/// least two messages and every one was said before it: a line said again on
+/// its own, or a minute with anything new, stays. One replayed line alone
+/// therefore stays too.
+fn replayed(mine: &[Message], other: &[Message]) -> Vec<bool> {
+    let mut first: HashMap<&str, i64> = HashMap::with_capacity(mine.len() + other.len());
+    for (minute, said) in mine.iter().chain(other).filter_map(|m| m.said.as_ref()) {
+        first
+            .entry(said.as_str())
+            .and_modify(|at| *at = (*at).min(*minute))
+            .or_insert(*minute);
+    }
+    // messages of the minute, and whether all were said before it
+    let mut minutes: HashMap<i64, (u32, bool)> = HashMap::new();
+    for (minute, said) in other.iter().filter_map(|m| m.said.as_ref()) {
+        let entry = minutes.entry(*minute).or_insert((0, true));
+        entry.0 += 1;
+        entry.1 &= first.get(said.as_str()).is_some_and(|at| at < minute);
+    }
+    other
+        .iter()
+        .map(|m| {
+            let minute = m.said.as_ref().and_then(|(minute, _)| minutes.get(minute));
+            minute.is_some_and(|&(count, before)| count >= 2 && before)
+        })
+        .collect()
+}
+
 /// The two files as one, by time, each keeping its own order, and the number
 /// of messages added; None when `theirs` adds nothing. A message counts as
 /// often as it appears: "ok" sent twice in a minute stays twice, and is not
-/// added again once it is there.
-fn merged(ours: &[u8], theirs: &[u8]) -> Option<(Vec<u8>, u64)> {
+/// added again once it is there. In a group's file, history written again
+/// is left out (`replayed`).
+fn merged(ours: &[u8], theirs: &[u8], group: bool) -> Option<(Vec<u8>, u64)> {
     let mine = messages(ours);
     let other = messages(theirs);
+    let replay = if group { replayed(&mine, &other) } else { vec![false; other.len()] };
     let mut have: HashMap<&str, u32> = HashMap::with_capacity(mine.len());
     for m in &mine {
         *have.entry(m.key.as_str()).or_default() += 1;
     }
     let new: Vec<&Message> = other
         .iter()
-        .filter(|m| match have.get_mut(m.key.as_str()) {
+        .zip(&replay)
+        .filter(|&(m, &again)| match have.get_mut(m.key.as_str()) {
             Some(count) if *count > 0 => {
                 *count -= 1;
                 false
             }
-            _ => true,
+            _ => !again,
         })
+        .map(|(m, _)| m)
         .collect();
     if new.is_empty() {
         return None;
@@ -377,6 +427,10 @@ pub fn merge_file(source: &Path, target: &Path) -> std::io::Result<u64> {
     }
     let theirs = std::fs::read(source)?;
     crate::disk_io::read(crate::disk_io::Origin::Logs, theirs.len());
+    let group = target
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| undated(stem).ends_with(names::GROUP_SUFFIX));
     for _ in 0..2 {
         let ours = match std::fs::read(target) {
             Ok(bytes) => bytes,
@@ -384,7 +438,7 @@ pub fn merge_file(source: &Path, target: &Path) -> std::io::Result<u64> {
             Err(e) => return Err(e),
         };
         crate::disk_io::read(crate::disk_io::Origin::Logs, ours.len());
-        let Some((text, added)) = merged(&ours, &theirs) else {
+        let Some((text, added)) = merged(&ours, &theirs, group) else {
             return Ok(0);
         };
         if let Some(dir) = target.parent() {
@@ -430,6 +484,8 @@ pub struct Report {
     pub failed: usize,
     /// Text files without any timestamp, not imported.
     pub left_out: usize,
+    /// Started by the login, not by the import window.
+    pub at_login: bool,
 }
 
 /// An import under way.
@@ -519,6 +575,7 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
     let missing: HashSet<PathBuf> = plan.iter().map(|(_, target)| target).filter(|t| !t.is_file()).cloned().collect();
     let mut out = Report {
         left_out,
+        at_login: request.skip_unchanged,
         ..Report::default()
     };
     let mut first_error = None;
@@ -593,7 +650,11 @@ mod tests {
     }
 
     fn merge(ours: &str, theirs: &str) -> Option<(String, u64)> {
-        merged(ours.as_bytes(), theirs.as_bytes()).map(|(out, added)| (text(&out), added))
+        merged(ours.as_bytes(), theirs.as_bytes(), false).map(|(out, added)| (text(&out), added))
+    }
+
+    fn merge_group(ours: &str, theirs: &str) -> Option<(String, u64)> {
+        merged(ours.as_bytes(), theirs.as_bytes(), true).map(|(out, added)| (text(&out), added))
     }
 
     #[test]
@@ -841,6 +902,51 @@ mod tests {
         assert_eq!(merge(theirs, "[2026/10/12 14:06]  Bob: ok\n").unwrap().1, 1);
     }
 
+    const SAID: &str = "[2026/10/12 14:05]  Bob: hi\n[2026/10/12 14:06]  Ann: hello\n";
+
+    #[test]
+    fn group_history_written_again_is_left_out() {
+        let again = "[2026/11/05 07:45]  Bob: hi\n[2026/11/05 07:45]  Ann: hello\n";
+        // what the Aurora file already has
+        assert_eq!(merge_group(SAID, again), None);
+        // a first import: the source says it twice itself
+        let source = format!("{SAID}{again}");
+        let (out, added) = merge_group("", &source).unwrap();
+        assert_eq!(added, 2);
+        assert_eq!(out, SAID);
+        // and a second run changes nothing
+        assert_eq!(merge_group(&out, &source), None);
+        // a resident's file is never touched: they said it twice
+        assert_eq!(merge(SAID, again).unwrap().1, 2);
+    }
+
+    #[test]
+    fn a_group_line_said_again_is_kept_unless_the_whole_minute_is_old() {
+        // alone in its minute
+        assert_eq!(merge_group(SAID, "[2026/11/05 07:45]  Bob: hi\n").unwrap().1, 1);
+        // beside something new, the minute is real chat
+        let mixed = "[2026/11/05 07:45]  Bob: hi\n[2026/11/05 07:45]  Ann: hello\n[2026/11/05 07:45]  Ann: new\n";
+        assert_eq!(merge_group(SAID, mixed).unwrap().1, 3);
+        // the same words from someone else are new
+        let other = "[2026/11/05 07:45]  Cid: hi\n[2026/11/05 07:45]  Ann: hello\n";
+        assert_eq!(merge_group(SAID, other).unwrap().1, 2);
+        // said twice in one minute and never before: not a replay
+        let twice = "[2026/10/12 14:05]  Bob: ok\n[2026/10/12 14:05]  Bob: ok\n";
+        assert_eq!(merge_group("", twice).unwrap().1, 2);
+    }
+
+    #[test]
+    fn only_a_groups_file_leaves_history_out() {
+        let dir = temp();
+        let again = "[2026/11/05 07:45]  Bob: hi\n[2026/11/05 07:45]  Ann: hello\n";
+        let source = dir.join("source.txt");
+        std::fs::write(&source, format!("{SAID}{again}")).unwrap();
+        for (name, added) in [("Club (group).txt", 2), ("Club (group)-2026-11.txt", 2), ("Jane Doe.txt", 4)] {
+            assert_eq!(merge_file(&source, &dir.join(name)).unwrap(), added, "{name}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn the_same_minute_in_another_form_is_the_same_message() {
         let ours = "[2026/10/12 14:05]  Bob: hi\n";
@@ -877,7 +983,7 @@ mod tests {
     #[test]
     fn line_ends_and_odd_bytes_survive() {
         let theirs = b"[2026/10/12 14:05]  Bob: caf\xE9\r\n more\r\n";
-        let (out, added) = merged(b"", theirs).unwrap();
+        let (out, added) = merged(b"", theirs, false).unwrap();
         assert_eq!(added, 1);
         // the invalid byte stays; the ends are ours
         assert_eq!(
@@ -890,9 +996,9 @@ mod tests {
             ]
             .concat()
         );
-        assert!(merged(&out, theirs).is_none());
+        assert!(merged(&out, theirs, false).is_none());
         // a byte order mark is not part of the first message
-        assert!(merged(b"[2026/10/12 14:05]  Bob: a\n", b"\xEF\xBB\xBF[2026/10/12 14:05]  Bob: a\n").is_none());
+        assert!(merged(b"[2026/10/12 14:05]  Bob: a\n", b"\xEF\xBB\xBF[2026/10/12 14:05]  Bob: a\n", false).is_none());
     }
 
     #[test]

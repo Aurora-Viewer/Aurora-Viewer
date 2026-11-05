@@ -139,6 +139,7 @@ pub enum Action {
     StageLocalUploads,
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
+    MapDrop(Uuid, usize, crate::ui::resource_drop::Target),
     Zoom(Uuid, Option<usize>),
     LargeMap(Uuid, usize),
     Remove(Uuid),
