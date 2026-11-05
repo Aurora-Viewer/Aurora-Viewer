@@ -3,8 +3,9 @@
 
 use aurora_updater::{
     Cancel, Failure,
-    feed::{Asset, Channel, Release, Source},
+    feed::{Archive, Channel, Release, Source},
     install, media_pack, package,
+    signature::{self, Entry, Manifest},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -14,7 +15,7 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -37,6 +38,7 @@ impl Drop for Temp {
 
 struct Server {
     base: String,
+    routes: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -47,6 +49,8 @@ impl Server {
         let base = format!("http://{}", listener.local_addr().expect("address"));
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
+        let routes = Arc::new(Mutex::new(routes));
+        let served = routes.clone();
         let thread = std::thread::spawn(move || {
             while !flag.load(Ordering::Relaxed) {
                 if let Ok((mut socket, _)) = listener.accept() {
@@ -67,10 +71,10 @@ impl Server {
                             .ok()
                             .and_then(|s| s.split_whitespace().nth(1))
                             .unwrap_or("");
-                        let (status, body) = if let Some(body) = routes.get(path) {
-                            ("200 OK", body.as_slice())
-                        } else {
-                            ("404 Not Found", b"missing".as_slice())
+                        let body = served.lock().expect("routes").get(path).cloned();
+                        let (status, body) = match &body {
+                            Some(body) => ("200 OK", body.as_slice()),
+                            None => ("404 Not Found", b"missing".as_slice()),
                         };
                         let mut response =
                             format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
@@ -88,12 +92,17 @@ impl Server {
         });
         Self {
             base,
+            routes,
             stop,
             thread: Some(thread),
         }
     }
     fn source(&self) -> Source {
         Source::local(&format!("{}/releases", self.base)).expect("test feed")
+    }
+    /// Serves `body` at `path`, in place of what was there.
+    fn add(&self, path: &str, body: impl Into<Vec<u8>>) {
+        self.routes.lock().expect("routes").insert(path.into(), body.into());
     }
 }
 impl Drop for Server {
@@ -138,7 +147,9 @@ fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn release(server: &Server, size: usize) -> Release {
+/// A release whose package has the size and SHA-256 of `bytes`, as its
+/// signed manifest would name them.
+fn release(server: &Server, size: usize, bytes: &[u8]) -> Release {
     Release {
         tag: "v0.3.0".into(),
         version: "0.3.0".into(),
@@ -146,15 +157,11 @@ fn release(server: &Server, size: usize) -> Release {
         url: format!("{}/release", server.base),
         required: false,
         maintenance: Default::default(),
-        archive: Some(Asset {
+        archive: Some(Archive {
             name: "package.zip".into(),
+            url: format!("{}/package.zip", server.base),
             size: size as u64,
-            browser_download_url: format!("{}/package.zip", server.base),
-        }),
-        checksum: Some(Asset {
-            name: "package.zip.sha256".into(),
-            size: 80,
-            browser_download_url: format!("{}/hash", server.base),
+            sha256: Sha256::digest(bytes).into(),
         }),
     }
 }
@@ -162,15 +169,11 @@ fn release(server: &Server, size: usize) -> Release {
 #[test]
 fn verifies_and_extracts_real_download() {
     let bytes = valid_zip();
-    let hash = format!("{}  package.zip\n", digest(&bytes));
-    let server = Server::new(HashMap::from([
-        ("/package.zip".into(), bytes.clone()),
-        ("/hash".into(), hash.into_bytes()),
-    ]));
+    let server = Server::new(HashMap::from([("/package.zip".into(), bytes.clone())]));
     let temp = Temp::new();
     let root = run(package::download(
         &server.source(),
-        &release(&server, bytes.len()),
+        &release(&server, bytes.len(), &bytes),
         &temp.0,
         &Cancel::default(),
         |_| {},
@@ -182,15 +185,12 @@ fn verifies_and_extracts_real_download() {
 #[test]
 fn rejects_hash_mismatch_and_truncated_transfer_before_extraction() {
     let bytes = valid_zip();
-    for (hash, size) in [("0".repeat(64), bytes.len()), (digest(&bytes), bytes.len() + 10)] {
-        let server = Server::new(HashMap::from([
-            ("/package.zip".into(), bytes.clone()),
-            ("/hash".into(), format!("{hash} package.zip").into_bytes()),
-        ]));
+    for (named, size) in [(&b"another package"[..], bytes.len()), (&bytes[..], bytes.len() + 10)] {
+        let server = Server::new(HashMap::from([("/package.zip".into(), bytes.clone())]));
         let temp = Temp::new();
         let outcome = run(package::download(
             &server.source(),
-            &release(&server, size),
+            &release(&server, size, named),
             &temp.0,
             &Cancel::default(),
             |_| {},
@@ -203,17 +203,14 @@ fn rejects_hash_mismatch_and_truncated_transfer_before_extraction() {
 #[test]
 fn cancellation_never_extracts_or_changes_installation() {
     let bytes = valid_zip();
-    let server = Server::new(HashMap::from([
-        ("/package.zip".into(), bytes.clone()),
-        ("/hash".into(), format!("{} package.zip", digest(&bytes)).into_bytes()),
-    ]));
+    let server = Server::new(HashMap::from([("/package.zip".into(), bytes.clone())]));
     let temp = Temp::new();
     let cancel = Cancel::default();
     cancel.cancel();
     assert!(
         run(package::download(
             &server.source(),
-            &release(&server, bytes.len()),
+            &release(&server, bytes.len(), &bytes),
             &temp.0,
             &cancel,
             |_| {}
@@ -542,87 +539,202 @@ fn media_pack_is_refused_when_altered_incomplete_or_being_installed() {
     assert_eq!(hidden(&root), 0);
 }
 
-#[test]
-fn release_filter_ignores_assets_drafts_prereleases_and_retrieves_minimum_version() {
-    // Bind first, then construct absolute fixture links without relying on GitHub.
-    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
-    let base = format!("http://{}", listener.local_addr().expect("address"));
-    let body = serde_json::json!([
-        {"tag_name":"assets-1","html_url":format!("{base}/assets")},
-        {"tag_name":"v1.0.0-beta.1","prerelease":true,"html_url":format!("{base}/beta")},
-        {"tag_name":"v9.0.0","draft":true,"html_url":format!("{base}/draft")},
-        {"tag_name":"v0.3.0","html_url":format!("{base}/release"),"body":"Real notes","assets":[{"name":"aurora-update-policy.json","size":100,"browser_download_url":format!("{base}/policy")}]},
-        {"tag_name":"v0.2.0","html_url":format!("{base}/old")}
-    ]).to_string();
-    let thread = std::thread::spawn(move || {
-        for data in [
-            body,
-            "{\"schema\":1,\"version\":\"0.3.0\",\"minimum_supported_version\":\"0.2.1\"}".into(),
-        ] {
-            let (mut socket, _) = listener.accept().expect("request");
-            let mut request = [0; 4096];
-            let _ = socket.read(&mut request);
-            write!(
-                socket,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}",
-                data.len()
-            )
-            .expect("response");
-        }
-    });
-    let result = run(Source::local(&format!("{base}/releases"))
-        .expect("feed")
-        .check("0.2.0+8.gabc123", Channel::Stable))
-    .expect("check")
-    .expect("release");
-    thread.join().expect("server");
-    assert_eq!(result.version, "0.3.0");
-    assert_eq!(result.notes, "Real notes");
-    assert!(result.required);
+/// A release key of the tests only.
+struct Key {
+    pkcs8: Vec<u8>,
+    public: [u8; 32],
+}
+impl Key {
+    fn new() -> Self {
+        let pkcs8 = signature::generate().expect("test key");
+        let public = signature::public_key(&pkcs8).expect("public key");
+        Self { pkcs8, public }
+    }
 }
 
-/// One answer per request, in order, on a loopback feed.
-fn serve(listener: TcpListener, answers: Vec<String>) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        for data in answers {
-            let (mut socket, _) = listener.accept().expect("request");
-            let mut request = [0; 4096];
-            let _ = socket.read(&mut request);
-            write!(
-                socket,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}",
-                data.len()
-            )
-            .expect("response");
-        }
-    })
+/// A release of the test feed: its files served under `/<tag>/`, listed
+/// with a manifest of `version` signed with `key`, and the manifest's
+/// signature. `extra` adds or replaces fields of the release.
+fn publish(server: &Server, key: &Key, tag: &str, version: &str, files: &[(&str, &[u8])], extra: serde_json::Value) -> serde_json::Value {
+    let manifest = Manifest::new(version, files.iter().map(|(name, bytes)| Entry::of(name, bytes)).collect()).to_bytes();
+    let sig = signature::sign(&manifest, &key.pkcs8).expect("signature");
+    let mut assets = Vec::new();
+    for (name, bytes) in files
+        .iter()
+        .map(|(n, b)| (*n, b.to_vec()))
+        .chain([(signature::MANIFEST, manifest), (signature::SIGNATURE, sig.into_bytes())])
+    {
+        let path = format!("/{tag}/{name}");
+        assets.push(serde_json::json!({"name": name, "size": bytes.len(), "browser_download_url": format!("{}{path}", server.base)}));
+        server.add(&path, bytes);
+    }
+    let mut release = serde_json::json!({
+        "tag_name": tag,
+        "prerelease": tag.contains('-'),
+        "html_url": format!("{}/{tag}", server.base),
+        "assets": assets,
+    });
+    if let (Some(release), Some(extra)) = (release.as_object_mut(), extra.as_object()) {
+        release.extend(extra.clone());
+    }
+    release
+}
+
+fn feed(server: &Server, releases: &[serde_json::Value]) {
+    server.add("/releases", serde_json::Value::from(releases.to_vec()).to_string());
+}
+
+const POLICY: &[u8] = br#"{"schema":1,"version":"0.3.0","minimum_supported_version":"0.2.1"}"#;
+
+#[test]
+fn a_signed_release_is_offered_with_its_policy_and_installs() {
+    let (server, key, zip) = (Server::new(HashMap::new()), Key::new(), valid_zip());
+    let files = [
+        ("Aurora-Viewer-v0.3.0-windows-x64.zip", &zip[..]),
+        ("aurora-update-policy.json", POLICY),
+    ];
+    feed(
+        &server,
+        &[
+            serde_json::json!({"tag_name":"assets-1","html_url":format!("{}/assets", server.base)}),
+            serde_json::json!({"tag_name":"v1.0.0-beta.1","prerelease":true,"html_url":format!("{}/beta", server.base)}),
+            serde_json::json!({"tag_name":"v9.0.0","draft":true,"html_url":format!("{}/draft", server.base)}),
+            publish(&server, &key, "v0.3.0", "0.3.0", &files, serde_json::json!({"body": "Real notes"})),
+            serde_json::json!({"tag_name":"v0.2.0","html_url":format!("{}/old", server.base)}),
+        ],
+    );
+    let source = server.source().trust(key.public).expect("test key");
+    let release = run(source.check("0.2.0+8.gabc123", Channel::Stable))
+        .expect("check")
+        .expect("release");
+    assert_eq!(release.version, "0.3.0");
+    assert_eq!(release.notes, "Real notes");
+    assert!(release.required, "the signed policy applies");
+    let temp = Temp::new();
+    let root = run(package::download(&source, &release, &temp.0, &Cancel::default(), |_| {})).expect("installed");
+    assert_eq!(fs::read(root.join("aurora-viewer.exe")).expect("viewer"), b"new viewer");
+    // The compiled keys alone do not know the test key.
+    let refusal = run(server.source().check("0.2.0", Channel::Stable)).expect_err("unknown key");
+    assert!(signature::is_refused(&refusal), "{refusal:#}");
+    assert!(Source::default().trust(key.public).is_err(), "no test key on the published feed");
+}
+
+#[test]
+fn unsigned_altered_or_mismatched_releases_are_refused() {
+    let zip = valid_zip();
+    let name = "Aurora-Viewer-v0.3.0-windows-x64.zip";
+    let files = [(name, &zip[..]), ("aurora-update-policy.json", POLICY)];
+    let without = |release: &mut serde_json::Value, asset: &str| {
+        release["assets"].as_array_mut().expect("assets").retain(|a| a["name"] != asset);
+    };
+    type Tamper = Box<dyn Fn(&Server, &Key, &mut serde_json::Value)>;
+    let other = zip.clone();
+    let size = zip.len();
+    let cases: Vec<(&str, Tamper)> = vec![
+        ("no signature", Box::new(move |_, _, r| without(r, signature::SIGNATURE))),
+        ("no manifest", Box::new(move |_, _, r| without(r, signature::MANIFEST))),
+        (
+            "wrong key",
+            Box::new(move |s, _, r| {
+                *r = publish(
+                    s,
+                    &Key::new(),
+                    "v0.3.0",
+                    "0.3.0",
+                    &[(name, &other), ("aurora-update-policy.json", POLICY)],
+                    serde_json::json!({}),
+                )
+            }),
+        ),
+        (
+            "manifest of another version",
+            Box::new(|s, k, r| {
+                *r = publish(
+                    s,
+                    k,
+                    "v0.3.0",
+                    "0.2.9",
+                    &[("aurora-update-policy.json", POLICY)],
+                    serde_json::json!({}),
+                )
+            }),
+        ),
+        (
+            "altered signature",
+            Box::new(|s, _, _| s.add(&format!("/v0.3.0/{}", signature::SIGNATURE), "00".repeat(64))),
+        ),
+        (
+            "altered policy",
+            Box::new(|s, _, _| {
+                s.add(
+                    "/v0.3.0/aurora-update-policy.json",
+                    &br#"{"schema":1,"version":"0.3.0","minimum_supported_version":"0.3.0"}"#[..],
+                )
+            }),
+        ),
+        (
+            "policy taken away",
+            Box::new(move |_, _, r| without(r, "aurora-update-policy.json")),
+        ),
+        (
+            "package of another size",
+            Box::new(move |_, _, r| {
+                for asset in r["assets"].as_array_mut().expect("assets") {
+                    if asset["name"] == name {
+                        asset["size"] = serde_json::json!(size + 1);
+                    }
+                }
+            }),
+        ),
+    ];
+    for (case, tamper) in cases {
+        let server = Server::new(HashMap::new());
+        let key = Key::new();
+        let mut release = publish(&server, &key, "v0.3.0", "0.3.0", &files, serde_json::json!({}));
+        tamper(&server, &key, &mut release);
+        feed(&server, &[release]);
+        let source = server.source().trust(key.public).expect("test key");
+        let refusal = run(source.check("0.2.0", Channel::Stable)).expect_err(case);
+        assert!(signature::is_refused(&refusal), "{case}: {refusal:#}");
+    }
+
+    // A package replaced by another of the same size: offered, then refused
+    // at download, before anything is extracted.
+    let server = Server::new(HashMap::new());
+    let key = Key::new();
+    feed(&server, &[publish(&server, &key, "v0.3.0", "0.3.0", &files, serde_json::json!({}))]);
+    let mut altered = zip.clone();
+    let last = altered.len() - 1;
+    altered[last] ^= 1;
+    server.add(&format!("/v0.3.0/{name}"), altered);
+    let source = server.source().trust(key.public).expect("test key");
+    let release = run(source.check("0.2.0", Channel::Stable)).expect("check").expect("release");
+    let temp = Temp::new();
+    let outcome = run(package::download(&source, &release, &temp.0, &Cancel::default(), |_| {}));
+    assert!(matches!(outcome, Err(Failure::Integrity)), "download outcome: {outcome:?}");
+    assert!(!temp.0.join("prepared").exists());
 }
 
 #[test]
 fn the_beta_channel_takes_betas_and_moves_on_to_the_stable_of_the_same_number() {
-    let feed = |base: &str| {
-        serde_json::json!([
-            {"tag_name":"v0.8.0-beta.20261026.1","prerelease":true,"html_url":format!("{base}/beta-next")},
-            {"tag_name":"v0.7.7-rc.1","prerelease":true,"html_url":format!("{base}/rc")},
-            {"tag_name":"v0.9.0","prerelease":true,"html_url":format!("{base}/mislabelled")},
-            {"tag_name":"v0.7.7-beta.20261025.2","prerelease":false,"html_url":format!("{base}/mislabelled-beta")},
-            {"tag_name":"v0.7.7-beta.20261025.1","prerelease":true,"html_url":format!("{base}/beta")},
-            {"tag_name":"v0.7.6","html_url":format!("{base}/stable")}
-        ])
-        .to_string()
-    };
-    let check = |current: &str, channel: Channel, drop_newest: bool| {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
-        let base = format!("http://{}", listener.local_addr().expect("address"));
-        let mut list: Vec<serde_json::Value> = serde_json::from_str(&feed(&base)).expect("fixture");
-        if drop_newest {
-            list.remove(0);
-            list.insert(0, serde_json::json!({"tag_name":"v0.7.7","html_url":format!("{base}/stable-next")}));
+    let key = Key::new();
+    let check = |current: &str, channel: Channel, stable_out: bool| {
+        let server = Server::new(HashMap::new());
+        let release = |tag: &str, extra: serde_json::Value| publish(&server, &key, tag, tag.trim_start_matches('v'), &[], extra);
+        let mut list = vec![
+            release("v0.8.0-beta.20261026.1", serde_json::json!({})),
+            release("v0.7.7-rc.1", serde_json::json!({})),
+            release("v0.9.0", serde_json::json!({"prerelease": true})),
+            release("v0.7.7-beta.20261025.2", serde_json::json!({"prerelease": false})),
+            release("v0.7.7-beta.20261025.1", serde_json::json!({})),
+            release("v0.7.6", serde_json::json!({})),
+        ];
+        if stable_out {
+            list[0] = release("v0.7.7", serde_json::json!({}));
         }
-        let server = serve(listener, vec![serde_json::Value::from(list).to_string()]);
-        let result = run(Source::local(&format!("{base}/releases")).expect("feed").check(current, channel)).expect("check");
-        server.join().expect("server");
-        result.map(|r| r.version)
+        feed(&server, &list);
+        let source = server.source().trust(key.public).expect("test key");
+        run(source.check(current, channel)).expect("check").map(|r| r.version)
     };
     // Stable never sees a beta, nor a stable number GitHub marks pre-release.
     assert_eq!(check("0.7.5", Channel::Stable, false).as_deref(), Some("0.7.6"));

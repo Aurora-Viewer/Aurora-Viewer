@@ -677,6 +677,7 @@ dependencies = [
  "directories",
  "log",
  "reqwest",
+ "ring",
  "semver",
  "serde",
  "serde_json",

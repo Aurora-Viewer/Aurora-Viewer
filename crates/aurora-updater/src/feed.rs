@@ -1,7 +1,10 @@
 //! A bounded GitHub release list, filtered by SemVer rather than GitHub's
 //! creation date (the assets-only release is not a viewer): stable versions,
 //! plus the `-beta.…` pre-releases for the Beta channel.
+//! The chosen release is trusted only through its signed manifest
+//! (`signature.rs`): the package's size and hash, and the policy's bytes.
 
+use crate::signature::{self, Manifest, refused};
 use anyhow::{Context, Result, ensure};
 use reqwest::{Client, Url};
 use semver::Version;
@@ -45,6 +48,9 @@ pub fn is_beta(v: &Version) -> bool {
 pub struct Source {
     url: String,
     loopback: bool,
+    /// Keys a release manifest may be signed with: the compiled ones, plus
+    /// a test key on a loopback feed.
+    keys: Vec<[u8; 32]>,
 }
 
 impl Default for Source {
@@ -52,6 +58,7 @@ impl Default for Source {
         Self {
             url: RELEASES.into(),
             loopback: false,
+            keys: signature::UPDATE_KEYS.to_vec(),
         }
     }
 }
@@ -68,7 +75,16 @@ impl Source {
         Ok(Self {
             url: url.into(),
             loopback: true,
+            keys: signature::UPDATE_KEYS.to_vec(),
         })
+    }
+
+    /// Also accept manifests signed with a throwaway key: test feeds only,
+    /// never the published releases.
+    pub fn trust(mut self, key: [u8; 32]) -> Result<Self> {
+        ensure!(self.loopback, "test keys are for loopback feeds only");
+        self.keys.push(key);
+        Ok(self)
     }
 
     pub fn validate_url(&self, value: &str) -> Result<()> {
@@ -157,17 +173,40 @@ impl Source {
             return Ok(None);
         }
         self.validate_url(&r.html_url)?;
+        let manifest = self.manifest(&client, &r, &v).await?;
         let expected = format!("Aurora-Viewer-{}-windows-x64.zip", r.tag_name);
-        let archive = r
-            .assets
-            .iter()
-            .find(|a| a.name == expected && a.size > 0 && a.size <= MAX_ARCHIVE)
-            .cloned();
-        let checksum = r.assets.iter().find(|a| a.name == format!("{expected}.sha256")).cloned();
+        let archive = match r.assets.iter().find(|a| a.name == expected && a.size > 0 && a.size <= MAX_ARCHIVE) {
+            Some(asset) => {
+                let entry = manifest
+                    .entry(&asset.name)
+                    .filter(|e| e.size == asset.size)
+                    .ok_or_else(|| refused(format!("{} does not match the signed manifest", asset.name)))?;
+                self.validate_url(&asset.browser_download_url)?;
+                Some(Archive {
+                    name: asset.name.clone(),
+                    url: asset.browser_download_url.clone(),
+                    size: asset.size,
+                    sha256: entry.digest().map_err(|_| refused("invalid hash in the signed manifest"))?,
+                })
+            }
+            None => None,
+        };
         let mut required = false;
         let mut maintenance = super::Maintenance::default();
-        if let Some(asset) = r.assets.iter().find(|a| a.name == POLICY) {
-            let policy: Policy = serde_json::from_slice(&self.bytes(&client, &asset.browser_download_url, 16 * 1024).await?)?;
+        let policy = match (r.assets.iter().find(|a| a.name == POLICY), manifest.entry(POLICY)) {
+            (Some(asset), Some(entry)) => {
+                let bytes = self.bytes(&client, &asset.browser_download_url, 16 * 1024).await?;
+                if !entry.matches(&bytes) {
+                    return Err(refused("the update policy does not match the signed manifest"));
+                }
+                Some(bytes)
+            }
+            (None, None) => None,
+            // a policy left out could drop a required minimum version
+            _ => return Err(refused("the update policy and the signed manifest disagree")),
+        };
+        if let Some(bytes) = policy {
+            let policy: Policy = serde_json::from_slice(&bytes)?;
             ensure!(policy.schema == 1 && policy.version == v.to_string(), "incompatible update policy");
             maintenance.clear_cache = threshold_applies(policy.cache_invalidation_before.as_deref(), current, &v)?;
             maintenance.reset_settings = threshold_applies(policy.settings_reset_before.as_deref(), current, &v)?;
@@ -180,19 +219,36 @@ impl Source {
                 required = version(current).is_some_and(|c| c.cmp_precedence(&min).is_lt());
             }
         }
-        for a in [&archive, &checksum].into_iter().flatten() {
-            self.validate_url(&a.browser_download_url)?;
-        }
         Ok(Some(Release {
             tag: r.tag_name,
             version: v.to_string(),
             notes: r.body.unwrap_or_default(),
             url: r.html_url,
             archive,
-            checksum,
             required,
             maintenance,
         }))
+    }
+
+    /// The release's manifest, once its signature holds against a trusted
+    /// key and it names this version. Everything else the check reads from
+    /// the release is compared with it.
+    async fn manifest(&self, client: &Client, release: &GithubRelease, version: &Version) -> Result<Manifest> {
+        let asset = |name: &str| {
+            release
+                .assets
+                .iter()
+                .find(|a| a.name == name)
+                .ok_or_else(|| refused(format!("{} has no signed update manifest ({name} missing)", release.tag_name)))
+        };
+        let (manifest, signature) = (asset(signature::MANIFEST)?, asset(signature::SIGNATURE)?);
+        let signature = self.bytes(client, &signature.browser_download_url, 1024).await?;
+        let bytes = self.bytes(client, &manifest.browser_download_url, 64 * 1024).await?;
+        let manifest = signature::verify(&bytes, &signature, &self.keys)?;
+        if manifest.version != version.to_string() {
+            return Err(refused(format!("the signed manifest is for {}, not {version}", manifest.version)));
+        }
+        Ok(manifest)
     }
 }
 
@@ -246,10 +302,19 @@ pub struct Release {
     pub version: String,
     pub notes: String,
     pub url: String,
-    pub archive: Option<Asset>,
-    pub checksum: Option<Asset>,
+    /// The Windows package, when the release has one.
+    pub archive: Option<Archive>,
     pub required: bool,
     pub maintenance: super::Maintenance,
+}
+
+/// A package as the signed manifest names it: nothing else is installed.
+#[derive(Clone, Debug)]
+pub struct Archive {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: [u8; 32],
 }
 
 #[cfg(test)]

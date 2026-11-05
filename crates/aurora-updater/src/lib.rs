@@ -6,6 +6,7 @@ pub mod feed;
 pub mod install;
 pub mod media_pack;
 pub mod package;
+pub mod signature;
 mod user_data;
 
 /// Effects resolved for the installed version, including skipped releases.
@@ -38,7 +39,11 @@ pub fn test_environment() -> Option<&'static TestEnvironment> {
         if config["schema"].as_u64()? != 1 {
             return None;
         }
-        let source = feed::Source::local(config["feed"].as_str()?).ok()?;
+        let mut source = feed::Source::local(config["feed"].as_str()?).ok()?;
+        // scripts/test-update.ps1 signs its release with a throwaway key
+        if let Some(key) = config["update_key"].as_str() {
+            source = source.trust(signature::unhex(key).ok()?.try_into().ok()?).ok()?;
+        }
         Some(TestEnvironment { root, source })
     })
     .as_ref()

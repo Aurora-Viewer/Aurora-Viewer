@@ -1,4 +1,5 @@
-//! Verify the published SHA-256 before extracting into an empty sibling.
+//! Verify the SHA-256 the signed manifest names before extracting into an
+//! empty sibling.
 //! ZIP names are validated for Windows even when the tests run elsewhere.
 
 use crate::{
@@ -24,17 +25,11 @@ pub async fn download(
     cancel.check().map_err(|_| Failure::Network)?;
     let client = source.client().map_err(|e| failure(Failure::Network, e))?;
     let archive = release.archive.as_ref().ok_or(Failure::Unsupported)?;
-    let checksum = release.checksum.as_ref().ok_or(Failure::Unsupported)?;
-    let expected = source
-        .bytes(&client, &checksum.browser_download_url, 1024)
-        .await
-        .map_err(|e| failure(Failure::Network, e))?;
-    let expected = parse_checksum(&expected, &archive.name).map_err(|e| failure(Failure::Integrity, e))?;
     let path = work.join("download.zip");
     let fetch = Fetch {
-        url: &archive.browser_download_url,
+        url: &archive.url,
         size: archive.size,
-        sha256: expected,
+        sha256: archive.sha256,
     };
     fetch.to_file(source, &client, &path, cancel, &progress).await?;
     let root = work.join("prepared");
@@ -96,6 +91,7 @@ impl Fetch<'_> {
             });
         }
         if received != self.size || hash.finalize().as_slice() != self.sha256 {
+            log::warn!("update refused: {} does not match its expected size and SHA-256", self.url);
             return Err(Failure::Integrity);
         }
         file.sync_all().map_err(|e| failure(Failure::Filesystem, e.into()))?;
@@ -111,16 +107,6 @@ impl Fetch<'_> {
 pub(crate) fn failure(kind: Failure, error: anyhow::Error) -> Failure {
     log::warn!("update {kind:?}: {error:#}");
     kind
-}
-
-fn parse_checksum(bytes: &[u8], filename: &str) -> Result<[u8; 32]> {
-    let text = std::str::from_utf8(bytes)?;
-    let fields: Vec<&str> = text.split_whitespace().collect();
-    ensure!(
-        fields.len() == 2 && fields[1].trim_start_matches('*') == filename,
-        "invalid checksum sidecar"
-    );
-    parse_sha256(fields[0])
 }
 
 pub(crate) fn parse_sha256(hex: &str) -> Result<[u8; 32]> {
@@ -248,16 +234,11 @@ pub struct InstallManifest {
 mod tests {
     use super::*;
     #[test]
-    fn checksum_known_vector_and_filename() {
-        let value = b"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad zip.zip\n";
-        assert_eq!(parse_checksum(value, "zip.zip").expect("hash"), Sha256::digest(b"abc").as_slice());
-        assert!(parse_checksum(value, "other.zip").is_err());
-        for text in [
-            "bad zip.zip",
-            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff zip.zip extra",
-            "éééééééééééééééééééééééééééééééé zip.zip",
-        ] {
-            assert!(parse_checksum(text.as_bytes(), "zip.zip").is_err());
+    fn sha256_known_vector() {
+        let value = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(parse_sha256(value).expect("hash"), Sha256::digest(b"abc").as_slice());
+        for text in ["bad", &"f".repeat(66), "éééééééééééééééééééééééééééééééé"] {
+            assert!(parse_sha256(text).is_err(), "{text}");
         }
     }
     #[test]

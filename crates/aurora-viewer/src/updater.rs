@@ -142,7 +142,11 @@ impl Updater {
                     .await
                     .map_err(|e: anyhow::Error| {
                         log::warn!("release check: {e:#}");
-                        Failure::Network
+                        if aurora_updater::signature::is_refused(&e) {
+                            Failure::Integrity
+                        } else {
+                            Failure::Network
+                        }
                     });
             let _ = tx.send(Event::Checked(result));
         });
@@ -240,7 +244,7 @@ impl Updater {
         if self.busy() {
             return;
         }
-        if !cfg!(windows) || release.archive.is_none() || release.checksum.is_none() {
+        if !cfg!(windows) || release.archive.is_none() {
             self.state = State::Error(Failure::Unsupported);
             self.open = true;
             return;
@@ -356,7 +360,6 @@ mod tests {
             notes: String::new(),
             url: aurora_updater::feed::RELEASE_PAGE.into(),
             archive: None,
-            checksum: None,
             required: true,
         };
         updater.tx.send(Event::Checked(Ok(Some(release)))).expect("result");

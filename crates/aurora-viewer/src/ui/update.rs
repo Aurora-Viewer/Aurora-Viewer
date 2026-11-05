@@ -591,7 +591,6 @@ mod tests {
             notes: "Synthetic notes".into(),
             url: aurora_updater::feed::RELEASE_PAGE.into(),
             archive: None,
-            checksum: None,
             required: true,
             maintenance: Default::default(),
         });
