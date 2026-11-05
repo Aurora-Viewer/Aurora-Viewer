@@ -1105,6 +1105,67 @@ fn adding_to_a_swimming_list_appends_without_replacing_links_or_originals() {
 }
 
 #[test]
+fn adding_to_an_ordered_state_sends_only_the_link() {
+    use crate::world::inventory::actions;
+    use aurora_net::inventory::operations::Operation;
+    let (mut inv, set) = fixture();
+    let reload = |inv: &mut Inventory| {
+        let mut catalog = inventory::Catalog::default();
+        catalog.refresh(inv);
+        catalog.selected(set.id).expect("set").clone()
+    };
+    let patches = |ops: &[Operation]| -> Vec<(Uuid, String)> {
+        ops.iter()
+            .filter_map(|op| match op {
+                Operation::Patch { id, body, .. } => {
+                    Some((*id, format!("{}{}", body["desc"].to_string_value(), body["name"].to_string_value())))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let walk = set.states[&State::Walking].steps[0].members[0].original;
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
+    let mut set = reload(&mut inv);
+    let steps = set.states[&State::Standing].steps.clone();
+    assert_eq!(steps.iter().map(|s| s.order).collect::<Vec<_>>(), [0, 1, 2]);
+    // AOEngine::addAnimation: one link, no rewrite of the stands already there
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Links { links, .. }] if links[0].desc == "3"),
+        "{:?}",
+        change.operations
+    );
+    // updateSortOrder rewrites only the entry out of place
+    inv.items.get_mut(&steps[2].id).expect("link").desc = "5".into();
+    set = reload(&mut inv);
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    let rewritten = patches(&change.operations);
+    assert_eq!(rewritten.len(), 1);
+    assert_eq!(rewritten[0], (steps[2].id, "2".into()));
+    assert!(matches!(change.operations.last(), Some(Operation::Links { links, .. }) if links[0].desc == "3"));
+    // the same inside a group, and for the group folder's OR value
+    let selected = steps[..2].iter().map(|s| s.id).collect();
+    let (change, group) = inventory::editor::combine(&inv, &set, State::Standing, "Together", false, &selected).expect("group");
+    let reply = actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
+    set = reload(&mut inv);
+    let group = reply.created.get(&group).copied().unwrap_or(group);
+    let change = inventory::add(&inv, &set, State::Standing, walk, Some(group)).expect("add to group");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Links { links, .. }] if links[0].desc == "2"),
+        "{:?}",
+        change.operations
+    );
+    inv.folders.get_mut(&group).expect("group").info.name = "Together:OR7".into();
+    set = reload(&mut inv);
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    let rewritten = patches(&change.operations);
+    assert_eq!(rewritten.len(), 2, "{rewritten:?}");
+    assert!(rewritten.contains(&(group, "Together:OR1".into())));
+}
+
+#[test]
 fn every_swimming_context_broadcasts_its_selected_animation_and_hands_back_on_exit() {
     let (_, mut set) = fixture();
     for (index, state) in State::SWIMMING.into_iter().enumerate() {

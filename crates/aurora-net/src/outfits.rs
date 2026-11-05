@@ -234,6 +234,40 @@ pub async fn set_favorite(
 }
 
 pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, String> {
+    send_detailed(req, body).await.map_err(|refusal| refusal.message)
+}
+
+/// A failed AIS request. AISAPI::InvokeAISCommandCoro logs the refused
+/// reply; here only its `error_code` / `error_description` are kept, for the
+/// log alone: the message shown to the user never carries the server's text.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Refusal {
+    pub message: String,
+    pub status: Option<u16>,
+    pub code: String,
+    pub description: String,
+}
+
+impl Refusal {
+    fn new(message: String) -> Self {
+        Self {
+            message,
+            ..Default::default()
+        }
+    }
+}
+
+/// A reply field fit for the log: no URL path or query (a capability), no
+/// control character, bounded.
+fn logged(value: &Llsd) -> String {
+    crate::fetch::redact_urls(&value.to_string_value())
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(256)
+        .collect()
+}
+
+pub(crate) async fn send_detailed(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, Refusal> {
     let response = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
@@ -241,18 +275,30 @@ pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Ll
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").to_owned())?;
-    if !response.status().is_success() {
-        return Err(aurora_i18n::tr!(
-            "outfits-the-server-rejected-the-operation-http",
-            value0 = format!("{}", response.status().as_u16())
-        ));
+        .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").into()))?;
+    let status = response.status();
+    if !status.is_success() {
+        let reply = response
+            .bytes()
+            .await
+            .ok()
+            .and_then(|bytes| aurora_llsd::from_xml(&bytes).ok())
+            .unwrap_or_default();
+        return Err(Refusal {
+            message: aurora_i18n::tr!(
+                "outfits-the-server-rejected-the-operation-http",
+                value0 = format!("{}", status.as_u16())
+            ),
+            status: Some(status.as_u16()),
+            code: logged(&reply["error_code"]),
+            description: logged(&reply["error_description"]),
+        });
     }
     let bytes = response
         .bytes()
         .await
-        .map_err(|_| aurora_i18n::tr!("outfits-interrupted-inventory-response").to_owned())?;
-    aurora_llsd::from_xml(&bytes).map_err(|_| aurora_i18n::tr!("outfits-unreadable-inventory-response").into())
+        .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-interrupted-inventory-response").into()))?;
+    aurora_llsd::from_xml(&bytes).map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-unreadable-inventory-response").into()))
 }
 
 #[cfg(test)]
