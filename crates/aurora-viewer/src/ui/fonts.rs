@@ -229,10 +229,20 @@ fn first_visit(seen: &mut std::collections::HashSet<PathBuf>, dir: &std::path::P
     std::fs::canonicalize(dir).map_or(true, |real| seen.insert(real))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: the scan looks unfinished on this thread, however fast it is.
+    pub(crate) static FONT_LIST_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// The installed fonts once a background scan has listed them, `None` until
 /// then (never blocks). The first call starts the scan: `system_fonts` opens
 /// every font file, which takes the frame with it on a cold disk.
 pub fn system_fonts_ready() -> Option<&'static [SystemFont]> {
+    #[cfg(test)]
+    if FONT_LIST_HELD.get() {
+        return None;
+    }
     static LIST: OnceLock<Vec<SystemFont>> = OnceLock::new();
     static STARTED: Once = Once::new();
     STARTED.call_once(|| {
