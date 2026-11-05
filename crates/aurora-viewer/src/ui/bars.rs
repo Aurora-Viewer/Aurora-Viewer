@@ -2215,6 +2215,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
+        "regiontracker" => panels.region_tracker,
         "gridstatus" => panels.grid_status,
         "webbrowser" => panels.web_browser,
         "voice" => panels.voice_controls,

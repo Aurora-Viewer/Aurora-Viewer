@@ -1807,7 +1807,8 @@ impl WorldMapUi {
         Self::friend_altitude_hint(ui, p, world);
         ui.add_space(8.0);
         let (mut go, mut copy, mut info, mut show, mut clear, mut track_region) = (false, false, false, false, false, false);
-        ui.horizontal(|ui| {
+        // wraps: Track region makes the row wider than a narrow card
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let h = Vec2::new(0.0, BUTTON_H);
             let icon_only = Vec2::new(30.0, BUTTON_H);
@@ -1852,7 +1853,7 @@ impl WorldMapUi {
                 aurora_i18n::tr!("region-tracker-track-region"),
                 ActionKind::Flat,
                 h,
-                region.is_some(),
+                region.is_some() && !world.rlva.has("showloc"),
             )
             .clicked();
             clear = widgets::action_button(ui, p, "backspace-filled", "", ActionKind::Flat, icon_only)
@@ -1866,7 +1867,10 @@ impl WorldMapUi {
         let ctx = ui.ctx().clone();
         let rect = self.ov.close(panel);
 
-        if track_region && let Some((_, sim)) = &region {
+        if track_region
+            && !world.rlva.has("showloc")
+            && let Some((_, sim)) = &region
+        {
             actions.push(WorldMapAction::TrackRegion(sim.name.clone()));
         }
 

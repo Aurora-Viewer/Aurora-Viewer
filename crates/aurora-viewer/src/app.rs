@@ -17000,7 +17000,7 @@ impl App {
                 for wa in wm {
                     match wa {
                         ui::worldmap::WorldMapAction::TrackRegion(name) => {
-                            self.region_tracker_ui.track_region(name);
+                            self.region_tracker_ui.track_region(&self.world, name);
                             self.panels.region_tracker = true;
                         }
                         ui::worldmap::WorldMapAction::TeleportHome => {

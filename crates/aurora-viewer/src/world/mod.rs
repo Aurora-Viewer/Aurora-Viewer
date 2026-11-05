@@ -697,14 +697,16 @@ impl World {
         }
     }
 
-    /// Refresh names and avatar counts while the Region Tracker is visible.
+    /// ALFloaterRegionTracker::refresh, while its window is open: every
+    /// region asked by name (sendNamedRegionRequest, for its online / down
+    /// state) and a known one's avatars (LLSimInfo::updateAgentCount), each
+    /// at most once a minute.
     pub fn refresh_tracked_regions(&mut self) {
         let names: Vec<_> = self.region_tracker.regions().iter().map(|r| r.name.clone()).collect();
         for name in names {
+            self.map.want_named_region(&name);
             if let Some(key) = self.map.region_by_name(&name) {
                 self.map.want_agents(key);
-            } else {
-                self.map.want_named_region(&name);
             }
         }
     }

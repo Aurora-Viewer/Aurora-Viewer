@@ -1056,10 +1056,13 @@ impl WorldMapUi {
             {
                 self.center_on(world, cam, x, y);
             }
+            // LLFloaterWorldMap::onTrackRegion; the name stays hidden under
+            // RLVa @showloc
             let track_name = world
                 .map
                 .track
                 .as_ref()
+                .filter(|_| !world.rlva.has("showloc"))
                 .and_then(|t| world.map.sim_at_global(t.x, t.y).map(|(_, s)| s.name.clone()));
             if ui
                 .add_enabled(

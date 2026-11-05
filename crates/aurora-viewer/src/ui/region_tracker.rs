@@ -1,110 +1,245 @@
-//! Region Tracker window.
+//! Region Tracker window (the Legacy Viewer's ALFloaterRegionTracker,
+//! floater_region_tracker.xml): label, maturity, region and avatar count of
+//! the regions the account watches, redrawn every 5 s while it is open.
 
-use super::widgets::Floater;
+use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::{
     World,
-    region_tracker::{RegionState, status},
+    region_tracker::{RegionState, RegionStatus, status},
 };
-use egui::{Pos2, RichText, Vec2};
+use egui::{Pos2, RichText, Sense, Vec2};
+use std::time::{Duration, Instant};
 
 pub const WINDOW: &str = "region_tracker";
+
+/// ALFloaterRegionTracker's LLEventTimer(5.f): the rows are rebuilt (and the
+/// throttled requests of `World::refresh_tracked_regions` checked) this often.
+const REDRAW: Duration = Duration::from_secs(5);
+const ROW_H: f32 = 24.0;
+/// Label, maturity, region, avatars (the columns of region_list).
+const WEIGHTS: [f32; 4] = [0.32, 0.18, 0.36, 0.14];
+
+struct Row {
+    name: String,
+    label: String,
+    status: RegionStatus,
+}
 
 #[derive(Default)]
 pub struct RegionTrackerUi {
     name: String,
     label: String,
     selected: Option<String>,
+    rows: Vec<Row>,
+    /// When the rows were last rebuilt; None while closed, so that opening
+    /// asks the regions at once (ALFloaterRegionTracker::onOpen).
+    refreshed: Option<Instant>,
 }
 
 impl RegionTrackerUi {
-    pub fn track_region(&mut self, name: String) {
+    /// The World Map's Track Region (LLFloaterWorldMap::onTrackRegion): the
+    /// region's name, its label offered with its current one or its name
+    /// (notification RegionTrackerAdd).
+    pub fn track_region(&mut self, world: &World, name: String) {
+        self.label = world
+            .region_tracker
+            .regions()
+            .iter()
+            .find(|r| r.name.eq_ignore_ascii_case(&name))
+            .map(|r| r.label.clone())
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| name.clone());
         self.name = name;
-        self.label.clear();
+    }
+
+    fn rebuild(&mut self, world: &mut World) {
+        world.refresh_tracked_regions();
+        let own = world.main_origin().map(|(x, y)| (x / 256, y / 256));
+        self.rows = world
+            .region_tracker
+            .regions()
+            .iter()
+            .map(|r| Row {
+                name: r.name.clone(),
+                label: r.label.clone(),
+                status: status(&world.map, &r.name, own),
+            })
+            .collect();
+        if let Some(sel) = &self.selected
+            && !self.rows.iter().any(|r| &r.name == sel)
+        {
+            self.selected = None;
+        }
+        self.refreshed = Some(Instant::now());
+    }
+
+    /// ALFloaterRegionTracker::openMap: the world map on the region, or
+    /// simply opened without one.
+    fn open_map(world: &mut World, region: Option<&str>, map_open: &mut bool) {
+        if let Some(name) = region {
+            world.map.track_region(name, glam::Vec3::new(128.0, 128.0, 0.0));
+            world.map.focus_track = true;
+        }
+        *map_open = true;
     }
 
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool, map_open: &mut bool) {
         if !*open {
+            self.refreshed = None;
             return;
         }
-        world.refresh_tracked_regions();
+        if self.refreshed.is_none_or(|t| t.elapsed() >= REDRAW) {
+            self.rebuild(world);
+        }
         let screen = ctx.content_rect();
         let pos = Pos2::new((screen.width() - 620.0).max(0.0) * 0.5, 100.0);
-        Floater::new(
+        let mut floater = Floater::new(
             WINDOW,
             aurora_i18n::tr!("toolbar-command-region-tracker"),
             pos,
             Vec2::new(620.0, 420.0),
-        )
-        .show(ctx, p, open, |ui| {
-            ui.horizontal(|ui| {
+        );
+        floater.min_size = Vec2::new(420.0, 260.0);
+        let mut changed = false;
+        floater.show(ctx, p, open, |ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(aurora_i18n::tr!("region-tracker-region"));
-                ui.text_edit_singleline(&mut self.name);
+                ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(160.0));
                 ui.label(aurora_i18n::tr!("region-tracker-label"));
-                ui.text_edit_singleline(&mut self.label);
-                if ui.button(aurora_i18n::tr!("common-add")).clicked() {
+                ui.add(egui::TextEdit::singleline(&mut self.label).desired_width(140.0));
+                // a tracked name again: its label is replaced
+                if ui
+                    .add_enabled(!self.name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-add")))
+                    .clicked()
+                {
                     world.add_tracked_region(&self.name, &self.label);
+                    self.selected = Some(self.name.trim().to_owned());
                     self.name.clear();
                     self.label.clear();
+                    changed = true;
                 }
-                if ui.button(aurora_i18n::tr!("region-tracker-add-current")).clicked() {
-                    let name = world.region_name();
-                    world.add_tracked_region(&name, "");
+                // the region's name is hidden under RLVa @showloc
+                let here = world.region_name();
+                if ui
+                    .add_enabled(
+                        !here.is_empty() && !world.rlva.has("showloc"),
+                        egui::Button::new(aurora_i18n::tr!("region-tracker-add-current")),
+                    )
+                    .clicked()
+                {
+                    // keeps the label of a region already tracked
+                    let label = world
+                        .region_tracker
+                        .regions()
+                        .iter()
+                        .find(|r| r.name.eq_ignore_ascii_case(&here))
+                        .map(|r| r.label.clone())
+                        .unwrap_or_default();
+                    world.add_tracked_region(&here, &label);
+                    changed = true;
                 }
             });
-            super::widgets::divider(ui, p);
+            ui.add_space(4.0);
+            let list = ui.scope_id().with("region_tracker_rows");
+            let width = widgets::header_width(ui, list);
             ui.horizontal(|ui| {
-                ui.strong(aurora_i18n::tr!("region-tracker-label"));
-                ui.add_space(18.0);
-                ui.strong(aurora_i18n::tr!("region-rules-maturity"));
-                ui.add_space(20.0);
-                ui.strong(aurora_i18n::tr!("region-tracker-region"));
-                ui.add_space(20.0);
-                ui.strong(aurora_i18n::tr!("region-tracker-avatars"));
-            });
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for region in world.region_tracker.regions() {
-                    let s = status(&world.map, &region.name, world.main_origin().map(|(x, y)| (x / 256, y / 256)));
-                    let color = match s.state {
-                        RegionState::Unknown => p.muted,
-                        RegionState::Down => p.danger,
-                        RegionState::Online => p.ink,
-                    };
-                    let access = s
-                        .access
-                        .map(crate::world::worldmap::access_label)
-                        .unwrap_or(aurora_i18n::tr!("common-unknown"));
-                    let count = s.agents.map(|n| n.to_string()).unwrap_or_else(|| "—".into());
-                    let response = ui
-                        .horizontal(|ui| {
-                            ui.label(&region.label);
-                            ui.add_space(18.0);
-                            ui.label(access);
-                            ui.add_space(20.0);
-                            ui.label(RichText::new(&region.name).color(color));
-                            ui.add_space(20.0);
-                            ui.label(count);
-                        })
-                        .response;
-                    if response.clicked() {
-                        self.selected = Some(region.name.clone());
-                    }
-                    if response.double_clicked() {
-                        world.map.track_region(&region.name, glam::Vec3::new(128.0, 128.0, 30.0));
-                        *map_open = true;
-                    }
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for (column, label) in [
+                    aurora_i18n::tr!("region-tracker-label"),
+                    aurora_i18n::tr!("region-rules-maturity"),
+                    aurora_i18n::tr!("region-tracker-region"),
+                    aurora_i18n::tr!("region-tracker-avatars"),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(width * WEIGHTS[column], 22.0), Sense::hover());
+                    widgets::paint_elided(
+                        ui,
+                        label,
+                        egui::pos2(rect.left() + 4.0, rect.center().y),
+                        rect.width() - 8.0,
+                        egui::FontId::proportional(12.0),
+                        p.muted,
+                    );
                 }
             });
+            let height = (ui.available_height() - 40.0).max(60.0);
+            let mut open_region = None;
+            let out = egui::ScrollArea::vertical()
+                .id_salt("region_tracker_rows")
+                .max_height(height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for row in &self.rows {
+                        let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
+                        let selected = self.selected.as_deref() == Some(row.name.as_str());
+                        if selected || response.hovered() {
+                            let fill = if selected { p.violet.gamma_multiply(0.28) } else { p.raised };
+                            ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
+                        }
+                        // alfloaterregiontracker.cpp: grey while unknown, red
+                        // with 0 avatars once down
+                        let color = match row.status.state {
+                            RegionState::Unknown => p.muted,
+                            RegionState::Down => p.danger,
+                            RegionState::Online => p.ink,
+                        };
+                        let maturity = match row.status.state {
+                            RegionState::Unknown => "",
+                            _ => row.status.access.map(crate::world::worldmap::access_label).unwrap_or_default(),
+                        };
+                        let count = row.status.agents.map_or_else(|| "…".to_owned(), |n| n.to_string());
+                        let texts = [row.label.as_str(), maturity, row.name.as_str(), count.as_str()];
+                        let mut x = rect.left();
+                        for (column, text) in texts.into_iter().enumerate() {
+                            let w = rect.width() * WEIGHTS[column];
+                            widgets::paint_elided(
+                                ui,
+                                text,
+                                egui::pos2(x + 4.0, rect.center().y),
+                                w - 8.0,
+                                egui::FontId::proportional(13.0),
+                                color,
+                            );
+                            x += w;
+                        }
+                        if response.clicked() {
+                            // the row's label goes to the fields: Add then
+                            // changes it
+                            self.selected = Some(row.name.clone());
+                            self.name = row.name.clone();
+                            self.label = row.label.clone();
+                        }
+                        if response.double_clicked() {
+                            open_region = Some(row.name.clone());
+                        }
+                    }
+                    if self.rows.is_empty() {
+                        ui.label(RichText::new(aurora_i18n::tr!("common-none")).color(p.muted));
+                    }
+                });
+            widgets::remember_scroll_bar(ui, list, &out);
             ui.horizontal(|ui| {
-                if ui.button(aurora_i18n::tr!("common-remove")).clicked()
+                if ui
+                    .add_enabled(self.selected.is_some(), egui::Button::new(aurora_i18n::tr!("common-remove")))
+                    .clicked()
                     && let Some(name) = self.selected.take()
                 {
                     world.remove_tracked_region(&name);
+                    changed = true;
                 }
                 if ui.button(aurora_i18n::tr!("common-world-map")).clicked() {
-                    *map_open = true;
+                    open_region = Some(self.selected.clone().unwrap_or_default());
                 }
             });
+            if let Some(name) = open_region {
+                Self::open_map(world, Some(name.as_str()).filter(|n| !n.is_empty()), map_open);
+            }
         });
+        if changed {
+            self.rebuild(world);
+        }
     }
 }

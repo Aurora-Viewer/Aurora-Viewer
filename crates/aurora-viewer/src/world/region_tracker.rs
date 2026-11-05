@@ -1,4 +1,7 @@
-//! Per-account list of regions to watch (Legacy Viewer Region Tracker).
+//! Per-account list of regions to watch (ALFloaterRegionTracker,
+//! indra/newview/alfloaterregiontracker.cpp): `tracked_regions.json` in the
+//! account's folder, `{name: {label}}` as the Legacy Viewer keeps it, and
+//! the state of each region read from the world map.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -18,11 +21,17 @@ pub struct RegionTracker {
 }
 
 impl RegionTracker {
+    /// The saved list; empty when there is none yet or it cannot be read.
     pub fn load(path: &Path) -> Self {
         let Ok(bytes) = std::fs::read(path) else { return Self::default() };
-        // Accept the Legacy Viewer `{name: {label}}` shape.
         let parsed: Result<std::collections::BTreeMap<String, LegacyEntry>, _> = serde_json::from_slice(&bytes);
-        let Ok(entries) = parsed else { return Self::default() };
+        let entries = match parsed {
+            Ok(entries) => entries,
+            Err(error) => {
+                log::warn!("region tracker: {} unreadable ({error})", path.display());
+                return Self::default();
+            }
+        };
         Self {
             regions: entries
                 .into_iter()
@@ -68,6 +77,8 @@ impl RegionTracker {
 
 #[derive(Deserialize, Serialize)]
 struct LegacyEntry {
+    /// An entry without a label keeps its region.
+    #[serde(default)]
     label: String,
 }
 
@@ -144,6 +155,75 @@ mod tests {
         list.save(&path).expect("save tracker");
         assert_eq!(RegionTracker::load(&path), list);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn missing_or_unreadable_file_is_an_empty_list_and_a_label_is_optional() {
+        let dir = std::env::temp_dir().join(format!("aurora-region-tracker-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        assert!(RegionTracker::load(&dir.join(FILE)).regions().is_empty());
+        let path = dir.join(FILE);
+        std::fs::write(&path, b"not json").expect("write");
+        assert!(RegionTracker::load(&path).regions().is_empty());
+        std::fs::write(&path, br#"{"Bravo": {"label": "shop"}, "Alpha": {}}"#).expect("write");
+        let list = RegionTracker::load(&path);
+        assert_eq!(
+            list.regions(),
+            [
+                TrackedRegion {
+                    name: "Alpha".into(),
+                    label: String::new()
+                },
+                TrackedRegion {
+                    name: "Bravo".into(),
+                    label: "shop".into()
+                },
+            ]
+        );
+        // only the names and labels are written
+        list.save(&path).expect("save");
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
+        assert_eq!(saved, serde_json::json!({"Alpha": {"label": ""}, "Bravo": {"label": "shop"}}));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn refresh_asks_each_region_by_name_and_its_avatars_once_a_minute() {
+        use aurora_net::NetCommand;
+        let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.region_tracker.add("Ahern", "");
+        w.region_tracker.add("Nowhere", "");
+        w.map.sims.insert(
+            (1000, 1000),
+            SimInfo {
+                name: "Ahern".into(),
+                access: SIM_ACCESS_PG,
+                flags: 0,
+                image: Uuid::nil(),
+                size_x: 512,
+                size_y: 512,
+            },
+        );
+        w.refresh_tracked_regions();
+        let sent = w.map.take_commands();
+        let names: Vec<_> = sent
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::MapNameRequest { name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, ["ahern", "nowhere"]);
+        assert_eq!(
+            sent.iter()
+                .filter(|c| matches!(c, NetCommand::MapItemRequest { item_type, handle }
+                    if *item_type == aurora_net::map_item::AGENT_LOCATIONS
+                        && *handle == aurora_net::origin_to_handle(1000 * 256, 1000 * 256)))
+                .count(),
+            1
+        );
+        w.refresh_tracked_regions();
+        assert!(w.map.take_commands().is_empty());
     }
 
     #[test]
