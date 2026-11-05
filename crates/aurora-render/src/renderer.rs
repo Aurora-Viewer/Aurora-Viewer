@@ -625,6 +625,8 @@ struct TaaU {
     inv_view_proj: [[f32; 4]; 4],
     prev_view_proj: [[f32; 4]; 4],
     params: [f32; 4],
+    /// x: 1 when the motion vectors move the history (`taa_motion_now`).
+    motion: [f32; 4],
 }
 
 #[repr(C)]
@@ -645,8 +647,28 @@ struct Taa {
     bind_groups: [wgpu::BindGroup; 2],
     /// post bind group reading history[i]
     post_bgs: [wgpu::BindGroup; 2],
+    /// The normals and motion target of the depth prepass when GTAO has
+    /// none to share (`motion_view`); its bind groups read
+    /// whichever one existed when they were made (`remake_taa` follows
+    /// every rebuild of the targets).
+    motion: Option<wgpu::TextureView>,
     parity: usize,
     reset: bool,
+}
+
+/// The depth prepass's colour target this frame, when something reads the
+/// motion (`Backend::motion_now`): the mesh normals (xy) and each pixel's
+/// screen motion (zw, object.wgsl `depth_normal`). GTAO's normals when its
+/// targets exist (TAA then reads the same), else TAA's own.
+fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>) -> Option<&'a wgpu::TextureView> {
+    if !motion_now {
+        return None;
+    }
+    targets
+        .gtao
+        .as_ref()
+        .map(|g| &g.normals)
+        .or_else(|| taa.and_then(|t| t.motion.as_ref()))
 }
 
 /// The replay of a frame's write journal is logged over this (ms).
@@ -1388,6 +1410,25 @@ fn gtao_mesh_normals_now() -> bool {
     crate::gtao::Normals::from_env().mesh(secs)
 }
 
+/// Whether TAA reprojects with the motion vectors in the frame drawn `secs`
+/// whole seconds into the session, for `AURORA_TAA_MOTION`: `0` the camera
+/// alone through the depth (as before the motion vectors), `alt` one second
+/// each, anything else on.
+fn taa_motion_applied(v: Option<&str>, secs: u64) -> bool {
+    match v.map(str::trim) {
+        Some("0") | Some("off") => false,
+        Some("alt") => secs.is_multiple_of(2),
+        _ => true,
+    }
+}
+
+fn taa_motion_now() -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    taa_motion_applied(MODE.get_or_init(|| std::env::var("AURORA_TAA_MOTION").ok()).as_deref(), secs)
+}
+
 /// AURORA_PROFILE: the summary also wants the time each step waited.
 fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -1536,6 +1577,9 @@ pub(crate) struct Backend {
     /// This frame's GTAO reads the mesh normals the depth prepass draws
     /// (`AURORA_GTAO_NORMALS=alt` switches them each second).
     gtao_normals_now: bool,
+    /// This frame's depth prepass writes each pixel's motion (`motion_view`):
+    /// GTAO reads the mesh normals beside it, or TAA reprojects with it.
+    motion_now: bool,
     /// This frame draws the blended faces at least half covered into the
     /// occlusion's depth (`AURORA_BLEND_AO`).
     blend_ao_depth: bool,
@@ -1609,7 +1653,7 @@ pub(crate) struct Backend {
     /// was submitted since: the next one takes its matrices as the previous.
     motion_cut: bool,
     /// The last submitted frame kept its matrices for the next one: only
-    /// while something reads the motion (`gtao_normals_now`).
+    /// while something reads the motion (`motion_now`).
     motion_kept: bool,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
@@ -3135,6 +3179,7 @@ impl Backend {
             contact,
             contact_now: false,
             gtao_normals_now: false,
+            motion_now: false,
             blend_ao_depth: true,
             bloom,
             exposure,
@@ -5007,6 +5052,7 @@ impl Backend {
                     count: None,
                 },
                 uniform_entry(4, wgpu::ShaderStages::FRAGMENT),
+                float_tex(5),
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -5062,6 +5108,23 @@ impl Backend {
             .1
         };
         let history = [mk(), mk()];
+        // GTAO's normals already carry the motion when its targets exist
+        let mut motion = None;
+        let motion_read: &wgpu::TextureView = match &self.targets.gtao {
+            Some(g) => &g.normals,
+            None => motion.insert(
+                make_view(
+                    device,
+                    "taa motion",
+                    self.scene_size().0,
+                    self.scene_size().1,
+                    crate::gtao::NORMAL_FORMAT,
+                    1,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                )
+                .1,
+            ),
+        };
         let bg = |read: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("taa"),
@@ -5086,6 +5149,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 4,
                         resource: buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(motion_read),
                     },
                 ],
             })
@@ -5123,6 +5190,7 @@ impl Backend {
             history,
             bind_groups,
             post_bgs,
+            motion,
             parity: 0,
             reset: true,
         }
@@ -5909,9 +5977,10 @@ impl Backend {
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
+        self.motion_now = self.gtao_normals_now || self.taa.is_some();
         // nothing kept the matrices while nothing read the motion: the
         // first frame that reads it again starts the history again
-        self.motion_cut |= self.gtao_normals_now && !self.motion_kept;
+        self.motion_cut |= self.motion_now && !self.motion_kept;
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         if f.photo_tile != Mat4::IDENTITY {
@@ -6719,7 +6788,7 @@ impl Backend {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        if self.motion_cut && self.gtao_normals_now {
+        if self.motion_cut && self.motion_now {
             self.motion_history.encode(&self.device, &mut encoder, &scene);
         }
         if let Some(old) = old_impostor_atlas {
@@ -6987,9 +7056,9 @@ impl Backend {
         } else {
             (&self.pipelines.pre_opaque, &self.pipelines.pre_opaque_2s)
         };
-        // GTAO's mesh normals, drawn beside the depth when it reads them;
-        // without them the passes keep no colour target at all
-        let normals = self.targets.gtao.as_ref().filter(|_| self.gtao_normals_now).map(|g| &g.normals);
+        // the mesh normals and the motion, drawn beside the depth when GTAO
+        // or TAA reads them; without them the passes keep no colour target
+        let normals = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
         let normal_target = |load| {
             normals.map(|view| {
                 Some(wgpu::RenderPassColorAttachment {
@@ -8100,6 +8169,7 @@ impl Backend {
                     world_size.0 as f32,
                     world_size.1 as f32,
                 ],
+                motion: [if taa_motion_now() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             };
             self.queue.write_buffer(&taa.buffer, 0, bytemuck::bytes_of(&u));
             {
@@ -8292,7 +8362,7 @@ impl Backend {
         }
 
         if let Some(debug) = &self.motion_debug {
-            let motion = self.targets.gtao.as_ref().filter(|_| self.gtao_normals_now).map(|g| &g.normals);
+            let motion = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
             debug.encode(
                 &self.device,
                 &self.queue,
@@ -8567,8 +8637,8 @@ impl Backend {
 
         prof.mark("egui");
         // after every pass that read this frame's matrices; without a
-        // reader of the motion (GTAO off or from the depth) no copy runs
-        if self.gtao_normals_now {
+        // reader of the motion (GTAO off or from the depth, no TAA) no copy runs
+        if self.motion_now {
             self.motion_history.encode(&self.device, &mut encoder, &scene);
         }
         if wanted == Some(Capture::Full) {
@@ -8624,7 +8694,7 @@ impl Backend {
             self.queue.on_submitted_work_done(move || frames.finished_through(index));
         }
         self.motion_cut = false;
-        self.motion_kept = self.gtao_normals_now;
+        self.motion_kept = self.motion_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
         let mut captured = None;
@@ -8841,6 +8911,16 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taa_follows_the_motion_unless_switched_off_or_alternating() {
+        assert!(taa_motion_applied(None, 0));
+        assert!(taa_motion_applied(Some("1"), 3));
+        assert!(!taa_motion_applied(Some("0"), 0));
+        assert!(!taa_motion_applied(Some(" off "), 5));
+        assert!(taa_motion_applied(Some("alt"), 4));
+        assert!(!taa_motion_applied(Some("alt"), 5));
+    }
 
     #[test]
     fn blend_runs_preserve_order_and_subranges_and_keep_single_sided_faces_culled() {

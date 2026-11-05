@@ -392,6 +392,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-use-bridge-help"),
                     &field!(use_bridge),
                 );
+                use crate::world::portals::Sources;
+                cx.combo(
+                    tr!("ui-options-aurora-portal-sources"),
+                    tr!("ui-options-aurora-portal-sources-help"),
+                    &field!(portal_sources),
+                    &[
+                        (Sources::Friends, tr!("ui-options-aurora-portal-sources-friends")),
+                        (Sources::FriendsAndGroups, tr!("ui-options-aurora-portal-sources-groups")),
+                        (Sources::Everyone, tr!("ui-options-aurora-portal-sources-everyone")),
+                        (Sources::Nobody, tr!("ui-options-aurora-portal-sources-nobody")),
+                    ],
+                );
             });
             cx.group(tr!("ui-options-aurora-gaze"), |cx| {
                 cx.wide().choice(

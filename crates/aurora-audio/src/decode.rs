@@ -114,6 +114,20 @@ impl DecodeStream {
         }
     }
 
+    /// Source samples (frames x channels) the container announces for the
+    /// decoded track, when it says (ov_pcm_total in the Legacy decoder).
+    fn declared_samples(&self) -> Option<u64> {
+        let track = self.format.tracks().iter().find(|t| t.id == self.track_id)?;
+        let frames = track.num_frames?;
+        let channels = track
+            .codec_params
+            .as_ref()
+            .and_then(|p| p.audio())
+            .and_then(|a| a.channels.as_ref())
+            .map_or(1, |c| c.count().max(1));
+        Some(frames.saturating_mul(channels as u64))
+    }
+
     /// "Artist - Title" from in-stream tags (Ogg/Vorbis comments), if any.
     pub(crate) fn tag_title(&mut self) -> Option<String> {
         let mut meta = self.format.metadata();
@@ -181,19 +195,48 @@ impl std::fmt::Debug for SoundClip {
     }
 }
 
-/// Clips longer than this are refused (protects against hostile assets).
-const MAX_CLIP_SECONDS: usize = 600;
+/// Longest sound asset accepted, in source samples (frames x channels):
+/// LLVORBIS_CLIP_REJECT_SIZE / 2 (llaudio/llvorbisencode.h), three times
+/// the 30 s stereo upload at 44.1 kHz, the same on every grid. That is 90 s
+/// of stereo or 180 s of mono at 44.1 kHz; OpenSim's 60 s uploads fit.
+pub(crate) const MAX_CLIP_SOURCE_SAMPLES: usize = 3 * 30 * 44_100 * 2;
+
+/// Longest decoded clip (LLVORBIS_CLIP_REJECT_SAMPLES at 44.1 kHz): a low
+/// sample rate does not stretch the source limit into a longer clip once
+/// resampled to the engine rate.
+pub(crate) const MAX_CLIP_SECONDS: usize = 180;
 
 impl SoundClip {
     /// Decodes an in-memory file (Ogg Vorbis — the Second Life sound asset
-    /// format —, WAV, MP3 or ADTS AAC).
+    /// format —, WAV, MP3 or ADTS AAC). A sound longer than the Legacy
+    /// Viewer accepts is refused, as soon as the container announces it or
+    /// the decoding passes the limit.
     pub fn decode(bytes: &[u8]) -> Result<SoundClip, AudioError> {
-        let mut stream = DecodeStream::open(Box::new(Cursor::new(bytes.to_vec())), None)?;
+        Self::decode_limited(bytes, MAX_CLIP_SOURCE_SAMPLES, MAX_CLIP_SECONDS)
+    }
+
+    /// [`SoundClip::decode`] with explicit limits: `max_source` source
+    /// samples (frames x channels) and `max_seconds` once decoded.
+    fn decode_limited(bytes: &[u8], max_source: usize, max_seconds: usize) -> Result<SoundClip, AudioError> {
+        let stream = DecodeStream::open(Box::new(Cursor::new(bytes.to_vec())), None)?;
+        Self::decode_stream(stream, max_source, max_seconds)
+    }
+
+    fn decode_stream(mut stream: DecodeStream, max_source: usize, max_seconds: usize) -> Result<SoundClip, AudioError> {
+        let too_long = || AudioError::Decode("sound is too long".into());
+        if stream.declared_samples().is_some_and(|n| n > max_source as u64) {
+            return Err(too_long());
+        }
         let mut stereo = Vec::new();
         let mut out = Vec::new();
         let mut resampler: Option<(u32, Resampler)> = None;
-        let limit = MAX_CLIP_SECONDS * ENGINE_SAMPLE_RATE as usize * 2;
+        let limit = max_seconds * ENGINE_SAMPLE_RATE as usize * 2;
+        let mut source = 0usize;
         while let Some(chunk) = stream.next_chunk()? {
+            source += chunk.samples.len();
+            if source > max_source {
+                return Err(too_long());
+            }
             stereo.clear();
             to_stereo(chunk.samples, chunk.channels, &mut stereo);
             if chunk.rate == ENGINE_SAMPLE_RATE {
@@ -207,7 +250,7 @@ impl SoundClip {
                 }
             }
             if out.len() > limit {
-                return Err(AudioError::Decode("sound is too long".into()));
+                return Err(too_long());
             }
         }
         if out.is_empty() {
@@ -233,6 +276,17 @@ impl SoundClip {
     /// Length of the clip.
     pub fn duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs_f64(self.samples.len() as f64 / 2.0 / f64::from(ENGINE_SAMPLE_RATE))
+    }
+
+    /// Memory held by the decoded samples.
+    pub fn memory_bytes(&self) -> usize {
+        std::mem::size_of_val(&*self.samples)
+    }
+
+    /// Whether another copy of this clip (a voice of the mixer, playing
+    /// it) shares its samples.
+    pub fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.samples) > 1
     }
 }
 
@@ -377,6 +431,55 @@ pub(crate) mod tests {
         }
         assert_eq!(rate, 44_100);
         assert!(frames >= 1024 * 15, "{frames}");
+    }
+
+    #[test]
+    fn clip_length_limit_matches_the_legacy_viewer() {
+        // 90 s of stereo or 180 s of mono at 44.1 kHz; OpenSim's 60 s stereo uploads fit
+        assert_eq!(MAX_CLIP_SOURCE_SAMPLES, 90 * 44_100 * 2);
+        assert_eq!(MAX_CLIP_SOURCE_SAMPLES, 180 * 44_100);
+        const { assert!(60 * 48_000 * 2 <= MAX_CLIP_SOURCE_SAMPLES) };
+        const { assert!(91 * 44_100 * 2 > MAX_CLIP_SOURCE_SAMPLES) };
+    }
+
+    #[test]
+    fn a_declared_length_over_the_limit_is_refused_before_decoding() {
+        let wav = wav_bytes(44_100, 2, &[0; 4_000]);
+        let stream = DecodeStream::open(Box::new(Cursor::new(wav.clone())), None).unwrap();
+        assert_eq!(stream.declared_samples(), Some(4_000));
+        assert!(SoundClip::decode_limited(&wav, 4_000, MAX_CLIP_SECONDS).is_ok());
+        assert!(SoundClip::decode_limited(&wav, 3_999, MAX_CLIP_SECONDS).is_err());
+    }
+
+    #[test]
+    fn decoding_stops_once_past_the_limit() {
+        // MP3 frames read without seeking: no length announced, only the decoded samples count
+        let open = || {
+            let source = symphonia::core::io::ReadOnlySource::new(Cursor::new(mp3_silence(30)));
+            DecodeStream::open(Box::new(source), Some("mp3")).unwrap()
+        };
+        assert_eq!(open().declared_samples(), None);
+        assert!(SoundClip::decode_stream(open(), 1_152 * 30, MAX_CLIP_SECONDS).is_ok());
+        assert!(SoundClip::decode_stream(open(), 1_152 * 5, MAX_CLIP_SECONDS).is_err());
+    }
+
+    #[test]
+    fn a_low_sample_rate_does_not_stretch_the_limit() {
+        // 2 s at 8 kHz: few source samples, but 2 s once resampled
+        let wav = wav_bytes(8_000, 1, &[0; 16_000]);
+        assert!(SoundClip::decode_limited(&wav, MAX_CLIP_SOURCE_SAMPLES, 3).is_ok());
+        assert!(SoundClip::decode_limited(&wav, MAX_CLIP_SOURCE_SAMPLES, 1).is_err());
+    }
+
+    #[test]
+    fn shared_samples_and_memory() {
+        let clip = SoundClip::from_pcm(&[0.0; 4_800], 1, ENGINE_SAMPLE_RATE);
+        assert_eq!(clip.memory_bytes(), 4_800 * 2 * 4);
+        assert!(!clip.is_shared());
+        let voice = clip.samples.clone();
+        assert!(clip.is_shared());
+        drop(voice);
+        assert!(!clip.is_shared());
     }
 
     #[test]
