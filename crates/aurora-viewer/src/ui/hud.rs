@@ -197,6 +197,20 @@ pub fn world_painter(ctx: &egui::Context) -> egui::Painter {
     ctx.layer_painter(egui::LayerId::background())
 }
 
+/// Hover text font size, in points.
+const HOVER_TEXT_SIZE: f32 = 12.0;
+/// Distance between two lines of hover text at `HOVER_TEXT_SIZE`, narrower
+/// than the font's own row: LLHUDText::renderText (indra/newview/llhudtext.cpp)
+/// advances by getLineHeight() - 1, 13 px with the 12 px Arial of Windows.
+/// Scripts line hover text up with prims, so this does not follow our font.
+const HOVER_TEXT_ADVANCE: f32 = 13.0;
+
+/// Top of the first of `lines` lines of hover text `advance` apart, the last
+/// one `last_height` tall and ending at `bottom`.
+fn hover_text_top(bottom: f32, lines: usize, last_height: f32, advance: f32) -> f32 {
+    bottom - last_height - lines.saturating_sub(1) as f32 * advance
+}
+
 /// llSetText on our HUD attachments, without world-distance fading. Painted
 /// after the world's labels and before the bars: over the HUD attachments,
 /// under the interface.
@@ -228,9 +242,19 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         let c = o.text_color;
         let color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
         let text = world.rlva_hover_privacy.apply(&o.text).into_owned();
-        let galley = super::bidi::no_wrap(ctx, text, egui::FontId::proportional(12.0 * scale), color);
-        let rect = egui::Align2::CENTER_BOTTOM.anchor_size(point, galley.size());
-        painter.galley(rect.min, galley, color);
+        let font = egui::FontId::proportional(HOVER_TEXT_SIZE * scale);
+        let galleys: Vec<_> = text
+            .lines()
+            .map(|line| super::bidi::no_wrap(ctx, line.to_owned(), font.clone(), color))
+            .collect();
+        let last_height = galleys.last().map_or(0.0, |g| g.size().y);
+        let advance = HOVER_TEXT_ADVANCE * scale;
+        let mut y = hover_text_top(point.y, galleys.len(), last_height, advance);
+        for galley in galleys {
+            let rect = egui::Align2::CENTER_TOP.anchor_size(Pos2::new(point.x, y), galley.size());
+            painter.galley(rect.min, galley, color);
+            y += advance;
+        }
     }
 }
 
@@ -619,7 +643,7 @@ pub fn draw(
             };
             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
             let text = world.rlva_hover_privacy.apply(&o.text);
-            let lines = text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
+            let lines = text.lines().map(|l| (l.to_owned(), col, HOVER_TEXT_SIZE)).collect();
             tags.push((d + 1000.0, sp, lines, None, None, None, anchor, 1.0, None));
         }
     }
@@ -646,7 +670,11 @@ pub fn draw(
             .collect();
         let total_h: f32 = galleys.iter().map(|g| g.size().y).sum();
         let max_w = galleys.iter().map(|g| g.size().x).fold(0.0, f32::max);
-        y -= total_h;
+        if is_avatar {
+            y -= total_h;
+        } else {
+            y = hover_text_top(y, galleys.len(), galleys.last().map_or(0.0, |g| g.size().y), HOVER_TEXT_ADVANCE);
+        }
         let visualizer = audio.world_voice_visualizer(avatar == Some(world.agent_id), world.calls.active.is_some(), false);
         let no_voice = visualizer && is_avatar && in_voice.is_none();
         let voice_w = if no_voice { super::voice_tag::ICON_WIDTH } else { 0.0 };
@@ -722,7 +750,7 @@ pub fn draw(
             }
             // every line was laid out with its own color: nothing to fall back on
             painter.galley(rect.min, g, Color32::PLACEHOLDER);
-            y += h;
+            y += if is_avatar { h } else { HOVER_TEXT_ADVANCE };
         }
     }
     if let Some(plates) = plates {
@@ -751,6 +779,16 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hover_text_lines_sit_the_legacy_distance_apart_above_their_bottom() {
+        // the ten lines of issue #2284: nine advances between the first and
+        // the last line's top, against 135 px with the font's 15 px rows
+        let top = hover_text_top(500.0, 10, 15.0, HOVER_TEXT_ADVANCE);
+        assert_eq!(500.0 - 15.0 - top, 117.0);
+        assert_eq!(hover_text_top(500.0, 1, 15.0, HOVER_TEXT_ADVANCE), 485.0);
+        assert_eq!(hover_text_top(500.0, 0, 0.0, HOVER_TEXT_ADVANCE), 500.0);
+    }
 
     #[test]
     fn plate_render_badges_distinguish_manual_limits_and_follow_setting_changes() {

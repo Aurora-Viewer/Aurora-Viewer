@@ -19527,6 +19527,14 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            // AURORA_DEMO_HOVER_LINES: a cube with ten lines of hover text
+            if crate::demo::hover_lines::scenario() {
+                for ev in crate::demo::hover_lines::events() {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+            }
             // AURORA_DEMO_GLYPHS=1|2|rtl: residents named and talking in the
             // characters of the grid's display names (system fallback fonts)
             if let Some(mode) = crate::demo::glyphs::scenario() {

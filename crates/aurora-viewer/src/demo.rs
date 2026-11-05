@@ -127,6 +127,9 @@ pub mod hand_ik;
 /// AURORA_DEMO_USERINFO).
 #[path = "demo_home.rs"]
 pub mod home;
+/// Ten lines of hover text on a cube (AURORA_DEMO_HOVER_LINES).
+#[path = "demo_hover_lines.rs"]
+pub mod hover_lines;
 /// The world's hover tips in one of their forms (AURORA_DEMO_HOVER_TIPS).
 #[path = "demo_hover_tips.rs"]
 pub mod hover_tips;

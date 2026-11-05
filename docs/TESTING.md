@@ -4952,6 +4952,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs and saved private/group conversation restoration |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
+| `AURORA_DEMO_HOVER_LINES=1` | A cube with ten lines of hover text, to measure their spacing |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CHAT_INPUT=1\|long` | Paragraph drafts in the conversation and nearby-chat inputs |
@@ -6281,6 +6282,11 @@ failure. Grid validation and any paid upload are performed by the human.
   Colours): the panel opens under "My messages", with the saturation / value field, the
   hue bar, the new colour above the old one, the
   R G B and hexadecimal fields, and the eyedropper.
+- **`AURORA_DEMO_HOVER_LINES=1`**: a cube left of the start view, with the
+  text "1" to "10" on ten lines (#2284). What to see: the lines 13 points
+  apart, like the Legacy Viewer on Windows, so 117 pixels from the top of "1"
+  to the top of "10" at 100% interface scale; avatar name tags keep their
+  spacing.
 - **`AURORA_DEMO_GLYPHS=1|2`**: eight residents in two rows in front of
   the avatar (the second row flying), a cube with floating text on the right
   and the Conversations window on local chat. The group title, display name
