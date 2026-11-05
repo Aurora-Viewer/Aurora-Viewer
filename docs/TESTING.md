@@ -4717,7 +4717,9 @@ seeds the static action cubes without running the action-click scenario.
 synthetic cube without changing the build selection. `face-hover-transparent`
 uses zero-alpha faces; `face-hover-material` carries a PBR material and
 `face-hover-all` holds Shift. Capture at frame 700: only the target face (or all
-faces with Shift) must have the ordinary selection overlay. `face-drop-transparent`
+faces with Shift) must have the ordinary selection overlay. Keep hovering to
+check that its 700 ms flash repeats; capture several cycles (for example frames
+660,680,702,722,744,764 at 60 FPS). `face-drop-transparent`
 releases at frame 730; `face-cancel` cancels with Escape and `face-ui` moves over
 the library. Capture at frame 750 to check the overlay is cleared. Suffixes can
 be combined, for example `face-hover-material-transparent-all`. `face-hover-contents`

@@ -10166,11 +10166,14 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: self
-                .imports
-                .local_status
-                .pulse(Instant::now(), self.settings.reduce_motion)
-                .unwrap_or_else(|| self.scene.selection_pulse(Instant::now())),
+            selection_pulse: if self.library_drag.highlighted.is_some() {
+                self.scene.selection_pulse(Instant::now(), true)
+            } else {
+                self.imports
+                    .local_status
+                    .pulse(Instant::now(), self.settings.reduce_motion)
+                    .unwrap_or_else(|| self.scene.selection_pulse(Instant::now(), false))
+            },
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
