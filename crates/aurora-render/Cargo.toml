@@ -26,6 +26,10 @@ intel_tex_2 = "0.5.0"
 # their own (dedicated.rs); macOS draws through Metal instead
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 ash = "0.38"
+# Optional diagnostic: make wgpu-hal expose the native Vulkan error when an
+# internal driver operation (such as pipeline creation) returns an unexpected
+# result. Keep disabled in normal builds; the diagnostic intentionally panics.
+wgpu-hal = { version = "30.0.1", default-features = false, optional = true, features = ["device_lost_panic", "internal_error_panic"] }
 
 # Metal under wgpu: memory budget and size of the device (vram.rs); the
 # version and the feature wgpu-hal uses
@@ -54,6 +58,7 @@ openxr = "0.22"
 
 [features]
 xr-static-loader = ["openxr/static"]
+diagnose-vulkan-internal-errors = ["dep:wgpu-hal", "wgpu-hal/device_lost_panic", "wgpu-hal/internal_error_panic"]
 
 [dev-dependencies]
 naga = { version = "30", features = ["wgsl-in"] }

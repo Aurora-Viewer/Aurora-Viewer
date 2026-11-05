@@ -55,7 +55,9 @@ triage.
 What each part tells the one who fixes it:
 
 - **Crash**: `Rust panic`, `Native exception 0x…`, `Startup or event loop
-  failure`, `GPU not responding` (the graphics card still held a frame when
+  failure`, `GPU device lost` (the renderer's device-lost callback fired),
+  `GPU device lost at startup` (the device was lost while the renderer
+  started), `GPU not responding` (the graphics card still held a frame when
   the session ended, the window answering: closed from the stall notice or
   by other means; the stack is the render thread's, waiting in the driver,
   and the row "GPU not responding" says for how long), `Freeze` (the window
@@ -86,13 +88,20 @@ What each part tells the one who fixes it:
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
+- **Contact-shadow test variant**: when a diagnostic shader variant was
+  selected, its fixed name (`no-main`, `no-store`, `no-early-out`, and so on).
+  Arbitrary environment-variable text is never included.
 - **GPU work at the loss**: the frame last submitted to the card and the
-  last one it finished, each with its age at the loss, and what that says:
-  a hang (the last frame not finished 0.5 s or more after its submission:
-  the driver reset the card; a real hang on an RTX 5070 Ti was declared
-  1.1 s after), a fault the driver found in a frame's work (the loss within
-  0.1 s of the submission, or after the frame ended), or undecided between
-  the two. Frame numbers and ages only.
+  last one it finished, each with its age at the loss. An unfinished
+  submission older than 0.5 s is reported as a likely hang (a real hang test
+  on an RTX 5070 Ti was declared lost 1.1 s after submission). A loss seen
+  within 0.1 s of a still-pending submission, or after the latest submission
+  finished, is reported with unknown cause; timing alone cannot identify a
+  GPU fault or the failing pass. Between 0.1 and 0.5 s, the report leaves
+  hang versus slow frame undecided. Frame numbers and ages only. If the log
+  contains more than one
+  loss, the report gives the first and last work records separately; a
+  recovery failure should not hide the state recorded at the original loss.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
   during the session (`AURORA_GPU_RECOVERY=1`), how many, and for the first
   five when in the session, how long the recovery took and whether it came

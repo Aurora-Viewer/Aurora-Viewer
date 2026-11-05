@@ -349,8 +349,33 @@ impl Override {
 pub(crate) enum Variant {
     /// The shader as it is.
     Bend,
-    /// No early exit of an all-sky wavefront through `workgroupUniformLoad`:
-    /// every wavefront goes on to the barrier. Same mask.
+    /// A no-op raymarch entry point, retaining only the mask clear pass.
+    NoMain,
+    /// Keep the full raymarch but replace the softening shader with no-op
+    /// entries. Separates raymarch shader creation/execution from filtering.
+    NoFilter,
+    /// Dispatch the same workgroup grid through a no-op raymarch entry point.
+    /// Separates queue dispatch from work performed by the shader body.
+    NoMainDispatch,
+    /// Run the full raymarch but suppress its final texture store. Isolates
+    /// shader execution from the unsynchronized output-pixel writes.
+    NoStore,
+    /// Keep one writer per output pixel with an atomic claim before the
+    /// normal storage-texture write. Isolates overlapping stores from the
+    /// storage-texture format and the rest of the raymarch.
+    AtomicClaim,
+    /// Minimal storage-image writer with no workgroup arrays. Separates
+    /// storage-image compilation/access from Naga's workgroup-array output.
+    MinimalImage,
+    /// Create and run the empty compute entry points without declaring or
+    /// writing a storage image. Separates the storage-image path from the
+    /// rest of the contact-shadow pass.
+    NoImage,
+    /// Dispatch the same empty entry point grid without declaring or
+    /// writing a storage image.
+    NoImageDispatch,
+    /// No all-sky wavefront early-out: omit the atomic flag and uniform load,
+    /// so every wavefront writes its depths and reaches the barrier. Same mask.
     NoEarlyOut,
     /// No workgroup memory and no barrier: each thread reads from the
     /// texture what the others would have shared. Same mask, slower.
@@ -369,6 +394,14 @@ impl Variant {
             Some("no-early-out") => Variant::NoEarlyOut,
             Some("no-shared") => Variant::NoShared,
             Some("short") => Variant::Short,
+            Some("no-main") => Variant::NoMain,
+            Some("no-filter") => Variant::NoFilter,
+            Some("noop-dispatch") => Variant::NoMainDispatch,
+            Some("no-store") => Variant::NoStore,
+            Some("atomic-claim") => Variant::AtomicClaim,
+            Some("minimal-image") => Variant::MinimalImage,
+            Some("no-image") => Variant::NoImage,
+            Some("no-image-dispatch") => Variant::NoImageDispatch,
             Some("skip") => Variant::Skip,
             _ => Variant::Bend,
         }
@@ -384,6 +417,23 @@ impl Variant {
             v
         })
     }
+}
+
+/// `AURORA_CONTACT_PIPELINE_TRACE=1` records entry and completion around
+/// startup stages that may otherwise have no log if the device is lost.
+fn trace_pipeline_stage<T>(stage: impl FnOnce() -> String, create: impl FnOnce() -> T) -> T {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let enabled = *TRACE.get_or_init(|| std::env::var("AURORA_CONTACT_PIPELINE_TRACE").is_ok_and(|value| value.trim() == "1"));
+    if !enabled {
+        return create();
+    }
+
+    let stage = stage();
+    log::info!("contact shadows startup: {stage} started");
+    let started = std::time::Instant::now();
+    let result = create();
+    log::info!("contact shadows startup: {stage} returned in {} µs", started.elapsed().as_micros());
+    result
 }
 
 /// The window's shader for `variant`: Bend's as it is, or without one of
@@ -402,11 +452,61 @@ pub(crate) fn variant_source(variant: Variant) -> String {
         src.replace_range(start..start + len, with);
     };
     match variant {
-        Variant::Bend | Variant::Skip => bend.to_owned(),
+        Variant::Bend | Variant::NoFilter | Variant::Skip => bend.to_owned(),
+        Variant::NoMain | Variant::NoMainDispatch => {
+            // Keep only the output texture and clear entry point. This
+            // diagnostic compares construction of the full raymarch
+            // pipeline with the same renderer without its shader body.
+            "@group(0) @binding(2) var out_tex: texture_storage_2d<rgba8unorm, write>;\n\
+             @compute @workgroup_size(64, 1, 1)\n\
+             fn main() {}\n\
+             @compute @workgroup_size(8, 8, 1)\n\
+             fn clear(@builtin(global_invocation_id) id: vec3<u32>) {\n\
+                 let size = textureDimensions(out_tex);\n\
+                 if (id.x < size.x && id.y < size.y) {\n\
+                     textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(0.0));\n\
+                 }\n\
+             }\n"
+            .to_owned()
+        }
+        Variant::MinimalImage => {
+            // A minimal storage-image clear with no workgroup arrays. This
+            // isolates the storage-image path from the known Naga workgroup
+            // layout warning reported by the Khronos validation layer.
+            "@group(0) @binding(2) var out_tex: texture_storage_2d<rgba8unorm, write>;\n\
+             @compute @workgroup_size(64, 1, 1)\n\
+             fn main() {}\n\
+             @compute @workgroup_size(8, 8, 1)\n\
+             fn clear(@builtin(global_invocation_id) id: vec3<u32>) {\n\
+                 let size = textureDimensions(out_tex);\n\
+                 if (id.x < size.x && id.y < size.y) {\n\
+                     textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(0.0));\n\
+                 }\n\
+             }\n"
+            .to_owned()
+        }
+        Variant::NoImage | Variant::NoImageDispatch => {
+            // AMD reports include device loss while creating a pipeline for
+            // a minimal storage-image writer. Keep the explicit pipeline
+            // layout, but remove all shader image declarations and access.
+            // This is a diagnostic baseline, not a rendering path.
+            "@compute @workgroup_size(64, 1, 1)\n\
+             fn main() {}\n\
+             @compute @workgroup_size(8, 8, 1)\n\
+             fn clear() {}\n"
+                .to_owned()
+        }
         Variant::Short => shader_source(16, 1),
         Variant::NoEarlyOut => {
             let mut src = lf();
-            cut(&mut src, "    if (workgroupUniformLoad(&any_live) == 0u) {", "    }\n", "");
+            for construct in [
+                "var<workgroup> any_live: atomic<u32>;\n",
+                "    if (!skip_pixel) {\n        atomicOr(&any_live, 1u);\n    }\n",
+                "    if (workgroupUniformLoad(&any_live) == 0u) {\n        return;\n    }\n",
+            ] {
+                assert_eq!(src.matches(construct).count(), 1, "contact shadows variant: `{construct}`");
+                src = src.replacen(construct, "", 1);
+            }
             src
         }
         Variant::NoShared => {
@@ -422,6 +522,50 @@ pub(crate) fn variant_source(variant: Variant) -> String {
             assert_eq!(reads, 3, "contact shadows variant: the shared reads");
             src = src.replace("depth_data[sample_index + i]", "stored_depth(wave, sample_index + i)");
             src.push_str(&include_str!("shaders/contact_shadows_no_shared.wgsl").replace("\r\n", "\n"));
+            src
+        }
+        Variant::NoStore => {
+            let mut src = lf();
+            let store = "    let size = vec2<i32>(textureDimensions(out_tex));\n    if (all(write_xy >= vec2<i32>(0)) && all(write_xy < size)) {\n        textureStore(out_tex, write_xy, vec4<f32>(1.0 - result, 0.0, 0.0, 0.0));\n    }\n";
+            assert_eq!(src.matches(store).count(), 1, "contact shadows variant: final output store");
+            src = src.replacen(store, "", 1);
+            src
+        }
+        Variant::AtomicClaim => {
+            let mut src = lf();
+            let output = "@group(0) @binding(2) var out_tex: texture_storage_2d<rgba8unorm, write>;\n";
+            assert_eq!(src.matches(output).count(), 1, "contact shadows variant: output binding");
+            src = src.replacen(
+                output,
+                "@group(0) @binding(2) var out_tex: texture_storage_2d<rgba8unorm, write>;\n\
+                 @group(0) @binding(3) var<storage, read_write> output_claims: array<atomic<u32>>;\n",
+                1,
+            );
+            let clear = "    let size = textureDimensions(out_tex);\n    if (id.x < size.x && id.y < size.y) {\n        textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(0.0));\n    }\n";
+            assert_eq!(src.matches(clear).count(), 1, "contact shadows variant: clear entry point");
+            src = src.replacen(
+                clear,
+                "    let size = textureDimensions(out_tex);\n    if (id.x < size.x && id.y < size.y) {\n\
+                     let pixel = id.y * size.x + id.x;\n\
+                     if (pixel % 32u == 0u) { atomicStore(&output_claims[pixel / 32u], 0u); }\n\
+                     textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(0.0));\n\
+                 }\n",
+                1,
+            );
+            let store = "    let size = vec2<i32>(textureDimensions(out_tex));\n    if (all(write_xy >= vec2<i32>(0)) && all(write_xy < size)) {\n        textureStore(out_tex, write_xy, vec4<f32>(1.0 - result, 0.0, 0.0, 0.0));\n    }\n";
+            assert_eq!(src.matches(store).count(), 1, "contact shadows variant: final output store");
+            src = src.replacen(
+                store,
+                "    let size = vec2<i32>(textureDimensions(out_tex));\n    if (all(write_xy >= vec2<i32>(0)) && all(write_xy < size)) {\n\
+                     let pixel = u32(write_xy.y * size.x + write_xy.x);\n\
+                     let bit = 1u << (pixel % 32u);\n\
+                     let previous = atomicOr(&output_claims[pixel / 32u], bit);\n\
+                     if ((previous & bit) == 0u) {\n\
+                         textureStore(out_tex, write_xy, vec4<f32>(1.0 - result, 0.0, 0.0, 0.0));\n\
+                     }\n\
+                 }\n",
+                1,
+            );
             src
         }
     }
@@ -473,11 +617,24 @@ struct Filter {
 }
 
 impl Filter {
-    fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("contact shadows filter"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/contact_shadows_filter.wgsl").into()),
-        });
+    fn new(device: &wgpu::Device, omit_storage_image_access: bool) -> Self {
+        let no_image = "@compute @workgroup_size(8, 8, 1)\n\
+                        fn main() {}\n\
+                        @compute @workgroup_size(8, 8, 1)\n\
+                        fn copy() {}\n";
+        let module = trace_pipeline_stage(
+            || "filter shader module".to_owned(),
+            || {
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("contact shadows filter"),
+                    source: wgpu::ShaderSource::Wgsl(if omit_storage_image_access {
+                        no_image.into()
+                    } else {
+                        include_str!("shaders/contact_shadows_filter.wgsl").into()
+                    }),
+                })
+            },
+        );
         let texture = |binding: u32, sample_type: wgpu::TextureSampleType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -511,14 +668,19 @@ impl Filter {
             immediate_size: 0,
         });
         let make = |entry: &'static str| {
-            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-                label: Some("contact shadows filter"),
-                layout: Some(&pl),
-                module: &module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+            trace_pipeline_stage(
+                || format!("filter {entry} pipeline"),
+                || {
+                    device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                        label: Some("contact shadows filter"),
+                        layout: Some(&pl),
+                        module: &module,
+                        entry_point: Some(entry),
+                        compilation_options: Default::default(),
+                        cache: None,
+                    })
+                },
+            )
         };
         Filter {
             soft: make("main"),
@@ -576,10 +738,15 @@ impl ContactShadows {
 
     /// [`Self::new`] with the window's shader of `variant`.
     pub(crate) fn with_variant(device: &wgpu::Device, variant: Variant) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("contact shadows"),
-            source: wgpu::ShaderSource::Wgsl(variant_source(variant).into()),
-        });
+        let module = trace_pipeline_stage(
+            || format!("raymarch {variant:?} shader module"),
+            || {
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("contact shadows"),
+                    source: wgpu::ShaderSource::Wgsl(variant_source(variant).into()),
+                })
+            },
+        );
         let stride = std::mem::size_of::<ParamsU>().next_multiple_of(device.limits().min_uniform_buffer_offset_alignment as usize) as u64;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("contact shadows"),
@@ -614,6 +781,16 @@ impl ContactShadows {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -622,17 +799,28 @@ impl ContactShadows {
             immediate_size: 0,
         });
         let make = |entry: &'static str| {
-            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-                label: Some("contact shadows"),
-                layout: Some(&pl),
-                module: &module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+            trace_pipeline_stage(
+                || format!("raymarch {variant:?} {entry} pipeline"),
+                || {
+                    device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                        label: Some("contact shadows"),
+                        layout: Some(&pl),
+                        module: &module,
+                        entry_point: Some(entry),
+                        compilation_options: Default::default(),
+                        cache: None,
+                    })
+                },
+            )
         };
         let (pipeline, clear) = (make("main"), make("clear"));
-        let filter = Filter::new(device);
+        let filter = Filter::new(
+            device,
+            matches!(
+                variant,
+                Variant::NoFilter | Variant::MinimalImage | Variant::NoImage | Variant::NoImageDispatch
+            ),
+        );
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("contact shadows params"),
             size: stride * 8,
@@ -664,18 +852,28 @@ impl ContactShadows {
             return;
         }
         let (count, hard) = self.samples;
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("contact shadows (photo)"),
-            source: wgpu::ShaderSource::Wgsl(shader_source(count, hard).into()),
-        });
-        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-            label: Some("contact shadows (photo)"),
-            layout: Some(&self.pipeline_layout),
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let module = trace_pipeline_stage(
+            || format!("photo {count}-sample shader module"),
+            || {
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("contact shadows (photo)"),
+                    source: wgpu::ShaderSource::Wgsl(shader_source(count, hard).into()),
+                })
+            },
+        );
+        let pipeline = trace_pipeline_stage(
+            || format!("photo {count}-sample pipeline"),
+            || {
+                device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                    label: Some("contact shadows (photo)"),
+                    layout: Some(&self.pipeline_layout),
+                    module: &module,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            },
+        );
         log::info!("contact shadows: {count} samples per pixel for the photo");
         self.photo = Some((self.samples, pipeline));
     }
@@ -727,6 +925,20 @@ impl ContactShadows {
             view_formats: &[],
         });
         let own_depth = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // The full per-pixel bitmap is only used by the explicit overlap
+        // diagnostic. Keep the normal path's binding valid with one word so
+        // diagnostics do not add a full-resolution allocation to rendering.
+        let claims_size = if self.variant == Variant::AtomicClaim {
+            (u64::from(size.0) * u64::from(size.1)).div_ceil(32) * 4
+        } else {
+            4
+        };
+        let output_claims = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("contact-shadow output claims"),
+            size: claims_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
         let group = |depth: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("contact shadows"),
@@ -747,6 +959,14 @@ impl ContactShadows {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::TextureView(&raw),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &output_claims,
+                            offset: 0,
+                            size: None,
+                        }),
                     },
                 ],
             })
@@ -811,9 +1031,8 @@ impl ContactShadows {
     }
 
     /// The dispatches of `write`, after the depth prepass (`more`: after
-    /// the blended faces and the cards were drawn into `depth`). No barrier is
-    /// needed between them: each writes its own pixels. The target is
-    /// emptied first (0, lit): the pixel under the light's point, which no
+    /// the blended faces and the cards were drawn into `depth`). The target
+    /// is emptied first (0, lit): the pixel under the light's point, which no
     /// wavefront writes, and the sky stay lit. Then the filter softens the
     /// mask into `result`, over the same depth.
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, more: bool) {
@@ -822,6 +1041,9 @@ impl ContactShadows {
         } else {
             (&t.group, &t.filter_group)
         };
+        // Neighboring workgroups can floor to the same texel and write it
+        // without synchronization. The GPU test measures this race; whether
+        // it is related to the reported AMD device losses is unknown.
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("contact shadows"),
             timestamp_writes: None,
@@ -833,12 +1055,12 @@ impl ContactShadows {
             Some((s, photo)) if *s == self.samples => photo,
             _ => &self.pipeline,
         };
-        pass.set_pipeline(pipeline);
-        let list = if self.variant == Variant::Skip {
+        let list = if matches!(self.variant, Variant::NoMain | Variant::NoImage | Variant::Skip) {
             &[][..]
         } else {
             self.list.dispatches()
         };
+        pass.set_pipeline(pipeline);
         for (i, d) in list.iter().enumerate() {
             pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
             pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
@@ -856,12 +1078,12 @@ mod tests {
     /// The pixel each thread of each wavefront writes, as the shader finds
     /// it (`ComputeWavefrontExtents`, contact_shadows.wgsl): a CPU copy of
     /// its first lines.
-    fn written_pixels(list: &DispatchList, wave: i32, mut each: impl FnMut(i32, i32)) {
+    fn written_pixels(list: &DispatchList, wave: i32, mut each: impl FnMut(usize, [i32; 3], i32, i32)) {
         let light = list.light;
         let light_xy = [light[0].floor() + 0.5, light[1].floor() + 0.5];
         let frac = [light[0] - light_xy[0], light[1] - light_xy[1]];
         let reverse = light[3] > 0.0;
-        for d in list.dispatches() {
+        for (dispatch_index, d) in list.dispatches().iter().enumerate() {
             for gz in 0..d.wave_count[2] {
                 for gy in 0..d.wave_count[1] {
                     for gx in 0..d.wave_count[0] {
@@ -887,7 +1109,7 @@ mod tests {
                                 start[0] + (end[0] - start[0]) * step / wave as f32,
                                 start[1] + (end[1] - start[1]) * step / wave as f32,
                             ];
-                            each(p[0].floor() as i32, p[1].floor() as i32);
+                            each(dispatch_index, [gx, gy, gz], p[0].floor() as i32, p[1].floor() as i32);
                         }
                     }
                 }
@@ -898,7 +1120,7 @@ mod tests {
     fn coverage(light: [f32; 4], w: i32, h: i32) -> (usize, DispatchList) {
         let list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
         let mut seen = vec![false; (w * h) as usize];
-        written_pixels(&list, WAVE_SIZE, |x, y| {
+        written_pixels(&list, WAVE_SIZE, |_, _, x, y| {
             if x >= 0 && y >= 0 && x < w && y < h {
                 seen[(y * w + x) as usize] = true;
             }
@@ -1054,6 +1276,14 @@ mod tests {
         assert_eq!(Variant::parse(Some("no-early-out")), Variant::NoEarlyOut);
         assert_eq!(Variant::parse(Some(" No-Shared ")), Variant::NoShared);
         assert_eq!(Variant::parse(Some("short")), Variant::Short);
+        assert_eq!(Variant::parse(Some("NO-MAIN")), Variant::NoMain);
+        assert_eq!(Variant::parse(Some("NO-FILTER")), Variant::NoFilter);
+        assert_eq!(Variant::parse(Some("NOOP-DISPATCH")), Variant::NoMainDispatch);
+        assert_eq!(Variant::parse(Some("NO-STORE")), Variant::NoStore);
+        assert_eq!(Variant::parse(Some("ATOMIC-CLAIM")), Variant::AtomicClaim);
+        assert_eq!(Variant::parse(Some("MINIMAL-IMAGE")), Variant::MinimalImage);
+        assert_eq!(Variant::parse(Some("NO-IMAGE")), Variant::NoImage);
+        assert_eq!(Variant::parse(Some("NO-IMAGE-DISPATCH")), Variant::NoImageDispatch);
         assert_eq!(Variant::parse(Some("SKIP")), Variant::Skip);
     }
 
@@ -1063,27 +1293,57 @@ mod tests {
     fn each_variant_drops_its_construct() {
         let bend = include_str!("shaders/contact_shadows.wgsl");
         assert_eq!(variant_source(Variant::Bend), bend);
+        assert_eq!(variant_source(Variant::NoFilter), bend);
         assert_eq!(variant_source(Variant::Skip), bend);
+        let no_main = variant_source(Variant::NoMain);
+        assert!(no_main.contains("fn main() {}"));
+        assert!(!no_main.contains("ComputeWavefrontExtents") && !no_main.contains("depth_data"));
+        assert_eq!(variant_source(Variant::NoMainDispatch), no_main);
         let no_exit = variant_source(Variant::NoEarlyOut);
-        assert!(!no_exit.contains("workgroupUniformLoad") && no_exit.contains("workgroupBarrier()"));
+        for gone in ["any_live", "atomicOr", "workgroupUniformLoad"] {
+            assert!(!no_exit.contains(gone), "{gone}");
+        }
+        assert!(no_exit.contains("workgroupBarrier()"));
         let no_shared = variant_source(Variant::NoShared);
         for gone in ["var<workgroup>", "workgroupBarrier", "workgroupUniformLoad", "depth_data"] {
             assert!(!no_shared.contains(gone), "{gone}");
         }
         assert_eq!(no_shared.matches("stored_depth(wave, sample_index + i)").count(), 3);
+        let no_store = variant_source(Variant::NoStore);
+        assert!(no_store.contains("fn depth_delta"));
+        assert!(no_store.contains("workgroupBarrier()"));
+        assert!(!no_store.contains("textureStore(out_tex, write_xy"));
+        let atomic_claim = variant_source(Variant::AtomicClaim);
+        assert!(atomic_claim.contains("array<atomic<u32>>"));
+        assert!(atomic_claim.contains("atomicOr(&output_claims[pixel / 32u], bit)"));
+        assert!(atomic_claim.contains("if ((previous & bit) == 0u)"));
+        assert_eq!(atomic_claim.matches("textureStore(out_tex, write_xy").count(), 1);
+        assert!(atomic_claim.contains("atomicStore(&output_claims[pixel / 32u], 0u)"));
+        let minimal_image = variant_source(Variant::MinimalImage);
+        assert!(minimal_image.contains("texture_storage_2d<rgba8unorm, write>"));
+        assert!(minimal_image.contains("textureStore(out_tex"));
+        assert!(!minimal_image.contains("var<workgroup>"));
+        for variant in [Variant::NoImage, Variant::NoImageDispatch] {
+            let src = variant_source(variant);
+            assert!(src.contains("fn main() {}"));
+            assert!(src.contains("fn clear() {}"));
+            assert!(!src.contains("@group") && !src.contains("textureStore"));
+        }
         assert!(variant_source(Variant::Short).contains("const SAMPLE_COUNT: i32 = 16;"));
     }
 
     /// The mask each variant draws over a ground with a box on it, read
-    /// back: `no-early-out` and `no-shared` must draw Bend's exactly, or
-    /// the tester's answers would compare different work.
+    /// back: `no-early-out` and `no-shared` must draw Bend's exactly on
+    /// pixels with a single writer. Overlapping writers are counted and
+    /// reported because the GPU may choose either result.
     #[test]
     #[ignore = "requires a GPU"]
     fn the_variants_that_keep_the_image_draw_bends_mask() {
         let instance = wgpu::Instance::default();
-        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+        let Ok(adapter) = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None)) else {
             return;
         };
+        eprintln!("contact-shadow GPU experiment: {:?}", adapter.get_info());
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("device");
         let (w, h) = (320u32, 192u32);
         let format = wgpu::TextureFormat::Depth32Float;
@@ -1168,8 +1428,11 @@ mod tests {
             pass.draw(0..3, 0..1);
         }
         queue.submit([encoder.finish()]);
-        // the sun ahead and high, its point on screen above the image
-        let light = [0.2, 1.6, 0.0, 0.8];
+        // The sun directly ahead. Projecting a directional light through
+        // the view gives a finite clip-space `w` and brings it to screen center.
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, w as f32 / h as f32, 0.1);
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::X, Vec3::Z);
+        let light = light_projection(projection * view, Vec3::X);
         let mask = |variant: Variant| -> Vec<u8> {
             let mut cs = ContactShadows::with_variant(&device, variant);
             let t = cs.targets(&device, &depth_view, format, w, h);
@@ -1207,20 +1470,62 @@ mod tests {
                 .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
                 .collect()
         };
+        // Run the isolated shader paths first so the validation layer's
+        // duplicate-message limit cannot hide their diagnostics.
+        eprintln!("contact-shadow GPU experiment: running NoFilter (raymarch only)");
+        let no_filter = mask(Variant::NoFilter);
+        let no_filter_shadowed = no_filter.iter().filter(|&&v| v > 128).count();
+        assert!(
+            no_filter_shadowed > 50 && no_filter_shadowed < no_filter.len() * 95 / 100,
+            "NoFilter retains the raymarch mask: {no_filter_shadowed} pixels"
+        );
+        eprintln!("contact-shadow GPU experiment: running NoMain (filter only)");
+        assert!(mask(Variant::NoMain).iter().all(|&v| v == 0), "NoMain: empty raymarch mask");
+        eprintln!("contact-shadow GPU experiment: running MinimalImage first");
+        assert!(mask(Variant::MinimalImage).iter().all(|&v| v == 0), "MinimalImage: nothing");
+        eprintln!("contact-shadow GPU experiment: running Bend");
         let bend = mask(Variant::Bend);
         let shadowed = bend.iter().filter(|&&v| v > 128).count();
-        assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
-        // the pixels two wavefronts write (where Bend's dispatches meet) take
-        // whichever lands last: only the others are compared
+        assert!(
+            shadowed > 50 && shadowed < bend.len() * 95 / 100,
+            "a shadow to compare: {shadowed} pixels"
+        );
+        // Match each texel's writers to workgroups as well as dispatches:
+        // duplicate stores within one workgroup are also unordered, but a
+        // cross-workgroup collision is the stronger GPU concurrency case.
         let mut writes = vec![0u8; (w * h) as usize];
         let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
-        written_pixels(&list, WAVE_SIZE, |x, y| {
+        let mut first_workgroup = vec![None::<(usize, i32, i32, i32)>; writes.len()];
+        let mut same_workgroup_overlap = vec![false; writes.len()];
+        let mut cross_workgroup_overlap = vec![false; writes.len()];
+        let mut per_dispatch = vec![vec![0u8; writes.len()]; list.count];
+        written_pixels(&list, WAVE_SIZE, |dispatch, group, x, y| {
             if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
-                writes[(y * w as i32 + x) as usize] += 1;
+                let pixel = (y * w as i32 + x) as usize;
+                let workgroup = (dispatch, group[0], group[1], group[2]);
+                if let Some(first) = first_workgroup[pixel] {
+                    if first == workgroup {
+                        same_workgroup_overlap[pixel] = true;
+                    } else {
+                        cross_workgroup_overlap[pixel] = true;
+                    }
+                } else {
+                    first_workgroup[pixel] = Some(workgroup);
+                }
+                writes[pixel] += 1;
+                per_dispatch[dispatch][pixel] += 1;
             }
         });
         let once = writes.iter().filter(|&&n| n == 1).count();
-        assert!(once > writes.len() * 3 / 4, "{once} pixels written once");
+        assert!(once > writes.len() / 2, "{once} pixels written once");
+        let same_workgroup = same_workgroup_overlap.iter().filter(|&&overlap| overlap).count();
+        let cross_workgroup = cross_workgroup_overlap.iter().filter(|&&overlap| overlap).count();
+        let across_dispatch = (0..writes.len())
+            .filter(|&pixel| per_dispatch.iter().filter(|counts| counts[pixel] > 0).count() > 1)
+            .count();
+        eprintln!(
+            "contact-shadow GPU experiment: {same_workgroup} texels have multiple writers in one workgroup; {cross_workgroup} across workgroups; {across_dispatch} across dispatches"
+        );
         let differ = |other: &[u8]| -> Vec<(usize, u8, u8)> {
             bend.iter()
                 .zip(other)
@@ -1229,17 +1534,82 @@ mod tests {
                 .map(|(i, (a, b))| (i, *a, *b))
                 .collect()
         };
-        let again = differ(&mask(Variant::Bend));
+        eprintln!("contact-shadow GPU experiment: running Bend again");
+        let bend_again = mask(Variant::Bend);
+        let (repeat_unique_diffs, repeat_overlap_diffs) =
+            bend.iter()
+                .zip(&bend_again)
+                .enumerate()
+                .filter(|(_, (a, b))| a != b)
+                .fold((0, 0), |(unique, overlap), (i, _)| {
+                    if writes[i] == 1 {
+                        (unique + 1, overlap)
+                    } else {
+                        (unique, overlap + 1)
+                    }
+                });
+        eprintln!(
+            "contact-shadow GPU experiment: repeated Bend differs on {repeat_unique_diffs} single-writer pixels and {repeat_overlap_diffs} overlapping-writer pixels"
+        );
+        let again = differ(&bend_again);
         assert!(
             again.is_empty(),
             "Bend twice: {} pixels differ, {:?}",
             again.len(),
             &again[..again.len().min(8)]
         );
-        for variant in [Variant::NoEarlyOut, Variant::NoShared] {
-            let d = differ(&mask(variant));
+        for variant in [Variant::NoEarlyOut, Variant::NoShared, Variant::AtomicClaim] {
+            eprintln!("contact-shadow GPU experiment: running {variant:?}");
+            let pixels = mask(variant);
+            let (unique_diffs, overlap_diffs) =
+                bend.iter()
+                    .zip(&pixels)
+                    .enumerate()
+                    .filter(|(_, (a, b))| a != b)
+                    .fold((0, 0), |(unique, overlap), (i, _)| {
+                        if writes[i] == 1 {
+                            (unique + 1, overlap)
+                        } else {
+                            (unique, overlap + 1)
+                        }
+                    });
+            eprintln!(
+                "contact-shadow GPU experiment: {variant:?} differs from Bend on {unique_diffs} single-writer pixels and {overlap_diffs} overlapping-writer pixels"
+            );
+            let d = differ(&pixels);
             assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
         }
-        assert!(mask(Variant::Skip).iter().all(|&v| v == 0), "skip: nothing");
+        eprintln!("contact-shadow GPU experiment: repeating AtomicClaim 8 times");
+        let mut previous = mask(Variant::AtomicClaim);
+        for run in 1..8 {
+            let pixels = mask(Variant::AtomicClaim);
+            let (single_writer_diffs, overlapping_writer_diffs) = previous
+                .iter()
+                .zip(&pixels)
+                .enumerate()
+                .filter(|(_, (a, b))| a != b)
+                .fold((0, 0), |(single, overlap), (i, _)| {
+                    if writes[i] == 1 {
+                        (single + 1, overlap)
+                    } else {
+                        (single, overlap + 1)
+                    }
+                });
+            eprintln!(
+                "contact-shadow GPU experiment: AtomicClaim repeat {run} differs on {single_writer_diffs} single-writer pixels and {overlapping_writer_diffs} overlapping-writer pixels"
+            );
+            assert_eq!(single_writer_diffs, 0, "AtomicClaim repeat {run}: single-writer pixels changed");
+            previous = pixels;
+        }
+        for variant in [
+            Variant::NoMainDispatch,
+            Variant::NoStore,
+            Variant::NoImage,
+            Variant::NoImageDispatch,
+            Variant::Skip,
+        ] {
+            eprintln!("contact-shadow GPU experiment: running {variant:?}");
+            assert!(mask(variant).iter().all(|&v| v == 0), "{variant:?}: nothing");
+        }
     }
 }

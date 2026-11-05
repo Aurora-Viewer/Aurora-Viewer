@@ -6918,10 +6918,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   card was lost" shows, with what to try; its OK closes the viewer, logged
   out, and the crash session holds `gpu-lost.txt`: the report says
   `| Crash | GPU device lost |`, `| GPU device lost | yes … |` and
-  `| GPU work at the loss | last submission frame …, finished …, a fault …
-  |` (a real loss tells a hang, the last frame not finished 0.5 s or more
-  after its submission, from a fault, within 0.1 s or after the frame ended,
-  or says "undecided" between the two; `AURORA_DEMO_GPU_HANG` shows the
+  `| GPU work at the loss | last submission frame …, finished …, … |`
+  (a real loss reports a likely hang when the last submission is still
+  unfinished after 0.5 s; a loss within 0.1 s of a pending submission or
+  after the latest submission finished has an unknown cause; between those
+  thresholds it says "undecided" between a hang and a slow frame;
+  `AURORA_DEMO_GPU_HANG` shows the
   hang's wording, "… 1.101 s before, not finished, …, a hang (the driver
   reset the card while that frame ran)" on an RTX 5070 Ti), and the next
   start offers the safe graphics. The window's close button closes at
@@ -9500,7 +9502,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
-| `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's, and the other overlays' unless allowed in Preferences) |
+| `AURORA_VULKAN_LAYERS=keep`, `overlays-off` or `obs-only` | Loads every Vulkan layer, disables all overlay layers, or keeps OBS Game Capture as the only overlay layer (GPU-crash comparison) |
 | `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_GPU_START_FAIL=1` or `lost` | Start as if no graphics card could draw the window, or as if the driver lost the device during the start: the message the user gets then |
@@ -9538,7 +9540,8 @@ What the inventory must show with these scenarios:
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
-| `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
+| `AURORA_CONTACT_VARIANT=no-main`, `no-filter`, `noop-dispatch`, `no-store`, `atomic-claim`, `minimal-image`, `no-image`, `no-image-dispatch`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: isolate contact-shadow pipeline creation, dispatch, storage-image writes and shader constructs (GPU hangs on some AMD cards) |
+| `AURORA_CONTACT_PIPELINE_TRACE=1` | Log contact-shadow shader-module and pipeline creation start/completion |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -9561,7 +9564,7 @@ What the inventory must show with these scenarios:
   adapter address and the serial show as `(not logged)`). On the
   grid the report is logged at debug level only, `sending viewer
   statistics: …` (`RUST_LOG=info,aurora_net=debug`).
-- **`AURORA_VULKAN_LAYERS=keep`**: at start the viewer sets the variables
+- **`AURORA_VULKAN_LAYERS`**: by default, at start the viewer sets the variables
   that disable Overwolf's implicit Vulkan layers (`VK_LAYER_OW_OVERLAY`,
   `DISABLE_VULKAN_OW_OVERLAY_LAYER=1`; `VK_LAYER_OW_OBS_HOOK`,
   `DISABLE_VULKAN_OW_OBS_CAPTURE=1`) in its own process, unless the user
@@ -9577,8 +9580,12 @@ What the inventory must show with these scenarios:
   the Epic Games overlay (`EOS_OVERLAY_DISABLE_VULKAN_WIN64`), Twitch Studio,
   FPS Monitor and PlayClaw. The log says so
   (`Vulkan layers kept out of the viewer`, each layer with its program,
-  and whether overlays are allowed). `keep` leaves the environment
-  as it is. ReShade and the GPU drivers' own layers are never disabled;
+  and whether overlays are allowed). `keep` leaves the environment as it
+  is. `overlays-off` disables the other overlay layers even if the
+  Preferences setting allows them. `obs-only` disables those layers and the
+  known-crashing layers, but leaves OBS Game Capture enabled. These two modes
+  are for controlled GPU-crash comparisons; use them only when testing
+  overlays. ReShade and the GPU drivers' own layers are never disabled;
   OBS's Window Capture needs no layer and keeps working. Overlays that inject a DLL into the
   running viewer instead (Discord) cannot be kept out: the log names them
   when they arrive (`overlay hook loaded in the viewer`). To
@@ -9917,19 +9924,41 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
   frame 690). Softened, neither shows and no shadow spreads from the
   ground onto a caster nor the reverse.
-  **`AURORA_CONTACT_VARIANT=no-early-out|no-shared|short|skip`**: a
+  **`AURORA_CONTACT_VARIANT=no-main|no-filter|noop-dispatch|no-store|atomic-claim|minimal-image|no-image|no-image-dispatch|no-early-out|no-shared|short|skip`**: a
   diagnostic of the GPU hangs (device lost, Windows TDR) some AMD RX 9070 XT
-  cards had as soon as the pass ran, each value without one construct of
-  the window's shader (`variant_source`, contact_shadows.rs; photos keep
-  Bend's): `no-early-out`, no early exit of an all-sky wavefront through
-  `workgroupUniformLoad`; `no-shared`, no workgroup memory nor barrier (each
+  cards had as soon as the pass ran, to isolate the raymarch pipeline or a
+  shader construct (`variant_source`, contact_shadows.rs; photos keep Bend's):
+  `no-early-out`, no atomic flag or `workgroupUniformLoad` early exit; every
+  wavefront reaches the barrier; `no-shared`, no workgroup memory nor barrier (each
   thread reads from the depth what the others would have shared,
   `contact_shadows_no_shared.wgsl`). Both draw the same mask as Bend's
   (the GPU test `the_variants_that_keep_the_image_draw_bends_mask`, run
   with `-- --ignored`). `short`: 16 samples per pixel instead of 60, the
-  shadows about four times shorter; `skip`: the shader is not dispatched,
-  no contact shadow (the mask is still cleared and filtered). Any other
-  value keeps Bend's shader; the log says `contact shadows: diagnostic
+  shadows about four times shorter; `no-main`: replace the raymarch entry
+  point with a no-op while retaining the mask clear and filter, to check
+  whether creating the full raymarch shader pipeline is involved; `no-filter`:
+  keep the full raymarch but replace the filter with no-op entries, to isolate
+  the raymarch from filter shader creation and dispatch;
+  `noop-dispatch`: dispatch the same workgroup grid with the no-op raymarch
+  pipeline, to separate the dispatch path from the shader body; `no-store`:
+  run the full raymarch but omit the final storage-texture write, separating
+  compute and synchronization from output writes (the mask stays clear);
+  `atomic-claim`: run the full raymarch and atomically claim each output pixel
+  before its storage-texture write, so at most one invocation stores each
+  pixel; overlapping pixels can still be won by different rays on different
+  runs, and the extra atomic buffer makes this a diagnostic comparison rather
+  than a proposed default; `minimal-image`: replace the raymarch and filter
+  with empty compute entries but keep a simple storage-image clear, separating
+  the storage-image path from workgroup-array shader code; `no-image` and
+  `no-image-dispatch`: create the same
+  explicit pipeline layouts with empty compute entry points and no storage-image
+  declaration or access in either the raymarch or filter; the latter also
+  dispatches the no-op raymarch grid. These are local diagnostic probes for
+  separating this pass's storage-image work from its other parts;
+  `skip`:
+  the original shader pipeline is created but the raymarch is not dispatched,
+  no contact shadow (the mask is still cleared and filtered). Any other value
+  keeps Bend's shader; the log says `contact shadows: diagnostic
   variant …` when one is taken. They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
@@ -9940,6 +9969,26 @@ What the inventory must show with these scenarios:
   `perf summary` is their GPU time, the copy of the depth and its extra
   casters included (same crowd with `AURORA_DEMO_FEET=blend`,
   2560 × 1369, RTX 4090, 120 fps cap: about 0.17 to 0.26 ms).
+  **`AURORA_CONTACT_PIPELINE_TRACE=1`**: logs `contact shadows startup:`
+  entries around making the window raymarch, clear and filter shader modules
+  and compute pipelines, plus photo pipelines when first requested. A
+  `started` line without its matching `returned` line shows which creation
+  call was last entered before the log stopped; returned calls include their
+  elapsed time. Driver work can finish asynchronously, so these lines narrow
+  the timeline but do not by themselves prove the exact failing GPU
+  operation. The trace is off by default and adds no per-frame logging. Use
+  it with an info-level log filter and include the last trace entry in a
+  report.
+  **`aurora-render/diagnose-vulkan-internal-errors` Cargo feature**: a
+  diagnostic build that enables wgpu-hal's `internal_error_panic` and
+  `device_lost_panic` on Vulkan.
+  Launch with `cargo run -p aurora-viewer --features
+  aurora-render/diagnose-vulkan-internal-errors`. An unexpected native Vulkan
+  result (including a compute-pipeline creation failure) is reported with its
+  `VkResult`; an explicit device-lost return also panics at the wgpu-hal call
+  site, so Aurora's panic hook captures its backtrace. This deliberately
+  changes error handling and is for diagnosis only; do not use this build as
+  a normal viewer.
 - **`AURORA_BLOOM=0|1|alt`**: Aurora's bloom (Preferences › Graphics ›
   Bloom, off by default) for this launch, without changing the saved
   setting: `0` off, `1` on (at the setting's strength, 0.5 when it is off),
