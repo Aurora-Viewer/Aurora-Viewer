@@ -194,11 +194,14 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
     });
 }
 
-fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World) {
+fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &BuildSettings, mods: Mods) {
     if tool.selection.is_empty() {
         common::small(ui, p, aurora_i18n::tr!("build-compact-select-hint"));
         return;
     }
+    // The row stays when it is empty: the counts do not move with the mode.
+    let part = tool.legacy_part_line(world, s, mods).unwrap_or_else(|| " ".into());
+    ui.add(egui::Label::new(RichText::new(part).size(11.0).color(p.ink)).truncate());
     let impact = tool
         .land_impact(world)
         .map(|v| aurora_i18n::integer(v.round() as i64))
@@ -253,7 +256,7 @@ pub(super) fn body(
             ui.spacing_mut().button_padding = vec2(3.0, 1.0);
             let scale = ui.available_width() / 295.0;
             let (canvas, _) = ui.allocate_exact_size(
-                vec2(ui.available_width(), (if s.expanded { 211.0 } else { 178.0 }) * scale),
+                vec2(ui.available_width(), (if s.expanded { 237.0 } else { 178.0 }) * scale),
                 egui::Sense::hover(),
             );
             toolbar(ui, p, tool, canvas);
@@ -292,8 +295,8 @@ pub(super) fn body(
                 tool.ui.layout.open = !tool.ui.layout.open;
             }
             if s.expanded {
-                let mut summary = slot(ui, canvas, [10.0, 181.0, 275.0, 30.0], "legacy-selection");
-                selection(&mut summary, p, tool, world);
+                let mut summary = slot(ui, canvas, [10.0, 181.0, 275.0, 56.0], "legacy-selection");
+                selection(&mut summary, p, tool, world, s, mods);
                 if tool.tool != Tool::Land {
                     let mut tab = tab_index(tool.tab);
                     if widgets::tabs(
