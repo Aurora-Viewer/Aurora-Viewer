@@ -5530,6 +5530,10 @@ impl Scene {
     ///
     /// Joint overrides never cross a control-avatar boundary. Rebuild when
     /// topology, skin metadata or appearance changes, including late assets.
+    pub(crate) fn skeleton_base(&self, owner: &Uuid) -> Option<Arc<anim::SkeletonBase>> {
+        self.skeletons.get(owner).map(|skeleton| skeleton.base.clone())
+    }
+
     fn skeleton_of(&mut self, world: &World, owner: Uuid, owner_idx: usize, now: Instant) -> (Arc<anim::SkeletonBase>, f32) {
         use std::hash::{Hash, Hasher};
         let members = animesh::members(&world.objects, owner_idx);

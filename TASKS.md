@@ -1828,6 +1828,8 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Controls
 
+- 🔧 #2415 Poser: rebase active pose channels when the shape or worn-mesh skeleton rest changes; preserve authored rotations, locks and history. Regression test covers changed chest scale and hip offset, head rotation, edit detection and undo; demo `AURORA_DEMO_POSER=shape-change`.
+
 - 🟡 Snap to objects, Place on surface and move holograms (human request, 2026-11-03; task `snap-to-objects`; no issue; [PR #2150](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/2150); validated by the human on the grid on 2026-11-03): Aurora's own, no Legacy Viewer has them. The move handles snap the selection flush against nearby prims (a mesh or shaped prim by its visible surface) and stop it at their faces; "Place on surface" puts it on the surface clicked, a hologram showing where, turned from the rotation it first had when a side is chosen. Details in the PR.
   - Settings: the construction settings' Snap row, Off / Grid / Objects (Grid by default, the Legacy Viewer's SnapEnabled); in Objects mode, Place on surface (P), its Offset (0 m), Keep rotation (default) / Auto rotate and the side (Bottom). Preferences › Aurora › Behavior › Hologram while moving: Off (default) / Moving object / Where it started. Demo `AURORA_DEMO_OBJECT_SNAP=1|on`, `AURORA_DEMO_MOVE_HOLOGRAM=moving|start`.
   - ⬜ Grid QA: snapping against prims and on the floor inside a mesh house; Place on surface on floors, walls and the ground with each side, on an object its creator turned; the holograms on a complex mesh; Hologram while moving in both modes, the object back to normal on release.

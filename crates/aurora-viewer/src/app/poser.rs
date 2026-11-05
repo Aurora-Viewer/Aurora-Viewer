@@ -22,6 +22,10 @@ impl App {
             let values = self.world.avatar_lib.shape_params.values_with(&[(193, 1.0)]);
             self.world.preview_shape(Some(values));
         }
+        if mode == "shape-change" && self.frame_count == 600 {
+            let values = self.world.avatar_lib.shape_params.values_with(&[(33, 1.0)]);
+            self.world.preview_shape(Some(values));
+        }
         // bridge-* modes show the subject menu's bridge hints for the same peer.
         let fixture = mode.starts_with("consent-") || mode.starts_with("bridge-");
         if fixture

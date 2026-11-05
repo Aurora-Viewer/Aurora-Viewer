@@ -277,6 +277,47 @@ fn poser_static_layer_keeps_fk_ancestors_scales_and_world_locks() {
             .abs_diff_eq(scaled.scales[chest], 1e-5)
     );
 }
+
+#[test]
+fn poser_shape_changes_rebase_pose_and_undo_onto_the_new_rest() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let head = rig.names["mHead"];
+    let chest = rig.names["CHEST"];
+    let hip = rig.pelvis;
+    let initial_rest = Arc::new(crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    });
+    editor.poser.sessions.get_mut(&world.agent_id).unwrap().rebase(initial_rest.clone());
+    let frame = Frame::new(&world).unwrap();
+    editor.select(head, &rig, &frame);
+    let head_position = editor.poser.sessions[&world.agent_id].pose.positions[head];
+    editor.poser_transform(&rig, &frame, head_position, Quat::from_rotation_z(0.4), true);
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.checkpoint();
+    let posed_head = session.pose.rotations[head];
+    let old_hip = session.pose.positions[hip];
+    let old_hip_world = session.pose.matrices(&rig, frame.model)[hip].w_axis.z;
+    let mut changed_rest = (*initial_rest).clone();
+    changed_rest.scale[chest] *= 1.3;
+    changed_rest.local_pos[hip].z += 0.12;
+    session.rebase(Arc::new(changed_rest));
+
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert_eq!(session.pose.rotations[head], posed_head);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (old_hip + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+    assert!(session.edited(head));
+    assert!(!session.edited(chest));
+    let matrices = session.pose.matrices(&rig, frame.model);
+    assert!((matrices[hip].w_axis.z - old_hip_world - 0.12).abs() < 1e-4);
+
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.history(false);
+    assert!((session.pose.scales[chest] - rig.scale[chest] * 1.3).length() < 1e-5);
+    assert!((session.pose.positions[hip] - (rig.local_pos[hip] + Vec3::new(0.0, 0.0, 0.12))).length() < 1e-5);
+}
 fn assert_attached(rig: &Rig, pose: &SubjectPose, reference: &SubjectPose, model: Mat4) {
     let matrices = pose.matrices(rig, model);
     for (bone, parent) in rig.parent.iter().enumerate() {
