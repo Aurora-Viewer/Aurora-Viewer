@@ -187,7 +187,11 @@ function New-AuroraRelease($Repo) {
             if ($url -and (Read-YesNo 'Open it in the browser?')) { Start-Process $url }
         } else {
             $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
-            if ($url) {
+            $draft = gh release view $tag -R $Repo.Slug --json isDraft --jq .isDraft 2>$null
+            if ($draft -eq 'true') {
+                # created by the Windows job, published only once signed
+                Write-Color "  The release stays a draft: its update manifest was not signed. gh run view $id --log-failed (docs/UPDATES.md, Update signature)." danger
+            } elseif ($url) {
                 # the Windows release is out: only the Linux archive is missing
                 Write-Color "  Release published for Windows: $url" success
                 Write-Color "  The Linux build failed: gh run view $id --log-failed (a passing failure: gh run rerun $id --failed)." warn
