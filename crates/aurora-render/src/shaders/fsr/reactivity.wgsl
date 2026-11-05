@@ -1,8 +1,9 @@
 // FSR 3.1 prepare reactivity (ffx_fsr3upscaler_prepare_reactivity.h):
 // disocclusion against the reconstructed previous depth, shading change,
 // motion divergence, the accumulation count of each pixel, and the new
-// locks of thin features. No reactive nor transparency and composition
-// mask yet: both read as 0, as the SDK's default ones.
+// locks of thin features. The reactive mask is generated
+// (fs_autogen_reactive); no transparency and composition mask yet: it
+// reads as 0, as the SDK's default one.
 
 @group(0) @binding(2) var dilated_motion_tex: texture_2d<f32>;
 @group(0) @binding(3) var dilated_depth_tex: texture_2d<f32>;
@@ -12,6 +13,7 @@
 @group(0) @binding(7) var<storage, read> reconstructed: array<u32>;
 // one f32 a pixel of the upscaled image, zeroed by the accumulation
 @group(0) @binding(8) var<storage, read_write> new_locks: array<f32>;
+@group(0) @binding(9) var reactive_tex: texture_2d<f32>;
 
 struct ReactivityOut {
     @location(0) masks: vec4<f32>,
@@ -140,6 +142,16 @@ fn update_accumulation(p: vec2<i32>, uv: vec2<f32>, mv: vec2<f32>, disocclusion:
     return vec2<f32>(accumulation, sat(accumulation + fsr.accumulation_added_per_frame));
 }
 
+fn dilate_reactive_masks(p: vec2<i32>) -> f32 {
+    var m = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            m = max(m, textureLoad(reactive_tex, clamp_load(p, vec2<i32>(x, y), fsr.render_size), 0).x);
+        }
+    }
+    return m;
+}
+
 fn compute_shading_change(uv: vec2<f32>) -> f32 {
     // the jitter applied again, removed when the accumulation samples it
     let su = clamp_uv(uv - fsr.jitter / render_size(), shading_change_render_size(), shading_change_max_render_size());
@@ -153,8 +165,7 @@ fn fs_prepare_reactivity(in: VsOut) -> ReactivityOut {
     let mv = textureLoad(dilated_motion_tex, p, 0).xy;
     let depth = textureLoad(dilated_depth_tex, p, 0).x;
     let disocclusion = compute_disocclusions(uv, mv, view_space_depth(depth));
-    // no reactive mask: the shading change alone
-    let shading_change = compute_shading_change(uv);
+    let shading_change = max(dilate_reactive_masks(p), compute_shading_change(uv));
     // no transparency and composition mask: the motion divergence alone
     let reactive = compute_motion_divergence(uv, mv, depth);
     let accumulation = update_accumulation(p, uv, mv, disocclusion, shading_change);

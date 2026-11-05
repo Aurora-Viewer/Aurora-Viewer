@@ -5249,6 +5249,7 @@ impl Backend {
                     color: &self.targets.color,
                     depth: &self.targets.depth_ss,
                     motion: motion_read,
+                    opaque: &self.targets.scene_copy,
                 },
             );
             let bg = post_bg(fsr.output());

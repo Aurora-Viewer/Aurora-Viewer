@@ -148,3 +148,21 @@ fn fs_shading_change(in: VsOut) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(sat(change), 0.0, 0.0, 0.0);
 }
+
+// FSR 3.1 reactive mask, generated (ffx_fsr3upscaler_autogen_reactive_pass):
+// how much the blended faces, the particles and the water changed the
+// opaque image (src0: the scene copy before them, src1: the final colour),
+// with the SDK sample's flags: tone mapped, largest channel, threshold.
+const REACTIVE_SCALE: f32 = 1.0;
+const REACTIVE_THRESHOLD: f32 = 0.2;
+const REACTIVE_BINARY_VALUE: f32 = 0.9;
+
+@fragment
+fn fs_autogen_reactive(in: VsOut) -> @location(0) vec4<f32> {
+    let p = clamp_load(px_of(in), vec2<i32>(0), fsr.render_size);
+    let pre = tonemap(max(vec3<f32>(0.0), safe_color(textureLoad(src0, p, 0).rgb)));
+    let post = tonemap(max(vec3<f32>(0.0), safe_color(textureLoad(src1, p, 0).rgb)));
+    let delta = abs(post - pre);
+    let v = max(delta.x, max(delta.y, delta.z)) * REACTIVE_SCALE * fsr.reactive_on;
+    return vec4<f32>(select(REACTIVE_BINARY_VALUE, 0.0, v < REACTIVE_THRESHOLD), 0.0, 0.0, 0.0);
+}

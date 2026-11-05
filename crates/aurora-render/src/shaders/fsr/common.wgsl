@@ -54,7 +54,11 @@ struct FsrParams {
     view_to_meters: f32,
     // 1 when the prepass's motion vectors are used (AURORA_TAA_MOTION)
     motion_on: f32,
-    pad: vec4<f32>,
+    // 0 without the generated reactive mask (AURORA_FSR_REACTIVE=0)
+    reactive_on: f32,
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
 };
 
 @group(0) @binding(0) var<uniform> fsr: FsrParams;

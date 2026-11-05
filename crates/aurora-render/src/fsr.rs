@@ -10,8 +10,10 @@
 //! vectors (the camera's own motion where none was drawn, as taa.wgsl), and
 //! TAA's jitter, over FSR's eight phases. Each pass is a full-screen
 //! fragment pass (see `shaders/fsr/common.wgsl` for the differences from
-//! the SDK). No reactive nor transparency and composition mask yet, and
-//! the exposure is 1 (FSR's tone mapping of the history works on the HDR
+//! the SDK). The reactive mask is generated from the scene before and after
+//! the blended faces, the particles and the water (FSR's autogen reactive
+//! pass, `AURORA_FSR_REACTIVE=0` turns it off); no transparency and
+//! composition mask yet, and the exposure is 1 (FSR's tone mapping of the history works on the HDR
 //! values as they are).
 
 use bytemuck::{Pod, Zeroable};
@@ -53,6 +55,12 @@ pub(crate) fn device_to_view(proj: Mat4) -> [f32; 2] {
 pub(crate) fn requested() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("AURORA_FSR").is_ok_and(|v| v.trim() == "1"))
+}
+
+/// `AURORA_FSR_REACTIVE=0`: no generated reactive mask (read once).
+fn reactive_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_FSR_REACTIVE").map_or(true, |v| v.trim() != "0"))
 }
 
 /// `AURORA_FSR_SHARPNESS=<0..1>|off` (default 0.8): RCAS's strength, or no
@@ -97,7 +105,8 @@ struct FsrU {
     rcas: f32,
     view_to_meters: f32,
     motion_on: f32,
-    pad: [f32; 4],
+    reactive_on: f32,
+    pad: [f32; 3],
 }
 
 /// What the frame gives FSR.
@@ -119,9 +128,13 @@ pub(crate) struct Inputs<'a> {
     pub color: &'a wgpu::TextureView,
     pub depth: &'a wgpu::TextureView,
     pub motion: &'a wgpu::TextureView,
+    /// The scene after the opaque faces only (the refraction's copy):
+    /// with `color`, what the generated reactive mask compares.
+    pub opaque: &'a wgpu::TextureView,
 }
 
 struct Pipelines {
+    autogen_reactive: wgpu::RenderPipeline,
     prepare: wgpu::RenderPipeline,
     farthest_mip1: wgpu::RenderPipeline,
     shading_change_mip0: wgpu::RenderPipeline,
@@ -136,6 +149,7 @@ struct Pipelines {
 /// One frame parity's bind groups (`[w]` writes the textures of parity w
 /// and reads those of 1 - w).
 struct Groups {
+    autogen_reactive: wgpu::BindGroup,
     prepare: wgpu::BindGroup,
     farthest_mip1: wgpu::BindGroup,
     shading_change_mip0: wgpu::BindGroup,
@@ -152,6 +166,7 @@ pub(crate) struct Fsr {
     buffer: wgpu::Buffer,
     reconstructed: wgpu::Buffer,
     size: (u32, u32),
+    reactive: wgpu::TextureView,
     dilated_motion: wgpu::TextureView,
     dilated_depth: wgpu::TextureView,
     farthest: wgpu::TextureView,
@@ -341,6 +356,7 @@ impl Fsr {
                 tex(6, true),
                 storage(7, true),
                 storage(8, false),
+                tex(9, true),
             ],
         );
         let l_accumulate = layout(
@@ -361,6 +377,14 @@ impl Fsr {
         let m_reactivity = module(device, "fsr reactivity", include_str!("shaders/fsr/reactivity.wgsl"));
         let m_accumulate = module(device, "fsr accumulate", include_str!("shaders/fsr/accumulate.wgsl"));
         let pipelines = Pipelines {
+            autogen_reactive: pipeline(
+                device,
+                &m_pyramids,
+                &l_tex3,
+                "fsr autogen reactive",
+                "fs_autogen_reactive",
+                &[ACCUMULATION_FORMAT],
+            ),
             prepare: pipeline(
                 device,
                 &m_prepare,
@@ -447,6 +471,7 @@ impl Fsr {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
+        let reactive = view(device, "fsr reactive mask", size, ACCUMULATION_FORMAT);
         let dilated_motion = view(device, "fsr dilated motion", size, MOTION_FORMAT);
         let dilated_depth = view(device, "fsr dilated depth", size, DEPTH_FORMAT);
         let farthest = view(device, "fsr farthest depth", size, LUMA_FORMAT);
@@ -514,6 +539,11 @@ impl Fsr {
         let groups = [0usize, 1].map(|w| {
             let r = 1 - w;
             Groups {
+                autogen_reactive: common(
+                    &l_tex3,
+                    "fsr autogen reactive",
+                    &[entry_tex(2, inputs.opaque), entry_tex(3, inputs.color), entry_tex(4, inputs.color)],
+                ),
                 prepare: common(
                     &l_prepare,
                     "fsr prepare inputs",
@@ -558,6 +588,7 @@ impl Fsr {
                         entry_tex(6, &luma[w]),
                         entry_buf(7, &reconstructed),
                         entry_buf(8, &new_locks),
+                        entry_tex(9, &reactive),
                     ],
                 ),
                 luma_instability: common(
@@ -606,6 +637,7 @@ impl Fsr {
             buffer,
             reconstructed,
             size,
+            reactive,
             dilated_motion,
             dilated_depth,
             farthest,
@@ -665,7 +697,8 @@ impl Fsr {
             rcas: rcas_scale(self.rcas.unwrap_or(0.0)),
             view_to_meters: 1.0,
             motion_on: if f.motion_on { 1.0 } else { 0.0 },
-            pad: [0.0; 4],
+            reactive_on: if reactive_on() { 1.0 } else { 0.0 },
+            pad: [0.0; 3],
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
         // nothing pushed yet: 0 is the farthest in reverse-Z
@@ -678,6 +711,13 @@ impl Fsr {
         }
         let g = &self.groups[w];
         let p = &self.pipelines;
+        run(
+            encoder,
+            "fsr autogen reactive",
+            &[&self.reactive],
+            &p.autogen_reactive,
+            &g.autogen_reactive,
+        );
         run(
             encoder,
             "fsr prepare inputs",
