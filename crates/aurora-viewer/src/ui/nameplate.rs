@@ -914,7 +914,7 @@ impl Plates {
         icons: &super::icons::Icons,
         tags: &[Tag<'_>],
         now: f64,
-        mut placed: impl FnMut(Uuid, Rect, glam::Vec3),
+        mut placed: impl FnMut(Uuid, Rect, glam::Vec3, Option<Rect>),
     ) {
         let mut env = paint::Env::new(painter, p, icons, now);
         env.friend = self.friend_tint.then(|| crate::ui::colors::c(crate::ui::colors::get().tag_friend));
@@ -1043,8 +1043,8 @@ impl Plates {
                 still: self.still,
             };
             aurora_render::world_label_at(painter.ctx(), Some(tag.at));
-            let (rect, surface) = paint::plate(&env, tag, &state, &mut entry.cache);
-            placed(tag.id, rect, tag.at);
+            let (rect, surface, slot) = paint::plate(&env, tag, &state, &mut entry.cache);
+            placed(tag.id, rect, tag.at, slot);
             if self.click_combo && entry.combo.busy(now) {
                 combo::paint(&env, surface, &entry.combo, self.tally.get(tag.id), tag.fade, self.still);
             }

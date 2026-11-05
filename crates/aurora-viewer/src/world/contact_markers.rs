@@ -31,6 +31,13 @@ const COARSE_SNAP: f32 = 64.0;
 const SCREEN_EASE: f32 = 0.1;
 /// Metres over which a marker fades, past its fade-out distance.
 const FADE_BAND: f32 = 2.0;
+/// Camera distance from which a marker lands on its plate: where a plate
+/// becomes complete (`ui::nameplate::FULL_DISTANCE`). It leaves it a little
+/// farther, so that a resident at that distance does not make it hesitate.
+pub const MERGE_DISTANCE: f32 = crate::ui::nameplate::FULL_DISTANCE;
+const MERGE_MARGIN: f32 = crate::ui::nameplate::LEVEL_MARGIN;
+/// Seconds a marker takes to land on its plate.
+const MERGE_EASE: f32 = 0.3;
 
 /// A resident seen this frame, in render space.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -90,6 +97,8 @@ pub struct Entry {
     pub lift: f32,
     /// From the screen centre, set by the painter.
     pub direction: Option<Vec2>,
+    /// 0 above the plate, 1 landed on it, linear.
+    merge: f32,
     altitude: Option<f32>,
     exact: bool,
     /// What remains between the coarse position and the exact one.
@@ -98,6 +107,25 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// The marker moves toward its plate when one offers it a place and
+    /// the camera is near enough; returns how far it is, eased.
+    pub fn ease_merge(&mut self, slot: bool, camera_distance: f32, dt: f32) -> f32 {
+        let reach = if self.merge > 0.0 {
+            MERGE_DISTANCE + MERGE_MARGIN
+        } else {
+            MERGE_DISTANCE
+        };
+        let step = dt / MERGE_EASE;
+        let landing = slot && camera_distance <= reach;
+        self.merge = (self.merge + if landing { step } else { -step }).clamp(0.0, 1.0);
+        self.merge * self.merge * (3.0 - 2.0 * self.merge)
+    }
+
+    /// No plate left to land on: back above the avatar at once.
+    pub fn drop_merge(&mut self) {
+        self.merge = 0.0;
+    }
+
     /// `lift` eased toward `target` over `dt` seconds.
     pub fn ease_lift(&mut self, target: f32, dt: f32) {
         self.lift += (target - self.lift) * ease(dt, SCREEN_EASE);
@@ -138,6 +166,7 @@ impl Tracker {
                     presence: 0.0,
                     lift: 0.0,
                     direction: None,
+                    merge: 0.0,
                     altitude: None,
                     exact: s.exact,
                     blend: Vec3::ZERO,
@@ -337,6 +366,27 @@ mod tests {
         let now = run(&mut t, 1.0, 1.0, &[seen(p, true, Some(true))]);
         run(&mut t, now, GRACE * 2.0, &[seen(p, true, None)]);
         assert_eq!(t.iter_mut().count(), 1);
+    }
+
+    #[test]
+    fn a_marker_lands_on_a_near_plate_and_leaves_it_a_little_farther() {
+        let mut t = Tracker::default();
+        run(&mut t, 0.0, 0.1, &[seen(Vec3::new(10.0, 10.0, 20.0), true, Some(true))]);
+        let (_, entry) = t.iter_mut().next().expect("a marker");
+        let mut settle = |slot, distance| {
+            let mut merge = 0.0;
+            for _ in 0..60 {
+                merge = entry.ease_merge(slot, distance, 1.0 / 60.0);
+            }
+            merge
+        };
+        assert_eq!(settle(true, MERGE_DISTANCE + 1.0), 0.0, "too far");
+        assert_eq!(settle(false, 5.0), 0.0, "no place on the plate");
+        assert_eq!(settle(true, MERGE_DISTANCE), 1.0);
+        assert_eq!(settle(true, MERGE_DISTANCE + 1.0), 1.0, "stays past the threshold");
+        assert_eq!(settle(true, MERGE_DISTANCE + MERGE_MARGIN + 1.0), 0.0);
+        assert_eq!(settle(true, 5.0), 1.0);
+        assert_eq!(settle(false, 5.0), 0.0, "the plate is gone");
     }
 
     #[test]

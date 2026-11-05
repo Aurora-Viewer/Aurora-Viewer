@@ -1,6 +1,6 @@
 //! Contact-set markers (AURORA_DEMO_CONTACT_MARKERS=region|parcel|fade,
-//! docs/TESTING.md): three sets, one with a symbol per colour and one with
-//! the plain diamond, and four residents known only by their coarse
+//! docs/TESTING.md): three sets, two with a symbol and one with the plain
+//! dot, and four residents known only by their coarse
 //! location: one circling the region, one behind the camera, one far to
 //! the side and one of unknown altitude. With AURORA_DEMO_TAGS, plate
 //! residents join the sets.

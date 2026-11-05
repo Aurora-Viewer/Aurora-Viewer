@@ -1,6 +1,8 @@
 //! Markers over contact-set members (`world/contact_markers.rs` says who
-//! and where): a glass diamond with a border and a symbol in the set's
-//! colour, seen through everything in the world. Off screen or behind the camera it
+//! and where): a glass disc with a border and a symbol in the set's colour,
+//! seen through everything in the world. Near a resident it lands on their
+//! name plate and becomes a badge, and stays painted there: a plate behind a
+//! wall is hidden, the badge of the marker is not. Off screen or behind the camera it
 //! stops at the edge of the room the bars leave and gains a chevron toward
 //! the resident, like the destination beacon (`ui/minimap.rs`).
 
@@ -17,15 +19,19 @@ use std::collections::HashSet;
 use std::time::Instant;
 use uuid::Uuid;
 
-/// Half the diagonal of the diamond: a 45° square about 20 points wide.
-const RADIUS: f32 = 14.0;
-const INNER_RADIUS: f32 = 5.5;
-const GLYPH: f32 = 14.0;
+/// The disc: larger than a plate's badge, which it shrinks to on landing.
+const RADIUS: f32 = 12.0;
+/// The dot of a set without a symbol.
+const DOT: f32 = 3.5;
+/// Symbol size for a disc of `RADIUS`.
+const GLYPH: f32 = 13.0;
 const BORDER: f32 = 1.25;
 /// Opacity of the border over the glass.
 const BORDER_ALPHA: f32 = 0.85;
 /// The glass of a world label (`widgets::paint_world_label`).
 const GLASS_TINT: f32 = 0.65;
+/// Opacity of the disc once landed, as a plate's badge.
+const BADGE_TINT: f32 = 0.9;
 const GLASS_SHADE: f32 = 0.65;
 /// Markers that blur the world behind them, nearest first; the others only
 /// tint it. Far apart on the screen, each widens the area blurred.
@@ -35,14 +41,14 @@ const MAX_GLASS: usize = 12;
 const CHEVRON: f32 = 6.0;
 const CHEVRON_WING: f32 = 9.0;
 const CHEVRON_STROKE: f32 = 2.0;
-/// Between the diamond and its chevron.
+/// Between the disc and its chevron.
 const CHEVRON_GAP: f32 = 5.0;
 /// How far from the room's edge a pinned marker stands: its chevron stays
 /// in the room, whichever way it points.
 const EDGE_MARGIN: f32 = RADIUS + CHEVRON_GAP + CHEVRON + CHEVRON_STROKE;
-/// Points between the head and the diamond.
+/// Points between the head and the disc.
 const GAP: f32 = 6.0;
-/// Points between the top of a name plate and the diamond: the plate's
+/// Points between the top of a name plate and the disc: the plate's
 /// badges float over that edge.
 const PLATE_GAP: f32 = 12.0;
 
@@ -147,8 +153,9 @@ pub fn draw(
         .iter_mut()
         .filter_map(|(id, entry)| {
             let alpha = entry.presence * proximity_alpha(entry.position.distance(world.agent.position), entry.marker.fade);
-            let (at, edge) = place(id, entry, scene, proj, screen.center(), inner, tags, dt)?;
-            (alpha > 0.0).then_some((entry.position.distance(eye), at, edge, entry.marker, alpha))
+            let distance = entry.position.distance(eye);
+            let placed = place(id, entry, scene, proj, screen.center(), inner, tags, distance, dt)?;
+            (alpha > 0.0).then_some((distance, placed, entry.marker, alpha))
         })
         .collect();
     if markers.is_empty() {
@@ -160,13 +167,21 @@ pub fn draw(
     aurora_render::world_label_at(ctx, None);
     let painter = super::hud::world_painter(ctx);
     let plain = markers.len().saturating_sub(MAX_GLASS);
-    for (i, (_, at, edge, marker, alpha)) in markers.into_iter().enumerate() {
-        paint(&painter, p, at, &marker, alpha, edge, i >= plain);
+    for (i, (_, placed, marker, alpha)) in markers.into_iter().enumerate() {
+        paint(&painter, p, &placed, &marker, alpha, i >= plain);
     }
 }
 
-/// Where a marker stands, and the way toward its resident when it is pinned
-/// to the edge of `inner`.
+/// Where a marker stands this frame.
+struct Placed {
+    at: Pos2,
+    radius: f32,
+    /// 0 above the plate, 1 landed on it.
+    merge: f32,
+    /// The way toward its resident, pinned to the edge of the room.
+    edge: Option<Vec2>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn place(
     id: &Uuid,
@@ -176,8 +191,9 @@ fn place(
     center: Pos2,
     inner: Rect,
     tags: &[NameTag],
+    distance: f32,
     dt: f32,
-) -> Option<(Pos2, Option<Vec2>)> {
+) -> Option<Placed> {
     let root = proj.view_proj * entry.position.extend(1.0);
     let head = proj.view_proj * scene.name_tag_anchor(id, entry.position).extend(1.0);
     // as `Projector::project_name_tag`: above the root, not above a head
@@ -195,11 +211,9 @@ fn place(
             (clip.x / clip.w * 0.5 + 0.5) * proj.width / proj.ppp,
             (0.5 - clip.y / clip.w * 0.5) * proj.height / proj.ppp,
         );
+        let tag = tags.iter().find(|tag| tag.id == *id);
         let rest = GAP + RADIUS;
-        let lift = tags
-            .iter()
-            .find(|tag| tag.id == *id)
-            .map_or(rest, |tag| (on_screen.y - tag.rect.top() + PLATE_GAP + RADIUS).max(rest));
+        let lift = tag.map_or(rest, |tag| (on_screen.y - tag.rect.top() + PLATE_GAP + RADIUS).max(rest));
         // no slide up from the head on the frame it appears
         if entry.presence == 0.0 {
             entry.lift = lift;
@@ -209,7 +223,23 @@ fn place(
         let way = (at - center).normalized();
         if inner.contains(at) {
             entry.direction = Some(glam::Vec2::new(way.x, way.y));
-            return Some((at, None));
+            let slot = tag.and_then(|tag| tag.marker_slot);
+            let merge = entry.ease_merge(slot.is_some(), distance, dt);
+            let Some(slot) = slot else {
+                entry.drop_merge();
+                return Some(Placed {
+                    at,
+                    radius: RADIUS,
+                    merge: 0.0,
+                    edge: None,
+                });
+            };
+            return Some(Placed {
+                at: at + (slot.center() - at) * merge,
+                radius: RADIUS + (slot.width() * 0.5 - RADIUS) * merge,
+                merge,
+                edge: None,
+            });
         }
         way
     } else {
@@ -218,32 +248,28 @@ fn place(
     let way = glam::Vec2::new(way.x, way.y);
     let way = entry.direction.map_or(way, |current| ease_direction(current, way, dt));
     entry.direction = Some(way);
+    entry.drop_merge();
     let way = vec2(way.x, way.y);
-    Some((super::minimap::edge_point(center, inner, way), Some(way)))
+    Some(Placed {
+        at: super::minimap::edge_point(center, inner, way),
+        radius: RADIUS,
+        merge: 0.0,
+        edge: Some(way),
+    })
 }
 
-/// A 45° square, clockwise from the top, as `Shape::convex_polygon` wants.
-fn diamond(at: Pos2, radius: f32) -> Vec<Pos2> {
-    vec![
-        at - vec2(0.0, radius),
-        at + vec2(radius, 0.0),
-        at + vec2(0.0, radius),
-        at - vec2(radius, 0.0),
-    ]
-}
-
-fn symbol(painter: &egui::Painter, icon: &str, at: Pos2, color: Color32) {
+fn symbol(painter: &egui::Painter, icon: &str, at: Pos2, size: f32, color: Color32) {
     let Some(texture) = super::icons::global(icon) else { return };
     let mut mesh = egui::Mesh::with_texture(texture.id());
     mesh.add_rect_with_uv(
-        Rect::from_center_size(at, Vec2::splat(GLYPH)),
+        Rect::from_center_size(at, Vec2::splat(size)),
         Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
         color,
     );
     painter.add(mesh);
 }
 
-/// The chevron beside a pinned diamond, pointing along `way`.
+/// The chevron beside a pinned disc, pointing along `way`.
 fn chevron(at: Pos2, way: Vec2) -> Vec<Pos2> {
     let base = at + way * (RADIUS + CHEVRON_GAP);
     let tip = base + way * CHEVRON;
@@ -252,27 +278,36 @@ fn chevron(at: Pos2, way: Vec2) -> Vec<Pos2> {
 
 /// `blur`: the world shows through the glass; off in a window, which has
 /// its own background behind the preview.
-fn paint(painter: &egui::Painter, p: &Palette, at: Pos2, marker: &Marker, alpha: f32, edge: Option<Vec2>, blur: bool) {
+fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker, alpha: f32, blur: bool) {
+    let &Placed { at, radius, merge, edge } = placed;
     let color = super::colors::set_color(marker.color).to_opaque();
     // the set's colour, moved in lightness to read on the panel's
     let ink = crate::interface_colors::on_panel(color).gamma_multiply(alpha);
     let blur = blur && p.panel_alpha < 255;
     let tint = if blur {
-        let rect = Rect::from_center_size(at, Vec2::splat(RADIUS * 2.0));
-        painter.add(aurora_render::glass_diamond(rect, alpha, GLASS_SHADE));
+        painter.add(aurora_render::glass_region(
+            Rect::from_center_size(at, Vec2::splat(radius * 2.0)),
+            radius,
+            alpha * (1.0 - merge),
+            GLASS_SHADE,
+        ));
         f32::from(p.panel_alpha) / 255.0 * GLASS_TINT
     } else {
         1.0
     };
-    painter.add(Shape::convex_polygon(
-        diamond(at, RADIUS),
-        p.panel.to_opaque().gamma_multiply(tint * alpha),
-        Stroke::new(BORDER, ink.gamma_multiply(BORDER_ALPHA)),
+    let tint = tint + (BADGE_TINT - tint) * merge;
+    // a plate's badge has no border: it goes as the marker lands
+    painter.add(Shape::circle_filled(at, radius, p.panel.to_opaque().gamma_multiply(tint * alpha)));
+    painter.add(Shape::circle_stroke(
+        at,
+        radius,
+        Stroke::new(BORDER, ink.gamma_multiply(BORDER_ALPHA * (1.0 - merge))),
     ));
+    let scale = radius / RADIUS;
     match marker.icon.and_then(|i| ICONS.get(i)) {
-        Some(icon) => symbol(painter, icon, at, ink),
+        Some(icon) => symbol(painter, icon, at, GLYPH * scale, ink),
         None => {
-            painter.add(Shape::convex_polygon(diamond(at, INNER_RADIUS), ink, Stroke::NONE));
+            painter.add(Shape::circle_filled(at, DOT * scale, ink));
         }
     }
     if let Some(way) = edge {
@@ -290,7 +325,19 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, marker: &Marker) {
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let y = rect.center().y;
-    paint(&painter, p, pos2(rect.left() + RADIUS, y), marker, 1.0, None, false);
-    let pinned = pos2(rect.left() + RADIUS * 4.0, y);
-    paint(&painter, p, pinned, marker, 1.0, Some(Vec2::RIGHT), false);
+    let placed = |x: f32, edge| Placed {
+        at: pos2(x, y),
+        radius: RADIUS,
+        merge: 0.0,
+        edge,
+    };
+    paint(&painter, p, &placed(rect.left() + RADIUS, None), marker, 1.0, false);
+    paint(
+        &painter,
+        p,
+        &placed(rect.left() + RADIUS * 4.0, Some(Vec2::RIGHT)),
+        marker,
+        1.0,
+        false,
+    );
 }

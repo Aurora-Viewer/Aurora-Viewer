@@ -9173,13 +9173,13 @@ What the inventory must show with these scenarios:
   typing) and Iris (compact pill).
 - **`AURORA_DEMO_CONTACT_MARKERS`** (`demo_contact_markers.rs`): three
   contact sets with a marker, for this run only: Family (heart), Shop (star)
-  and Clubbing (no symbol: the plain diamond), and four residents known only
+  and Clubbing (no symbol: a dot), and four residents known only
   by their coarse location, sent once a second: one circling the region in
   40 s (the marker glides, then pins to each edge in turn), one behind the
   camera (pinned, with its chevron), one far to the side, and one of unknown
   altitude (at our own height). With `AURORA_DEMO_TAGS=voice`, Nova, Orion
-  and Vega join the sets: the marker sits above their plate and shows through
-  the wall. `parcel`: members only on our parcel (the demo's region is cut
+  and Vega join the sets: the marker sits above their plate, shows through the
+  wall, and under 15 m from the camera lands on the plate as a badge. `parcel`: members only on our parcel (the demo's region is cut
   into four); `fade`: markers gone within 12 m of our avatar.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
