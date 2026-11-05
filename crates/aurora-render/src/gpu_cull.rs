@@ -19,13 +19,14 @@
 //! the compute culling and its bins ([`GpuCull`]) are the render thread's,
 //! which gets the tables' buffers and sizes with each frame packet.
 
+use crate::pipeline_cache::CachedPipelines;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::gpu_alloc::{Backoff, try_buffer};
+use crate::gpu_alloc::{Backoff, fallback_capacities, grow_upload_buffer, try_buffer};
 use crate::shadow_cull::{SHADOW_PLANES, casts_into, merged_from_finer};
 use crate::types::{DrawIndexedIndirect, SKELETON_ANCHOR, SkinBind};
 use crate::writes::GpuWrites;
@@ -80,8 +81,8 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 16;
-pub const BIN_WATER_EXCLUSION: usize = 15;
+pub const BINS: usize = 30;
+pub const BIN_WATER_EXCLUSION: usize = 29;
 pub const MAIN_BINS: usize = 4;
 /// Shadow casters of each cascade drawn depth only: opaque faces, which
 /// `fs_shadow` never discards.
@@ -92,29 +93,29 @@ pub const BIN_PROBE: usize = 9;
 /// Shadow casters of each cascade drawn with the alpha test of `fs_shadow`
 /// (masked faces, blended rigged faces).
 pub const BIN_SHADOW_ALPHA: usize = 10;
-/// Shadow casters of the two projectors that cast shadows, drawn with the
+/// Shadow casters of the projectors within the configured budget, drawn with the
 /// alpha test.
 pub const BIN_SPOT: usize = 13;
 /// Projector shadow maps of a frame.
-pub const SPOT_SHADOWS: usize = 2;
+pub const SPOT_SHADOWS: usize = crate::projector_shadows::MAX_PROJECTOR_SHADOWS;
 /// Argument regions: the bins, then the occlusion's phase 1 and phase 2
 /// prepass lists of the main bins (depth only, in no particular order).
-pub const REGION_PRE1: usize = 16;
-pub const REGION_PRE2: usize = 20;
-const REGIONS: usize = 24;
+pub const REGION_PRE1: usize = BINS;
+pub const REGION_PRE2: usize = REGION_PRE1 + MAIN_BINS;
+const REGIONS: usize = REGION_PRE2 + MAIN_BINS;
 
-const COUNT_VISIBLE: usize = 16;
-const COUNT_TRIANGLES: usize = 17;
-const COUNT_HIDDEN: usize = 18;
+const COUNT_VISIBLE: usize = BINS;
+const COUNT_TRIANGLES: usize = COUNT_VISIBLE + 1;
+const COUNT_HIDDEN: usize = COUNT_VISIBLE + 2;
 /// Counts of the phase 1 and phase 2 prepass lists of each main bin.
-pub const COUNT_PRE1: usize = 19;
-pub const COUNT_PRE2: usize = 23;
+pub const COUNT_PRE1: usize = COUNT_VISIBLE + 3;
+pub const COUNT_PRE2: usize = COUNT_PRE1 + MAIN_BINS;
 /// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
 /// casters, then its rigged casters, then their triangles.
-const COUNT_SHADOW: usize = 27;
+const COUNT_SHADOW: usize = COUNT_PRE2 + MAIN_BINS;
 #[cfg(test)]
 const SHADOW_STATS: usize = 9;
-const COUNTS: usize = 40;
+const COUNTS: usize = 52;
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -131,7 +132,7 @@ pub mod frame_flags {
     /// (AURORA_SHADOW_LEGACY).
     pub const SHADOW_ALPHA_ALL: u32 = 128;
     /// Projector shadow map 0 is drawn (map 1: the next bit).
-    pub const SPOT: u32 = 256;
+    pub const SPOT: u32 = 1 << 16;
     /// Exterior refraction shares the water bin, with a union of frustums.
     pub const WATER_AIR: u32 = 1024;
     /// Blended faces that are not rigged cast too
@@ -143,6 +144,27 @@ pub mod frame_flags {
 
 const CLASSIFY_GROUP: u32 = 128;
 const SPHERE_GROUP: u32 = 64;
+
+/// Every indirect region shares one storage binding. Its limit applies
+/// to the whole buffer, not to each bin, and occlusion dispatches 64 faces
+/// per workgroup. A scene that cannot fit uses the existing CPU lists.
+fn face_capacity(limits: &wgpu::Limits) -> u32 {
+    let bytes = limits.max_buffer_size.min(limits.max_storage_buffer_binding_size);
+    let slots = bytes / (REGIONS * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
+    let dispatch = u64::from(limits.max_compute_workgroups_per_dimension) * 64;
+    (slots.min(dispatch).min(u64::from(u32::MAX)) as u32) / CLASSIFY_GROUP * CLASSIFY_GROUP
+}
+
+fn sphere_capacity(limits: &wgpu::Limits) -> u32 {
+    let bytes = limits.max_buffer_size.min(limits.max_storage_buffer_binding_size);
+    let dispatch = u64::from(limits.max_compute_workgroups_per_dimension) * u64::from(SPHERE_GROUP);
+    // Keep a conservative power-of-two slot budget for the source object
+    // table's rounded growth. Its whole binding is larger per slot than
+    // the generated spheres.
+    let slots = bytes / std::mem::size_of::<CullObject>() as u64;
+    let source_capacity = slots.checked_ilog2().map_or(0, |shift| 1u64 << shift);
+    source_capacity.min(dispatch).min(u64::from(u32::MAX)) as u32
+}
 
 /// One drawable face, indexed by its draw record (must match `CullFace` in
 /// cull.wgsl).
@@ -518,8 +540,8 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
 }
 
 /// `pack_bins` of cull.wgsl: one 8-bit counter per bin, four per lane.
-pub fn pack_bins(m: u32) -> [u32; 4] {
-    let mut v = [0u32; 4];
+pub fn pack_bins(m: u32) -> [u32; 8] {
+    let mut v = [0u32; 8];
     for b in 0..BINS {
         if (m >> b) & 1 != 0 {
             v[b >> 2] += 1 << ((b & 3) * 8);
@@ -532,12 +554,12 @@ pub fn pack_bins(m: u32) -> [u32; 4] {
 /// scatter pass, as cull.wgsl computes it (inclusive prefix sum of the
 /// packed counters minus the face's own): reference for the tests.
 pub fn workgroup_ranks(masks: &[u32]) -> Vec<[u32; BINS]> {
-    let mut acc = [0u32; 4];
+    let mut acc = [0u32; 8];
     masks
         .iter()
         .map(|&m| {
             let own = pack_bins(m);
-            for k in 0..4 {
+            for k in 0..8 {
                 acc[k] += own[k];
             }
             let mut r = [0u32; BINS];
@@ -739,31 +761,12 @@ impl<T: Pod + PartialEq> GpuTable<T> {
         let size = std::mem::size_of::<T>();
         self.uploaded = 0;
         let needed = (self.mirror.len() * size) as u64;
-        let now = std::time::Instant::now();
-        if needed > self.buffer.size() && self.backoff.ready(now) {
-            let cap = self.mirror.len().next_power_of_two();
-            match try_buffer(device, &Self::desc(self.label, cap)) {
-                Ok(buffer) => {
-                    self.backoff.succeeded();
-                    self.buffer = buffer;
-                    self.generation += 1;
-                    writes.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
-                    self.uploaded = needed;
-                    self.dirty.clear();
-                    return;
-                }
-                Err(e) => {
-                    if !self.backoff.waiting() {
-                        log::warn!(
-                            "{} not grown to {} MB ({e}): video memory is full, the entries past {} wait for it",
-                            self.label,
-                            (cap * size) >> 20,
-                            self.buffer.size() as usize / size
-                        );
-                    }
-                    self.backoff.failed(now);
-                }
-            }
+        if needed > self.buffer.size() && grow_upload_buffer(device, &mut self.buffer, &mut self.backoff, self.label, needed) {
+            self.generation += 1;
+            writes.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
+            self.uploaded = needed;
+            self.dirty.clear();
+            return;
         }
         // (while the buffer could not grow, what it has no room for waits:
         // the growth writes the whole table)
@@ -905,6 +908,8 @@ pub struct GpuCull {
     sphere_cap: u32,
     /// This frame: objects of the scene's table.
     objects: u32,
+    face_backoff: Backoff,
+    sphere_backoff: Backoff,
 }
 
 impl GpuCull {
@@ -916,6 +921,13 @@ impl GpuCull {
         !force_cpu
             && device.features().contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT)
             && device.limits().max_storage_buffers_per_shader_stage >= 8
+    }
+
+    /// Whether the complete scene fits the GPU lists. Checked before the
+    /// scene chooses which lists to build, so a limit never hides faces.
+    pub fn fits(device: &wgpu::Device, faces: usize, objects: usize) -> bool {
+        let limits = device.limits();
+        faces <= face_capacity(&limits) as usize && objects <= sphere_capacity(&limits) as usize
     }
 
     pub fn new(device: &wgpu::Device) -> Self {
@@ -979,7 +991,7 @@ impl GpuCull {
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pl),
                 module: &module,
@@ -1005,7 +1017,7 @@ impl GpuCull {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let cap = 4096;
+        let cap = 4096.min(face_capacity(&device.limits()));
         let mut s = GpuCull {
             spheres_layout,
             lists_layout,
@@ -1030,6 +1042,8 @@ impl GpuCull {
             spheres: Self::make_storage(device, "cull spheres", 4096 * 16),
             sphere_cap: 4096,
             objects: 0,
+            face_backoff: Backoff::default(),
+            sphere_backoff: Backoff::default(),
         };
         s.readback = (0..3)
             .map(|_| {
@@ -1046,41 +1060,103 @@ impl GpuCull {
     }
 
     fn make_storage(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        device.create_buffer(&Self::storage_desc(label, size))
+    }
+
+    fn storage_desc(label: &str, size: u64) -> wgpu::BufferDescriptor<'_> {
+        wgpu::BufferDescriptor {
             label: Some(label),
             size: size.max(16),
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        })
+        }
     }
 
     fn make_args(device: &wgpu::Device, cap: u32) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        device.create_buffer(&Self::args_desc(cap))
+    }
+
+    fn args_desc(cap: u32) -> wgpu::BufferDescriptor<'static> {
+        wgpu::BufferDescriptor {
             label: Some("cull args"),
             size: REGIONS as u64 * cap as u64 * std::mem::size_of::<DrawIndexedIndirect>() as u64,
             // copy source: GPU test read-back
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        })
+        }
     }
 
     /// Size the buffers for `faces` face slots and upload the frame
     /// parameters (`frame.sizes` and `groups` are filled in here); `objects`:
     /// entries of the scene's object table this frame.
     pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, faces: usize, objects: usize, mut frame: CullFrame) {
-        let faces = (faces as u32).min(self.max_groups.saturating_mul(CLASSIFY_GROUP));
-        if faces > self.cap {
-            self.cap = faces.next_power_of_two();
-            self.args = Self::make_args(device, self.cap);
-            self.masks = Self::make_storage(device, "cull masks", self.cap as u64 * 4);
-            self.group_data = Self::make_storage(device, "cull groups", self.cap.div_ceil(CLASSIFY_GROUP) as u64 * BINS as u64 * 4);
-            log::info!("GPU culling: {} slots per bin", self.cap);
+        let limits = device.limits();
+        let faces = faces.min(face_capacity(&limits) as usize) as u32;
+        let now = std::time::Instant::now();
+        if faces > self.cap && self.face_backoff.ready(now) {
+            let preferred = faces.next_power_of_two().min(face_capacity(&limits));
+            let mut failure = None;
+            for cap in fallback_capacities(self.cap, faces - self.cap, preferred, CLASSIFY_GROUP) {
+                let buffers = try_buffer(device, &Self::args_desc(cap)).and_then(|args| {
+                    let masks = try_buffer(device, &Self::storage_desc("cull masks", u64::from(cap) * 4))?;
+                    let groups = try_buffer(
+                        device,
+                        &Self::storage_desc("cull groups", u64::from(cap.div_ceil(CLASSIFY_GROUP)) * BINS as u64 * 4),
+                    )?;
+                    Ok((args, masks, groups))
+                });
+                match buffers {
+                    Ok((args, masks, groups)) => {
+                        self.args = args;
+                        self.masks = masks;
+                        self.group_data = groups;
+                        self.cap = cap;
+                        self.face_backoff.succeeded();
+                        failure = None;
+                        log::info!("GPU culling: {cap} slots per bin");
+                        break;
+                    }
+                    Err(e) => failure = Some(e),
+                }
+            }
+            if let Some(e) = failure {
+                if !self.face_backoff.waiting() {
+                    log::warn!(
+                        "GPU culling buffers not grown ({e}): keeping {} slots until video memory is available",
+                        self.cap
+                    );
+                }
+                self.face_backoff.failed(now);
+            }
         }
-        let objects = (objects as u32).min(self.max_groups.saturating_mul(SPHERE_GROUP));
-        if objects > self.sphere_cap {
-            self.sphere_cap = objects.next_power_of_two();
-            self.spheres = Self::make_storage(device, "cull spheres", self.sphere_cap as u64 * 16);
+        let objects = objects.min(sphere_capacity(&limits) as usize) as u32;
+        if objects > self.sphere_cap && self.sphere_backoff.ready(now) {
+            let preferred = objects.next_power_of_two().min(sphere_capacity(&limits));
+            let mut failure = None;
+            for cap in fallback_capacities(self.sphere_cap, objects - self.sphere_cap, preferred, 1) {
+                match try_buffer(device, &Self::storage_desc("cull spheres", u64::from(cap) * 16)) {
+                    Ok(spheres) => {
+                        self.spheres = spheres;
+                        self.sphere_cap = cap;
+                        self.sphere_backoff.succeeded();
+                        failure = None;
+                        break;
+                    }
+                    Err(e) => failure = Some(e),
+                }
+            }
+            if let Some(e) = failure {
+                if !self.sphere_backoff.waiting() {
+                    log::warn!(
+                        "GPU culling spheres not grown ({e}): keeping {} objects until video memory is available",
+                        self.sphere_cap
+                    );
+                }
+                self.sphere_backoff.failed(now);
+            }
         }
+        let faces = faces.min(self.cap);
+        let objects = objects.min(self.sphere_cap);
         self.objects = objects;
         self.faces = faces;
         self.groups = faces.div_ceil(CLASSIFY_GROUP).max(1);
@@ -1257,6 +1333,23 @@ impl GpuCull {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cull_capacity_respects_the_whole_binding_and_occlusion_dispatch() {
+        let mut limits = wgpu::Limits {
+            max_buffer_size: 2 << 20,
+            max_storage_buffer_binding_size: 2 << 20,
+            ..Default::default()
+        };
+        assert_eq!(face_capacity(&limits), 2688);
+        assert_eq!(sphere_capacity(&limits), 32768);
+        limits.max_storage_buffer_binding_size = 1 << 20;
+        assert_eq!(face_capacity(&limits), 1280);
+        assert_eq!(sphere_capacity(&limits), 16384);
+        limits.max_compute_workgroups_per_dimension = 16;
+        assert_eq!(face_capacity(&limits), 1024);
+        assert_eq!(sphere_capacity(&limits), 1024);
+    }
 
     fn wgsl_fields(src: &str, name: &str) -> Vec<String> {
         let start = src.find(&format!("struct {name} {{")).expect("struct in cull.wgsl");
@@ -1820,6 +1913,122 @@ mod tests {
         assert_eq!(mesh.world_sphere(&palettes, &binds, &boxes), rest);
     }
 
+    /// A buffer may be valid to allocate but too large to bind in full.
+    /// Keep the table usable when its rounded growth crosses that limit.
+    #[test]
+    #[ignore]
+    fn gpu_table_growth_respects_the_whole_storage_binding_limit() {
+        let _gpu = crate::test_gpu::lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("Vulkan adapter");
+        let mut limits = adapter.limits();
+        limits.max_buffer_size = 4 << 20;
+        limits.max_storage_buffer_binding_size = 1_500_000;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: limits,
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut table = GpuTable::new(&device, "table binding limit", 16, 0u32);
+        let mut writes = GpuWrites::default();
+        table.set(275_000, 123);
+        table.flush(&device, &mut writes);
+        assert_eq!(table.buffer().size(), 1_500_000);
+        assert_eq!(table.uploaded, 1_100_004);
+        assert_eq!(table.generation, 1);
+        writes.replay(&mut crate::writes::QueueSink(&queue));
+        queue.submit([]);
+        let previous = table.buffer().clone();
+        table.set(375_000, 456);
+        table.flush(&device, &mut writes);
+        assert_eq!(
+            table.buffer(),
+            &previous,
+            "a table beyond the hard limit retains its valid allocation"
+        );
+        assert_eq!(table.generation, 1);
+        writes.replay(&mut crate::writes::QueueSink(&queue));
+        queue.submit([]);
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[storage(0, true)],
+        });
+        let _binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("table binding limit"),
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: table.buffer().as_entire_binding(),
+            }],
+        });
+        assert!(pollster::block_on(scope.pop()).is_none());
+    }
+
+    /// A growth just past a power of two can still fit the device even
+    /// when doubling its indirect buffer cannot. Exercise a real Vulkan
+    /// device with a smaller declared limit instead of exhausting VRAM.
+    #[test]
+    #[ignore]
+    fn gpu_cull_growth_respects_buffer_limits() {
+        let _gpu = crate::test_gpu::lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).expect("Vulkan adapter");
+        let mut limits = adapter.limits();
+        limits.max_buffer_size = 2 << 20;
+        limits.max_storage_buffer_binding_size = 2 << 20;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: limits,
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let mut cull = GpuCull::new(&device);
+        assert!(GpuCull::fits(&device, 4097, 0));
+        assert!(!GpuCull::fits(&device, 4353, 0), "larger scenes must select the CPU lists");
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        cull.prepare(&device, &queue, 4097, 0, CullFrame::zeroed());
+        let error = pollster::block_on(validation.pop());
+        assert!(error.is_none(), "growth installed an invalid GPU buffer: {error:?}");
+        assert!(cull.cap() >= 4097, "all faces still fit");
+        assert!(cull.args().size() <= device.limits().max_buffer_size);
+        assert!(cull.args().size() <= device.limits().max_storage_buffer_binding_size);
+    }
+
+    /// Run in its own process with AURORA_GPU_OOM=0: only our fallible
+    /// growth allocations are refused, after the working buffers exist.
+    #[test]
+    #[ignore]
+    fn gpu_cull_growth_keeps_working_buffers_after_oom() {
+        assert_eq!(std::env::var("AURORA_GPU_OOM").as_deref(), Ok("0"), "run with AURORA_GPU_OOM=0");
+        let _gpu = crate::test_gpu::lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("Vulkan adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let mut cull = GpuCull::new(&device);
+        let size = cull.args().size();
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        cull.prepare(&device, &queue, 4097, 4097, CullFrame::zeroed());
+        assert_eq!(cull.cap(), 4096);
+        assert_eq!(cull.sphere_cap, 4096);
+        assert_eq!(cull.args().size(), size);
+        assert_eq!((cull.faces, cull.objects), (4096, 4096));
+        assert!(cull.face_backoff.waiting() && cull.sphere_backoff.waiting());
+        // Existing scene entries remain usable while the excess waits.
+        cull.prepare(&device, &queue, 1024, 1024, CullFrame::zeroed());
+        assert_eq!((cull.faces, cull.objects), (1024, 1024));
+        assert!(pollster::block_on(validation.pop()).is_none());
+    }
+
     /// The compute passes give the reference bins, in record order, for a
     /// random scene larger than one workgroup and one scan chunk. Needs a
     /// GPU: `cargo test -p aurora-render gpu_bins -- --ignored`.
@@ -2009,13 +2218,19 @@ mod tests {
             | frame_flags::OCCLUSION
             | frame_flags::SHADOW_STATS
             | frame_flags::BLEND_CASTS;
+        // Exercise every projector bin, including the upper packed-counter
+        // words and the highest frame-flag bit.
+        for k in 0..SPOT_SHADOWS {
+            frame.sizes[3] |= frame_flags::SPOT << k;
+        }
         // caster volumes: the east half in the second cascade, a slanted slab in the third
         frame.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
         frame.shadow_planes[2][3] = [0.6, 0.0, 0.8, 10.0];
         frame.shadow_planes[2][SHADOW_PLANES - 1] = [-0.6, 0.0, -0.8, 30.0];
-        // merged cascades: squares of 10, 25 and 50 m, the opaque casters
-        // of a finer one left out of the next
-        frame.cascades = [0.1, 0.04, 0.02].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
+        // merged cascades: squares of 8, 32 and 64 m, the opaque casters
+        // of a finer one left out of the next. Binary scales keep a sphere
+        // exactly on a plane from rounding to opposite sides on CPU/GPU.
+        frame.cascades = [0.125, 0.03125, 0.015625].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
         frame.dist[3] = 2048.0;
         // Exterior and reflection share one draw bin but retain independent
         // frusta. Include objects behind the main/reflection camera as well.
@@ -2083,6 +2298,10 @@ mod tests {
             }
         }
         assert!(expect.iter().take(MAIN_BINS + 3).all(|e| !e.is_empty()), "every bin used");
+        assert!(
+            expect[BIN_SPOT..BIN_SPOT + SPOT_SHADOWS].iter().all(|e| !e.is_empty()),
+            "every projector shadow bin used"
+        );
         assert!(
             expect[BIN_SHADOW_ALPHA..BIN_SHADOW_ALPHA + 3].iter().all(|e| !e.is_empty()),
             "alpha tested casters in every cascade"

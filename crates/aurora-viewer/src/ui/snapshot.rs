@@ -41,10 +41,9 @@ pub struct SnapshotUi {
     pub caption: String,
     /// The e-mail of a postcard (not kept either).
     pub postcard: PostcardForm,
-    /// The quick light, for the photo only (never saved).
+    /// The quick light, for the photo only (never saved), set in the
+    /// viewfinder's light panel (`light_only`).
     pub light: crate::snapshot::light::PhotoLight,
-    /// Scroll the panel to the Light section on the next frame (demo).
-    pub reveal_light: bool,
     /// The free camera's switch and flight (never saved).
     pub free: crate::camera::free::FreeSettings,
     /// The looks editor's state (`ui::looks_editor`).
@@ -105,7 +104,8 @@ pub struct EnvView<'a> {
     pub catalog: &'a crate::world::env_select::SettingsCatalog,
     /// What the user's own environment shows in each list.
     pub own: crate::world::eep_env::LocalView,
-    /// The sun shown: azimuth and elevation (degrees).
+    /// The sun of the sky shown before the photo turns it: azimuth and
+    /// elevation (degrees), what the sun sliders show and restore.
     pub sun: (f32, f32),
     /// RLVa holds the environment (@setenv): nothing to change.
     pub locked: bool,
@@ -135,6 +135,9 @@ pub struct View<'a> {
     pub message: Option<&'a (String, bool)>,
     pub last_saved: Option<&'a Path>,
     pub gallery: &'a [(PathBuf, Option<egui::TextureHandle>)],
+    /// The session's photos, shown instead of the folder's once there is
+    /// one (None in the Legacy style).
+    pub reel: Option<crate::ui::photo_reel::ReelView<'a>>,
     pub folder: PathBuf,
     /// The destination is the inventory.
     pub inventory: Option<InventoryView>,
@@ -186,12 +189,16 @@ pub enum Action {
     Confirm(bool),
     /// The "cannot afford" message was closed.
     CloseAfford,
+    /// The first "Photo quality" warning was answered: go on (true) or not.
+    QualityWarning(bool),
     /// Choose a .cube file to add to the tables of the photo's look.
     ImportLut,
     /// Delete one of the tables (its file name).
     RemoveLut(String),
     /// Show the folder of the tables.
     OpenLutFolder,
+    /// The session's photos (`ui::photo_reel`).
+    Reel(crate::ui::photo_reel::ReelAction),
 }
 
 impl SnapshotUi {
@@ -264,7 +271,6 @@ impl SnapshotUi {
         }
 
         let before = s.clone();
-        let light_before = self.light;
         // the settings scroll between the preview and the shutter, which
         // stay in sight on a short screen
         let room = (ui.ctx().content_rect().height() - 470.0).max(150.0);
@@ -276,9 +282,6 @@ impl SnapshotUi {
         self.actions(ui, p, view, out);
 
         changed(s, &before, out);
-        if self.light != light_before && !out.contains(&Action::Changed) {
-            out.push(Action::Changed);
-        }
     }
 
     /// The viewfinder's drawer: every setting of the panel, its shutter,
@@ -298,7 +301,6 @@ impl SnapshotUi {
     ) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = s.clone();
-        let light_before = self.light;
         let freeze = self.freeze;
         egui::ScrollArea::vertical()
             .id_salt("photo_drawer")
@@ -306,13 +308,13 @@ impl SnapshotUi {
             .show(ui, |ui| self.settings(ui, p, s, fov, default_fov, view, out));
         self.actions(ui, p, view, out);
         changed(s, &before, out);
-        if (self.light != light_before || self.freeze != freeze) && !out.contains(&Action::Changed) {
+        if self.freeze != freeze && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
         }
     }
 
-    /// The viewfinder's light panel: the Light section alone, the dock's
-    /// shortcut to the drawer's section of the same name.
+    /// The viewfinder's light panel, opened by the dock's sun button: the
+    /// only place of the photo's light.
     pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = self.light;
@@ -433,7 +435,7 @@ impl SnapshotUi {
     /// quality (SnapshotQuality, shared with the disk's JPEG). An empty
     /// subject or message is sent with the default shown in the field
     /// (PromptMissingSubjMsg's choice, without the question).
-    fn postcard_form(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, mail: &EmailView) {
+    pub(crate) fn postcard_form(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, mail: &EmailView) {
         if !mail.available {
             ui.label(RichText::new(aurora_i18n::tr!("photo-email-unavailable")).color(p.muted));
         }
@@ -725,13 +727,7 @@ impl SnapshotUi {
 
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
         dof_rows(ui, p, &mut s.dof);
-
-        let light = ui.cursor();
-        section(ui, p, "sun-filled", aurora_i18n::tr!("photo-section-light"));
-        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
-        if std::mem::take(&mut self.reveal_light) {
-            ui.scroll_to_rect(light.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
-        }
+        // (the photo's light: the viewfinder dock's sun button, `light_only`)
 
         let filter = ui.cursor();
         section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
@@ -773,6 +769,39 @@ impl SnapshotUi {
         });
     }
 
+    /// The warning before "Photo quality" is first turned on: it raises
+    /// every graphics setting, which a modest PC or graphics card may not
+    /// survive (a frozen window or a crash). Some(true): go on.
+    pub fn quality_warning(&self, ctx: &egui::Context, p: &Palette) -> Option<bool> {
+        use widgets::{Modal, action_button};
+        let size = Vec2::new(0.0, 26.0);
+        let mut answer = None;
+        let response = Modal::new(egui::Id::unique("photo_quality_warning")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("photo-quality-warning-title"))
+                    .size(17.0)
+                    .color(p.ink),
+            );
+            ui.add_space(8.0);
+            ui.label(aurora_i18n::tr!("photo-quality-warning-text"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let ok = aurora_i18n::tr!("photo-quality-warning-ok");
+                if action_button(ui, p, "sparkles-filled", ok, ActionKind::Primary, size).clicked() {
+                    answer = Some(true);
+                }
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if answer.is_none() && response.should_close() {
+            answer = Some(false);
+        }
+        answer
+    }
+
     /// The price to confirm before a paid upload (`confirm`), or the price
     /// the balance cannot pay (`short`: LLPanelSnapshotInventory::onSend
     /// and its ErrorPhotoCannotAfford).
@@ -798,6 +827,9 @@ impl SnapshotUi {
                     }
                 });
             });
+            // (above the reel's quick view, which raises its layers every frame)
+            ctx.move_to_top(response.backdrop_response.layer_id);
+            ctx.move_to_top(response.response.layer_id);
             if answer.is_none() && response.should_close() {
                 answer = Some(false);
             }
@@ -813,6 +845,8 @@ impl SnapshotUi {
                     close = true;
                 }
             });
+            ctx.move_to_top(response.backdrop_response.layer_id);
+            ctx.move_to_top(response.response.layer_id);
             if close || response.should_close() {
                 out.push(Action::CloseAfford);
             }
@@ -1039,10 +1073,10 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
-/// The window's quick light (Phototools' Quick Environments, the sky, water
+/// The photo's quick light (Phototools' Quick Environments, the sky, water
 /// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
-/// Exposure, and the sun of "Personal lighting"), for the photo only: the
-/// window gives the user's own back when it closes, unless "Keep this
+/// Exposure, and the sun of "Personal lighting"), for the photo only: closing
+/// the photo mode gives the user's own back, unless "Keep this
 /// light".
 fn light_rows(
     ui: &mut egui::Ui,
@@ -1194,14 +1228,30 @@ fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Phot
             }
         });
     }
-    // the sun: LLFloaterEnvironmentAdjust's azimuth and elevation, over any sky
-    let (mut az, mut el) = l.env.sun.map_or(env.sun, super::environment::azimuth_elevation);
-    let mut moved = false;
-    for (label, value, range) in [
-        (aurora_i18n::tr!("photo-light-sun-azimuth"), &mut az, 0.0..=359.99),
-        (aurora_i18n::tr!("photo-light-sun-elevation"), &mut el, -90.0..=90.0),
+    // the sun: LLFloaterEnvironmentAdjust's azimuth and elevation, over any
+    // sky; each row's restore button gives back the sky's own value of its
+    // slider and keeps the other's
+    let own = env.sun;
+    let (mut az, mut el) = l.env.sun.map_or(own, super::environment::azimuth_elevation);
+    let (mut moved, mut restored) = (false, false);
+    for (label, tip, value, range, own_value, wraps) in [
+        (
+            aurora_i18n::tr!("photo-light-sun-azimuth"),
+            aurora_i18n::tr!("photo-light-sun-azimuth-reset"),
+            &mut az,
+            0.0..=359.99,
+            own.0,
+            true,
+        ),
+        (
+            aurora_i18n::tr!("photo-light-sun-elevation"),
+            aurora_i18n::tr!("photo-light-sun-elevation-reset"),
+            &mut el,
+            -90.0..=90.0,
+            own.1,
+            false,
+        ),
     ] {
-        let reset = range.start() < &0.0;
         row(ui, p, label, None, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().slider_width = (ui.available_width() - 100.0).max(40.0);
@@ -1212,16 +1262,31 @@ fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Phot
                     .clamping(egui::SliderClamping::Edits)
                     .custom_parser(aurora_i18n::parse_number);
                 moved |= ui.add(slider).changed();
-                // one restore button for the sun, on its second row
-                if reset && widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("photo-light-sun-reset"), l.env.sun.is_some()) {
-                    l.env.sun = None;
+                let off = l.env.sun.is_some() && sun_differs(*value, own_value, wraps);
+                if widgets::icon_button(ui, p, "restore", tip, off) {
+                    *value = own_value;
+                    restored = true;
                 }
             });
         });
     }
-    if moved {
+    if restored {
+        // both back: the sky's own sun again, moving with its day
+        let fixed = sun_differs(az, own.0, true) || sun_differs(el, own.1, false);
+        l.env.sun = fixed.then(|| super::environment::rotation_from(az, el));
+    } else if moved {
         l.env.sun = Some(super::environment::rotation_from(az, el));
     }
+}
+
+/// A sun slider's value is off the sky's own (degrees; an azimuth wraps
+/// at 360°), past what its whole-degree display shows.
+fn sun_differs(value: f32, own: f32, wraps: bool) -> bool {
+    let mut d = (value - own).abs();
+    if wraps {
+        d = d.min(360.0 - d);
+    }
+    d >= 0.5
 }
 
 /// The full-frame strip's depth of field: its switch and the aperture.
@@ -1429,29 +1494,41 @@ fn preview(ui: &mut egui::Ui, p: &Palette, s: &Settings, view: &View) -> bool {
     resp.on_hover_text(aurora_i18n::tr!("photo-refresh")).clicked()
 }
 
-/// The latest photos and "Open the folder".
+/// The latest photos and "Open the folder": the session's reel once it
+/// has a photo (its stack, the older ones after it; a click opens the
+/// quick view), the folder's latest before that and in the Legacy style.
 fn gallery(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
     ui.add_space(2.0);
+    if let Some(reel) = view.reel.filter(|r| !r.photos.is_empty()) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let mut asked = Vec::new();
+            let stack = crate::ui::photo_reel::stack(ui, p, &reel, 34.0, reel.photos.len());
+            if stack.clicked() {
+                asked.push(crate::ui::photo_reel::ReelAction::Show(reel.photos[0].id));
+            }
+            // the room left of the folder's button
+            let width = ui.available_width() - 30.0 - ui.spacing().item_spacing.x;
+            crate::ui::photo_reel::strip(ui, p, &reel, 1, width, &mut asked);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::action_button(ui, p, "folder-open-filled", "", ActionKind::Flat, Vec2::new(30.0, 26.0))
+                    .on_hover_text(aurora_i18n::tr!("photo-open-folder"))
+                    .clicked()
+                {
+                    out.push(Action::OpenFolder);
+                }
+            });
+            out.extend(asked.into_iter().map(Action::Reel));
+        });
+        return;
+    }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let radius = ui.visuals().window_corner_radius;
         for (path, tex) in view.gallery {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(54.0, 34.0), Sense::click());
-            ui.painter().rect_filled(rect, radius, p.field);
-            if let Some(t) = tex {
-                let size = t.size_vec2();
-                // the middle of the photo, filling the thumbnail
-                let r = size.x / size.y.max(1.0);
-                let want = rect.width() / rect.height();
-                let uv = if r > want {
-                    let w = want / r;
-                    Rect::from_min_max(Pos2::new(0.5 - w / 2.0, 0.0), Pos2::new(0.5 + w / 2.0, 1.0))
-                } else {
-                    let h = r / want;
-                    Rect::from_min_max(Pos2::new(0.0, 0.5 - h / 2.0), Pos2::new(1.0, 0.5 + h / 2.0))
-                };
-                ui.painter().image(t.id(), rect, uv, widgets::PICTURE_TINT);
-            }
+            // the middle of the photo, filling the thumbnail
+            crate::ui::photo_reel::picture(ui.painter(), p, rect, radius, tex.as_ref());
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             if resp.on_hover_text(name).clicked() {
                 out.push(Action::OpenPhoto(path.clone()));
@@ -1634,6 +1711,15 @@ fn shutter(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sun_value_differs_past_its_shown_degree_and_azimuths_wrap() {
+        assert!(!sun_differs(120.3, 120.0, true));
+        assert!(sun_differs(121.0, 120.0, true));
+        assert!(!sun_differs(359.8, 0.1, true), "across north");
+        assert!(sun_differs(359.8, 0.1, false));
+        assert!(sun_differs(-10.0, 10.0, false));
+    }
 
     #[test]
     fn the_photo_fits_the_screen_and_the_rest_is_masked() {

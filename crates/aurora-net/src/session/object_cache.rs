@@ -324,6 +324,7 @@ mod tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let (object_cache, mut files) = ObjectCaches::new(Some(dir.clone()));
         let mut session = Session {
             sh: &sh,
@@ -335,6 +336,10 @@ mod tests {
             caps_tx,
             notecard_copy_tx,
             inventory_move_tx,
+            inventory_udp_tx,
+            appearance_serial: 0,
+            appearance_queue: Default::default(),
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
@@ -349,6 +354,7 @@ mod tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache,

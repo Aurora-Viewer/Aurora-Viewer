@@ -108,6 +108,21 @@ fn entry(
     selected: bool,
     left: f32,
 ) -> egui::Response {
+    entry_tinted(ui, p, icon, label, count, waiting, selected, left, None)
+}
+
+/// An entry whose icon has the user's folder color, if given.
+fn entry_tinted(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    count: Option<usize>,
+    waiting: usize,
+    selected: bool,
+    left: f32,
+    color: Option<egui::Color32>,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
     let hot = response.hovered() || response.dnd_hover_payload::<InvDrag>().is_some();
     if selected || hot {
@@ -115,7 +130,7 @@ fn entry(
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
     }
     let icon_center = Pos2::new(rect.left() + left + ICON / 2.0, rect.center().y);
-    let tint = if selected { p.violet_pale } else { p.muted };
+    let tint = color.unwrap_or(if selected { p.violet_pale } else { p.muted });
     widgets::paint_glyph(ui.painter(), icon, icon_center, ICON, tint);
     let mut end = rect.right() - 8.0;
     if waiting > 0 {
@@ -160,7 +175,7 @@ fn folder_target(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    task_drop::target(ui, p, response, inv, id, prefs, actions);
+    task_drop::target(ui, p, response, inv, id, actions);
     drag::target(ui, p, response, inv, id, st, prefs, facts, actions);
     drag::navigation::folder(ui, response, st.ui_id, id, open);
     menu::context_menu(response, p, |ui| context::show(ui, p, inv, id, st, prefs, facts, actions));
@@ -413,10 +428,12 @@ pub(super) fn show(
             let name = folder_name(inv, row.id);
             let icon = match tree::folder_icon(folder.info.type_default, row.open) {
                 "Inv_TrashClosed" => "trash-filled",
+                "Inv_SuitcaseOpen" | "Inv_SuitcaseClosed" => "briefcase-filled",
                 "Inv_FolderOpen" => "folder-open-filled",
                 _ => "folder-filled",
             };
-            let response = entry(ui, p, icon, &name, None, 0, selected, left);
+            let color = folder_colors::tint(prefs, row.id);
+            let response = entry_tinted(ui, p, icon, &name, None, 0, selected, left, color);
             #[cfg(test)]
             st.side.drawn.insert(row.id, response.rect);
             let caret_center = Pos2::new(

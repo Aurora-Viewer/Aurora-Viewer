@@ -97,12 +97,12 @@ struct Frame {
     // `light_projectors` (x: lights 0..31, y: lights 32..63)
     projectors: array<ProjectorLight, 64>,
     light_projectors: vec4<u32>,
-    // shadow maps of the two projectors that cast shadows: world to the
+    // shadow maps of the projectors within the configured budget: world to the
     // clip space of each, its light (-1: none), and what it leaves unlit
     // of its shadows (1 - fade)
-    spot_vp: array<mat4x4<f32>, 2>,
-    spot_lights: vec4<i32>,
-    spot_fade: vec4<f32>,
+    spot_vp: array<mat4x4<f32>, 16>,
+    spot_lights: array<vec4<i32>, 4>,
+    spot_fade: array<vec4<f32>, 4>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
     features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
     // Motion vectors (main view; zero in the other passes), without the TAA
@@ -112,6 +112,7 @@ struct Frame {
     motion_vp: mat4x4<f32>,
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
+    photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -1242,6 +1243,8 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let step = span / f32(taps - 1u);
     let center = 0.5 * f32(taps - 1u);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
+    let atlas = vec2<f32>(textureDimensions(shadow_map));
+    let tile_scale = vec2<f32>(0.5, atlas.x / (2.0 * atlas.y));
     // Receiver bias in metres along the light: two texels of the cascade.
     // The depth range of a cascade is its square plus CASCADE_DEPTH_PAD on
     // each side (about 810 m for the finest), so a fixed 0.0005 of it was
@@ -1267,7 +1270,7 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
             // result as the clamp-to-edge of a separate texture, never a
             // texel of the neighbouring tile
             let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - receiver_bias);
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * tile_scale, ndc.z - receiver_bias);
         }
     }
     return sum / f32(taps * taps);
@@ -1819,8 +1822,7 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
                         lo = mid;
                     }
                 }
-                let edge = min(min(huv.x, 1.0 - huv.x), min(huv.y, 1.0 - huv.y));
-                let conf = clamp(edge * 10.0, 0.0, 1.0) * (1.0 - f32(i) / f32(steps));
+                let conf = ssr_edge_fade(huv) * (1.0 - f32(i) / f32(steps));
                 let col = textureSampleLevel(scene_tex, lin_clamp, huv, 0.0).rgb;
                 return vec4<f32>(col, conf);
             }
@@ -1829,6 +1831,44 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
         t = t * 1.18 + 0.1;
     }
     return vec4<f32>(0.0);
+}
+
+// Pixels of a photo tile's inner edges over which a reflection's hit fades:
+// past them the ray finds nothing, the scene beyond is not drawn. Within
+// the guard band (at least 128 pixels, `snapshot::TILE_GUARD`), so the
+// pixels the tile keeps read their hits whole.
+const SSR_TILE_FADE: f32 = 64.0;
+
+// How much of a reflection's hit at `uv` is kept: it fades over the last
+// tenth of the image towards its edges. A photo tile fades at the photo's
+// edges, as the photo in one pass does, and at its inner edges only over
+// `SSR_TILE_FADE`: fading over a tenth of the tile took the reflections
+// out along every seam.
+fn ssr_edge_fade(uv: vec2<f32>) -> f32 {
+    if (frame.photo.z <= 0.0) {
+        let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+        return clamp(edge * 10.0, 0.0, 1.0);
+    }
+    let p = frame.photo.xy + uv * frame.photo.zw;
+    let edge = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));
+    // in this tile's pixels from each side; a side on the photo's edge
+    // fades with the photo
+    let px = uv * frame.screen.xy;
+    let to_end = frame.screen.xy - px;
+    var inner = 1.0;
+    if (frame.photo.x > 1e-6) {
+        inner = min(inner, px.x / SSR_TILE_FADE);
+    }
+    if (frame.photo.y > 1e-6) {
+        inner = min(inner, px.y / SSR_TILE_FADE);
+    }
+    if (frame.photo.x + frame.photo.z < 1.0 - 1e-6) {
+        inner = min(inner, to_end.x / SSR_TILE_FADE);
+    }
+    if (frame.photo.y + frame.photo.w < 1.0 - 1e-6) {
+        inner = min(inner, to_end.y / SSR_TILE_FADE);
+    }
+    return clamp(edge * 10.0, 0.0, 1.0) * clamp(inner, 0.0, 1.0);
 }
 
 // calcLegacyDistanceAttenuation (deferredUtil.glsl): `d` is the distance
@@ -1895,14 +1935,15 @@ fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
 
 // Light left by the shadow map of projector `i` (1: lit, or no map), as
 // spotLightF.glsl with sampleSpotShadow / pcfSpotShadow (shadowUtil.glsl):
-// the two projectors that weigh most on screen have a map, in the halves of
-// the top row of the shadow atlas's fourth tile. Like Firestorm's, these
-// shadows stop with the sun's (the last tenth of its shadow distance).
+// the configured budget extends the Legacy Viewer's two-map limit without
+// reducing each map's resolution (projector_shadows.rs). These shadows stop
+// with the sun's (the last tenth of its shadow distance).
 fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
-    if (frame.params.z < 0.5 || (i != frame.spot_lights.x && i != frame.spot_lights.y)) {
+    let slot = frame.projectors[i].tex.y;
+    if (frame.params.z < 0.5 || slot == 0u) {
         return 1.0;
     }
-    let k = select(0u, 1u, i == frame.spot_lights.y);
+    let k = slot - 1u;
     let far = frame.cascade_splits.z;
     let depth = distance(world_pos, frame.camera_pos.xyz);
     if (depth >= far) {
@@ -1920,18 +1961,26 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     }
     // a map is a quarter of the atlas wide: its texel in map coordinates
     let texel = 4.0 / f32(textureDimensions(shadow_map).x);
-    let origin = vec2<f32>(0.5 + 0.25 * f32(k), 0.5);
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    let size = dims.x * 0.5;
+    let half = size * 0.5;
+    var origin: vec2<f32>;
+    if (k < 4u) {
+        origin = vec2<f32>(size + f32(k % 2u) * half, size + f32(k / 2u) * half);
+    } else {
+        origin = vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
+    }
     var sum = 0.0;
     // pcfSpotShadow's five taps
     let taps = array<vec2<f32>, 5>(
         vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
     for (var t = 0; t < 5; t++) {
         let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0002);
+        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + at * half) / dims, ndc.z - 0.0002);
     }
     var s = sum * 0.2;
     // the map fades in and out as its projector takes or loses it
-    s = clamp(s + select(frame.spot_fade.x, frame.spot_fade.y, k == 1u), 0.0, 1.0);
+    s = clamp(s + frame.spot_fade[k / 4u][k % 4u], 0.0, 1.0);
     return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
 }
 

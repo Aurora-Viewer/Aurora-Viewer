@@ -167,6 +167,36 @@ fn a_card_over_its_budget_still_draws_passes_of_the_windows_size() {
 }
 
 #[test]
+fn a_pass_counts_the_targets_the_renderer_measured_and_its_output() {
+    // measured: whatever the MSAA, the targets' own bytes (rounded up)
+    assert_eq!(pass_bytes_per_pixel(Some(112.3), 1), 113 + PASS_OUTPUT_BYTES);
+    assert_eq!(pass_bytes_per_pixel(Some(195.0), 8), 195 + PASS_OUTPUT_BYTES);
+    // not measured yet, or nonsense: the fallback grows with the samples
+    let one = pass_bytes_per_pixel(None, 1);
+    let eight = pass_bytes_per_pixel(None, 8);
+    assert!(one >= 120 && eight > one, "{one} {eight}");
+    assert_eq!(pass_bytes_per_pixel(Some(0.0), 1), one);
+    assert_eq!(pass_bytes_per_pixel(Some(f32::NAN), 1), one);
+}
+
+#[test]
+fn an_8k_photo_no_longer_fits_one_pass_on_a_card_with_2_gb_free() {
+    // Agni, 2026-11-02, RTX 5070: 9,959 MB budget, 7,504 MB used, no MSAA;
+    // the targets took 87 bytes a pixel (measured there), counted 34 before
+    let free = (9_959u64 - 7_504) * 1_000_000 / 2;
+    let photo = (7680, 4108);
+    let before = plan(photo, 16384, pass_pixels(free, 34, (3840, 2054)), TILE_GUARD);
+    assert_eq!(before.len(), 1, "the plan that lost the GPU");
+    let per_pixel = pass_bytes_per_pixel(Some(87.0), 1);
+    let tiles = plan(photo, 16384, pass_pixels(free, per_pixel, (3840, 2054)), TILE_GUARD);
+    assert!(tiles.len() > 1, "{}", tiles.len());
+    for t in &tiles {
+        let bytes = u64::from(t.draw.width) * u64::from(t.draw.height) * per_pixel;
+        assert!(bytes <= free, "a pass of {} x {} takes {bytes} bytes", t.draw.width, t.draw.height);
+    }
+}
+
+#[test]
 fn a_tile_is_drawn_with_a_guard_band_on_the_sides_it_shares() {
     // 3200 x 1800 with sides of 1024 at most: 5 x 3 tiles of 640 x 600,
     // drawn with up to 128 pixels more on each inner side
@@ -330,6 +360,40 @@ fn every_tile_of_a_photo_shows_the_instant_of_its_first() {
     }
     // a first part drawn again (its frame lost) takes its own instant
     assert_eq!(Hold::for_part(4, 0, &mut kept, at(80, 3.0)), Some(at(80, 3.0)));
+}
+
+#[test]
+fn only_a_tiled_photo_with_occlusion_draws_its_context_first() {
+    // a quarter of each side, rounded up
+    assert_eq!(ContextPass::plan((7680, 4320), 6, true), ContextPass::Pending((1920, 1080)));
+    assert_eq!(ContextPass::plan((3003, 1801), 4, true), ContextPass::Pending((751, 451)));
+    assert_eq!(ContextPass::plan((7680, 4320), 1, true), ContextPass::None, "one pass");
+    assert_eq!(ContextPass::plan((7680, 4320), 6, false), ContextPass::None, "no occlusion");
+    // never a target smaller than a few texels
+    assert_eq!(ContextPass::plan((40, 20), 2, true), ContextPass::Pending((16, 16)));
+}
+
+#[test]
+fn the_context_is_the_first_part_and_its_tiles_keep_its_instant() {
+    let t0 = std::time::Instant::now();
+    let at = |ms: u64| Hold {
+        at: t0 + std::time::Duration::from_millis(ms),
+        clock: ms as f32,
+        later: false,
+    };
+    let tiles = 3;
+    let mut kept = None;
+    let (part, parts) = ContextPass::Pending((960, 540)).part(0, tiles);
+    assert_eq!((part, parts), (0, 4));
+    assert_eq!(Hold::for_part(parts, part, &mut kept, at(16)), Some(at(16)));
+    // the first tile is a later part: it shows the context's instant
+    for next in 0..tiles {
+        let (part, parts) = ContextPass::Drawn.part(next, tiles);
+        assert_eq!((part, parts), (next + 1, 4));
+        let hold = Hold::for_part(parts, part, &mut kept, at(33 + next as u64 * 16));
+        assert_eq!(hold, Some(Hold { later: true, ..at(16) }), "tile {next}");
+    }
+    assert_eq!(ContextPass::None.part(2, tiles), (2, 3));
 }
 
 #[test]

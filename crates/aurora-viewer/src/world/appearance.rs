@@ -43,6 +43,14 @@ pub enum WearMode {
     ReplaceItems,
 }
 
+/// One item of a `Action::Force` batch, with its own mode and point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WearRequest {
+    pub item: Uuid,
+    pub replace: bool,
+    pub point: u8,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Wear(Uuid, bool),
@@ -56,6 +64,13 @@ pub enum Action {
     },
     Save(Option<String>),
     SaveIn(String, Uuid),
+    ExportJson(Uuid),
+    PickJson,
+    ImportJson {
+        backup: Box<super::outfit_backup::Backup>,
+        name: String,
+        partial: bool,
+    },
     Remove(Uuid),
     RemoveItems(Vec<Uuid>),
     Add(Uuid),
@@ -68,6 +83,13 @@ pub enum Action {
         items: Vec<Uuid>,
         replace: bool,
         point: u8,
+    },
+    /// The removals and wears of RLVa force commands in one COF update,
+    /// each wear with its own mode and point (RlvForceWear::done,
+    /// rlvhelper.cpp). Removals apply first, then the wears in order.
+    Force {
+        remove: Vec<Uuid>,
+        wear: Vec<WearRequest>,
     },
     ReplaceWearable {
         old: Uuid,
@@ -93,22 +115,10 @@ pub enum Action {
     Revert,
 }
 
-/// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp):
-/// a system folder is a child of the root, the smallest id when the server
-/// left two. Every inventory rule asks this for each entry it checks, so it
-/// reads the root's few children instead of every folder (#1580); the whole
-/// inventory is only scanned when the root does not list one.
+/// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp),
+/// indexed across inventory and Appearance rules until the inventory changes.
 pub fn system_folder(inv: &Inventory, kind: i32) -> Option<Uuid> {
-    let is_system = |f: &super::inventory::Folder| f.info.type_default == kind && !f.library;
-    inv.folders
-        .get(&inv.root)
-        .into_iter()
-        .flat_map(|root| &root.children)
-        .filter_map(|id| inv.folders.get(id))
-        .filter(|f| f.info.parent == inv.root && is_system(f))
-        .map(|f| f.info.id)
-        .min()
-        .or_else(|| inv.folders.values().find(|f| is_system(f)).map(|f| f.info.id))
+    inv.system_folder(kind)
 }
 
 pub fn cof(inv: &Inventory) -> Option<Uuid> {
@@ -356,6 +366,87 @@ fn base_link(inv: &Inventory, id: Uuid) -> OutfitLink {
     }
 }
 
+/// Take items off the planned COF: clothing and attachments only, a body
+/// part is replaced, never removed.
+fn remove_links(inv: &Inventory, current: &mut Vec<OutfitLink>, ids: Vec<Uuid>) -> Result<(), String> {
+    let mut removable = HashSet::new();
+    for id in ids {
+        let id = super::inventory::actions::original(inv, id).ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+        let it = inv
+            .items
+            .get(&id)
+            .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+        if it.asset_type == 13 {
+            return Err(aurora_i18n::tr!("world-appearance-a-body-part-must-be-replaced-it-cannot-be").into());
+        }
+        if !matches!(it.asset_type, 5 | 6 | 21) {
+            return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-taken-off").into());
+        }
+        removable.insert(id);
+    }
+    current.retain(|l| l.folder || !removable.contains(&l.target));
+    Ok(())
+}
+
+/// Put one item on the planned COF. A body part always replaces its type;
+/// `replace_layer` clears the item's clothing layer first; `replace` sends
+/// an attachment to its point instead of adding it there.
+fn wear_link(
+    inv: &Inventory,
+    current: &mut Vec<OutfitLink>,
+    worn: &HashMap<Uuid, u8>,
+    seen: &mut HashSet<Uuid>,
+    request: WearRequest,
+    replace_layer: bool,
+) -> Result<(), String> {
+    let id =
+        super::inventory::actions::original(inv, request.item).ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+    if !seen.insert(id) {
+        return Ok(());
+    }
+    let it = inv
+        .items
+        .get(&id)
+        .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+    if !matches!(it.asset_type, 5 | 6 | 13 | 21)
+        || super::inventory::actions::library(inv, id)
+        || super::inventory::actions::in_type(inv, id, 14)
+    {
+        return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-worn").into());
+    }
+    if it.asset_type == 13 || (replace_layer && it.asset_type == 5) {
+        current.retain(|l| {
+            l.folder
+                || inv
+                    .items
+                    .get(&l.target)
+                    .is_none_or(|old| old.asset_type != it.asset_type || old.flags & 0xff != it.flags & 0xff)
+        });
+    }
+    if request.replace && it.asset_type == 6 {
+        // Point zero uses the last saved point (LLObjectBridge::mAttachPt).
+        let point = if request.point == 0 {
+            (it.flags & 0xff) as u8
+        } else {
+            request.point
+        };
+        if point != 0 {
+            current.retain(|l| {
+                l.folder
+                    || l.target == id
+                    || inv
+                        .items
+                        .get(&l.target)
+                        .is_none_or(|old| old.asset_type != 6 || worn.get(&l.target).copied().unwrap_or((old.flags & 0xff) as u8) != point)
+            });
+        }
+    }
+    if !current.iter().any(|l| l.target == id) {
+        current.push(item_link(it));
+    }
+    Ok(())
+}
+
 /// Produces one acknowledged AIS operation. No optimistic inventory mutation.
 pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result<(OutfitMutation, bool), String> {
     // DeleteFromOutfit removes the saved links, never the originals or the worn items.
@@ -391,6 +482,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         Action::Add(_)
             | Action::WearItem { .. }
             | Action::WearItems { .. }
+            | Action::Force { .. }
             | Action::Remove(_)
             | Action::RemoveItems(_)
             | Action::RemoveOutfit(_)
@@ -418,6 +510,62 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let original_current = current.clone();
     let mut sync = true;
     match action {
+        Action::ImportJson { backup, name, partial } => {
+            if !super::outfit_backup::valid_name(&name) {
+                return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
+            }
+            let resolved = backup.resolve(inv, inv.owner);
+            if !partial && !resolved.missing.is_empty() {
+                return Err(aurora_i18n::tr!("outfit-json-missing-changed").into());
+            }
+            // Wearing zero links would take off every clothing item and
+            // attachment, so an empty backup is refused like an unavailable one.
+            if resolved.links.is_empty() {
+                return Err(if resolved.missing.is_empty() {
+                    aurora_i18n::tr!("outfit-json-empty")
+                } else {
+                    aurora_i18n::tr!("outfit-json-none-found")
+                }
+                .into());
+            }
+            let mut links = resolved.links;
+            // As updateCOF does, keep the current required body part whenever
+            // the selected (possibly partial) outfit does not supply its type.
+            for old in current.iter().filter(|link| !link.folder) {
+                if let Some(item) = inv.items.get(&old.target)
+                    && item.asset_type == 13
+                    && !links.iter().any(|link| {
+                        inv.items
+                            .get(&link.target)
+                            .is_some_and(|it| it.asset_type == 13 && it.flags & 0xff == item.flags & 0xff)
+                    })
+                {
+                    links.push(old.clone());
+                }
+            }
+            let parent =
+                system_folder(inv, FT_MY_OUTFITS).ok_or(aurora_i18n::tr!("world-appearance-the-my-outfits-folder-is-unavailable"))?;
+            let id = Uuid::new_v4();
+            let name = name.trim().to_owned();
+            change.folder = id;
+            change.create = Some(InvFolder {
+                id,
+                parent,
+                name: name.clone(),
+                type_default: FT_OUTFIT,
+                version: 1,
+                ..Default::default()
+            });
+            change.links = links.clone();
+            links.push(OutfitLink {
+                target: id,
+                name,
+                desc: String::new(),
+                folder: true,
+                inv_type: 8,
+            });
+            change.cof = Some((cof, links));
+        }
         Action::Save(_) | Action::SaveIn(..) | Action::SaveTo(_) => {
             let my = system_folder(inv, FT_MY_OUTFITS);
             let (name, destination, parent) = match action {
@@ -446,6 +594,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             let links: Vec<_> = current.iter().filter(|l| !l.folder).cloned().collect();
             if let Some(name) = name {
+                crate::text_validation::require(crate::text_validation::Policy::Ascii, &name)?;
                 let name = name.trim();
                 if name.is_empty() || name.chars().count() > 63 {
                     return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
@@ -609,23 +758,17 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 Action::RemoveItems(ids) => ids,
                 _ => unreachable!(),
             };
-            let mut removable = HashSet::new();
-            for id in ids {
-                let id = super::inventory::actions::original(inv, id)
-                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                let it = inv
-                    .items
-                    .get(&id)
-                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                if it.asset_type == 13 {
-                    return Err(aurora_i18n::tr!("world-appearance-a-body-part-must-be-replaced-it-cannot-be").into());
-                }
-                if !matches!(it.asset_type, 5 | 6 | 21) {
-                    return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-taken-off").into());
-                }
-                removable.insert(id);
+            remove_links(inv, &mut current, ids)?;
+            change.links = current;
+        }
+        Action::Force { remove, wear } => {
+            remove_links(inv, &mut current, remove)?;
+            let mut seen = HashSet::new();
+            for request in wear {
+                // RLVa already chose replace or add per item (the first
+                // clothing of a layer replaces, the next ones add).
+                wear_link(inv, &mut current, worn, &mut seen, request, request.replace)?;
             }
-            current.retain(|l| l.folder || !removable.contains(&l.target));
             change.links = current;
         }
         Action::RemoveOutfit(_) | Action::RemoveOutfits(_) => {
@@ -634,10 +777,11 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 Action::RemoveOutfits(ids) => ids,
                 _ => unreachable!(),
             };
-            // takeOffOutfit never removes the four required body parts.
+            // takeOffOutfit never removes the four required body parts, and
+            // takes any folder: a demo or a delivery, not only a saved outfit
+            // (#1849).
             let mut removable = HashSet::new();
             for id in folders {
-                require_outfit(inv, id)?;
                 require_complete(inv, id)?;
                 warn_broken(inv, id);
                 removable.extend(
@@ -662,46 +806,19 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             let mut seen = HashSet::new();
             let mut replaced_clothing = HashSet::new();
             for id in ids {
-                let id = super::inventory::actions::original(inv, id)
-                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                if !seen.insert(id) {
-                    continue;
-                }
-                let it = inv
-                    .items
-                    .get(&id)
-                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                if !matches!(it.asset_type, 5 | 6 | 13 | 21)
-                    || super::inventory::actions::library(inv, id)
-                    || super::inventory::actions::in_type(inv, id, 14)
-                {
-                    return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-worn").into());
-                }
-                if it.asset_type == 13 || (replace && it.asset_type == 5 && replaced_clothing.insert(it.flags & 0xff)) {
-                    current.retain(|l| {
-                        l.folder
-                            || inv
-                                .items
-                                .get(&l.target)
-                                .is_none_or(|old| old.asset_type != it.asset_type || old.flags & 0xff != it.flags & 0xff)
-                    });
-                }
-                if replace && it.asset_type == 6 {
-                    // Point zero uses the last saved point (LLObjectBridge::mAttachPt).
-                    let point = if point == 0 { (it.flags & 0xff) as u8 } else { point };
-                    if point != 0 {
-                        current.retain(|l| {
-                            l.folder
-                                || l.target == id
-                                || inv.items.get(&l.target).is_none_or(|old| {
-                                    old.asset_type != 6 || worn.get(&l.target).copied().unwrap_or((old.flags & 0xff) as u8) != point
-                                })
-                        });
-                    }
-                }
-                if !current.iter().any(|l| l.target == id) {
-                    current.push(item_link(it));
-                }
+                let layer = super::inventory::actions::original(inv, id)
+                    .and_then(|id| inv.items.get(&id))
+                    .map(|it| (it.asset_type, it.flags & 0xff));
+                // The first clothing of a layer replaces, the next ones add.
+                let replace_layer = replace && layer.is_some_and(|(kind, layer)| kind != 5 || replaced_clothing.insert(layer));
+                wear_link(
+                    inv,
+                    &mut current,
+                    worn,
+                    &mut seen,
+                    WearRequest { item: id, replace, point },
+                    replace_layer,
+                )?;
             }
             change.links = current;
         }
@@ -759,9 +876,20 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             change.links = current;
         }
-        Action::ShowOriginal(_) | Action::Favorite(_) | Action::Category(..) | Action::Folders(_) | Action::DeleteFromOutfit { .. } => {
+        Action::ShowOriginal(_)
+        | Action::Favorite(_)
+        | Action::Category(..)
+        | Action::Folders(_)
+        | Action::DeleteFromOutfit { .. }
+        | Action::ExportJson(_)
+        | Action::PickJson => {
             return Err(aurora_i18n::tr!("world-appearance-this-action-does-not-change-the-current-outfit").into());
         }
+    }
+    // Every new-outfit entry point (including imports) must satisfy the
+    // destination-name policy before any inventory requests are prepared.
+    if let Some(created) = &change.create {
+        crate::text_validation::require(crate::text_validation::Policy::Ascii, &created.name)?;
     }
     if change.folder == cof {
         drop_coalesced(inv, &mut change.links);
@@ -831,6 +959,7 @@ pub fn category_plan(
     require_outfit(inv, id)?;
     match &mut update {
         Update::Rename(name) => {
+            crate::text_validation::require_edit(crate::text_validation::Policy::Ascii, &inv.folders[&id].info.name, name)?;
             *name = name.trim().into();
             if name.is_empty() || name.chars().count() > 63 || name.chars().any(char::is_control) {
                 return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
@@ -852,6 +981,7 @@ pub fn category_plan(
         folder: id,
         parent: inv.folders.get(&id).map(|f| f.info.parent).unwrap_or_default(),
         update,
+        type_default: None,
     })
 }
 
@@ -952,14 +1082,95 @@ pub struct CofSync {
     pub unknown: Vec<Uuid>,
 }
 
+/// LLAppearanceMgr::wearItemsOnAvatar / LLAttachmentsMgr::linkRecentlyArrivedAttachments
+/// (indra/newview/llappearancemgr.cpp, llattachmentsmgr.cpp): request objects
+/// first, and link only those that arrive worn. Inventory flags do not say
+/// whether an object is Animesh; the simulator decides its account limit.
+/// A refused request must not leave a COF link that retries at every login.
+/// Saved outfits retain their requested objects; only the COF write changes.
+pub fn defer_attachment_links(
+    inv: &Inventory,
+    change: &mut OutfitMutation,
+    worn: &HashSet<Uuid>,
+    attachments: &mut Vec<AttachRequest>,
+    agent: Uuid,
+) {
+    let Some(cof) = cof(inv) else { return };
+    let before = folder_links(inv, cof);
+    let links = if change.folder == cof {
+        &mut change.links
+    } else if let Some((folder, links)) = &mut change.cof {
+        if *folder != cof {
+            return;
+        }
+        links
+    } else {
+        return;
+    };
+    links.retain(|link| {
+        let Some(item) = inv.items.get(&link.target).filter(|item| !link.folder && item.asset_type == 6) else {
+            return true;
+        };
+        if worn.contains(&item.id) {
+            return true;
+        }
+        // An existing link may still be restoring at login. Do not remove
+        // it just because the region has not sent the object yet, unless
+        // this action explicitly retries that item.
+        if before.iter().any(|old| old.target == item.id) && !attachments.iter().any(|request| request.item_id == item.id) {
+            return true;
+        }
+        if !attachments.iter().any(|request| request.item_id == item.id) {
+            attachments.push(super::outfit::attach_request(item, agent));
+        }
+        false
+    });
+}
+
+/// An object can arrive while the COF write is in flight. Keep explicit
+/// requests and objects that arrived during the write out of the detach
+/// list until their arrival is linked. Keep the chosen point and mode.
+pub fn sync_with_attachments(
+    inv: &Inventory,
+    agent: Uuid,
+    worn: &HashSet<Uuid>,
+    worn_before: &HashSet<Uuid>,
+    keep: Uuid,
+    attachments: Vec<AttachRequest>,
+) -> CofSync {
+    let mut sync = sync_plan_keeping(inv, agent, worn, keep);
+    for command in &mut sync.commands {
+        if let NetCommand::DetachAttachments(items) = command {
+            items.retain(|id| worn_before.contains(id) && !attachments.iter().any(|request| request.item_id == *id));
+        }
+    }
+    sync.commands
+        .retain(|command| !matches!(command, NetCommand::DetachAttachments(items) if items.is_empty()));
+    for attachment in attachments {
+        if worn.contains(&attachment.item_id) && attachment.point == 0 && attachment.add {
+            continue;
+        }
+        apply_attachment_override(&mut sync.commands, attachment);
+    }
+    sync
+}
+
 pub fn sync_plan(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> CofSync {
+    sync_plan_keeping(inv, agent, worn, Uuid::nil())
+}
+
+/// `sync_plan` that never takes `keep` off, linked or not: the Aurora bridge,
+/// which the Legacy Viewer puts back into every replaced outfit (FSLSLBridge
+/// in LLAppearanceMgr::updateCOF, llappearancemgr.cpp). It stays in `worn`,
+/// or its link would ask to wear it again at each sync.
+pub fn sync_plan_keeping(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>, keep: Uuid) -> CofSync {
     let Some(cof) = cof(inv) else {
         return CofSync::default();
     };
     // the links to objects, with those whose item is not known yet: a worn
     // object linked in the COF stays on even before its item is fetched
     let objects: HashSet<_> = super::outfit::cof_objects(inv, cof).into_iter().collect();
-    let detach: Vec<_> = worn.difference(&objects).copied().collect();
+    let detach: Vec<_> = worn.difference(&objects).copied().filter(|id| *id != keep).collect();
     let mut unknown = Vec::new();
     let mut attach = Vec::new();
     for id in objects.difference(worn) {
@@ -999,35 +1210,103 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
     sync_plan(inv, agent, worn).commands
 }
 
+/// A forced batch with nothing left to do: its links would not change and the
+/// avatar already matches. RlvForceWear::done (rlvhelper.cpp) returns early
+/// here; an outfit write would still raise the COF version and ask for a new
+/// appearance. Read when the batch runs: a run of `@detach` queues while the
+/// first object is leaving, and has nothing to do once it has left. An object
+/// on the avatar or on its way needs no new request (`requested`:
+/// LLAttachmentsMgr::wasRequestedRecently) and is linked when it arrives
+/// (`update_attachment_inventory`). Gestures are always applied, their state
+/// is not in the links.
+pub fn force_changes_nothing(inv: &Inventory, action: &Action, worn: &HashMap<Uuid, u8>, requested: &HashSet<Uuid>) -> bool {
+    let Action::Force { remove, wear } = action else {
+        return false;
+    };
+    let original = |id: Uuid| super::inventory::actions::original(inv, id).unwrap_or(id);
+    let gesture = |id: Uuid| inv.items.get(&id).is_some_and(|it| it.asset_type == 21);
+    let settled_off = |id: &Uuid| {
+        let id = original(*id);
+        !gesture(id) && !worn.contains_key(&id)
+    };
+    let settled_on = |request: &WearRequest| {
+        let id = original(request.item);
+        !gesture(id)
+            && match inv.items.get(&id).map(|it| it.asset_type) {
+                Some(6) => match worn.get(&id) {
+                    Some(point) => request.point == 0 || request.point == *point,
+                    None => requested.contains(&id),
+                },
+                Some(_) => true,
+                None => false,
+            }
+    };
+    if !remove.iter().all(settled_off) || !wear.iter().all(settled_on) {
+        return false;
+    }
+    let (Some(cof), Ok((change, _))) = (cof(inv), plan(inv, action.clone(), worn)) else {
+        return false;
+    };
+    let arriving: HashSet<_> = wear
+        .iter()
+        .map(|request| original(request.item))
+        .filter(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 6))
+        .collect();
+    let links = |links: &[OutfitLink]| {
+        links
+            .iter()
+            .filter(|l| !arriving.contains(&l.target))
+            .map(|l| (l.target, l.folder))
+            .collect::<HashSet<_>>()
+    };
+    links(&folder_links(inv, cof)) == links(&change.links)
+}
+
 /// Explicit attachment requests retain the chosen point and replace/add mode.
-/// They are sent only after the COF update has been acknowledged. "Add" of a
-/// coalesced object is asked here too: the COF does not link it, so the sync
-/// would not ask for it, and the simulator's refusal is shown once, as the
-/// Legacy Viewer's rez_attachment does.
+/// They are sent only after the COF update has been acknowledged. Objects
+/// are linked on arrival, so "Add" also needs its explicit rez request.
 pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> Vec<AttachRequest> {
-    let (items, point, replace) = match action {
-        Action::WearItem { item, point, replace } => (std::slice::from_ref(item), *point, *replace),
-        Action::WearItems { items, point, replace } => (items.as_slice(), *point, *replace),
-        Action::Add(item)
-            if super::inventory::actions::original(inv, *item)
-                .and_then(|id| inv.items.get(&id))
-                .is_some_and(coalesced) =>
-        {
-            (std::slice::from_ref(item), 0, false)
+    let requests: Vec<WearRequest> = match action {
+        Action::WearItem { item, point, replace } => vec![WearRequest {
+            item: *item,
+            replace: *replace,
+            point: *point,
+        }],
+        Action::WearItems { items, point, replace } => items
+            .iter()
+            .map(|item| WearRequest {
+                item: *item,
+                replace: *replace,
+                point: *point,
+            })
+            .collect(),
+        Action::Force { wear, .. } => wear.clone(),
+        Action::ImportJson { backup, .. } => {
+            let available: HashSet<_> = backup.resolve(inv, agent).links.into_iter().map(|link| link.target).collect();
+            backup
+                .points()
+                .into_iter()
+                .filter(|request| available.contains(&request.item))
+                .collect()
         }
+        Action::Add(item) => vec![WearRequest {
+            item: *item,
+            replace: false,
+            point: 0,
+        }],
         _ => return Vec::new(),
     };
     let mut seen = HashSet::new();
-    items
-        .iter()
-        .filter_map(|id| super::inventory::actions::original(inv, *id))
-        .filter(|id| seen.insert(*id))
-        .filter_map(|id| inv.items.get(&id).filter(|it| it.asset_type == 6))
-        .map(|it| AttachRequest {
+    requests
+        .into_iter()
+        .filter_map(|request| super::inventory::actions::original(inv, request.item).map(|id| (id, request)))
+        .filter(|(id, _)| seen.insert(*id))
+        .filter_map(|(id, request)| inv.items.get(&id).filter(|it| it.asset_type == 6).map(|it| (it, request)))
+        .map(|(it, request)| AttachRequest {
             item_id: it.id,
             owner_id: if it.owner.is_nil() { agent } else { it.owner },
-            point,
-            add: !replace,
+            point: request.point,
+            add: !request.replace,
             flags: it.flags,
             group_mask: it.group_mask,
             everyone_mask: it.everyone_mask,
@@ -1259,6 +1538,58 @@ pub fn demo_outfit_count() -> usize {
         .ok()
         .and_then(|v| v.split(',').next().and_then(|n| n.trim().parse().ok()))
         .unwrap_or(0)
+}
+
+/// `AURORA_DEMO_APPEARANCE=take-off-folder` (#1849): an ordinary folder,
+/// not a saved outfit, as a demo or a delivery worn from Recent. It holds
+/// the worn jacket and pants originals and, in a subfolder, a link to the
+/// worn mesh hair; frame 600 takes it off as the inventory's Remove from
+/// current outfit does.
+pub const DEMO_TAKE_OFF_FOLDER: Uuid = Uuid::from_u128(0x1849_0001);
+
+/// Seeds the [`DEMO_TAKE_OFF_FOLDER`] folder and its subfolder.
+pub fn seed_demo_take_off(inv: &mut Inventory, agent: Uuid) {
+    use super::inventory::Folder;
+    let sub = Uuid::from_u128(0x1849_0002);
+    let folder = |id, parent, name: &str, children| Folder {
+        info: InvFolder {
+            id,
+            parent,
+            name: name.into(),
+            type_default: -1,
+            version: 1,
+            ..Default::default()
+        },
+        children,
+        items: Vec::new(),
+        state: FetchState::Fetched,
+        library: false,
+    };
+    let root = inv.root;
+    inv.folders
+        .insert(DEMO_TAKE_OFF_FOLDER, folder(DEMO_TAKE_OFF_FOLDER, root, "Demo delivery", vec![sub]));
+    inv.folders
+        .insert(sub, folder(sub, DEMO_TAKE_OFF_FOLDER, "Accessories", Vec::new()));
+    if let Some(r) = inv.folders.get_mut(&root) {
+        r.children.push(DEMO_TAKE_OFF_FOLDER);
+    }
+    let items = [715, 716]
+        .into_iter()
+        .filter_map(|n| inv.items.get(&Uuid::from_u128(n)).cloned())
+        .map(|mut it| {
+            it.parent = DEMO_TAKE_OFF_FOLDER;
+            it
+        })
+        .collect();
+    inv.apply(vec![aurora_net::inventory::FolderContents {
+        folder_id: DEMO_TAKE_OFF_FOLDER,
+        owner_id: agent,
+        version: 2,
+        folders: Vec::new(),
+        items,
+    }]);
+    let hair: Vec<_> = inv.items.get(&Uuid::from_u128(717)).map(item_link).into_iter().collect();
+    demo_replace(inv, agent, sub, &hair);
 }
 
 /// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
@@ -1903,6 +2234,79 @@ mod tests {
         assert!(inv.folders.contains_key(&outfit), "saved outfits are retained");
     }
 
+    /// An ordinary folder (no outfit type) holding `items`, under `parent`.
+    fn plain_folder(inv: &mut Inventory, id: u128, parent: Uuid, items: &[u128]) -> Uuid {
+        let id = Uuid::from_u128(id);
+        let mut folder = inv.folders[&Uuid::from_u128(703)].clone();
+        folder.info.id = id;
+        folder.info.parent = parent;
+        folder.info.type_default = -1;
+        folder.info.name = format!("Folder {id}");
+        folder.children.clear();
+        folder.items = items.iter().map(|n| Uuid::from_u128(*n)).collect();
+        inv.folders.insert(id, folder);
+        if let Some(p) = inv.folders.get_mut(&parent) {
+            p.children.push(id);
+        }
+        for item in &folder_items(inv, id) {
+            inv.items.get_mut(item).expect("folder item").parent = id;
+        }
+        id
+    }
+
+    fn folder_items(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
+        inv.folders[&id].items.clone()
+    }
+
+    /// Issue #1849: "Remove from current outfit" on an ordinary folder (a
+    /// demo worn from Recent) refused it as an outfit it cannot modify. The
+    /// Legacy Viewer (takeOffOutfit) takes off the worn clothing and
+    /// attachments of any folder and its subfolders, originals or links,
+    /// never a body part, and leaves the rest of the outfit on.
+    #[test]
+    fn remove_outfit_takes_off_an_ordinary_folder() {
+        let mut inv = fixture();
+        let (skin, jacket, pants, hair, earrings, spare) = (711, 715, 716, 717, 718, 722);
+        let worn = |change: &OutfitMutation, n: u128| change.links.iter().any(|l| l.target == Uuid::from_u128(n));
+        let current = usable_links(&inv, cof(&inv).expect("COF"));
+        let before = |n: u128| current.iter().any(|l| l.target == Uuid::from_u128(n));
+        assert!([skin, jacket, pants, hair, earrings].into_iter().all(before), "worn in the demo");
+        assert!(!before(spare), "the spare shirt is not");
+        // the demo: worn originals, an unworn one, a body part, and a
+        // subfolder holding a link to a worn attachment
+        let root = inv.root;
+        let demo = plain_folder(&mut inv, 1100, root, &[jacket, spare, skin]);
+        let sub = plain_folder(&mut inv, 1101, demo, &[]);
+        let link = Uuid::from_u128(1102);
+        let mut hair_link = inv.items[&Uuid::from_u128(hair)].clone();
+        hair_link.id = link;
+        hair_link.parent = sub;
+        hair_link.asset_type = 24;
+        hair_link.asset_id = Uuid::from_u128(hair);
+        inv.items.insert(link, hair_link);
+        inv.folders.get_mut(&sub).expect("subfolder").items.push(link);
+        let (change, sync) = plan(&inv, Action::RemoveOutfit(demo), &HashMap::new()).expect("take off a demo folder");
+        assert!(sync);
+        assert!(!worn(&change, jacket), "its clothing is taken off");
+        assert!(!worn(&change, hair), "the attachment linked in its subfolder too");
+        assert!(!worn(&change, spare), "nothing is put on");
+        assert!(worn(&change, skin), "a body part in the folder stays");
+        for n in 710..714 {
+            assert!(worn(&change, n), "body part {n}");
+        }
+        for n in [pants, earrings, 719, 720, 721] {
+            assert!(worn(&change, n), "{n}, outside the folder, stays worn");
+        }
+        // two ordinary folders at once: one outfit change for both
+        let other = plain_folder(&mut inv, 1103, root, &[pants]);
+        let (change, _) = plan(&inv, Action::RemoveOutfits(vec![demo, other]), &HashMap::new()).expect("take off two folders");
+        assert!(!worn(&change, jacket) && !worn(&change, pants) && !worn(&change, hair));
+        assert!(worn(&change, earrings));
+        // an unloaded folder waits instead of taking off part of it
+        inv.folders.get_mut(&sub).expect("subfolder").state = FetchState::Unknown;
+        assert!(plan(&inv, Action::RemoveOutfit(demo), &HashMap::new()).is_err());
+    }
+
     #[test]
     fn save_to_selected_outfit_updates_its_links_and_the_cof_base() {
         let mut inv = fixture();
@@ -2180,8 +2584,9 @@ mod tests {
             asked.iter().map(|a| (a.item_id, a.point, a.add)).collect::<Vec<_>>(),
             [(item, 0, true)]
         );
-        // an ordinary Add is still asked by the COF sync alone
-        assert!(attachments_for_action(&inv, agent, &Action::Add(linked)).is_empty());
+        // Ordinary Add also requests the object explicitly: its COF link
+        // is deferred until the simulator confirms the attachment.
+        assert_eq!(attachments_for_action(&inv, agent, &Action::Add(linked))[0].item_id, linked);
         demo_mutate(&mut inv, agent, &change).expect("mutation");
         let asks_for = |inv: &Inventory, id: Uuid| {
             sync_commands(inv, agent, &HashSet::new())
@@ -2209,6 +2614,166 @@ mod tests {
         // the next COF rewrite drops the link, freeing its attachment slot
         let (change, _) = plan(&inv, Action::Add(Uuid::from_u128(723)), &HashMap::new()).expect("add");
         assert!(!change.links.iter().any(|l| l.target == stale));
+    }
+
+    #[test]
+    fn refused_attachments_leave_no_cof_link_for_a_later_sync_or_login() {
+        let agent = Uuid::from_u128(1);
+        for limit in [2, 3] {
+            let mut inv = fixture();
+            let cof = cof(&inv).expect("COF");
+            let worn: HashMap<_, _> = (717..717 + limit).map(|id| (Uuid::from_u128(id), 5)).collect();
+            let rejected = Uuid::from_u128(723);
+            // Also recover a phantom link left by an earlier viewer when
+            // the user explicitly attempts that object again.
+            let mut links = folder_links(&inv, cof);
+            links.push(item_link(&inv.items[&rejected]));
+            demo_replace(&mut inv, agent, cof, &links);
+            let action = Action::Add(rejected);
+            let (mut change, _) = plan(&inv, action.clone(), &worn).expect("add at account limit");
+            let mut attachments = attachments_for_action(&inv, agent, &action);
+            defer_attachment_links(&inv, &mut change, &worn.keys().copied().collect(), &mut attachments, agent);
+            assert!(!change.links.iter().any(|link| link.target == rejected));
+            assert!(worn.keys().all(|id| change.links.iter().any(|link| link.target == *id)));
+            demo_mutate(&mut inv, agent, &change).expect("COF write");
+            let sync = sync_with_attachments(
+                &inv,
+                agent,
+                &worn.keys().copied().collect(),
+                &worn.keys().copied().collect(),
+                Uuid::nil(),
+                attachments,
+            );
+            assert_eq!(
+                sync.commands
+                    .iter()
+                    .flat_map(|cmd| match cmd {
+                        NetCommand::RezAttachments(items) => items.iter().filter(|a| a.item_id == rejected).collect(),
+                        _ => Vec::new(),
+                    })
+                    .count(),
+                1,
+                "one request, whose refusal does not link the object"
+            );
+            assert!(
+                !super::super::outfit::cof_objects(&inv, cof).contains(&rejected),
+                "login cannot re-request it"
+            );
+            let subsequent = sync_plan(&inv, agent, &worn.keys().copied().collect());
+            assert!(
+                !subsequent
+                    .commands
+                    .iter()
+                    .any(|cmd| matches!(cmd, NetCommand::RezAttachments(items) if items.iter().any(|a| a.item_id == rejected)))
+            );
+            assert!(inv.items.contains_key(&rejected), "the inventory original remains");
+        }
+    }
+
+    #[test]
+    fn deferred_bulk_requests_keep_the_point_mode_and_deduplicate_aliases() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let original = Uuid::from_u128(723);
+        let alias = Uuid::from_u128(9001);
+        inv.items.insert(
+            alias,
+            InvItem {
+                id: alias,
+                asset_type: 24,
+                asset_id: original,
+                ..Default::default()
+            },
+        );
+        for replace in [false, true] {
+            let action = Action::WearItems {
+                items: vec![original, alias],
+                replace,
+                point: 35,
+            };
+            let (mut change, _) = plan(&inv, action.clone(), &HashMap::new()).expect("bulk request");
+            let mut attachments = attachments_for_action(&inv, agent, &action);
+            defer_attachment_links(&inv, &mut change, &HashSet::new(), &mut attachments, agent);
+            let requests: Vec<_> = attachments.iter().filter(|a| a.item_id == original).collect();
+            assert_eq!(requests.len(), 1);
+            assert_eq!((requests[0].point, requests[0].add), (35, !replace));
+            assert!(!change.links.iter().any(|link| link.target == original));
+        }
+    }
+
+    #[test]
+    fn an_attachment_arriving_during_the_cof_write_is_not_detached() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let item = Uuid::from_u128(723);
+        let action = Action::Add(item);
+        let (mut change, _) = plan(&inv, action.clone(), &HashMap::new()).expect("add");
+        let mut attachments = attachments_for_action(&inv, agent, &action);
+        defer_attachment_links(&inv, &mut change, &HashSet::new(), &mut attachments, agent);
+        demo_mutate(&mut inv, agent, &change).expect("COF readback");
+        let another = Uuid::from_u128(9999);
+        let removed = Uuid::from_u128(9998);
+        let sync = sync_with_attachments(
+            &inv,
+            agent,
+            &HashSet::from([item, another, removed]),
+            &HashSet::from([removed]),
+            Uuid::nil(),
+            attachments,
+        );
+        assert!(
+            !sync
+                .commands
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::DetachAttachments(items) if items.contains(&another)))
+        );
+        assert!(
+            sync.commands
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::DetachAttachments(items) if items.contains(&removed)))
+        );
+        assert!(
+            !sync
+                .commands
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::DetachAttachments(items) if items.contains(&item)))
+        );
+        assert!(
+            !sync
+                .commands
+                .iter()
+                .any(|cmd| matches!(cmd, NetCommand::RezAttachments(items) if items.iter().any(|a| a.item_id == item)))
+        );
+    }
+
+    #[test]
+    fn saved_outfit_objects_stay_saved_while_their_cof_links_wait_for_arrival() {
+        let inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let saved = Uuid::from_u128(704);
+        let before = folder_links(&inv, saved);
+        let (mut change, _) = plan(&inv, Action::Wear(saved, false), &HashMap::new()).expect("wear outfit");
+        let mut attachments = Vec::new();
+        defer_attachment_links(&inv, &mut change, &HashSet::new(), &mut attachments, agent);
+        assert!(!attachments.is_empty());
+        assert!(
+            attachments
+                .iter()
+                .all(|request| !change.links.iter().any(|link| link.target == request.item_id))
+        );
+        assert_eq!(folder_links(&inv, saved), before, "the saved outfit is not rewritten");
+        let (mut save, _) = plan(&inv, Action::Save(Some("Saved outfit".into())), &HashMap::new()).expect("save");
+        let saved_objects: Vec<_> = save
+            .links
+            .iter()
+            .filter(|link| inv.items[&link.target].asset_type == 6)
+            .cloned()
+            .collect();
+        defer_attachment_links(&inv, &mut save, &HashSet::new(), &mut Vec::new(), agent);
+        assert!(
+            saved_objects.iter().all(|link| save.links.contains(link)),
+            "only the COF side of a save is deferred"
+        );
     }
 
     #[test]
@@ -2428,6 +2993,157 @@ mod tests {
             .is_err()
         );
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), before);
+    }
+
+    /// RlvForceWear::done: a run of forced commands costs no outfit write once
+    /// the avatar and the links are as asked, and anything still to do does.
+    #[test]
+    fn a_forced_batch_with_nothing_to_do_changes_nothing() {
+        let mut inv = fixture();
+        let cof = cof(&inv).expect("COF");
+        let (linked, other) = (Uuid::from_u128(970), Uuid::from_u128(971));
+        let shirt = Uuid::from_u128(972);
+        inv.add_items(
+            [(linked, 6, 6), (other, 6, 6), (shirt, 5, 18)]
+                .into_iter()
+                .map(|(id, asset_type, inv_type)| InvItem {
+                    id,
+                    parent: inv.root,
+                    asset_type,
+                    inv_type,
+                    flags: 4,
+                    name: "item".into(),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        inv.add_items(
+            [(980, linked, 6), (981, shirt, 18)]
+                .into_iter()
+                .map(|(id, target, inv_type)| InvItem {
+                    id: Uuid::from_u128(id),
+                    parent: cof,
+                    asset_type: 24,
+                    inv_type,
+                    asset_id: target,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let remove = |items: &[Uuid]| Action::Force {
+            remove: items.to_vec(),
+            wear: Vec::new(),
+        };
+        let wear = |item, point| Action::Force {
+            remove: Vec::new(),
+            wear: vec![WearRequest {
+                item,
+                replace: false,
+                point,
+            }],
+        };
+        let on = HashMap::from([(linked, 5)]);
+        let none = HashMap::new();
+        let nothing = |action: &Action, worn: &HashMap<Uuid, u8>| force_changes_nothing(&inv, action, worn, &HashSet::new());
+        assert!(nothing(&remove(&[other]), &on), "off already, no link");
+        assert!(!nothing(&remove(&[other]), &HashMap::from([(other, 5)])), "still on");
+        assert!(!nothing(&remove(&[linked]), &none), "its link is still there");
+        assert!(nothing(&wear(linked, 0), &on), "on already, linked");
+        assert!(nothing(&wear(linked, 5), &on), "on its point");
+        assert!(!nothing(&wear(linked, 6), &on), "to be moved");
+        assert!(!nothing(&wear(linked, 0), &none), "linked, not on the avatar");
+        assert!(nothing(&wear(other, 0), &HashMap::from([(other, 5)])), "on, linked when it arrived");
+        assert!(!nothing(&wear(other, 0), &none), "off, no request");
+        let requested = HashSet::from([other]);
+        assert!(force_changes_nothing(&inv, &wear(other, 0), &none, &requested), "on its way");
+        assert!(
+            !force_changes_nothing(&inv, &wear(other, 6), &HashMap::from([(other, 5)]), &requested),
+            "still to be moved"
+        );
+        assert!(nothing(&wear(shirt, 0), &none), "clothing already linked");
+        assert!(!nothing(&remove(&[shirt]), &none), "clothing to take off");
+        assert!(
+            !nothing(&remove(&[Uuid::from_u128(999)]), &on),
+            "an unknown item is an error to report"
+        );
+        assert!(!nothing(&Action::Remove(other), &on), "only forced batches");
+    }
+
+    /// LLAttachmentsMgr::wasRequestedRecently: the first wear goes out, its
+    /// repeats do not, and one is sent again once the request is old.
+    #[test]
+    fn repeats_of_a_forced_wear_wait_for_the_first_request() {
+        let mut world = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = fixture();
+        let item = Uuid::from_u128(990);
+        world.inventory.add_items(vec![InvItem {
+            id: item,
+            parent: world.inventory.root,
+            asset_type: 6,
+            inv_type: 6,
+            flags: 4,
+            name: "item".into(),
+            ..Default::default()
+        }]);
+        let action = Action::Force {
+            remove: Vec::new(),
+            wear: vec![WearRequest {
+                item,
+                replace: true,
+                point: 0,
+            }],
+        };
+        let start = std::time::Instant::now();
+        assert!(!world.rlva_force_settled(&action, start), "the first one goes out");
+        assert!(
+            world.rlva_force_settled(&action, start + std::time::Duration::from_secs(1)),
+            "a repeat does not"
+        );
+        assert!(
+            !world.rlva_force_settled(&action, start + std::time::Duration::from_secs(6)),
+            "sent again once old"
+        );
+    }
+
+    /// The bridge item: on while it is worn, whether the COF links it or not,
+    /// and only worn again when a link finds it really absent.
+    #[test]
+    fn cof_sync_neither_wears_again_nor_takes_off_the_kept_bridge() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let cof = cof(&inv).expect("COF");
+        let bridge = Uuid::from_u128(960);
+        let touched = |sync: &CofSync| {
+            sync.commands.iter().fold((false, false), |(worn, off), command| match command {
+                NetCommand::RezAttachments(items) => (worn || items.iter().any(|a| a.item_id == bridge), off),
+                NetCommand::DetachAttachments(items) => (worn, off || items.contains(&bridge)),
+                _ => (worn, off),
+            })
+        };
+        inv.add_items(vec![InvItem {
+            id: bridge,
+            parent: inv.root,
+            asset_type: 6,
+            inv_type: 6,
+            name: "bridge".into(),
+            ..Default::default()
+        }]);
+        let on = HashSet::from([bridge]);
+        let unlinked = sync_plan_keeping(&inv, agent, &on, bridge);
+        assert_eq!(touched(&unlinked), (false, false), "worn and not linked: it stays on");
+        assert_eq!(touched(&sync_plan(&inv, agent, &on)), (false, true), "any other object comes off");
+        inv.add_items(vec![InvItem {
+            id: Uuid::from_u128(961),
+            parent: cof,
+            asset_type: 24,
+            inv_type: 6,
+            asset_id: bridge,
+            ..Default::default()
+        }]);
+        let linked = sync_plan_keeping(&inv, agent, &on, bridge);
+        assert_eq!(touched(&linked), (false, false), "worn and linked: nothing to do");
+        let absent = sync_plan_keeping(&inv, agent, &HashSet::new(), bridge);
+        assert_eq!(touched(&absent), (true, false), "linked and absent: it is worn");
     }
 
     /// `missing_targets` reads the links in place; it finds what the copied

@@ -127,6 +127,8 @@ pub struct BlendEntry {
     pub cmd: DrawCmd,
     /// The face has glow (drawn into the glow right after it).
     pub glow: bool,
+    /// glTF doubleSided, retained alongside the face through sorting.
+    pub double_sided: bool,
     /// The face belongs to a rigged mesh.
     pub rigged: bool,
     /// Its object (index in the scene's slab), whose faces share one
@@ -344,6 +346,7 @@ mod tests {
                 bounds: [0.0; 4],
             },
             glow: false,
+            double_sided: false,
             rigged,
             object: record,
             face: 0,
@@ -380,6 +383,16 @@ mod tests {
 
     fn records(e: &[BlendEntry]) -> Vec<u32> {
         e.iter().map(|e| e.cmd.record).collect()
+    }
+
+    #[test]
+    fn blended_material_sidedness_follows_faces_without_changing_sort_order() {
+        let mut faces = [entry(1, 2.0, false), entry(2, 3.0, false), entry(3, 1.0, false)];
+        faces[1].double_sided = true;
+        faces[2].double_sided = true;
+        sort(&mut faces, false);
+        assert_eq!(records(&faces), [2, 1, 3]);
+        assert_eq!(faces.map(|face| face.double_sided), [true, false, true]);
     }
 
     /// Mesh hair centred on the head (farther) and eyelashes in front of the

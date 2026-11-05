@@ -10,7 +10,8 @@ const SOUND_PREVIEW: u64 = u64::MAX - 10;
 impl App {
     pub(super) fn show_imports(&mut self, ctx: &egui::Context, palette: &Palette) {
         if self.demo && !self.imports.demo_started {
-            self.world.balance = Some(1000);
+            // keep a scenario's own balance (AURORA_DEMO_ACTIONS sets one)
+            self.world.balance.get_or_insert(1000);
             self.imports.demo_started = true;
             self.imports.load_preferences = self.settings.imports.clone();
             crate::imports::demo::start(&mut self.imports, &self.scene.jobs, ctx);
@@ -123,7 +124,7 @@ impl App {
             && !self.imports.demo_upload_started
             && self.imports.pending_files.is_none()
             && !self.imports.entries.is_empty()
-            && self.imports.folder_plan_valid(&self.world, &self.settings.inventory)
+            && self.imports.folder_plan_valid(&self.world)
         {
             let missing_quotes: Vec<_> = self
                 .imports
@@ -670,10 +671,11 @@ impl App {
                         .imports
                         .local_appearance_targets
                         .iter()
-                        .filter(|(_, appearance)| appearance.entry() == id)
+                        .filter(|(_, appearance)| appearance.contains(id))
                         .map(|((id, _), _)| *id)
                         .collect();
                     self.imports.clear_appearance_targets(&mut self.world.objects, &targets, Some(id));
+                    self.build.forget_local_picker_asset(id);
                     if let Some(index) = self.imports.entries.iter().position(|e| e.id == id) {
                         let mut entry = self.imports.entries.remove(index);
                         if let Some(Source::Mesh(draft)) = &mut entry.source {
@@ -701,6 +703,11 @@ impl App {
                 }
                 Action::MapInventory(id, slot) => {
                     self.imports.open_map_picker(id, slot);
+                }
+                Action::MapDrop(id, slot, target) => {
+                    if let Some(resource) = target.receive(ctx, palette, &self.world.inventory, |_| true) {
+                        self.imports.drop_map(id, slot, resource.asset);
+                    }
                 }
             }
         }
@@ -1102,6 +1109,34 @@ impl App {
         }
         self.apply_local_mesh_targets();
         self.imports.apply_appearance_targets(&mut self.world.objects);
+    }
+
+    /// After a GPU recovery (gpu_recovery.rs): the textures of the imports
+    /// shown in-world were the lost renderer's slots, and the uploads under
+    /// way were staged in its pool. Those slots are forgotten, never freed
+    /// (the new renderer has its own under the same numbers), and every
+    /// import shown is published again on the new one.
+    pub(super) fn republish_local_imports(&mut self) {
+        for prepared in std::mem::take(&mut self.imports.local_uploads) {
+            self.scene.jobs.discard(prepared);
+        }
+        self.imports.retired_local_slots.clear();
+        let shown: Vec<uuid::Uuid> = self
+            .imports
+            .entries
+            .iter_mut()
+            .filter(|e| e.local_published || e.local_pending)
+            .map(|e| {
+                e.local_slots.clear();
+                e.local_published = false;
+                e.local_pending = false;
+                e.id
+            })
+            .collect();
+        let ctx = self.egui_ctx.clone();
+        for id in shown {
+            self.publish_local_import(id, &ctx);
+        }
     }
 
     fn publish_local_import(&mut self, id: uuid::Uuid, ctx: &egui::Context) {

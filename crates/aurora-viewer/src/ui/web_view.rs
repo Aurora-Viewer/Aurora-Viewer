@@ -63,6 +63,13 @@ pub struct WebView {
     pub location: String,
     /// A page is loading (between NavigateBegin and NavigateComplete).
     pub loading: bool,
+    /// The page's title (LLViewerMediaObserver MEDIA_EVENT_NAME_CHANGED).
+    pub title: String,
+    /// The browser's status line (MEDIA_EVENT_STATUS_TEXT_CHANGED: the link
+    /// under the pointer).
+    pub status: String,
+    /// Load progress, 0 to 100 (MEDIA_EVENT_PROGRESS_UPDATED).
+    pub progress: i32,
 }
 
 impl WebView {
@@ -115,6 +122,13 @@ impl WebView {
     pub fn forward(&mut self) {
         if let Some(p) = self.plugin.as_mut() {
             p.browse_forward();
+        }
+    }
+
+    /// LLMediaCtrl::navigateStop.
+    pub fn stop(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_stop();
         }
     }
 
@@ -236,6 +250,10 @@ impl WebView {
         }
         p.idle();
         for ev in p.take_events() {
+            if let Some(url) = clicked_url(&ev) {
+                super::context::request(ui.ctx(), clicked_link_action(url));
+                continue;
+            }
             match ev {
                 MediaEvent::NavigateComplete { uri, .. } => {
                     // the first page of a new browser may complete twice
@@ -255,6 +273,9 @@ impl WebView {
                 }
                 MediaEvent::LocationChanged(uri) if !uri.is_empty() => self.location = uri,
                 MediaEvent::CursorChanged(c) => self.cursor = c,
+                MediaEvent::NameChanged(name) => self.title = name,
+                MediaEvent::StatusText(text) => self.status = text,
+                MediaEvent::Progress(percent) => self.progress = percent,
                 MediaEvent::PluginFailed(e) => {
                     log::warn!("web view: browser stopped: {e}");
                     self.failed = Some(e);
@@ -365,5 +386,82 @@ impl WebView {
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         resp
+    }
+}
+
+/// Links from the browser are actionable only after a user click. CEF sends
+/// custom schemes separately and records whether navigation had a gesture;
+/// a redirect or script navigation must never trigger a SLURL action.
+fn clicked_url(event: &MediaEvent) -> Option<&str> {
+    match event {
+        MediaEvent::ClickLinkNoFollow { url, nav_type } if nav_type == "clicked" && !url.is_empty() => Some(url),
+        _ => None,
+    }
+}
+
+/// Follow the same SLURL and app-link rules as a clicked link in chat.
+fn clicked_link_action(url: &str) -> super::context::CtxAction {
+    use super::context::CtxAction;
+    if let Some(place) = crate::slurl::place_link(url) {
+        let location = place.location;
+        if place.teleport {
+            CtxAction::TeleportToPlace(location.target(), location.pos)
+        } else {
+            CtxAction::ShowPlaceInfo(location.target(), location.pos)
+        }
+    } else if let Some(link) = crate::slapp::parse(url) {
+        CtxAction::AppLink(link)
+    } else {
+        CtxAction::OpenUrl(url.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_scheme_links_require_a_click_gesture() {
+        assert_eq!(
+            clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
+                nav_type: "clicked".into(),
+            }),
+            Some("secondlife:///app/teleport/Aurora/12/34/56")
+        );
+        assert_eq!(
+            clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
+                nav_type: "navigated".into(),
+            }),
+            None
+        );
+        assert_eq!(
+            clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: String::new(),
+                nav_type: "clicked".into(),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn clicked_teleport_slurl_uses_the_viewers_teleport_flow() {
+        let action = clicked_link_action("secondlife:///app/teleport/Aurora%20Plaza/12/34/56");
+        assert!(matches!(action, super::super::context::CtxAction::TeleportToPlace(region, pos)
+            if region == "Aurora Plaza" && pos == glam::Vec3::new(12.0, 34.0, 56.0)));
+    }
+
+    #[test]
+    fn clicked_map_slurl_opens_place_details() {
+        let action = clicked_link_action("https://maps.secondlife.com/secondlife/Aurora%20Plaza/12/34/56");
+        assert!(matches!(action, super::super::context::CtxAction::ShowPlaceInfo(region, pos)
+            if region == "Aurora Plaza" && pos == glam::Vec3::new(12.0, 34.0, 56.0)));
+    }
+
+    #[test]
+    fn clicked_http_links_keep_the_external_link_policy() {
+        let action = clicked_link_action("https://example.org/");
+        assert!(matches!(action, super::super::context::CtxAction::OpenUrl(url) if url == "https://example.org/"));
     }
 }

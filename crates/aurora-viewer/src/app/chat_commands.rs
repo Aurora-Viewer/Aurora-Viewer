@@ -296,8 +296,11 @@ impl App {
 
     /// teleportViaLocation to a render-space point, maybe in a neighbour.
     pub(super) fn teleport_render_pos(&mut self, pos: Vec3) {
-        let size = self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32);
-        if (0.0..size).contains(&pos.x) && (0.0..size).contains(&pos.y) {
+        let size = self
+            .world
+            .main()
+            .map_or((256.0, 256.0), |r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32));
+        if (0.0..size.0).contains(&pos.x) && (0.0..size.1).contains(&pos.y) {
             self.teleport_in_region(pos);
         } else {
             let (x, y) = crate::ui::minimap::to_global(&self.world, pos);
@@ -312,14 +315,15 @@ impl App {
     /// cmdline_rezplat: a flat metal box 2.5 m under the avatar (where it
     /// will be in a third of a second).
     fn rez_platform(&mut self, width: f32) {
-        use crate::build::{MAX_PRIM_SCALE, MIN_PRIM_SCALE};
+        use crate::build::MIN_PRIM_SCALE;
+        let limits = self.world.prim_limits();
         let Some(handle) = self.world.main_region else {
             return;
         };
         let agent = &self.world.agent;
         let pos = agent.position + agent.velocity * 0.333;
         let at = pos - Vec3::new(0.0, 0.0, 2.5);
-        let size = width.clamp(MIN_PRIM_SCALE, MAX_PRIM_SCALE);
+        let size = limits.clamp(width);
         let p = aurora_net::build::NewPrim {
             handle,
             group_id: self.world.group_for_rez(self.settings.build.rez_under_land_group),
@@ -334,7 +338,7 @@ impl App {
             ray_target: Uuid::nil(),
             ray_end_is_intersection: false,
             bypass_raycast: true,
-            scale: Vec3::new(size, size, MIN_PRIM_SCALE.max(0.01)),
+            scale: Vec3::new(size, size, limits.clamp(MIN_PRIM_SCALE)),
             rotation: glam::Quat::IDENTITY,
             state: 0,
         };

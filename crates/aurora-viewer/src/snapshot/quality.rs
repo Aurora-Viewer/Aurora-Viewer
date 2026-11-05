@@ -84,6 +84,7 @@ macro_rules! each_value {
             anisotropy,
             sharpen,
             glow,
+            max_texture_resolution,
             effects
         )
     };
@@ -299,6 +300,10 @@ pub struct Screen {
     pub pixels: u64,
     /// The most MSAA samples the GPU supports (the renderer takes no more).
     pub max_samples: u32,
+    /// Bytes a pixel of the render targets takes now
+    /// (`RenderStats::target_bytes_per_pixel`): what a step that changes
+    /// the MSAA replaces ([`made_bytes`]).
+    pub target_bytes: u64,
 }
 
 /// Estimated video memory the settings `v` hold that grows with the boost.
@@ -324,6 +329,38 @@ fn held_bytes(v: &Values, screen: Screen) -> u64 {
 /// Estimated bytes the values `v` take beyond the user's own.
 pub fn extra_bytes(user: &Values, v: &Values, screen: Screen) -> u64 {
     held_bytes(v, screen).saturating_sub(held_bytes(user, screen))
+}
+
+/// Bytes a change from `from` to `to` keeps alive beyond the new step's
+/// own cost, for a frame or two: the frames in flight hold what the change
+/// replaces until the GPU is done with them, while the new ones are in
+/// already. Another MSAA replaces every render target (their measured
+/// bytes a pixel now), the shadows their atlas, the reflections their
+/// targets, the probes their slots. The ground grows as the scene loads,
+/// and frees as it unloads, never at once.
+pub fn made_bytes(from: &Values, to: &Values, screen: Screen) -> u64 {
+    let px = screen.pixels as f64;
+    let n = |v: &Values| samples(v.antialiasing).min(screen.max_samples.max(1));
+    let targets = if n(from) != n(to) { screen.pixels * screen.target_bytes } else { 0 };
+    let shadows = if from.shadow_quality != to.shadow_quality {
+        let res = u64::from(Settings::shadow_params_of(from.shadow_quality).0);
+        17 * res * res
+    } else {
+        0
+    };
+    let reflection = |a: u8, b: u8| {
+        if a == b {
+            0
+        } else {
+            (px * f64::from(Settings::reflection_scale(a)).powi(2) * 12.0) as u64
+        }
+    };
+    let probes = if from.probe_count != to.probe_count {
+        u64::from(from.probe_count.clamp(8, 64)) * PROBE_BYTES
+    } else {
+        0
+    };
+    targets + shadows + reflection(from.water_reflections, to.water_reflections) + reflection(from.mirrors, to.mirrors) + probes
 }
 
 /// Video memory as the driver tells it, and the textures' pressure step
@@ -353,14 +390,26 @@ pub fn hysteresis(budget: u64) -> u64 {
     (budget / 20).max(256 * MB)
 }
 
-/// The step of [`ladder`] to draw with: the first whose estimated cost
-/// (`costs`, by step, beyond the user's own values) fits in the budget
-/// with its [`margin`]. `current` is the step in use (its cost is in
-/// `usage` already; None: the boost is not on yet). Down at once, as far
-/// as needed; up one step at a time, only with [`hysteresis`] of room to
-/// spare and when `may_raise`. Without figures from the driver, the whole
-/// boost, as before.
-pub fn choose(memory: Option<Memory>, costs: &[u64], current: Option<usize>, may_raise: bool) -> usize {
+/// The step of [`ladder`] to draw with. `costs` are the steps' estimated
+/// bytes beyond the user's own values, `made(from, to)` what a change of
+/// step allocates while the old one lives ([`made_bytes`]); `current` the
+/// step in use (its cost is in `usage` already; None: the boost is not on
+/// yet).
+///
+/// Switched on, the first step that fits with its cost doubled, what it
+/// makes anew and the [`hysteresis`]: the estimate leaves out the levels
+/// of detail, the avatars drawn in full and the textures at full
+/// resolution, which the readings show only once they are in. Then up one
+/// step at a time when `may_raise`, with room for the next step's cost,
+/// what it makes and the hysteresis; doubled for the whole boost (step 0),
+/// which loads the textures in view at full resolution. Down at once, as
+/// far as needed. The whole boost at once was taken from the estimate alone
+/// and lost the GPU on Agni (2026-11-02, RTX 5070: 6,436 MB taken of
+/// 9,025, MSAA 8x and the full-resolution textures brought 2.2 GB in a
+/// second for 1.6 GB estimated, and the step down to 4x made its targets
+/// while the 8x ones were still alive). Without figures from the driver,
+/// the whole boost, as before.
+pub fn choose(memory: Option<Memory>, costs: &[u64], made: impl Fn(usize, usize) -> u64, current: Option<usize>, may_raise: bool) -> usize {
     let Some(m) = memory else {
         return 0;
     };
@@ -371,10 +420,18 @@ pub fn choose(memory: Option<Memory>, costs: &[u64], current: Option<usize>, may
     let base = m.usage.saturating_sub(held);
     let room = m.budget.saturating_sub(margin(m)).saturating_sub(base);
     let fits = |i: usize| costs[i] <= room;
+    let need = |from: usize, to: usize, unseen: bool| {
+        let cost = if unseen || to == 0 {
+            costs[to].saturating_mul(2)
+        } else {
+            costs[to]
+        };
+        cost + made(from, to) + hysteresis(m.budget)
+    };
     match current {
-        None => (0..=last).find(|&i| fits(i)).unwrap_or(last),
+        None => (0..last).find(|&i| need(last, i, true) <= room).unwrap_or(last),
         Some(c) if !fits(c) => (c..=last).find(|&i| fits(i)).unwrap_or(last),
-        Some(c) if may_raise && c > 0 && costs[c - 1] + hysteresis(m.budget) <= room => c - 1,
+        Some(c) if may_raise && c > 0 && need(c, c - 1, false) <= room => c - 1,
         Some(c) => c,
     }
 }
@@ -401,7 +458,8 @@ impl Plan {
 pub fn plan(memory: Option<Memory>, user: Values, screen: Screen, current: Option<usize>, may_raise: bool) -> Plan {
     let steps = ladder(user);
     let costs: Vec<u64> = steps.iter().map(|v| extra_bytes(&user, v, screen)).collect();
-    let step = choose(memory, &costs, current, may_raise);
+    let made = |from: usize, to: usize| made_bytes(&steps[from], &steps[to], screen);
+    let step = choose(memory, &costs, made, current, may_raise);
     Plan {
         step,
         steps: steps.len(),
@@ -470,9 +528,11 @@ mod tests {
     const MB: u64 = 1 << 20;
 
     fn screen(w: u64, h: u64) -> Screen {
+        // the targets measured on Agni without MSAA (2026-11-02)
         Screen {
             pixels: w * h,
             max_samples: 8,
+            target_bytes: 87,
         }
     }
 
@@ -585,11 +645,23 @@ mod tests {
         let p = plan(memory(10_312, 10_415, 7), user, screen(1920, 1080), None, false);
         assert_eq!(p.values, user);
         // the same card earlier, budget still 7,249 MB and the textures
-        // fine: part of the boost, the MSAA first
-        let p = plan(memory(7_249, 5_800, 0), user, screen(3440, 1369), None, false);
+        // fine: 724 MB of room, not enough for a step with its estimate
+        // doubled at once; it climbs to part of the boost, the MSAA first
+        let (m, s) = (memory(7_249, 5_800, 0), screen(3440, 1369));
+        let mut step = plan(m, user, s, None, false).step;
+        for _ in 0..10 {
+            let held = plan(m, user, s, Some(step), false).extra;
+            let reading = memory(7_249, 5_800 + (held >> 20), 0);
+            let next = plan(reading, user, s, Some(step), true).step;
+            if next == step {
+                break;
+            }
+            step = next;
+        }
+        let p = plan(m, user, s, Some(step), false);
         assert!(p.reduced() && p.step < p.steps - 1, "{p:?}");
         assert!(p.values.antialiasing != MSAA_8X);
-        assert!(p.extra <= 7_249 * MB - margin(memory(7_249, 5_800, 0).expect("m")) - 5_800 * MB);
+        assert!(p.extra <= 7_249 * MB - margin(m.expect("m")) - 5_800 * MB);
     }
 
     #[test]
@@ -606,24 +678,70 @@ mod tests {
         // the usage that leaves `room` MB above the user's own settings,
         // with `held` bytes of the boost in it
         let usage = |room: u64, held: u64| budget - margin0 - room * MB + held;
+        // (no render target made anew between these steps)
+        let none = |_: usize, _: usize| 0;
         // the boost on at step 0 with its 1,000 MB, the budget shrinks:
         // straight to the step that fits
-        assert_eq!(choose(reading(usage(250, costs[0]), 0), &costs, Some(0), true), 3);
+        assert_eq!(choose(reading(usage(250, costs[0]), 0), &costs, none, Some(0), true), 3);
         // held at step 3: 500 MB would fit in 600, not with the hysteresis
-        assert_eq!(choose(reading(usage(600, costs[3]), 0), &costs, Some(3), true), 3);
+        assert_eq!(choose(reading(usage(600, costs[3]), 0), &costs, none, Some(3), true), 3);
         // with room to spare: one step up, and only when allowed
-        assert_eq!(choose(reading(usage(1_000, costs[3]), 0), &costs, Some(3), true), 2);
-        assert_eq!(choose(reading(usage(1_000, costs[3]), 0), &costs, Some(3), false), 3);
+        assert_eq!(choose(reading(usage(1_000, costs[3]), 0), &costs, none, Some(3), true), 2);
+        assert_eq!(choose(reading(usage(1_000, costs[3]), 0), &costs, none, Some(3), false), 3);
         // the same room read again once that step holds its 500 MB: it stays
-        assert_eq!(choose(reading(usage(1_000, costs[2]), 0), &costs, Some(2), true), 2);
+        assert_eq!(choose(reading(usage(1_000, costs[2]), 0), &costs, none, Some(2), true), 2);
         // readings between the two never move it either way
         for room in [500, 600, 700, 800, 900] {
-            assert_eq!(choose(reading(usage(room, costs[3]), 0), &costs, Some(3), true), 3, "{room}");
+            assert_eq!(choose(reading(usage(room, costs[3]), 0), &costs, none, Some(3), true), 3, "{room}");
         }
         // the textures pressed hard: more margin, a step down
-        assert_eq!(choose(reading(usage(250, costs[3]), 7), &costs, Some(3), true), 4);
+        assert_eq!(choose(reading(usage(250, costs[3]), 7), &costs, none, Some(3), true), 4);
         // over the budget: the last step
-        assert_eq!(choose(reading(budget + 500 * MB, 0), &costs, None, false), 4);
+        assert_eq!(choose(reading(budget + 500 * MB, 0), &costs, none, None, false), 4);
+        // into the whole boost (step 0) the cost counts twice: 1,000 MB
+        // would fit in 1,500 with the hysteresis, 2,000 does not
+        assert_eq!(choose(reading(usage(1_500, costs[1]), 0), &costs, none, Some(1), true), 1);
+        assert_eq!(choose(reading(usage(2_500, costs[1]), 0), &costs, none, Some(1), true), 0);
+        // what a step makes anew needs room too
+        let made = |_: usize, to: usize| if to == 2 { 400 * MB } else { 0 };
+        assert_eq!(choose(reading(usage(1_000, costs[3]), 0), &costs, made, Some(3), true), 3);
+        assert_eq!(choose(reading(usage(1_400, costs[3]), 0), &costs, made, Some(3), true), 2);
+    }
+
+    #[test]
+    fn the_agni_case_climbs_from_the_users_settings_instead_of_jumping() {
+        // 2026-11-02, RTX 5070 at 3840 x 2054: 6,436 MB taken of 9,025, the
+        // textures fine; the user's own settings without MSAA
+        let user = user();
+        let s = screen(3840, 2054);
+        let m = memory(9_025, 6_436, 0);
+        let p = plan(m, user, s, None, false);
+        assert!(p.step > 0, "the whole boost at once lost the GPU there: {p:?}");
+        assert_ne!(p.values.antialiasing, MSAA_8X);
+        // then a step at a time, never two, while the readings (the user's
+        // own 6,436 MB and the step's estimate) leave room
+        let reading = |usage: u64| {
+            Some(Memory {
+                budget: 9_025 * MB,
+                usage,
+                pressure: 0,
+            })
+        };
+        let mut step = p.step;
+        for _ in 0..p.steps {
+            let held = plan(m, user, s, Some(step), false).extra;
+            let next = plan(reading(6_436 * MB + held), user, s, Some(step), true).step;
+            assert!(next + 1 >= step, "{step} -> {next}");
+            if next == step {
+                break;
+            }
+            step = next;
+        }
+        // where it settles, the step fits under the budget with its margin,
+        // and the whole boost is not reached on this card
+        assert!(step > 0);
+        let usage = 6_436 * MB + plan(m, user, s, Some(step), false).extra;
+        assert!(usage <= 9_025 * MB - margin(reading(usage).expect("a reading")), "{step}");
     }
 
     #[test]

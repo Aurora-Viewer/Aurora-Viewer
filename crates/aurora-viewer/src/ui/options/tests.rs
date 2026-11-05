@@ -77,6 +77,7 @@ const BEFORE: &[&str] = &[
     "shadow_quality",
     "shadows",
     "projector_shadows",
+    "projector_shadow_limit",
     "contact_shadows",
     "ssao",
     "ao_method",
@@ -107,6 +108,7 @@ const BEFORE: &[&str] = &[
     "fps_limit",
     "background_fps_cap",
     "background_fps_limit",
+    "background_gpu_pause",
     // Interface
     "language",
     "language_is_public",
@@ -183,7 +185,8 @@ const BEFORE: &[&str] = &[
     "font",
     "font_scale",
     // Chat
-    "chat_timestamps",
+    "chat_timestamps_nearby",
+    "chat_timestamps_im",
     "show_chat_channel",
     "compact_automated_chat",
     "compact_im_system_lines",
@@ -470,8 +473,30 @@ fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     s.joystick.rise_button = 12;
     s.joystick.fall_button = 13;
     s.joystick.direct_zoom = true;
+    s.joystick.zoom_mode = crate::joystick::ZoomMode::HoldAxis;
+    s.joystick.zoom_in_button = 8;
+    s.joystick.zoom_out_button = 9;
+    s.joystick.zoom_hold_button = 31;
+    s.joystick.zoom_speed = 2.5;
+    s.joystick.set_axis_inverted(0, true);
+    s.joystick.set_axis_inverted(6, true);
+    assert!(s.joystick.axis_inverted(6), "shared inversion also persists at zero gain");
+    let paths = collected();
+    for path in [
+        "joystick.zoom_mode",
+        "joystick.zoom_in_button",
+        "joystick.zoom_out_button",
+        "joystick.zoom_hold_button",
+        "joystick.zoom_speed",
+    ] {
+        assert!(
+            paths.iter().any(|(page, key)| *page == Page::Controls && key == path),
+            "{path} stays searchable and resettable in every mode"
+        );
+    }
     reset_page_settings(Page::Controls, &mut s);
     assert_eq!(s.joystick, crate::joystick::Settings::default());
+    assert!(!s.joystick.axis_inverted(0) && !s.joystick.axis_inverted(6));
 }
 
 #[test]
@@ -582,7 +607,7 @@ fn the_modified_settings_are_counted_on_their_pages() {
     let mut s = Settings::default();
     assert_eq!(counts(&mut s, "").total_modified(), 0, "nothing differs from the defaults");
     s.draw_distance = 300.0;
-    s.chat_timestamps = !s.chat_timestamps;
+    s.chat_timestamps_nearby = !s.chat_timestamps_nearby;
     s.water_effects.caustics = false;
     s.anti_spam.enabled = true;
     let c = counts(&mut s, "");
@@ -782,6 +807,95 @@ fn preference_shapes(
         let mut cx = Cx::new(ui, p, s, &d, st, r, Mode::Show, "");
         run_page(&mut cx, view.0, Some(view.1));
     })
+}
+
+#[test]
+fn preference_rows_settle_with_a_scrollbar_at_compact_widths() {
+    for (width, height) in [700.0, 740.0, 760.0, 780.0, 800.0, 820.0, 900.0]
+        .into_iter()
+        .flat_map(|width| [460.0, 500.0, 540.0, 580.0, 620.0].map(move |height| (width, height)))
+    {
+        let mut frames = Frames::new();
+        crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::INTER);
+        let theme = crate::theme::Theme::default();
+        theme.apply(&frames.ctx, 1.0);
+        let p = theme.palette();
+        let (mut s, d, mut st, mut r) = (
+            Settings::default(),
+            Settings::default(),
+            OptionsUi::default(),
+            OptionsResult::default(),
+        );
+        let mut previous = None;
+        let mut previous_text = None;
+        for frame in 0..90 {
+            let texts = frames.run(Vec::new(), |ui| {
+                count(ui, &p, &mut s, &d, &mut st, &mut r);
+                page_area(
+                    ui,
+                    &p,
+                    &mut s,
+                    &d,
+                    &mut st,
+                    &mut r,
+                    Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height)),
+                    false,
+                );
+            });
+            if frame >= 60 {
+                if let Some(previous) = &previous {
+                    assert!(
+                        &st.control_sizes == previous,
+                        "rows still reflowing at {width}x{height}, frame {frame}"
+                    );
+                }
+                previous = Some(st.control_sizes.clone());
+                let painted: Vec<_> = texts.into_iter().map(|text| (text.source, text.rect)).collect();
+                if let Some(previous_text) = &previous_text {
+                    assert_eq!(&painted, previous_text, "text still moving at {width}x{height}, frame {frame}");
+                }
+                previous_text = Some(painted);
+            }
+        }
+    }
+}
+
+#[test]
+fn rows_after_a_width_change_match_a_fresh_layout() {
+    fn texts(shapes: &[egui::Shape], out: &mut Vec<(String, i32, i32)>) {
+        for shape in shapes {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.pos.x.round() as i32, t.pos.y.round() as i32)),
+                egui::Shape::Vec(v) => texts(v, out),
+                _ => {}
+            }
+        }
+    }
+    let layout = |widths: &[f32], page: Page, tab: usize| {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        let mut shapes = Vec::new();
+        for &w in widths {
+            for _ in 0..6 {
+                shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, (page, tab, w), Vec::new());
+            }
+        }
+        let mut out = Vec::new();
+        texts(&shapes, &mut out);
+        out.sort();
+        out
+    };
+    let mut bad = Vec::new();
+    for page in Page::ALL {
+        for tab in 0..page.tabs().len() {
+            for (from, to) in [(900.0, 420.0), (420.0, 900.0)] {
+                if layout(&[from, to], page, tab) != layout(&[to], page, tab) {
+                    bad.push(format!("{page:?}/{tab} {from}->{to}"));
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "laid out differently after a width change:\n{}", bad.join("\n"));
 }
 
 #[test]
@@ -1121,7 +1235,7 @@ fn the_conversations_choice_switches_the_style() {
 fn the_dot_of_a_modified_row_puts_it_back() {
     let mut frames = Frames::new();
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
-    s.chat_timestamps = !s.chat_timestamps;
+    s.chat_timestamps_nearby = !s.chat_timestamps_nearby;
     let mut texts = Vec::new();
     for _ in 0..3 {
         texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Chat, 0, Vec::new());
@@ -1136,7 +1250,7 @@ fn the_dot_of_a_modified_row_puts_it_back() {
     for events in click(dot) {
         page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Chat, 0, events);
     }
-    assert_eq!(s.chat_timestamps, Settings::default().chat_timestamps);
+    assert_eq!(s.chat_timestamps_nearby, Settings::default().chat_timestamps_nearby);
     assert!(r.changed);
 }
 

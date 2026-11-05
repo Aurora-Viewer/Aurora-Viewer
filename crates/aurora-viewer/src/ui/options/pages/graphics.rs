@@ -221,6 +221,11 @@ fn frames_per_second(cx: &mut Cx) {
                 tr!("status-fps"),
             );
         });
+        cx.unfolded().toggle(
+            tr!("ui-options-pause-when-card-busy"),
+            tr!("ui-options-pause-when-card-busy-tip"),
+            &field!(background_gpu_pause),
+        );
     });
 }
 
@@ -378,6 +383,19 @@ fn quality(cx: &mut Cx) {
             &field!(anisotropy),
             &choices,
         );
+        // RenderMaxTextureResolution (panel_preferences_graphics1.xml,
+        // FSRestrictMaxTexturePixels): 512, 1024 or 2048 pixels
+        let names: Vec<(u32, String)> = crate::settings::MAX_TEXTURE_RESOLUTIONS
+            .into_iter()
+            .map(|v| (v, tr!("ui-options-texture-resolution-pixels", size = v.to_string())))
+            .collect();
+        let choices: Vec<(u32, &str)> = names.iter().map(|(v, l)| (*v, l.as_str())).collect();
+        cx.combo(
+            tr!("ui-options-maximum-texture-resolution"),
+            tr!("ui-options-world-textures-load-no-larger-more-fit-before-blurring"),
+            &field!(max_texture_resolution),
+            &choices,
+        );
     });
     cx.group(tr!("ui-options-avatars"), |cx| {
         cx.slider(
@@ -507,6 +525,23 @@ fn light(cx: &mut Cx) {
                 tr!("ui-options-projector-shadows"),
                 tr!("ui-options-projector-shadows-help"),
                 &field!(projector_shadows),
+            );
+            let enabled = cx.s.projector_shadows;
+            cx.row(
+                tr!("ui-options-projector-shadow-limit"),
+                tr!("ui-options-projector-shadow-limit-help"),
+                &field!(projector_shadow_limit),
+                |ui, s| {
+                    ui.add_enabled(
+                        enabled,
+                        egui::Slider::new(
+                            &mut s.projector_shadow_limit,
+                            1..=aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8,
+                        )
+                        .trailing_fill(true),
+                    )
+                    .changed()
+                },
             );
             cx.toggle(
                 tr!("ui-options-contact-shadows"),

@@ -88,7 +88,7 @@ pub(super) fn show(
     floater.show(ctx, p, &mut open, |ui| {
         match &mut dialog {
             EditDialog::Properties(id) => {
-                done = super::properties::show(ui, p, icons, inv, st, prefs, facts, images, *id, actions);
+                done = super::properties::show(ui, p, icons, inv, st, facts, images, *id, actions);
             }
             EditDialog::Discard(id) => {
                 ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
@@ -298,7 +298,12 @@ pub(super) fn show(
         if !st.message.is_empty() {
             ui.label(RichText::new(&st.message).color(p.warn));
         }
-        if (!confirmation && !document_confirmation && flat_button(ui, p, aurora_i18n::tr!("extra-close-cancel")).clicked())
+        let close_label = if properties {
+            aurora_i18n::tr!("common-close")
+        } else {
+            aurora_i18n::tr!("extra-close-cancel")
+        };
+        if (!confirmation && !document_confirmation && flat_button(ui, p, close_label).clicked())
             || ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
             done = true;
@@ -338,6 +343,7 @@ fn share(
     p: &Palette,
     icons: &Icons,
     inv: &Inventory,
+    // the folder colors of the list
     prefs: &InventoryPreferences,
     facts: &Facts,
     picture: Option<&egui::TextureHandle>,
@@ -355,11 +361,12 @@ fn share(
             let icon = item.map_or_else(
                 || {
                     let kind = inv.folders.get(id).map_or(-1, |f| f.info.type_default);
-                    (super::tree::folder_icon(kind, false), p.muted)
+                    let tint = super::folder_colors::tint(prefs, *id).unwrap_or(p.muted);
+                    (super::tree::folder_icon(kind, false), tint)
                 },
                 |it| inventory_item_icon(inv, it, p),
             );
-            let (fate, tag, why) = match rules::offer(inv, *id, &prefs.protected, &facts.worn) {
+            let (fate, tag, why) = match rules::offer(inv, *id, &facts.worn) {
                 Ok(bucket) if rules::offer_has_no_copy(inv, &bucket) => {
                     (Fate::NoCopy, aurora_i18n::tr!("ui-inventory-dialogs-no-copy"), String::new())
                 }
@@ -546,7 +553,7 @@ pub(super) fn preview(
         return;
     };
     if it.asset_type == 20 {
-        animation(ctx, p, inv, st, it, prefs, actions);
+        animation(ctx, p, inv, st, it, actions);
         return;
     }
     if !inv.can_preview(it.asset_type) {
@@ -641,7 +648,7 @@ pub(super) fn preview(
             }
         } else {
             if it.asset_type == 7 {
-                notecard_description(ui, inv, st, it, prefs, actions);
+                notecard_description(ui, inv, st, it, actions);
             }
             if it.asset_type == 7 && view.choose(ui, p) {
                 st.notecard_view = Some(view);
@@ -851,7 +858,6 @@ fn notecard_description(
     inv: &Inventory,
     st: &mut InventoryUi,
     it: &aurora_net::inventory::InvItem,
-    prefs: &InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
     let description = st.preview_description.get_or_insert_with(|| super::document::Description {
@@ -864,16 +870,21 @@ fn notecard_description(
         description.original.clone_from(&it.desc);
         description.text.clone_from(&it.desc);
     }
-    let can_edit =
-        rules::mutable(inv, it.id, &prefs.protected) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none() && !st.save_pending;
+    let can_edit = rules::mutable(inv, it.id) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none() && !st.save_pending;
     ui.horizontal(|ui| {
         ui.label(aurora_i18n::tr!("common-description"));
-        let response = crate::ui::widgets::text_field(ui, can_edit, &mut description.text, |b, ui| {
-            egui::TextEdit::singleline(b)
-                .id(egui::Id::unique(("notecard_description", st.ui_id, it.id)))
-                .char_limit(127)
-                .desired_width(ui.available_width())
-        });
+        let response = crate::ui::widgets::restricted_text_field(
+            ui,
+            can_edit,
+            &mut description.text,
+            crate::ui::widgets::TextPolicy::PrintableNoPipe,
+            |b, ui| {
+                egui::TextEdit::singleline(b)
+                    .id(egui::Id::unique(("notecard_description", st.ui_id, it.id)))
+                    .char_limit(127)
+                    .desired_width(ui.available_width())
+            },
+        );
         if can_edit
             && response.lost_focus()
             && description.text != it.desc
@@ -890,7 +901,6 @@ fn animation(
     inv: &Inventory,
     st: &mut InventoryUi,
     it: &aurora_net::inventory::InvItem,
-    prefs: &InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
     if st.animation_description.as_ref().is_none_or(|(id, _)| *id != it.id) {
@@ -910,10 +920,14 @@ fn animation(
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("common-description"));
             if let Some((_, description)) = &mut st.animation_description {
-                let can_edit = rules::mutable(inv, it.id, &prefs.protected) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none();
-                let response = crate::ui::widgets::text_field(ui, can_edit, description, |b, ui| {
-                    egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width())
-                });
+                let can_edit = rules::mutable(inv, it.id) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none();
+                let response = crate::ui::widgets::restricted_text_field(
+                    ui,
+                    can_edit,
+                    description,
+                    crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                    |b, ui| egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width()),
+                );
                 if can_edit
                     && description != &it.desc
                     && response.lost_focus()
@@ -1185,7 +1199,7 @@ mod tests {
         for (mask, protected, pending, allowed) in [
             (rules::COPY, false, false, false),
             (rules::MODIFY, false, false, true),
-            (rules::COPY | rules::MODIFY, true, false, false),
+            (rules::COPY | rules::MODIFY, true, false, true),
             (rules::COPY | rules::MODIFY, false, true, false),
         ] {
             let ctx = egui::Context::default();
@@ -2105,7 +2119,7 @@ mod tests {
         let mut ids: Vec<Uuid> = inv
             .items
             .values()
-            .filter(|it| it.owner_mask & rules::COPY != 0 && rules::offer(&inv, it.id, &HashSet::new(), &worn).is_ok())
+            .filter(|it| it.owner_mask & rules::COPY != 0 && rules::offer(&inv, it.id, &worn).is_ok())
             .map(|it| it.id)
             .collect();
         ids.sort();

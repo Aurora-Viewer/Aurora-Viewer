@@ -56,7 +56,6 @@ png = "0.18.1"
 md5 = "0.8.1"
 memmap2 = "0.9.11"
 parking_lot = "0.13.0"
-pollster = "1.0.1"
 # CommonMark parsing for notecard previews; MIT licensed, no HTML runtime.
 pulldown-cmark = { version = "0.13.4", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
@@ -71,6 +70,9 @@ sha2 = "0.11.0"
 # spell checking of the text fields with Hunspell dictionaries (spelling.rs);
 # pure Rust, MPL-2.0
 spellbook = "0.4.2"
+# A photo of the reel deleted goes to the Recycle Bin / Trash (snapshot::reel,
+# app/photo_reel.rs), recoverable; Windows, macOS and freedesktop. MIT.
+trash = "5.2.9"
 ttf-parser = "0.25.1"
 # Right-to-left text in reading order (ui/bidi.rs): the Unicode Bidirectional
 # Algorithm (unicode-rs, already in the tree through url) and its mirrored
@@ -129,8 +131,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_UI_Input", "Win32_UI_Inpu
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Variant", "Win32_System_WinRT", "Win32_System_Wmi"] }
 
 [target.'cfg(unix)'.dependencies]
-# getenv without allocating, for the allocator's choice (allocator.rs); already
-# in the tree
+# getenv without allocating, for the allocator's choice (allocator.rs), and
+# the signals that end a session on Linux (crash/native.rs); already in the tree
 libc = "0.2.190"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -138,6 +140,9 @@ libc = "0.2.190"
 # (mac_quit.rs); the versions already in the tree
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
+# The graphics card box (app/gpu_stall.rs): a CFUserNotification kept to be
+# cancelled; already in the tree through rfd
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFBase", "CFDate", "CFDictionary", "CFString", "CFUserNotification"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The freedesktop notification service (system_notify.rs), over the session
@@ -149,6 +154,10 @@ zbus = "5.19.0"
 wayland-client = "0.31.15"
 x11rb = { version = "0.13.2", features = ["allow-unsafe-code", "dl-libxcb"] }
 xkbcommon-dl = { version = "0.4.2", features = ["x11"] }
+# The font directories fontconfig is configured with (ui/fonts.rs), for the
+# fonts of NixOS and of any other set-up found only there; pure Rust, already
+# in the tree through resvg's fontdb (MIT)
+fontconfig-parser = { version = "0.5.8", default-features = false }
 
 # icon and version block of aurora-viewer.exe (build.rs; runs rc.exe of the
 # Windows SDK). Without `toml`: nothing is read from Cargo.toml.

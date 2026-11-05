@@ -562,6 +562,10 @@ pub struct DrawLists {
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
+    /// Per `blend` entry: select the unculled twin only for double-sided faces.
+    pub blend_double_sided: Vec<bool>,
+    /// Per `blend_under_water` entry: the same sidedness rule before water.
+    pub blend_under_double_sided: Vec<bool>,
     pub shadow_casters: Vec<ShadowCaster>,
     /// Terrain chunks casting shadows: drawn depth only like the opaque
     /// casters, else with the terrain's own alpha test (`fs_shadow_terrain`),
@@ -704,6 +708,8 @@ impl DrawLists {
         self.blend.clone_from(&src.blend);
         self.blend_under_water.clone_from(&src.blend_under_water);
         self.blend_glow.clone_from(&src.blend_glow);
+        self.blend_double_sided.clone_from(&src.blend_double_sided);
+        self.blend_under_double_sided.clone_from(&src.blend_under_double_sided);
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
@@ -768,6 +774,8 @@ impl DrawLists {
         self.water_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
+        self.blend_double_sided.clear();
+        self.blend_under_double_sided.clear();
         self.glow_alpha.clear();
         self.debug_red.clear();
         self.debug_blue.clear();
@@ -957,6 +965,10 @@ pub struct SnapshotSpec {
     pub interface: bool,
     /// HUD attachments drawn (RenderHUDInSnapshot).
     pub huds: bool,
+    /// The whole photo's size, which a tile's GTAO resolution follows:
+    /// tiles of different sizes, at full and half resolution side by
+    /// side, would differ along their border.
+    pub photo: (u32, u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -992,6 +1004,8 @@ pub struct RenderSettings {
     pub hdr: bool,
     /// Shadow map resolution per cascade (0 = shadows off).
     pub shadow_resolution: u32,
+    /// Maximum simultaneous projector shadow maps (0 disables them).
+    pub projector_shadow_limit: u8,
     /// Screen-space ambient occlusion: 0 off, 1 low, 2 high.
     pub ssao: u8,
     /// How the occlusion `ssao` turns on is computed.
@@ -1034,6 +1048,7 @@ impl Default for RenderSettings {
             tonemapper: Tonemapper::KhronosNeutral,
             hdr: true,
             shadow_resolution: 2048,
+            projector_shadow_limit: 2,
             ssao: 1,
             ao_method: AoMethod::Legacy,
             screen_indirect: false,
@@ -1223,6 +1238,24 @@ pub struct OverlayEffect {
     pub texture: [u32; 4],
 }
 
+/// A photo drawn in tiles reads GTAO's depth of the whole photo beyond
+/// each tile: a tile drawn alone has no scene past its guard band, and near
+/// the camera GTAO's radius (0.73 m) spans thousands of pixels, so its
+/// horizon search read the border's depth again for a wall, light and dark
+/// steps along the seams. The farther a sample, the coarser the depth level
+/// it reads: a whole frame at a fraction of the photo's size serves them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PhotoContext {
+    /// Outside a tiled photo: a context kept from one is freed.
+    #[default]
+    None,
+    /// The whole photo, drawn small before its tiles: GTAO's depth levels
+    /// are kept.
+    Record,
+    /// A tile: GTAO's samples past it read the kept depth.
+    Use,
+}
+
 /// Camera and environment for one frame.
 #[derive(Debug, Clone)]
 pub struct FrameParams {
@@ -1254,6 +1287,8 @@ pub struct FrameParams {
     /// the viewfinder's in a photo. The screen-space effects measured in
     /// pixels (the contact shadows) keep their size in the image with it.
     pub photo_scale: f32,
+    /// The whole photo's depth around the tiles (`PhotoContext`).
+    pub photo_context: PhotoContext,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,
@@ -1294,7 +1329,7 @@ pub struct FrameParams {
     pub shadow_distance: f32,
     pub lights: Vec<PointLight>,
     /// The projectors of `lights` that cast shadows (drawn with `shadows`).
-    pub spot_shadows: [Option<SpotShadow>; 2],
+    pub spot_shadows: [Option<SpotShadow>; crate::projector_shadows::MAX_PROJECTOR_SHADOWS],
     pub clear_color: Vec4,
     pub sky: SkyParams,
     pub water: WaterParams,
@@ -1490,6 +1525,12 @@ pub struct RenderStats {
     /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
     /// the photo's).
     pub gpu_pixels: u64,
+    /// Video memory the render targets that follow the image's size take
+    /// for each of its pixels, with the MSAA samples, the effects and the
+    /// TAA history of the current settings: measured with wgpu's counters
+    /// when they were last made. A photo pass needs as much for each of its
+    /// pixels, besides its output and readback.
+    pub target_bytes_per_pixel: Option<f32>,
     /// CPU time the main thread spent on the frame's rendering (ms): the
     /// whole encoding when the renderer runs on it, only the frame packet
     /// with a render thread.
@@ -1780,7 +1821,9 @@ mod tests {
         scene.physics_shapes.push(cmd(26));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
         scene.blend_under_water.push(cmd(29));
+        scene.blend_under_double_sided.push(true);
         scene.blend_glow.extend([false, true, false]);
+        scene.blend_double_sided.extend([true, false, true]);
         scene.blend_depth = 1;
         scene.glow.push(cmd(4));
         scene.select_root.push(cmd(5));
@@ -1829,7 +1872,9 @@ mod tests {
         assert_eq!(packet.physics_shapes[0].record, 26);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_under_water.iter().map(|c| c.record).collect::<Vec<_>>(), [29]);
+        assert_eq!(packet.blend_under_double_sided, [true]);
         assert_eq!(packet.blend_glow, [false, true, false]);
+        assert_eq!(packet.blend_double_sided, [true, false, true]);
         assert_eq!(packet.blend_depth, 1);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
         assert_eq!(packet.terrain_mask[0].record, 27);
@@ -1848,6 +1893,7 @@ mod tests {
         assert_eq!(packet.blend.len(), 3);
         assert!(scene.hud_view.is_none());
         assert!(scene.blend_under_water.is_empty());
+        assert!(scene.blend_under_double_sided.is_empty());
         assert!(scene.hud_opaque.is_empty());
         assert!(scene.hud_debug_red.is_empty());
         assert!(scene.creation_preview.is_empty());

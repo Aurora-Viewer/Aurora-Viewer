@@ -15,6 +15,7 @@ pub mod bidi;
 pub mod blacklist;
 pub mod bumps;
 pub mod sound_explorer;
+pub mod voice_controls;
 // Bug report form (disabled, see main.rs):
 // pub mod bug_report;
 pub mod beacons;
@@ -40,7 +41,9 @@ pub mod env_editor;
 pub mod environment;
 pub mod exit;
 pub mod experience_profile;
+pub mod experiences;
 pub mod find_shortcut;
+pub mod fly_override;
 pub mod follow;
 pub mod fonts;
 pub mod friend_prompt;
@@ -49,6 +52,7 @@ pub(crate) mod give_drop;
 pub mod grid_status;
 pub mod grids;
 pub mod group_profile;
+pub mod group_titles;
 pub mod hover_height;
 pub mod hover_tips;
 pub mod hud;
@@ -87,6 +91,7 @@ pub mod parcel_icons;
 pub mod pay;
 pub mod people;
 pub mod perf;
+pub mod photo_reel;
 pub mod physics;
 pub mod place_card;
 pub mod place_details;
@@ -94,11 +99,13 @@ pub mod places;
 pub mod portals;
 pub mod presence;
 pub mod profile;
+pub mod quick_prefs;
 pub mod region;
 pub mod region_message_prompt;
 pub mod region_restart;
 pub mod remote_object;
 pub mod report_abuse;
+pub(crate) mod resource_drop;
 pub mod rlva;
 pub mod script_queue;
 pub mod scripts;
@@ -124,6 +131,7 @@ pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
 pub mod wearable;
+pub mod web_browser;
 pub mod web_view;
 pub mod widgets;
 
@@ -140,6 +148,9 @@ pub struct Panels {
     pub dev_toolbox: bool,
     /// Advanced › Region console (SimConsoleAsync, estate managers).
     pub sim_console: bool,
+    /// Group titles (FSFloaterGroupTitles): the toolbar's command and
+    /// Contacts › Groups › Titles.
+    pub group_titles: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -181,10 +192,18 @@ pub struct Panels {
     pub asset_blacklist: bool,
     /// "Money tracker" (Me menu): the L$ received and paid.
     pub money_tracker: bool,
+    /// "Experiences" (Me menu): the agent's experiences by tab.
+    pub experiences: bool,
     /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// The built-in web browser (toolbar `webbrowser`).
+    pub web_browser: bool,
+    /// "Quick preferences" (toolbar `quickprefs`).
+    pub quick_prefs: bool,
+    /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
+    pub voice_controls: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -213,6 +232,7 @@ impl Panels {
             perf: settings.show_perf,
             dev_toolbox: false,
             sim_console: false,
+            group_titles: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
@@ -241,8 +261,12 @@ impl Panels {
             avatar_render_settings: false,
             asset_blacklist: false,
             money_tracker: false,
+            experiences: false,
             bumps: false,
             grid_status: false,
+            web_browser: false,
+            quick_prefs: false,
+            voice_controls: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,

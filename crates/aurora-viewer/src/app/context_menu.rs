@@ -174,6 +174,17 @@ impl App {
             particle_only: self.object_menu.particle_only,
             ..Facts::default()
         };
+        // the same check as the send, so a greyed entry never disagrees
+        let refused = |command: NetCommand| !w.rlva_allows_command(&command, uuid::Uuid::nil());
+        f.ground_sit_blocked = refused(NetCommand::OneShotControl(aurora_net::control::SIT_ON_GROUND));
+        f.stand_blocked = refused(NetCommand::OneShotControl(aurora_net::control::STAND_UP));
+        if let Some(Target::Object { key, full_id, offset }) = self.context_menu.as_ref().map(|m| &m.target) {
+            f.object_sit_blocked = refused(NetCommand::RequestSit {
+                handle: key.region,
+                target: *full_id,
+                offset: *offset,
+            });
+        }
         match self.context_menu.as_ref().map(|m| &m.target) {
             Some(Target::Object { key, .. } | Target::Attachment { key }) => {
                 if let Some(idx) = w.objects.index_of(key) {
@@ -814,10 +825,19 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
-            CtxAction::TeleportToPlace(region, pos) => self.teleport_to_location(region, pos),
+            CtxAction::TeleportToPlace(region, pos) => {
+                self.teleport_to_location(region, pos);
+            }
             CtxAction::AppLink(link) => self.run_app_link(link),
             CtxAction::OpenUrl(url) => {
                 use crate::link_trust::Trust;
+                // only web pages go to the system, as the links of a
+                // notification: a link of a text, a profile or a server reply
+                // must not start a local program (the scheme alone is logged)
+                if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
+                    log::warn!("link not opened: the {scheme} scheme is not a web page");
+                    return;
+                }
                 // LLWeb::loadURLInternal: a Marketplace page opens in the
                 // Marketplace window (Firestorm's default browser choice keeps
                 // the Second Life sites inside the viewer)
@@ -834,7 +854,9 @@ impl App {
                     }
                 }
             }
-            CtxAction::TeleportToPlaceConfirmed(region, pos) => self.teleport_to_location(region, pos),
+            CtxAction::TeleportToPlaceConfirmed(region, pos) => {
+                self.teleport_to_location(region, pos);
+            }
             CtxAction::GrantRights { friend, rights } => {
                 let cmd = NetCommand::GrantUserRights { friend, rights };
                 self.world.profile_command(&cmd);

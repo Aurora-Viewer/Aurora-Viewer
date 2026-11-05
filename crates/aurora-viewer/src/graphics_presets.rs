@@ -23,6 +23,8 @@
 //!
 //! The avatar physics detail follows the Legacy Viewer's lists too (0 in
 //! Potato, 0.75 in Low, 1 above); the physics switch itself is not a level's.
+//! So does the maximum texture resolution (RenderMaxTextureResolution: 512
+//! in Potato, 1024 in Low, 2048 above).
 //!
 //! What a level does not touch: the texture memory (sized from the video
 //! memory), the frame rate limits and vertical sync (comfort, not quality),
@@ -30,7 +32,7 @@
 //! (exposure, tone mapping), and the limits of the worn surface and of the
 //! complexity rule, which are choices about other people.
 
-use crate::settings::Settings;
+use crate::settings::{MAX_TEXTURE_RESOLUTION, Settings};
 
 pub(crate) mod saved;
 
@@ -71,7 +73,8 @@ impl Preset {
     pub fn values(self) -> Values {
         match self {
             // featuretable "Low": 64 m, LOD 1.5, 3 full avatars at 35 k,
-            // 256 particles, no shadows, SSAO, water or probe reflections,
+            // 256 particles, textures at 512 px at most, no shadows, SSAO,
+            // water or probe reflections,
             // no anti-aliasing, anisotropy or sharpening, no HDR and Emissive
             // (RenderDisableVintageMode 0); glow off as well (a full-screen
             // pass the oldest cards feel)
@@ -83,6 +86,7 @@ impl Preset {
                 max_particles: 256,
                 shadow_quality: 0,
                 projector_shadows: false,
+                projector_shadow_limit: 2,
                 ssao: 0,
                 ao_method: 0,
                 gtao_quality: 2,
@@ -97,10 +101,11 @@ impl Preset {
                 glow: false,
                 avatar_physics_detail: 0.0,
                 hdr_emissive: false,
+                max_texture_resolution: 512,
                 effects: Effects::OFF,
             },
             // "LowMid": 96 m, LOD 2, 5 avatars at 100 k, 2,048 particles,
-            // still nothing of the deferred effects nor HDR and Emissive
+            // textures at 1024 px at most, still nothing of the deferred effects nor HDR and Emissive
             Preset::Low => Values {
                 draw_distance: 96.0,
                 lod_factor: 2.0,
@@ -109,6 +114,7 @@ impl Preset {
                 max_particles: 2048,
                 shadow_quality: 0,
                 projector_shadows: false,
+                projector_shadow_limit: 2,
                 ssao: 0,
                 ao_method: 0,
                 gtao_quality: 2,
@@ -123,6 +129,7 @@ impl Preset {
                 glow: true,
                 avatar_physics_detail: 0.75,
                 hdr_emissive: false,
+                max_texture_resolution: 1024,
                 effects: Effects::OFF,
             },
             // "Mid": 128 m, 7 avatars at 200 k, 4,096 particles, FXAA,
@@ -136,6 +143,7 @@ impl Preset {
                 max_particles: 4096,
                 shadow_quality: 0,
                 projector_shadows: false,
+                projector_shadow_limit: 2,
                 ssao: 1,
                 ao_method: 1,
                 gtao_quality: 0,
@@ -150,6 +158,7 @@ impl Preset {
                 glow: true,
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
+                max_texture_resolution: MAX_TEXTURE_RESOLUTION,
                 effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
@@ -165,6 +174,7 @@ impl Preset {
                 max_particles: 4096,
                 shadow_quality: 2,
                 projector_shadows: false,
+                projector_shadow_limit: 2,
                 ssao: 1,
                 ao_method: 1,
                 gtao_quality: 2,
@@ -179,6 +189,7 @@ impl Preset {
                 glow: true,
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
+                max_texture_resolution: MAX_TEXTURE_RESOLUTION,
                 effects: Effects::HIGH,
             },
             // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
@@ -200,6 +211,7 @@ impl Preset {
                 max_particles: 8192,
                 shadow_quality: 4,
                 projector_shadows: true,
+                projector_shadow_limit: 2,
                 ssao: 2,
                 ao_method: 1,
                 gtao_quality: 3,
@@ -214,6 +226,7 @@ impl Preset {
                 glow: true,
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
+                max_texture_resolution: MAX_TEXTURE_RESOLUTION,
                 effects: Effects::DELUXE,
             },
         }
@@ -402,10 +415,13 @@ pub(crate) fn upgrade_levels_v21(s: &mut Settings) {
 pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
     for preset in [Preset::Potato, Preset::Low] {
         let level = preset.values();
-        // (files of then all have HDR and Emissive on: upgrade_hdr_emissive)
+        // (files of then all have HDR and Emissive on, and no maximum
+        // texture resolution: upgrade_hdr_emissive and
+        // upgrade_max_texture_resolution)
         let current = Values {
             avatar_physics_detail: level.avatar_physics_detail,
             hdr_emissive: level.hdr_emissive,
+            max_texture_resolution: level.max_texture_resolution,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -422,12 +438,32 @@ pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
 pub(crate) fn upgrade_hdr_emissive(s: &mut Settings) {
     for preset in [Preset::Potato, Preset::Low] {
         let level = preset.values();
+        // (files of then have no maximum texture resolution either)
         let current = Values {
             hdr_emissive: level.hdr_emissive,
+            max_texture_resolution: level.max_texture_resolution,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
             s.hdr_emissive = level.hdr_emissive;
+            return;
+        }
+    }
+}
+
+/// Settings files written before the levels set the maximum texture
+/// resolution (version 31), all at 2048: a profile exactly on Potato or Low
+/// apart from it takes the level's (512 and 1024, the Legacy Viewer's Low
+/// and LowMid); any other keeps 2048.
+pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
+    for preset in [Preset::Potato, Preset::Low] {
+        let level = preset.values();
+        let current = Values {
+            max_texture_resolution: level.max_texture_resolution,
+            ..Values::read(s)
+        };
+        if current.as_shown() == level.as_shown() {
+            s.max_texture_resolution = level.max_texture_resolution;
             return;
         }
     }
@@ -478,6 +514,8 @@ pub struct Values {
     pub max_particles: u32,
     pub shadow_quality: u8,
     pub projector_shadows: bool,
+    #[serde(default = "default_projector_shadow_limit")]
+    pub projector_shadow_limit: u8,
     pub ssao: u8,
     /// 0 Legacy, 1 GTAO (`Settings::ao_method`).
     pub ao_method: u8,
@@ -497,11 +535,24 @@ pub struct Values {
     /// written before it holds none: on, the default then).
     #[serde(default = "hdr_on")]
     pub hdr_emissive: bool,
+    /// RenderMaxTextureResolution: 512 in Low, 1024 in LowMid, 2048 above
+    /// (a backup or a saved preset written before it holds none: 2048, the
+    /// default then).
+    #[serde(default = "max_texture_resolution")]
+    pub max_texture_resolution: u32,
     pub effects: Effects,
+}
+
+fn default_projector_shadow_limit() -> u8 {
+    2
 }
 
 fn hdr_on() -> bool {
     true
+}
+
+fn max_texture_resolution() -> u32 {
+    MAX_TEXTURE_RESOLUTION
 }
 
 impl Values {
@@ -540,6 +591,11 @@ impl Values {
             max_complexity: slider::to_limit(slider::from_limit(self.max_complexity)),
             sharpen: round(self.sharpen, 0.05),
             avatar_physics_detail: round(self.avatar_physics_detail, 0.05),
+            projector_shadow_limit: if self.projector_shadows && self.shadow_quality > 0 {
+                self.projector_shadow_limit
+            } else {
+                2
+            },
             ao_method,
             gtao_quality: if ao_method == 1 { self.gtao_quality } else { 2 },
             effects,
@@ -556,6 +612,7 @@ impl Values {
             max_particles: s.max_particles,
             shadow_quality: s.shadow_quality,
             projector_shadows: s.projector_shadows,
+            projector_shadow_limit: s.projector_shadow_limit,
             ssao: s.ssao,
             ao_method: s.ao_method,
             gtao_quality: s.gtao_quality,
@@ -570,6 +627,7 @@ impl Values {
             glow: s.glow,
             avatar_physics_detail: s.avatar_physics_detail,
             hdr_emissive: s.hdr_emissive,
+            max_texture_resolution: s.max_texture_resolution,
             effects: Effects {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
@@ -589,6 +647,9 @@ impl Values {
         s.shadow_quality = self.shadow_quality;
         s.shadows = self.shadow_quality > 0;
         s.projector_shadows = self.projector_shadows;
+        s.projector_shadow_limit = self
+            .projector_shadow_limit
+            .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         s.ssao = self.ssao;
         s.ao_method = self.ao_method;
         s.gtao_quality = self.gtao_quality;
@@ -603,6 +664,8 @@ impl Values {
         s.glow = self.glow;
         s.avatar_physics_detail = self.avatar_physics_detail;
         s.hdr_emissive = self.hdr_emissive;
+        // (a saved profile edited by hand: the nearest choice of the combo)
+        s.max_texture_resolution = crate::settings::max_texture_resolution_choice(self.max_texture_resolution);
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
@@ -613,6 +676,23 @@ impl Values {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn projector_shadow_budget_is_saved_with_custom_presets_and_old_presets_keep_two() {
+        let mut settings = Settings::default();
+        Preset::Deluxe.apply(&mut settings);
+        settings.projector_shadow_limit = 10;
+        assert_eq!(Preset::matching(&settings), None);
+        let saved = serde_json::to_value(Values::read(&settings)).expect("save custom preset");
+        let restored: Values = serde_json::from_value(saved.clone()).expect("restore custom preset");
+        Preset::Low.apply(&mut settings);
+        restored.write(&mut settings);
+        assert_eq!(settings.projector_shadow_limit, 10);
+        let mut old = saved;
+        old.as_object_mut().expect("preset object").remove("projector_shadow_limit");
+        let old: Values = serde_json::from_value(old).expect("older preset");
+        assert_eq!(old.projector_shadow_limit, 2);
+    }
+
     use super::*;
 
     #[test]
@@ -744,6 +824,58 @@ mod tests {
         assert!(read.hdr_emissive);
     }
 
+    /// RenderMaxTextureResolution 512 in the Legacy Viewer's Low, 1024 in
+    /// LowMid (featuretable.txt), 2048 above.
+    #[test]
+    fn the_low_levels_cap_the_textures_like_the_legacy_viewer() {
+        let cap = |p: Preset| p.values().max_texture_resolution;
+        assert_eq!(cap(Preset::Potato), 512);
+        assert_eq!(cap(Preset::Low), 1024);
+        for p in [Preset::Medium, Preset::High, Preset::Deluxe] {
+            assert_eq!(cap(p), 2048, "{p:?}");
+        }
+        // changed by hand: custom
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        s.max_texture_resolution = 1024;
+        assert_eq!(Preset::matching(&s), None);
+        // an older file exactly on Potato or Low (2048 then, and before
+        // versions 24 and 28 the physics detail at 1 and HDR on too) takes
+        // the level's
+        for preset in [Preset::Potato, Preset::Low] {
+            let mut s = Settings::default();
+            preset.apply(&mut s);
+            s.max_texture_resolution = 2048;
+            s.hdr_emissive = true;
+            s.avatar_physics_detail = 1.0;
+            upgrade_physics_detail(&mut s);
+            upgrade_hdr_emissive(&mut s);
+            upgrade_max_texture_resolution(&mut s);
+            assert_eq!(Preset::matching(&s), Some(preset));
+        }
+        // a custom profile and the higher levels keep 2048
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.max_texture_resolution = 2048;
+        s.draw_distance = 300.0;
+        upgrade_max_texture_resolution(&mut s);
+        assert_eq!(s.max_texture_resolution, 2048);
+        Preset::Medium.apply(&mut s);
+        upgrade_max_texture_resolution(&mut s);
+        assert_eq!(s.max_texture_resolution, 2048);
+        // a safe graphics backup or a saved preset written before it holds
+        // none: 2048
+        let mut json = serde_json::to_value(Preset::Potato.values()).expect("values serialize");
+        json.as_object_mut().expect("an object").remove("max_texture_resolution");
+        let read: Values = serde_json::from_value(json).expect("backup without the field");
+        assert_eq!(read.max_texture_resolution, 2048);
+        // an odd value in a saved profile: one of the choices once applied
+        let mut odd = Preset::Medium.values();
+        odd.max_texture_resolution = 700;
+        odd.write(&mut s);
+        assert_eq!(s.max_texture_resolution, 512);
+    }
+
     #[test]
     fn levels_rise_from_potato_to_deluxe() {
         let v: Vec<Values> = Preset::ALL.iter().map(|p| p.values()).collect();
@@ -760,6 +892,7 @@ mod tests {
             assert!(a.probe_count <= b.probe_count);
             assert!(a.anisotropy <= b.anisotropy);
             assert!(a.avatar_physics_detail <= b.avatar_physics_detail);
+            assert!(a.max_texture_resolution <= b.max_texture_resolution);
         }
     }
 
@@ -777,6 +910,7 @@ mod tests {
             assert!((8..=64).contains(&v.probe_count) && v.probe_count % 8 == 0);
             assert!(v.antialiasing <= 6);
             assert!([1, 2, 4, 8, 16].contains(&v.anisotropy));
+            assert!(crate::settings::MAX_TEXTURE_RESOLUTIONS.contains(&v.max_texture_resolution));
             assert!((0.0..=1.0).contains(&v.sharpen));
         }
     }

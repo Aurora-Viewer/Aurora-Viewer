@@ -26,6 +26,48 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-04 — Aurora 0.9.1: steadier logins, teleports and outfits
+A region slow to confirm your arrival no longer ends the session, and a refused two-factor code no longer locks the login out of the code field. Outfit changes send one appearance request at a time, for the newest version, so products and RLVa that change the outfit quickly no longer drown your appearance in failed updates. A key the viewer never saw pressed no longer makes your avatar jump or fly up after you switch windows. Imported Windlight skies save to the inventory.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.1)
+
+## 2026-11-04 — Photo roll, projector shadows, smoother busy places
+Photo mode keeps the session's last 10 photos in a small stack in the viewfinder: look through them, then upload, e-mail or delete one. Choose how many projectors cast shadows, from 1 to 16, in Preferences › Graphics › Light (2 by default). In busy regions, objects that spin or move by themselves are placed by the graphics card, flexible prims out of view hold their mesh, and the frame's buffer writes go out together: more frames per second, the same image.
+
+## 2026-11-04 — Building, avatars and crash reports
+Paper lanterns and other tortured spheres keep their shape, Legacy construction gets Tilt, Radius and Revolutions back, and objects rezzed from the inventory can be edited and focused right away. Worn objects follow animations that move their attachment point, an avatar hidden by an animation leaves the screen as on the Legacy Viewer, and the Poser works on every shape. Crash reports after a lost graphics card say what was in play. Thanks to anne-skydancer, Gaalrauch, Marakiinfinity and Odessa-Draekavik.
+
+## 2026-11-04 — Aurora 0.9.0: OpenSim and Hypergrid, for real
+On OpenSim grids your avatar now bakes and is seen as you dress it, the land of large regions goes past 256 m, and the inventory, outfits and profiles save on grids without AIS. Buy and prices use the grid's own currency and money symbol. After a Hypergrid teleport Aurora follows the grid you are on, asks before a trip that would leave worn items behind, and offers to add an unknown grid from a link.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.0)
+
+## 2026-11-04 — Snap to objects, place on surface, holograms
+Building gets three placement aids. Set Snap to Objects and the selection goes flush against nearby objects, purple guides on the faces that meet, never pushing through them. Press P to place it on any surface or on the ground, previewed as a hologram. A hologram can also show the object you move, or where it started (Preferences › Aurora › Behavior › Building). Stretch Textures holds while resizing, and the camera controls roll the view.
+
+## 2026-11-04 — The Legacy toolbar, complete
+The toolbar's Quick preferences, Web browser and Voice buttons open their Legacy Viewer windows: the settings changed most often, a built-in browser on a home page, the voice controls. Statistics, Picks, Beacons, Snapshot to disk and Show Friends Only join them, a button lights while its window is open, and the Legacy Viewer's missing menu shortcuts are in. Me › Fly override (Ctrl+Alt+V) lets you fly where flying is off, with a word of caution first.
+
+## 2026-11-04 — Inventory, chat and groups
+Give an inventory folder a colour of your own, seen by you only, and back an outfit up to a JSON file to restore it later. Me › Experiences lists your experiences and what their scripts did. Wear a group title chosen by region, and log in straight at a favourite landmark. The chat gets its own text size, a long IM goes out as several messages instead of being cut, and chat times follow the clock's 12 or 24 hours.
+
+## 2026-11-04 — Steadier on your graphics card
+Intel Iris Xe starts again, and Aurora shares the graphics card fairly with other viewers and programs. Photo quality climbs to what video memory holds instead of losing the card, and world textures can be capped at 512, 1024 or 2048 pixels. Links, logs and simulator connections are hardened after a security review by Butter Roux, thank you! Thanks also to Aznlilly, anne-skydancer, circuskid, ddagetracker, emmelinedevere, Gaalrauch, iGao, jumpinmimi, KanikaBreed, Marakiinfinity, Memekiller, Odessa-Draekavik, vexxbyte, voidel, wolfosbournesl, xWynt3r and zdub0is.
+
+## 2026-11-02 — Aurora 0.8.5: immersive sound and VR, both experimental
+World sounds now go dull behind a wall or inside a closed box, pass behind your head with headphones (HRTF), and ring like the place you stand in: dry in the open air, a long soft tail in a large hall. Three switches in Preferences › Sound; HRTF and reverb are off by default. With an OpenXR headset, the headset button of the bottom toolbar shows the world in stereo, from your avatar's eyes or the camera. Viewing only for now: Esc brings the desktop back.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.5)
+
+## 2026-11-02 — Quicker starts, smoother busy places
+Aurora keeps its own cache of compiled graphics pipelines, so a start no longer waits twenty seconds on a black window when the driver emptied its own. On 4K screens ambient occlusion costs about a third of what it did, textures stay sharp after a teleport into a busy region, a viewer window behind gives its video memory back to the one in front, and fast cards get back the frame rates of 0.8.3 in busy places.
+
+## 2026-11-02 — Stars, portals and building
+Choose where on Earth the real night sky is seen from, and how bright its stars shine. Drag a place from Favorites, Places, the teleport history or search into the world to open a portal. A selection rectangle takes only what it surrounds, objects rez with your active group, BOM textures go in every PBR map, and grayscale PNG textures upload. An experience you allow can now change your sky and water.
+
+## 2026-11-02 — Outfits, shopping and Linux
+Pick several items in an outfit or in Worn and wear or take them off at once; Remove from current outfit works on any folder. Vendors sell on one click, and a short balance opens Buy L$. Clear the notification history, see a friend go on or offline in their open conversation, and assign gamepad buttons by pressing them. On Linux, a second viewer keeps the first one's web pages, and the safe graphics are offered after a GPU problem.
+
+## 2026-11-02 — Steadier
+Your logs and settings survive a hard reset of the PC, About Land saves its Allowed and Banned lists, the water no longer turns white under some region skies, and photos wait for a busy graphics card instead of failing. Thanks to anne-skydancer, circuskid, Gaalrauch, KanikaBreed, lambskin, Marakiinfinity, Odessa-Draekavik, vexxbyte, voidel, wolfosbournesl and zdub0is.
+
 ## 2026-10-31 — Aurora 0.8.4: copy anything, build in a crowd
 Click a name in a profile to copy it, and select the text of a greyed-out field to copy it too: a no-modify object's name, a parcel's media address. Outfits copy their item names and creator credits. In a busy sandbox, the build tools can select only your own objects, or only the ones you may move, and the editor has a Legacy layout. Ctrl+Shift+H takes you home.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.4)

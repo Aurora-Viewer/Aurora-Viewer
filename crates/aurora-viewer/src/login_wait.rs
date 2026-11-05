@@ -211,13 +211,25 @@ pub fn started(key: &(String, String), session_id: uuid::Uuid, now: u64) {
     });
 }
 
-/// The session is still alive (`HEARTBEAT`).
+/// The session is still alive (`HEARTBEAT`), written on a thread of its own:
+/// the heartbeat comes from the frame, and the write waits for the disk
+/// (atomic_file.rs, #1809).
 pub fn alive(key: &(String, String), now: u64) {
-    change(key, |session| {
-        if let Some(session) = session.as_mut().filter(|session| session.ended.is_none()) {
-            session.alive = now;
-        }
-    });
+    let key = key.clone();
+    let spawned = std::thread::Builder::new()
+        .name("aurora-login-alive".into())
+        .spawn(move || change(&key, |session| touch(session, now)));
+    if let Err(e) = spawned {
+        log::warn!("{FILE}: no thread for the sign of life: {e}");
+    }
+}
+
+/// A sign of life written late never moves `alive` back (a session that
+/// started since) nor reopens one that ended.
+fn touch(session: &mut Option<Session>, now: u64) {
+    if let Some(session) = session.as_mut().filter(|session| session.ended.is_none()) {
+        session.alive = session.alive.max(now);
+    }
 }
 
 /// The viewer saw the session end.
@@ -320,5 +332,23 @@ mod tests {
         let (_, first) = pending.progress(start);
         let (_, last) = pending.progress(start + Duration::from_secs(10));
         assert!(first < last);
+    }
+
+    #[test]
+    fn a_late_sign_of_life_never_moves_back_nor_reopens_a_session() {
+        let mut current = Some(session(200, None));
+        touch(&mut current, 215);
+        assert_eq!(current, Some(session(215, None)));
+        // written after the next session started (alive 300)
+        let mut next = Some(session(300, None));
+        touch(&mut next, 230);
+        assert_eq!(next, Some(session(300, None)));
+        // written after the session ended
+        let mut ended = Some(session(250, Some(250)));
+        touch(&mut ended, 260);
+        assert_eq!(ended, Some(session(250, Some(250))));
+        let mut none = None;
+        touch(&mut none, 260);
+        assert_eq!(none, None);
     }
 }

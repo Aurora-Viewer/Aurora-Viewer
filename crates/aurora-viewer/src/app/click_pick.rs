@@ -29,7 +29,8 @@
 //!
 //! With the depth, a click asks what the next frame draws under its pixel
 //! (`Renderer::request_drawn`): the object of a rigged mesh, which only the
-//! GPU poses, is designated from that answer (scene/drawn.rs). Camera picks
+//! GPU poses, a worn mesh, and for a left click a worn prim with an action,
+//! are designated from that answer (scene/drawn.rs). Camera picks
 //! reject transparent texture holes unless the transparency overlay shows
 //! their surface; interactions retain invisible Blend surfaces. The answer
 //! comes a frame after the depth.
@@ -198,6 +199,12 @@ pub(super) struct ClickWait {
 }
 
 impl ClickWait {
+    /// After a GPU recovery: the lost renderer will never answer the
+    /// waiting click's picks (gpu_recovery.rs).
+    pub(super) fn forget_pending(&mut self) {
+        self.pending = None;
+    }
+
     /// A click waits for its depth: what comes now goes behind it.
     pub(super) fn waiting(&self) -> bool {
         self.pending.is_some()

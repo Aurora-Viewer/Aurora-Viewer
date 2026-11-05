@@ -62,14 +62,7 @@ pub fn open_logs_dir() {
 
 /// Show a directory in the system file manager (also the transcripts folder).
 pub fn open_directory(path: &Path) -> std::io::Result<()> {
-    let program = if cfg!(windows) {
-        "explorer"
-    } else if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    std::process::Command::new(program).arg(path).spawn().map(|_| ())
+    crate::open_path::open(path)
 }
 
 /// Mask the id of capability URLs (".../cap/<uuid>").
@@ -299,6 +292,13 @@ pub fn init() {
     .target(env_logger::Target::Pipe(Box::new(Tee { file, session_file })))
     .init();
     std::panic::set_hook(Box::new(|info| {
+        // wgpu's panic for a device lost during a wait, caught by the
+        // renderer and taken as the loss (aurora-render device_lost.rs);
+        // any other panic there is reported
+        if aurora_render::in_guarded_poll() && info.payload_as_str().is_some_and(aurora_render::is_loss_panic) {
+            log::warn!("wgpu: {info}");
+            return;
+        }
         let bt = std::backtrace::Backtrace::force_capture();
         crate::crash::panic(info, &bt);
         log::error!("panic: {info}\n{bt}");

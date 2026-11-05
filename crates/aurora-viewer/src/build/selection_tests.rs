@@ -33,7 +33,7 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
         world.hud_scales.set_offset(hud_id, Vec3::Y * 0.2);
         let position = world.objects.get(hud).unwrap().position;
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.4;
         let next = world
             .objects
@@ -42,16 +42,16 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
             .unwrap()
             .0;
         tool.click_select(&mut world, &settings, Some(next), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, if target == SelectType::Hud { 0.4 } else { 1.0 });
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.3;
         tool.deselect_all(&world);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, 1.0);
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.2;
         tool.close(&mut world, &mut settings);
         assert_eq!(world.hud_zoom, 1.0);
@@ -60,7 +60,7 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
         assert_eq!(world.objects.get(hud).unwrap().position, position);
         // The explicit World > HUDs zoom remains usable outside HUD editing.
         world.hud_zoom = 0.5;
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, 0.5);
     }
 }
@@ -70,13 +70,13 @@ fn removed_hud_selection_restores_view_zoom() {
     let (mut world, mut tool, settings) = seated_fixture(false);
     let hud = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
     tool.click_select(&mut world, &settings, Some(hud), false);
-    tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+    tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
     world.hud_zoom = 0.1;
     world.apply(NetEvent::ObjectsKilled {
         handle: world.objects.get(hud).unwrap().key.region,
         local_ids: vec![world.objects.get(hud).unwrap().key.local_id],
     });
-    tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+    tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
     assert_eq!(world.hud_zoom, 1.0);
 }
 
@@ -131,7 +131,14 @@ fn transparent_selection_keeps_its_outline_during_a_real_move_drag() {
     let handle = position + Vec3::Z * tool.cam.meters_for_pixels(position, 50.0) * 0.9;
     let cursor = tool.cam.project_px(handle).unwrap();
     assert!(tool.mouse_down(&mut world, &mut settings, None, None, None, cursor, Mods::default()));
-    tool.update(&mut world, &settings, (cursor.0 + 30.0, cursor.1 - 30.0), false, Mods::default());
+    tool.update(
+        &mut world,
+        &settings,
+        None,
+        (cursor.0 + 30.0, cursor.1 - 30.0),
+        false,
+        Mods::default(),
+    );
     assert!(tool.manip.dragging(), "The regression must exercise an active manipulation");
     assert_eq!(tool.outlined(&world, &settings), before);
     settings.show_highlight = false;
@@ -678,6 +685,59 @@ fn preexisting_create_flags_are_never_selected_after_ownership_arrives() {
     world.objects.get_mut(idx).unwrap().owner_id = world.agent_id;
     tool.pick_up_created(&world, &settings);
     assert!(tool.selection.is_empty());
+}
+
+#[test]
+fn inventory_rez_leaves_create_and_edits_only_the_new_object() {
+    for keep_tool in [false, true] {
+        let (mut world, mut tool, mut settings) = fixture();
+        settings.keep_tool = keep_tool;
+        let old = object(&world, 99610);
+        world.objects.get_mut(old).unwrap().update_flags |= FLAGS_CREATE_SELECTED;
+        tool.click_select(&mut world, &settings, Some(old), false);
+        tool.set_tool(Tool::Create);
+        assert!(tool.creation_preview_enabled(&settings, false, Mods::default()));
+        tool.edit_inventory_rez(&world);
+        assert_eq!(tool.tool, Tool::Edit);
+        assert!(!tool.creation_preview_enabled(&settings, false, Mods::default()));
+        assert!(tool.open && tool.selection.is_empty());
+        // The old flagged object is not mistaken for a delayed rez reply.
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
+        assert!(tool.selection.is_empty());
+
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = 99940;
+        update.full_id = crate::demo::action_id(99940);
+        update.parent_id = 0;
+        update.owner_id = Uuid::nil();
+        update.update_flags = FLAGS_CREATE_SELECTED | crate::ui::context::flags::OBJECT_YOU_OWNER;
+        let handle = world.objects.get(old).unwrap().key.region;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
+        assert_eq!(tool.tool, Tool::Edit);
+        assert_eq!(selected(&tool), [99940]);
+        assert_eq!(settings.keep_tool, keep_tool);
+        assert!(tool.out.iter().any(|command| matches!(
+            command,
+            NetCommand::Build(BuildCmd::Select { local_ids, .. }) if local_ids == &[99940]
+        )));
+    }
+}
+
+#[test]
+fn primitive_creation_still_honors_keep_tool() {
+    for keep_tool in [false, true] {
+        let (mut world, mut tool, mut settings) = fixture();
+        settings.keep_tool = keep_tool;
+        tool.set_tool(Tool::Create);
+        let point = world.agent.position + Vec3::X * 5.0;
+        tool.place(&mut world, &settings, Some(point), None, (0.0, 0.0));
+        assert_eq!(tool.tool, if keep_tool { Tool::Create } else { Tool::Edit });
+    }
 }
 
 #[test]

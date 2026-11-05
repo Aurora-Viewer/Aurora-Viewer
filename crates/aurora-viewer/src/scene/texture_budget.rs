@@ -15,7 +15,16 @@
 //!   then lose up to two more levels, those out of view first;
 //! - a loaded texture is lowered on the GPU from the levels it already
 //!   holds, a few per frame, never decoded again; avatar bakes, HUDs, the
-//!   interface, sculpt maps and the terrain are left alone.
+//!   interface, sculpt maps and the terrain are left alone;
+//! - a window in the background for a minute, or minimised for a second,
+//!   goes to the highest pressure and gives its video memory back
+//!   ("freeing up video memory", TextureDiscardBackgroundedTime 60 s,
+//!   TextureDiscardMinimizedTime 1 s), then takes up again where it was
+//!   once in front ([`Background`]): with two viewers on one card, the one
+//!   behind leaves room to the one in front (#1808; on the grid, 6.6 and
+//!   5.9 GB on a 12 GB card overfilled it, GPU frames of 1 s). On purpose,
+//!   a window behind gives them back at once while the memory is short,
+//!   without waiting its minute.
 //!
 //! What differs, on purpose:
 //! - the budget is read from the driver as it is now and the use is what
@@ -144,6 +153,68 @@ pub fn texture_target(setting: u64, pages: u64, video: Option<VideoMemory>) -> u
     setting.min(process.saturating_sub(others)).max(MIN_TEXTURE_BYTES)
 }
 
+/// The target with the card oversubscribed by `over` bytes (gpu_load.rs):
+/// the pages hold that much less, no less than the minimum. Nothing while
+/// the programs fit.
+pub fn relieve(target: u64, cap: Option<u64>) -> u64 {
+    cap.map_or(target, |cap| target.min(cap))
+}
+
+/// The pages' limit that gives the card `over` bytes back, fixed at each
+/// reading of the card's load. The reading changes every few seconds, the
+/// budget pass runs four times a second: taking `over` off the pages of
+/// every pass would take it off again and again for as long as the reading
+/// lasts, and the pressure would climb to its last step. The pages of the
+/// reading less `over`, once, and the next reading sees what that freed.
+#[derive(Debug, Default)]
+pub struct Relief {
+    seq: u64,
+    cap: Option<u64>,
+}
+
+impl Relief {
+    /// The limit for the reading `seq` (gpu_load::Load::seq) that found
+    /// `over` bytes to give back while `pages` were held; None while the
+    /// card has room.
+    pub fn update(&mut self, seq: u64, pages: u64, over: u64) -> Option<u64> {
+        if seq != self.seq {
+            self.seq = seq;
+            self.cap = (over > 0).then(|| pages.saturating_sub(over).max(MIN_TEXTURE_BYTES));
+        }
+        self.cap
+    }
+}
+
+/// Most the texture target rises in a second, in bytes. A drop counts at
+/// once, a rise takes this long: when another program frees the card the
+/// driver's budget jumps by gigabytes, and a target that follows lets
+/// thousands of lowered textures load again together, in the second the
+/// card is shared with that program. A tester's device was lost 1 s after
+/// the target went from 1.6 to 4.4 GB (budget 3.9 -> 7.3 GB, 2.9 GB used).
+const RISE_PER_SECOND: u64 = 256 * MB;
+
+/// The target given to the pressure: down at once, up by
+/// [`RISE_PER_SECOND`] at most.
+#[derive(Debug, Default)]
+pub struct TargetRamp {
+    last: Option<(Instant, u64)>,
+}
+
+impl TargetRamp {
+    pub fn update(&mut self, target: u64, now: Instant) -> u64 {
+        let eased = match self.last {
+            Some((_, last)) if target <= last => target,
+            Some((at, last)) => {
+                let rise = (RISE_PER_SECOND as f64 * now.saturating_duration_since(at).as_secs_f64()) as u64;
+                target.min(last.saturating_add(rise))
+            }
+            None => target,
+        };
+        self.last = Some((now, eased));
+        eased
+    }
+}
+
 /// What the pressure is decided on, a few times a second.
 #[derive(Clone, Copy, Debug)]
 pub struct Reading {
@@ -158,12 +229,75 @@ pub struct Reading {
     pub below: u64,
 }
 
+/// LLViewerTexture::updateClass: how long the window stays in the background
+/// (not in front) or minimised before its textures go
+/// (TextureDiscardBackgroundedTime, TextureDiscardMinimizedTime).
+pub const BACKGROUNDED_AFTER: Duration = Duration::from_secs(60);
+pub const MINIMIZED_AFTER: Duration = Duration::from_secs(1);
+
+/// Whether the window has been in the background long enough to give its
+/// textures back, see the module.
+#[derive(Debug, Default)]
+pub struct Background {
+    /// Since when the window is not in front.
+    since: Option<Instant>,
+    /// Its textures went, since it is behind.
+    away: bool,
+    /// They went with the viewer past the driver's budget: its 3D drawing
+    /// pauses too ([`Background::paused`]).
+    crowded: bool,
+}
+
+impl Background {
+    /// The window's state now (`in_front`: it has the focus and is not
+    /// minimised; `crowded`: the viewer is past the driver's budget);
+    /// whether its textures should go. Once gone they stay gone until the
+    /// window is in front again (their going brings the viewer back under
+    /// the budget).
+    ///
+    /// Crowded, a window behind gives them back at once, which the Legacy
+    /// Viewer does not: two viewers arriving in a busy region within the
+    /// same minute overfilled a 12 GB card in 25 to 40 s, before the one
+    /// behind had waited its minute, and one lost its device (#1808). Past
+    /// the budget only, not under mere pressure: one viewer holds step 1 for
+    /// minutes in a busy region, and a glance at another program would have
+    /// cost it every texture.
+    pub fn update(&mut self, now: Instant, in_front: bool, minimized: bool, crowded: bool) -> bool {
+        if in_front && !minimized {
+            self.since = None;
+            self.away = false;
+            self.crowded = false;
+            return false;
+        }
+        let since = *self.since.get_or_insert(now);
+        let after = if minimized { MINIMIZED_AFTER } else { BACKGROUNDED_AFTER };
+        self.crowded |= crowded;
+        self.away |= crowded || now.duration_since(since) >= after;
+        self.away
+    }
+
+    /// The window is behind and was past the driver's budget there: it
+    /// stops drawing its 3D scene and its 3D targets shrink until it is in
+    /// front again (the app's frame, #1808). Its textures alone were not
+    /// enough on the grid: at 4K in a busy region the window behind still
+    /// held 6.1 GB (2.1 of textures at the highest step, 1.35 of geometry,
+    /// the rest render targets and allocator room) beside the 7.6 GB of the
+    /// one in front on a 12 GB card, and drew its scene at 15 fps, 30 ms of
+    /// GPU each: both fell to 1 or 2 fps.
+    pub fn paused(&self) -> bool {
+        self.crowded
+    }
+}
+
 /// The pressure step, see the module.
 #[derive(Debug)]
 pub struct Pressure {
     step: u8,
     over_since: Option<Instant>,
     changed: Instant,
+    /// The step before the window went to the background, while it is held
+    /// at the highest ([`Pressure::hold_max`]).
+    held: Option<u8>,
 }
 
 impl Pressure {
@@ -172,11 +306,38 @@ impl Pressure {
             step: 0,
             over_since: None,
             changed: now,
+            held: None,
         }
     }
 
     pub fn step(&self) -> u8 {
         self.step
+    }
+
+    /// Held at the highest step for a window in the background.
+    pub fn held(&self) -> bool {
+        self.held.is_some()
+    }
+
+    /// The window went to the background: the highest step, the one it was
+    /// at kept for [`Pressure::release`].
+    pub fn hold_max(&mut self, now: Instant) {
+        if self.held.is_none() {
+            self.held = Some(self.step);
+            self.step = MAX_PRESSURE;
+            self.changed = now;
+            self.over_since = None;
+        }
+    }
+
+    /// The window is in front again: back to the step it was at, the usual
+    /// rules taking over from there (the Legacy Viewer restores its bias).
+    pub fn release(&mut self, now: Instant) {
+        if let Some(step) = self.held.take() {
+            self.step = step;
+            self.changed = now;
+            self.over_since = None;
+        }
     }
 
     /// The step for this reading. Up: at once from none (textures only come
@@ -186,6 +347,9 @@ impl Pressure {
     /// 90 % of the target for a while, and only if the textures would still
     /// fit there one step below.
     pub fn update(&mut self, now: Instant, r: Reading) -> u8 {
+        if self.held.is_some() {
+            return self.step;
+        }
         let free = r.target / 10 * 9;
         if r.used > r.target {
             let since = *self.over_since.get_or_insert(now);
@@ -273,6 +437,52 @@ mod tests {
         // the driver behind the counters (a buffer just created): the live
         // resources at least
         assert_eq!(texture_target(6 * GB, 3 * GB, v(4 * GB)), 6 * GB - GB / 2 - GB);
+    }
+
+    #[test]
+    fn an_oversubscribed_card_takes_its_excess_from_the_pages() {
+        let mut relief = Relief::default();
+        assert_eq!(relieve(4000 * MB, relief.update(1, 3000 * MB, 0)), 4000 * MB);
+        assert_eq!(relieve(4000 * MB, relief.update(2, 3000 * MB, 500 * MB)), 2500 * MB);
+        // the target when it is lower already
+        assert_eq!(relieve(2000 * MB, relief.update(3, 3000 * MB, 500 * MB)), 2000 * MB);
+        // the minimum when little is left
+        assert_eq!(relieve(4000 * MB, relief.update(4, 300 * MB, 500 * MB)), 256 * MB);
+    }
+
+    #[test]
+    fn a_reading_is_taken_off_the_pages_once() {
+        let mut relief = Relief::default();
+        // the reading 5 found 500 MB to give back with 3000 MB held
+        assert_eq!(relief.update(5, 3000 * MB, 500 * MB), Some(2500 * MB));
+        // the passes until the next reading hold 2900, 2700, 2500 MB: the
+        // limit stays where the reading put it instead of falling by 500 MB
+        // each time
+        for pages in [2900, 2700, 2500] {
+            assert_eq!(relief.update(5, pages * MB, 500 * MB), Some(2500 * MB));
+        }
+        // the next reading sees what was freed
+        assert_eq!(relief.update(6, 2500 * MB, 200 * MB), Some(2300 * MB));
+        // and the card with room again
+        assert_eq!(relief.update(7, 2300 * MB, 0), None);
+        assert_eq!(relief.update(7, 2300 * MB, 400 * MB), None);
+    }
+
+    #[test]
+    fn the_target_drops_at_once_and_rises_slowly() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut r = TargetRamp::default();
+        // the first figure is taken as it is
+        assert_eq!(r.update(4400 * MB, t0), 4400 * MB);
+        assert_eq!(r.update(1600 * MB, t0 + s(1)), 1600 * MB);
+        // the budget jumps: 256 MB a second
+        assert_eq!(r.update(4400 * MB, t0 + s(2)), 1600 * MB + 256 * MB);
+        assert_eq!(r.update(4400 * MB, t0 + s(4)), 1856 * MB + 512 * MB);
+        // a dip counts at once and the climb starts from it
+        assert_eq!(r.update(2000 * MB, t0 + s(5)), 2000 * MB);
+        // never past the target itself
+        assert_eq!(r.update(2100 * MB, t0 + s(60)), 2100 * MB);
     }
 
     #[test]
@@ -395,5 +605,81 @@ mod tests {
         assert_eq!(p.update(t0 + s(70), reading(800, true, below_estimate(850, 800, 800))), 0);
         // the free room of the pages counts as it is now
         assert_eq!(below_estimate(850, 1000, 800), 1062);
+    }
+
+    #[test]
+    fn a_window_behind_for_a_minute_or_minimised_for_a_second_gives_its_textures_back() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut b = Background::default();
+        assert!(!b.update(t0, true, false, false));
+        // in the background: a minute, as TextureDiscardBackgroundedTime
+        assert!(!b.update(t0 + s(1), false, false, false));
+        assert!(!b.update(t0 + s(60), false, false, false));
+        assert!(b.update(t0 + s(61), false, false, false));
+        // in front again: at once, and the minute starts over
+        assert!(!b.update(t0 + s(62), true, false, false));
+        assert!(!b.update(t0 + s(63), false, false, false));
+        assert!(!b.update(t0 + s(100), false, false, false));
+        // minimised: a second, as TextureDiscardMinimizedTime
+        let mut m = Background::default();
+        assert!(!m.update(t0, false, true, false));
+        assert!(m.update(t0 + s(1), false, true, false));
+        // minimised even with the focus (restored, not yet in front)
+        let mut f = Background::default();
+        assert!(!f.update(t0, true, true, false));
+        assert!(f.update(t0 + s(2), true, true, false));
+    }
+
+    #[test]
+    fn a_held_window_stays_at_the_highest_step_and_comes_back_to_its_own() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut p = Pressure::new(t0);
+        assert_eq!(p.update(t0, reading(1007, true, 1007)), 1);
+        p.hold_max(t0 + s(1));
+        assert!(p.held());
+        assert_eq!(p.step(), MAX_PRESSURE);
+        // readings change nothing while held, under the target or over it
+        assert_eq!(p.update(t0 + s(20), reading(100, true, 100)), MAX_PRESSURE);
+        assert_eq!(p.update(t0 + s(30), reading(2000, true, 2000)), MAX_PRESSURE);
+        // holding again keeps the step it came from
+        p.hold_max(t0 + s(31));
+        p.release(t0 + s(40));
+        assert!(!p.held());
+        assert_eq!(p.step(), 1);
+        // then the usual rules: no step down before LOWER_AFTER
+        assert_eq!(p.update(t0 + s(42), reading(100, true, 100)), 1);
+        assert_eq!(p.update(t0 + s(46), reading(100, true, 100)), 0);
+        // releasing what is not held changes nothing
+        p.release(t0 + s(50));
+        assert_eq!(p.step(), 0);
+    }
+
+    #[test]
+    fn a_window_behind_gives_its_textures_back_at_once_while_the_memory_is_short() {
+        // run F: the second viewer arrives while the first is behind;
+        // the card was full long before the minute
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut b = Background::default();
+        assert!(!b.update(t0, false, false, false));
+        assert!(!b.paused());
+        assert!(b.update(t0 + s(5), false, false, true));
+        assert!(b.paused(), "past the budget behind: the 3D drawing pauses");
+        // back under the budget once they went: still gone while behind
+        assert!(b.update(t0 + s(6), false, false, false));
+        assert!(b.paused());
+        // in front, crowded or not: its textures stay, the drawing resumes
+        assert!(!b.update(t0 + s(7), true, false, true));
+        assert!(!b.paused());
+        // behind again, not crowded: the Legacy minute again, still drawing
+        assert!(!b.update(t0 + s(8), false, false, false));
+        assert!(!b.update(t0 + s(60), false, false, false));
+        assert!(b.update(t0 + s(69), false, false, false));
+        assert!(!b.paused(), "the Legacy minute alone does not pause");
+        // minimised and crowded: at once too
+        let mut m = Background::default();
+        assert!(m.update(t0, true, true, true));
     }
 }

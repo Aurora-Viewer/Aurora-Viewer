@@ -1,4 +1,206 @@
 use super::*;
+use std::path::Path;
+
+#[test]
+fn protected_upload_defaults_survive_loading_locking_and_queueing_every_asset_type() {
+    use crate::world::inventory::actions;
+    use aurora_net::inventory::{InvFolder, mesh_upload::Quote};
+
+    for lock_parent in [false, true] {
+        let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory.root = Uuid::from_u128(1);
+        world.balance = Some(1000);
+        let mut inventory = crate::ui::inventory::InventoryPreferences::default();
+        let mut folders = vec![InvFolder {
+            id: world.inventory.root,
+            name: "Inventory".into(),
+            type_default: 8,
+            ..Default::default()
+        }];
+        let kinds = [Kind::Texture, Kind::Sound, Kind::Animation, Kind::Mesh, Kind::Material];
+        for kind in kinds {
+            let slot = kind.folder_slot() as u128;
+            let parent = Uuid::from_u128(10 + slot);
+            let destination = Uuid::from_u128(20 + slot);
+            for (id, parent, type_default) in [
+                (parent, world.inventory.root, -1),
+                (destination, parent, -1),
+                (Uuid::from_u128(30 + slot), world.inventory.root, kind.asset_type()),
+            ] {
+                folders.push(InvFolder {
+                    id,
+                    parent,
+                    name: format!("Folder {id}"),
+                    type_default,
+                    ..Default::default()
+                });
+            }
+            inventory.upload_folders[kind.folder_slot()] = destination;
+        }
+        world.inventory.created_folders(folders);
+        let animation = demo::tail_animation();
+        let sources = [
+            Source::Texture(image(4, 4)),
+            Source::Sound(Arc::new(Sound {
+                source_channels: 1,
+                source_bits: 16,
+                mono: vec![0.0; 44100],
+            })),
+            Source::Animation {
+                bytes: Arc::new(aurora_assets::import_animation::encode(&animation).expect("animation")),
+                animation: Arc::new(animation),
+                bvh: None,
+            },
+            Source::Mesh(Box::new(mesh_fixture())),
+            Source::Material {
+                value: Default::default(),
+                images: Box::new([Some(files::local_image((*image(8, 8)).clone(), "Map".into())), None, None, None]),
+            },
+        ];
+        let entries = sources
+            .into_iter()
+            .enumerate()
+            .map(|(i, source)| Entry::new(format!("Asset {i}").into(), Ok(source), Default::default()))
+            .collect();
+        let mut imports = Imports {
+            choice: Choice::Bulk,
+            ..Default::default()
+        };
+        let request = Uuid::new_v4();
+        imports.pending_files = Some(request);
+        imports.tx.send(Worker::Loaded(request, entries)).expect("loaded assets");
+        let ctx = egui::Context::default();
+        let (jobs, _results) = crate::scene::jobs::Jobs::new();
+        imports.poll(&ctx, &jobs, &world, &inventory);
+        assert_eq!(imports.entries.len(), kinds.len());
+        for entry in &imports.entries {
+            let kind = entry.source.as_ref().expect("source").kind();
+            assert_eq!(entry.folder, inventory.upload_folders[kind.folder_slot()]);
+        }
+        let quote = Uuid::new_v4();
+        if let Some(Source::Mesh(draft)) = &mut imports.entries[3].source {
+            draft.quote = Some(Quote {
+                token: quote,
+                cost: 20,
+                data: Default::default(),
+            });
+        }
+        // Reproduce #1981: choose the destinations first, then lock them.
+        for kind in kinds {
+            let destination = inventory.upload_folders[kind.folder_slot()];
+            let locked = if lock_parent {
+                actions::parent(&world.inventory, destination).expect("parent")
+            } else {
+                destination
+            };
+            inventory.protected.insert(locked);
+            assert!(!actions::removable(&world.inventory, locked, &inventory.protected));
+        }
+        let inventory = serde_json::from_slice(&serde_json::to_vec(&inventory).expect("save settings")).expect("restore settings");
+        imports.sync_destinations(&Preferences::default(), &world, &inventory);
+        let Some(Source::Mesh(draft)) = &imports.entries[3].source else {
+            panic!("mesh")
+        };
+        assert_eq!(draft.quote.as_ref().expect("unchanged destination keeps quote").token, quote);
+        assert!(imports.folder_plan_ready(&world));
+        imports.start(&world, &inventory, &Preferences::default(), &prices());
+        assert_eq!(imports.queue.len(), 6, "five assets and the material map: {}", imports.message);
+        for step in &imports.queue {
+            let expected = inventory.upload_folders[step.kind.folder_slot()];
+            assert_eq!(step.folder, expected, "{:?}, locked parent: {lock_parent}", step.kind);
+            assert_ne!(Some(step.folder), actions::system(&world.inventory, step.kind.asset_type()));
+        }
+    }
+}
+
+#[test]
+fn protected_upload_defaults_still_reject_missing_and_restricted_destinations() {
+    use aurora_net::inventory::InvFolder;
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.inventory.root = Uuid::from_u128(1);
+    let mut inventory = crate::ui::inventory::InventoryPreferences::default();
+    world.inventory.created_folders(vec![InvFolder {
+        id: world.inventory.root,
+        name: "Inventory".into(),
+        type_default: 8,
+        ..Default::default()
+    }]);
+    for kind in [Kind::Texture, Kind::Sound, Kind::Animation, Kind::Mesh, Kind::Material] {
+        let fallback = Uuid::from_u128(10 + kind.folder_slot() as u128);
+        world.inventory.created_folders(vec![InvFolder {
+            id: fallback,
+            parent: world.inventory.root,
+            name: "System".into(),
+            type_default: kind.asset_type(),
+            ..Default::default()
+        }]);
+        for folder_type in [-1, 14, 46, 48, 50] {
+            let forbidden = Uuid::new_v4();
+            let child = Uuid::new_v4();
+            world.inventory.created_folders(vec![
+                InvFolder {
+                    id: forbidden,
+                    parent: world.inventory.root,
+                    name: "Restricted".into(),
+                    type_default: folder_type,
+                    ..Default::default()
+                },
+                InvFolder {
+                    id: child,
+                    parent: forbidden,
+                    name: "Child".into(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+            ]);
+            if folder_type == -1 {
+                world.inventory.folders.get_mut(&forbidden).expect("library").library = true;
+                world.inventory.folders.get_mut(&child).expect("library child").library = true;
+            }
+            for destination in [Uuid::nil(), Uuid::new_v4(), forbidden, child] {
+                inventory.upload_folders[kind.folder_slot()] = destination;
+                inventory.protected.insert(destination);
+                assert_eq!(
+                    Imports::default_folder(&world, &inventory, kind),
+                    fallback,
+                    "{kind:?}, folder type {folder_type}"
+                );
+            }
+            world.inventory.folders.remove(&child);
+            world.inventory.folders.remove(&forbidden);
+        }
+    }
+}
+
+#[test]
+fn restricted_text_uploads_clean_generated_labels_without_changing_local_paths() {
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.inventory.root = Uuid::from_u128(1);
+    world.inventory.created_folders(vec![aurora_net::inventory::InvFolder {
+        id: world.inventory.root,
+        parent: Uuid::nil(),
+        name: "Inventory".into(),
+        type_default: 8,
+        ..Default::default()
+    }]);
+    world.balance = Some(1000);
+    let mut imports = Imports::default();
+    for file in ["Été.png", "桜.png"] {
+        let mut entry = Entry::new(file.into(), Ok(Source::Texture(image(16, 16))), Default::default());
+        entry.folder = world.inventory.root;
+        assert_eq!(entry.path, PathBuf::from(file));
+        assert_eq!(
+            entry.name,
+            crate::text_validation::generated_name(Path::new(file).file_stem().expect("stem").to_str().expect("UTF-8"), 63)
+        );
+        assert!(crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.name));
+        imports.entries.push(entry);
+    }
+    imports.start(&world, &Default::default(), &Default::default(), &prices());
+    assert_eq!(imports.queue.len(), 2, "{}", imports.message);
+    assert_eq!(imports.entries[0].path, PathBuf::from("Été.png"));
+    assert_eq!(imports.entries[1].path, PathBuf::from("桜.png"));
+}
 
 #[test]
 fn authored_native_animation_opens_the_normal_inspector_without_starting_or_charging_an_upload() {
@@ -519,6 +721,74 @@ pub(super) fn mesh_fixture() -> mesh::Draft {
     let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml")).expect("skeleton");
     let scene = aurora_assets::import_mesh::collada::parse(demo::DAE.as_bytes(), &skeleton).expect("synthetic mesh");
     mesh::Draft::new(scene, HashMap::new())
+}
+
+pub(super) fn invalid_physics_fixture() -> mesh::Draft {
+    let mut draft = mesh_fixture();
+    for lod in &mut draft.lods[..3] {
+        lod.source = mesh::LodSource::Above;
+    }
+    let face = &mut Arc::make_mut(&mut draft.scene).models[0].faces[0];
+    let start = face.vertices.len() as u32;
+    let prototype = face.vertices[0].clone();
+    for position in [[0.0, 0.0, 0.0], [0.00001, 0.0, 0.0], [0.0, 0.00001, 0.0]] {
+        face.vertices.push(aurora_assets::import_mesh::Vertex {
+            position,
+            ..prototype.clone()
+        });
+    }
+    face.indices.extend([start, start + 1, start + 2]);
+    draft.options.physics_source = 3;
+    draft.options.resolution = 1000;
+    draft
+}
+
+#[test]
+fn mesh_physics_invalid_fee_preparation_keeps_geometry_for_repair_without_network_requests() {
+    let ctx = egui::Context::default();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let entry = Entry::new(
+        "physics.dae".into(),
+        Ok(Source::Mesh(Box::new(invalid_physics_fixture()))),
+        Default::default(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        choice: Choice::Mesh,
+        active: Some(id),
+        entries: vec![entry],
+        message: "Unrelated warning".into(),
+        ..Default::default()
+    };
+    imports.quote_mesh(id, &ctx, &jobs, &world, &Default::default(), Permissions::default());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let commands = imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, aurora_net::NetCommand::QuoteMesh { .. }))
+        );
+        let Some(Source::Mesh(draft)) = &imports.entries[0].source else {
+            panic!("mesh")
+        };
+        if draft.pending.is_none() {
+            assert_eq!(draft.prepared.as_ref().expect("geometry retained").degenerate_triangles, 1);
+            assert!(draft.quote.is_none());
+            assert!(
+                draft
+                    .inspector
+                    .log
+                    .contains(&aurora_i18n::tr!("import-degenerate-physics", count = 1))
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "physics worker did not complete");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(imports.message, "Unrelated warning");
+    assert!(imports.queue.is_empty() && imports.current.is_none());
 }
 
 #[test]

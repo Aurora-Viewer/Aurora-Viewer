@@ -139,6 +139,7 @@ pub enum Action {
     StageLocalUploads,
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
+    MapDrop(Uuid, usize, crate::ui::resource_drop::Target),
     Zoom(Uuid, Option<usize>),
     LargeMap(Uuid, usize),
     Remove(Uuid),
@@ -242,18 +243,30 @@ fn metadata_controls(ui: &mut egui::Ui, entry: &mut Entry) {
         .spacing(Vec2::new(12.0, 8.0))
         .show(ui, |ui| {
             ui.label(aurora_i18n::tr!("common-name"));
-            ui.add(
-                egui::TextEdit::singleline(&mut entry.name)
-                    .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
-                    .char_limit(63),
+            crate::ui::widgets::restricted_text_field(
+                ui,
+                true,
+                &mut entry.name,
+                crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                |b, ui| {
+                    egui::TextEdit::singleline(b)
+                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
+                        .char_limit(63)
+                },
             );
             ui.end_row();
             if !entry.local {
                 ui.label(aurora_i18n::tr!("common-description"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut entry.description)
-                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
-                        .char_limit(127),
+                crate::ui::widgets::restricted_text_field(
+                    ui,
+                    true,
+                    &mut entry.description,
+                    crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                    |b, ui| {
+                        egui::TextEdit::singleline(b)
+                            .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
+                            .char_limit(127)
+                    },
                 );
                 ui.end_row();
             }
@@ -361,7 +374,7 @@ pub fn show(
                         ui.label(aurora_i18n::tr!("import-confirm-shared-textures"));
                     }
                 }
-                if imports.folders.active() && !imports.folder_plan_ready(world, inventory_prefs) {
+                if imports.folders.active() && !imports.folder_plan_ready(world) {
                     ui.label(aurora_i18n::tr!("import-folders-auto-create"));
                 }
                 ui.horizontal(|ui| {
@@ -578,13 +591,14 @@ fn texture(
     }
     if *target != 0 {
         if let Some(model) = model {
-            aurora_render::preview::paint(
+            let response = aurora_render::preview::paint(
                 ui,
                 ui.scope_id().with(("texture_preview", id)),
                 model.clone(),
                 view,
                 Vec2::new(ui.available_width(), 260.0),
             );
+            widgets::local_texture::paint(ui, p, response.rect);
             preview_camera_controls(ui, p, view);
         } else {
             ui.spinner();
@@ -626,6 +640,7 @@ fn texture(
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             widgets::PICTURE_TINT,
         );
+        widgets::local_texture::paint(ui, p, rect);
     } else {
         ui.spinner();
     }
@@ -814,7 +829,7 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
         RichText::new(aurora_i18n::tr!(
             "import-animation-frames",
             frames = bvh.frames,
-            rate = format!("{:.2}", 1.0 / bvh.frame_time)
+            rate = format!("{:.2}", if bvh.frame_time > 0.0 { 1.0 / bvh.frame_time } else { 0.0 })
         ))
         .small()
         .color(p.muted),
@@ -894,7 +909,11 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                     {
                         *value = percent / 100.0 * animation.duration;
                     }
-                    let mut frame = (*value / bvh.frame_time).round() as usize;
+                    let mut frame = if bvh.frame_time > 0.0 {
+                        (*value / bvh.frame_time).round() as usize
+                    } else {
+                        0
+                    };
                     if ui
                         .add_sized(
                             Vec2::new(52.0, 26.0),

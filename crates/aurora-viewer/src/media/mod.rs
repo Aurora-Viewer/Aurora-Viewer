@@ -398,7 +398,6 @@ struct ObjMedia {
     /// Worn by us (an attachment or a HUD), its avatar already known: false
     /// while a parent has not arrived.
     on_own_avatar: bool,
-    owner: Uuid,
     /// Agent of the last media change ("x-mv:<version>/<agent>").
     changed_by: Uuid,
 }
@@ -650,6 +649,17 @@ fn sanitize(url: &str) -> String {
 }
 
 impl MediaManager {
+    /// After a GPU recovery (app/gpu_recovery.rs): the media slots were the
+    /// lost renderer's. Each one is made again, black, and its next frame
+    /// fills it (`update`: a slot 0 is fresh).
+    pub fn gpu_reset(&mut self) {
+        for m in &mut self.impls {
+            m.texture.slot = 0;
+            m.texture.ready = false;
+        }
+        self.pending_free.clear();
+    }
+
     /// SLPlugin / llplugin (searched once per configured folder and per state
     /// of Aurora's pack).
     pub fn plugins(&mut self, settings: &MediaSettings) -> Option<&PluginPaths> {

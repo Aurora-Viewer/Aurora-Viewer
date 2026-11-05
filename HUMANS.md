@@ -305,8 +305,8 @@ the PRs **ready to review / merge** (CI with its running duration, verdict of
 the agent's review), the PRs **waiting on the author** (dimmed, with why:
 `■ DRAFT`, `■ CI FAIL`, or `■ CHANGES ASKED` when a GitHub review requests
 changes or a comment opening with `## Maintainer review` or `## Changes
-requested` came after the last commit; a new commit brings the PR back to
-review) and the **recently merged** ones (how long ago: "04 min"). A PR with
+requested` came after the last commit; a new commit of the author brings the
+PR back to review, a merge of main into the branch does not) and the **recently merged** ones (how long ago: "04 min"). A PR with
 the `on-hold` label (put on hold at a human's request, AGENTS.md section 9)
 is left out of the panel, the banner and the notifications until the label
 is removed, unless it is in the merge queue. Each section shows, for
@@ -381,10 +381,13 @@ cargo run -p aurora-viewer
 
 ### Disk space
 
-Builds take space: count 3 to 4 GB per `target` folder (the repository, each
-task in progress, `RELEASE`). It is only cache, which can always be deleted:
-it will be rebuilt when needed. A new task frees by itself the `target` of
-the tasks that are merged or inactive for 7 days.
+Builds take space: count 5 to 20 GB per `target` folder (the repository, each
+task in progress, `RELEASE`), three quarters of it the `incremental` cache
+that only speeds up the next small rebuild of that task. It is only cache,
+which can always be deleted: it will be rebuilt when needed. A new task
+frees by itself the incremental cache of the tasks with no build for 24
+hours, and the whole `target` of the tasks that are merged or inactive for
+2 days.
 
 The **Disk** choice of the tools does the same as:
 
@@ -392,6 +395,7 @@ The **Disk** choice of the tools does the same as:
 ./scripts/clean.ps1                 # shows the space taken, deletes nothing
 ./scripts/clean.ps1 -Apply          # frees the builds of the repository (keeps target\release)
 ./scripts/clean.ps1 -Tasks -Apply   # also frees those of the tasks in progress
+./scripts/clean.ps1 -Incremental -Apply   # frees only the incremental caches of the tasks
 ```
 
 The script only deletes Cargo build folders, and refuses to work during a

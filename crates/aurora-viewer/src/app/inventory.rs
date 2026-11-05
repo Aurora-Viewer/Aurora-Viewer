@@ -48,12 +48,7 @@ impl App {
             };
             request.item = item.clone();
         }
-        if !task_inventory::destination(
-            &self.world.inventory,
-            request.folder,
-            &request.item,
-            &self.settings.inventory.protected,
-        ) {
+        if !task_inventory::destination(&self.world.inventory, request.folder, &request.item) {
             self.inventory_ui.message = aurora_i18n::tr!("task-transfer-destination").into();
             return;
         }
@@ -267,6 +262,16 @@ impl App {
         self.send(NetCommand::EditInventory { request, change });
     }
 
+    /// An inventory change, after the listings' questions; `drag` when it
+    /// comes from a drop on a folder.
+    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool) {
+        let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
+        if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
+            self.inventory_ui.consume_clipboard = cut;
+            self.submit_inventory_change(change);
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         if let InvAction::Share { resident, .. } = &action
             && !self.world.rlva.allows("share", &resident.to_string())
@@ -288,15 +293,10 @@ impl App {
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
-            InvAction::Edit(change) => {
-                let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
-                if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut) {
-                    self.inventory_ui.consume_clipboard = cut;
-                    self.submit_inventory_change(change);
-                }
-            }
+            InvAction::Edit(change) => self.edit_inventory(change, false),
+            InvAction::Drop(change) => self.edit_inventory(change, true),
             InvAction::Create { parent, kind, name } => {
-                if rules::destination(&self.world.inventory, parent, &self.settings.inventory.protected) {
+                if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
                         match crate::world::inventory::wearable::create_with_permissions(
                             kind,
@@ -526,7 +526,7 @@ impl App {
                 }
                 let worn = crate::ui::inventory::Facts::from_world(&self.world, false).worn;
                 for id in rules::roots(&self.world.inventory, &items) {
-                    match rules::offer(&self.world.inventory, id, &self.settings.inventory.protected, &worn) {
+                    match rules::offer(&self.world.inventory, id, &worn) {
                         Ok(bucket) => {
                             // LLGiveInventory removes copy-protected originals
                             // locally after the reliable offer, including folder contents.
@@ -631,7 +631,12 @@ impl App {
                 self.world.inventory.apply(reply.contents);
                 self.world.inventory.created_folders(reply.folders);
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
-                    let sync = crate::world::appearance::sync_plan(&self.world.inventory, self.world.agent_id, &self.outfit_sync_worn());
+                    let sync = crate::world::appearance::sync_plan_keeping(
+                        &self.world.inventory,
+                        self.world.agent_id,
+                        &self.world.outfit_attachment_items(),
+                        self.bridge_runtime.item(),
+                    );
                     for cmd in sync.commands {
                         self.send(cmd);
                     }
@@ -821,6 +826,22 @@ impl App {
     }
 
     pub(super) fn apply_appearance_action_from(&mut self, action: crate::world::appearance::Action, actor: Uuid) {
+        match &action {
+            crate::world::appearance::Action::ExportJson(folder) => {
+                let result =
+                    crate::world::outfit_backup::Backup::capture(&self.world.inventory, *folder, &self.world.outfit_attachment_points());
+                match result {
+                    Ok(backup) => self.appearance_ui.json.export(&self.egui_ctx, &self.world, backup),
+                    Err(reason) => self.appearance_ui.message = reason,
+                }
+                return;
+            }
+            crate::world::appearance::Action::PickJson => {
+                self.appearance_ui.json.import(&self.egui_ctx, &self.world);
+                return;
+            }
+            _ => {}
+        }
         let allow_recovery = self
             .appearance_ui
             .pending
@@ -880,7 +901,9 @@ impl App {
         }
         self.appearance_ui.saved_new = matches!(
             &action,
-            crate::world::appearance::Action::Save(Some(_)) | crate::world::appearance::Action::SaveIn(..)
+            crate::world::appearance::Action::Save(Some(_))
+                | crate::world::appearance::Action::SaveIn(..)
+                | crate::world::appearance::Action::ImportJson { .. }
         );
         let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
@@ -889,6 +912,7 @@ impl App {
                 self.appearance_ui.pending = Some((request, sync));
                 self.appearance_ui.pending_actor = actor;
                 self.appearance_ui.attachments = attachments;
+                self.appearance_ui.worn_before = self.world.outfit_attachment_items();
                 self.appearance_ui.message.clear();
                 let mut command = NetCommand::UpdateOutfit { request, change };
                 // An attachment the outfit write left out must not reach the
@@ -898,6 +922,14 @@ impl App {
                 if !self.world.rlva_allows_command(&command, actor) {
                     self.appearance_ui.pending = None;
                     self.appearance_ui.attachments.clear();
+                } else if let NetCommand::UpdateOutfit { change, .. } = &mut command {
+                    crate::world::appearance::defer_attachment_links(
+                        &self.world.inventory,
+                        change,
+                        &self.appearance_ui.worn_before,
+                        &mut self.appearance_ui.attachments,
+                        self.world.agent_id,
+                    );
                 }
                 self.send_from(command, actor);
             }
@@ -916,6 +948,25 @@ impl App {
         let worn = self.world.outfit_attachment_items();
         for command in self.appearance_ui.reload(&mut self.world.inventory, self.world.agent_id, &worn) {
             self.send(command);
+        }
+    }
+
+    /// Ctrl+C, Ctrl+X or Ctrl+V of Appearance, on the inventory's clipboard:
+    /// a paste goes through the inventory's paste, outfit rules included.
+    pub(super) fn appearance_clipboard(&mut self, ctx: &egui::Context, request: ui::appearance::ClipboardRequest) {
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        self.inventory_ui.message.clear();
+        let actions = ui::inventory::appearance_clipboard(
+            ctx,
+            &self.world.inventory,
+            &mut self.inventory_ui,
+            &self.settings.inventory,
+            &facts,
+            request,
+        );
+        self.appearance_ui.message.clone_from(&self.inventory_ui.message);
+        for action in actions {
+            self.apply_inventory_action(action);
         }
     }
 }

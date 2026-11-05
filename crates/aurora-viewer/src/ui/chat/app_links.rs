@@ -86,13 +86,16 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
         // "Region (x, y, z)" (LLUrlEntryParcel::processParcelInfo)
         AppLink::Parcel(id) => match world.profiles.parcels.get(id) {
             Some(d) if !d.name.is_empty() => d.name.clone(),
-            Some(d) if !d.sim_name.is_empty() => format!(
-                "{} ({}, {}, {})",
-                d.sim_name,
-                (d.global.x.round() as i64).rem_euclid(256),
-                (d.global.y.round() as i64).rem_euclid(256),
-                d.global.z.round() as i64
-            ),
+            Some(d) if !d.sim_name.is_empty() => {
+                let (x, y) = world.map.local_xy(d.global.x.round(), d.global.y.round());
+                format!(
+                    "{} ({}, {}, {})",
+                    d.sim_name,
+                    x.round() as i64,
+                    y.round() as i64,
+                    d.global.z.round() as i64
+                )
+            }
             Some(_) => aurora_i18n::tr!("ui-chat-applink-parcel-error").to_owned(),
             None => {
                 want(|w| {
@@ -207,7 +210,8 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
                     && let Some(d) = at
                 {
                     let g = d.global;
-                    let pos = glam::Vec3::new(g.x.rem_euclid(256.0) as f32, g.y.rem_euclid(256.0) as f32, g.z as f32);
+                    let (x, y) = world.map.local_xy(g.x, g.y);
+                    let pos = glam::Vec3::new(x as f32, y as f32, g.z as f32);
                     request(&ctx, CtxAction::ShowPlace(d.sim_name.clone(), pos));
                 }
             }

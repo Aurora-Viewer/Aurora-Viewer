@@ -111,6 +111,40 @@ while rethinking the user interface.
   </tr>
 </table>
 
+### New in 0.9.0 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>OpenSim and Hypergrid, for real</h3>
+      Your avatar bakes on grids that do not, large regions show past
+      256 m, and the inventory, outfits and profiles save without AIS.
+      The grid's own currency and money symbol, and a viewer that follows
+      the grid you are on after a Hypergrid teleport.
+    </td>
+    <td width="50%" valign="top">
+      <h3>Snap to objects, place on surface</h3>
+      Moved objects go flush against their neighbours, with purple guides
+      on the faces that meet. Press P to place the selection on any surface
+      or the ground, previewed as a hologram.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>The Legacy toolbar, complete</h3>
+      Quick preferences, a built-in web browser, the voice controls,
+      Statistics, Picks, Beacons and Show Friends Only on the toolbar, the
+      Legacy Viewer's menu shortcuts, and the fly override (Ctrl+Alt+V).
+    </td>
+    <td valign="top">
+      <h3>Steadier on your graphics card</h3>
+      Intel Iris Xe starts again, the card is shared fairly with other
+      viewers and programs, and Photo quality climbs as far as the video
+      memory allows instead of losing the card.
+    </td>
+  </tr>
+</table>
+
 Items marked <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle">
 are planned or in progress: they are not in the viewer yet.
 
@@ -151,6 +185,20 @@ are planned or in progress: they are not in the viewer yet.
   in Preferences, from the login screen on.
 - **Fast with a huge wardrobe**: the Appearance window stays smooth with
   thousands of outfits.
+- **Quick starts, every time**: Aurora keeps the graphics pipelines it
+  compiled, so a start no longer depends on the driver's own shader cache
+  still holding them.
+- **Light on a 4K screen**: on large scenes, ambient occlusion is computed
+  at half resolution and brought back along the depth, for the same image
+  at about a third of the cost.
+- **Sharp after a teleport**: in a busy region, texture memory comes down
+  once and holds, instead of blurring and sharpening again every few
+  seconds.
+- **Two viewers on one card**: a window in the background gives its video
+  memory back, and pauses its 3D drawing when the card is full, so the one
+  in front keeps its frame rate. Aurora also shares the card fairly with the
+  other viewers and programs on it, and caps world textures at 512, 1024 or
+  2048 pixels if you wish (Preferences › Graphics).
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
   graphics card.
 
@@ -221,6 +269,12 @@ are planned or in progress: they are not in the viewer yet.
   folder, or wear them straight away, replacing your outfit or adding to it.
 - **Sound Explorer**: find which object plays a sound, preview it, stop it or
   block it.
+- **Experiences that set the scene**: an experience you allow can change
+  your sky and water, as its creator meant; Forget or Block puts the shared
+  environment back, and so does leaving the region.
+- **Shopping in one click**: a vendor sells on a click on its price, a short
+  balance opens Buy L$ instead of greying the button, and Buy works from the
+  menu of any object for sale.
 - **Run your land**: a complete Region / Estate window (people and bans,
   interventions, scripts and physics with Top scripts / Top colliders,
   environment, experiences, covenant, telehub and terrain), in the Aurora
@@ -236,6 +290,16 @@ are planned or in progress: they are not in the viewer yet.
 - **PBR terrain**: regions whose ground uses PBR materials render with them,
   as in the Legacy Viewer, and estate managers preview a ground-cover change
   on the terrain before they apply it.
+- **OpenSim and the Hypergrid**: a grid manager for your grids, and on
+  grids without central baking your avatar bakes itself and is seen as you
+  dress it. Large regions show their land past 256 m, with the right
+  parcel lines and positions; the inventory, outfits, wearables and
+  profiles save on grids without AIS; Buy and prices use the grid's own
+  currency helper and money symbol. After a Hypergrid teleport the map,
+  search and links follow the grid you are on, and a trip that would leave
+  worn items behind asks first.
+- **Fly where you choose**: Me › Fly override (Ctrl+Alt+V) flies over land
+  that forbids it, after a word of caution on the risk of a ban.
 
 ### A photo mode like a real camera
 
@@ -256,6 +320,9 @@ are planned or in progress: they are not in the viewer yet.
   on-screen camera pad, and a 2 s or 10 s self-timer to get into your pose.
 - **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
   profile feed ([how to use it](#photos)).
+- **A photo roll**: the session's last 10 photos pile up in a small stack in
+  the viewfinder; look through them, then upload, e-mail or delete one
+  without taking another.
 - **Group photos, sharp**: Shift + click adds every avatar of a group shot
   to the focus, while the background keeps its blur.
 - **Pose without leaving the shot**: your HUDs answer clicks in the
@@ -312,7 +379,16 @@ are planned or in progress: they are not in the viewer yet.
   boundary shortcuts in the terrain menus. Default permissions (Inventory ›
   New) apply to everything you create or import. In a busy sandbox, select
   only your own objects, or only the ones you may move; prefer the classic
-  editor? Its Legacy layout is one switch away.
+  editor? Its Legacy layout is one switch away. A selection rectangle takes
+  only what it wholly surrounds (one switch to take all it touches), objects
+  rez and copy with your active group, BOM textures go in all four PBR maps,
+  and grayscale or 16-bit PNG textures upload as they are.
+- **Snap to objects and place on surface**: set Snap to Objects and what you
+  move goes flush against the objects around it, with purple guides on the
+  faces that meet, never pushing through them. Press P to place the
+  selection on any surface or on the ground, previewed as a hologram, with
+  an offset and the side to put down; a hologram can also show the moving
+  object, or where it started. Stretch Textures holds while you resize.
 - **Area search**: find the objects rezzed around you from World › Area
   search or a toolbar button. Search their name, description, owner,
   creator, group or UUID as you type, keep to the current parcel or reach
@@ -329,7 +405,8 @@ are planned or in progress: they are not in the viewer yet.
 ### An interface made for today
 
 - **Flat, calm and readable**: glass island bars, a notification center with
-  history, the Inter font throughout and a redesigned performance window.
+  history you can clear (finished script menus no longer pile up in it), the
+  Inter font throughout and a redesigned performance window.
 - **In English, French and Japanese (日本語)**: the whole interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
@@ -361,7 +438,8 @@ are planned or in progress: they are not in the viewer yet.
   mention someone in the conversation, names completed as you type, and `/`
   in nearby chat to find and play a gesture. Ctrl+Shift+Enter starts a new
   line, and pasted paragraphs keep their shape. Arabic and Hebrew read right
-  to left, in name tags, bubbles, floating text and conversations.
+  to left, in name tags, bubbles, floating text and conversations. A long
+  IM goes out as several messages instead of being cut off.
 - **Messages that matter, in front of you**: a message an estate manager
   sends to the region shows as a card in the middle of the screen, like a
   friendship offer, and a group notice shows its group, its insignia and
@@ -383,7 +461,10 @@ are planned or in progress: they are not in the viewer yet.
   controls and more).
 - **Arrange it your way**: customizable bottom, left and right toolbars,
   favourites in a menu, row or dock, and windows that move over the whole
-  screen.
+  screen. The Legacy Viewer's toolbar buttons are all there: Quick
+  preferences, a built-in web browser on a home page you choose, the voice
+  controls, Statistics, Picks, Beacons, Snapshot to disk and Show Friends
+  Only, each one lit while its window is open.
 - **Right-click menus that do it all**: Inspect an avatar, Derender and the
   asset blacklist, invite to a group, add to a contact set, block particles,
   give a calling card, and the object menus' entries working as you expect.
@@ -404,22 +485,32 @@ are planned or in progress: they are not in the viewer yet.
   Recent tab can cover a set period, such as the last week. Hover an item to
   preview its picture, and build an advanced search from visual rules
   ("objects or scripts, but not no-copy ones"), saved for later, or ask for
-  items similar to one.
+  items similar to one. Give a folder a colour of your own, seen by you
+  only.
 - **Outfits at hand**: the outfit menu on the outfit folders, and a
   double-click in the inventory to put something on or take it off. Group
   your outfits in folders right from Appearance, in the list and the
   gallery. Drag your tattoo, alpha or universal layers into the order you
   want, and see (and remove) what a script attached to you for a while.
+  Pick several items in an outfit or in Worn with Ctrl- and Shift-click and
+  wear, add or take them off at once; Remove from current outfit works on
+  any folder, a demo or a delivery as well as a saved outfit. Back an
+  outfit up to a JSON file and restore it later, even when some of its
+  items are gone, and cut, copy and paste in Appearance with Ctrl+X, Ctrl+C
+  and Ctrl+V.
 - **One search for everything**: type once and residents, places, events,
   groups and classifieds come back together, with type chips, filters on
   one line and the details beside the results.
 - **Places with a preview**: favourites, landmarks and history in one list,
   with parcel snapshots, a star to add a favourite and, widened, folders and
   a preview of the selected place. Hold the back arrow of the top bar to
-  list every place of the session and go back in one click.
+  list every place of the session and go back in one click, and log in
+  straight at a favourite landmark from the login screen's Start menu.
 - **People and places at a glance**: redesigned resident and group profiles,
   a People window for friends, groups, contact sets, recent and blocked
-  residents, and a world map with floating controls.
+  residents, and a world map with floating controls. Wear a group title
+  chosen by region, and find your experiences and what their scripts did
+  in Me › Experiences.
 - **Name tags your way**: show or hide your own tag, your friends' and other
   residents' separately, or show them for a few seconds before they fade.
   Your friends' plates take the friends' colour, so they stand out in a
@@ -431,9 +522,12 @@ are planned or in progress: they are not in the viewer yet.
   automatically in mouselook.
 - **Ready for your keyboard**: movement keys adapt to the keyboard layout on
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
-  their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
-  action, category or key. On the Mac, Command works as Control and
-  shortcuts read ⌘ ⌥ ⇧, as macOS users expect.
+  their letter (M is M on AZERTY too). The Legacy Viewer's menu shortcuts
+  work too (Ctrl+O, Ctrl+Shift+F, H on a build selection…). Search
+  Preferences › Shortcuts by action, category or key. On the Mac, Command works as Control and
+  shortcuts read ⌘ ⌥ ⇧, as macOS users expect. A gamepad's buttons,
+  triggers and sticks are assigned by simply pressing them, and the flycam
+  gets its own zoom controls.
 - **Copy what you need**: click a name in a profile to copy it, select and
   copy the text of a greyed-out field (a no-modify object's name, a
   parcel's media address), and copy an outfit's item names and creator
@@ -441,7 +535,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Made for every eye**: an Accessibility page gathers the settings that
   help (interface scale, text size up to twice the normal size, reduce
   motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and
-  volume sliders that follow your ear are a click away.
+  volume sliders that follow your ear are a click away, and the chat can
+  have a text size of its own.
 - **Your colours**: pick the accent, window background and text colours in
   Preferences; Aurora keeps them readable.
 - **A clock in the bars**, with your local time and its zone, and a balance
@@ -458,8 +553,19 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Only in Aurora
 
-- **Portals to walk through**: open a portal to a place, or drop a landmark
-  into the world, and walk, run or fly through it to teleport. Other Aurora
+- <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"> **Immersive sound**: world sounds muffled behind walls, hills
+  and inside closed boxes, heard in front, behind, above or below with
+  headphones (HRTF), and given the reverb of the place around you, changing
+  as you walk through a door. Each part has its own switch in Preferences ›
+  Sound; HRTF and reverb are off by default.
+- <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"> **VR headset viewing**: look around the world in stereo with an
+  OpenXR headset, tested on Windows and Linux (the macOS path awaits its
+  first headset), from your avatar's
+  eyes or the desktop camera. Viewing only: exit with Esc to chat, build or
+  move ([setup and limits](docs/VR.md)).
+- **Portals to walk through**: open a portal to a place, drop a landmark
+  into the world, or drag a place there from Favorites, Places, the teleport
+  history or search results, and walk, run or fly through it to teleport. Other Aurora
   users see it too: your friends by default, everyone if you choose, and a
   portal that appears on someone never pulls them in.
 - **Just your parcel, if you like**: hide what stands outside the current
@@ -498,7 +604,9 @@ are planned or in progress: they are not in the viewer yet.
   [NOTICE.md](NOTICE.md).
 - **Windows, Linux and macOS**: every release has a Linux build
   ([install guide](docs/LINUX.md)), with its sound through PulseAudio or
-  PipeWire and the desktop's notifications, and a macOS application for
+  PipeWire, the desktop's notifications, the keyboard layout read from the
+  desktop, the resource monitor and web pages from a Legacy Viewer install's
+  plugins, and a macOS application for
   Apple Silicon, drawn through Metal, with web pages and video in the world
   ([install guide](docs/MACOS.md)).
 
@@ -534,7 +642,8 @@ The texture memory budget is set automatically from the detected VRAM.
   occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
   water, glow, particles, rainbows, 22° halos and depth of field;
   screen-space indirect light, GPU occlusion and enhanced water effects (all
-  experimental), graphics presets and per-section resets.
+  experimental), graphics presets and per-section resets; headset viewing
+  through OpenXR (experimental, view only).
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
   a shape editor with textured mesh previews, skin, hair, eyes, tattoo,
@@ -554,14 +663,18 @@ The texture memory budget is set automatically from the detected VRAM.
   consenting nearby avatars, with a pose library, BVH export and animation
   import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
 - **World** — prims, sculpts, mesh with LOD, classic and PBR terrain, EEP environment,
-  sky, water and day-cycle editors, world sounds, parcel music and media
+  sky, water and day-cycle editors, experience environments, world sounds
+  with occlusion, headphone HRTF and room reverb (experimental), parcel
+  music and media
   on prims, with Aurora's downloadable media plugins pack; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
   walk-through portals shared with other Aurora users, with friend/group
   access and protection against portals appearing on top of someone;
   parcel content isolation, a grid status window, and a live particle
-  editor.
+  editor; OpenSim grids and the Hypergrid, with a grid manager, avatars
+  baked by the viewer where the grid does not bake, large regions, and
+  grids without AIS.
 - **Photos and camera** — a full-screen viewfinder with face autofocus, lens
   rings, focus peaking, a live histogram, exposure lock and a self-timer;
   group focus, HUDs and the poser in the viewfinder; snapshots up to 8K to
@@ -599,7 +712,7 @@ The texture memory budget is set automatically from the detected VRAM.
   second inventory window, resizable columns, advanced searches from visual
   rules and saved searches, picture previews on hover, giving by dropping on a
   profile or an avatar, copying or wearing an object's contents, inventory
-  tools, dedicated Marketplace and
+  tools, folder colours, outfit backups to JSON, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
 - **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
@@ -639,7 +752,8 @@ Voice is WebRTC only; Vivox is not supported.
 - Compression for the textures that fast BC7 encoding would harm (they
   stay uncompressed and are decoded at each visit).
 - The water effects out of their experimental stage.
-- Maybe a VR mode with controller support.
+- Immersive sound out of its experimental stage.
+- VR beyond viewing: controllers, menus and moving around in the headset.
 
 The detailed list of what is done, in progress and to do is in
 [TASKS.md](TASKS.md).
@@ -714,6 +828,8 @@ cycle button between them, the AO switch, and swimming or water walking. The
 run and flight boosts are in Settings › Movement. Its **Settings** button
 opens the full Animation Overrider, with its movement editor and the
 animation lists by category (General, Ground, Jumping, Flying, Swimming).
+Each account remembers its last animation in every list and independent track
+after reconnecting; automatic cycling continues according to the set's options.
 Swimming has its own lists at the surface and underwater. Sets are kept under `#Aurora/Aurora AO`; at first
 start, the sets of a Legacy Viewer `#Firestorm/#AO` folder are brought over.
 Import a ZHAO notecard from the same folder as its animations. The AO is off at first, as in the Legacy Viewer. `cao on` /
