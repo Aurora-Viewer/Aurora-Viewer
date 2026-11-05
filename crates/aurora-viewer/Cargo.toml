@@ -56,7 +56,6 @@ png = "0.18.1"
 md5 = "0.8.1"
 memmap2 = "0.9.11"
 parking_lot = "0.13.0"
-pollster = "1.0.1"
 # CommonMark parsing for notecard previews; MIT licensed, no HTML runtime.
 pulldown-cmark = { version = "0.13.4", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
@@ -141,6 +140,9 @@ libc = "0.2.190"
 # (mac_quit.rs); the versions already in the tree
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
+# The graphics card box (app/gpu_stall.rs): a CFUserNotification kept to be
+# cancelled; already in the tree through rfd
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFBase", "CFDate", "CFDictionary", "CFString", "CFUserNotification"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The freedesktop notification service (system_notify.rs), over the session

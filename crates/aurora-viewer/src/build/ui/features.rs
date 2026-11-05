@@ -359,13 +359,18 @@ fn light_section(
             p,
             env.images,
             &mut tool.ui.wanted_images,
-            img.map(|i| i.texture),
+            world
+                .objects
+                .get(idx)
+                .and_then(|object| object.visual_light_image())
+                .map(|image| image.texture),
             if legacy { "" } else { aurora_i18n::tr!("common-texture") },
             swatch_size,
             false,
             on,
         )
         .on_hover_text(aurora_i18n::tr!("common-texture"));
+        super::texture::texture_drop::slot(ui, p, tool, world, r.rect, PickTarget::LightTexture, on);
         let demo_picker = egui::Id::unique("demo_light_texture_picker_opened");
         let demo_open = env.demo
             && on

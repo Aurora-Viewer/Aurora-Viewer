@@ -320,6 +320,9 @@ are planned or in progress: they are not in the viewer yet.
   on-screen camera pad, and a 2 s or 10 s self-timer to get into your pose.
 - **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
   profile feed ([how to use it](#photos)).
+- **A photo roll**: the session's last 10 photos pile up in a small stack in
+  the viewfinder; look through them, then upload, e-mail or delete one
+  without taking another.
 - **Group photos, sharp**: Shift + click adds every avatar of a group shot
   to the focus, while the background keeps its blur.
 - **Pose without leaving the shot**: your HUDs answer clicks in the
