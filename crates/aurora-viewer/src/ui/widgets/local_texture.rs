@@ -115,7 +115,7 @@ mod tests {
             let mut preview = Rect::NOTHING;
             let mut clicked = false;
             let mut draw = |events| {
-                ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                         events,
@@ -136,7 +136,9 @@ mod tests {
                         preview = response.rect;
                         clicked = response.clicked();
                     },
-                )
+                );
+                output.textures_delta.clear();
+                output
             };
             let output = draw(vec![]);
             let badge = output
