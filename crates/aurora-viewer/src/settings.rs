@@ -306,6 +306,8 @@ pub struct HoverTips {
     /// human's choice (2026-10-21); the Legacy Viewer's is on.
     pub enabled: bool,
     pub form: HoverTipForm,
+    /// Show avatar names independently of object tips (Preferences › Interface).
+    pub avatars: bool,
     /// ShowAllObjectHoverTip: every object, not only those that can be
     /// touched, paid, bought or have media (off, as in the Legacy Viewer).
     pub all_objects: bool,
@@ -328,6 +330,7 @@ impl Default for HoverTips {
         HoverTips {
             enabled: false,
             form: HoverTipForm::Card,
+            avatars: true,
             all_objects: false,
             land: false,
             group_titles: true,
@@ -3060,6 +3063,16 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn avatar_hover_tips_default_on_and_old_preferences_load_it() {
+        use super::HoverTips;
+        assert!(HoverTips::default().avatars);
+        let old: HoverTips = serde_json::from_str(r#"{"enabled":true,"all_objects":false}"#).expect("older hover preferences");
+        assert!(old.avatars);
+        assert!(old.enabled);
+        assert!(!old.all_objects);
+    }
+
     #[test]
     fn projector_shadow_budget_survives_restart_and_clamps_untrusted_values() {
         use super::Settings;

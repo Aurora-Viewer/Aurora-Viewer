@@ -56,7 +56,8 @@ impl App {
             None => self
                 .look_hover
                 .and_then(|(idx, point)| tips::subject_at(&self.world, idx, point).map(|s| (s, point))),
-        };
+        }
+        .filter(|(subject, _)| tips::subject_enabled(*subject, &settings));
         let subject = hovered.map(|(s, _)| (s, s.key(&self.hover_tips.parcels)));
         // the parcel under a bare ground point, or under the subject for the
         // readout's second line (setHoverParcel)

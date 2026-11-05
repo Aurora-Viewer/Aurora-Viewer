@@ -14,6 +14,35 @@ fn object(n: u128) -> (Subject, Key) {
     )
 }
 
+#[test]
+fn avatar_subjects_follow_their_option_independently_of_object_and_land_options() {
+    let avatar = Subject::Avatar {
+        idx: 1,
+        id: Uuid::from_u128(1),
+    };
+    let (object, _) = object(2);
+    let land = Subject::Land {
+        handle: 0,
+        local: Vec3::ZERO,
+        origin: (0, 0),
+    };
+    for avatars in [false, true] {
+        for all_objects in [false, true] {
+            for land_enabled in [false, true] {
+                let settings = HoverTips {
+                    avatars,
+                    all_objects,
+                    land: land_enabled,
+                    ..HoverTips::default()
+                };
+                assert_eq!(subject_enabled(avatar, &settings), avatars);
+                assert!(subject_enabled(object, &settings));
+                assert_eq!(subject_enabled(land, &settings), land_enabled);
+            }
+        }
+    }
+}
+
 struct Run {
     timing: Timing,
     start: Instant,

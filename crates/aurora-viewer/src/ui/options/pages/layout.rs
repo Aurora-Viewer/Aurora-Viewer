@@ -147,6 +147,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 ],
             );
             cx.toggle(
+                tr!("ui-options-hover-tips-avatars"),
+                tr!("ui-options-hover-tips-avatars-help"),
+                &field!(hover_tips.avatars),
+            );
+            cx.toggle(
                 tr!("ui-options-hover-tips-land"),
                 tr!("ui-options-hover-tips-land-help"),
                 &field!(hover_tips.land),

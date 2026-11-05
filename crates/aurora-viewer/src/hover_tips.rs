@@ -541,7 +541,8 @@ pub struct Sources<'a> {
 pub fn build(world: &mut World, subject: Subject, s: &Sources, settings: &HoverTips) -> Option<Tip> {
     match subject {
         Subject::Object { idx, root, root_id } => object_tip(world, idx, root, root_id, s, settings),
-        Subject::Avatar { idx, id } => Some(avatar_tip(world, idx, id, s, settings)),
+        Subject::Avatar { idx, id } if settings.avatars => Some(avatar_tip(world, idx, id, s, settings)),
+        Subject::Avatar { .. } => None,
         Subject::Land { handle, local, origin } => {
             if !settings.land {
                 return None;
@@ -549,6 +550,16 @@ pub fn build(world: &mut World, subject: Subject, s: &Sources, settings: &HoverT
             let parcel = s.parcels.at(handle, local, origin)?.clone();
             Some(land_tip(world, &parcel, s.point))
         }
+    }
+}
+
+/// Whether this kind of hovered subject is enabled in Preferences. Object
+/// interaction and land details are checked by their respective builders.
+pub fn subject_enabled(subject: Subject, settings: &HoverTips) -> bool {
+    match subject {
+        Subject::Avatar { .. } => settings.avatars,
+        Subject::Object { .. } => true,
+        Subject::Land { .. } => settings.land,
     }
 }
 
