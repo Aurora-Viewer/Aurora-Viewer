@@ -25,6 +25,8 @@ pub(super) struct DragState {
     /// A face of what we wear under the pointer, from the last answer.
     worn: Option<(usize, u8)>,
     pub highlighted: Vec<(usize, u64)>,
+    /// A drop waiting for the no-copy confirmation, and its object.
+    confirm: Option<(Drop, Uuid)>,
 }
 impl DragState {
     fn end_worn_search(&mut self, renderer: &mut Renderer) {
@@ -42,6 +44,8 @@ pub(super) struct Drop {
     all: bool,
     /// With `all`: every prim of the worn linkset, not only the one hit.
     linkset: bool,
+    /// The no-copy confirmation was answered.
+    confirmed: bool,
     contents: bool,
     remove_pbr: bool,
 }
@@ -98,6 +102,12 @@ fn worn_drop_keys(ui: &mut egui::Ui, p: &crate::theme::Palette, shift: bool, lin
 fn drop_prims(world: &World, idx: usize, linkset: bool) -> Vec<usize> {
     let root = contents_drop::linkset(world, idx).filter(|_| linkset);
     root.map_or_else(|| vec![idx], |(root, _)| crate::build::family(world, root))
+}
+/// Whether a drop moves `item` out of the inventory for good: a no-copy item
+/// the object does not hold yet (handleDropMaterialProtections). The asset of
+/// the library or of the object's contents costs nothing.
+fn no_copy_leaves(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, agent: Uuid, retained: bool) -> bool {
+    !retained && !rules::library(inv, item.id) && permissions(item, agent) & rules::COPY == 0
 }
 fn selection_copy_denied(item: &aurora_net::inventory::InvItem, agent: Uuid, objects: usize) -> bool {
     objects > 1 && permissions(item, agent) & rules::COPY == 0
@@ -966,16 +976,75 @@ impl App {
                 face,
                 all: drag.shift,
                 linkset,
+                confirmed: false,
                 contents: ctrl,
                 remove_pbr: self.alt,
             });
         }
         None
     }
+    /// Whether the contents of `object` already hold the asset of `item`.
+    fn contents_retain(&self, object: Uuid, item: &aurora_net::inventory::InvItem) -> bool {
+        self.build.contents.objects.get(&object).is_some_and(|inv| {
+            inv.items
+                .iter()
+                .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
+        })
+    }
+
+    /// LLToolDragAndDrop::dad3dApplyToObject's "ApplyInventoryToObject": a
+    /// no-copy item is only applied once the user agrees to move it. Gives
+    /// the drop back when they do; the object is looked up again, as the
+    /// dialog can stay open for long.
+    pub(super) fn no_copy_drop_prompt(&mut self, ctx: &egui::Context) -> Option<Drop> {
+        self.library_drag.confirm.as_ref()?;
+        let p = &self.palette;
+        let mut answer = ctx.input(|i| i.key_pressed(egui::Key::Escape)).then_some(false);
+        ui::widgets::Modal::new(egui::Id::unique("texture-no-copy-drop")).show(ctx, |ui| {
+            ui.set_max_width(380.0);
+            ui.label(aurora_i18n::tr!("texture-library-no-copy-drop"));
+            ui.add_space(6.0);
+            ui.label(aurora_i18n::tr!("texture-library-no-copy-drop-question"));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button(aurora_i18n::tr!("common-cancel")).clicked() {
+                    answer = Some(false);
+                }
+                if ui::widgets::action_button(
+                    ui,
+                    p,
+                    "check",
+                    aurora_i18n::text("common-move"),
+                    ui::widgets::ActionKind::Primary,
+                    egui::vec2(0.0, 28.0),
+                )
+                .clicked()
+                {
+                    answer = Some(true);
+                }
+            });
+        });
+        let accepted = answer?;
+        let (mut drop, object) = self.library_drag.confirm.take()?;
+        drop.object = self.world.objects.index_of_uuid(&object).filter(|_| accepted)?;
+        drop.confirmed = true;
+        Some(drop)
+    }
+
     pub(super) fn apply_texture_library_drop(&mut self, drop: Drop) {
         let Some(item) = catalogue::resource(&self.world.inventory, drop.item).cloned() else {
             return;
         };
+        if !drop.confirmed && !drop.contents {
+            let Some(object) = self.world.objects.get(drop.object).map(|o| o.full_id) else {
+                return;
+            };
+            let retained = self.contents_retain(object, &item);
+            if no_copy_leaves(&self.world.inventory, &item, self.world.agent_id, retained) {
+                self.library_drag.confirm = Some((drop, object));
+                return;
+            }
+        }
         let mut applied = false;
         for idx in drop_prims(&self.world, drop.object, drop.all && drop.linkset) {
             let Some(object) = self.world.objects.get(idx) else { continue };
@@ -1088,11 +1157,7 @@ impl App {
         if !contents && contents_drop::worn_image_refused(&self.world, idx, item) {
             return false;
         }
-        let retained = self.build.contents.objects.get(&object_id).is_some_and(|inv| {
-            inv.items
-                .iter()
-                .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
-        });
+        let retained = self.contents_retain(object_id, item);
         if contents || requires_contents(&self.world.inventory, item, self.world.agent_id) && !retained {
             if super::inventory_drag::target_allowed(&self.world, idx, item, true).is_err() {
                 return false;
@@ -1138,6 +1203,20 @@ impl App {
 mod tests {
     use super::*;
     use aurora_net::inventory::InvItem;
+    #[test]
+    fn only_a_no_copy_item_the_object_lacks_asks_before_it_moves() {
+        let agent = Uuid::from_u128(0xa6);
+        let inv = crate::world::inventory::Inventory::default();
+        let item = |owner_mask| InvItem {
+            owner: agent,
+            owner_mask,
+            ..Default::default()
+        };
+        let no_copy = item(rules::TRANSFER);
+        assert!(no_copy_leaves(&inv, &no_copy, agent, false));
+        assert!(!no_copy_leaves(&inv, &no_copy, agent, true), "already in the object");
+        assert!(!no_copy_leaves(&inv, &item(rules::COPY | rules::TRANSFER), agent, false));
+    }
     #[test]
     fn only_ctrl_shift_over_what_is_worn_takes_the_whole_linkset() {
         assert!(linkset_drop(true, true, true));

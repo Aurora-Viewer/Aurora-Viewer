@@ -10570,6 +10570,9 @@ impl App {
                     library_drop = self.texture_library_drag_input(ui.ctx(), &mut gfx.renderer);
                 }
             }
+            if library_drop.is_none() {
+                library_drop = self.no_copy_drop_prompt(ui.ctx());
+            }
             // after every window: their text fields have been drawn
             self.text_menu.after(ui.ctx(), &self.palette);
             // the glass blurs the world: there is none behind the login screen
