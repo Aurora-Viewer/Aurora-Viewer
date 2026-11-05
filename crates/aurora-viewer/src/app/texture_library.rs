@@ -15,6 +15,7 @@ pub(super) struct DragState {
     ray: Option<(Vec3, Vec3)>,
     checked: Option<Instant>,
     target: Option<(usize, u8)>,
+    pub highlighted: Option<(usize, u64)>,
 }
 pub(super) struct Drop {
     item: Uuid,
@@ -80,6 +81,59 @@ impl App {
             pressed,
             modifiers: Default::default(),
         };
+        if mode.starts_with("face-") {
+            let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(970)) else {
+                return;
+            };
+            let Some(target) = self.world.objects.get(idx).and_then(|o| self.build.cam.project(o.position)) else {
+                return;
+            };
+            let item = if mode.contains("material") {
+                crate::demo::texture_library::preview_items()[2]
+            } else {
+                crate::demo::texture_library::first_texture()
+            };
+            let modifiers = egui::Modifiers {
+                shift: mode.contains("all"),
+                ctrl: mode.contains("contents"),
+                ..Default::default()
+            };
+            raw.events.push(egui::Event::ModifiersChanged(modifiers));
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+            };
+            match self.frame_count {
+                650 => {
+                    egui::DragAndDrop::set_payload(&self.egui_ctx, ui::inventory::InvDrag(item));
+                    raw.events.extend([egui::Event::PointerMoved(target), button(target, true)]);
+                }
+                651..=729 => raw.events.push(egui::Event::PointerMoved(target)),
+                730 if mode.contains("drop") => raw.events.push(button(target, false)),
+                730 if mode.contains("cancel") => raw.events.push(egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }),
+                730 if mode.contains("ui") => {
+                    if let Some(point) = self
+                        .egui_ctx
+                        .data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique("texture_library_first_card")))
+                    {
+                        raw.events.push(egui::Event::PointerMoved(point));
+                    }
+                }
+                _ => {}
+            }
+            if matches!(self.frame_count, 700 | 750) {
+                log::info!("demo face drop: mode={mode}, highlighted={:?}", self.library_drag.highlighted);
+            }
+            return;
+        }
         if mode.starts_with("types") {
             if let Some(point) = self
                 .egui_ctx
@@ -324,6 +378,26 @@ impl App {
             self.settings.texture_library.texture_preview_size = None;
             self.settings.texture_library.material_preview_size = None;
             self.texture_library.demo(&mode, self.world.agent_id);
+            if mode.starts_with("face-") {
+                if let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(970)) {
+                    let position = self.world.agent.position + Vec3::new(0.0, -2.0, 1.0);
+                    if let Some(object) = self.world.objects.get_mut(idx) {
+                        object.position = position;
+                        object.scale = Vec3::splat(1.5);
+                        object.rotation = glam::Quat::IDENTITY;
+                        if mode.contains("transparent")
+                            && let Some(te) = object.te.as_mut()
+                        {
+                            for face in &mut Arc::make_mut(te).faces {
+                                face.color[3] = 0.0;
+                            }
+                        }
+                        object.material_dirty = true;
+                        object.render.needs_records = true;
+                    }
+                }
+                self.camera.demo_orbit(0.0, 0.15, Some(8.0), &self.settings.camera);
+            }
             if ui::inventory::drag::demo::enabled() {
                 self.panels.texture_library = false;
                 self.panels.inventory = false;
@@ -628,6 +702,7 @@ impl App {
         true
     }
     pub(super) fn texture_library_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<Drop> {
+        self.library_drag.highlighted = None;
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return None;
         }
@@ -646,16 +721,32 @@ impl App {
                 .checked
                 .is_none_or(|at| at.elapsed() >= Duration::from_millis(100));
         if refresh {
-            let hud = self.scene.hud_edit_pick(&self.world, position);
-            let surface = if let Some((idx, _, ray)) = hud {
-                self.scene.touch_surface(&self.world, idx, ray).map(|s| (idx, s.face as u8))
-            } else {
-                self.scene
-                    .inventory_surface(&self.world, ray, self.settings.draw_distance, &mut self.library_drag.candidates)
-                    .and_then(|(_, idx)| idx)
-                    .and_then(|idx| self.scene.touch_surface(&self.world, idx, ray).map(|s| (idx, s.face as u8)))
-            };
-            self.library_drag.target = surface;
+            // Unlike rez supports, texture/material targets include transparent
+            // faces. Keep the exact face from the same query as the object.
+            let hud = self
+                .settings
+                .show_huds
+                .then_some(self.scene.lists.hud_view)
+                .flatten()
+                .and_then(|view| {
+                    self.scene.resource_drop_face_at_ray(
+                        &self.world,
+                        view.ray(position.0, position.1),
+                        true,
+                        f32::INFINITY,
+                        &mut self.library_drag.candidates,
+                    )
+                });
+            let surface = hud.or_else(|| {
+                self.scene.resource_drop_face_at_ray(
+                    &self.world,
+                    ray,
+                    false,
+                    self.settings.draw_distance,
+                    &mut self.library_drag.candidates,
+                )
+            });
+            self.library_drag.target = surface.map(|(idx, face)| (idx, face as u8));
             self.library_drag.ray = Some(ray);
             self.library_drag.checked = Some(Instant::now());
         }
@@ -716,12 +807,24 @@ impl App {
         if reason.is_none()
             && let Some((idx, face)) = target
             && !drag.ctrl
+            && !drag.released
+            && face < 64
         {
-            let mut highlighted = self.build.face_selection(&self.world, &self.settings.build);
-            if face < 64 {
-                *highlighted.entry(idx).or_default() |= 1u64 << face;
-                self.scene.set_face_selection(&mut self.world, highlighted);
-            }
+            let mask = if drag.shift {
+                self.world
+                    .objects
+                    .get(idx)?
+                    .te
+                    .as_ref()?
+                    .faces
+                    .iter()
+                    .take(64)
+                    .enumerate()
+                    .fold(0, |mask, (i, _)| mask | 1u64 << i)
+            } else {
+                1u64 << face
+            };
+            self.library_drag.highlighted = Some((idx, mask));
         }
         if drag.released {
             egui::DragAndDrop::clear_payload(ctx);
@@ -734,7 +837,7 @@ impl App {
                 item: drag.item,
                 object,
                 face,
-                all: self.shift,
+                all: drag.shift,
                 contents: drag.ctrl,
                 remove_pbr: self.alt,
             })
