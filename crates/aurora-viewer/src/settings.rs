@@ -678,6 +678,8 @@ pub struct Settings {
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
     pub window_maximized: bool,
+    /// Start in a borderless window covering the current monitor.
+    pub window_fullscreen: bool,
     /// Legacy single-account authorization, read once for migration only.
     #[serde(skip_serializing)]
     pub mfa_hash: String,
@@ -1852,6 +1854,7 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            window_fullscreen: false,
             mfa_hash: String::new(),
             font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
@@ -2747,6 +2750,7 @@ impl Settings {
             window_x: old.window_x,
             window_y: old.window_y,
             window_maximized: old.window_maximized,
+            window_fullscreen: old.window_fullscreen,
             // a newer build's own values are not this build's to reset
             newer_file: old.newer_file,
             // Named profiles are user content, like separate preset files.
@@ -3897,6 +3901,23 @@ mod tests {
         left.window_maximized = true;
         let json = serde_json::to_string(&left).expect("serialize synthetic settings");
         assert_eq!(state(&json), (true, false));
+    }
+
+    #[test]
+    fn borderless_fullscreen_defaults_off_and_round_trips() {
+        let defaults = Settings::default();
+        assert!(!defaults.window_fullscreen);
+
+        let path = scratch_settings_file();
+        let settings = Settings {
+            window_fullscreen: true,
+            ..defaults
+        };
+        settings.save_to(&path);
+        let loaded = Settings::load_from(&path);
+
+        assert!(loaded.window_fullscreen);
+        let _ = std::fs::remove_dir_all(path.parent().expect("settings directory"));
     }
 
     #[test]

@@ -199,9 +199,11 @@ impl MediaManager {
             forget_slot(&mut self.slot_ids, idx, &o.full_id);
             return;
         }
-        let avatar = attachment_avatar(world, idx);
+        let worn = attachment_avatar(world, idx);
+        let avatar = worn.map(|(avatar, _)| avatar);
         let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
         let on_own_avatar = !world.agent_id.is_nil() && avatar == Some(world.agent_id);
+        let own_creation = on_own_avatar && worn.is_some_and(|(_, root)| made_by_us(world, root));
         let e = self.objects.entry(o.full_id).or_default();
         if e.idx != idx {
             forget_slot(&mut self.slot_ids, e.idx, &o.full_id);
@@ -211,6 +213,7 @@ impl MediaManager {
         e.hud = hud(idx);
         e.on_other_avatar = on_other_avatar;
         e.on_own_avatar = on_own_avatar;
+        e.own_creation = own_creation;
         e.changed_by = entry::media_version_agent(&o.media_url);
         if let Some(local) = local {
             if e.data.is_none() {
@@ -353,19 +356,28 @@ impl MediaManager {
 
     /// The media filter (filterMediaUrl), before any plugin or type request
     /// reaches the site: a wanted media whose site has no answer yet waits
-    /// unloaded, a refused one is no longer wanted. Media on our own worn
-    /// items is not asked about (`filter_trust_own_worn`).
+    /// unloaded, a refused one is no longer wanted. Media on items we wear
+    /// and made ourselves is not asked about (`filter_trust_own_worn`). A
+    /// script, a file of this computer or a browser page never loads, with
+    /// the filter off too (`filter::refused_scheme`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
         let objects = &self.objects;
         for m in &mut self.impls {
             m.filter_hold = false;
-            if !f.settings.filter || !m.wanted {
+            if !m.wanted {
                 continue;
             }
             let source = match m.key {
                 MediaKey::Parcel => Source::ParcelMedia,
                 MediaKey::Prim { .. } => Source::PrimMedia,
             };
+            if world.media_filter.refuse_scheme(&m.url, source) {
+                m.wanted = false;
+                continue;
+            }
+            if !f.settings.filter {
+                continue;
+            }
             let verdict = if trusted_by_filter(objects, m.key, f.settings) {
                 world.media_filter.check_trusted(&m.url, source)
             } else {
@@ -878,25 +890,43 @@ fn forget_slot(slot_ids: &mut HashMap<usize, Uuid>, idx: usize, id: &Uuid) {
     }
 }
 
-/// Whether the media filter loads a media without asking: on our own worn
-/// items (attachments and HUDs) when the option is on. Another avatar's
-/// attachments, objects in the world, the parcel media, and an item whose
-/// avatar has not arrived yet are asked about.
+/// Whether the media filter loads a media without asking: on items we wear
+/// (attachments and HUDs) and made ourselves, when the option is on. A worn
+/// item someone else made can hold a script of theirs that changes the
+/// address, so it asks, as do a worn item whose creator is not known yet
+/// (its inventory item not fetched, a temporary attachment), another
+/// avatar's attachments, objects in the world, the parcel media, and an
+/// item whose avatar has not arrived yet.
 fn trusted_by_filter(objects: &HashMap<Uuid, ObjMedia>, key: MediaKey, settings: &MediaSettings) -> bool {
     settings.filter_trust_own_worn
         && match key {
-            MediaKey::Prim { object, .. } => objects.get(&object).is_some_and(|om| om.on_own_avatar),
+            MediaKey::Prim { object, .. } => objects.get(&object).is_some_and(|om| om.on_own_avatar && om.own_creation),
             MediaKey::Parcel => false,
         }
 }
 
-/// Root avatar of an attachment.
-fn attachment_avatar(world: &World, mut idx: usize) -> Option<Uuid> {
+/// Whether the attachment whose root is `root` comes from an inventory
+/// item we created: its AttachItemID, read in our inventory. False while
+/// the item is unknown.
+fn made_by_us(world: &World, root: usize) -> bool {
+    world
+        .objects
+        .get(root)
+        .and_then(|o| o.attachment_item_id())
+        .and_then(|item| world.inventory.items.get(&item))
+        .is_some_and(|item| !item.creator.is_nil() && item.creator == world.agent_id)
+}
+
+/// Root avatar of an attachment, and the attachment's root prim (the one
+/// seated on the avatar).
+fn attachment_avatar(world: &World, mut idx: usize) -> Option<(Uuid, usize)> {
+    let mut root = idx;
     for _ in 0..16 {
         let o = world.objects.get(idx)?;
         if o.is_avatar() {
-            return Some(o.full_id);
+            return Some((o.full_id, root));
         }
+        root = idx;
         idx = world.objects.parent_of(o)?;
     }
     None
@@ -1248,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn only_media_on_our_own_worn_items_skips_the_filter_question() {
+    fn only_media_on_worn_items_we_made_skips_the_filter_question() {
         let (mut w, screen) = world();
         w.agent_id = crate::demo::DEMO_AGENT;
         let own = w
@@ -1273,9 +1303,38 @@ mod tests {
         // in the world
         track(&mut m, &mut w);
         assert!(!trusted_by_filter(&m.objects, key, &on));
-        // worn by us, as an attachment or a HUD
+        // worn by us, its item not known yet (or a temporary attachment,
+        // worn from no item): asked
         parent_to(&mut w, own);
+        let item = Uuid::from_u128(0x17e3);
+        if let Some(o) = w.objects.get_mut(idx) {
+            o.name_values = format!("AttachItemID STRING RW SV {item}");
+        }
         track(&mut m, &mut w);
+        assert!(m.objects.get(&screen).is_some_and(|e| e.on_own_avatar));
+        assert!(!trusted_by_filter(&m.objects, key, &on), "creator unknown");
+        // an item someone else made (a gift whose script can change the
+        // address): asked
+        let made_by = |w: &mut World, creator: Uuid| {
+            w.inventory.add_items(vec![aurora_net::inventory::InvItem {
+                id: item,
+                name: "Screen".into(),
+                creator,
+                owner: w.agent_id,
+                ..Default::default()
+            }]);
+        };
+        // the item arrives later: seen at the next refresh
+        let refresh = |m: &mut MediaManager, w: &mut World| {
+            let later = m.last_refresh + Duration::from_millis(600);
+            m.track_objects(w, &|_| false, later);
+        };
+        made_by(&mut w, Uuid::from_u128(0x5747));
+        refresh(&mut m, &mut w);
+        assert!(!trusted_by_filter(&m.objects, key, &on), "made by someone else");
+        // made by us, as an attachment or a HUD
+        made_by(&mut w, crate::demo::DEMO_AGENT);
+        refresh(&mut m, &mut w);
         assert!(trusted_by_filter(&m.objects, key, &on));
         assert!(!trusted_by_filter(&m.objects, key, &off), "the option off asks again");
         m.track_objects(&mut w, &|_| true, m.last_refresh);
