@@ -2788,9 +2788,20 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
+| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
 | `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
+
+`AURORA_DEMO_FLOATING_TEXT=hud` displays three separate yellow, blue and cyan
+llSetText prims above a black HUD toolbar (#1938). The last row must clear
+the toolbar. `guides` adds green ticks at the reference baselines, computed
+from the attachment projection and the Legacy Viewer's padding/draw offset
+independently of font layout. Check that the bottoms of non-descending
+letters sit on the ticks; test different UI text sizes and fonts.
+`world` instead adds a purple cube with three centered text rows near the
+default demo start. Last-baseline placement is shared, and interline spacing
+follows the selected font's ascent plus descent minus one, without line gap.
 
 Eight textured HUDs on points 31–38, with floating text and a translucent
 child button; another avatar's HUD is hidden. No access to a

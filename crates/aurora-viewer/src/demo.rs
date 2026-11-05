@@ -95,6 +95,8 @@ pub mod env;
 /// (AURORA_DEMO_EXPERIENCE).
 #[path = "demo_experience.rs"]
 pub mod experience;
+#[path = "demo_floating_text.rs"]
+pub mod floating_text;
 /// A prop derezzed and particles started while the photo mode holds the
 /// world still (AURORA_DEMO_FREEZE_WORLD).
 #[path = "demo_freeze_world.rs"]
