@@ -1656,11 +1656,13 @@ impl Camera {
                     self.change_to_mouselook(agent, s, true);
                 }
             }
-            (Some(rot), Some(mut seat)) if self.avatar.camera_decoupled => {
+            (Some(rot), Some(mut seat)) if self.avatar.camera_decoupled && self.mouselook() => {
                 // VEHICLE_FLAG_CAMERA_DECOUPLED keeps the mouselook agent
                 // frame in world space (LLAgent::changeCameraToMouselook
-                // resets its axes). Track that heading in seat space in
-                // case the flag is cleared while the agent remains seated.
+                // resets its axes); the third-person sit camera still turns
+                // with the vehicle (LLAgentCamera::calcCameraPositionTargetGlobal).
+                // Track that heading in seat space in case the flag is
+                // cleared, or mouselook left, while the agent remains seated.
                 let world_heading = Vec3::new(agent.yaw.cos(), agent.yaw.sin(), 0.0);
                 if let Some(local_yaw) = flat(rot.inverse() * world_heading) {
                     seat.local_yaw = local_yaw;
@@ -2924,6 +2926,23 @@ mod tests {
             assert_eq!(world.agent.pitch, pitch);
             assert!(camera.forward().abs_diff_eq(aim, 1e-4), "{:?} vs {aim:?}", camera.forward());
         }
+        // out of mouselook the decoupled vehicle's turns carry the heading again
+        camera.change_to_default(&mut world.agent, &settings);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let before = world.agent.yaw;
+        set_rotation(&mut world, Quat::from_rotation_z(0.8 + 0.5) * Quat::from_rotation_y(0.6));
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let turned = (world.agent.yaw - before + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        assert!((turned - 0.5).abs() < 1e-3, "third person follows the vehicle: {turned}");
+        // and a vehicle without the flag turns the mouselook heading with it
+        world.objects.get_mut(seat).unwrap().update_flags &= !FLAGS_CAMERA_DECOUPLED;
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let before = world.agent.yaw;
+        set_rotation(&mut world, Quat::from_rotation_z(0.8 + 0.5 + 0.4) * Quat::from_rotation_y(0.6));
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let turned = (world.agent.yaw - before + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        assert!((turned - 0.4).abs() < 1e-3, "a coupled vehicle turns the aim: {turned}");
     }
 
     #[test]
