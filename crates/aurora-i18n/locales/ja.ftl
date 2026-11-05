@@ -1715,6 +1715,15 @@ demo-auto-blend = 自動：ブレンド
 demo-auto-mask = 自動：マスク
 ui-inventory-properties-permissions = 権限
 world-mod-requested-permissions = 要求された権限
+world-notifications-caution-title = 警告：アカウントへのアクセス
+world-notifications-caution-debit = { $owner_name }が所有するオブジェクト「{ $object_name }」が、あなたのL$アカウントへの完全なアクセスを求めています。アクセスを許可すると、このオブジェクトは今後いつでも追加の警告なしに、アカウントから資金を引き出したり、アカウントを空にしたりできるようになります。
+world-notifications-caution-land = { $owner_name }が所有するオブジェクト「{ $object_name }」が、あなたの土地への特権アクセスを求めています。アクセスを許可すると、追加の警告なしに土地を売却される可能性があります。
+world-notifications-caution-advice = アクセスを求める理由を十分に理解していない場合は、許可しないでください。
+world-notifications-caution-also = アカウントへのアクセスを許可すると、このオブジェクトに次のことも許可することになります：
+world-notifications-caution-granted = { $owner_name }が所有するオブジェクト「{ $object_name }」（{ $region }の{ $position }）に次の権限が許可されました：{ $permissions }。
+world-notifications-caution-denied = { $owner_name }が所有するオブジェクト「{ $object_name }」（{ $region }の{ $position }）への次の権限が拒否されました：{ $permissions }。
+world-notifications-caution-unknown-region = （不明なリージョン）
+world-notifications-caution-unknown-position = （不明な位置）
 world-experiences-question-title = 体験：{ $name }
 world-experiences-question = { "「" }{ $owner_name }{ "」が所有するオブジェクト「" }{ $object_name }{ "」が、" }{ $scope }{ "の体験への参加を求めています：\u000A\u000A" }{ $experience }{ "\u000A\u000A許可すると、体験のプロフィールから取り消さない限り、この体験についてこのメッセージは再び表示されません。\u000A\u000Aこの体験に関連付けられたスクリプトは、体験が有効なリージョンで次のことができるようになります：\u000A•" }{ $questions }{ "\u000A\u000Aよろしいですか？" }
 world-experiences-grid-scope = グリッドスコープ
@@ -1782,6 +1791,8 @@ ui-experiences-log-long-sit = あなたのアバターを着席させる
 ui-experiences-log-long-environment = あなたの環境設定を変更する
 ui-experiences-log-notice = オブジェクトがエクスペリエンス { $experience } により { $what } ことを許可されました。オブジェクト: { $object }。区画: { $parcel }。
 ui-notifications-allow = 許可
+ui-notifications-allow-access = アクセスを許可
+ui-notifications-deny = 拒否
 build-ui-floaters-allow-access-only-to-specified-urls = 指定したＵＲＬへのアクセスのみ許可
 ui-land-general-allow-deeding-to-group = グループへの譲渡を許可
 build-ui-floaters-allow-navigation-interaction = ナビゲーションと操作を許可
@@ -2131,6 +2142,7 @@ ui-inventory-thumbnail-choose-object-picture = 選択：オブジェクトの画
 build-ui-texture-choose-material = 選択：マテリアル
 build-ui-texture-choose-normal-map = 選択：法線マップ
 build-ui-texture-choose-specular-map = 選択：鏡面反射マップ
+build-ui-texture-drop-restricted = 無制限のコピーおよび譲渡権限を持つテクスチャのみが許可されます。
 build-ui-texture-choose-texture = 選択：テクスチャ
 build-ui-features-choose-light-texture = 選択：ライトのテクスチャ
 build-ui-object-choose-sculpt-map = 選択：スカルプトマップ
@@ -2548,10 +2560,10 @@ ui-options-slurl-links-open-help = このユーザの secondlife://、hop://、x
 ui-options-slurl-links-other = これらのリンクは現在{ $program }で開きます。
 ui-options-backup = バックアップ
 ui-options-backup-save = 設定をバックアップ
-ui-options-backup-save-help = 初期設定、色、ショートカット、バー、ウィンドウのレイアウト、スキン、および各アカウントの設定ファイル（コンタクトセット、ボイス音量、ブロックしたアセットなど）を１つのファイルに保存します。リセット後や別のＰＣで復元できます。ログイン情報は含まれません。
+ui-options-backup-save-help = 初期設定、色、ショートカット、バー、ウィンドウのレイアウト、スキン、および各アカウントの設定ファイル（コンタクトセット、ボイス音量、ブロックしたアセットなど）を１つのファイルに保存します。リセット後や別のＰＣで復元できます。ログイン情報とGIFサービスのキーは含まれません。
 ui-options-backup-save-button = バックアップ…
 ui-options-backup-restore = 設定を復元
-ui-options-backup-restore-help = バックアップファイルを読み込み、選択した項目を一度に復元します。このＰＣログイン情報、ウィンドウサイズ、フォルダ、オーディオデバイスは保持されます。
+ui-options-backup-restore-help = バックアップファイルを読み込み、選択した項目を一度に復元します。このＰＣログイン情報、ウィンドウサイズ、フォルダ、オーディオデバイス、GIFサービスのキーは保持されます。
 ui-options-backup-restore-button = 復元…
 ui-options-backup-file-type = Aurora設定バックアップ
 ui-options-backup-saved = 設定を{ $path }にバックアップしました。
@@ -3571,6 +3583,7 @@ ui-options-double-click-teleport = その場所へテレポート
 ui-sound-group-invitation = グループへの招待
 ui-sound-incoming-voice-call = ボイス通話の着信
 world-mod-invitation-to-join-a-group = グループへの参加招待
+world-notifications-group-fee = 参加費：L$ { $fee }
 ui-context-invite-to-group = グループに招待
 ui-profile-invite-to-group-coming-soon = グループに招待（近日公開）
 ui-contacts-invite = 招待…
@@ -3745,6 +3758,7 @@ ui-perf-the-graph-shows-fps-over-the-last-few-seconds = グラフに過去数秒
 ui-land-environment-the-estate-manager-does-not-allow-parcel-environment-changes = 不動産の管理者は、このリージョンでの区画の環境の変更を許可していません。
 common-the-link-is-broken = リンクが壊れています。
 link-trust-the-link-leads-to-an-ip-address-instead-of = このリンクはサイト名ではなくＩＰアドレスにつながっています。
+link-trust-the-link-leads-to-this-computer-or-local-network = このリンクはインターネット上のサイトではなく、このコンピューターまたはローカルネットワークにつながっています。
 ui-options-the-violet-wolf-howls-under-the-northern-lights = 紫の狼がオーロラの下で遠吠えする。
 world-inventory-preview-the-material-is-unreadable = マテリアルを読み取れません。
 ui-contacts-your-chosen-name-for-this-person = この人に付けた名前。
@@ -3901,6 +3915,10 @@ ui-options-avatar-physics-help = 物理演算レイヤーを着用したアバ�
 ui-options-avatar-physics-detail = アバター物理演算の詳細度
 ui-options-avatar-physics-detail-help = 1ではすべてのアバターが動きます。値を下げると画面上で小さいアバターは形状を保ちます。0で物理演算を停止します（RenderAvatarPhysicsLODFactor）。
 ui-options-limit-when-unfocused = 非アクティブ時に制限
+ui-options-pause-when-card-busy = グラフィックカードが過負荷のとき3Dを一時停止
+ui-options-pause-when-card-busy-tip = Auroraが背面にある間に別のプログラムがグラフィックカードを占有しているとき、カードがリセットされないよう、クリックするまでAuroraはワールドの描画を止めます。オフにすると、Auroraが「グラフィックカードが失われました」で終了することがあります。デフォルトで有効
+busy-pause-notice = 3Dを一時停止中：グラフィックカードが別のプログラムで使用中です。クリックで再開します。
+busy-pause-window-title = { $title } — 一時停止中
 ui-land-sound-restrict-voice-chat-to-this-parcel = ボイスチャットをこの区画に制限
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = ジェスチャーとオブジェクトのサウンドをこの区画に制限
 common-limits = 制限
@@ -4182,7 +4200,7 @@ ui-options-scripted-media = スクリプトによるメディア
 ui-options-media-filter = メディアフィルター
 ui-options-media-filter-help = リストにないサイトからメディアや音楽を読み込む前に確認します（MediaEnableFilter）。
 ui-options-media-filter-own-worn = 自分の装着アイテムを信頼
-ui-options-media-filter-own-worn-help = 自分が着用しているもの（装着アイテム、ＨＵＤ）のメディアは確認なしで読み込みます。ブロックしたサイトは引き続きブロックされます。他のアバターのアイテムは確認します。
+ui-options-media-filter-own-worn-help = 自分が着用していて自分で作成したもの（装着アイテム、ＨＵＤ）のメディアは確認なしで読み込みます。ブロックしたサイトは引き続きブロックされます。他の人が作成したアイテムと他のアバターのアイテムは確認します。
 ui-options-media-filter-list = サイト
 ui-options-media-filter-list-help = このアカウントで許可またはブロックするドメイン（サブドメインを含む）とアドレス
 ui-options-media-filter-empty = サイトはまだありません。確認ダイアログで保存した回答がここに表示されます。
@@ -5644,6 +5662,8 @@ ui-contacts-nickname = ニックネーム
 ui-contacts-set-nickname = ニックネームを設定…
 ui-emoji-symbols = シンボル
 ui-options-vertical-synchronization = 垂直同期
+ui-options-borderless-fullscreen = 全画面表示
+ui-options-borderless-fullscreen-help = 現在のモニター全体を枠なしで表示します。Alt+Enter でオン／オフを切り替えます（入力中を除く）。
 ui-options-graphics-card = グラフィックカード
 ui-options-graphics-card-automatic = 自動
 ui-options-graphics-card-help = 自動では専用カードが優先されます。次回の起動時に適用されます。
@@ -5653,7 +5673,7 @@ ui-options-graphics-card-no-discrete = ビューアから見えるのは内蔵�
 ui-options-graphics-card-cannot-present = 専用カードではビューアのウィンドウを描画できません：モニターをマザーボードではなく専用カードの出力端子に接続してください。
 ui-options-overlays = オーバーレイ
 ui-options-allow-overlays = 他のプログラムのオーバーレイを許可
-ui-options-allow-overlays-help = Steamオーバーレイ、RivaTuner（MSI Afterburner）、Epic Gamesのオーバーレイなどはビューアの表示に入り込み、クラッシュや白いウィンドウの原因になることがよくあります：許可しない限り除外されます。OBS Studioのゲームキャプチャは常に動作します。Discordのオーバーレイは除外できません：ウィンドウが白くなった場合は、DiscordでAuroraのオーバーレイをオフにしてください。次回の起動時に適用されます。
+ui-options-allow-overlays-help = Steamオーバーレイ、RivaTuner（MSI Afterburner）、Epic Gamesのオーバーレイなどはビューアの表示に入り込み、クラッシュや白いウィンドウの原因になることがよくあります：許可しない限り除外されます。OBS Studioのゲームキャプチャも除外されます：ウィンドウキャプチャは常に動作します。Discordのオーバーレイは除外できません：ウィンドウが白くなった場合は、DiscordでAuroraのオーバーレイをオフにしてください。次回の起動時に適用されます。
 ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait = 垂直同期、フレームレート制限、表示、描画スレッドの待機
 build-ui-texture-synchronize-materials = マテリアルを同期
 common-system = システム
@@ -6052,6 +6072,10 @@ login-safe-graphics-active-title = 安全なグラフィックがオンです
 login-safe-graphics-active = グラフィックカードが応答しなくなったため、Auroraはポテトレベルで動作しています。原因を解決したら（ドライバを更新、オーバーレイをオフ）、自分の設定に戻してください。
 login-safe-graphics-restore = 自分のグラフィック設定を復元
 login-safe-graphics-stay = 安全なグラフィックを維持
+login-photo-quality-off-title = 写真の品質をオフにしました
+login-photo-quality-off = 前回、写真の品質がすべてのグラフィック設定を最大にしている間に、Auroraが予期せず終了しました。写真の品質はオフになったので、写真ウィンドウは通常どおり開きます。グラフィック設定そのものは変わっていません。写真ウィンドウまたは「初期設定 › グラフィック」で再びオンにできます。
+login-photo-quality-off-ok = OK
+login-photo-quality-off-back-on = 再びオンにする
 ui-perf-downloaded = ダウンロード済み
 common-teleport-2 = テレポート
 common-teleport-accepted = テレポートが受け入れられました…
@@ -6176,6 +6200,8 @@ demo-keywords-object-name = パーティーライト
 demo-keywords-object = 点灯：パーティーを始められます。
 demo-keywords-plain = 今日の広場はいい天気です。
 demo-notifs-lantern = 紙のランタン
+demo-notifs-fee-group-invitation = Tess TouchさんがLagoon Sailing Clubへの参加にあなたを招待しています。
+demo-notifs-fee-object = チップ箱
 demo-notifs-group-notice = Aurora Buildersからのグループ通知：広場に新しい床が付きます
 demo-notifs-paid = Lune ExempleがあなたにL$ 50を支払いました
 demo-scripted-textbox = ゲストブックにあなたの名前を書き込んでください
@@ -6473,6 +6499,8 @@ photo-quality-warning-text = 写真の品質は、写真ウィンドウが開い
 photo-quality-warning-ok = それでもオンにする
 photo-quality-loading = 詳細を読み込んでいます…（テクスチャ{ $count }枚）
 photo-quality-reduced = 品質を下げています：ビデオメモリがほぼいっぱいです
+photo-quality-off-after-crash = クラッシュ後に写真の品質をオフにする
+photo-quality-off-after-crash-help = 写真の品質がオンの間にAuroraがクラッシュまたは停止した場合、次回の起動時にオフにし、ログイン画面でお知らせします。
 photo-freeze-hint = 今撮影し、保存するまで画面に保持します
 photo-freeze-world = ワールドを止める
 photo-freeze-world-hint = カメラは動かせますが、アバター、アニメーション、動くものはすべて静止します。
@@ -8983,6 +9011,12 @@ ui-options-aurora-move-hologram-moving = 移動中のオブジェクト
 ui-options-aurora-move-hologram-start = 開始位置
 ui-options-aurora-use-bridge = Auroraブリッジを使用
 ui-options-aurora-use-bridge-help = Auroraが作成して装着する小さなスクリプト付きアタッチメントです：位置のロック、レーダーのアバターの高度、スクリプトとオブジェクトの情報、ポーズのリクエスト、共有ポータル。オフにすると、Auroraはブリッジを作成も装着もせず、装着中のものを取り外します。これらの機能は使えなくなります。
+ui-options-aurora-portal-sources = ポータルを表示する相手
+ui-options-aurora-portal-sources-help = 他の住人がAuroraブリッジで近くに開いたポータルです。自分のポータルと、移動先からの帰り道は常に表示されます。フレンドではない人のポータルを初めて通り抜けるときは、移動する前に確認します。グループの場合、グリッドがその住人を自分のグループのいずれかに載せていれば（プロフィールまたは読み込まれたメンバー一覧）、対象になります。
+ui-options-aurora-portal-sources-nobody = なし
+ui-options-aurora-portal-sources-friends = フレンド
+ui-options-aurora-portal-sources-groups = フレンドと自分のグループ
+ui-options-aurora-portal-sources-everyone = 全員
 ui-options-aurora-gaze = 視線
 ui-options-aurora-aim = 視線の向かう先
 ui-options-aurora-aim-help = アバターがカーソルの下の正確な点を見るか、レガシービューアのようにカーソルの側へ頭を向けます。
@@ -9064,6 +9098,48 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count }個のファイルを消去しました。
     }
 ui-options-chat-logs-erase-failed = 一部のファイルを消去できませんでした。
+ui-options-chat-logs-busy = 履歴はインポート、移動、または消去の処理中です。しばらくしてからもう一度お試しください。
+ui-options-chat-logs-import-login = ログイン時にインポート
+ui-options-chat-logs-import-login-help = ログインのたびに、前回のインポート以降にLegacy Viewerがこのアカウントに書き込んだ内容を追加します。Legacy Viewerのファイルは読み取るだけです。既定ではオンです。
+ui-options-chat-logs-import-login-off = この履歴が戻らないよう、ログイン時のインポートをオフにしました。
+ui-options-chat-logs-imported-at-login = Legacy Viewerのチャット履歴：{ $files ->
+    [one] { $files }件の会話
+   *[other] { $files }件の会話
+    }に{ $count ->
+    [one] { $count }件のメッセージを追加しました。
+   *[other] { $count }件のメッセージを追加しました。
+    }止めるには、「ログイン時にインポート」をオフにしてください（環境設定 › チャット › 履歴）。
+ui-options-chat-logs-import = Legacy Viewerからインポート…
+ui-options-chat-logs-import-title = Legacy Viewerのチャット履歴をインポート
+ui-options-chat-logs-import-text = 会話はこのアカウントのファイルに時系列で追加され、すでにあるメッセージは飛ばされるため、再度インポートしても新しい分だけが追加されます。Legacy Viewerのファイルは読み取るだけです。
+ui-options-chat-logs-import-searching = Legacy Viewerの履歴を探しています…
+ui-options-chat-logs-import-none = このアカウントのLegacy Viewerの履歴は見つかりませんでした。別の場所にある場合は、そのフォルダを選択してください。
+ui-options-chat-logs-import-files = { $count ->
+    [one] 会話ファイル{ $count }個
+   *[other] 会話ファイル{ $count }個
+    }
+ui-options-chat-logs-import-same = Auroraはすでにこのフォルダを使用しているため、インポートするものはありません。
+ui-options-chat-logs-import-empty = このフォルダに会話ファイルはありません。
+ui-options-chat-logs-import-choose = フォルダを選択…
+ui-options-chat-logs-import-confirm = インポート
+ui-options-chat-logs-importing = インポート中：{ $total }個中{ $done }個のファイル
+ui-options-chat-logs-imported = { $files ->
+    [one] { $files }件の会話
+   *[other] { $files }件の会話
+    }に{ $count ->
+    [one] { $count }件のメッセージを追加しました。
+   *[other] { $count }件のメッセージを追加しました。
+    }
+ui-options-chat-logs-import-reopen = 進行中の会話には、次に開いたときに表示されます。
+ui-options-chat-logs-import-nothing = 新しくインポートするものはありません。
+ui-options-chat-logs-import-failed = { $count ->
+    [one] { $count }個のファイルをインポートできず、変更しませんでした。もう一度インポートして再試行してください。
+   *[other] { $count }個のファイルをインポートできず、変更しませんでした。もう一度インポートして再試行してください。
+    }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] 時刻のないテキストファイル{ $count }個をインポートしませんでした。時刻なしで記録された会話の可能性があります。
+   *[other] 時刻のないテキストファイル{ $count }個をインポートしませんでした。時刻なしで記録された会話の可能性があります。
+    }
 ui-chat-filter-conversation = 会話を絞り込む（Ctrl＋F：検索）
 ui-chat-filter = フィルタ…
 ui-chat-find = この会話を検索…
@@ -12575,6 +12651,9 @@ portal-destination-hidden = 非表示の行き先
 portal-restricted = アクセス権がありません
 portal-step-away = 一度離れてから戻ると入れます
 portal-walk-through = 通り抜けるとテレポートします
+portal-cross-title = このポータルを通り抜けますか？
+portal-cross-text = { $name }がこのポータルを開きました。行き先は{ $destination }です。
+portal-cross-go = 移動
 ui-appearance-selected-outfits = { $count }個のアウトフィットを選択しています
 
 # Spell checker and auto-replace (#675)
@@ -12669,7 +12748,7 @@ wearable-changed = この容姿のアイテムは変更されたか、もう着�
 wearable-error = この容姿のアセットを読み取りまたは保存できませんでした。
 wearable-readonly = このアイテムは修正できません。
 wearable-texture-permissions = コピーの権限があり、譲渡可能な衣類の場合は譲渡の権限もあるインベントリのテクスチャを選択してください。
-wearable-local-preview = ローカルテクスチャは自分だけのプレビューです。保存する前にテクスチャをアップロードし、インベントリから選択してください。
+wearable-local-preview = 保存するとローカルテクスチャの参照が保持されます。画像はアップロードされません。
 wearable-loading = 容姿のアイテムを読み込んでいます…
 wearable-saving = 保存しています…
 wearable-saved = 容姿のアイテムを保存しました。
@@ -13111,3 +13190,11 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
+
+picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。
+
+picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
+
+local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。

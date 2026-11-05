@@ -1718,6 +1718,15 @@ demo-auto-blend = Auto: blend
 demo-auto-mask = Auto: mask
 ui-inventory-properties-permissions = Permissions
 world-mod-requested-permissions = Requested permissions
+world-notifications-caution-title = Warning: access to your account
+world-notifications-caution-debit = The object “{ $object_name }” owned by { $owner_name } wants total access to your L$ account. If you allow access, it can remove funds from your account at any time, or empty your account completely, on an ongoing basis with no additional warnings.
+world-notifications-caution-land = The object “{ $object_name }” owned by { $owner_name } wants privileged access to your land. If you allow access, it may sell your land with no additional warnings.
+world-notifications-caution-advice = Do not allow access if you do not fully understand why it wants access to your account.
+world-notifications-caution-also = If you allow access to your account, you will also be allowing the object to:
+world-notifications-caution-granted = “{ $object_name }”, an object owned by { $owner_name }, located in { $region } at { $position }, has been granted permission to: { $permissions }.
+world-notifications-caution-denied = “{ $object_name }”, an object owned by { $owner_name }, located in { $region } at { $position }, has been denied permission to: { $permissions }.
+world-notifications-caution-unknown-region = (unknown region)
+world-notifications-caution-unknown-position = (unknown position)
 world-experiences-question-title = Experience: { $name }
 world-experiences-question = { "'" }{ $object_name }{ "', an object owned by '" }{ $owner_name }{ "', requests your participation in the " }{ $scope }{ " experience:\u000A\u000A" }{ $experience }{ "\u000A\u000AOnce permission is granted you will not see this message again for this experience unless it is revoked from the experience profile.\u000A\u000AScripts associated with this experience will be able to do the following on regions where the experience is active:\u000A• " }{ $questions }{ "\u000A\u000AIs this OK?" }
 world-experiences-grid-scope = Grid-Scope
@@ -1785,6 +1794,8 @@ ui-experiences-log-long-sit = force your avatar to sit
 ui-experiences-log-long-environment = change your environment settings
 ui-experiences-log-notice = An object was allowed to { $what } by the experience { $experience }. Object: { $object }. Parcel: { $parcel }.
 ui-notifications-allow = Allow
+ui-notifications-allow-access = Allow access
+ui-notifications-deny = Deny
 build-ui-floaters-allow-access-only-to-specified-urls = Allow access only to specified URLs
 ui-land-general-allow-deeding-to-group = Allow deeding to group
 build-ui-floaters-allow-navigation-interaction = Allow navigation & interaction
@@ -2134,6 +2145,7 @@ ui-inventory-thumbnail-choose-object-picture = Choose: Object picture
 build-ui-texture-choose-material = Choose: material
 build-ui-texture-choose-normal-map = Choose: normal map
 build-ui-texture-choose-specular-map = Choose: specular map
+build-ui-texture-drop-restricted = Only textures with unrestricted copy and transfer permissions are allowed.
 build-ui-texture-choose-texture = Choose: texture
 build-ui-features-choose-light-texture = Choose: light texture
 build-ui-object-choose-sculpt-map = Choose: sculpt map
@@ -2552,10 +2564,10 @@ ui-options-slurl-links-open-help = Registers secondlife://, hop:// and x-grid-lo
 ui-options-slurl-links-other = These links currently open in { $program }.
 ui-options-backup = Backup
 ui-options-backup-save = Back up the settings
-ui-options-backup-save-help = Saves the preferences, the colours, the shortcuts, the bars, the windows' layout, the skin and each account's preference files (contact sets, voice volumes, blocked assets…) to one file, to put them back after a reset or on another PC. Nothing of the login goes in it.
+ui-options-backup-save-help = Saves the preferences, the colours, the shortcuts, the bars, the windows' layout, the skin and each account's preference files (contact sets, voice volumes, blocked assets…) to one file, to put them back after a reset or on another PC. Nothing of the login goes in it, nor your GIF service keys.
 ui-options-backup-save-button = Back up…
 ui-options-backup-restore = Restore the settings
-ui-options-backup-restore-help = Reads a backup file and puts back the parts you choose, at once. This PC keeps its login, window size, folders and audio devices.
+ui-options-backup-restore-help = Reads a backup file and puts back the parts you choose, at once. This PC keeps its login, window size, folders, audio devices and GIF service keys.
 ui-options-backup-restore-button = Restore…
 ui-options-backup-file-type = Aurora settings backup
 ui-options-backup-saved = Settings backed up to { $path }.
@@ -3574,6 +3586,7 @@ ui-options-double-click-teleport = Teleport there
 ui-sound-group-invitation = Group invitation
 ui-sound-incoming-voice-call = Incoming voice call
 world-mod-invitation-to-join-a-group = Invitation to join a group
+world-notifications-group-fee = Membership fee: L$ { $fee }
 ui-context-invite-to-group = Invite to group
 ui-profile-invite-to-group-coming-soon = Invite to group (coming soon)
 ui-contacts-invite = Invite...
@@ -3748,6 +3761,7 @@ ui-perf-the-graph-shows-fps-over-the-last-few-seconds = The graph shows FPS over
 ui-land-environment-the-estate-manager-does-not-allow-parcel-environment-changes = The estate manager does not allow parcel environment changes in this region.
 common-the-link-is-broken = The link is broken.
 link-trust-the-link-leads-to-an-ip-address-instead-of = The link leads to an IP address instead of a site name.
+link-trust-the-link-leads-to-this-computer-or-local-network = The link leads to this computer or to your local network, not to a site on the internet.
 ui-options-the-violet-wolf-howls-under-the-northern-lights = The violet wolf howls under the northern lights.
 world-inventory-preview-the-material-is-unreadable = The material is unreadable.
 ui-contacts-your-chosen-name-for-this-person = Your chosen name for this person.
@@ -3904,6 +3918,10 @@ ui-options-avatar-physics-help = The breasts, belly and butt of avatars wearing 
 ui-options-avatar-physics-detail = Avatar physics detail
 ui-options-avatar-physics-detail-help = At 1 every avatar moves; lower, avatars small on screen keep their shape; 0 stops the physics (RenderAvatarPhysicsLODFactor)
 ui-options-limit-when-unfocused = Limit when unfocused
+ui-options-pause-when-card-busy = Pause the 3D when the card is overloaded
+ui-options-pause-when-card-busy-tip = When another program keeps the graphics card busy while Aurora is behind, Aurora stops drawing the world until you click on it, so the card is not reset. Turned off, Aurora can close with "the graphics card was lost". Enabled by default
+busy-pause-notice = 3D paused: the graphics card is busy with another program. Click to resume.
+busy-pause-window-title = { $title } — Paused
 ui-land-sound-restrict-voice-chat-to-this-parcel = Restrict voice chat to this parcel
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = Restrict gesture and object sounds to this parcel
 common-limits = Limits
@@ -4185,7 +4203,7 @@ ui-options-scripted-media = Scripted media
 ui-options-media-filter = Media filter
 ui-options-media-filter-help = Ask before media or music loads from a site not in the list (MediaEnableFilter)
 ui-options-media-filter-own-worn = Trust my worn items
-ui-options-media-filter-own-worn-help = Media on what you wear (attachments, HUDs) loads without asking; blocked sites stay blocked. Other avatars' items still ask
+ui-options-media-filter-own-worn-help = Media on what you wear (attachments, HUDs) and made yourself loads without asking; blocked sites stay blocked. Items made by someone else, and other avatars' items, still ask
 ui-options-media-filter-list = Sites
 ui-options-media-filter-list-help = Domains (with their subdomains) and addresses this account allows or blocks
 ui-options-media-filter-empty = No site yet: the answers you keep from the question appear here.
@@ -5651,6 +5669,8 @@ ui-contacts-nickname = Nickname
 ui-contacts-set-nickname = Set nickname...
 ui-emoji-symbols = Symbols
 ui-options-vertical-synchronization = Vertical synchronization
+ui-options-borderless-fullscreen = Fullscreen
+ui-options-borderless-fullscreen-help = Fills the current monitor, without borders. Alt+Enter turns it on or off (not while typing).
 ui-options-graphics-card = Graphics card
 ui-options-graphics-card-automatic = Automatic
 ui-options-graphics-card-help = Automatic takes the dedicated card first. Applied at the next start.
@@ -5660,7 +5680,7 @@ ui-options-graphics-card-no-discrete = Only the integrated graphics is visible t
 ui-options-graphics-card-cannot-present = The dedicated card cannot draw the viewer's window: plug the monitor into the dedicated card's outputs, not the motherboard's.
 ui-options-overlays = Overlays
 ui-options-allow-overlays = Allow other programs' overlays
-ui-options-allow-overlays-help = The Steam overlay, RivaTuner (MSI Afterburner), the Epic Games overlay and others insert themselves into the viewer's display and often cause crashes or a white window: they are kept out unless you allow them. OBS Studio's game capture always works. Discord's overlay cannot be kept out: if the window turns white, turn it off for Aurora in Discord. Applied at the next start.
+ui-options-allow-overlays-help = The Steam overlay, RivaTuner (MSI Afterburner), the Epic Games overlay and others insert themselves into the viewer's display and often cause crashes or a white window: they are kept out unless you allow them. OBS Studio's Game Capture is kept out too: its Window Capture always works. Discord's overlay cannot be kept out: if the window turns white, turn it off for Aurora in Discord. Applied at the next start.
 ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait = Vertical synchronization, frame rate limit, presentation, render thread wait
 build-ui-texture-synchronize-materials = Synchronize materials
 common-system = System
@@ -6059,6 +6079,10 @@ login-safe-graphics-active-title = Safe graphics are on
 login-safe-graphics-active = Aurora runs on the Potato level since the graphics card stopped answering. Once the cause is fixed (driver updated, overlays off), put your own settings back.
 login-safe-graphics-restore = Restore my graphics
 login-safe-graphics-stay = Keep the safe graphics
+login-photo-quality-off-title = Photo quality turned off
+login-photo-quality-off = Aurora closed unexpectedly last time while Photo quality had every graphics setting at its maximum. It is off now, so the photo window opens normally; your own graphics settings have not changed. You can turn it back on in the photo window or in Preferences › Graphics.
+login-photo-quality-off-ok = OK
+login-photo-quality-off-back-on = Turn it back on
 ui-perf-downloaded = Downloaded
 common-teleport-2 = Teleport
 common-teleport-accepted = Teleport accepted…
@@ -6183,6 +6207,8 @@ demo-keywords-object-name = Party lights
 demo-keywords-object = Lights on: the party can start.
 demo-keywords-plain = Nice weather on the plaza today.
 demo-notifs-lantern = A paper lantern
+demo-notifs-fee-group-invitation = Tess Touch has invited you to join Lagoon Sailing Club.
+demo-notifs-fee-object = Tip jar
 demo-notifs-group-notice = Group notice from Aurora Builders: the plaza gets a new floor
 demo-notifs-paid = Lune Exemple paid you L$50
 demo-scripted-textbox = Write your name for the guest book
@@ -6480,6 +6506,8 @@ photo-quality-warning-text = Photo quality raises every graphics setting to its 
 photo-quality-warning-ok = Turn on anyway
 photo-quality-loading = Loading the details… ({ $count } textures)
 photo-quality-reduced = Quality reduced: video memory almost full
+photo-quality-off-after-crash = Turn photo quality off after a crash
+photo-quality-off-after-crash-help = When Aurora crashes or is stopped while Photo quality is on, the next start turns it off and says so on the login screen.
 photo-freeze-hint = Taken now and kept on screen until saved
 photo-freeze-world = Freeze the world
 photo-freeze-world-hint = Avatars, animations and everything that moves hold still while the camera moves on.
@@ -8996,6 +9024,12 @@ ui-options-aurora-move-hologram-moving = Moving object
 ui-options-aurora-move-hologram-start = Where it started
 ui-options-aurora-use-bridge = Use the Aurora bridge
 ui-options-aurora-use-bridge-help = A small scripted attachment that Aurora makes and wears for you: position lock, avatar heights in the radar, script and object information, pose requests and shared portals. Off, Aurora no longer makes or wears it and takes off a worn one: these features are then unavailable.
+ui-options-aurora-portal-sources = Show portals from
+ui-options-aurora-portal-sources-help = Portals that other residents open near you with their Aurora bridge. Your own portals and the way back from your trips always show. The first time you walk through a portal from someone who is not your friend, Aurora asks before you go. With groups, a resident counts once the grid lists them in one of your groups (their profile or a loaded member list).
+ui-options-aurora-portal-sources-nobody = Nobody
+ui-options-aurora-portal-sources-friends = Friends
+ui-options-aurora-portal-sources-groups = Friends and my groups
+ui-options-aurora-portal-sources-everyone = Everyone
 ui-options-aurora-gaze = Gaze
 ui-options-aurora-aim = Where your gaze goes
 ui-options-aurora-aim-help = Your avatar looks at the exact point under the cursor, or turns its head toward the cursor's side like the Legacy Viewer.
@@ -9077,6 +9111,48 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count } files erased.
     }
 ui-options-chat-logs-erase-failed = Some files could not be erased.
+ui-options-chat-logs-busy = The history is busy with an import, a move or an erasing: try again in a moment.
+ui-options-chat-logs-import-login = Import at login
+ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import. Its files are only read. On by default.
+ui-options-chat-logs-import-login-off = Import at login is now off, so that this history does not come back.
+ui-options-chat-logs-imported-at-login = Chat history from the Legacy Viewer: { $count ->
+    [one] { $count } message added
+   *[other] { $count } messages added
+    } to { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    } To stop this, turn off Import at login (Preferences › Chat › History).
+ui-options-chat-logs-import = Import from the Legacy Viewer…
+ui-options-chat-logs-import-title = Import chat history from the Legacy Viewer
+ui-options-chat-logs-import-text = Conversations are added to this account's files in time order, and the messages already there are skipped, so importing again adds only what is new. The Legacy Viewer's files are only read.
+ui-options-chat-logs-import-searching = Looking for the Legacy Viewer's history…
+ui-options-chat-logs-import-none = No Legacy Viewer history was found for this account. If it is somewhere else, choose its folder.
+ui-options-chat-logs-import-files = { $count ->
+    [one] { $count } conversation file
+   *[other] { $count } conversation files
+    }
+ui-options-chat-logs-import-same = Aurora already uses this folder: there is nothing to import.
+ui-options-chat-logs-import-empty = No conversation files in this folder.
+ui-options-chat-logs-import-choose = Choose a folder…
+ui-options-chat-logs-import-confirm = Import
+ui-options-chat-logs-importing = Importing: { $done } of { $total } files
+ui-options-chat-logs-imported = { $count ->
+    [one] { $count } message added
+   *[other] { $count } messages added
+    } to { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    }
+ui-options-chat-logs-import-reopen = A conversation already in progress shows them the next time it opens.
+ui-options-chat-logs-import-nothing = Nothing new to import.
+ui-options-chat-logs-import-failed = { $count ->
+    [one] { $count } file could not be imported and was left as it was: import again to retry.
+   *[other] { $count } files could not be imported and were left as they were: import again to retry.
+    }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] { $count } text file has no timestamps and was left out: it may be a conversation logged without them.
+   *[other] { $count } text files have no timestamps and were left out: they may be conversations logged without them.
+    }
 ui-chat-filter-conversation = Filter the conversation (Ctrl+F: find)
 ui-chat-filter = Filter…
 ui-chat-find = Find in this conversation…
@@ -12600,6 +12676,9 @@ portal-destination-hidden = Hidden destination
 portal-restricted = You do not have access
 portal-step-away = Move away, then return to enter
 portal-walk-through = Walk through to teleport
+portal-cross-title = Go through this portal?
+portal-cross-text = { $name } opened this portal. It leads to { $destination }.
+portal-cross-go = Go
 ui-appearance-selected-outfits = { $count } outfits selected
 
 # Spell checker and auto-replace (#675)
@@ -12694,7 +12773,7 @@ wearable-changed = This appearance item changed or is no longer worn. Open it ag
 wearable-error = This appearance asset could not be read or saved.
 wearable-readonly = This item cannot be modified.
 wearable-texture-permissions = Choose an inventory texture with Copy permission and, for transferable clothing, Transfer permission.
-wearable-local-preview = Local textures are a private preview. Upload the texture and select it from inventory before saving.
+wearable-local-preview = Saving keeps the local texture references without uploading the images.
 wearable-loading = Loading appearance item…
 wearable-saving = Saving…
 wearable-saved = Appearance item saved.
@@ -13138,3 +13217,11 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
+
+picker-pipette-hint = Click an object face to select its texture or material from your inventory.
+
+picker-pipette-no-texture = No copyable texture found in your inventory.
+
+picker-pipette-no-material = No copyable material found in your inventory.
+
+local-texture-preview-hint = Local texture — preview from a file on this computer.

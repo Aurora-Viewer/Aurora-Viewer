@@ -2473,9 +2473,18 @@ LUT_3D_SIZE {n}
     /// the user's values back as soon as either is off (they are also what
     /// a save in the meantime writes, `Settings::to_saved`).
     fn photo_quality(&mut self, renderer: &Renderer) {
+        // switched on from Preferences › Graphics: the photo window's first
+        // warning still comes before the boost
+        if self.panels.snapshot && self.settings.snapshot.quality && !self.settings.snapshot.quality_warned {
+            self.settings.snapshot.quality = false;
+            self.snapshots.quality_ask = true;
+        }
         let want = self.panels.snapshot && self.settings.snapshot.quality;
         match (&self.settings.photo_held, want) {
             (None, true) => {
+                // marked before the boost: a crash while it is drawn turns
+                // the switch off at the next start
+                crate::crash::photo_quality(true);
                 let mut held = snapshot::quality::boost(&mut self.settings);
                 // within what the video memory leaves, from the start, and
                 // with room for what the estimate leaves out: the whole
@@ -2520,6 +2529,7 @@ LUT_3D_SIZE {n}
                     held.restore(&mut self.settings);
                 }
                 log::info!("photo quality: off, the user's settings back");
+                crate::crash::photo_quality(false);
                 self.snapshots.fit = None;
                 self.snapshots.settings_changed = true;
             }
@@ -2537,6 +2547,34 @@ LUT_3D_SIZE {n}
         // the textures in view at full resolution only with the whole boost:
         // lowered, the video memory has no room for them either
         self.scene.textures.full_resolution = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_none_or(|f| f.step == 0);
+    }
+
+    /// The last session crashed or was stopped with "Photo quality" on: the
+    /// switch goes off (the graphics settings themselves were never saved
+    /// raised), and the login screen says so with a way to turn it back on.
+    /// The Legacy Viewer has no such boost. `AURORA_DEMO_PHOTO_QUALITY_CRASH=1`
+    /// shows the card in demo.
+    pub(super) fn photo_quality_at_start(&mut self) {
+        let crashed = crate::crash::take_photo_quality_crash();
+        let demo = std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_PHOTO_QUALITY_CRASH").is_some();
+        if demo || (crashed && self.settings.snapshot.quality && self.settings.snapshot.quality_off_after_crash) {
+            log::warn!("the last session ended badly with the photo quality on: switched off");
+            self.settings.snapshot.quality = false;
+            self.settings.save();
+            self.login_form.photo_quality_off = true;
+        } else if crashed {
+            log::info!("the last session ended badly with the photo quality on: left as it is");
+        }
+    }
+
+    /// The login card's answer: back on (true) or just read.
+    pub(super) fn photo_quality_off_answer(&mut self, back_on: bool) {
+        self.login_form.photo_quality_off = false;
+        if back_on {
+            log::info!("photo quality turned back on from the login card");
+            self.settings.snapshot.quality = true;
+            self.settings.save();
+        }
     }
 
     /// The photo quality still climbing towards the whole boost: a photo
@@ -2828,6 +2866,7 @@ LUT_3D_SIZE {n}
             }
             if demo.quality {
                 self.settings.snapshot.quality = true;
+                self.settings.snapshot.quality_warned = true;
             }
             if demo.light {
                 let mut light = snapshot::light::PhotoLight {

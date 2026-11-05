@@ -164,7 +164,7 @@ fn graphics_card(cx: &mut Cx) {
     });
 }
 
-/// Other programs' overlays (Steam, RivaTuner, Epic…): their Vulkan layers
+/// Other programs' overlays (OBS's game capture, Steam, RivaTuner, Epic…): their Vulkan layers
 /// are kept out at startup unless allowed (`aurora_render::vulkan_layers`),
 /// so the choice applies at the next start. `AURORA_VULKAN_LAYERS=keep`
 /// loads them all.
@@ -195,6 +195,11 @@ fn frames_per_second(cx: &mut Cx) {
             tr!("ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing"),
             &field!(vsync),
         );
+        cx.wide().toggle(
+            tr!("ui-options-borderless-fullscreen"),
+            tr!("ui-options-borderless-fullscreen-help"),
+            &field!(window_fullscreen),
+        );
         // the limits show under their switches: the value is what the
         // switch is turned on for
         cx.unfolded().toggle(
@@ -221,6 +226,11 @@ fn frames_per_second(cx: &mut Cx) {
                 tr!("status-fps"),
             );
         });
+        cx.unfolded().toggle(
+            tr!("ui-options-pause-when-card-busy"),
+            tr!("ui-options-pause-when-card-busy-tip"),
+            &field!(background_gpu_pause),
+        );
     });
 }
 
@@ -488,6 +498,16 @@ fn quality(cx: &mut Cx) {
                 },
             );
         });
+    });
+    // the photo window's own switch, also here: a PC that crashes as soon
+    // as the window opens with it on can still turn it off
+    cx.group(tr!("photo-title"), |cx| {
+        cx.toggle(tr!("photo-quality"), tr!("photo-quality-hint"), &field!(snapshot.quality));
+        cx.toggle(
+            tr!("photo-quality-off-after-crash"),
+            tr!("photo-quality-off-after-crash-help"),
+            &field!(snapshot.quality_off_after_crash),
+        );
     });
 }
 

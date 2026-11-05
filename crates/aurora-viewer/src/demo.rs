@@ -5330,6 +5330,80 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]: a closed room with a lamp and a
+    // manual probe of that ambiance, at AURORA_DEMO_POS="100,100" (#2217): a
+    // sphere that crosses the floor, or a box that fills the room
+    if let Ok(room) = std::env::var("AURORA_DEMO_PROBE_ROOM") {
+        let mut values = room.split(',');
+        let ambiance = values.next().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0);
+        let filled = values.next().is_some_and(|v| v.trim() == "box");
+        let (x, y) = (100.0, 100.0);
+        let z = g(x, y);
+        let (half, height) = (8.0, 5.0);
+        let matte = [0.72, 0.68, 0.6, 1.0];
+        for (offset, scale) in [
+            (Vec3::new(0.0, 0.0, 0.1), Vec3::new(2.0 * half, 2.0 * half, 0.2)),
+            (Vec3::new(0.0, 0.0, height), Vec3::new(2.0 * half, 2.0 * half, 0.2)),
+            (Vec3::new(half, 0.0, height / 2.0), Vec3::new(0.2, 2.0 * half, height)),
+            (Vec3::new(-half, 0.0, height / 2.0), Vec3::new(0.2, 2.0 * half, height)),
+            (Vec3::new(0.0, half, height / 2.0), Vec3::new(2.0 * half, 0.2, height)),
+            (Vec3::new(0.0, -half, height / 2.0), Vec3::new(2.0 * half, 0.2, height)),
+        ] {
+            add(prim(
+                id,
+                Vec3::new(x, y, z) + offset,
+                Quat::IDENTITY,
+                scale,
+                boxp,
+                te(matte, 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+        add(prim(
+            id,
+            Vec3::new(x - 4.0, y + 4.0, z + 3.5),
+            Quat::IDENTITY,
+            Vec3::splat(0.3),
+            boxp,
+            te([1.0, 0.85, 0.6, 1.0], 0, true, 0.2),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [1.0, 0.8, 0.55, 1.0],
+                    radius: 10.0,
+                    cutoff: 0.0,
+                    falloff: 0.75,
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+        let (center, scale, flags) = if filled {
+            (Vec3::new(x, y, z + height / 2.0), Vec3::new(2.0 * half, 2.0 * half, height), 0x1)
+        } else {
+            (Vec3::new(x + 3.0, y + 3.0, z + 0.2), Vec3::splat(4.0), 0x0)
+        };
+        add(prim(
+            id,
+            center,
+            Quat::IDENTITY,
+            scale,
+            boxp,
+            te([1.0, 1.0, 1.0, 0.0], 0, false, 0.0),
+            ExtraParams {
+                reflection_probe: Some(aurora_prim::extra::ReflectionProbeParams {
+                    ambiance,
+                    clip_distance: 0.0,
+                    flags,
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+    }
     // glass panel (alpha blend)
     add(prim(
         id,
@@ -5905,6 +5979,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
             object_id: Uuid::from_u128(0xF1),
             object_name: aurora_i18n::tr!("demo-resident-picker").into(),
             owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
+            owner_id: Uuid::nil(),
             message,
             channel: -4243,
             buttons: ["1", "2", "3", "4"].map(str::to_owned).to_vec(),
@@ -5922,6 +5997,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
             object_id: Uuid::from_u128(0xF0),
             object_name: aurora_i18n::tr!("demo-fountain").into(),
             owner_name: owner.into(),
+            owner_id: Uuid::nil(),
             message: aurora_i18n::tr!("demo-choose-a-color-for-the-water").into(),
             channel: -4242,
             buttons: vec![
@@ -5935,6 +6011,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
             object_id: Uuid::from_u128(0xF2),
             object_name: aurora_i18n::tr!("demo-land-script-sign").into(),
             owner_name: owner.into(),
+            owner_id: Uuid::nil(),
             message: aurora_i18n::tr!("demo-scripted-textbox").into(),
             channel: -4244,
             buttons: vec!["!!llTextBox!!".into()],
@@ -6021,6 +6098,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         object_id: Uuid::from_u128(0xF0),
         object_name: object_name.into(),
         owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
+        owner_id: Uuid::nil(),
         message: message.into(),
         channel: -4242,
         buttons,
@@ -6094,7 +6172,7 @@ pub fn chime() -> (Uuid, aurora_audio::SoundClip) {
 pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
     let demo_cache = crate::settings::cache_dir();
     if let Some(real) = demo_cache.parent()
-        && let Ok(data) = std::fs::read(real.join("sound").join(format!("{id}.ogg")))
+        && let Ok(data) = crate::cache::read(real.join(crate::settings::ASSET_STORE).join("sound").join(format!("{id}.ogg")))
         && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
     {
         return clip;

@@ -199,6 +199,21 @@ struct GeomEntry {
 
 /// Frames an unused geometry is kept (an object may want it back soon).
 const GEOM_KEEP_FRAMES: u32 = 600;
+/// `AURORA_DEBUG_GEOM_DELAY=<seconds>`: every built geometry reaches the
+/// arena that long after its job ended, as on a slow PC in a busy region
+/// (a geometry pending longer than `GEOM_KEEP_FRAMES` is collected and
+/// built a second time).
+fn geom_arrival_delay() -> Option<std::time::Duration> {
+    static DELAY: std::sync::OnceLock<Option<std::time::Duration>> = std::sync::OnceLock::new();
+    *DELAY.get_or_init(|| {
+        std::env::var("AURORA_DEBUG_GEOM_DELAY")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|s| *s > 0.0)
+            .map(std::time::Duration::from_secs_f32)
+    })
+}
+
 /// Unused geometries looked at per frame once their time has come.
 const GEOM_FREED_PER_FRAME: usize = 256;
 /// Frames between two looks at what an avatar's attachments show of its
@@ -1034,6 +1049,8 @@ pub struct Scene {
     /// system allocator, that growth queued the main thread behind the
     /// jobs during bursts of results).
     geom_waiting_spare: Vec<(GeomKey, jobs::PreparedGeom, f32)>,
+    /// Geometry held back by `AURORA_DEBUG_GEOM_DELAY` until its time.
+    geom_delayed: VecDeque<(Instant, GeomKey, jobs::PreparedGeom, f32)>,
     /// Streaming time of the frame by part (AURORA_PROFILE `s_*`), taken by
     /// the frame profile at the end of the frame.
     pub parts: crate::frame_profile::Parts,
@@ -1400,12 +1417,21 @@ impl Scene {
         }
     }
 
-    pub fn selection_pulse(&self, now: Instant) -> f32 {
+    pub fn selection_pulse(&self, now: Instant, repeat: bool) -> f32 {
         if self.selection_faces.is_empty() {
             return 0.0;
         }
         self.selection_changed.map_or(0.0, |at| {
-            let remaining = (1.0 - now.saturating_duration_since(at).as_secs_f32() / 0.7).clamp(0.0, 1.0);
+            let period = std::time::Duration::from_millis(700);
+            let elapsed = now.saturating_duration_since(at);
+            // Drag feedback repeats the ordinary selection flash without
+            // changing its mask or rebuilding invisible-face records.
+            let elapsed = if repeat {
+                std::time::Duration::from_nanos((elapsed.as_nanos() % period.as_nanos()) as u64)
+            } else {
+                elapsed
+            };
+            let remaining = (1.0 - elapsed.as_secs_f32() / period.as_secs_f32()).clamp(0.0, 1.0);
             0.18 * remaining * remaining
         })
     }
@@ -1571,6 +1597,7 @@ impl Scene {
             staging: None,
             geom_waiting: Vec::new(),
             geom_waiting_spare: Vec::new(),
+            geom_delayed: VecDeque::new(),
             parts: Default::default(),
             skeletons: Default::default(),
             rig_extents: Default::default(),
@@ -1787,6 +1814,10 @@ impl Scene {
     /// Put a prepared geometry in the arena: staged faces are copied by the
     /// GPU (their regions must be ready), the others written from here.
     fn upload_geom(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom) {
+        if self.geom_drawn(&key) {
+            log::debug!("{key:?} built twice: the copy is dropped, the geometry drawn stays");
+            return;
+        }
         let gfaces = geom
             .faces
             .into_iter()
@@ -1806,20 +1837,28 @@ impl Scene {
             pick_faces: geom.pick_faces,
         });
         match self.geoms.get_mut(&key) {
-            Some(e) => match std::mem::replace(&mut e.state, GeomState::Ready(g)) {
-                GeomState::Ready(old) => {
-                    for f in old.faces.iter().flatten() {
-                        renderer.free_mesh(*f);
-                    }
-                    self.joint_boxes.release(&key);
-                    self.geom_trash.push(old);
+            Some(e) => {
+                if matches!(std::mem::replace(&mut e.state, GeomState::Ready(g)), GeomState::Pending) {
+                    self.geom_pending = self.geom_pending.saturating_sub(1);
                 }
-                GeomState::Pending => self.geom_pending = self.geom_pending.saturating_sub(1),
-                GeomState::Failed => {}
-            },
+            }
             None => self.geom_insert(key, GeomState::Ready(g)),
         }
         self.sets.geometry_changed(sync_plan::wait_token(&key));
+    }
+
+    /// A geometry arriving for `key` while the one there is already drawn
+    /// comes from a second job for the same key: the entry, pending longer
+    /// than `GEOM_KEEP_FRAMES` with no object bound to it yet, was collected
+    /// by `geom_gc` and asked for again while the first job still ran. The
+    /// objects drawing the first one keep the draw commands written when
+    /// they bound it, which point into its arena ranges: replacing it freed
+    /// those ranges under them, the next uploads took them, and these
+    /// objects drew another mesh's vertices (long stretched triangles
+    /// across the scene, on rigged and static objects alike). The copy is
+    /// dropped instead, the geometry drawn stays.
+    fn geom_drawn(&self, key: &GeomKey) -> bool {
+        matches!(self.geoms.get(key).map(|e| &e.state), Some(GeomState::Ready(_)))
     }
 
     fn ensure_avatar_parts(&mut self, renderer: &mut Renderer) {
@@ -1865,6 +1904,12 @@ impl Scene {
         // Before, only the jobs were bounded: a chunk that became copyable
         // put all its geometry in the arena in the same frame.
         let mut placed = 0;
+        let now = Instant::now();
+        while self.geom_delayed.front().is_some_and(|d| d.0 <= now) {
+            if let Some((_, key, geom, area)) = self.geom_delayed.pop_front() {
+                self.geom_waiting.push((key, geom, area));
+            }
+        }
         let mut waiting = std::mem::replace(&mut self.geom_waiting, std::mem::take(&mut self.geom_waiting_spare));
         for (key, geom, area) in waiting.drain(..) {
             if geom.ready() && (placed == 0 || t0.elapsed() < budget / 2) {
@@ -1941,6 +1986,10 @@ impl Scene {
     /// A geometry built by a job goes to the GPU, or waits for a coming
     /// frame while another job still writes in its staging chunk.
     fn finish_geometry(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom, area: f32) {
+        if let Some(delay) = geom_arrival_delay() {
+            self.geom_delayed.push_back((Instant::now() + delay, key, geom, area));
+            return;
+        }
         if geom.ready() {
             self.place_geometry(renderer, key, geom, area);
         } else {
@@ -2125,6 +2174,7 @@ impl Scene {
         self.geom_pending = 0;
         self.geom_waiting.clear();
         self.geom_waiting_spare.clear();
+        self.geom_delayed.clear();
         self.geom_trash = Default::default();
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
@@ -3683,8 +3733,15 @@ impl Scene {
                     .get(&o.key)
                     .and_then(|s| s.iter().rev().find(|(f, _)| *f as usize == fi))
                     .map(|(_, ov)| ov)
-                    .filter(|_| o.local_appearance(fi).is_none());
-                let m = meshes::render_material(&self.materials.resolve(&mid), ov);
+                    .filter(|_| {
+                        o.local_appearance(fi)
+                            .and_then(crate::world::objects::LocalAppearance::surface)
+                            .is_none()
+                    });
+                let mut m = meshes::render_material(&self.materials.resolve(&mid), ov);
+                if let Some(appearance) = o.local_appearance(fi) {
+                    appearance.apply_pbr(&mut m);
+                }
                 // glTF materials replace the legacy shininess
                 rec.flags[0] &= !flags::LEGACY_MAT;
                 rec.flags[0] |= flags::PBR;
@@ -3734,7 +3791,9 @@ impl Scene {
             }
             // legacy material (LLMaterial) of the texture entry
             let mut legacy_alpha = plant.map(|_| legacy_mat::alpha_mode::MASK);
-            if mat_id.is_none() && !tf.material_id.is_nil() {
+            let local_normal = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Normal);
+            let local_specular = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Specular);
+            if mat_id.is_none() && (!tf.material_id.is_nil() || local_normal.is_some() || local_specular.is_some()) {
                 g.material_ids.push(tf.material_id);
                 let cap = world.regions.get(&o.key.region).and_then(|r| {
                     r.caps.get("RenderMaterials").map(|url| legacy_mat::RegionCap {
@@ -3742,7 +3801,23 @@ impl Scene {
                         limits: r.materials_limits,
                     })
                 });
-                if let Some(lm) = self.legacy_mats.get(&tf.material_id, cap) {
+                let loaded = (!tf.material_id.is_nil())
+                    .then(|| self.legacy_mats.get(&tf.material_id, cap))
+                    .flatten();
+                let material = loaded.map(|m| (*m).clone()).or_else(|| {
+                    (local_normal.is_some() || local_specular.is_some()).then(|| legacy_mat::LegacyMaterial {
+                        diffuse_alpha_mode: if self.textures.has_alpha(&tf.texture).unwrap_or(false) {
+                            legacy_mat::alpha_mode::BLEND
+                        } else {
+                            legacy_mat::alpha_mode::NONE
+                        },
+                        ..Default::default()
+                    })
+                });
+                if let Some(mut lm) = material {
+                    if let Some(appearance) = o.local_appearance(fi) {
+                        appearance.apply_legacy(&mut lm);
+                    }
                     rec.flags[0] |= flags::LEGACY_MAT;
                     aux_tex[0] = lm.normal_map;
                     aux_tex[1] = lm.specular_map;
@@ -3960,12 +4035,19 @@ impl Scene {
                             .get(&o.key)
                             .and_then(|s| s.iter().rev().find(|(face, _)| *face as usize == fi))
                             .map(|(_, ov)| ov)
-                            .filter(|_| o.local_appearance(fi).is_none());
+                            .filter(|_| {
+                                o.local_appearance(fi)
+                                    .and_then(crate::world::objects::LocalAppearance::surface)
+                                    .is_none()
+                            });
                         let status = self
                             .materials
                             .peek(&mid)
                             .map_or(meshes::MaterialStatus::Pending, meshes::MaterialStatus::Loaded);
-                        let m = meshes::render_material(&status, ov);
+                        let mut m = meshes::render_material(&status, ov);
+                        if let Some(appearance) = o.local_appearance(fi) {
+                            appearance.apply_pbr(&mut m);
+                        }
                         maps = [
                             maps[0],
                             m.base_color_texture,
@@ -5845,6 +5927,40 @@ mod tests {
     }
 
     #[test]
+    fn a_geometry_built_twice_keeps_the_one_drawn() {
+        let mut scene = Scene::new(Default::default(), Arc::new(AvatarLibrary::load()));
+        let key = GeomKey::Tree { species: 3, lod: 1 };
+        // a first arrival is uploaded: nothing there, or still pending
+        // (asked for again after `geom_gc` collected it), or failed before
+        assert!(!scene.geom_drawn(&key));
+        for state in [GeomState::Pending, GeomState::Failed] {
+            scene.geom_insert(key, state);
+            assert!(!scene.geom_drawn(&key));
+        }
+        // the second job's copy is dropped: the objects bound to the first
+        // one draw from its arena ranges, which must stay theirs
+        let drawn = MeshAlloc {
+            vertex_offset: 40,
+            vertex_count: 8,
+            index_offset: 96,
+            index_count: 12,
+        };
+        scene.geom_insert(
+            key,
+            GeomState::Ready(Arc::new(GpuGeom {
+                faces: vec![Some(drawn)],
+                min: Vec3::ZERO,
+                max: Vec3::ONE,
+                joint_bounds: Vec::new(),
+                pick_faces: Vec::new(),
+            })),
+        );
+        assert!(scene.geom_drawn(&key));
+        let kept = scene.geom_ready(&key).expect("the geometry drawn stays");
+        assert_eq!(kept.faces, vec![Some(drawn)]);
+    }
+
+    #[test]
     fn bakes_replace_placeholders_only_on_worn_non_hud_non_animesh_objects() {
         let mut w = World::new(Arc::new(AvatarLibrary::load()));
         for e in crate::demo::events().into_iter().chain(crate::demo::animesh_events()) {
@@ -6946,15 +7062,34 @@ mod tests {
         let selected = HashMap::from([(7, 1 << 3)]);
         scene.set_face_selection(&mut world, selected.clone());
         let at = scene.selection_changed.unwrap();
-        assert!((scene.selection_pulse(at) - 0.18).abs() < 1e-6);
-        assert!(scene.selection_pulse(at + std::time::Duration::from_millis(350)) < 0.05);
+        assert!((scene.selection_pulse(at, false) - 0.18).abs() < 1e-6);
+        assert!(scene.selection_pulse(at + std::time::Duration::from_millis(350), false) < 0.05);
         scene.set_face_selection(&mut world, selected);
         assert_eq!(scene.selection_changed, Some(at));
-        assert_eq!(scene.selection_pulse(at + std::time::Duration::from_millis(700)), 0.0);
+        assert_eq!(scene.selection_pulse(at + std::time::Duration::from_millis(700), false), 0.0);
         scene.reveal_selected_faces();
-        assert!(scene.selection_pulse(Instant::now()) > 0.17);
+        assert!(scene.selection_pulse(Instant::now(), false) > 0.17);
         scene.set_face_selection(&mut world, HashMap::new());
-        assert_eq!(scene.selection_pulse(Instant::now()), 0.0);
+        assert_eq!(scene.selection_pulse(Instant::now(), false), 0.0);
+    }
+
+    #[test]
+    fn face_drop_hover_repeats_the_selection_flash_until_feedback_ends() {
+        use std::time::Duration;
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.set_face_selection(&mut world, HashMap::from([(7, 1 << 3)]));
+        let at = scene.selection_changed.unwrap();
+        for cycle in 0..10 {
+            let start = at + Duration::from_millis(cycle * 700);
+            assert!((scene.selection_pulse(start, true) - 0.18).abs() < 1e-6);
+            assert!(scene.selection_pulse(start + Duration::from_millis(600), true) < 0.01);
+        }
+        let later = at + Duration::from_secs(7);
+        assert_eq!(scene.selection_pulse(later, false), 0.0, "ordinary selection must not keep looping");
+        scene.set_face_selection(&mut world, HashMap::new());
+        assert_eq!(scene.selection_pulse(later, true), 0.0, "leaving the face removes the effect");
     }
 
     /// The GPU culling (reference of cull.wgsl, `gpu_cull::face_bins`) takes

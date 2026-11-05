@@ -35,6 +35,17 @@ pub const MESH_HEADER_SIZE: usize = 4096;
 pub const MAX_DECOMPRESSED_SIZE: usize = 32 * 1024 * 1024;
 
 const LOD_KEYS: [&str; 4] = ["lowest_lod", "low_lod", "medium_lod", "high_lod"];
+/// Faces decoded from one LOD: an object never has more texture entries
+/// (`LLPrimitive::setNumTEs` takes a U8, indra/llprimitive/llprimitive.cpp),
+/// and uploads stop at 8 (`LL_SCULPT_MESH_MAX_FACES`).
+const MAX_MESH_FACES: usize = 255;
+/// Vertices of one face: its indices are U16, and
+/// `LLVolume::unpackVolumeFacesInternal` refuses the LOD past this.
+const MAX_FACE_VERTICES: usize = 65535;
+/// Entries of each joint list of a skin. Uploads stop at 110
+/// (`LL_MAX_JOINTS_PER_MESH_OBJECT`, indra/llcharacter/lljoint.h) and
+/// weights address 255 joints; a longer list can only be filler.
+const MAX_SKIN_JOINTS: usize = 1024;
 
 /// Parsed mesh asset header. All ranges are `(offset, size)` with the offset
 /// relative to the start of the asset.
@@ -67,6 +78,7 @@ impl MeshHeader {
 fn llsd_err(e: LlsdError, what: &'static str) -> AssetError {
     match e {
         LlsdError::Eof => AssetError::Truncated(what),
+        LlsdError::TooLarge => AssetError::TooLarge(what),
         other => AssetError::Llsd(other),
     }
 }
@@ -215,13 +227,21 @@ pub fn decode_mesh_lod(section: &[u8]) -> Result<Vec<MeshFace>, AssetError> {
     if submeshes.is_empty() {
         return Err(AssetError::invalid("mesh LOD has no faces"));
     }
-    Ok(submeshes.iter().enumerate().map(|(i, s)| decode_face(i, s)).collect())
+    if submeshes.len() > MAX_MESH_FACES {
+        log::warn!("mesh LOD: {} faces, keeping the first {MAX_MESH_FACES}", submeshes.len());
+    }
+    submeshes
+        .iter()
+        .take(MAX_MESH_FACES)
+        .enumerate()
+        .map(|(i, s)| decode_face(i, s))
+        .collect()
 }
 
-fn decode_face(face_index: usize, sm: &Llsd) -> MeshFace {
+fn decode_face(face_index: usize, sm: &Llsd) -> Result<MeshFace, AssetError> {
     let mut face = MeshFace::default();
     if sm.has("NoGeometry") {
-        return face;
+        return Ok(face);
     }
     let pos = sm["Position"].as_binary();
     let norm = sm["Normal"].as_binary();
@@ -235,13 +255,18 @@ fn decode_face(face_index: usize, sm: &Llsd) -> MeshFace {
     }
     if num_indices < 3 {
         log::debug!("mesh face {face_index}: empty face");
-        return face;
+        return Ok(face);
     }
 
     let num_verts = pos.len() / 6;
     if num_verts == 0 {
         log::warn!("mesh face {face_index}: indices without vertices");
-        return face;
+        return Ok(face);
+    }
+    if num_verts > MAX_FACE_VERTICES {
+        // like LL, the whole LOD is unusable
+        log::warn!("mesh face {face_index}: {num_verts} vertices, more than U16 indices reach");
+        return Err(AssetError::TooLarge("mesh face vertex count"));
     }
 
     // Indices; drop triangles referencing missing vertices (LL would read out of bounds).
@@ -259,7 +284,7 @@ fn decode_face(face_index: usize, sm: &Llsd) -> MeshFace {
         log::warn!("mesh face {face_index}: dropped {dropped} triangles with out-of-range indices");
     }
     if face.indices.is_empty() {
-        return face;
+        return Ok(face);
     }
 
     if sm.has("NormalizedScale") {
@@ -298,7 +323,7 @@ fn decode_face(face_index: usize, sm: &Llsd) -> MeshFace {
         face.joints = joints;
         face.weights = weights;
     }
-    face
+    Ok(face)
 }
 
 /// The order the Legacy Viewer draws the triangles of a mesh face in: it
@@ -417,6 +442,10 @@ pub fn decode_skin(section: &[u8]) -> Result<SkinInfo, AssetError> {
         return Err(AssetError::invalid("mesh skin is not a map"));
     }
     let mut info = SkinInfo::default();
+    let lists = ["joint_names", "inverse_bind_matrix", "alt_inverse_bind_matrix"];
+    if lists.iter().any(|k| skin[*k].len() > MAX_SKIN_JOINTS) {
+        return Err(AssetError::TooLarge("mesh skin joint count"));
+    }
 
     if skin.has("joint_names") {
         info.joint_names = skin["joint_names"].as_array().iter().map(Llsd::to_string_value).collect();
@@ -603,6 +632,60 @@ mod tests {
         e.write_all(&big).unwrap();
         let z = e.finish().unwrap();
         assert!(matches!(decode_mesh_lod(&z), Err(AssetError::TooLarge(_))));
+    }
+
+    fn zip_raw(raw: &[u8]) -> Vec<u8> {
+        let mut e = ZlibEncoder::new(Vec::new(), Compression::best());
+        e.write_all(raw).unwrap();
+        e.finish().unwrap()
+    }
+
+    /// A block whose parsed tree would be far larger than its inflated size
+    /// stops at the parse budget, reported as too large.
+    #[test]
+    fn sections_stop_at_the_parse_budget() {
+        let n = 4usize << 20;
+        let mut raw = vec![b'['];
+        raw.extend_from_slice(&(n as u32).to_be_bytes());
+        raw.resize(5 + n, b'!');
+        raw.push(b']');
+        let z = zip_raw(&raw);
+        assert!(z.len() < 64 * 1024, "{}", z.len());
+        assert!(matches!(decode_mesh_lod(&z), Err(AssetError::TooLarge(_))));
+        assert!(matches!(decode_skin(&z), Err(AssetError::TooLarge(_))));
+    }
+
+    #[test]
+    fn faces_past_the_texture_entry_limit_are_left_out() {
+        let lod = Llsd::Array(vec![llsd_map! { "NoGeometry" => true }; MAX_MESH_FACES + 10]);
+        assert_eq!(decode_mesh_lod(&zip(&lod)).unwrap().len(), MAX_MESH_FACES);
+    }
+
+    #[test]
+    fn faces_with_more_vertices_than_u16_indices_fail_the_lod() {
+        let face = |verts: usize| {
+            llsd_map! {
+                "Position" => Llsd::Binary(vec![0; verts * 6]),
+                "PositionDomain" => domain(&[0.0, 0.0, 0.0], &[1.0, 1.0, 1.0]),
+                "TriangleList" => u16s(&[0, 1, 2]),
+            }
+        };
+        let ok = decode_mesh_lod(&zip(&Llsd::Array(vec![face(MAX_FACE_VERTICES)]))).unwrap();
+        assert_eq!(ok[0].positions.len(), MAX_FACE_VERTICES);
+        let lod = Llsd::Array(vec![face(3), face(MAX_FACE_VERTICES + 1)]);
+        assert!(matches!(decode_mesh_lod(&zip(&lod)), Err(AssetError::TooLarge(_))));
+    }
+
+    #[test]
+    fn skins_with_endless_joint_lists_are_refused() {
+        let names = |n: usize| Llsd::Array(vec![Llsd::String("mPelvis".into()); n]);
+        let s = decode_skin(&zip(&llsd_map! { "joint_names" => names(MAX_SKIN_JOINTS) })).unwrap();
+        assert_eq!(s.joint_names.len(), MAX_SKIN_JOINTS);
+        for key in ["joint_names", "inverse_bind_matrix", "alt_inverse_bind_matrix"] {
+            let mut m = Map::new();
+            m.insert(key.into(), Llsd::Array(vec![Llsd::Undef; MAX_SKIN_JOINTS + 1]));
+            assert!(matches!(decode_skin(&zip(&Llsd::Map(m))), Err(AssetError::TooLarge(_))), "{key}");
+        }
     }
 
     #[test]

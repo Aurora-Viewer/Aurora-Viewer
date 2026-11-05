@@ -858,6 +858,11 @@ fn history(cx: &mut Cx) {
             tr!("ui-options-chat-logs-dated-help"),
             &field!(log_dated_names),
         );
+        cx.toggle(
+            tr!("ui-options-chat-logs-import-login"),
+            tr!("ui-options-chat-logs-import-login-help"),
+            &field!(log_import_at_login),
+        );
     });
     cx.group(tr!("ui-options-folder"), |cx| {
         cx.note(tr!("ui-options-chat-logs-note"));
@@ -874,8 +879,10 @@ fn history(cx: &mut Cx) {
                 ui.vertical(|ui| {
                     path_label(ui, &p, &dir, ui.available_width());
                     ui.horizontal(|ui| {
-                        use crate::ui::widgets::{ActionKind, action_button};
+                        use crate::ui::widgets::{ActionKind, action_button, action_button_if};
                         let size = Vec2::new(0.0, 24.0);
+                        // the files stay where they are while they are merged
+                        let idle = st.chat_log_importing.is_none();
                         if action_button(
                             ui,
                             &p,
@@ -890,27 +897,63 @@ fn history(cx: &mut Cx) {
                         }
                         // Legacy Viewer › Network & Files (InstantMessageLogPath):
                         // the files move with the folder
-                        if action_button(ui, &p, "folder-filled", tr!("ui-options-change-folder"), ActionKind::Flat, size).clicked() {
+                        if action_button_if(
+                            ui,
+                            &p,
+                            "folder-filled",
+                            tr!("ui-options-change-folder"),
+                            ActionKind::Flat,
+                            size,
+                            idle,
+                        )
+                        .clicked()
+                        {
                             r.folder = Some((Folder::ChatLogs, FolderChoice::Pick));
                         }
                         if st.chat_log_custom
-                            && action_button(ui, &p, "restore", tr!("ui-options-default-folder"), ActionKind::Flat, size).clicked()
+                            && action_button_if(ui, &p, "restore", tr!("ui-options-default-folder"), ActionKind::Flat, size, idle).clicked()
                         {
                             r.folder = Some((Folder::ChatLogs, FolderChoice::Default));
                         }
-                        if action_button(
+                        if action_button_if(
                             ui,
                             &p,
                             "trash-filled",
                             tr!("ui-options-chat-logs-erase"),
                             ActionKind::FlatDanger,
                             size,
+                            idle,
                         )
                         .clicked()
                         {
                             st.confirm_erase_logs = true;
                         }
                     });
+                    if crate::ui::widgets::action_button_if(
+                        ui,
+                        &p,
+                        "file-import",
+                        tr!("ui-options-chat-logs-import"),
+                        crate::ui::widgets::ActionKind::Flat,
+                        Vec2::new(0.0, 24.0),
+                        st.chat_log_importing.is_none(),
+                    )
+                    .clicked()
+                    {
+                        r.find_legacy_logs = true;
+                    }
+                    if let Some((done, total)) = st.chat_log_importing {
+                        let fraction = if total == 0 { 0.0 } else { done as f32 / total as f32 };
+                        crate::ui::widgets::progress(
+                            ui,
+                            &p,
+                            "chat_import",
+                            fraction,
+                            ui.available_width().min(360.0),
+                            &tr!("ui-options-chat-logs-importing", done = done, total = total),
+                            None,
+                        );
+                    }
                     if !st.chat_log_status.is_empty() {
                         ui.label(RichText::new(&st.chat_log_status).size(11.5).color(p.muted));
                     }

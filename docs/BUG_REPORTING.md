@@ -166,9 +166,16 @@ inlined functions included, to functions and source lines. It then:
 - when an open issue already has the same signature, comments there with
   the new occurrence (version, system, GPU) and closes the new issue as its
   duplicate; otherwise renames the issue `Crash: <kind> in <function>` and
-  sets the Bug type.
+  sets the Bug type;
+- adds the `crash-triaged` label to the issue it signed.
 
-No label is needed: the signature lives in a hidden comment of the body. A
+The signature lives in a hidden comment, the last line of the triage
+section. An open issue is a reference only when it carries the
+`crash-triaged` label (the workflow or a maintainer sets it; a reporter
+cannot) and that line of its own triage section has the same signature: a
+`crash-signature` comment written anywhere else in a body is not read. An
+issue signed before the label existed becomes a reference again once
+"Run workflow" triages it again. A
 closed issue is not a reference: a crash that comes back after its fix
 opens a new issue. "Run workflow" with an issue number triages it again,
 for example once the symbols of its version are published. Locally, on a
@@ -263,7 +270,7 @@ reopening the window or choosing "New report" then prepares a fresh form.
 The browser does not confirm the publication to the viewer: the tester
 clicks "I have published the report" after sending on GitHub to clear the
 draft. Opening GitHub or saving a local copy does not clear it.
-The avatar name and the diagnostics are unticked at first. No SL login
+The location, the avatar name and the diagnostics are unticked at first. No SL login
 state and no full settings are serialised. The public diagnostics keep only
 the recognised warning / error categories: simply removing the URLs or
 UUIDs would not be enough to remove the names and the free texts coming

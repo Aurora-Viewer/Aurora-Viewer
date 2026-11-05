@@ -108,6 +108,7 @@ const BEFORE: &[&str] = &[
     "fps_limit",
     "background_fps_cap",
     "background_fps_limit",
+    "background_gpu_pause",
     // Interface
     "language",
     "language_is_public",
@@ -227,6 +228,7 @@ const BEFORE: &[&str] = &[
     "log_show_history",
     "reopen_ims",
     "log_dated_names",
+    "log_import_at_login",
     "autoresponse",
     "mute_all_groups",
     "mute_groups_without_notices",
