@@ -1724,6 +1724,15 @@ impl BuildTool {
         }
     }
 
+    /// Inventory drops replace the selection (LLToolDragAndDrop::dropObject).
+    /// Leave Create immediately so its preview cannot cover the rezzed object;
+    /// keep-tool applies only to primitives placed with the Create tool.
+    pub fn edit_inventory_rez(&mut self, world: &World) {
+        self.set_tool(Tool::Edit);
+        self.deselect_all(world);
+        self.expect_created(world);
+    }
+
     /// Remember the objects already flagged "create selected" so that only
     /// new ones get selected when they arrive.
     pub fn expect_created(&mut self, world: &World) {

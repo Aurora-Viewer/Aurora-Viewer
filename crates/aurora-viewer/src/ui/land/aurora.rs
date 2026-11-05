@@ -159,6 +159,7 @@ fn picture(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, parcel: &Pa
             icon_at(ui, "mountain-filled", rect.center(), 48.0, p.muted_dim);
         }
     }
+    s.texture.drop_target_slot(ui, rect, false, overview::can_change_picture(v), 1);
     if overview::can_change_picture(v) {
         let slot = Rect::from_min_size(rect.right_bottom() - Vec2::splat(8.0 + 28.0), Vec2::splat(28.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(slot));

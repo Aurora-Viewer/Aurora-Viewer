@@ -948,3 +948,190 @@ fn poser_poses_a_shape_whose_sliders_mirror_face_joints() {
     );
     assert_eq!(data::bounded_scale(Vec3::new(-20.0, 0.0, -1e-6)), Vec3::new(-10.0, 0.001, -0.001));
 }
+
+#[test]
+fn poser_poses_and_exports_a_shape_that_leaves_a_joint_almost_flat() {
+    // A slider crossing zero left both pectorals at this scale on a real
+    // avatar: the capture took it, the check behind 0.001 refused the pose,
+    // and neither edits nor Save and Upload did anything.
+    let (mut world, mut editor) = fixture();
+    let lib = world.avatar_lib.clone();
+    let rig = &lib.rig;
+    let mut shape = lib.shape_params.shape(&[0; 260], rig);
+    for name in ["LEFT_PEC", "RIGHT_PEC"] {
+        shape.scale[rig.names[name]].x = -0.00019;
+    }
+    let joints = rig.world_with(&rig.local_rot, Vec3::ZERO, &shape.local_pos, &shape.scale);
+    world.avatar_poses.insert(
+        world.agent_id,
+        joints.iter().zip(&rig.default_world_inv).map(|(p, i)| *p * *i).collect(),
+    );
+    editor.poser.sessions.clear();
+    assert!(editor.pose_layers(&world).contains_key(&world.agent_id), "the avatar is posed");
+    let frame = Frame::new(&world).expect("frame");
+    editor.select(rig.names["mHead"], rig, &frame);
+    editor.set_rotation(Quat::from_rotation_z(0.4));
+    assert!(editor.commit_poser_manipulation(rig, &frame, true));
+    let session = &editor.poser.sessions[&world.agent_id];
+    let authored = session.authored(rig, frame.model).expect("the export has a pose");
+    let moved = authored.rotations[rig.names["mHead"]].dot(rig.local_rot[rig.names["mHead"]]).abs();
+    assert!(moved < 0.999, "the edit is exported");
+    assert!(
+        storage::native(rig, &authored, &[], "Flat".into(), 4).is_ok(),
+        "the upload is prepared"
+    );
+    assert!(
+        document::Document::capture(rig, session, "Flat".into(), 4).valid(rig),
+        "the pose can be saved"
+    );
+}
+
+/// The fixture on a pose it did not make: an animation plays on the avatar
+/// when the poser captures it.
+fn captured_animation() -> (World, Editor, usize, usize, Quat) {
+    let (mut world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let (left, right) = (rig.names["mElbowLeft"], rig.names["mElbowRight"]);
+    let played = Quat::from_euler(EulerRot::ZYX, 0.9, -0.4, 0.7);
+    let mut rotations = rig.local_rot.clone();
+    rotations[left] = played;
+    rotations[rig.names["mHead"]] = Quat::from_rotation_x(0.8);
+    let mut positions = rig.local_pos.clone();
+    positions[rig.pelvis] += Vec3::new(0.1, -0.2, 0.3);
+    world.avatar_poses.insert(
+        world.agent_id,
+        rig.world_with(&rotations, Vec3::ZERO, &positions, &rig.scale)
+            .iter()
+            .zip(&rig.default_world_inv)
+            .map(|(p, i)| *p * *i)
+            .collect(),
+    );
+    editor.poser.sessions.clear();
+    editor.pose_layers(&world);
+    (world, editor, left, right, played)
+}
+fn near(a: Quat, b: Quat) -> bool {
+    a.dot(b).abs() > 0.9999
+}
+#[test]
+fn poser_exports_nothing_of_a_captured_animation_through_any_format() {
+    let (world, editor, left, _, played) = captured_animation();
+    let rig = &world.avatar_lib.rig;
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(near(session.pose.rotations[left], played), "the avatar keeps showing its animation");
+    let authored = session.authored(rig, Mat4::IDENTITY).unwrap();
+    for bone in 0..rig.len() {
+        assert!(near(authored.rotations[bone], rig.local_rot[bone]), "{}", rig.canonical_names[bone]);
+        assert!(authored.positions[bone].abs_diff_eq(rig.local_pos[bone], 1e-5));
+    }
+    let native = storage::native(rig, &authored, &[], "Pose".into(), 4).unwrap();
+    let track = native.animation.joints.iter().find(|j| j.joint_name == "mElbowLeft").unwrap();
+    assert!(near(track.rot_keys[0].rotation, rig.local_rot[left]));
+    let pelvis = native.animation.joints.iter().find(|j| j.joint_name == "mPelvis").unwrap();
+    assert!(pelvis.pos_keys[0].position.abs_diff_eq(Vec3::ZERO, 1e-4));
+    let bvh = bvh::encode(rig, &authored, true).unwrap();
+    assert!(
+        aurora_assets::import_animation::parse_bvh(bvh.as_bytes(), world.avatar_lib.skeleton.as_ref().unwrap()).is_err(),
+        "nothing moves in the file"
+    );
+    let document = document::Document::capture(rig, session, "Pose".into(), 4);
+    let text = serde_json::to_string(&document).unwrap();
+    let decoded: document::Document = serde_json::from_str(&text).unwrap();
+    let mut other = data::Session::new(SubjectPose {
+        rotations: rig.local_rot.clone(),
+        positions: rig.local_pos.clone(),
+        scales: rig.scale.clone(),
+        locks: Default::default(),
+        origin: rig.local_rot.clone(),
+    });
+    assert!(decoded.apply(rig, &mut other, document::LoadMode::All, Mat4::IDENTITY));
+    assert!(
+        (0..rig.len()).all(|b| near(other.pose.rotations[b], rig.local_rot[b])),
+        "a saved file brings none of it to another avatar"
+    );
+}
+#[test]
+fn poser_touching_or_mirroring_joints_exports_the_change_and_not_the_captured_rotation() {
+    let (world, mut editor, left, right, played) = captured_animation();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    let change = Quat::from_rotation_z(0.2);
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    Arc::make_mut(&mut session.pose).rotations[left] = played * change;
+    let authored = session.authored(&rig, frame.model).unwrap();
+    assert!(near(authored.rotations[left], rig.local_rot[left] * change));
+    editor.select(left, &rig, &frame);
+    editor.pose_operation(&rig, &frame, controls::Operation::Mirror);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(session.edited(right), "the right arm shows the mirrored pose");
+    let authored = session.authored(&rig, frame.model).unwrap();
+    let mirrored = data::mirrored(&rig, rig.local_rot[left] * change, left, right);
+    assert!(near(authored.rotations[right], mirrored), "the mirror carries the change only");
+    editor.pose_operation(&rig, &frame, controls::Operation::Flip);
+    let authored = editor.poser.sessions[&world.agent_id].authored(&rig, frame.model).unwrap();
+    assert!(near(authored.rotations[rig.names["mHead"]], rig.local_rot[rig.names["mHead"]]));
+    assert!(near(authored.rotations[left], rig.local_rot[left] * change));
+    editor.poser.preset = 1;
+    editor.hand_preset(&rig, Some(true));
+    let session = &editor.poser.sessions[&world.agent_id];
+    let authored = session.authored(&rig, frame.model).unwrap();
+    let finger = rig.names["mHandIndex1Left"];
+    assert!(
+        near(authored.rotations[finger], session.pose.rotations[finger]),
+        "a preset is the user's"
+    );
+}
+#[test]
+fn poser_t_pose_makes_the_whole_pose_the_users_until_undo_or_reset() {
+    let (world, mut editor, left, _, played) = captured_animation();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    editor.select(left, &rig, &frame);
+    editor.pose_operation(&rig, &frame, controls::Operation::TPose);
+    let built = Quat::from_rotation_y(0.5);
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.checkpoint();
+    Arc::make_mut(&mut session.pose).rotations[left] = built;
+    let authored = session.authored(&rig, frame.model).unwrap();
+    assert!(near(authored.rotations[left], built), "built from the T-pose, it exports in full");
+    let document = document::Document::capture(&rig, session, "Built".into(), 4);
+    let mut other = data::Session::new((*session.base).clone());
+    assert!(document.apply(&rig, &mut other, document::LoadMode::All, Mat4::IDENTITY));
+    assert!(near(other.pose.rotations[left], built), "a complete file reloads as it was");
+    assert!(
+        near(other.authored(&rig, frame.model).unwrap().rotations[left], built),
+        "and stays the user's on the avatar it is loaded on"
+    );
+    session.history(false);
+    session.history(false);
+    assert!(near(session.pose.rotations[left], played));
+    assert!(
+        near(session.authored(&rig, frame.model).unwrap().rotations[left], rig.local_rot[left]),
+        "undo restores the origin"
+    );
+    session.history(true);
+    editor.pose_operation(&rig, &frame, controls::Operation::ResetJoint);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(near(session.pose.rotations[left], played));
+    assert!(near(
+        session.authored(&rig, frame.model).unwrap().rotations[left],
+        rig.local_rot[left]
+    ));
+    editor.pose_operation(&rig, &frame, controls::Operation::ResetAll);
+    assert!(near(editor.poser.sessions[&world.agent_id].pose.origin[left], played));
+}
+#[test]
+fn poser_a_saved_change_applies_on_the_destinations_own_pose_and_older_files_still_load() {
+    let (world, editor, left, _, played) = captured_animation();
+    let rig = &world.avatar_lib.rig;
+    let change = Quat::from_rotation_z(0.2);
+    let mut session = editor.poser.sessions[&world.agent_id].clone();
+    Arc::make_mut(&mut session.pose).rotations[left] = played * change;
+    let document = document::Document::capture(rig, &session, "Change".into(), 4);
+    let mut same = data::Session::new((*session.base).clone());
+    assert!(document.apply(rig, &mut same, document::LoadMode::All, Mat4::IDENTITY));
+    assert!(near(same.pose.rotations[left], played * change), "reloaded over the same pose");
+    let older = br#"{"name":"mElbowLeft","rotation":[0.0,0.0,0.0,1.0],"translation":[0.0,0.0,0.0],"scale":[1.0,1.0,1.0],"locked":false}"#;
+    let older: document::Joint = serde_json::from_slice(older).unwrap();
+    assert_eq!(older.name, "mElbowLeft");
+}

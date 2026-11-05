@@ -27,19 +27,8 @@ pub const CARRIED_LOCAL_ID: u32 = u32::MAX;
 /// Private namespace for render-only Blender attachments, never a grid handle.
 pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 
-/// Client-only appearance; never included in simulator texture/material edits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum LocalAppearance {
-    Texture(Uuid),
-    Material(Uuid),
-}
-impl LocalAppearance {
-    pub fn entry(self) -> Uuid {
-        match self {
-            Self::Texture(id) | Self::Material(id) => id,
-        }
-    }
-}
+mod local_appearance;
+pub use local_appearance::{LocalAppearance, LocalTextureSlot};
 
 /// GPU-side state owned by the scene; kept here so it moves with the object.
 #[derive(Debug, Default)]
@@ -195,7 +184,7 @@ impl Object {
     }
     pub fn visual_texture_face(&self, face: usize) -> aurora_prim::te::TextureFace {
         let mut value = self.te.as_ref().map(|te| *te.face(face)).unwrap_or_default();
-        if let Some(LocalAppearance::Texture(id)) = self.local_appearance(face) {
+        if let Some(id) = self.local_texture(face, LocalTextureSlot::Diffuse) {
             value.texture = id;
         }
         value
@@ -204,9 +193,10 @@ impl Object {
         if self.render.blinn_phong_preview {
             return None;
         }
-        match self.local_appearance(face) {
+        match self.local_appearance(face).and_then(LocalAppearance::surface) {
             Some(LocalAppearance::Texture(_)) => None,
             Some(LocalAppearance::Material(id)) => Some(id),
+            Some(LocalAppearance::Channels(_)) => None,
             None => self
                 .extra
                 .render_materials
@@ -214,6 +204,20 @@ impl Object {
                 .find(|(f, _)| *f as usize == face)
                 .map(|(_, id)| *id)
                 .filter(|id| !id.is_nil()),
+        }
+    }
+    pub fn local_texture(&self, face: usize, slot: LocalTextureSlot) -> Option<Uuid> {
+        self.local_appearance(face).and_then(|appearance| appearance.texture(slot))
+    }
+
+    pub fn visual_light_image(&self) -> Option<aurora_prim::extra::LightImageParams> {
+        if let Some(texture) = self.local_texture(0, LocalTextureSlot::Light) {
+            Some(aurora_prim::extra::LightImageParams {
+                texture,
+                ..self.extra.light_image.unwrap_or(crate::build::edits::LIGHT_IMAGE_DEFAULT)
+            })
+        } else {
+            self.extra.light_image
         }
     }
     #[inline]
@@ -535,7 +539,7 @@ impl Object {
 
     /// The simulator reported a motion the object follows (velocity,
     /// acceleration or spin).
-    fn extrapolates(&self) -> bool {
+    pub fn extrapolates(&self) -> bool {
         let (velocity, acceleration) = self.linear_motion();
         velocity != Vec3::ZERO || acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
     }

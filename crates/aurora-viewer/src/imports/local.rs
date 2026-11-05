@@ -49,7 +49,6 @@ impl Imports {
     /// Only applied appearances count: loading a file into the library alone
     /// must not announce that it is replacing a surface in the world.
     pub fn appearance_status(&self, objects: &crate::world::objects::ObjectStore) -> AppearanceStatus {
-        use crate::world::objects::LocalAppearance;
         let ids: HashSet<_> = self.local_appearance_targets.keys().map(|(id, _)| *id).collect();
         let mut status = AppearanceStatus {
             remembered_objects: ids.len(),
@@ -64,12 +63,11 @@ impl Imports {
             for face in 0..aurora_prim::te::MAX_TES {
                 if let Some(appearance) = object.local_appearance(face) {
                     mask |= 1u64.checked_shl(face as u32).unwrap_or(0);
-                    match appearance {
-                        LocalAppearance::Texture(id) => {
-                            textures.insert(id);
-                        }
-                        LocalAppearance::Material(id) => {
+                    for (id, material) in appearance.entries() {
+                        if material {
                             materials.insert(id);
+                        } else {
+                            textures.insert(id);
                         }
                     }
                 }
@@ -268,27 +266,42 @@ impl Imports {
             Some(Source::Material { .. }) => LocalAppearance::Material(entry_id),
             _ => return,
         };
+        let slot = if matches!(appearance, LocalAppearance::Material(_)) {
+            crate::world::objects::LocalTextureSlot::Material
+        } else {
+            crate::world::objects::LocalTextureSlot::Diffuse
+        };
         if faces.is_empty() {
-            self.local_appearance_targets.retain(|(id, _), _| *id != object);
-            self.set_local_appearance_target(object, None, Some(appearance));
+            let faces: Vec<_> = self
+                .local_appearance_targets
+                .iter()
+                .filter(|((id, face), _)| *id == object && face.is_some())
+                .map(|((_, face), value)| (*face, *value))
+                .collect();
+            for (face, current) in faces {
+                self.set_local_appearance_target(object, face, LocalAppearance::with_texture(Some(current), slot, Some(entry_id)));
+            }
+            let current = self.local_appearance_targets.get(&(object, None)).copied();
+            self.set_local_appearance_target(object, None, LocalAppearance::with_texture(current, slot, Some(entry_id)));
         } else {
             for face in faces {
-                self.set_local_appearance_target(object, Some(*face), Some(appearance));
+                let current = self
+                    .local_appearance_targets
+                    .get(&(object, Some(*face)))
+                    .or_else(|| self.local_appearance_targets.get(&(object, None)))
+                    .copied();
+                self.set_local_appearance_target(object, Some(*face), LocalAppearance::with_texture(current, slot, Some(entry_id)));
             }
         }
     }
     pub fn apply_appearance_targets(&self, objects: &mut crate::world::objects::ObjectStore) {
         for ((id, face), appearance) in &self.local_appearance_targets {
-            if !self
-                .entries
-                .iter()
-                .any(|entry| entry.id == appearance.entry() && entry.local_published)
-            {
+            let Some(appearance) = appearance.retain(|id| self.entries.iter().any(|entry| entry.id == id && entry.local_published)) else {
                 continue;
-            }
+            };
             let Some(index) = objects.index_of_uuid(id) else { continue };
             if objects.get(index).is_some_and(|object| {
-                object.render.local_appearance.get(face) == Some(appearance)
+                object.render.local_appearance.get(face) == Some(&appearance)
                     && (face.is_some()
                         || object
                             .render
@@ -305,24 +318,38 @@ impl Imports {
                         .local_appearance
                         .retain(|face, _| face.is_none() || self.local_appearance_targets.contains_key(&(*id, *face)));
                 }
-                object.render.local_appearance.insert(*face, *appearance);
+                object.render.local_appearance.insert(*face, appearance);
                 object.material_dirty = true;
                 object.render.needs_records = true;
             }
         }
     }
     pub fn clear_appearance_targets(&mut self, objects: &mut crate::world::objects::ObjectStore, ids: &[Uuid], entry: Option<Uuid>) {
-        self.local_appearance_targets
-            .retain(|(id, _), appearance| !ids.contains(id) || entry.is_some_and(|entry| appearance.entry() != entry));
+        self.local_appearance_targets.retain(|(id, _), appearance| {
+            if !ids.contains(id) {
+                return true;
+            }
+            let Some(remaining) = appearance.retain(|id| entry.is_some_and(|entry| id != entry)) else {
+                return false;
+            };
+            *appearance = remaining;
+            true
+        });
         for id in ids {
             let Some(index) = objects.index_of_uuid(id) else { continue };
             if let Some(object) = objects.get_mut(index) {
-                let before = object.render.local_appearance.len();
-                object
-                    .render
-                    .local_appearance
-                    .retain(|_, appearance| entry.is_some_and(|entry| appearance.entry() != entry));
-                if before != object.render.local_appearance.len() {
+                let mut changed = false;
+                object.render.local_appearance.retain(|_, appearance| {
+                    let remaining = appearance.retain(|id| entry.is_some_and(|entry| id != entry));
+                    changed |= remaining != Some(*appearance);
+                    if let Some(remaining) = remaining {
+                        *appearance = remaining;
+                        true
+                    } else {
+                        false
+                    }
+                });
+                if changed {
                     object.material_dirty = true;
                     object.render.needs_records = true;
                 }
@@ -414,6 +441,64 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removing_a_local_map_preserves_other_channels_and_does_not_reapply_it() {
+        use crate::world::objects::{LocalAppearance, LocalTextureSlot, ObjectStore};
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        let id = update.full_id;
+        let mut objects = ObjectStore::default();
+        let index = objects.upsert(0, update);
+        let mut imports = Imports::default();
+        let mut appearance = None;
+        for (n, slot) in [LocalTextureSlot::Diffuse, LocalTextureSlot::Normal, LocalTextureSlot::Specular]
+            .into_iter()
+            .enumerate()
+        {
+            let mut entry = Entry::new(
+                format!("channel-{n}.png").into(),
+                Ok(Source::Texture(Arc::new(DecodedImage {
+                    width: 1,
+                    height: 1,
+                    components: 3,
+                    data: vec![128, 128, 255],
+                    discard: 0,
+                }))),
+                Default::default(),
+            );
+            entry.local = true;
+            entry.local_published = true;
+            appearance = LocalAppearance::with_texture(appearance, slot, Some(entry.id));
+            imports.entries.push(entry);
+        }
+        let diffuse = imports.entries[0].id;
+        let normal = imports.entries[1].id;
+        let specular = imports.entries[2].id;
+        imports.set_local_appearance_target(id, Some(0), appearance);
+        imports.apply_appearance_targets(&mut objects);
+        assert_eq!(imports.appearance_status(&objects).textures, 3);
+        imports.clear_appearance_targets(&mut objects, &[id], Some(normal));
+        imports.apply_appearance_targets(&mut objects);
+        let object = objects.get(index).unwrap();
+        assert_eq!(object.local_texture(0, LocalTextureSlot::Diffuse), Some(diffuse));
+        assert_eq!(object.local_texture(0, LocalTextureSlot::Normal), None);
+        assert_eq!(object.local_texture(0, LocalTextureSlot::Specular), Some(specular));
+        assert_eq!(imports.appearance_status(&objects).textures, 2);
+        // Applying a surface from the library preserves the map bindings too.
+        imports.target_local(normal, id, &[], false);
+        imports.apply_appearance_targets(&mut objects);
+        assert_eq!(
+            objects.get(index).unwrap().local_texture(0, LocalTextureSlot::Diffuse),
+            Some(normal)
+        );
+        assert_eq!(
+            objects.get(index).unwrap().local_texture(0, LocalTextureSlot::Specular),
+            Some(specular)
+        );
+        imports.clear_all_appearance_targets(&mut objects);
+        assert!(objects.get(index).unwrap().render.local_appearance.is_empty());
+    }
 
     #[test]
     fn local_appearance_applies_selected_faces_and_restores_latest_server_state() {

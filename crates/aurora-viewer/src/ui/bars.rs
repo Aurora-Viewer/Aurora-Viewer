@@ -82,6 +82,8 @@ pub enum BarAction {
     ToggleFlyOverride,
     /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
     PhotoToDisk,
+    /// The toolbar's Photo roll: the reel's quick view on its newest photo.
+    PhotoRoll,
     /// Our profile on its Picks tab, or closed when Picks is shown
     /// (Avatar.TogglePicks, llviewermenu.cpp).
     MyPicks,
@@ -2157,6 +2159,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
+        "photo_roll" => return BarAction::PhotoRoll,
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
         // Floater.Toggle quickprefs
         "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
@@ -2381,6 +2384,7 @@ fn tool_button(
     label: &str,
     tip: &str,
     active: bool,
+    usable: bool,
     look: ButtonLook,
     unread: usize,
     flash: f32,
@@ -2391,9 +2395,10 @@ fn tool_button(
     let icon_size = look.icon;
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    // a saved Firestorm command Aurora does not run yet: very dimmed, with
-    // neither face nor pill under the pointer, as in the window
-    let ready = super::toolbar::ready(command);
+    // a saved Legacy Viewer command Aurora does not run yet, or one with
+    // nothing to do now: very dimmed, with neither face nor pill under the
+    // pointer, as in the window
+    let ready = super::toolbar::ready(command) && usable;
     // `locked`: RLVa would refuse its action, greyed without a hover face
     let hovered = ready && !locked && resp.hovered();
     if let Some(fill) = tool_fill(p, ready && active, hovered).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
@@ -2960,6 +2965,8 @@ pub(crate) fn toolbar_row(
             toolbar.water_walk_active
         } else if b.command == "picks" {
             toolbar.picks_active
+        } else if b.command == "photo_roll" {
+            toolbar.photo_roll_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
         } else if b.command == "RFO" {
@@ -2979,6 +2986,8 @@ pub(crate) fn toolbar_row(
             && row.unread > 0
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
+        // the Photo roll's button, dimmed while the session has no photo
+        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty);
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -2987,6 +2996,8 @@ pub(crate) fn toolbar_row(
             )
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
+        } else if !usable {
+            format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("photo-reel-none"))
         } else {
             super::toolbar::label(b).to_owned()
         };
@@ -3008,6 +3019,7 @@ pub(crate) fn toolbar_row(
             super::toolbar::label(b),
             &tip,
             active,
+            usable,
             look(b),
             count,
             // the Grid status button flashes on a new entry of the feed
@@ -3021,8 +3033,9 @@ pub(crate) fn toolbar_row(
         );
         rects.push(response.rect);
         toolbar.button(&response, row.bar, row.style, b, p, row.locked);
-        if !super::toolbar::ready(&b.command) {
-            // a saved Firestorm command Aurora does not have yet
+        if !super::toolbar::ready(&b.command) || !usable {
+            // a saved Legacy Viewer command Aurora does not have yet, or one
+            // with nothing to do now
             continue;
         }
         if b.command == "favorites" {
@@ -3783,6 +3796,16 @@ mod tests {
         panels.snapshot = false;
         assert!(super::super::toolbar::ready("snapshot_to_disk"));
         assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
+        assert!(!panels.snapshot);
+    }
+
+    #[test]
+    fn photo_roll_opens_the_quick_view_without_photo_mode() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.snapshot = false;
+        assert!(super::super::toolbar::ready("photo_roll"));
+        assert!(matches!(run_command(&ctx, "photo_roll", &mut panels), BarAction::PhotoRoll));
         assert!(!panels.snapshot);
     }
 
