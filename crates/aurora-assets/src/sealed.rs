@@ -14,8 +14,11 @@
 //! ([`Reader`]: the transcoded texture cache reads the coarse levels at the
 //! end of a file).
 //!
-//! A file without the magic is read as it is: the demo's sources and the
-//! files written by hand in tests. Only writing seals.
+//! The store reads only its own format: [`Key::open`] and [`Reader::new`]
+//! give an error for a file without the magic, a cache miss like a damaged
+//! one. The `_or_plain` readers take such a file as it is, for the callers
+//! whose sources are plain files (the demo's, the files tests write by
+//! hand).
 //!
 //! `ring` does the AES (hardware AES and carry-less multiply): about 13 GB/s
 //! on one core, some 12 µs for a texture of the cache.
@@ -124,13 +127,25 @@ impl Key {
         Ok(out)
     }
 
-    /// The plain bytes of a file read whole: decrypted in place when it is
-    /// sealed, as it is otherwise. An error for a damaged file, or one
-    /// sealed under another key (the store was reset): a cache miss.
-    pub fn open(&self, mut file: Vec<u8>) -> io::Result<Vec<u8>> {
+    /// The plain bytes of a sealed file read whole, decrypted in place. An
+    /// error for a file not in this format, a damaged one, or one sealed
+    /// under another key (the store was reset): a cache miss.
+    pub fn open(&self, file: Vec<u8>) -> io::Result<Vec<u8>> {
+        if !is_sealed(&file) {
+            return Err(invalid("not in the store format"));
+        }
+        self.open_sealed(file)
+    }
+
+    /// Like [`Key::open`], but a file without the magic is read as it is.
+    pub fn open_or_plain(&self, file: Vec<u8>) -> io::Result<Vec<u8>> {
         if !is_sealed(&file) {
             return Ok(file);
         }
+        self.open_sealed(file)
+    }
+
+    fn open_sealed(&self, mut file: Vec<u8>) -> io::Result<Vec<u8>> {
         let mut header = [0u8; HEADER];
         header.copy_from_slice(&file[..HEADER]);
         let len = plain_len(&header);
@@ -153,8 +168,8 @@ impl Key {
     }
 }
 
-/// Random access to the plain bytes of a cache file, sealed or not: only
-/// the chunks read are decrypted.
+/// Random access to the plain bytes of a cache file: only the chunks read
+/// are decrypted.
 pub struct Reader<R> {
     inner: R,
     sealed: Option<Sealed>,
@@ -171,7 +186,18 @@ struct Sealed {
 }
 
 impl<R: Read + Seek> Reader<R> {
-    pub fn new(mut inner: R, key: &Key) -> io::Result<Self> {
+    /// A reader of a sealed file; an error for a file not in this format
+    /// (as [`Key::open`]).
+    pub fn new(inner: R, key: &Key) -> io::Result<Self> {
+        Self::with(inner, key, false)
+    }
+
+    /// Like [`Reader::new`], but a file without the magic is read as it is.
+    pub fn new_or_plain(inner: R, key: &Key) -> io::Result<Self> {
+        Self::with(inner, key, true)
+    }
+
+    fn with(mut inner: R, key: &Key, plain: bool) -> io::Result<Self> {
         let total = inner.seek(SeekFrom::End(0))?;
         inner.seek(SeekFrom::Start(0))?;
         let mut sealed = None;
@@ -194,6 +220,9 @@ impl<R: Read + Seek> Reader<R> {
             } else {
                 inner.seek(SeekFrom::Start(0))?;
             }
+        }
+        if sealed.is_none() && !plain {
+            return Err(invalid("not in the store format"));
         }
         Ok(Reader {
             inner,
@@ -308,11 +337,27 @@ mod tests {
     }
 
     #[test]
-    fn plain_files_read_as_they_are() {
+    fn the_store_reads_only_its_own_format() {
+        let key = Key::random().expect("random");
+        // short, long, and long with a magic of another format
+        for file in [bytes(10), bytes(200), [b"AUSX".as_slice(), &bytes(200)].concat()] {
+            assert!(key.open(file.clone()).is_err(), "{} bytes", file.len());
+            assert!(Reader::new(Cursor::new(file.clone()), &key).is_err(), "{} bytes", file.len());
+        }
+        // a sealed file still reads through both
+        let sealed = key.seal(&bytes(200)).expect("seal");
+        assert_eq!(key.open(sealed.clone()).expect("open"), bytes(200));
+        assert_eq!(Reader::new(Cursor::new(sealed), &key).expect("reader").len(), 200);
+    }
+
+    #[test]
+    fn plain_files_read_as_they_are_when_asked() {
         let key = Key::random().expect("random");
         let plain = bytes(200);
-        assert_eq!(key.open(plain.clone()).expect("plain"), plain);
-        let mut r = Reader::new(Cursor::new(plain.clone()), &key).expect("reader");
+        assert_eq!(key.open_or_plain(plain.clone()).expect("plain"), plain);
+        let sealed = key.seal(&plain).expect("seal");
+        assert_eq!(key.open_or_plain(sealed).expect("sealed"), plain);
+        let mut r = Reader::new_or_plain(Cursor::new(plain.clone()), &key).expect("reader");
         assert_eq!(r.len(), 200);
         r.seek(SeekFrom::Start(150)).expect("seek");
         let mut tail = Vec::new();

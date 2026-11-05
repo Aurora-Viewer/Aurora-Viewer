@@ -30,7 +30,8 @@ const MAGIC: &[u8; 4] = b"AOC2";
 
 /// The key the files are sealed with (`aurora_assets::sealed`), the one of
 /// the viewer's disk cache: set by the viewer before any session. Without
-/// it (this crate's tests) the files are written as they are.
+/// it (this crate's tests) the files are written and read as they are; with
+/// it, a file not in the store format is a miss (`Key::open`).
 static SEAL: std::sync::OnceLock<aurora_assets::sealed::Key> = std::sync::OnceLock::new();
 
 pub fn seal_with(key: aurora_assets::sealed::Key) {

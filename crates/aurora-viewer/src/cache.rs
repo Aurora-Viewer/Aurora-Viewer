@@ -54,12 +54,27 @@ fn publish(path: &Path, file: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Read a cache file whole. A file sealed under another key or damaged is
-/// an error, like a missing one: a cache miss.
+/// Whether a file not in the store format reads as it is. Only in the
+/// unit tests, which write their files by hand, and in the demo: its
+/// sources are plain files (`AURORA_DEMO_STREAM`'s `j2k=` folder, what its
+/// local asset server serves, the maps its scenarios write), and it never
+/// meets a grid. Anywhere else such a file is a cache miss: the asset is
+/// fetched again.
+fn plain_files_read() -> bool {
+    static DEMO: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("AURORA_DEMO").is_some());
+    cfg!(test) || *DEMO
+}
+
+fn open(file: Vec<u8>, plain: bool) -> std::io::Result<Vec<u8>> {
+    if plain { key().open_or_plain(file) } else { key().open(file) }
+}
+
+/// Read a cache file whole. A file sealed under another key, damaged, or
+/// not in the store format is an error, like a missing one: a cache miss.
 pub fn read(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     let d = std::fs::read(path.as_ref())?;
     crate::disk_io::read(origin_of(path.as_ref()), d.len());
-    key().open(d)
+    open(d, plain_files_read())
 }
 
 /// Read a cache file and mark it as used.
@@ -71,7 +86,12 @@ pub fn read_touch(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
 
 /// A cache file for reads at given places (only those chunks are decrypted).
 pub fn reader(path: impl AsRef<Path>) -> std::io::Result<aurora_assets::sealed::Reader<std::fs::File>> {
-    aurora_assets::sealed::Reader::new(std::fs::File::open(path)?, key())
+    let file = std::fs::File::open(path)?;
+    if plain_files_read() {
+        aurora_assets::sealed::Reader::new_or_plain(file, key())
+    } else {
+        aurora_assets::sealed::Reader::new(file, key())
+    }
 }
 
 /// Delete the cache folders of the earlier format, which the versions
@@ -344,6 +364,16 @@ mod tests {
         assert_eq!(origin_of(&root.join("settings").join("x.settings")), Origin::Other);
         // a file named like a folder is not one
         assert_eq!(origin_of(&root.join("tex")), Origin::Other);
+    }
+
+    #[test]
+    fn a_store_read_takes_only_the_store_format() {
+        let plain = [[0xff, 0x4f, 0xff, 0x51].as_slice(), b" a codestream written by hand"].concat();
+        assert!(open(plain.clone(), false).is_err(), "a plain file is a miss");
+        assert_eq!(open(plain.clone(), true).expect("demo source"), plain);
+        let sealed = key().seal(&plain).expect("seal");
+        assert_eq!(open(sealed.clone(), false).expect("sealed"), plain);
+        assert_eq!(open(sealed, true).expect("sealed"), plain);
     }
 
     #[test]
