@@ -94,7 +94,7 @@ fn portals_show_friends_by_default_and_our_own_whatever_the_setting() {
     state.sync(&world, None, 1000);
     let ids: Vec<_> = state.visible(&world).map(|entry| entry.portal.id.as_u128()).collect();
     assert_eq!(ids, [9, 10]);
-    assert!(state.entries.iter().all(|entry| !entry.from_non_friend(&world)));
+    assert!(state.entries.iter().all(|entry| !entry.opened_by_non_friend(&world)));
     open(
         &mut state,
         &world,

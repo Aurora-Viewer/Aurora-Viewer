@@ -135,7 +135,7 @@ impl Entry {
 
     /// Someone who is not our friend opened or relays it: the first crossing
     /// asks first. Ours, or a friend's relayed by a friend, does not.
-    pub fn from_non_friend(&self, world: &World) -> bool {
+    pub fn opened_by_non_friend(&self, world: &World) -> bool {
         !self.own()
             && !((self.owner == world.agent_id || friend(world, self.owner))
                 && self
@@ -389,7 +389,7 @@ impl State {
                 .entries
                 .iter()
                 .find(|entry| entry.owner == owner && entry.portal.id == id)
-                .is_none_or(|entry| entry.from_non_friend(world))
+                .is_none_or(|entry| entry.opened_by_non_friend(world))
     }
 
     /// The portal a question is about, while it can still be crossed.
