@@ -761,10 +761,10 @@ fn a_link_can_be_pasted_into_an_outfit_folder_but_a_copy_cannot() {
 fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
     let mut inv = Inventory::default();
     let asset = id(9801);
-    assert!(!asset_uuid_shown(&inv, asset, false), "not in the inventory");
-    assert!(asset_uuid_shown(&inv, asset, true), "a god may see any asset UUID");
-    assert!(asset_uuid_shown(&inv, aurora_prim::te::BLANK_TEXTURE, false));
-    assert!(asset_uuid_shown(&inv, aurora_prim::te::TRANSPARENT_TEXTURE, false));
+    assert!(!asset_uuid_shown(&inv, asset), "not in the inventory");
+    assert!(asset_uuid_shown_to(&inv, asset, true), "a god may see any asset UUID");
+    assert!(asset_uuid_shown(&inv, aurora_prim::te::BLANK_TEXTURE));
+    assert!(asset_uuid_shown(&inv, aurora_prim::te::TRANSPARENT_TEXTURE));
     for missing in [COPY, MODIFY, TRANSFER] {
         inv.items.insert(
             id(9802),
@@ -775,7 +775,7 @@ fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
                 ..Default::default()
             },
         );
-        assert!(!asset_uuid_shown(&inv, asset, false), "missing permission {missing:x}");
+        assert!(!asset_uuid_shown(&inv, asset), "missing permission {missing:x}");
     }
     inv.items.insert(
         id(9803),
@@ -786,5 +786,5 @@ fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
             ..Default::default()
         },
     );
-    assert!(asset_uuid_shown(&inv, asset, false), "a second item gives full permissions");
+    assert!(asset_uuid_shown(&inv, asset), "a second item gives full permissions");
 }

@@ -280,7 +280,7 @@ pub(super) fn toolbar(
             actions.push(Action::RefreshTexture(item.asset_id));
         }
         // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions only
-        let copy_uuid = rules::asset_uuid_shown(inventory, item.asset_id, god);
+        let copy_uuid = rules::asset_uuid_shown_to(inventory, item.asset_id, god);
         if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), copy_uuid) {
             ui.ctx().copy_text(item.asset_id.to_string());
         }

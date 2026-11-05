@@ -346,7 +346,7 @@ impl Editor {
                                     .unwrap_or_else(|| id.to_string())
                             })
                             .unwrap_or_else(|| aurora_i18n::tr!("import-no-map").into()),
-                            map.is_some_and(|id| rules::asset_uuid_shown(&world.inventory, id, world.god_level > 0)),
+                            map.is_some_and(|id| rules::asset_uuid_shown_to(&world.inventory, id, world.god_level > 0)),
                         );
                     }
                     if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), cached.3) {
