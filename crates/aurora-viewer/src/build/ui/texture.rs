@@ -9,6 +9,8 @@
 
 #[path = "legacy_texture.rs"]
 mod legacy_texture;
+#[path = "texture_drop.rs"]
+pub(super) mod texture_drop;
 
 use super::common::{Edit, check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
@@ -144,8 +146,10 @@ impl BuildTool {
     }
 
     /// Apply inventory cargo to explicitly picked faces, leaving selection and
-    /// other texture-entry properties unchanged. A texture on PBR replaces its
-    /// base map; Alt restores the legacy face, as dropTextureOneFace does.
+    /// other texture-entry properties unchanged. Follow the displayed shading
+    /// mode: a Blinn-Phong preview edits its diffuse while retaining PBR.
+    /// Otherwise a texture on PBR replaces its base map; Alt removes PBR,
+    /// as dropTextureOneFace does.
     pub fn apply_inventory_surface(
         &mut self,
         world: &mut World,
@@ -176,6 +180,7 @@ impl BuildTool {
             self.apply_texture(world, env, PickTarget::PbrMaterial, asset, &selected);
             return;
         }
+        let blinn_phong = world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview);
         let mut legacy = Vec::new();
         let mut updates = Vec::new();
         for face in selected {
@@ -187,6 +192,8 @@ impl BuildTool {
                         asset: Some(Uuid::nil()),
                         over: None,
                     });
+                    legacy.push(face);
+                } else if blinn_phong {
                     legacy.push(face);
                 } else {
                     let mut over = BuildTool::gltf_override(world, idx, face.face);
@@ -480,10 +487,12 @@ fn material_tint(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn material_asset(
     ui: &mut egui::Ui,
     p: &Palette,
     tool: &mut BuildTool,
+    world: &World,
     asset: Option<Uuid>,
     mixed: bool,
     model: Option<std::sync::Arc<aurora_render::preview::Model>>,
@@ -531,6 +540,7 @@ fn material_asset(
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", "PbrMaterial".to_string())), response.rect));
         crate::ui::widgets::local_texture::asset(ui, p, response.rect, asset);
+        texture_drop::slot(ui, p, tool, world, response.rect, PickTarget::PbrMaterial, true);
         let caption = aurora_i18n::tr!("build-ui-texture-material");
         ui.add_sized(
             [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
@@ -552,6 +562,7 @@ fn material_map(
     ui: &mut egui::Ui,
     p: &Palette,
     tool: &mut BuildTool,
+    world: &World,
     env: &mut Env,
     id: Option<Uuid>,
     mixed: bool,
@@ -565,6 +576,7 @@ fn material_map(
         ui.spacing_mut().item_spacing.y = if super::legacy::active(ui) { 0.0 } else { 6.0 };
         // A material asset is glTF, not an image: only its maps enter the image loader.
         let response = swatch(ui, p, env.images, &mut tool.ui.wanted_images, id, "", size, mixed, enabled);
+        texture_drop::slot(ui, p, tool, world, response.rect, target, enabled);
         #[cfg(test)]
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", format!("{target:?}"))), response.rect));
@@ -717,7 +729,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             .num_columns(3)
             .spacing(egui::vec2(10.0, 10.0))
             .show(ui, |ui| {
-                material_asset(ui, p, tool, asset, asset_mixed, model, size);
+                material_asset(ui, p, tool, world, asset, asset_mixed, model, size);
                 for (index, (id, caption, channel)) in [
                     (mat.base_color_texture, aurora_i18n::tr!("common-color"), 0),
                     (mat.normal_texture, aurora_i18n::tr!("build-ui-texture-normal"), 1),
@@ -727,7 +739,19 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 .into_iter()
                 .enumerate()
                 {
-                    material_map(ui, p, tool, env, id, false, caption, PickTarget::PbrMap(channel), editable, size);
+                    material_map(
+                        ui,
+                        p,
+                        tool,
+                        world,
+                        env,
+                        id,
+                        false,
+                        caption,
+                        PickTarget::PbrMap(channel),
+                        editable,
+                        size,
+                    );
                     if (index + 2) % 3 == 0 {
                         ui.end_row();
                     }
@@ -943,7 +967,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 PickTarget::Specular,
             ),
         ] {
-            material_map(ui, p, tool, env, id, mixed, caption, target, editable, size);
+            material_map(ui, p, tool, world, env, id, mixed, caption, target, editable, size);
         }
     });
     ui.vertical(|ui| {

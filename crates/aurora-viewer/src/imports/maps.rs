@@ -72,6 +72,14 @@ impl Imports {
         }
     }
 
+    /// A direct drop commits the map and ends an older reversible picker.
+    pub fn drop_map(&mut self, id: Uuid, slot: usize, asset: Uuid) {
+        self.map_picker.open = false;
+        self.map_target = None;
+        self.map_before = None;
+        self.select_map(id, slot, asset);
+    }
+
     pub fn select_map(&mut self, id: Uuid, slot: usize, asset: Uuid) {
         // A local file contributes pixels to the material's normal upload
         // path; its viewer-only UUID must never become a remote map asset.

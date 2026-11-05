@@ -159,7 +159,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         ),
     ] {
         let mut map = child(ui, canvas, 0.0, y, 60.0, 76.0, &format!("legacy-map-{target:?}"));
-        material_map(&mut map, p, tool, env, id, mixed, caption, target, !water, 60.0);
+        material_map(&mut map, p, tool, world, env, id, mixed, caption, target, !water, 60.0);
     }
     let (rgb, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
     let mut diffuse_tint = child(ui, canvas, 64.0, 0.0, 40.0, 76.0, "legacy-diffuse-tint");
@@ -364,7 +364,7 @@ pub(super) fn pbr_surface(
 ) {
     let (canvas, _) = ui.allocate_exact_size(vec2(ui.available_width(), 224.0), egui::Sense::hover());
     let mut material = child(ui, canvas, 0.0, 0.0, 60.0, 76.0, "legacy-pbr-material");
-    material_asset(&mut material, p, tool, asset, mixed, model, 60.0);
+    material_asset(&mut material, p, tool, world, asset, mixed, model, 60.0);
     for (x, y, id, caption, channel) in [
         (64.0, 0.0, mat.base_color_texture, aurora_i18n::tr!("common-color"), 0),
         (0.0, 74.0, mat.normal_texture, aurora_i18n::tr!("build-ui-texture-normal"), 1),
@@ -376,6 +376,7 @@ pub(super) fn pbr_surface(
             &mut map,
             p,
             tool,
+            world,
             env,
             id,
             false,
