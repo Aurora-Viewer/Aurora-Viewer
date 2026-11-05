@@ -11,13 +11,20 @@ pub const SOUND_SOURCE: Uuid = Uuid::from_u128(0xa6780004_0000_0000_0000_0000000
 pub const SOUND_OWNER: Uuid = Uuid::from_u128(0xa6780005_0000_0000_0000_000000000005);
 
 pub fn dialog(source: Uuid) -> NetEvent {
+    dialog_on(source, -678)
+}
+
+/// A script dialog on its own channel: dialogs from one object replace each
+/// other only on the same channel (LLScriptFloaterManager), so a flood that
+/// should stack uses a channel per prompt.
+pub fn dialog_on(source: Uuid, channel: i32) -> NetEvent {
     NetEvent::ScriptDialog {
         sender: ([127, 0, 0, 1], 13000).into(),
         object_id: source,
         object_name: aurora_i18n::tr!("anti-spam-demo-object").into(),
         owner_name: aurora_i18n::tr!("anti-spam-demo-resident").into(),
         message: aurora_i18n::tr!("anti-spam-demo-prompt").into(),
-        channel: -678,
+        channel,
         buttons: vec![aurora_i18n::tr!("common-ok").into()],
     }
 }
@@ -79,7 +86,7 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
     let mut out = Vec::new();
     for n in 0..65 {
         if n < 15 {
-            out.push(dialog(DIALOG_SOURCE));
+            out.push(dialog_on(DIALOG_SOURCE, -678 - n as i32));
             out.push(offer(agent, INVENTORY_SOURCE, 9, n));
             out.push(offer(agent, TELEPORT_SOURCE, 22, n));
         }
