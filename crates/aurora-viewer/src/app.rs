@@ -9138,6 +9138,12 @@ impl App {
         if in_world {
             self.scene.draw_distance = self.settings.draw_distance;
             self.scene.synchronize_animations = self.settings.synchronize_animations;
+            if self.demo
+                && let Ok(speed) = std::env::var("AURORA_DEMO_ANIM_SPEED")
+                && let Ok(speed) = speed.parse::<f32>()
+            {
+                self.scene.animation_speed = speed.clamp(0.1, 2.0);
+            }
             self.scene.ground_avatar_feet = self.settings.ground_avatar_feet;
             self.scene.ground_feet_while_moving = self.settings.ground_feet_while_moving;
             self.scene.ground_feet_max_height = self.settings.ground_feet_max_height;
@@ -13236,6 +13242,14 @@ impl App {
                 self.settings.save();
                 log::info!("quiet snapshots: {}", !self.settings.snapshot.sound);
             }
+            BarAction::AnimationSpeed(speed) => {
+                self.scene.animation_speed = speed.clamp(0.1, 2.0);
+                log::info!("animation speed: {:.1}x", self.scene.animation_speed);
+            }
+            BarAction::ToggleSlowMotionAnimations => {
+                self.scene.slow_motion_animations = !self.scene.slow_motion_animations;
+                log::info!("slow motion animations: {}", self.scene.slow_motion_animations);
+            }
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
@@ -14804,6 +14818,8 @@ impl App {
                     friends_only: self.world.friends_only(),
                     fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
+                    animation_speed: self.scene.animation_speed,
+                    slow_motion_animations: self.scene.slow_motion_animations,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     can_go_home: self.world.rlva_can_teleport_home(),

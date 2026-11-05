@@ -2981,6 +2981,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit\|resync` | Animation loops, sequences, stops and synchronization after delayed loading, editing or Ctrl+S |
+| `AURORA_DEMO_ANIM_SPEED=0.2|2` | Set the demo scene's animation speed for testing the Advanced › Animation Speed menu; combine with `AURORA_DEMO_ANIM_LOOP` |
 | `AURORA_DEMO_PELVIS_CONSTRAINT=1` | An animation constraint carrying the avatar's body out of sight, 4 s out of 8 |
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
@@ -3563,6 +3564,7 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   tags stay and the camera does not move; they are back at the next loop,
   with no shadow or lighting left behind. Count the frames from the frame
   rate when capturing (at 170 fps, a loop is about 1,360 frames).
+- **`AURORA_DEMO_ANIM_SPEED=0.2|2`**, with `AURORA_DEMO_ANIM_LOOP=1`: set the session speed for the animation loop fixture. Check the loop at quarter speed and double speed, then use Advanced › Animation Speed to change speed live; global speed affects all avatars and animesh, while Slow Motion Animations affects only our avatar.
 - **`AURORA_DEMO_ANIM_LOOP=1`**: loop whose first interval is missing,
   sequence changed every 120 frames, stop / restart at frames
   960 / 1020 every 1200 frames.
