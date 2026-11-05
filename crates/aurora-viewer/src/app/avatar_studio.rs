@@ -182,10 +182,21 @@ impl App {
         };
         if !pressed && *held {
             *held = false;
+            if button == MouseButton::Right && self.right_gesture.opens_menu() && !over_ui {
+                self.open_context_menu();
+            }
             return true;
+        }
+        // Edit from an attachment's context menu must keep selection and
+        // manipulator presses/releases; the build camera already uses the Studio view.
+        if button == MouseButton::Left && self.build.open {
+            return false;
         }
         if pressed && !over_ui && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_none() {
             *held = true;
+            if button == MouseButton::Right {
+                self.right_gesture = super::RightGesture::default();
+            }
             return true;
         }
         false
@@ -251,7 +262,7 @@ impl App {
                 })
                 .collect();
         }
-        fp.spot_shadows = [None; 2];
+        fp.spot_shadows.fill(None);
         fp.probes = Default::default();
         fp.mirror = None;
         fp.shadows = false;

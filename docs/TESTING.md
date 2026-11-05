@@ -8292,6 +8292,18 @@ avatar through the plinth. Check GPU culling and `AURORA_CPU_CULL=1` at
 high and low focal heights, and compare planar reflections enabled/disabled.
 Region terrain must appear neither directly nor through water reflections or
 refraction, including classic and PBR terrain outside the main camera view.
+Right-click the avatar and its attachments: the normal menus, including skeleton
+reset and attachment edit/detach, must remain available. Small pointer jitter
+under 10 UI points must neither move focus nor suppress the menu. Right-drag
+beyond that threshold must adjust focus and never open a menu on release,
+including after returning to the starting point. Release a drag over a window:
+it stops without opening a menu. Select Edit on an attachment, then select and
+drag its build handles: editing must own the left button without rotating Studio.
+Close the editor: left-drag orbits again. Photo mode keeps its native controls.
+For offline menu captures, keep the viewer focused (focus loss cancels Studio
+gestures) and combine `AURORA_DEMO_AVATAR_STUDIO=a-pose` with
+`AURORA_DEMO_CLICKS=1000,800,300,menu` at 1600 × 1000. A mesh-head shape
+fixture (`AURORA_DEMO_SHAPE=mesh-head`) also exercises the attachment target.
 Reduced motion holds the aurora still. Left-drag the exposed view horizontally to turn. Right-drag up/down
 to move the focus vertically through the avatar's centre; horizontal motion
 must not move that height control sideways. Hold the middle mouse button and
