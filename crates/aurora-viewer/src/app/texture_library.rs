@@ -954,7 +954,7 @@ impl App {
                     egui::LayerId::background(),
                     egui::Id::unique("texture-world-drop-refused"),
                     // clear of the cursor and of the badge it carries
-                    egui::PopupAnchor::Position(drag.position + egui::vec2(22.0, 20.0)),
+                    egui::PopupAnchor::Position(drag.position + egui::vec2(16.0, 14.0)),
                 )
                 .show(|ui| match reason {
                     Some(reason) => {
