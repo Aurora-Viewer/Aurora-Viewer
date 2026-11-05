@@ -393,6 +393,15 @@ pub(crate) fn take_folder(inv: &crate::world::inventory::Inventory, folders: imp
     (known && !trashed).then_some(folder)
 }
 
+/// LLPermissions::allowTransferTo (indra/llinventory/llpermissions.cpp) on
+/// an object's full properties: its owner (or no one) may always pass it
+/// on; otherwise, and when a group owns it (no owner, a group), the owner
+/// mask needs transfer.
+fn transfers_to(p: &ObjectProps, agent: Uuid) -> bool {
+    let group_owned = p.owner_id.is_nil() && !p.group_id.is_nil();
+    p.owner_mask & aurora_net::build::perm::TRANSFER != 0 || !group_owned && (p.owner_id == agent || p.owner_id.is_nil())
+}
+
 #[cfg(test)]
 mod prim_limit_tests {
     use super::PrimLimits;
@@ -1564,6 +1573,65 @@ impl BuildTool {
         if !copy {
             self.deselect_all(world);
         }
+    }
+
+    /// Build › Save back to object contents applies
+    /// (enable_save_into_task_inventory, indra/newview/llviewermenu.cpp):
+    /// the first selected root has its full properties, names the object
+    /// that rezzed it (FromTaskID) and is not worn. Returns that object.
+    pub fn save_to_task_inventory_target(&self, world: &World) -> Option<Uuid> {
+        if self.attachment_selected(world) {
+            return None;
+        }
+        let root = world.objects.get(*self.roots(world).first()?)?;
+        self.props
+            .get(&root.full_id)
+            .filter(|p| p.full && !p.from_task_id.is_nil())
+            .map(|p| p.from_task_id)
+    }
+
+    /// Save back to object contents (LLToolsSaveToObjectInventory): the
+    /// selected roots go into the contents of the object that rezzed the
+    /// first one, in one DeRezObject (derez_objects,
+    /// DRD_SAVE_INTO_TASK_INVENTORY) with the active group. Only the roots
+    /// we may copy and transfer go (get_derezzable_objects; we are never
+    /// godlike); a copy is saved, so the selection stays.
+    pub fn save_to_task_inventory(&mut self, world: &mut World) {
+        let Some(rezzer) = self.save_to_task_inventory_target(world) else {
+            return;
+        };
+        let roots = self.roots(world);
+        // AcquireErrorObjectSpan, as take
+        if self.group_by_region(world, &roots).len() > 1 {
+            self.status = aurora_i18n::tr!("build-mod-cannot-take-objects-from-multiple-regions-at-once").into();
+            return;
+        }
+        let derezzable: Vec<usize> = roots
+            .into_iter()
+            .filter(|&r| {
+                world.objects.get(r).is_some_and(|o| {
+                    o.update_flags & crate::ui::context::flags::OBJECT_COPY != 0
+                        && self
+                            .props
+                            .get(&o.full_id)
+                            .is_some_and(|p| p.full && transfers_to(p, world.agent_id))
+                })
+            })
+            .collect();
+        // "No objects to derez": nothing is sent
+        if derezzable.is_empty() {
+            return;
+        }
+        for (handle, local_ids) in self.group_by_region(world, &derezzable) {
+            self.send(BuildCmd::DeRez {
+                handle,
+                local_ids,
+                destination: derez::SAVE_INTO_TASK_INVENTORY,
+                destination_id: rezzer,
+                group_id: world.groups.active,
+            });
+        }
+        world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
     }
 
     /// "Take as separate items" / "Take copies as separate items"

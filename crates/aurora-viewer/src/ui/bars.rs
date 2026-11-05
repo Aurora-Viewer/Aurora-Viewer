@@ -30,6 +30,8 @@ pub enum BarAction {
     Poser,
     /// Build › Edit particles (Object.EditParticles).
     EditParticles,
+    /// Build › Save back to object contents (Tools.SaveToObjectInventory).
+    SaveToObjectContents,
     Portals,
     CheckUpdates,
     ReportBug,
@@ -311,6 +313,9 @@ pub struct StatusInfo<'a> {
     /// Build › Edit particles applies: an object we own is selected
     /// (Object.EnableEditParticles).
     pub edit_particles: bool,
+    /// Build › Save back to object contents applies: the selection was
+    /// rezzed by an object (Tools.EnableSaveToObjectInventory).
+    pub save_to_contents: bool,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
@@ -1194,7 +1199,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
-        build_menu(ui, p, action, &st.ik_keys, st.edit_particles);
+        build_menu(ui, p, action, &st.ik_keys, st.edit_particles, st.save_to_contents);
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels, action, st.marketplace, st.motd);
@@ -1372,7 +1377,7 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
     });
 }
 
-fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str, edit_particles: bool) {
+fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str, edit_particles: bool, save_to_contents: bool) {
     if menu::item(ui, p, "wand", aurora_i18n::tr!("poser-title")) {
         *action = BarAction::Poser;
     }
@@ -1404,6 +1409,23 @@ fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &
         },
     ) {
         *action = BarAction::EditParticles;
+    }
+    // menu_viewer.xml: Build › Object › Save Back to Object Contents,
+    // greyed out until an object rezzed from another one's contents is
+    // selected (enable_save_into_task_inventory)
+    if menu::item_tip(
+        ui,
+        p,
+        "device-floppy-filled",
+        aurora_i18n::tr!("ui-bars-save-to-object-contents"),
+        save_to_contents,
+        if save_to_contents {
+            ""
+        } else {
+            aurora_i18n::tr!("ui-bars-save-to-object-contents-tip")
+        },
+    ) {
+        *action = BarAction::SaveToObjectContents;
     }
     menu::separator(ui, p);
     if menu::item(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu")) {
