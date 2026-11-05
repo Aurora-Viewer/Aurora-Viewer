@@ -56,6 +56,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-chat-keep-focus-hint"),
                     &field!(chat_keep_focus),
                 );
+                cx.toggle(
+                    tr!("ui-options-chat-enter-toggles"),
+                    tr!("ui-options-chat-enter-toggles-hint"),
+                    &field!(chat_enter_toggles),
+                );
+                cx.toggle(
+                    tr!("ui-options-chat-enter-last-field"),
+                    tr!("ui-options-chat-enter-last-field-hint"),
+                    &field!(chat_enter_last_field),
+                );
                 // #980: FSChatbarGestureAutoCompleteEnable (on),
                 // FSChatbarNamePrediction (on, the human's choice; off in the Legacy
                 // Viewer), FSUseChatMentionAutoComplete

@@ -732,6 +732,14 @@ pub struct Settings {
     /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
     /// off, the bar lets go after sending.
     pub chat_keep_focus: bool,
+    /// Aurora extension, Enter toggles typing: Enter on an empty field gives
+    /// the keyboard back to the world in every conversation too (IMs and
+    /// group chats), not only in the nearby chat. Off by default.
+    pub chat_enter_toggles: bool,
+    /// Aurora extension, Enter returns to the last chat field used: from the
+    /// world, Enter focuses the conversation last talked in when its window
+    /// is open, instead of always the chat bar. Off by default.
+    pub chat_enter_last_field: bool,
     /// The nearby chat fields complete a gesture's trigger after `/`, with
     /// the list of the matching ones (FSChatbarGestureAutoCompleteEnable, on).
     pub chat_gesture_autocomplete: bool,
@@ -1898,6 +1906,8 @@ impl Default for Settings {
             compact_automated_chat: false,
             compact_im_system_lines: false,
             chat_keep_focus: true,
+            chat_enter_toggles: false,
+            chat_enter_last_field: false,
             chat_gesture_autocomplete: true,
             chat_name_prediction: true,
             colon_emote: false,
