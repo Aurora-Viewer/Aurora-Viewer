@@ -334,6 +334,15 @@ pub(super) fn handles_of(ctx: &Context, p: &Palette, response: &egui::Response, 
         if response.dragged() {
             ctx.set_cursor_icon(edge.cursor());
         }
+        // `move_to_top` above orders widgets within the layer only. egui
+        // raises the window whose area holds a press, which knows nothing of
+        // the grip outside it: over another window, that one came to the
+        // front (#2422). The Legacy Viewer brings the resized floater to the
+        // front (LLFloater::handleMouseDown), so raise this one as well; both
+        // asking in the same pass keeps their order.
+        if response.is_pointer_button_down_on() || response.dragged() {
+            ctx.move_to_top(response.layer_id);
+        }
         for (side, moves) in edge.sides().into_iter().enumerate() {
             hovered[side] |= moves && response.hovered();
             dragged[side] |= moves && response.dragged();
@@ -598,6 +607,80 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// #2422: the grip just outside a window lies over the window behind it.
+    /// A press there resizes the front window and leaves the order alone, as
+    /// the Legacy Viewer's resize bars, inside their floater, bring that one
+    /// to the front (LLFloater::handleMouseDown, llui/llfloater.cpp).
+    #[test]
+    fn an_outer_grip_over_another_window_resizes_the_front_one() {
+        let ctx = Context::default();
+        let mut frame = 0;
+        let mut show = |events: Vec<egui::Event>| {
+            frame += 1;
+            let palette = crate::theme::Theme::default().palette();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                    time: Some(frame as f64 / 60.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    // the back window first: the one shown later opens above it
+                    for (id, pos, size) in [
+                        ("order_back", pos2(300.0, 200.0), vec2(440.0, 300.0)),
+                        ("order_front", pos2(150.0, 250.0), vec2(300.0, 200.0)),
+                    ] {
+                        let title = aurora_i18n::tr!("common-inventory");
+                        let body = |ui: &mut Ui| ui.set_min_height(ui.available_height());
+                        Floater::new(id, title, pos, size)
+                            .silent()
+                            .show(ui.ctx(), &palette, &mut true, body);
+                    }
+                },
+            );
+            output.textures_delta.clear();
+            let rect = |id: &str| ctx.memory(|memory| memory.area_rect(Id::unique(id)).unwrap());
+            (rect("order_back"), rect("order_front"))
+        };
+        let (mut back, mut front) = show(vec![]);
+        for _ in 0..8 {
+            (back, front) = show(vec![]);
+        }
+        let overlap = back.intersect(front);
+        let on_top = |ctx: &Context| ctx.layer_id_at(overlap.center()).map(|layer| layer.id);
+        assert!(overlap.is_positive() && on_top(&ctx) == Some(Id::unique("order_front")));
+        let grip = pos2(front.right() + 2.0, front.center().y);
+        assert!(back.contains(grip) && !front.contains(grip), "{back:?} {front:?}");
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        show(vec![egui::Event::PointerMoved(grip)]);
+        show(vec![button(grip, true)]);
+        let target = grip + vec2(30.0, 0.0);
+        show(vec![egui::Event::PointerMoved(target)]);
+        show(vec![button(target, false)]);
+        let (back_after, front_after) = show(vec![]);
+        assert_eq!(back_after, back, "the window behind stays put");
+        assert!(
+            (front_after.width() - front.width() - 30.0).abs() < 1.0 && front_after.left() == front.left(),
+            "{front:?} -> {front_after:?}"
+        );
+        assert_eq!(on_top(&ctx), Some(Id::unique("order_front")), "the front window stays in front");
+        assert_eq!(ctx.dragged_id(), None);
+        // a click well inside the window behind still raises it
+        let inside = pos2(back.right() - 40.0, back.center().y);
+        assert!(!front_after.expand(SIDE_OUT + CORNER_OUT).contains(inside));
+        show(vec![egui::Event::PointerMoved(inside)]);
+        show(vec![button(inside, true)]);
+        show(vec![button(inside, false)]);
+        show(vec![]);
+        assert_eq!(on_top(&ctx), Some(Id::unique("order_back")));
     }
 
     #[test]
