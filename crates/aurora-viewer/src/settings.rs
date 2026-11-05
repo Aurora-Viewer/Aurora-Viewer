@@ -306,7 +306,9 @@ pub struct HoverTips {
     /// human's choice (2026-10-21); the Legacy Viewer's is on.
     pub enabled: bool,
     pub form: HoverTipForm,
-    /// Show avatar names independently of object tips (Preferences › Interface).
+    /// Avatar tips even with `enabled` off, objects and land then showing
+    /// none (#2475; the Legacy Viewer has no such switch, its avatar tips
+    /// follow ShowHoverTips alone). Off, so nothing changes for anyone.
     pub avatars: bool,
     /// ShowAllObjectHoverTip: every object, not only those that can be
     /// touched, paid, bought or have media (off, as in the Legacy Viewer).
@@ -330,7 +332,7 @@ impl Default for HoverTips {
         HoverTips {
             enabled: false,
             form: HoverTipForm::Card,
-            avatars: true,
+            avatars: false,
             all_objects: false,
             land: false,
             group_titles: true,
@@ -3064,11 +3066,12 @@ impl WaterEffectsSettings {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn avatar_hover_tips_default_on_and_old_preferences_load_it() {
+    fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
         use super::HoverTips;
-        assert!(HoverTips::default().avatars);
+        assert!(!HoverTips::default().avatars);
+        assert!(!HoverTips::default().enabled);
         let old: HoverTips = serde_json::from_str(r#"{"enabled":true,"all_objects":false}"#).expect("older hover preferences");
-        assert!(old.avatars);
+        assert!(!old.avatars);
         assert!(old.enabled);
         assert!(!old.all_objects);
     }

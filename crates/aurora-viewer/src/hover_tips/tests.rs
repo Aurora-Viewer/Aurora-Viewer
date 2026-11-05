@@ -15,7 +15,7 @@ fn object(n: u128) -> (Subject, Key) {
 }
 
 #[test]
-fn avatar_subjects_follow_their_option_independently_of_object_and_land_options() {
+fn each_switch_combination_selects_its_subjects() {
     let avatar = Subject::Avatar {
         idx: 1,
         id: Uuid::from_u128(1),
@@ -26,18 +26,25 @@ fn avatar_subjects_follow_their_option_independently_of_object_and_land_options(
         local: Vec3::ZERO,
         origin: (0, 0),
     };
-    for avatars in [false, true] {
-        for all_objects in [false, true] {
-            for land_enabled in [false, true] {
-                let settings = HoverTips {
-                    avatars,
-                    all_objects,
-                    land: land_enabled,
-                    ..HoverTips::default()
-                };
-                assert_eq!(subject_enabled(avatar, &settings), avatars);
-                assert!(subject_enabled(object, &settings));
-                assert_eq!(subject_enabled(land, &settings), land_enabled);
+    for enabled in [false, true] {
+        for avatars in [false, true] {
+            for all_objects in [false, true] {
+                for land_on in [false, true] {
+                    let settings = HoverTips {
+                        enabled,
+                        avatars,
+                        all_objects,
+                        land: land_on,
+                        ..HoverTips::default()
+                    };
+                    let case = format!("enabled={enabled} avatars={avatars} all={all_objects} land={land_on}");
+                    // the main switch shows avatars as before; "Avatars even
+                    // when off" shows them alone
+                    assert_eq!(any_enabled(&settings), enabled || avatars, "{case}");
+                    assert_eq!(subject_enabled(avatar, &settings), enabled || avatars, "{case}");
+                    assert_eq!(subject_enabled(object, &settings), enabled, "{case}");
+                    assert_eq!(subject_enabled(land, &settings), enabled && land_on, "{case}");
+                }
             }
         }
     }
