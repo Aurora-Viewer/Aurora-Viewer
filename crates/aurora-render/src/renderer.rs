@@ -701,6 +701,19 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
         .or_else(|| taa.and_then(|t| t.motion.as_ref()))
 }
 
+/// The coverage from which a blended face gives FSR its own depth and
+/// motion (`fsr_blend_normal`): the glass faint enough to show what lies
+/// behind keeps its edges anti-aliased, the softest fringes (smoke, hair
+/// tips) leave the motion to what is behind them.
+const FSR_BLEND_ALPHA: f64 = 0.1;
+
+/// `AURORA_FSR_BLEND_MOTION=0`: the blended faces give FSR no motion of
+/// their own (read once).
+fn fsr_blend_motion() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_FSR_BLEND_MOTION").map_or(true, |v| v.trim() != "0"))
+}
+
 /// The replay of a frame's write journal is logged over this (ms).
 const SLOW_WRITES_MS: f32 = 4.0;
 
@@ -950,6 +963,10 @@ struct Pipelines {
     pre_contact: SidedPipelines,
     /// `pre_contact` with GTAO's mesh normals, into the occlusion's depth.
     pre_contact_normal: SidedPipelines,
+    /// FSR only (`AURORA_FSR=1`): the blended faces covered from
+    /// `FSR_BLEND_ALPHA`, with their motion, into the occlusion's depth
+    /// once the occlusion and the contact shadows have read it.
+    fsr_blend_normal: Option<SidedPipelines>,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): ordinary / portal-clipped, each one-sided and two-sided.
     pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
@@ -3961,6 +3978,19 @@ impl Backend {
                 blend_cull(side != 0),
             )
         });
+        let fsr_blend_normal = crate::fsr::requested().then(|| {
+            std::array::from_fn(|side| {
+                pipe(PipeDesc {
+                    cull: blend_cull(side != 0),
+                    samples: 1,
+                    format: Some(crate::gtao::NORMAL_FORMAT),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    constants: &[("DEPTH_CONTACT_ALPHA", FSR_BLEND_ALPHA)],
+                    ..base("fsr blended faces motion", "vs_depth_mask_normal", "fs_depth_contact_normal")
+                })
+            })
+        });
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>, clipped: bool| {
                 pipe(PipeDesc {
@@ -4179,6 +4209,7 @@ impl Backend {
             pre_normal_portal,
             pre_contact,
             pre_contact_normal,
+            fsr_blend_normal,
             pre_msaa,
             refl_sky,
             refl_terrain,
@@ -4325,7 +4356,10 @@ impl Backend {
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
-        let ao_depth = (s.ssao > 0 && (legacy_ao || gtao_ao)).then(|| {
+        // FSR reads it too: the blended faces at least half covered drawn
+        // there, with their motion, keep their history instead of taking
+        // the motion of what lies behind them
+        let ao_depth = ((s.ssao > 0 && (legacy_ao || gtao_ao)) || crate::fsr::requested()).then(|| {
             // copied in turn for the contact shadows
             let copies = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
             make_view(device, "occlusion depth", w, h, DEPTH_FORMAT, 1, sampled | copies)
@@ -5247,7 +5281,9 @@ impl Backend {
                 self.scene_size(),
                 &crate::fsr::Inputs {
                     color: &self.targets.color,
-                    depth: &self.targets.depth_ss,
+                    // the prepass and the blended faces at least half
+                    // covered, whose motion the same pass wrote
+                    depth: self.targets.ao_depth.as_ref().map_or(&self.targets.depth_ss, |(_, view)| view),
                     motion: motion_read,
                     opaque: &self.targets.scene_copy,
                 },
@@ -7358,6 +7394,35 @@ impl Backend {
             self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
+        // ---- FSR: the blended faces drawn over what lies behind them, even
+        // faint glass, give their own depth and motion, so their edges keep
+        // their history (the occlusion and the contact shadows have read
+        // that depth; GTAO those normals)
+        if let (Some(pipe), Some((_, view)), true, true) = (
+            &self.pipelines.fsr_blend_normal,
+            &self.targets.ao_depth,
+            normals.is_some() && n_blend > 0,
+            self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) && fsr_blend_motion(),
+        ) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fsr blended faces motion"),
+                color_attachments: normal_target(wgpu::LoadOp::Load).as_slice(),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.a);
+            draw_sided(&mut pass, pipe, rg.blend, 0);
+            draw_under(&mut pass, pipe, rg.blend_under);
+        }
         self.water_effects.encode(&mut encoder);
         // ---- planar reflections
         let refl_passes = [
