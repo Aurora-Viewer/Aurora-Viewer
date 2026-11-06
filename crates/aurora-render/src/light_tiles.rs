@@ -99,7 +99,8 @@ impl LightSets {
 
     /// Member `i` in every set: what reaches every fragment whatever its
     /// extent says.
-    pub fn hold_everywhere(&mut self, i: usize) {
+    #[cfg(test)]
+    fn hold_everywhere(&mut self, i: usize) {
         let (word, bit) = (i / 32 % 2, 1u32 << (i % 32));
         for pair in self.columns.iter_mut().chain(&mut self.rows).chain(&mut self.slices) {
             pair[word] |= bit;
@@ -234,18 +235,11 @@ pub(crate) fn reach(view: Mat4, proj: Mat4, eye: Vec3, forward: Vec3, size: [f32
 /// list (its first [`LIGHTS`]), the screen `size` in pixels, the camera at
 /// `eye` (the position the shaders measure depths from).
 pub fn bin(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], lights: &[PointLight]) -> LightSets {
-    bin_spheres(view, proj, eye, size, lights.iter().map(|l| (l.position, l.radius)))
-}
-
-/// The sets of the main view for members that each reach the fragments of
-/// a sphere (centre, radius) and no other: the first [`LIGHTS`] of
-/// `spheres`, in their order.
-pub fn bin_spheres(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], spheres: impl IntoIterator<Item = (Vec3, f32)>) -> LightSets {
     let size = [size[0].max(1) as f32, size[1].max(1) as f32];
     let forward = view_forward(view);
     let (mut columns, mut rows, mut slices) = ([0u64; TILES], [0u64; TILES], [0u64; SLICES]);
-    for (i, (position, radius)) in spheres.into_iter().take(LIGHTS).enumerate() {
-        let Some(reach) = reach(view, proj, eye, forward, size, position, radius) else {
+    for (i, light) in lights.iter().take(LIGHTS).enumerate() {
+        let Some(reach) = reach(view, proj, eye, forward, size, light.position, light.radius) else {
             continue;
         };
         for (sets, [from, to]) in [(&mut columns[..], reach.x), (&mut rows[..], reach.y), (&mut slices[..], reach.z)] {

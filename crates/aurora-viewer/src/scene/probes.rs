@@ -672,7 +672,9 @@ mod tests {
             let t = Vec3::new((k % 4) as f32, ((k / 4) % 4) as f32, (k / 16) as f32) / 4.0 + Vec3::splat(0.1);
             assert_eq!(probe_cell(lo + t * s, anchor), (level, cell));
         }
-        // a forest within 230 m fits the 64 slots (one cell per column)
+        // one layer of a forest within 230 m takes less than 64 cells (one
+        // per column); a real forest spreads over its height too, about 213
+        // on the grid, which needs more slots than the default
         let mut cells = HashSet::new();
         for x in -15..15 {
             for y in -15..15 {

@@ -6115,8 +6115,8 @@ impl Backend {
         // reflection probes by screen tile and depth, for the main view
         // (probes::tiles), and how its fragments walk them (sample_probes_pair)
         let probe_walk = crate::probes::ProbeWalk::from_env();
-        // (a device with fewer cube layers than the viewer has slots: the
-        // probes in the slots it lacks are left out)
+        // (the viewer asks for what the device holds, `fitted_probe_slots`:
+        // this is for the frames until a new number of slots is applied)
         let probe_list: std::borrow::Cow<[crate::types::ProbeGpu]> = if f.probes.probes.iter().any(|p| p.slot[0] >= self.probes.slots) {
             f.probes.probes.iter().filter(|p| p.slot[0] < self.probes.slots).copied().collect()
         } else {
