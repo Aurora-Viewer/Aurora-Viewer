@@ -1498,7 +1498,7 @@ fn drag_update(
                 // Firestorm refuses to copy individual parts
             } else {
                 let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
-                for m in &d.movers {
+                for m in d.movers.iter().filter(|m| super::copyable_object(world, m.idx)) {
                     by_region.entry(m.key.region).or_default().push(m.key.local_id);
                 }
                 for (handle, ids) in by_region {
