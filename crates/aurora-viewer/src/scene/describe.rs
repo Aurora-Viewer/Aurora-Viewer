@@ -650,11 +650,14 @@ impl Scene {
             "ready" => String::new(),
             state => format!(", geometry {state}"),
         };
-        let head = format!("({kind}, lod {}{geometry})", g.lod);
+        let mut head = format!("({kind}, lod {}{geometry})", g.lod);
         if count > 0 && zero == count {
             // a prim a body HUD hid whole: one short line, merged with the
             // others alike (see `merge_alike`)
             return format!("{head}: all {count} faces left out for texture-entry alpha 0");
+        }
+        if g.hud {
+            head.push_str(&self.hud_geometry(world, renderer, o, g));
         }
         let mut counts = vec![if g.faces.is_empty() {
             "no faces drawn".to_string()
@@ -671,6 +674,76 @@ impl Scene {
             }
         }
         format!("{head}: {}:{}", counts.join(", "), grouped_faces(&faces))
+    }
+
+    /// Read the actual HUD draw matrices without changing its placement.
+    /// Four vertices per face identify the edges of small panel meshes;
+    /// bounding this sample also keeps the live inspector inexpensive.
+    fn hud_geometry(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu) -> String {
+        use std::fmt::Write as _;
+
+        let mut text = format!(
+            "\n    HUD geometry: local position {:.8?}, rotation xyzw {:.8?}, reported size {:.8?}, visual size {:.8?}",
+            o.position.to_array(),
+            o.rotation.to_array(),
+            o.scale.to_array(),
+            o.visual_scale_at(Instant::now()).to_array()
+        );
+        if let Some(sculpt) = o.visual_volume().sculpt {
+            let _ = write!(text, ", asset {}", sculpt.texture);
+        }
+        if let Some(idx) = world.objects.index_of_uuid(&o.full_id)
+            && crate::build::root_of(world, idx) == idx
+        {
+            let _ = write!(
+                text,
+                "\n    HUD edit: effective flags {:#010x}, whole move {}, whole rotate {}, stretch {}, linked move {}",
+                o.update_flags,
+                crate::build::can_transform(world, idx, false, crate::build::EditMode::Move),
+                crate::build::can_transform(world, idx, false, crate::build::EditMode::Rotate),
+                crate::build::can_transform(world, idx, false, crate::build::EditMode::Stretch),
+                crate::build::can_transform(world, idx, true, crate::build::EditMode::Move)
+            );
+        }
+        let Some(geom) = self.ready_geom(g) else { return text };
+        let _ = write!(
+            text,
+            "\n    HUD local bounds: {:.8?} .. {:.8?}",
+            geom.min.to_array(),
+            geom.max.to_array()
+        );
+        let Some(view) = self.lists.hud_view else { return text };
+        let scale = world.objects.index_of_uuid(&o.full_id).map_or(1.0, |idx| world.hud_scale(idx));
+        let _ = write!(
+            text,
+            "\n    HUD projection: window {:.0}x{:.0}, area {:.4?}, pixels per unit {:.8}, view zoom {:.8}, object zoom {:.8}",
+            view.width,
+            view.height,
+            view.area,
+            view.unit(),
+            view.zoom,
+            scale
+        );
+        for (fi, face) in geom.pick_faces.iter().enumerate().take(64) {
+            let Some(face) = face else { continue };
+            let record = g
+                .faces
+                .iter()
+                .find(|draw| usize::from(draw.te_index) == fi)
+                .and_then(|draw| renderer.records.get(draw.record));
+            let Some(record) = record else { continue };
+            let model = glam::Mat4::from_cols_array_2d(&record.model);
+            let _ = write!(
+                text,
+                "\n    HUD face {fi}: model {:.8?}, vertex samples local -> pixel",
+                record.model
+            );
+            for p in face.positions.iter().take(4) {
+                let pixel = view.pixel(model.transform_point3(Vec3::from_array(*p)));
+                let _ = write!(text, " [{p:.8?} -> {pixel:.8?}]");
+            }
+        }
+        text
     }
 
     /// A drawn face: texture entry as received, what the draw record holds,
