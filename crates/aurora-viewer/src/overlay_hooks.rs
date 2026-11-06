@@ -2,24 +2,23 @@
 //!
 //! Unlike the Vulkan layers of `aurora_render::vulkan_layers`, which the
 //! loader adds and the viewer can keep out, these are DLLs a running program
-//! loads into the process at any moment (when its overlay or its capture
-//! starts) and that patch the presentation functions in place. Discord's
-//! `DiscordHook64.dll`, for example, is started by `DiscordHookHelper64.exe`
-//! when its in-game overlay attaches or a Go Live stream captures the
-//! window, and hooks `vkQueuePresentKHR`, DXGI and OpenGL; its own drawing
-//! code covers DXGI and OpenGL only. The viewer has no way to refuse them
-//! (Discord's exclusions are a fixed list of executable names), so it says
-//! in the log when one appears: a white or frozen window reported by a
-//! tester can then be matched with the hook that arrived at that time. The
-//! crash report names the hooks too ("Overlay hooks"), from this fixed list
-//! only.
+//! loads into the process at any moment (when its overlay or capture starts).
+//! `DiscordHook64.dll` is a known legacy Discord game-hook module. Discord
+//! described its redesigned overlay as no longer using the former direct game
+//! hooking approach (https://discord.com/blog/player-release-q12025). A known
+//! module is observational evidence, not proof that its program caused a
+//! display loss. The crash report names hooks from this fixed list only.
 
+#[cfg(windows)]
 use std::time::Duration;
 
-/// How often the process's modules are listed: the hooks arrive late and
-/// at any time. A list of a few hundred modules takes well under a
+/// Normal module scan cadence after an initial one-second sampling window.
+/// Hooks arrive late; a list of a few hundred modules takes well under a
 /// millisecond on a background thread.
+#[cfg(windows)]
 const EVERY: Duration = Duration::from_secs(10);
+#[cfg(windows)]
+const EARLY: Duration = Duration::from_secs(1);
 
 /// One known hook DLL, what it belongs to and what to do if the image is
 /// lost while it is loaded.
@@ -33,8 +32,8 @@ pub struct Hook {
 pub const KNOWN: &[Hook] = &[
     Hook {
         file: "DiscordHook64.dll",
-        program: "Discord (in-game overlay or Go Live capture)",
-        advice: "if the window turns white while the world's sound plays, turn off Discord's in-game overlay for Aurora (Discord › User Settings › Game Overlay, or the game's entry in Registered Games)",
+        program: "Discord legacy game hook",
+        advice: "if the image is lost, test with Discord's game overlay disabled for Aurora; this legacy hook does not identify Go Live capture state",
     },
     Hook {
         file: "GameOverlayRenderer64.dll",
@@ -45,6 +44,41 @@ pub const KNOWN: &[Hook] = &[
         file: "RTSSHooks64.dll",
         program: "RivaTuner Statistics Server (MSI Afterburner's on-screen display)",
         advice: "if the image is lost, add aurora-viewer.exe to RivaTuner with Application detection level None",
+    },
+    Hook {
+        // Medal documents game-process injection for its overlay/capture, but
+        // does not publish this DLL name. The exact module is observed in
+        // crash reports (with an OBS Graphics Hook PDB):
+        // https://support.medal.tv/support/solutions/articles/48001166446-how-to-whitelist-medal-in-your-anti-virus
+        // https://us.forums.blizzard.com/en/overwatch/t/dev-look-pls-constant-crashes-and-unrecoverable-errors/721037
+        file: "medal-hook64.dll",
+        program: "Medal game capture",
+        advice: "if the image is lost, turn off Medal's in-game overlay or use window capture",
+    },
+    Hook {
+        // NVIDIA's symbol server lists this module and a D3D12 load is logged
+        // in its developer forum: https://driver-symbols.nvidia.com/nvspcap64.dll/
+        // and https://forums.developer.nvidia.com/t/crash-in-d3d12createdevice-when-custom-debugger-is-attached/275346.
+        file: "nvspcap64.dll",
+        program: "NVIDIA Share capture overlay",
+        advice: "if the image is lost, turn off the in-game overlay in NVIDIA App",
+    },
+    Hook {
+        // FPS Monitor's developer confirms game-rendering injection and the
+        // fpsmon64.dll/fps-mon64.dll names; the exact hyphenated token is also
+        // present in its current package listing:
+        // https://store.steampowered.com/news/posts/?enddate=1640812878&feed=steam_community_announcements
+        // https://steamdb.info/depot/966611/
+        file: "fps-mon64.dll",
+        program: "FPS Monitor overlay",
+        advice: "if the image is lost, turn off FPS Monitor's in-game overlay",
+    },
+    Hook {
+        // OBS Studio's Windows blocklist names Bandicam's game hook and says
+        // it does not unhook cleanly: https://github.com/obsproject/obs-studio/blob/master/frontend/utility/win-dll-blocklist.c.
+        file: "bdcam64.dll",
+        program: "Bandicam game capture",
+        advice: "if the image is lost, switch Bandicam to screen recording or turn off game capture",
     },
     Hook {
         file: "we-graphics-hook64.dll",
@@ -96,6 +130,7 @@ pub fn start() {
         );
         let spawned = std::thread::Builder::new().name("aurora-overlay-hooks".into()).spawn(move || {
             let mut seen = Vec::new();
+            let mut samples = 0u8;
             loop {
                 let mut loaded = modules();
                 loaded.extend(demo.clone());
@@ -109,7 +144,11 @@ pub fn start() {
                     // the crash report names it (crash/summary.rs)
                     crate::crash::overlay_hook(hook.file);
                 }
-                std::thread::sleep(EVERY);
+                // Device startup follows shortly after this watch begins.
+                // Sample each second early to catch hooks loaded by
+                // vkCreateInstance/device setup, then use the normal cadence.
+                std::thread::sleep(if samples < 30 { EARLY } else { EVERY });
+                samples = samples.saturating_add(1);
             }
         });
         if let Err(e) = spawned {
@@ -148,6 +187,15 @@ fn modules() -> Vec<String> {
     names
 }
 
+/// Snapshot known hook modules at the moment the viewer records a GPU loss.
+pub(crate) fn loss_snapshot() {
+    #[cfg(windows)]
+    {
+        let files: Vec<_> = modules().iter().filter_map(|name| known(name).map(|hook| hook.file)).collect();
+        crate::crash::overlay_hooks_at_loss(&files);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +213,28 @@ mod tests {
     }
 
     #[test]
+    fn known_hooks_include_only_the_confirmed_capture_module_names() {
+        for (file, program) in [
+            ("medal-hook64.dll", "Medal game capture"),
+            ("nvspcap64.dll", "NVIDIA Share capture overlay"),
+            ("fps-mon64.dll", "FPS Monitor overlay"),
+            ("bdcam64.dll", "Bandicam game capture"),
+        ] {
+            assert_eq!(known(file).map(|hook| hook.program), Some(program), "{file}");
+        }
+        for unsupported in [
+            "GameBarPresenceWriter.dll",
+            "GameBarOverlay.dll",
+            "owclient.dll",
+            "DiscordOverlay64.dll",
+            "atiadlxx.dll",
+            "amdlvr64.dll",
+        ] {
+            assert_eq!(known(unsupported), None, "{unsupported}");
+        }
+    }
+
+    #[test]
     fn the_demo_hook_names_a_module_in_demo_only() {
         assert_eq!(demo_hook(true, Some(" DiscordHook64.dll ")).as_deref(), Some("DiscordHook64.dll"));
         assert_eq!(demo_hook(false, Some("DiscordHook64.dll")), None);
@@ -178,9 +248,24 @@ mod tests {
         let before: Vec<String> = ["aurora-viewer.exe", "ntdll.dll"].map(String::from).into();
         assert!(arrived(&mut seen, &before).is_empty());
         let mut later = before.clone();
-        later.push("DiscordHook64.dll".into());
+        later.extend([
+            "DiscordHook64.dll".into(),
+            "medal-hook64.dll".into(),
+            "nvspcap64.dll".into(),
+            "fps-mon64.dll".into(),
+            "bdcam64.dll".into(),
+        ]);
         let new: Vec<_> = arrived(&mut seen, &later).iter().map(|h| h.file).collect();
-        assert_eq!(new, ["DiscordHook64.dll"]);
+        assert_eq!(
+            new,
+            [
+                "DiscordHook64.dll",
+                "medal-hook64.dll",
+                "nvspcap64.dll",
+                "fps-mon64.dll",
+                "bdcam64.dll"
+            ]
+        );
         assert!(arrived(&mut seen, &later).is_empty());
         later.push("RTSSHooks64.dll".into());
         let new: Vec<_> = arrived(&mut seen, &later).iter().map(|h| h.file).collect();

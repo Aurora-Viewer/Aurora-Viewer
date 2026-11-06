@@ -69,6 +69,7 @@ impl App {
     pub(super) fn gpu_stall_frame(&mut self, renderer: &aurora_render::Renderer) {
         let now = Instant::now();
         if renderer.device_lost() && super::gpu_recovery::enabled() && !self.gpu_stall.lost {
+            crate::crash::gpu_loss_snapshot();
             use super::gpu_recovery::LossStep;
             match super::gpu_recovery::loss_step(&mut self.gpu_losses, now) {
                 step @ (LossStep::Recover | LossStep::RecoverSafe) => {
