@@ -291,10 +291,11 @@ impl Scene {
         }
         None
     }
-    /// Conservative avatar-sized free space behind a nearby solid object.
+    /// Conservative avatar-sized free space behind a nearby solid object,
+    /// with that object's index (whose rights the passage reads).
     /// Visual geometry cannot reproduce Havok shapes; boxes deliberately
     /// reject uncertain destinations before a bounded scripted physical passage.
-    pub fn movement_exit(&self, world: &World, origin: Vec3, direction: Vec3, height: f32) -> Option<Vec3> {
+    pub fn movement_exit(&self, world: &World, origin: Vec3, direction: Vec3, height: f32) -> Option<(Vec3, usize)> {
         let ray = (origin, direction);
         let mut candidates = Vec::new();
         self.pick.ray_candidates(ray, &mut candidates);
@@ -363,7 +364,7 @@ impl Scene {
             let ext = inverse.x_axis.abs() * 0.35 + inverse.y_axis.abs() * 0.35 + inverse.z_axis.abs() * (height * 0.5);
             local.cmple(size.abs() * 0.5 + ext).all()
         });
-        (!occupied && destination.is_finite()).then_some(destination)
+        (!occupied && destination.is_finite()).then_some((destination, idx))
     }
     /// LLToolPie::handleRightMouseDown / LLToolSelectRect::handleMouseDown:
     /// pick_transparent includes every volume surface, without requiring a
@@ -2037,14 +2038,15 @@ pub(crate) mod tests {
         }
         let origin = Vec3::new(128.0, 128.0, 50.0);
         assert!(scene.movement_obstacle(&world, origin, Vec3::X));
-        let exit = scene.movement_exit(&world, origin, Vec3::X, 1.7).expect("clear far side");
+        let (exit, wall) = scene.movement_exit(&world, origin, Vec3::X, 1.7).expect("clear far side");
+        assert_eq!(wall, front, "the object passed through");
         assert!(
             exit.distance(Vec3::new(130.5, 128.0, 50.0)) < 0.0001,
             "leave one metre beyond the wall's far face at x=129.5"
         );
         for distance in [1.6, 2.5, 3.0] {
             let approach = origin.with_x(128.5 - distance);
-            let farther_exit = scene.movement_exit(&world, approach, Vec3::X, 1.7).expect("wall in approach range");
+            let (farther_exit, _) = scene.movement_exit(&world, approach, Vec3::X, 1.7).expect("wall in approach range");
             assert!(
                 farther_exit.distance(exit) < 0.0001,
                 "the approach distance must not move the exit farther away"

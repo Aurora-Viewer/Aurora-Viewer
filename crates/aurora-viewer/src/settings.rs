@@ -492,10 +492,13 @@ pub struct Settings {
     pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
-    /// The shape editor stands our avatar up and plays the customise
+    /// AppearanceCameraMovement (llpaneleditwearable.cpp): frame the edited
+    /// body part automatically. Independent of the customise animation.
+    pub appearance_camera_movement: bool,
+    /// The appearance editors stand our avatar up and play the customise
     /// animation, which turns it to face the camera (on, as the Legacy
     /// Viewer always does; Preferences › Avatars › Animations). Off, our
-    /// avatar keeps its pose and the camera frames it from the front.
+    /// avatar keeps its pose. Camera framing is controlled independently.
     pub customize_animation: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
@@ -1379,6 +1382,10 @@ pub struct Settings {
     /// graphics card once it is known (`graphics_presets::for_machine`).
     #[serde(skip)]
     pub new_profile: bool,
+    /// Version 33 turned the camera's limits back on in this file: the login
+    /// screen says so once (`ui/login/camera_limits_notice.rs`).
+    #[serde(skip)]
+    pub camera_limits_restored: bool,
 }
 
 /// The default strength of GTAO's indirect light: at 1 (one physical
@@ -1432,7 +1439,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 31;
+const SETTINGS_VERSION: u32 = 33;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1771,6 +1778,7 @@ impl Default for Settings {
             shape_show_hints: true,
             shape_height_feet: false,
             customize_animation: true,
+            appearance_camera_movement: true,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
@@ -2110,6 +2118,7 @@ impl Default for Settings {
             settings_version: SETTINGS_VERSION,
             newer_file: None,
             new_profile: false,
+            camera_limits_restored: false,
         }
     }
 }
@@ -2170,11 +2179,14 @@ pub fn config_dir() -> PathBuf {
     if let Some(test) = aurora_updater::test_environment() {
         return test.root.join("profile");
     }
-    for_mode(
-        directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
-            .map(|d| d.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from(".")),
-    )
+    for_mode(default_config_root())
+}
+
+/// The settings folder before the demo's subfolder.
+pub(crate) fn default_config_root() -> PathBuf {
+    directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
+        .map(|d| d.config_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Files of one account (LL_PATH_PER_SL_ACCOUNT): contact sets, pinned
@@ -2297,6 +2309,16 @@ impl Settings {
     /// when the file or the field is missing or unreadable.
     pub fn allow_overlays_at_start() -> bool {
         allow_overlays_in(std::fs::read(Self::path()).ok().as_deref())
+    }
+
+    /// One text field of the settings file as saved, read alone (no repair
+    /// of the file, no log): empty when the file or the field is missing.
+    pub fn saved_text(field: &str) -> String {
+        std::fs::read(Self::path())
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| v.get(field).and_then(|c| c.as_str()).map(str::to_owned))
+            .unwrap_or_default()
     }
 
     fn load_from(path: &Path) -> Settings {
@@ -2510,7 +2532,8 @@ impl Settings {
         }
         if self.settings_version < 14 {
             // new defaults: unrestricted camera, no camera collisions (every
-            // file wrote the old "off" defaults)
+            // file wrote the old "off" defaults; version 33 turns them off
+            // again)
             self.camera.disable_constraints = true;
             self.camera.ignore_sim_constraints = true;
         }
@@ -2611,6 +2634,24 @@ impl Settings {
             // still exactly on Potato or Low takes theirs (512 and 1024),
             // any other keeps 2048
             crate::graphics_presets::upgrade_max_texture_resolution(&mut self);
+        }
+        if self.settings_version < 32 {
+            // the head turns toward the cursor's side by default, like the
+            // Legacy Viewer, instead of looking at the point under it, which
+            // everyone nearby saw. Every earlier file wrote the former
+            // default, Point: once to Direction, Preferences › Aurora keeps
+            // Point as a choice
+            self.lookat.aim = crate::world::lookat::Aim::Direction;
+        }
+        if self.settings_version < 33 {
+            // the camera's limits are on again, as DisableCameraConstraints
+            // and FSIgnoreSimulatorCameraConstraints in the Legacy Viewer:
+            // version 14 had turned both off in every file, so they go back
+            // on once, and the login screen says where to turn them off
+            let camera = &mut self.camera;
+            self.camera_limits_restored = camera.disable_constraints || camera.ignore_sim_constraints;
+            camera.disable_constraints = false;
+            camera.ignore_sim_constraints = false;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3078,6 +3119,25 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn appearance_camera_and_pose_preferences_default_on_and_persist_independently() {
+        use super::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(old.appearance_camera_movement && old.customize_animation);
+        for camera in [false, true] {
+            for pose in [false, true] {
+                let settings = Settings {
+                    appearance_camera_movement: camera,
+                    customize_animation: pose,
+                    ..Settings::default()
+                };
+                let bytes = serde_json::to_vec(&settings).expect("save preferences");
+                let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
+                assert_eq!((restored.appearance_camera_movement, restored.customize_animation), (camera, pose));
+            }
+        }
+    }
+
     #[test]
     fn projector_shadow_budget_survives_restart_and_clamps_untrusted_values() {
         use super::Settings;
@@ -3701,6 +3761,26 @@ mod tests {
         assert!(chosen.sanitized().show_perf);
     }
 
+    /// The head turns toward the cursor's side by default; earlier files all
+    /// held the former default, the point under the cursor, and move once;
+    /// a later choice of the point stays.
+    #[test]
+    fn gaze_follows_the_cursor_side_by_default_and_once_for_earlier_files() {
+        use crate::world::lookat::Aim;
+        assert_eq!(Settings::default().sanitized().lookat.aim, Aim::Direction);
+        let mut old = Settings {
+            settings_version: 31,
+            ..Settings::default()
+        };
+        old.lookat.aim = Aim::Point;
+        assert_eq!(old.sanitized().lookat.aim, Aim::Direction);
+        let mut chosen = Settings::default();
+        chosen.lookat.aim = Aim::Point;
+        let chosen = chosen.sanitized();
+        assert_eq!(chosen.lookat.aim, Aim::Point);
+        assert_eq!(chosen.sanitized().lookat.aim, Aim::Point, "migrated only once");
+    }
+
     /// The rez effect is the default; earlier files all held the former
     /// grey default, a later choice of grey stays.
     #[test]
@@ -4042,26 +4122,51 @@ mod tests {
         }
     }
 
-    /// The unrestricted camera and the camera collisions turned off reach the
-    /// earlier files once (they all wrote the old "off"); turned off again
-    /// afterwards, they stay off.
+    /// The camera's limits are on by default, as in the Legacy Viewer, and
+    /// go back on once in every earlier file (version 14 had turned them
+    /// off everywhere), with the login notice when something changed;
+    /// turned off again afterwards, they stay off and nothing is said.
     #[test]
-    fn camera_constraints_are_off_by_default_and_once_for_earlier_files() {
-        let c = Settings::default().sanitized().camera;
-        assert!(c.disable_constraints && c.ignore_sim_constraints);
-        let mut old = Settings {
-            settings_version: 13,
+    fn camera_limits_are_on_by_default_and_once_for_earlier_files() {
+        let fresh = Settings::default().sanitized();
+        assert!(!fresh.camera.disable_constraints && !fresh.camera.ignore_sim_constraints);
+        assert!(!fresh.camera_limits_restored, "a new profile has nothing to be told");
+        for version in [13, 14, 31, 32] {
+            let mut old = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            old.camera.disable_constraints = true;
+            old.camera.ignore_sim_constraints = true;
+            let s = old.sanitized();
+            assert!(
+                !s.camera.disable_constraints && !s.camera.ignore_sim_constraints,
+                "version {version}"
+            );
+            assert!(s.camera_limits_restored, "version {version}");
+            assert_eq!(s.settings_version, SETTINGS_VERSION);
+        }
+        // only one of the two was still off: both on, and the notice
+        let mut one = Settings {
+            settings_version: 32,
             ..Settings::default()
         };
-        old.camera.disable_constraints = false;
-        old.camera.ignore_sim_constraints = false;
-        let c = old.sanitized().camera;
-        assert!(c.disable_constraints && c.ignore_sim_constraints);
+        one.camera.ignore_sim_constraints = true;
+        let s = one.sanitized();
+        assert!(!s.camera.ignore_sim_constraints && s.camera_limits_restored);
+        // a file of version 32 already on the limits: no notice
+        let kept = Settings {
+            settings_version: 32,
+            ..Settings::default()
+        };
+        assert!(!kept.sanitized().camera_limits_restored);
+        // turned off again after the migration: kept, no notice
         let mut chosen = Settings::default();
-        chosen.camera.disable_constraints = false;
-        chosen.camera.ignore_sim_constraints = false;
-        let c = chosen.sanitized().camera;
-        assert!(!c.disable_constraints && !c.ignore_sim_constraints);
+        chosen.camera.disable_constraints = true;
+        chosen.camera.ignore_sim_constraints = true;
+        let s = chosen.sanitized();
+        assert!(s.camera.disable_constraints && s.camera.ignore_sim_constraints);
+        assert!(!s.camera_limits_restored);
     }
 
     /// Inter reaches the earlier files once (they all wrote Noto Sans, and

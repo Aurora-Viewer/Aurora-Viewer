@@ -1988,6 +1988,31 @@ struct PipeDesc<'a> {
     unclipped_depth: bool,
 }
 
+/// The main view's draws, in the order of their indirect arguments, each list
+/// with what the occlusion does to it. `shaders/occlusion.wgsl` reads its table
+/// by index against those arguments, so both are made from this one array. A
+/// cut-out photo leaves the ground and the water out of the view (cutout.rs);
+/// the reflections and the probes keep them, for the light they give.
+fn main_view_lists<'a>(lists: &'a DrawLists, cutout: bool) -> [(&'a [DrawCmd], u32); 13] {
+    use crate::occlusion::{KIND_NONE, KIND_PREPASS, KIND_TESTED};
+    let background = |list: &'a [DrawCmd]| -> &'a [DrawCmd] { if cutout { &[] } else { list } };
+    [
+        (background(&lists.terrain), KIND_NONE),
+        (background(&lists.terrain_pbr), KIND_NONE),
+        (background(&lists.terrain_mask), KIND_NONE),
+        (&lists.opaque, KIND_PREPASS),
+        (&lists.opaque_two_sided, KIND_PREPASS),
+        (&lists.mask, KIND_PREPASS),
+        (&lists.mask_two_sided, KIND_PREPASS),
+        (background(&lists.water), KIND_NONE),
+        (&lists.water_exclusion, KIND_NONE),
+        (&lists.blend, KIND_TESTED),
+        (&lists.glow, KIND_TESTED),
+        (&lists.glow_alpha, KIND_TESTED),
+        (&lists.blend_under_water, KIND_TESTED),
+    ]
+}
+
 /// Draws of `list` whose bounding sphere touches the view of `view_proj`
 /// (side and near planes; reverse-Z infinite projections have no far plane).
 fn cull_to_view(view_proj: Mat4, list: &[ShadowCaster]) -> Vec<DrawCmd> {
@@ -6817,25 +6842,39 @@ impl Backend {
             (start, l.len() as u32)
         };
         let cpu = &mut self.indirect_cpu;
-        // a cut-out photo leaves the ground and the water out of the view
-        // (cutout.rs); the reflections and the probes keep them, for the
-        // light they give
-        let (terrain, water): (&[DrawCmd], &[DrawCmd]) = if f.cutout { (&[], &[]) } else { (&lists.terrain, &lists.water) };
-        let mut rg = Ranges {
-            terrain: push(cpu, terrain),
-            terrain_pbr: push(cpu, if f.cutout { &[] } else { &lists.terrain_pbr }),
-            terrain_mask: push(cpu, if f.cutout { &[] } else { &lists.terrain_mask }),
-            opaque: push(cpu, &lists.opaque),
-            opaque_2s: push(cpu, &lists.opaque_two_sided),
-            mask: push(cpu, &lists.mask),
-            mask_2s: push(cpu, &lists.mask_two_sided),
-            water: push(cpu, water),
-            water_exclusion: push(cpu, &lists.water_exclusion),
-            blend: push(cpu, &lists.blend),
-            glow: push(cpu, &lists.glow),
-            glow_alpha: push(cpu, &lists.glow_alpha),
-            blend_under: push(cpu, &lists.blend_under_water),
-            ..Default::default()
+        let main_lists = main_view_lists(lists, f.cutout);
+        let mut rg = {
+            let [
+                terrain,
+                terrain_pbr,
+                terrain_mask,
+                opaque,
+                opaque_2s,
+                mask,
+                mask_2s,
+                water,
+                water_exclusion,
+                blend,
+                glow,
+                glow_alpha,
+                blend_under,
+            ] = main_lists.map(|(list, _)| push(cpu, list));
+            Ranges {
+                terrain,
+                terrain_pbr,
+                terrain_mask,
+                opaque,
+                opaque_2s,
+                mask,
+                mask_2s,
+                water,
+                water_exclusion,
+                blend,
+                glow,
+                glow_alpha,
+                blend_under,
+                ..Default::default()
+            }
         };
         let main_count = cpu.len();
         // GPU draw lists this frame (gpu_cull.rs)
@@ -6846,25 +6885,10 @@ impl Backend {
             && (main_count > 0 || gpu.is_some())
             && !*NO_OCCLUSION.get_or_init(|| std::env::var_os("AURORA_NO_OCCLUSION").is_some());
         if occl {
-            use crate::occlusion::{CullDraw, KIND_NONE, KIND_PREPASS, KIND_TESTED};
+            use crate::occlusion::CullDraw;
             let mut cull = std::mem::take(&mut self.cull_cpu);
             cull.clear();
-            let lists_kinds: [(&[DrawCmd], u32); 13] = [
-                (&lists.terrain, KIND_NONE),
-                (&lists.terrain_pbr, KIND_NONE),
-                (&lists.terrain_mask, KIND_NONE),
-                (&lists.opaque, KIND_PREPASS),
-                (&lists.opaque_two_sided, KIND_PREPASS),
-                (&lists.mask, KIND_PREPASS),
-                (&lists.mask_two_sided, KIND_PREPASS),
-                (&lists.water, KIND_NONE),
-                (&lists.water_exclusion, KIND_NONE),
-                (&lists.blend, KIND_TESTED),
-                (&lists.glow, KIND_TESTED),
-                (&lists.glow_alpha, KIND_TESTED),
-                (&lists.blend_under_water, KIND_TESTED),
-            ];
-            for (l, kind) in lists_kinds {
+            for (l, kind) in main_lists {
                 cull.extend(l.iter().map(|c| CullDraw {
                     sphere: c.bounds,
                     kind,
@@ -9299,6 +9323,50 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The occlusion's table is read by index against the main view's
+    /// arguments: a cut-out photo leaves the ground and the water out of both,
+    /// and every other list keeps its place and its kind. Otherwise the table
+    /// is longer and shifted: draws tested with the bounds of others, a black
+    /// ground around the isolated avatar, and a panic where assertions are on.
+    #[test]
+    fn a_cut_out_leaves_the_ground_and_the_water_out_of_the_main_lists() {
+        use crate::occlusion::{KIND_NONE, KIND_PREPASS, KIND_TESTED};
+        let draws = |n| {
+            vec![
+                DrawCmd {
+                    index_count: 3,
+                    first_index: 0,
+                    base_vertex: 0,
+                    record: 0,
+                    bounds: [0.0; 4],
+                };
+                n
+            ]
+        };
+        let lists = DrawLists {
+            terrain: draws(1),
+            terrain_pbr: draws(2),
+            terrain_mask: draws(3),
+            opaque: draws(4),
+            water: draws(5),
+            water_exclusion: draws(6),
+            blend: draws(7),
+            ..Default::default()
+        };
+        let sizes = |cutout| main_view_lists(&lists, cutout).map(|(list, kind)| (list.len(), kind));
+        let (whole, cut) = (sizes(false), sizes(true));
+        assert_eq!(whole.iter().map(|(n, _)| n).sum::<usize>(), 28);
+        assert_eq!(cut.iter().map(|(n, _)| n).sum::<usize>(), 17);
+        for (i, (kept, left)) in whole.iter().zip(&cut).enumerate() {
+            let background = matches!(i, 0 | 1 | 2 | 7);
+            assert_eq!(left.0, if background { 0 } else { kept.0 }, "list {i}");
+            assert_eq!(left.1, kept.1, "list {i}");
+        }
+        assert_eq!(cut[3], (4, KIND_PREPASS));
+        assert_eq!(cut[8], (6, KIND_NONE));
+        assert_eq!(cut[9], (7, KIND_TESTED));
+    }
 
     #[test]
     fn taa_follows_the_motion_unless_switched_off_or_alternating() {

@@ -659,7 +659,13 @@ fn install_snapshot() -> anyhow::Result<()> {
         }
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = snapshot::handler();
-        action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_RESTART;
+        // No SA_ONSTACK: a snapshot is no stack overflow, and the unwinder
+        // it runs has little room on the standard library's 8 KB alternate
+        // stack once the kernel's signal frame is on it (about 3.5 KB with
+        // AVX-512): the likely cause of the SIGSEGV that ended the test
+        // binary now and then on the CI's Linux runners, whose processors
+        // differ. The thread's own stack has room to spare.
+        action.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
         libc::sigemptyset(&mut action.sa_mask);
         anyhow::ensure!(
             libc::sigaction(signal, &action, std::ptr::null_mut()) == 0,
@@ -861,6 +867,57 @@ mod tests {
         assert!(frames.iter().any(|f| f.contains("aurora_viewer-test")), "{text}");
         // A thread that does not exist answers nothing.
         assert!(!Thread(i32::MAX).write_stack(&mut Vec::new()));
+    }
+
+    #[test]
+    fn a_thread_with_the_smallest_alternate_stack_still_answers() {
+        install_snapshot().unwrap();
+        let _ = EXE.set(Name::new(b"aurora_viewer-test"));
+        let (ids, id) = std::sync::mpsc::channel();
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let blocked = std::thread::Builder::new()
+            .name("aurora-test-alt".into())
+            .spawn(move || {
+                // The smallest alternate stack the kernel takes, above a
+                // guard page: a handler run on it would fault in the guard.
+                // SAFETY: plain queries and a private anonymous mapping we
+                // own, given back after the thread's old stack is restored.
+                unsafe {
+                    let page = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+                    let least = (libc::getauxval(libc::AT_MINSIGSTKSZ) as usize).max(libc::MINSIGSTKSZ);
+                    let size = least.div_ceil(page) * page;
+                    let base = libc::mmap(
+                        std::ptr::null_mut(),
+                        page + size,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                        -1,
+                        0,
+                    );
+                    assert_ne!(base, libc::MAP_FAILED);
+                    assert_eq!(libc::mprotect(base, page, libc::PROT_NONE), 0);
+                    let small = libc::stack_t {
+                        ss_sp: base.cast::<u8>().add(page).cast(),
+                        ss_flags: 0,
+                        ss_size: size,
+                    };
+                    let mut old: libc::stack_t = std::mem::zeroed();
+                    assert_eq!(libc::sigaltstack(&small, &mut old), 0);
+                    ids.send(libc::gettid()).unwrap();
+                    let _ = wait.recv();
+                    assert_eq!(libc::sigaltstack(&old, std::ptr::null_mut()), 0);
+                    libc::munmap(base, page + size);
+                }
+            })
+            .unwrap();
+        let id = id.recv().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut out = Vec::new();
+        assert!(Thread(id).write_stack(&mut out));
+        release.send(()).unwrap();
+        blocked.join().unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.lines().filter(|line| line.contains("+0x")).count() > 4, "{text}");
     }
 
     #[test]
