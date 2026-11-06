@@ -4983,6 +4983,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
+| `AURORA_DEMO_UPDATE_NOTICE=1\|ready` | The notice of a new version in the world, or of one downloaded |
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
@@ -6995,6 +6996,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   In a small window, the button stays reachable at the top right.
   `AURORA_DEMO_UPDATE_MAINTENANCE=cache|settings|both` shows the forced effects;
   when absent, the dialog announces the usual preservation and migrations.
+- **`AURORA_DEMO_UPDATE_NOTICE=1|ready`**, with `AURORA_DEMO=1`: the notice a
+  periodic update check shows in the world (made-up version 9.9.9), at frame
+  700; `ready` is the one of a version already downloaded (Automatic mode).
+  In Aurora's notification center the card has the aurora's edge and title
+  (still with Reduce motion); the Legacy notifications show a plain card. Its
+  buttons only close it: the demo checks for nothing.
 - **`AURORA_DEMO_GPU_DRIVER=old|old-linux|aged`**, with `AURORA_DEMO=1`: the
   driver check (`gpu_driver.rs`) reads a made-up card instead of the real one:
   `old` a GeForce GTX 1060 on NVIDIA 546.33 (under the 572.16 minimum),

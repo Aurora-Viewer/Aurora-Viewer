@@ -135,6 +135,7 @@ mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
 mod uninstall;
+mod update_notice;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
@@ -8718,6 +8719,7 @@ impl App {
             self.shutdown(event_loop);
             return;
         }
+        self.update_notice();
         // Aurora's media plugins: downloaded once, when none are found (the
         // web pages of the profiles need them even with media disabled), and
         // only once the user agreed (the card of `ui::media_pack`, or a
@@ -16846,6 +16848,7 @@ impl App {
                     if self.region_restart_bell_answer(id, &r) {
                         continue;
                     }
+                    self.update_notice_answer(id, &r);
                     if matches!(r, crate::world::notifications::Response::Open)
                         && let Some(object) = self.world.notifications.list.iter().find_map(|n| match n.data {
                             crate::world::notifications::Data::Delivery { object } if n.id == id => Some(object),
