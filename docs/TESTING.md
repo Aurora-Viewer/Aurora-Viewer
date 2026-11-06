@@ -1732,7 +1732,20 @@ disabled. Cancel instead restores its texture and projector settings. Use
 `AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-own-animesh|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-clear[-mesh]|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
-or later. `worn-other-moving` makes the scripted prim a 10 cm clicker and
+or later. Add `-seated` to a `worn-*` mode (before any `-moving` / `-held`
+suffix) to seat the wearer on a rotated prim with the synthetic sitting
+animation before installing the attachment.
+Ordinary attachments must retain their attachment/script target while seated;
+the buried fixtures below also exercise the body occlusion boundary.
+`demo worn posture` confirms the seat parent. This covers our own and other
+residents' attachments, linked children, invisible clickers and meshes.
+`worn-other-hidden-inside-near-seated` moves the tiny invisible clicker
+18 cm toward the camera: it must receive the touch within the classic
+avatar's 10 cm attachment priority. `demo attachment clearance` logs the
+distance behind the displayed body. The unshifted seated fixture buries
+it more than 20 cm into the classic body and must remain occluded.
+
+`worn-other-moving` makes the scripted prim a 10 cm clicker and
 moves its wearer 8 cm a frame from 701 to 705, while the GPU answer of the
 press is on its way, as an animated avatar does: the press must still touch
 it (`demo touch_start: prim=975`). `worn-other-clear` and
@@ -1751,6 +1764,12 @@ keeps its plain click. `demo photo press` logs restored keyboard modifiers;
 Preferences › Camera › Behavior › “Click my avatar: keep camera” for the run:
 a plain body click must preserve position, target, lens and tracked object.
 `avatar-return` disables the option and must return to avatar follow.
+`avatar-gap-head` / `avatar-gap-legs` put a scripted panel behind our avatar
+and click beside its head / between its legs, inside the former body box.
+Both must log `demo touch_start: prim=975` and leave the camera unchanged;
+capture at 690 and 780 to inspect the gap and the panel's touch response.
+The leg fixture hides the demo's system skirt and keeps the camera above
+the ground so that the press can actually pass between the legs.
 `avatar-drag` / `avatar-tag-drag` hold a real press on our body / own plate
 at frame 700, drag horizontally at 710–760 and release at 761. Add
 `-keep-camera` to retain the off-centre focus. Capture at 690, 780 and 840:
@@ -1766,8 +1785,8 @@ both keep the camera, while only the scripted attachment receives a touch.
 capture frames 690 and 780 to compare. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
 `camera-te` uses an invisible scripted TE face. Alt-focus must reach the cube
 behind both; `camera-glass` instead reaches the translucent solid pane.
-`camera-faint` uses texture alpha 1/255: it must still take the focus, since
-only alpha-zero texels pass through world Blend objects (#1574).
+`camera-faint` uses texture alpha 1/255: it must focus the cube behind,
+following the Legacy Viewer's alpha > 32/255 texture threshold.
 `camera-mask` uses a fully transparent Mask texel and also reaches the cube.
 Add `-ctrl` to any `camera-*` mode to press Ctrl + Alt together. Repeat with
 `AURORA_DEMO_DEBUG=alpha`: all four modes must focus the highlighted panel
@@ -2258,9 +2277,10 @@ No real L$ and no connection to a grid.
   click, for manual testing (near x=138, y=126).
 - `blend-zero`, `blend-faint`, `blend-half`, `blend-solid`: non-actionable
   panel before a Buy object, with texture alpha 0, 1/255, 128/255 or 255/255.
-  `blend-zero` must pass the left click to Buy (971), with `dialog=true`;
-  the other three must reach panel 976 and leave `dialog=false`. The GPU
-  response must omit the zero-alpha panel but retain the faint/half panels.
+  `blend-zero` and `blend-faint` must pass the left click to Buy (971),
+  with `dialog=true`; half and solid must reach panel 976 and leave
+  `dialog=false`. The GPU response must omit zero/faint panels and retain
+  half/solid panels: the legacy texture threshold is alpha > 32/255.
   `blend-zero-menu` must still target panel 976 with the right click.
   `blend-backface` replaces it with a cube whose transparent entry face
   reveals Buy while the opaque exit face is invisible from this camera.
@@ -2277,10 +2297,18 @@ No real L$ and no connection to a grid.
   response. Capture after frame 620.
 - Add `-ready` to the Blend / Mask modes above to test hover without
   an automatic click. At frame 650, `demo cursor hover` must report
-  `prim=Some(976), action=None` before Blend at every opacity, and
-  `prim=Some(971), action=Some(Buy)` through the Mask hole. Enable
+  `prim=Some(971), action=Some(Buy)` through zero/faint Blend and the
+  Mask hole; half/solid Blend must report `prim=Some(976), action=None`.
+  The cursor and left click share the alpha > 32/255 threshold. Enable
   `AURORA_HOVER_CHECK=1` to compare the cache and index with the full search;
-  media hover behind Blend must respect the same depth limit.
+  media hover behind Blend must respect the same depth limit. Near posed
+  objects, cursor feedback also reads the left-click GPU query at most once
+  per 100 ms, without a GPU wait. Attachment fixtures log `demo cursor hover`
+  at frame 699, after holding the pointer still from frame 680: expect Touch
+  on the same prim as the ensuing press, including
+  linked children and clickers under a standing or seated wearer. Own rigged
+  body meshes and clickers buried beyond the body clearance must not show Touch.
+  HUD hover retains its existing alpha and ownership rules.
 
 Transaction windows, with the same variable:
 
@@ -2788,9 +2816,20 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
+| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
 | `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
+
+`AURORA_DEMO_FLOATING_TEXT=hud` displays three separate yellow, blue and cyan
+llSetText prims above a black HUD toolbar (#1938). The last row must clear
+the toolbar. `guides` adds green ticks at the reference baselines, computed
+from the attachment projection and the Legacy Viewer's padding/draw offset
+independently of font layout. Check that the bottoms of non-descending
+letters sit on the ticks; test different UI text sizes and fonts.
+`world` instead adds a purple cube with three centered text rows near the
+default demo start. Last-baseline placement is shared, and interline spacing
+follows the selected font's ascent plus descent minus one, without line gap.
 
 Eight textured HUDs on points 31–38, with floating text and a translucent
 child button; another avatar's HUD is hidden. No access to a
@@ -2839,6 +2878,11 @@ grid.
   secondary key, moving with the latter.
 - `menu`, `edit`, `edit-zoom`: right click on the child, Edit and
   moving the linkset by the Y handle, also at 50%.
+- `edit-no-mod`, `rotate-no-mod`: the same Edit entry on a HUD without
+  Modify, then a move arrow or rotation ring drag. Another HUD is 512 units
+  deep while the world selection limit stays at 128 m: handles must remain
+  visible. Capture at frame 790 for idle handles or 845 during the drag.
+  The whole linkset moves/rotates; resizing and linked-part edits stay denied.
 - `edit-scroll`: selects a HUD locally enlarged to 200%, then
   places it off screen (frame 740). Without the HUD key, five notches
   backwards in an empty area zoom all the HUDs out (frame 760); holding the
@@ -4597,8 +4641,9 @@ both open states and the selection count. Capture at frame 620.
     stream: region left`, then `demo stream: textures evicted`); read
     `s_maintain`, `sync`, `s_sync_list` and `r_submit` in `max:`.
   - With `,j2k=<folder>` after the numbers, the textures are the
-    `.j2c` files of that folder (a viewer's `cache\tex`, looped over
-    if there are fewer of them than objects) instead of drawn checkerboards:
+    `.j2c` files of that folder (looped over if there are fewer of them
+    than objects; plain files, or in a development build also a store's
+    `tex`, as for `AURORA_DEMO_ARRIVAL`) instead of drawn checkerboards:
     each file is handed to the streaming as a successful read of the disk
     cache and follows the real path from the JPEG2000 decode onwards, at
     the level its on-screen size asks for. This is the return to a
@@ -4640,9 +4685,11 @@ both open states and the selection count. Capture at frame 620.
   `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
   the folder's `mat` subfolder), whose textures are served from `tex`
   when it holds them, else one of the others in their place. `<folder>`
-  holds plain asset files, or is this installation's cache store
-  (`cache/store`, read through `crate::cache`; an earlier build cannot
-  serve it). Every asset is
+  holds plain asset files; a development build (`dev`, `ci`,
+  `debugging`) also reads files of the cache's format, such as the cache
+  store (`cache/store`, through `crate::cache`; an earlier build cannot
+  serve it), while a `--release` build leaves them out and takes plain
+  folders only (`demo_source.rs`; the log says so once). Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to
   this machine only), which answers each request after `net` milliseconds
   (200 by default; about 70 for the asset hosts on a good link); with
@@ -8631,6 +8678,14 @@ sky, material, link and varied permissions; library in the tree,
 root open and labels aligned left. Creations and mutations simulated
 offline; the files and snapshots uploaded in demo stay offline.
 
+In both layouts, give Inventory and Recent different type, permission and date
+filters, then switch back and forth with the finder open: its controls and
+results must follow the selected tab. Repeat with Worn, Favorites and Received.
+Reset and Keep by default affect only that tab; reopen a second inventory window
+or restart the demo to check saved defaults. Advanced searches and temporary
+Find links / Find similar filters must also stay with their tab. Repeat with
+separate searches enabled and disabled; that preference controls only the text.
+
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
   whatever Preferences › Aurora › Inventory says.
@@ -9413,7 +9468,8 @@ What the inventory must show with these scenarios:
   and the window). `stop` ends the stream after the last title: "No
   stream playing", the history kept. No sound is played.
 - **`AURORA_DEMO_SOUND=1|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
-  sounds (taken from the real sound cache if it exists, otherwise a brief
+  sounds (in a development build, taken from the sound cache of grid
+  sessions if it holds them; otherwise, and in a `--release` build, a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
   The wind sound is silent too, unless this or `AURORA_DEMO_WIND` is set.
