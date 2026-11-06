@@ -1,10 +1,11 @@
 //! Markers over contact-set members (`world/contact_markers.rs` says who
 //! and where): a glass disc or diamond with a border and a symbol in the
-//! set's colour, seen through everything in the world. Near a resident it lands on their
-//! name plate and becomes a badge, and stays painted there: a plate behind a
-//! wall is hidden, the badge of the marker is not. Off screen or behind the camera it
-//! stops at the edge of the room the bars leave and gains a chevron toward
-//! the resident, like the destination beacon (`ui/minimap.rs`).
+//! set's colour, seen through everything in the world. Near a resident it
+//! lands on their name plate and becomes a badge, and stays painted there: a
+//! plate behind a wall is hidden, the badge of the marker is not. Off screen
+//! or behind the camera it stops at the edge of the room the bars leave and
+//! gains a chevron toward the resident, like the destination beacon
+//! (`ui/minimap.rs`).
 
 use super::hud::{NameTag, Projector};
 use crate::scene::Scene;

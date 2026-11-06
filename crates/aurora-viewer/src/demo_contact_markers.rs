@@ -1,9 +1,9 @@
 //! Contact-set markers (AURORA_DEMO_CONTACT_MARKERS=region|parcel|fade|body,
 //! docs/TESTING.md): three sets, two with a symbol and one with a plain
-//! dot, Family in circles and the others in diamonds, and four residents known only by their coarse
-//! location: one circling the region, one behind the camera, one far to
-//! the side and one of unknown altitude. With AURORA_DEMO_TAGS, plate
-//! residents join the sets.
+//! dot, Family in circles and the others in diamonds, and four residents
+//! known only by their coarse location: one circling the region, one behind
+//! the camera, one far to the side and one of unknown altitude. With
+//! AURORA_DEMO_TAGS, plate residents join the sets.
 
 use super::HANDLE;
 use crate::world::contact_sets::{MarkerScope, MarkerShape, Visuals};
