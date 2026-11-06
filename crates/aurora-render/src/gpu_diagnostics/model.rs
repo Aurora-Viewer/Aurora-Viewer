@@ -13,7 +13,12 @@ pub(super) const LAST_EPOCH: u32 = u32::MAX / WORDS as u32 - 1;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Mode {
     Off,
+    /// The default: the driver's fault report only (no cost until a loss),
+    /// no per-pass markers. Measured on an RX 9070 XT (RADV), the markers
+    /// cost about 0.18 ms of render-thread time per frame, over the 0.1 ms
+    /// budget: they stay opt-in (`auto`) until they are batched.
     #[default]
+    Fault,
     Auto,
     Transfer,
 }
@@ -23,8 +28,9 @@ impl Mode {
     pub(crate) fn environment() -> Self {
         match std::env::var("AURORA_GPU_BREADCRUMBS").as_deref() {
             Ok("off") => Self::Off,
+            Ok("auto") => Self::Auto,
             Ok("transfer") => Self::Transfer,
-            _ => Self::Auto,
+            _ => Self::Fault,
         }
     }
 }
@@ -59,7 +65,7 @@ pub(crate) struct Capabilities {
 impl Capabilities {
     pub(super) fn select(self, mode: Mode) -> Method {
         match mode {
-            Mode::Off => Method::Unavailable,
+            Mode::Off | Mode::Fault => Method::Unavailable,
             Mode::Transfer => Method::Transfer,
             Mode::Auto if self.amd => Method::Amd,
             Mode::Auto if self.nv => Method::Nv,
@@ -628,6 +634,8 @@ mod tests {
             ..Capabilities::default()
         };
         assert_eq!(amd.select(Mode::Off), Method::Unavailable);
+        assert_eq!(amd.select(Mode::Fault), Method::Unavailable, "the default adds no per-pass markers");
+        assert_eq!(Mode::default(), Mode::Fault);
         assert_eq!(amd.select(Mode::Auto), Method::Amd);
         assert_eq!(
             Capabilities {

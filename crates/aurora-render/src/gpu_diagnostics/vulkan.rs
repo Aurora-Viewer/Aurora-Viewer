@@ -586,6 +586,8 @@ mod tests {
             fault: true,
             coherent: true,
         };
+        let fault_only = Plan::choose(offered, Mode::Fault);
+        assert!(fault_only.enabled.fault && !fault_only.enabled.amd && !fault_only.enabled.nv);
         let plan = Plan::choose(offered, Mode::Auto);
         let mut ordinary = vec![ash::khr::swapchain::NAME];
         let mut xr = ordinary.clone();
