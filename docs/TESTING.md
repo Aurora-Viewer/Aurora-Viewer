@@ -9558,8 +9558,8 @@ What the inventory must show with these scenarios:
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_OIT=0` or `1` | Order-independent transparency (stochastic) off or on for this launch, whatever the setting |
 | `AURORA_OIT=stochastic` | The same as `1` |
-| `AURORA_OIT_SAMPLES=8\|16\|32` | With the stochastic method: samples per pixel in all (16 by default) |
-| `AURORA_OIT_STOCH=<flags>` | With `AURORA_OIT=stochastic`: `naive`, `nocorr`, `filter=<r>[:<sigma>]`, `temporal[=<n>]`, `index`, `mask`, `pass=<n>`, `noprim`, `seed=white\|r2\|blue` (see Details) |
+| `AURORA_OIT_SAMPLES=8\|16\|32` | With the stochastic method: samples per pixel in all (8 by default: one run, with the temporal blend; 16 is the earlier default, two runs, no temporal blend with `AURORA_OIT_STOCH=notemporal`) |
+| `AURORA_OIT_STOCH=<flags>` | With `AURORA_OIT=stochastic`: `naive`, `nocorr`, `filter=<r>[:<sigma>]`, `temporal[=<n>]`, `notemporal`, `index`, `mask`, `pass=<n>`, `noprim`, `seed=white\|r2\|blue` (see Details) |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
@@ -10130,11 +10130,11 @@ What the inventory must show with these scenarios:
   sample index route`) and the targets (`oit stochastic: targets <w>x<h>,
   the scene at <n> samples, the passes at <p>: <i> iterations for <S>
   samples, <m> MB`, the video memory of those targets: about 187 MB at
-  1600 x 900 and 478 MB at 2560 x 1440 with MSAA 4x); with `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=…
+  1600 x 900 and 478 MB at 2560 x 1440 with MSAA 4x without the history; 198 and 506 MB with it, the default); with `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=…
   depth1=… accum1=… more_iterations=… resolve_composite=… total=…` every
   120 frames (the first run of the stochastic depth and of the
   accumulation, then the other runs together). `AURORA_OIT_SAMPLES` sets
-  the samples in all (16 by default): past a pass's count the two
+  the samples in all (8 by default, one run of passes of 8): past a pass's count the two
   stochastic passes run again with the next bits of one stratified mask
   (16 with passes of 8: two runs). The paper's method is the default: stratified
   masks, alpha correction, the depth-based accumulation, seeds by pixel and
@@ -10142,7 +10142,9 @@ What the inventory must show with these scenarios:
   sample instead of a stratified S-choose-R mask), `nocorr` (no alpha
   correction), `filter=<r>[:<sigma>]` (the paper's cross-bilateral filter
   of the accumulated colour guided by the total alpha, radius 1 to 4,
-  alpha sigma 0.1 by default), `temporal[=<n>]` (the resolved colour
+  alpha sigma 0.1 by default), `temporal[=<n>]` (on by default with n = 8,
+  and off when the scene's anti-aliasing is TAA, which accumulates already
+  (logged once as `oit stochastic: temporal blend off`); `notemporal` turns it off: the resolved colour
   blended 1/n with the last frame's reprojected through the nearest
   transparent depth and clamped to the 3 x 3 neighbourhood; the seeds then
   change every frame; ghosts under motion), `index` (the coverage by one

@@ -8055,11 +8055,12 @@ impl Backend {
             let ready = self.pipelines.st_resolve.as_ref().is_some_and(|r| r.samples() == samples);
             let (device, queue) = (&self.device, &self.queue);
             let reproj = main.motion_reproj;
+            let taa = self.settings.aa == AntiAliasing::Taa;
             ready
                 && self
                     .st
                     .as_mut()
-                    .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj, !st_glow.is_empty()))
+                    .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj, !st_glow.is_empty(), taa))
         };
         // off, its targets are freed (as `Bloom::release`)
         if method != crate::oit_stochastic::Method::Stochastic

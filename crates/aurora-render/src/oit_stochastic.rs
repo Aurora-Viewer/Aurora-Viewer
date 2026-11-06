@@ -68,16 +68,18 @@ pub enum Route {
 /// `AURORA_OIT=stochastic`, `AURORA_OIT_SAMPLES`, `AURORA_OIT_STOCH`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Config {
-    /// samples per pixel in all: 8, 16 or 32 (16 by default: the paper
-    /// finds 8 pleasant on hair and foliage, 16 adequate on broad smooth
-    /// surfaces)
+    /// samples per pixel in all: 8, 16 or 32 (8 by default, one run of the
+    /// passes, with the temporal blend averaging the noise over the frames:
+    /// the paper finds 8 pleasant on hair and foliage, 16 adequate on broad
+    /// smooth surfaces)
     pub samples: u32,
     pub stratified: bool,
     pub correction: bool,
     /// the cross-bilateral filter's radius (0: off) and alpha sigma
     pub filter: u32,
     pub sigma_alpha: f32,
-    /// the temporal blend's weight of the current frame (0: off)
+    /// the temporal blend's weight of the current frame (0: off; 1/8 by
+    /// default, and off under TAA, which accumulates already)
     pub temporal: f32,
     pub route: Route,
     /// the triangle in the seed
@@ -102,12 +104,12 @@ pub enum Seed {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            samples: 16,
+            samples: 8,
             stratified: true,
             correction: true,
             filter: 0,
             sigma_alpha: 0.1,
-            temporal: 0.0,
+            temporal: 1.0 / 8.0,
             route: Route::SampleMask,
             prim_seed: true,
             seed: Seed::White,
@@ -157,9 +159,10 @@ pub(crate) fn config() -> Config {
     })
 }
 
-/// `samples`: 8, 16 or 32. `flags`, comma separated: `naive` (one coin per
+/// `samples`: 8 (the default), 16 or 32. `flags`, comma separated: `naive` (one coin per
 /// sample instead of a stratified mask), `nocorr` (no alpha correction),
-/// `filter=<radius>[:<sigma>]`, `temporal[=<frames>]` (the resolved colour
+/// `filter=<radius>[:<sigma>]`, `temporal[=<frames>]` (on by default with
+/// 8 frames; `notemporal` turns it off: the resolved colour
 /// blended with the last frame's reprojected through the nearest
 /// transparent depth, weight 1/frames, the seeds changing every frame),
 /// `index` (the sample index route instead of the sample mask's), `mask`
@@ -188,6 +191,7 @@ pub fn parse_config(samples: Option<&str>, flags: Option<&str>) -> Config {
                     c.sigma_alpha = s.clamp(0.01, 1.0);
                 }
             }
+            "notemporal" => c.temporal = 0.0,
             "temporal" => c.temporal = 1.0 / value.parse::<f32>().unwrap_or(8.0).clamp(1.0, 64.0),
             "mask" => c.route = Route::SampleMask,
             "index" => c.route = Route::SampleIndex,
@@ -458,6 +462,8 @@ struct Targets {
     /// the scene's samples, the stochastic passes'
     samples: u32,
     pass: u32,
+    /// the last frame's resolved colour is kept (the temporal blend)
+    history: bool,
     /// the total alpha's samples (`trans_samples`)
     trans_samples: u32,
     trans: wgpu::TextureView,
@@ -473,7 +479,10 @@ struct Targets {
 
 pub(crate) struct Stochastic {
     shared: Shared,
+    /// the configuration in force (its temporal weight 0 under TAA)
     config: Config,
+    /// the temporal weight the environment and the defaults ask for
+    wanted_temporal: f32,
     /// the mask table for `config.samples` and the blue-noise tile (bound
     /// by `face_groups`)
     _masks: wgpu::Buffer,
@@ -678,6 +687,7 @@ impl Stochastic {
                 expand_layout_ss,
                 expand_module,
             },
+            wanted_temporal: config.temporal,
             config,
             _masks: masks,
             _blue: blue,
@@ -725,15 +735,27 @@ impl Stochastic {
         samples: u32,
         reproj: [[f32; 4]; 4],
         glow: bool,
+        taa: bool,
     ) -> bool {
         let pass = self.shared.pass_samples(samples);
         if pass < 2 {
             return false;
         }
+        // the scene's TAA accumulates already: a second history would ghost
+        // twice, so the blend (and its seeds changing every frame) is off
+        let temporal = if taa { 0.0 } else { self.wanted_temporal };
+        if temporal != self.config.temporal {
+            log::info!(
+                "oit stochastic: temporal blend {}",
+                if taa { "off, the scene's TAA accumulates" } else { "on" }
+            );
+            self.config.temporal = temporal;
+        }
+        let history = plan(&self.config).history;
         let stale = self
             .targets
             .as_ref()
-            .is_none_or(|t| t.width != width || t.height != height || t.samples != samples || t.pass != pass);
+            .is_none_or(|t| t.width != width || t.height != height || t.samples != samples || t.pass != pass || t.history != history);
         if stale {
             self.targets = Some(self.make_targets(device, width, height, samples, pass));
             queue.write_buffer(&self.expand_params, 0, bytemuck::cast_slice(&expand_map(samples, pass)));
@@ -901,6 +923,7 @@ impl Stochastic {
             height,
             samples,
             pass,
+            history: plan.history,
             trans_samples: trans_n,
             trans,
             accum,
@@ -1501,21 +1524,32 @@ mod tests {
     #[test]
     fn the_targets_hold_only_what_the_configuration_reads() {
         let mib = |w, h, s, plan| target_bytes(w, h, s, 8, plan) as f64 / (1024.0 * 1024.0);
+        // the default keeps the last frame's colour for the temporal blend
         let default = plan(&Config::default());
         assert_eq!(
             default,
+            Plan {
+                history: true,
+                filtered: false
+            }
+        );
+        let off = plan(&parse_config(None, Some("notemporal")));
+        assert_eq!(
+            off,
             Plan {
                 history: false,
                 filtered: false
             }
         );
-        // the default at MSAA 4x: 136 bytes a pixel (the earlier layout, with
-        // the second resolved colour, the filtered one and the full-size
-        // placeholders, took 184: 253 and 647 MB)
-        assert_eq!((mib(1600, 900, 4, default) + 0.5) as u32, 187);
-        assert_eq!((mib(2560, 1440, 4, default) + 0.5) as u32, 478);
+        // without the history, MSAA 4x: 136 bytes a pixel (the earlier layout,
+        // with the second resolved colour, the filtered one and the full-size
+        // placeholders, took 184: 253 and 647 MB); the history adds 8
+        assert_eq!((mib(1600, 900, 4, off) + 0.5) as u32, 187);
+        assert_eq!((mib(2560, 1440, 4, off) + 0.5) as u32, 478);
+        assert_eq!((mib(1600, 900, 4, default) + 0.5) as u32, 198);
+        assert_eq!((mib(2560, 1440, 4, default) + 0.5) as u32, 506);
         // without MSAA the total alpha is at the passes' samples
-        assert_eq!((mib(1600, 900, 1, default) + 0.5) as u32, 198);
+        assert_eq!((mib(1600, 900, 1, off) + 0.5) as u32, 198);
         let all = Plan {
             history: true,
             filtered: true,
@@ -1557,7 +1591,11 @@ mod tests {
         assert_eq!(parse_config(None, Some("seed=r2")).seed, Seed::R2);
         assert_eq!(parse_config(Some("32"), Some("filter")).filter, 2);
         assert_eq!(parse_config(Some("12"), None).samples, 16);
-        assert_eq!(parse_config(None, None).samples, 16);
+        assert_eq!(parse_config(None, None).samples, 8);
+        assert_eq!(parse_config(Some("16"), None).samples, 16);
+        // the temporal blend is the default; `notemporal` turns it off
+        assert_eq!(parse_config(None, None).temporal, 0.125);
+        assert_eq!(parse_config(None, Some("notemporal")).temporal, 0.0);
     }
 
     #[test]
