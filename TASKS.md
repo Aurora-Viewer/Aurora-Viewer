@@ -2855,6 +2855,9 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
   - ⬜ to check on the grid: a club or a skybox, a large build, outdoors, and the cost in a busy region.
   - ⬜ later (immersive sound, next steps): voice chat through the reverb, per-material absorption (glass, wood, fabric), region or parcel acoustics set by the owner, early reflections from the measured directions, streamed media on prims
 
+- 🟡 Closing the microphone never freezes the viewer ([#2635](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2635); task `mic-close-off-main-thread`): turning voice off closed the microphone on the main thread and waited for its capture thread, whose last step (closing the device's stream) waits for the audio driver; a driver that never let go froze the viewer for good. The capture thread is now joined by a short-lived `aurora-mic-close` thread that logs a warning when the device has not closed after 3 s; the viewer goes on at once, and a microphone reopened meanwhile gets its own thread and stream. Same for an open that fails. Unit tests with a stand-in stuck thread (no hardware). Tested by the QA after the merge pending the human's decision.
+  - ⬜ to test by the QA: on the grid with voice on, turn voice off and on many times, then change the microphone device in Preferences › Sound several times (also while speaking): no freeze, the microphone works after each change, the Windows "microphone in use" indicator goes away when voice is off.
+
 ## To explore
 
 Open-source technologies that could set Aurora apart (human request of 2026-10-16). Not decided: each one needs a feasibility study first (Rust integration, size, cost per frame, licence). All the licences listed fit the GPLv3. Large models (translation, speech) cannot be embedded in the exe: they would be downloaded on demand when the option is turned on.
