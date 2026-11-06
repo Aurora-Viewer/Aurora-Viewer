@@ -9717,6 +9717,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FSR_SHARPNESS=<0-1>` or `off` | FSR's RCAS sharpening for this launch, or none |
 | `AURORA_FSR_REACTIVE=0` | FSR without the reactive mask it generates from the blended faces |
 | `AURORA_FSR_BLEND_MOTION=0` | FSR without the depth and motion of the blended faces |
+| `AURORA_FSR_COMPOSITION=0` | FSR without its transparency and composition mask (running texture animations) |
 | `AURORA_FSR_MIP_BIAS=0` | FSR's smaller modes without the textures' mip bias |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
@@ -10101,6 +10102,12 @@ What the inventory must show with these scenarios:
   - `AURORA_FSR_BLEND_MOTION=0` drops the depth and motion the blended
     faces covered from 10 % give FSR: the edges of a glass panel turn
     jagged.
+  - `AURORA_FSR_COMPOSITION=0` drops the transparency and composition
+    mask, which marks the faces with a running texture animation
+    (llSetTextureAnim): with `AURORA_DEMO_TEXANIM=1` and
+    `AURORA_FSR_QUALITY=3`, the dark lines of the turning panel then show
+    twice (the history keeps them where they were) and the holes of the
+    scaled one get a rim; frame 1520, zoomed 2x.
   - `AURORA_FSR_MIP_BIAS=0` keeps the textures' mips at 0 in the smaller
     modes; by default they take `log2(render / window) - 1` (quality -1.58,
     performance -2), as AMD's integration guide asks, for the window's

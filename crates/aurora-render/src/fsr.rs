@@ -15,9 +15,11 @@
 //! fragment pass (see `shaders/fsr/common.wgsl` for the differences from
 //! the SDK). The reactive mask is generated from the scene before and after
 //! the blended faces, the particles and the water (FSR's autogen reactive
-//! pass, `AURORA_FSR_REACTIVE=0` turns it off); no transparency and
-//! composition mask yet, and the exposure is 1 (FSR's tone mapping of the history works on the HDR
-//! values as they are).
+//! pass, `AURORA_FSR_REACTIVE=0` turns it off). The transparency and
+//! composition mask marks the faces with a running texture animation, read
+//! from the prepass's normals (`NORMAL_COMPOSITION` in common.wgsl,
+//! `AURORA_FSR_COMPOSITION=0` turns it off). The exposure is 1 (FSR's tone
+//! mapping of the history works on the HDR values as they are).
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2};
