@@ -108,7 +108,7 @@ impl LightSets {
     }
 
     /// The members a fragment at pixel (`x`, `y`) and `depth` walks, as the
-    /// shaders find them (`light_set`, `probe_tiles` in common.wgsl).
+    /// shaders find them (`light_set`, `probe_word` in common.wgsl).
     #[cfg(test)]
     pub(crate) fn at(&self, x: f32, y: f32, depth: f32) -> u64 {
         if self.mode[0] == 0 {

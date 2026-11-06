@@ -105,7 +105,7 @@ impl ProbeSets {
     }
 
     /// The probes a fragment at pixel (`x`, `y`) and `depth` walks, as
-    /// `probe_tiles` in common.wgsl finds them.
+    /// `probe_word` in common.wgsl finds them.
     #[cfg(test)]
     fn at(&self, x: f32, y: f32, depth: f32) -> [u32; WORDS] {
         if self.mode[0] == 0 {
@@ -760,7 +760,8 @@ mod tests {
         assert_eq!(light_tiles::TILES, 32);
         assert!(src.contains(&format!("const MAX_PROBES: u32 = {MAX_PROBES}u;")));
         assert!(src.contains(&format!("struct ProbeMask {{\n    w: array<u32, {WORDS}>,")));
-        assert!(src.contains("probe_set.boxes.w[k] & held[k]"));
+        assert!(src.contains("var boxes = probe_set.boxes.w[k];"));
+        assert!(src.contains("boxes &= probe_word(k, count, tiles, cell);"));
         // nearer than this the shaders walk the whole list: the sets hold
         // what is further than the plane the extents are cut by
         assert!(src.contains("const PROBE_TILES_NEAREST: f32 = 0.01;"));
