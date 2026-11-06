@@ -753,7 +753,7 @@ fn friends_tab(
                 let col = if f.online { p.indigo_light } else { p.muted };
                 // complete names can be long: cut before the rights
                 // and buttons (full name on hover)
-                let buttons = if settings.permissions { 140.0 } else { 80.0 };
+                let buttons = if settings.permissions { 168.0 } else { 108.0 };
                 let w = (ui.available_width() - buttons).max(60.0);
                 let r = ui
                     .allocate_ui_with_layout(egui::vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -774,6 +774,9 @@ fn friends_tab(
                     // the icons these actions have in the avatar menus
                     if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
                         actions.push(PeopleAction::OfferTeleport(f.id));
+                    }
+                    if widgets::icon_button(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), f.online) {
+                        context::request(ui.ctx(), context::CtxAction::RequestTeleport(f.id));
                     }
                     if widgets::icon_button(
                         ui,

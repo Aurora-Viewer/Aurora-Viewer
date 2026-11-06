@@ -1744,6 +1744,9 @@ fn sets_tab(
                                 if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), *on) {
                                     actions.push(ContactsAction::OfferTeleport(*id));
                                 }
+                                if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), *on) {
+                                    context::request(ui.ctx(), CtxAction::RequestTeleport(*id));
+                                }
                             });
                         }
                     });
