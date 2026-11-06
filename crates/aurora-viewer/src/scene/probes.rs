@@ -73,6 +73,8 @@ const EDGE_FADE_MIN: f32 = 8.0;
 const CAPTURE_REACH: f32 = 64.0;
 /// How fast the edge of the field follows its target (time constant, s).
 const EDGE_EASE: f32 = 0.5;
+/// How fast the edge of the field comes in at most (m/s).
+const EDGE_IN_SPEED: f32 = 16.0;
 const DEFAULT_PERIOD: Duration = Duration::from_secs(2);
 const SCAN_PERIOD: Duration = Duration::from_millis(500);
 /// The candidate scan visits every object of the scene and of the world: it
@@ -215,11 +217,26 @@ fn edge_fade(distance: f32, edge: f32) -> f32 {
     ((edge - distance) / band).clamp(0.0, 1.0)
 }
 
+/// What an automatic probe weighs in the shaders, from its fade and its place
+/// in the field. Cubed: the default probe weighs so little (one over its 64 m
+/// and more) that a probe holds most of a point's light down to a few percent
+/// of its weight, and a straight fade would do all it shows in its last
+/// moments, a step in the light.
+fn auto_weight(fade: f32, edge: f32) -> f32 {
+    (fade * edge).powi(3)
+}
+
 /// The edge of the field after `dt`, going towards `target`: where the slots
-/// run out jumps when a probe comes or goes, and the ambient light of what
-/// is around that edge would pop with it.
+/// run out jumps when a probe comes or goes, and far out, where the probes are
+/// sparse, two that change places can move it by tens of metres. The ambient
+/// light of what is around that edge would pop with it. It comes in slowly:
+/// what falls past the slots in the meantime fades out by itself.
 fn eased_edge(edge: Option<f32>, target: f32, dt: f32) -> f32 {
-    edge.map_or(target, |edge| edge + (target - edge) * (1.0 - (-dt / EDGE_EASE).exp()))
+    let Some(edge) = edge else {
+        return target;
+    };
+    let eased = edge + (target - edge) * (1.0 - (-dt / EDGE_EASE).exp());
+    eased.max(edge - EDGE_IN_SPEED * dt)
 }
 
 /// Which of two probes is captured first (check_priority,
@@ -356,7 +373,16 @@ impl ProbeManager {
         for (i, k) in order.iter().enumerate() {
             let updating = self.updating.is_some_and(|u| u.key == Some(*k));
             if let Some(p) = self.probes.get_mut(k) {
-                if i >= keep && !updating {
+                // an automatic probe past the slots fades out before its cube
+                // goes, and is back at once if it returns: the default probe's
+                // weight is so small that even the end of a fade cut short is
+                // a step in the light. A manual probe goes at once, as in
+                // LLReflectionMapManager::update.
+                let leaving = i >= keep && !updating;
+                if leaving {
+                    p.fade -= dt;
+                }
+                if leaving && (p.kind != 0.0 || !p.complete || p.fade <= 0.0) {
                     // free the cube index of distant probes
                     p.slot = None;
                     p.complete = false;
@@ -377,8 +403,11 @@ impl ProbeManager {
                 p.slot = Some(free as u32);
             }
         }
-        for p in self.probes.values_mut() {
-            if p.complete && p.retired.is_none() {
+        for k in order.iter().take(keep) {
+            if let Some(p) = self.probes.get_mut(k)
+                && p.complete
+                && p.retired.is_none()
+            {
                 p.fade = (p.fade + dt).min(1.0);
             }
         }
@@ -409,10 +438,14 @@ impl ProbeManager {
             }
             // (manual probes do not fade: LLReflectionMapManager keeps or
             // drops them by distance, and they are the creator's)
-            let edge_weight = if p.kind == 0.0 { edge_fade(p.distance, edge) } else { 1.0 };
+            let weight = if p.kind == 0.0 {
+                auto_weight(p.fade, edge_fade(p.distance, edge))
+            } else {
+                p.fade
+            };
             list.push(ProbeGpu {
                 center_radius: [p.origin.x, p.origin.y, p.origin.z, p.radius],
-                params: [p.ambiance.max(sky_ambiance), 1.0, p.fade * edge_weight, p.kind],
+                params: [p.ambiance.max(sky_ambiance), 1.0, weight, p.kind],
                 slot: [slot, 0, 0, 0],
                 box_inv: p.box_inv.to_cols_array_2d(),
             });
@@ -430,8 +463,11 @@ impl ProbeManager {
     fn next_capture(&mut self, order: &[Key], eye: Vec3, now: Instant) -> Option<ProbeCapture> {
         if self.updating.is_none() {
             let default_due = !self.default_complete || self.default_last.is_none_or(|t| now.duration_since(t) >= DEFAULT_PERIOD);
+            // (a probe fading out past the slots is not drawn again)
+            let keep = self.slots.saturating_sub(1) as usize;
             let candidate = order
                 .iter()
+                .take(keep)
                 .filter(|k| self.probes.get(k).is_some_and(|p| p.slot.is_some() && p.retired.is_none()))
                 .min_by(|a, b| {
                     let (pa, pb) = (&self.probes[a], &self.probes[b]);
@@ -661,6 +697,10 @@ fn auto_candidate(g: &ObjGpu) -> bool {
 }
 
 #[cfg(test)]
+#[path = "probes_walk.rs"]
+mod walk;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
@@ -704,6 +744,51 @@ mod tests {
             }
         }
         assert!(cells.len() < 64, "{}", cells.len());
+    }
+
+    #[test]
+    fn a_probe_past_the_slots_fades_out_before_it_loses_its_cube() {
+        let world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let start = Instant::now();
+        let mut m = ProbeManager {
+            slots: 3,
+            default_complete: true,
+            default_last: Some(start),
+            last_scan: Some(start),
+            last_frame: Some(start),
+            ..Default::default()
+        };
+        // (four probes for two slots: the last two are past them)
+        let at = |x: f32, slot: u32| Probe {
+            slot: Some(slot),
+            last_update: Some(start),
+            ..cell_probe(Vec3::new(x, 0.0, 0.0), 1.0, true)
+        };
+        m.probes.insert(cell_key(0), at(10.0, 1));
+        m.probes.insert(cell_key(1), at(20.0, 2));
+        let mut far = at(30.0, 4);
+        far.fade = 0.5;
+        m.probes.insert(cell_key(2), far);
+        let manual = Key::Object(Uuid::from_u128(1));
+        m.probes.insert(manual, Probe { kind: 1.0, ..at(40.0, 5) });
+        let tick = Duration::from_millis(100);
+        m.update(&scene, &world, Vec3::ZERO, 0.0, start + tick);
+        // the automatic one keeps its cube and fades; the manual one goes
+        let p = &m.probes[&cell_key(2)];
+        assert!(p.complete && p.slot.is_some() && (p.fade - 0.4).abs() < 1e-3, "{}", p.fade);
+        assert!(m.probes[&manual].slot.is_none() && !m.probes[&manual].complete);
+        // back within the slots: it stays and fades in, with no new capture
+        m.probes.remove(&cell_key(0));
+        m.update(&scene, &world, Vec3::ZERO, 0.0, start + 2 * tick);
+        let p = &m.probes[&cell_key(2)];
+        assert!(p.complete && p.slot.is_some() && (p.fade - 0.5).abs() < 1e-3, "{}", p.fade);
+        // still past them: at zero, the cube is free
+        m.probes.insert(cell_key(0), at(10.0, 1));
+        m.probes.insert(cell_key(3), at(15.0, 6));
+        m.update(&scene, &world, Vec3::ZERO, 0.0, start + 10 * tick);
+        let p = &m.probes[&cell_key(2)];
+        assert!(p.slot.is_none() && !p.complete && p.fade == 0.0);
     }
 
     #[test]
@@ -884,16 +969,28 @@ mod tests {
     }
 
     #[test]
+    fn an_automatic_probe_ends_its_fade_gently() {
+        assert_eq!(auto_weight(1.0, 1.0), 1.0);
+        assert_eq!(auto_weight(0.0, 1.0), 0.0);
+        assert_eq!(auto_weight(1.0, 0.0), 0.0);
+        // a tenth of the way from the end, a thousandth of the weight
+        assert!((auto_weight(0.1, 1.0) - 0.001).abs() < 1e-6);
+    }
+
+    #[test]
     fn the_edge_of_the_field_eases_to_its_target() {
         assert_eq!(eased_edge(None, 230.0, 0.016), 230.0, "the first frame takes it");
         // the slots run out: from the range towards a closer edge
         let mut edge = 230.0;
         let first = eased_edge(Some(edge), 60.0, 0.016);
         assert!((first - 230.0).abs() < 7.0, "no jump in a frame: {first}");
-        for _ in 0..240 {
+        for _ in 0..1000 {
             edge = eased_edge(Some(edge), 60.0, 0.016);
         }
         assert!((edge - 60.0).abs() < 1e-1, "{edge}");
+        // however far it has to go in, it comes in slowly; out, it eases
+        assert!((eased_edge(Some(230.0), 10.0, 0.1) - 228.4).abs() < 1e-3);
+        assert!(eased_edge(Some(60.0), 230.0, 0.1) > 90.0);
         // a long frame does not overshoot
         assert!(eased_edge(Some(230.0), 60.0, 100.0) >= 60.0);
     }
