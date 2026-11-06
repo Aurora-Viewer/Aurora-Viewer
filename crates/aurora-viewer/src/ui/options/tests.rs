@@ -1662,3 +1662,35 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     assert!(!s.reduce_motion);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
 }
+
+#[test]
+fn the_weather_lives_in_graphics_and_every_row_the_aurora_page_borrows_exists() {
+    let paths = collected();
+    let graphics: Vec<_> = paths
+        .iter()
+        .filter(|(page, _)| *page == Page::Graphics)
+        .map(|(_, p)| p.as_str())
+        .collect();
+    // the paths Preferences › Aurora borrows (pages/aurora.rs): a misspelt
+    // one would draw nothing
+    for path in [
+        "weather.quality",
+        "weather.puddles",
+        "weather.puddle_distance",
+        "weather.ice",
+        "weather.snow_settles",
+        "weather.snow_distance",
+        "weather.snow_footprints",
+        "weather.snow_deep",
+        "weather.region_weather",
+        "weather.wind_follow_region",
+        "weather.wind_from",
+    ] {
+        assert!(graphics.contains(&path), "`{path}` is not a Graphics row: {graphics:?}");
+    }
+    let elsewhere: Vec<_> = paths
+        .iter()
+        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
+        .collect();
+    assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
+}

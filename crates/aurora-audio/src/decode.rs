@@ -273,6 +273,21 @@ impl SoundClip {
         SoundClip { samples }
     }
 
+    /// The same sound, starting `fraction` (0..1) of the way through and
+    /// wrapping round: a loop played from another point (two copies of a
+    /// long noisy loop, offset, sound like two different sources).
+    pub fn rotated(&self, fraction: f32) -> SoundClip {
+        let frames = self.samples.len() / 2;
+        if frames == 0 {
+            return self.clone();
+        }
+        let start = ((fraction.rem_euclid(1.0) * frames as f32) as usize).min(frames - 1) * 2;
+        let mut samples = Vec::with_capacity(self.samples.len());
+        samples.extend_from_slice(&self.samples[start..]);
+        samples.extend_from_slice(&self.samples[..start]);
+        SoundClip { samples: samples.into() }
+    }
+
     /// Length of the clip.
     pub fn duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs_f64(self.samples.len() as f64 / 2.0 / f64::from(ENGINE_SAMPLE_RATE))

@@ -4,6 +4,7 @@
 //! to the theme here (docs/BRANDING.md); the settings keep the rows of the
 //! other pages.
 
+use super::super::Page;
 use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
 use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
@@ -67,7 +68,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
 /// green, turquoise, indigo, violet and rose, taken from the palette.
-fn aurora_color(p: &Palette, t: f32) -> Color32 {
+pub(crate) fn aurora_color(p: &Palette, t: f32) -> Color32 {
     let stops = [p.success, p.teal, p.indigo_light, p.violet_light, p.rose];
     let x = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
     let i = (x.floor() as usize).min(stops.len() - 2);
@@ -97,6 +98,36 @@ fn aurora_strip(p: &Palette, r: Rect) -> Shape {
     Shape::mesh(m)
 }
 
+/// `text` in the aurora gradient, one letter after the other: the mark of
+/// what is Aurora's own (this page's entry, the Aurora Weather titles).
+pub(crate) fn aurora_text(p: &Palette, text: &str, font: FontId) -> egui::text::LayoutJob {
+    let count = text.chars().count().max(2) as f32 - 1.0;
+    let mut job = egui::text::LayoutJob::default();
+    for (i, ch) in text.chars().enumerate() {
+        let color = aurora_color(p, i as f32 / count);
+        job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+    }
+    job
+}
+
+/// `text` with only the word "Aurora" in the aurora gradient, the rest in
+/// `ink`: an Aurora feature's title outside Preferences (Aurora Weather),
+/// whatever the word order of the language.
+pub(crate) fn aurora_word(p: &Palette, text: &str, font: FontId, ink: Color32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let mut rest = text;
+    while let Some(at) = rest.find("Aurora") {
+        job.append(&rest[..at], 0.0, egui::TextFormat::simple(font.clone(), ink));
+        for (i, ch) in "Aurora".chars().enumerate() {
+            let color = aurora_color(p, i as f32 / 5.0);
+            job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+        }
+        rest = &rest[at + "Aurora".len()..];
+    }
+    job.append(rest, 0.0, egui::TextFormat::simple(font, ink));
+    job
+}
+
 /// The entry of the page in the sidebar: the neighbours' entry, with the
 /// aurora gradient in its edge mark and its name.
 pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, selected: bool) -> egui::Response {
@@ -124,13 +155,7 @@ pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, select
     }
     // the name in the gradient, one letter after the other
     let font = FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
-    let count = label.chars().count().max(2) as f32 - 1.0;
-    let mut job = egui::text::LayoutJob::default();
-    for (i, ch) in label.chars().enumerate() {
-        let color = aurora_color(p, i as f32 / count);
-        job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
-    }
-    let galley = ui.painter().layout_job(job);
+    let galley = ui.painter().layout_job(aurora_text(p, label, font));
     ui.painter()
         .galley(rect.left_center() + Vec2::new(34.0, -galley.size().y / 2.0), galley, p.ink);
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
@@ -346,6 +371,28 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-colored-sky-ambient-help"),
                     &field!(colored_sky_ambient),
                     &[(true, aurora, true), (false, tr!("ui-options-aurora-classic"), false)],
+                );
+            });
+            // the weather is Aurora's own (the Legacy Viewer has none): its
+            // rows of Graphics › Sky and environment, the same settings
+            cx.group(tr!("ui-weather"), |cx| {
+                cx.note(tr!("ui-options-aurora-weather-note"));
+                cx.borrow(
+                    Page::Graphics,
+                    2,
+                    &[
+                        "weather.quality",
+                        "weather.puddles",
+                        "weather.puddle_distance",
+                        "weather.ice",
+                        "weather.snow_settles",
+                        "weather.snow_distance",
+                        "weather.snow_footprints",
+                        "weather.snow_deep",
+                        "weather.region_weather",
+                        "weather.wind_follow_region",
+                        "weather.wind_from",
+                    ],
                 );
             });
             cx.group(tr!("common-interface"), |cx| {

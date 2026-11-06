@@ -159,6 +159,179 @@ struct Request {
     /// Distance of the terrain or the water along each ray, if in range.
     ground: [Option<f32>; RAYS],
     reflectors: Vec<Reflector>,
+    /// While it rains: the rain's rays (`rain_rays`), with the distance of
+    /// the terrain or the water along each.
+    rain: Option<(Vec<Vec3>, Vec<Option<f32>>)>,
+}
+
+/// The rain's rays: a ring around the listener of [`RAIN_AZIMUTHS`]
+/// directions at a few heights (sound reaches the ear from about the
+/// horizon), turned by `turn` (radians: a little more each measure, so that
+/// over a few of them the ring sees between its own rays: a doorway).
+const RAIN_AZIMUTHS: usize = 24;
+const RAIN_HEIGHTS: [f32; 3] = [-0.15, 0.1, 0.4];
+/// Where along a rain ray the rain is looked for (m), and how much each
+/// counts (nearer rain is louder).
+const RAIN_SAMPLES: [f32; 5] = [1.5, 4.0, 8.0, 15.0, 25.0];
+
+fn rain_rays(turn: f32) -> Vec<Vec3> {
+    let mut dirs = Vec::with_capacity(RAIN_AZIMUTHS * RAIN_HEIGHTS.len());
+    for &z in &RAIN_HEIGHTS {
+        let flat = (1.0 - z * z).sqrt();
+        for i in 0..RAIN_AZIMUTHS {
+            let a = turn + i as f32 * std::f32::consts::TAU / RAIN_AZIMUTHS as f32;
+            dirs.push(Vec3::new(a.cos() * flat, a.sin() * flat, z));
+        }
+    }
+    // and straight down: how high above what the rain lands on
+    dirs.push(Vec3::NEG_Z);
+    dirs
+}
+
+/// How much rain is heard from each side (east, north, west, south: 0 to
+/// 1), and overall: along each rain ray, up to what it meets, the points
+/// where rain falls (nothing above them: looked for from above, as the
+/// rain falls, so that a one-sided awning stops it), nearer ones counting
+/// more. From a doorway the street's rain comes from the door; under an
+/// awning, from all round its edge; in a closed room, from nowhere.
+fn rain_exposure(request: &Request) -> Option<([f32; 4], f32, f32)> {
+    let (dirs, ground) = request.rain.as_ref()?;
+    let sides = [glam::Vec2::X, glam::Vec2::Y, glam::Vec2::NEG_X, glam::Vec2::NEG_Y];
+    let (mut heard, mut weight) = ([0.0f32; 4], [0.0f32; 4]);
+    let (mut all_heard, mut all_weight) = (0.0f32, 0.0f32);
+    let mut surface = RANGE;
+    for (dir, g) in dirs.iter().zip(ground) {
+        let reach = ray_reach(request, *dir, g.unwrap_or(RANGE));
+        surface = surface.min(reach);
+        if *dir == Vec3::NEG_Z {
+            continue;
+        }
+        let mut exposed = 0.0f32;
+        let mut total = 0.0f32;
+        for &d in &RAIN_SAMPLES {
+            let w = 1.0 / (1.0 + d / 4.0);
+            total += w;
+            if d < reach - 0.3 && open_above(request, request.from + *dir * d) {
+                exposed += w;
+            }
+        }
+        let e = exposed / total;
+        all_heard += e;
+        all_weight += 1.0;
+        let flat = dir.truncate();
+        for (i, side) in sides.iter().enumerate() {
+            let w = flat.dot(*side).max(0.0);
+            heard[i] += e * w;
+            weight[i] += w;
+        }
+    }
+    Some((
+        std::array::from_fn(|i| if weight[i] > 0.0 { heard[i] / weight[i] } else { 0.0 }),
+        if all_weight > 0.0 { all_heard / all_weight } else { 0.0 },
+        surface,
+    ))
+}
+
+/// How far a ray from the listener goes before it meets something (`best`:
+/// the terrain's or the water's distance, or the range).
+fn ray_reach(request: &Request, dir: Vec3, mut best: f32) -> f32 {
+    for r in &request.reflectors {
+        let to = r.center - request.from;
+        let along = to.dot(dir);
+        let off = to.length_squared() - along * along;
+        if off > r.radius * r.radius || along + r.radius < 0.0 || along - r.radius > best {
+            continue;
+        }
+        if let Some(t) = nearest(&r.surface, request.from, dir * best) {
+            best *= t;
+        }
+    }
+    best
+}
+
+/// Nothing above `p` within the range: rain falls there (looked for from
+/// above, down to it).
+fn open_above(request: &Request, p: Vec3) -> bool {
+    let top = p + Vec3::Z * RANGE;
+    let span = Vec3::NEG_Z * RANGE;
+    request.reflectors.iter().all(|r| {
+        let flat = (r.center - p).truncate();
+        flat.length_squared() > r.radius * r.radius || r.center.z + r.radius < p.z || nearest(&r.surface, top, span).is_none()
+    })
+}
+
+/// The sky around the listener, as the rays saw it (the rain's sound,
+/// `rain_sound.rs`): how open it is toward the east, north, west and south
+/// (the share of the rays at or above the horizon on that side that
+/// escaped), how much of the sky above (rays more than about 17 degrees
+/// up) a roof within [`ROOF_RANGE`] covers, and how far that roof is (its
+/// hits' mean distance), and the enclosure. An arch overhead covers a strip
+/// of that sky; a ceiling, most of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sky {
+    pub open: [f32; 4],
+    pub roof: f32,
+    pub roof_distance: f32,
+    pub enclosure: f32,
+    /// How much falling rain is in sight overall (0..1, `rain_exposure`):
+    /// none, only what comes through walls and roofs is heard.
+    pub exposure: f32,
+    /// How far the nearest thing the rain lands on is (m; the range when
+    /// none is): flying high, the rain is only heard faintly, from afar.
+    pub surface: f32,
+}
+
+/// A roof this close above (m) drums with the rain.
+const ROOF_RANGE: f32 = 15.0;
+
+impl Sky {
+    /// Open all round, no roof.
+    pub const OPEN: Sky = Sky {
+        open: [1.0; 4],
+        roof: 0.0,
+        roof_distance: ROOF_RANGE,
+        enclosure: 0.0,
+        exposure: 1.0,
+        surface: 0.0,
+    };
+
+    pub fn of(hits: &[Option<f32>; RAYS]) -> Sky {
+        let sides = [glam::Vec2::X, glam::Vec2::Y, glam::Vec2::NEG_X, glam::Vec2::NEG_Y];
+        let (mut open, mut count) = ([0.0f32; 4], [0.0f32; 4]);
+        let (mut up, mut roofed, mut upper, mut enclosed) = (0u32, 0u32, 0u32, 0u32);
+        let mut roof_sum = 0.0f32;
+        for (dir, hit) in directions().iter().zip(hits) {
+            if dir.z < HORIZON {
+                continue;
+            }
+            upper += 1;
+            enclosed += u32::from(hit.is_some());
+            if dir.z > 0.3 {
+                up += 1;
+                if let Some(d) = hit.filter(|d| *d < ROOF_RANGE) {
+                    roofed += 1;
+                    roof_sum += d;
+                }
+            }
+            // each side weighs the rays toward it (straight up: all alike)
+            let flat = dir.truncate();
+            for (i, side) in sides.iter().enumerate() {
+                let w = flat.dot(*side).max(0.0) + 0.25 * dir.z.max(0.0);
+                count[i] += w;
+                if hit.is_none() {
+                    open[i] += w;
+                }
+            }
+        }
+        Sky {
+            open: std::array::from_fn(|i| if count[i] > 0.0 { open[i] / count[i] } else { 1.0 }),
+            roof: roofed as f32 / up.max(1) as f32,
+            roof_distance: if roofed > 0 { roof_sum / roofed as f32 } else { ROOF_RANGE },
+            enclosure: enclosed as f32 / upper.max(1) as f32,
+            exposure: 1.0 - enclosed as f32 / upper.max(1) as f32,
+            surface: 0.0,
+        }
+    }
 }
 
 /// The surroundings, as the rays saw them.
@@ -258,8 +431,12 @@ struct Stats {
 
 /// The reverb of the surroundings, held by the scene.
 pub struct SoundReverb {
-    tx: Sender<(Estimate, Duration)>,
-    rx: Receiver<(Estimate, Duration)>,
+    tx: Sender<(Estimate, Sky, Duration)>,
+    rx: Receiver<(Estimate, Sky, Duration)>,
+    /// The last measure's sky (while measuring: the reverb on, or rain).
+    pub sky: Option<Sky>,
+    /// How far the rain's ring of rays is turned (`rain_rays`).
+    rain_turn: f32,
     /// A measure is in the job, sent from there.
     waiting: Option<Vec3>,
     next: Option<Instant>,
@@ -284,6 +461,8 @@ impl Default for SoundReverb {
         SoundReverb {
             tx,
             rx,
+            sky: None,
+            rain_turn: 0.0,
             waiting: None,
             next: None,
             smoothed: None,
@@ -400,20 +579,24 @@ impl Scene {
     /// parameters and each world sound's send to the mixer (every frame,
     /// after `SoundManager::update`; it measures a few times a second).
     /// `enabled`: Preferences › Sound, "Reverb from the surroundings"; off,
-    /// the mixer's reverb fades out and stops.
+    /// the mixer's reverb fades out and stops. `raining`: the rain's sound
+    /// needs the sky (`SoundReverb::sky`), measured then even without the
+    /// reverb.
     pub fn update_sound_reverb(
         &mut self,
         world: &World,
         engine: Option<&aurora_audio::AudioEngine>,
         listener: Vec3,
         enabled: bool,
+        raining: bool,
         now: Instant,
     ) {
         let Some(engine) = engine else {
             return;
         };
         let rev = &mut self.sound_reverb;
-        while let Ok((estimate, job)) = rev.rx.try_recv() {
+        while let Ok((estimate, sky, job)) = rev.rx.try_recv() {
+            rev.sky = Some(sky);
             let at = rev.waiting.take().unwrap_or(listener);
             rev.stats.job += job;
             rev.stats.job_max = rev.stats.job_max.max(job);
@@ -428,9 +611,13 @@ impl Scene {
             rev.sends.clear();
             rev.smoothed = None;
             rev.logged = None;
-            return;
+            if !raining {
+                rev.sky = None;
+                return;
+            }
+        } else {
+            rev.update_sends(engine, self.sounds.audible(), listener);
         }
-        rev.update_sends(engine, self.sounds.audible(), listener);
         if rev.waiting.is_some() || rev.next.is_some_and(|t| now < t) {
             return;
         }
@@ -438,7 +625,20 @@ impl Scene {
         rev.summary(now);
         let started = Instant::now();
         let mut candidates = std::mem::take(&mut self.sound_reverb.candidates);
-        let request = self.reverb_request(world, listener, now, &mut candidates);
+        let mut request = self.reverb_request(world, listener, now, &mut candidates);
+        if raining {
+            // the ring turned by a golden angle each measure
+            self.sound_reverb.rain_turn = (self.sound_reverb.rain_turn + 2.399_963) % std::f32::consts::TAU;
+            let dirs = rain_rays(self.sound_reverb.rain_turn);
+            let water = world.main_water_height();
+            let below = world.ground_height(listener);
+            let far = below.is_none_or(|g| listener.z - g > RANGE);
+            let ground = dirs
+                .iter()
+                .map(|d| ground_hit(listener, below, far, Some(water), &|p| world.ground_height(p), *d))
+                .collect();
+            request.rain = Some((dirs, ground));
+        }
         let rev = &mut self.sound_reverb;
         rev.candidates = candidates;
         let main = started.elapsed();
@@ -450,8 +650,14 @@ impl Scene {
         let tx = rev.tx.clone();
         self.jobs.run(move || {
             let started = Instant::now();
-            let estimate = Estimate::of(&measure(&request));
-            let _ = tx.send((estimate, started.elapsed()));
+            let hits = measure(&request);
+            let mut sky = Sky::of(&hits);
+            if let Some((sides, all, surface)) = rain_exposure(&request) {
+                sky.open = sides;
+                sky.exposure = all;
+                sky.surface = surface;
+            }
+            let _ = tx.send((Estimate::of(&hits), sky, started.elapsed()));
         });
     }
 
@@ -478,6 +684,7 @@ impl Scene {
             from,
             ground: ground_hits(from, Some(water), |p| world.ground_height(p)),
             reflectors,
+            rain: None,
         }
     }
 }
@@ -487,7 +694,21 @@ impl Scene {
 fn ground_hits(from: Vec3, water: Option<f32>, ground: impl Fn(Vec3) -> Option<f32>) -> [Option<f32>; RAYS] {
     let below = ground(from);
     let far = below.is_none_or(|g| from.z - g > RANGE);
-    directions().map(|dir| {
+    directions().map(|dir| ground_hit(from, below, far, water, &ground, dir))
+}
+
+/// The distance along one ray (`dir`) from `from` to the terrain or the
+/// water, if within `RANGE`; `below`: the terrain's height under `from`,
+/// `far`: too high above it to meet it.
+fn ground_hit(
+    from: Vec3,
+    below: Option<f32>,
+    far: bool,
+    water: Option<f32>,
+    ground: &impl Fn(Vec3) -> Option<f32>,
+    dir: Vec3,
+) -> Option<f32> {
+    {
         let water_hit = water
             .filter(|_| dir.z.abs() > 1e-3)
             .map(|w| (w - from.z) / dir.z)
@@ -528,7 +749,7 @@ fn ground_hits(from: Vec3, water: Option<f32>, ground: impl Fn(Vec3) -> Option<f
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         }
-    })
+    }
 }
 
 /// The distance each ray of `request` travels before it meets something
@@ -644,7 +865,82 @@ mod tests {
             from: Vec3::ZERO,
             ground,
             reflectors,
+            rain: None,
         }))
+    }
+
+    /// A solid box (faces outwards) `size` across, centred on `center`.
+    fn slab(center: Vec3, size: Vec3) -> Reflector {
+        let mut r = box_facing(size, [0, 2, 1, 0, 3, 2]);
+        r.surface.inv = (Mat4::from_translation(center) * Mat4::from_scale(size)).inverse();
+        r.center = center;
+        r
+    }
+
+    /// The rain heard by a listener 1.7 m above flat ground among
+    /// `reflectors`: by side, and overall.
+    fn rain_heard(reflectors: Vec<Reflector>) -> ([f32; 4], f32) {
+        let (sides, all, _) = rain_heard_at(1.7, reflectors);
+        (sides, all)
+    }
+
+    /// The same `height` m above the ground: by side, overall, and how far
+    /// the nearest surface is.
+    fn rain_heard_at(height: f32, reflectors: Vec<Reflector>) -> ([f32; 4], f32, f32) {
+        let dirs = rain_rays(0.1);
+        let far = height > RANGE;
+        let ground = dirs
+            .iter()
+            .map(|d| ground_hit(Vec3::ZERO, Some(-height), far, None, &|_| Some(-height), *d))
+            .collect();
+        rain_exposure(&Request {
+            from: Vec3::ZERO,
+            ground: on_ground(height),
+            reflectors,
+            rain: Some((dirs, ground)),
+        })
+        .expect("rain rays")
+    }
+
+    #[test]
+    fn flying_high_the_rain_lands_far_below() {
+        let (_, _, standing) = rain_heard_at(1.7, Vec::new());
+        let (_, _, flying) = rain_heard_at(30.0, Vec::new());
+        let (_, _, high) = rain_heard_at(200.0, Vec::new());
+        assert!(standing < 2.0, "{standing}");
+        assert!(flying > 25.0, "{flying}");
+        assert!(high >= RANGE - 0.01, "{high}");
+    }
+
+    #[test]
+    fn rain_is_heard_all_round_in_the_open() {
+        let (sides, all) = rain_heard(Vec::new());
+        assert!(all > 0.6, "{all}");
+        assert!(sides.iter().all(|s| *s > 0.6), "{sides:?}");
+    }
+
+    #[test]
+    fn under_an_awning_the_rain_is_heard_from_its_edges() {
+        let open = rain_heard(Vec::new()).1;
+        let (_, under) = rain_heard(vec![slab(Vec3::new(0.0, 0.0, 3.0), Vec3::new(8.0, 8.0, 0.3))]);
+        assert!(under > 0.2 && under < open, "{under} vs {open}");
+    }
+
+    #[test]
+    fn a_closed_room_hears_no_rain_and_a_doorway_brings_it_in() {
+        let roof = || slab(Vec3::new(0.0, 0.0, 2.5), Vec3::new(12.0, 12.0, 0.3));
+        let (_, closed) = rain_heard(vec![room_box(Vec3::new(8.0, 8.0, 4.4)), roof()]);
+        assert!(closed < 0.05, "{closed}");
+        // the east wall gone: the rain comes from the east
+        let walls = vec![
+            slab(Vec3::new(-4.1, 0.0, 0.5), Vec3::new(0.2, 8.0, 4.4)),
+            slab(Vec3::new(0.0, 4.1, 0.5), Vec3::new(8.0, 0.2, 4.4)),
+            slab(Vec3::new(0.0, -4.1, 0.5), Vec3::new(8.0, 0.2, 4.4)),
+            slab(Vec3::new(0.0, 0.0, 2.5), Vec3::new(8.4, 8.4, 0.3)),
+        ];
+        let (sides, all) = rain_heard(walls);
+        assert!(all > 0.05, "{all}");
+        assert!(sides[0] > sides[2] * 3.0 + 0.05, "{sides:?}");
     }
 
     #[test]

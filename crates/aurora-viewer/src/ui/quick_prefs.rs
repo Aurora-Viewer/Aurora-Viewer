@@ -260,7 +260,7 @@ impl QuickPrefsUi {
                 out.changed |= slot_row(ui, p, settings, Slot::Bandwidth);
                 out.changed |= complexity_row(ui, p, settings);
                 widgets::divider(ui, p);
-                env.selector_body(ui, p, view, loading, None, LABEL_W, lighting, &mut out.env);
+                env.selector_body(ui, p, view, loading, None, LABEL_W, lighting, None, &mut out.env);
             });
         // saved once the button is released, not at every frame of a drag
         self.unsaved |= out.changed;
