@@ -1,8 +1,17 @@
 # Notices — Aurora Viewer
 
+Copyright © 2026 the Aurora Viewer contributors (the authors in the project's
+Git history).
+
 Aurora Viewer is free software: you can redistribute it and/or modify it under
 the terms of the **GNU General Public License, version 3 or (at your option) any
-later version** (see [LICENSE](LICENSE)).
+later version** (see [LICENSE](LICENSE)). A modified version must keep these
+notices, including where the viewer shows them in its About window, and say
+that it was modified (sections 4 and 5 of the licence).
+
+The licence covers the code and the assets; it grants no right to the name
+"Aurora Viewer" or to the Aurora logo as trademarks. What a modified version may
+do with them is in [TRADEMARKS.md](TRADEMARKS.md).
 
 Aurora Viewer is not provided, endorsed or supported by Linden Research, Inc.
 ("Linden Lab") or The Phoenix Firestorm Project, Inc. Second Life® is a

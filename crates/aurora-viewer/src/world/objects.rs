@@ -27,19 +27,8 @@ pub const CARRIED_LOCAL_ID: u32 = u32::MAX;
 /// Private namespace for render-only Blender attachments, never a grid handle.
 pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 
-/// Client-only appearance; never included in simulator texture/material edits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum LocalAppearance {
-    Texture(Uuid),
-    Material(Uuid),
-}
-impl LocalAppearance {
-    pub fn entry(self) -> Uuid {
-        match self {
-            Self::Texture(id) | Self::Material(id) => id,
-        }
-    }
-}
+mod local_appearance;
+pub use local_appearance::{LocalAppearance, LocalTextureSlot};
 
 /// GPU-side state owned by the scene; kept here so it moves with the object.
 #[derive(Debug, Default)]
@@ -195,7 +184,7 @@ impl Object {
     }
     pub fn visual_texture_face(&self, face: usize) -> aurora_prim::te::TextureFace {
         let mut value = self.te.as_ref().map(|te| *te.face(face)).unwrap_or_default();
-        if let Some(LocalAppearance::Texture(id)) = self.local_appearance(face) {
+        if let Some(id) = self.local_texture(face, LocalTextureSlot::Diffuse) {
             value.texture = id;
         }
         value
@@ -204,9 +193,10 @@ impl Object {
         if self.render.blinn_phong_preview {
             return None;
         }
-        match self.local_appearance(face) {
+        match self.local_appearance(face).and_then(LocalAppearance::surface) {
             Some(LocalAppearance::Texture(_)) => None,
             Some(LocalAppearance::Material(id)) => Some(id),
+            Some(LocalAppearance::Channels(_)) => None,
             None => self
                 .extra
                 .render_materials
@@ -214,6 +204,20 @@ impl Object {
                 .find(|(f, _)| *f as usize == face)
                 .map(|(_, id)| *id)
                 .filter(|id| !id.is_nil()),
+        }
+    }
+    pub fn local_texture(&self, face: usize, slot: LocalTextureSlot) -> Option<Uuid> {
+        self.local_appearance(face).and_then(|appearance| appearance.texture(slot))
+    }
+
+    pub fn visual_light_image(&self) -> Option<aurora_prim::extra::LightImageParams> {
+        if let Some(texture) = self.local_texture(0, LocalTextureSlot::Light) {
+            Some(aurora_prim::extra::LightImageParams {
+                texture,
+                ..self.extra.light_image.unwrap_or(crate::build::edits::LIGHT_IMAGE_DEFAULT)
+            })
+        } else {
+            self.extra.light_image
         }
     }
     #[inline]
@@ -572,10 +576,14 @@ impl Object {
     /// A report was applied at `now`: stamp it with its region's clock and,
     /// when it left the object where `drawn` says it was not, let the gap
     /// fade. True when a correction started. A damped seat needs none: its
-    /// damping takes it there.
+    /// damping takes it there. An object the report sets moving jumps, as
+    /// LLViewerObject::updateDrawable damps only a volume whose velocity is
+    /// exactly zero: a looping keyframed motion starts again from its first
+    /// frame instead of sliding back to it (#2328).
     fn stamp_motion(&mut self, motion_time: f64, now: Instant, drawn: Option<(Vec3, Quat)>) -> bool {
         self.motion_time = motion_time;
-        let drawn = if self.seat_damping() { None } else { drawn };
+        let moving = !self.is_avatar() && self.velocity != Vec3::ZERO;
+        let drawn = if self.seat_damping() || moving { None } else { drawn };
         self.correction = drawn.and_then(|drawn| Correction::between(drawn, (self.position, self.rotation), now));
         self.correction.is_some()
     }
@@ -2168,6 +2176,33 @@ mod tests {
         let o = store.get(idx).expect("large jump");
         assert_eq!(store.predicted(o, start + Duration::from_millis(150)).0, report.position);
         assert_eq!(o.visual_scale(), report.scale);
+    }
+
+    /// #2328: a looping keyframed step put back at its first frame jumps
+    /// there, as LLViewerObject::updateDrawable leaves a moving object
+    /// undamped; the same gap on an object at rest still fades.
+    #[test]
+    fn a_moving_object_put_back_by_its_report_jumps_and_one_at_rest_fades() {
+        use std::time::Duration;
+        let start = Instant::now();
+        let at = start + Duration::from_millis(500);
+        let mut store = ObjectStore::default();
+        for (local, speed, fades) in [(103, Vec3::Y, false), (104, Vec3::ZERO, true)] {
+            let idx = store.upsert_at(1, update(local, PRIM, ""), Some(start));
+            let o = store.get_mut(idx).expect("prim");
+            let origin = o.position;
+            // drawn half a metre along its path when the report puts it back
+            o.position = origin + Vec3::Y * 0.5;
+            store.apply_terse_at(idx, &terse(local, origin, speed), Some(at));
+            let o = store.get(idx).expect("reported prim");
+            assert_eq!(o.correction.is_some(), fades, "speed {speed:?}");
+            let shown = store.predicted(o, at).0;
+            if fades {
+                assert!(shown.distance(origin) > 0.4, "an object at rest fades from where it was drawn");
+            } else {
+                near(shown, origin);
+            }
+        }
     }
 
     fn terse(local_id: u32, position: Vec3, velocity: Vec3) -> TerseUpdate {

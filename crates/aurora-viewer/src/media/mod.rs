@@ -357,16 +357,20 @@ pub struct MediaSettings {
     /// MediaEnableFilter: media and music ask before a site not in the
     /// account's list (on by default, as there).
     pub filter: bool,
-    /// Aurora's own: media on our own worn items (attachments and HUDs)
-    /// loads without the filter's question; a site the list refuses stays
-    /// refused. On by default: wearing a media earring should not raise a
-    /// question.
+    /// Aurora's own: media on our own worn items (attachments and HUDs),
+    /// whoever made them, loads without the filter's question; a site the
+    /// list refuses stays refused. On by default: wearing a media earring
+    /// or a HUD should not raise a question (the Legacy Viewer never
+    /// filters prim media).
     pub filter_trust_own_worn: bool,
     /// FirstMediaFilter, inverted: the filter's first question was
     /// answered, its explanation is no longer shown.
     pub filter_explained: bool,
     /// Folder with SLPlugin and llplugin\ (empty: automatic).
     pub plugin_dir: String,
+    /// Aurora's own: the answer to the download of the media plugins pack
+    /// (`pack.rs`); asked once, the first time it is needed.
+    pub pack_consent: pack::Consent,
 }
 
 impl Default for MediaSettings {
@@ -383,6 +387,7 @@ impl Default for MediaSettings {
             filter_trust_own_worn: true,
             filter_explained: false,
             plugin_dir: String::new(),
+            pack_consent: pack::Consent::Unasked,
         }
     }
 }
