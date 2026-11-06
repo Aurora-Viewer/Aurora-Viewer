@@ -143,7 +143,9 @@ function Write-Footer([string]$Hints) {
     $raw = $Host.UI.RawUI
     $w = $raw.WindowSize.Width - 1
     $y = $raw.WindowPosition.Y + $raw.WindowSize.Height - 1
-    if ($w -lt 20 -or $y -lt $raw.CursorPosition.Y) { return }
+    # Not on the cursor's row either: long output (a build) leaves it on the last
+    # line, and a question waiting there would be drawn over and look frozen.
+    if ($w -lt 20 -or $y -le $raw.CursorPosition.Y) { return }
     $status = @(if ($FooterStatus) { & $FooterStatus })
     # one segment comes unrolled: ('text', 'color'); plain text: one muted segment
     if ($status.Count -and $status[0] -isnot [array]) {

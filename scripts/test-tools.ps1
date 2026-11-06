@@ -128,6 +128,13 @@ if ($ConsoleFixture) {
         $raw.CursorPosition = [Management.Automation.Host.Coordinates]::new(0, 1)
         Write-Footer 'Long keyboard hints'
         Assert-ToolsTest ($raw.CursorPosition.Y -eq 1) 'A long footer must not wrap or move the cursor.'
+        # Long output leaves the cursor on the last line: a question there stays readable.
+        Set-TestSize 80 10
+        $FooterStatus = $null
+        1..12 | ForEach-Object { Write-Host "build output $_" }
+        Write-Host 'Start this viewer? [Y/n] ' -NoNewline
+        Write-Footer 'Y yes'
+        Assert-ToolsTest ((@(Get-TestScreen) -join "`n").Contains('Start this viewer?')) 'The footer must not cover a question on the last line.'
         'Console: navigation, paging, scrolling, resize, cancellation, cursor and footer passed.' | Set-Content -LiteralPath $OutputFile -Encoding UTF8
         exit 0
     } catch {
