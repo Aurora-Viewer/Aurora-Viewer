@@ -849,7 +849,7 @@ impl super::Scene {
         let point = blend.map(|(t, _)| ray.0 + ray.1 * t).or(point);
         let t_point = profile.then(Instant::now);
         let object = point.and_then(|point| self.interaction_at_ray_among(world, point, ray, true, Some(&candidates.point)));
-        let answer = (point, object);
+        let answer = self.hover_through_clear(world, ray, far, (point, object));
         if let (Some(t_index), Some(t_point)) = (t_index, t_point) {
             let done = Instant::now();
             let ms = |a: Instant, b: Instant| (b - a).as_secs_f32() * 1000.0;
@@ -893,10 +893,30 @@ impl super::Scene {
     /// classes or triangle hierarchies.
     fn full_hover_pick(&self, world: &crate::world::World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32) -> HoverHit {
         let point = self.action_point_among(world, ray, depth, far, None);
-        (
-            point,
-            point.and_then(|point| self.interaction_at_ray_among(world, point, ray, true, None)),
-        )
+        let object = point.and_then(|point| self.interaction_at_ray_among(world, point, ray, true, None));
+        self.hover_through_clear(world, ray, far, (point, object))
+    }
+
+    /// What a left click would do with a clear or click-action-None prim in
+    /// front of an actionable one (`visible_action_point`): the cursor shows
+    /// the actionable one. Only looked for when the hovered object can be
+    /// clear somewhere.
+    fn hover_through_clear(&self, world: &crate::world::World, ray: (Vec3, Vec3), far: f32, answer: HoverHit) -> HoverHit {
+        let (point, Some(idx)) = answer else { return answer };
+        let (Some(o), Some(g)) = (world.objects.get(idx), self.gpu.get(idx)) else {
+            return answer;
+        };
+        if g.owner_avatar.is_some()
+            || !(o.click_action == crate::interaction::code::DISABLED || self.see_through_face(g, true) || self.has_blend_face(world, idx))
+        {
+            return answer;
+        }
+        let mut along = Vec::new();
+        self.pick.ray_candidates(ray, &mut along);
+        match self.visible_action_point(world, ray, point, far, &along) {
+            Some(p) => (Some(p), self.left_interaction_among(world, p, ray, &along).or(Some(idx))),
+            None => answer,
+        }
     }
 
     /// The class of an object for the hover search ([`class`]), from what

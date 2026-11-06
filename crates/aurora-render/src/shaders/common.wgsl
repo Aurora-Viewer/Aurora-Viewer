@@ -113,6 +113,7 @@ struct Frame {
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
+    tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -372,6 +373,13 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 }
 
 fn sample_tex(idx: u32, uv: vec2<f32>) -> vec4<f32> {
+    let loc = tex_loc[idx];
+    return textureSampleBias(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, frame.tex_lod.x);
+}
+
+// Without the frame's mip bias: the shadow maps have their own size, and
+// their pass binds no frame uniform
+fn sample_tex_unbiased(idx: u32, uv: vec2<f32>) -> vec4<f32> {
     let loc = tex_loc[idx];
     return textureSample(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu);
 }

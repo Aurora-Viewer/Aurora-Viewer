@@ -409,8 +409,8 @@ pub struct OptionsUi {
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
     pub cache_usage: u64,
     pub cache_clearing: bool,
-    /// Detected video memory (MB) and integrated GPU; set by the app.
-    pub vram: (Option<u64>, bool),
+    /// Detected dedicated/shared heaps (MB) and integrated GPU; set by the app.
+    pub vram: (Option<u64>, Option<u64>, bool),
     /// The GPUs that can draw the viewer, the one in use, and why the
     /// dedicated one may not be drawing; set by the app as soon as the
     /// renderer is created, so the login screen has them too (#894). The
@@ -428,10 +428,10 @@ pub struct OptionsUi {
     /// Media plugins folder found (empty: none) and plugins running.
     pub media_plugins: String,
     pub media_running: usize,
-    /// Aurora's media plugins pack (set by the app), and its "Retry" button
-    /// (cleared by the app).
+    /// Aurora's media plugins pack (set by the app), and its "Download" or
+    /// "Retry" button (cleared by the app).
     pub media_pack: crate::media::pack::PackState,
-    pub media_pack_retry: bool,
+    pub media_pack_download: bool,
     /// The account's media filter list while logged in (set by the app when
     /// it changes); the changes made here, applied by the app; the site
     /// being typed.
@@ -543,6 +543,13 @@ impl OptionsUi {
     pub fn open_videos(&mut self) {
         self.open(Page::Chat, 0);
         self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-video-volume")));
+    }
+
+    /// Opens Preferences › Camera › Behavior on the camera's limits (the
+    /// login card of `camera_limits_notice.rs`).
+    pub fn open_camera_limits(&mut self) {
+        self.open(Page::Camera, 1);
+        self.reveal = Some((Page::Camera, 1, aurora_i18n::tr!("ui-options-camera-unrestricted-camera")));
     }
 
     /// Opens Preferences › Chat on the GIF picker's settings (#932).

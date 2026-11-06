@@ -199,8 +199,10 @@ are planned or in progress: they are not in the viewer yet.
   in front keeps its frame rate. Aurora also shares the card fairly with the
   other viewers and programs on it, and caps world textures at 512, 1024 or
   2048 pixels if you wish (Preferences › Graphics).
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
-  graphics card.
+- **AMD FSR 3.1 upscaling** and its native anti-aliasing, on every brand of
+  graphics card: the world drawn at 67 % down to 33 % of the window, then
+  rebuilt sharp at its size, for more frames per second (Preferences ›
+  Graphics › Anti-aliasing).
 
 ### A sharper, richer picture
 
@@ -571,9 +573,11 @@ are planned or in progress: they are not in the viewer yet.
   move ([setup and limits](docs/VR.md)).
 - **Portals to walk through**: open a portal to a place, drop a landmark
   into the world, or drag a place there from Favorites, Places, the teleport
-  history or search results, and walk, run or fly through it to teleport. Other Aurora
+  history or search results, and walk, run or fly through it to teleport.
+  A portal opens where you may build, like rezzing an object. Other Aurora
   users see it too: your friends by default, everyone if you choose, and a
-  portal that appears on someone never pulls them in.
+  portal that appears on someone never pulls them in. The portal back home
+  is yours alone on land where you may not build.
 - **Just your parcel, if you like**: hide what stands outside the current
   parcel, everywhere or only on the parcels you list, with exceptions that
   stay visible and options for neighbouring parcels of the same owner or
@@ -672,7 +676,7 @@ The texture memory budget is set automatically from the detected VRAM.
   sky, water and day-cycle editors, experience environments, world sounds
   with occlusion, headphone HRTF and room reverb (experimental), parcel
   music and media
-  on prims, with Aurora's downloadable media plugins pack; an area search
+  on prims, with Aurora's media plugins pack, downloaded once you agree; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
   walk-through portals shared with other Aurora users, with friend/group
@@ -753,8 +757,6 @@ Voice is WebRTC only; Vivox is not supported.
 
 **Planned**
 
-- AMD FSR (FidelityFX Super Resolution) upscaling and native anti-aliasing,
-  on every GPU vendor.
 - Frame Generation (under investigation).
 - Compression for the textures that fast BC7 encoding would harm (they
   stay uncompressed and are decoded at each visit).
@@ -1127,6 +1129,8 @@ Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
 At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
 upscaler; controls, HUDs and world labels retain the window's native resolution.
 Saved photos render at their requested resolution. The default remains 100%.
+With AMD FSR 3.1 as the anti-aliasing, FSR's own mode (Native AA, Quality,
+Balanced, Performance, Ultra performance) takes the render scale's place.
 Bindless texture pages use the adapter's binding-array limit rather than its
 ordinary sampled-texture limit, avoiding the former 79-page ceiling on Metal.
 
