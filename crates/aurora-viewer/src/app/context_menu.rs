@@ -88,6 +88,9 @@ impl App {
         }
         // the previous menu's selection goes, as deselectUnused would
         self.build.release_menu_selection(&self.world);
+        // Shift or Ctrl alone adds to the selection or takes out of it
+        // (LLToolPie::handleRightClickPick, the click's mask)
+        let extend = crate::build::BuildTool::menu_extends(self.shift, self.ctrl, self.alt);
         let me = self.world.agent_id;
         let target = match picked.and_then(|i| self.world.objects.get(i).map(|o| (i, o))) {
             Some((_, o)) if o.is_avatar() => Target::Avatar {
@@ -99,7 +102,7 @@ impl App {
                 let (key, full_id) = (o.key, o.full_id);
                 match ui::context::wearer(&self.world, idx) {
                     Some(w) if w == me => {
-                        self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
                         self.flush_build();
                         Target::Attachment { key }
                     }
@@ -116,7 +119,7 @@ impl App {
                             .unwrap_or(Vec3::ZERO);
                         // selected and outlined while the menu is open
                         // (LLToolSelect::handleObjectSelection, temp_select)
-                        self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
                         self.flush_build();
                         Target::Object { key, full_id, offset }
                     }
