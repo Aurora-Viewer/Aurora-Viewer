@@ -79,10 +79,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 paste_features(tool, world, idx, c);
             }
             if super::common::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("build-ui-features-copy-attributes"), enabled) {
+                let (light_image, keep_light_image) = light_image_copy(world, extra.light_image);
                 tool.ui.features_clipboard = Some(FeaturesClip {
                     flexible: extra.flexible,
                     light: extra.light,
-                    light_image: extra.light_image,
+                    light_image,
+                    keep_light_image,
                     probe: extra.reflection_probe,
                     material: material & 0x0f,
                     physics: tool.physics.get(&key.local_id).copied(),
@@ -538,6 +540,19 @@ impl BuildTool {
     }
 }
 
+/// The projector of "Copy" (LLPanelVolume::onCopyFeatures): kept only when
+/// the agent may copy its map; otherwise nothing, and the paste leaves the
+/// target's projector alone (the second value).
+pub(super) fn light_image_copy(
+    world: &World,
+    image: Option<aurora_prim::extra::LightImageParams>,
+) -> (Option<aurora_prim::extra::LightImageParams>, bool) {
+    match image {
+        Some(i) if !crate::build::texture_copy::can_copy(&world.inventory, world.agent_id, i.texture) => (None, true),
+        other => (other, false),
+    }
+}
+
 /// "Paste" of the features (LLPanelVolume::onPasteFeatures).
 fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: FeaturesClip) {
     let current = world.objects.get(idx).map(|o| o.extra.clone()).unwrap_or_default();
@@ -547,7 +562,7 @@ fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: Featur
     if current.light != c.light {
         tool.set_extra(world, idx, Extra::Light(c.light));
     }
-    if current.light_image != c.light_image {
+    if !c.keep_light_image && current.light_image != c.light_image {
         tool.set_extra(world, idx, Extra::LightImage(c.light_image));
     }
     if current.reflection_probe != c.probe {
@@ -556,5 +571,39 @@ fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: Featur
     tool.set_material(world, c.material);
     if let Some(ph) = c.physics {
         tool.set_physics(world, |x| *x = ph);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_projector_the_agent_cannot_copy_leaves_the_target_its_own() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let map = uuid::Uuid::from_u128(0x11a1);
+        let image = Some(aurora_prim::extra::LightImageParams {
+            texture: map,
+            ..crate::build::edits::LIGHT_IMAGE_DEFAULT
+        });
+        assert_eq!(light_image_copy(&w, image), (None, true));
+        assert_eq!(
+            light_image_copy(&w, None),
+            (None, false),
+            "no projector: the paste removes the target's"
+        );
+        let id = uuid::Uuid::from_u128(0x11a2);
+        let agent = w.agent_id;
+        w.inventory.items.insert(
+            id,
+            aurora_net::inventory::InvItem {
+                id,
+                asset_id: map,
+                owner: agent,
+                owner_mask: crate::world::inventory::actions::COPY,
+                ..Default::default()
+            },
+        );
+        assert_eq!(light_image_copy(&w, image), (image, false));
     }
 }

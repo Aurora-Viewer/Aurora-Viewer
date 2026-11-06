@@ -19,18 +19,11 @@ pub(super) struct TaskNotecard {
 /// we cannot edit; a god reads and edits any (LLTaskNotecardBridge::openItem
 /// and LLPreviewNotecard::loadAsset: isGodlike()).
 fn editor_item(mut item: InvItem, agent: Uuid, member: bool, manipulate: bool, object_editable: bool, god: bool) -> InvItem {
-    if god {
-        item.owner_mask |= rules::COPY | rules::MODIFY;
-        return item;
-    }
-    item.owner_mask = if item.owner == agent || (item.group_owned && manipulate) {
-        item.owner_mask
-    } else {
-        item.everyone_mask | if member { item.group_mask } else { 0 }
-    };
+    let mut mask = rules::task_notecard_mask(&item, agent, member, manipulate);
     if !object_editable {
-        item.owner_mask &= !rules::MODIFY;
+        mask &= !rules::MODIFY;
     }
+    item.owner_mask = mask | (rules::with_god(0, god) & (rules::COPY | rules::MODIFY));
     item
 }
 

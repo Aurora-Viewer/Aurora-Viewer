@@ -2,8 +2,9 @@
 .SYNOPSIS
     Triage of a crash report issue (docs/BUG_REPORTING.md, "Crash triage"),
     run by the Crash triage workflow: symbolizes its stack with the symbol
-    file of its release, signs it, and closes it as a duplicate of the
-    first open issue with the same signature.
+    file of its release, signs it (section and crash-triaged label), and
+    closes it as a duplicate of the first open issue it signed with the
+    same signature.
 
 .EXAMPLE
     ./scripts/crash-triage.ps1 -Issue 900
@@ -79,7 +80,9 @@ $signature = Get-CrashSignature $report $frames
 $section = Format-TriageSection $frames $symbolsName $signature
 Show-Triage $report $frames $signature $section
 
-$open = @(Invoke-Gh api "repos/$repo/issues?state=open&per_page=100" --paginate --jq '.[] | select(.pull_request == null) | {Number: .number, Body: .body} | tojson' |
+# Only the issues this triage signed: the label, which a reporter cannot set,
+# is checked again with the section in Find-DuplicateIssue.
+$open = @(Invoke-Gh api "repos/$repo/issues?state=open&labels=$TriagedLabel&per_page=100" --paginate --jq '.[] | select(.pull_request == null) | {Number: .number, Body: .body, Labels: [.labels[].name]} | tojson' |
     ForEach-Object { $_ | ConvertFrom-Json })
 $duplicate = Find-DuplicateIssue $open $signature.Id $Issue
 
@@ -90,6 +93,8 @@ if ($title -and -not $duplicate) { $patch.title = $title }
 $json = Join-Path ([IO.Path]::GetTempPath()) "crash-triage-$Issue.json"
 [IO.File]::WriteAllText($json, ($patch | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding $false))
 Invoke-Gh api -X PATCH "repos/$repo/issues/$Issue" --input $json | Out-Null
+# After the section: a signed issue is a reference for the next reports.
+Invoke-Gh api -X POST "repos/$repo/issues/$Issue/labels" -f "labels[]=$TriagedLabel" | Out-Null
 
 if ($duplicate) {
     $details = @("version $($report.Version)")

@@ -98,8 +98,7 @@ impl App {
     pub(in crate::app) fn portal_demo_input(&mut self, raw: &mut egui::RawInput) {
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
-            && mode.starts_with("private-")
-            && (mode.contains("-chat-") || mode.contains("-keyboard-"))
+            && (mode.starts_with("private-") && (mode.contains("-chat-") || mode.contains("-keyboard-")) || mode.starts_with("stranger"))
         {
             self.portal_keyboard_demo_input(raw, mode.contains("-chat-"));
             return;
@@ -204,14 +203,15 @@ impl App {
         }
         if (600..=840).contains(&self.frame_count) && self.frame_count.is_multiple_of(60) {
             log::info!(
-                "portal keyboard demo: frame {}, chat {}, keyboard focus {}, forward {}, position {:?}, authorized {}, journey {}",
+                "portal keyboard demo: frame {}, chat {}, keyboard focus {}, forward {}, position {:?}, authorized {}, journey {}, question {}",
                 self.frame_count,
                 self.chat_ui.has_focus,
                 self.egui_ctx.egui_wants_keyboard_input(),
                 self.input.forward,
                 self.world.agent.position,
                 self.world.portals.entries.iter().any(|entry| entry.allowed(&self.world)),
-                self.portal_journey.is_some()
+                self.portal_journey.is_some(),
+                self.portal_ask.is_some()
             );
         }
     }
