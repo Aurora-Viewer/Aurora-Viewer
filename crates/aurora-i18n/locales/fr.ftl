@@ -1688,6 +1688,7 @@ app-graphics-start-failed =
     À essayer :
     • mettre à jour le pilote de la carte graphique ;
     • sur un PC à deux cartes graphiques, vérifier qu'elles sont toutes deux activées dans le Gestionnaire de périphériques, et que l'écran est branché sur la carte qui doit dessiner ;
+    • sur un ordinateur portable avec des cartes graphiques AMD et NVIDIA, mettre aussi à jour le pilote AMD depuis le site d'AMD ;
     • redémarrer le PC.
 
     Détails : { $e }
@@ -2863,6 +2864,7 @@ dev-toolbox-r9 = Lumières
 dev-toolbox-r10 = Sondes de réflexion
 dev-toolbox-r11 = Tri des lumières locales
 dev-toolbox-r12 = Tri des sondes de réflexion
+dev-toolbox-r13 = Mettre le Render en pause
 dev-toolbox-o1 = Boîtes englobantes
 dev-toolbox-o2 = Niveaux de détail (LOD)
 dev-toolbox-o3 = Culling
@@ -3934,10 +3936,11 @@ ui-options-avatar-physics-help = La poitrine, le ventre et les fesses des avatar
 ui-options-avatar-physics-detail = Détail de la physique des avatars
 ui-options-avatar-physics-detail-help = À 1, tous les avatars bougent ; plus bas, les avatars petits à l'écran gardent leur forme ; 0 arrête la physique (RenderAvatarPhysicsLODFactor)
 ui-options-limit-when-unfocused = Limiter hors focus
-ui-options-pause-when-card-busy = Mettre la 3D en pause quand la carte sature
-ui-options-pause-when-card-busy-tip = Quand un autre programme occupe la carte graphique pendant qu'Aurora est derrière, Aurora arrête de dessiner le monde jusqu'à ce que vous cliquiez dessus, pour que la carte ne soit pas réinitialisée. Désactivé, Aurora peut se fermer avec « la carte graphique a été perdue ». Activé par défaut
-busy-pause-notice = 3D en pause : la carte graphique est occupée par un autre programme. Cliquez pour reprendre.
+ui-options-pause-when-card-busy = Mettre le Render en pause quand la carte sature
+ui-options-pause-when-card-busy-tip = Quand un autre programme occupe la carte graphique pendant qu'Aurora est derrière, Aurora arrête de dessiner le monde jusqu'à ce que vous cliquiez dessus, pour que la carte ne soit pas réinitialisée. Désactivé, Aurora peut se fermer avec « la carte graphique a été perdue ». Vaut pour toutes les fenêtres Aurora ouvertes. Activé par défaut
+busy-pause-notice = Render en pause : la carte graphique est occupée par un autre programme. Cliquez pour reprendre.
 busy-pause-window-title = { $title } — En pause
+busy-pause-forced-notice = Render en pause depuis la Dev Toolbox (R13). Appuyez de nouveau sur R13 pour reprendre.
 ui-land-sound-restrict-voice-chat-to-this-parcel = Limiter le chat vocal à cette parcelle
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = Limiter les sons des gestes et des objets à cette parcelle
 common-limits = Limites
@@ -4219,7 +4222,7 @@ ui-options-scripted-media = Médias par script
 ui-options-media-filter = Filtre média
 ui-options-media-filter-help = Demander avant qu'un média ou une musique se charge depuis un site absent de la liste (MediaEnableFilter)
 ui-options-media-filter-own-worn = Faire confiance à mes objets portés
-ui-options-media-filter-own-worn-help = Les médias de ce que vous portez (attachements, HUD) et avez créé vous-même se chargent sans question ; les sites bloqués restent bloqués. Pour les objets créés par quelqu'un d'autre et ceux des autres avatars, la question reste posée
+ui-options-media-filter-own-worn-help = Les médias de ce que vous portez (attachements, HUD) se chargent sans question ; les sites bloqués restent bloqués. Pour les objets des autres avatars et ceux du monde, la question reste posée
 ui-options-media-filter-list = Sites
 ui-options-media-filter-list-help = Domaines (avec leurs sous-domaines) et adresses que ce compte autorise ou bloque
 ui-options-media-filter-empty = Aucun site pour l'instant : les réponses gardées depuis la question apparaissent ici.
@@ -9130,7 +9133,7 @@ ui-options-chat-logs-erased = { $count ->
 ui-options-chat-logs-erase-failed = Certains fichiers n'ont pas pu être effacés.
 ui-options-chat-logs-busy = L'historique est occupé par un import, un déplacement ou un effacement : réessayez dans un instant.
 ui-options-chat-logs-import-login = Importer à la connexion
-ui-options-chat-logs-import-login-help = À chaque connexion, ajoute ce que le Legacy Viewer a écrit pour ce compte depuis le dernier import. Ses fichiers sont seulement lus. Activé par défaut.
+ui-options-chat-logs-import-login-help = À chaque connexion, ajoute ce que le Legacy Viewer a écrit pour ce compte depuis le dernier import, pour les conversations enregistrées ci-dessus. Ses fichiers sont seulement lus. Activé par défaut.
 ui-options-chat-logs-import-login-off = L'import à la connexion est maintenant désactivé, pour que cet historique ne revienne pas.
 ui-options-chat-logs-imported-at-login = Historique du Legacy Viewer : { $count ->
     [one] { $count } message ajouté
