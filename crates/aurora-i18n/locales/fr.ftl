@@ -12953,6 +12953,7 @@ about-copied = Copié
 about-copy-hint = Copie tout ce qui précède, en anglais, pour une demande d'aide ou un rapport de bug.
 about-click-to-copy = Cliquer pour copier cette valeur
 about-build-pill = Compilation { $profile }
+about-third-party-viewer = Aurora Viewer est un viewer tiers, ni fourni ni pris en charge par Linden Lab, l'éditeur de Second Life.
 about-release-notes = Notes de version
 about-licence-title = Licence d'Aurora Viewer
 about-licence-gpl = GNU GPL v3

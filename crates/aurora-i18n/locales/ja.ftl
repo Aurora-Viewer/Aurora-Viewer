@@ -12932,6 +12932,7 @@ about-copied = コピーしました
 about-copy-hint = サポートへの問い合わせやバグレポート用に、上記のすべてを英語でコピーします。
 about-click-to-copy = クリックしてこの値をコピー
 about-build-pill = { $profile }ビルド
+about-third-party-viewer = Aurora Viewerはサードパーティ製のビューアです。Second Lifeの開発元であるLinden Labが提供またはサポートするものではありません。
 about-release-notes = リリースノート
 about-licence-title = Auroraビューアのライセンス
 about-licence-gpl = GNU GPL v3
