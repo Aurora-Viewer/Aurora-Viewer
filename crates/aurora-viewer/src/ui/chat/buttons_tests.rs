@@ -1027,6 +1027,63 @@ fn enter_on_an_empty_conversation_field_returns_to_the_world_by_its_rule() {
     }
 }
 
+/// "Conversations window only" (#2696): the nearby field takes the chat
+/// bar's rule in every style. An empty Enter and Escape give the keyboard
+/// back to the world; after a message it follows "Keep the chat bar active
+/// after sending". The IMs keep their own rule.
+#[test]
+fn the_nearby_field_takes_the_chat_bars_rule_in_conversations_window_only() {
+    let escape = || {
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    };
+    for style in ALL {
+        let field = egui::Id::unique(("conv_input", None::<Uuid>));
+        let focused = |h: &H| h.frames.ctx.memory(|m| m.has_focus(field));
+        let fresh = |keep: bool| {
+            let mut h = H::new(style);
+            h.st.bar_mode = crate::settings::ChatBar::ConversationsOnly;
+            h.st.keep_focus = keep;
+            h.open(None);
+            assert!(focused(&h), "{style:?}: opened with the keyboard");
+            h
+        };
+        // an empty Enter: back to the world, nothing sent
+        let mut h = fresh(true);
+        h.enter(egui::Modifiers::NONE);
+        assert!(!focused(&h), "{style:?}: an empty Enter gives the keyboard back");
+        assert!(h.take().is_empty());
+        // a message: kept, or let go, as the setting says
+        for keep in [true, false] {
+            let mut h = fresh(keep);
+            h.type_text("hello");
+            h.enter(egui::Modifiers::NONE);
+            assert!(!h.take().is_empty(), "{style:?}: sent");
+            assert_eq!(focused(&h), keep, "{style:?} keep {keep}");
+        }
+        // Escape: back to the world, the draft kept
+        let mut h = fresh(true);
+        h.type_text("draft");
+        h.frame(escape());
+        h.settle();
+        assert!(!focused(&h), "{style:?}: Escape gives the keyboard back");
+        assert!(!h.frames.ctx.text_edit_focused(), "{style:?}: no field holds the keyboard");
+        assert_eq!(h.st.draft_mut(None).as_str(), "draft");
+        // an IM is not the chat bar: its empty Enter keeps the keyboard
+        let mut h = H::new(style);
+        h.st.bar_mode = crate::settings::ChatBar::ConversationsOnly;
+        h.open(Some(JANE));
+        h.enter(egui::Modifiers::NONE);
+        let im = egui::Id::unique(("conv_input", Some(JANE)));
+        assert!(h.frames.ctx.memory(|m| m.has_focus(im)), "{style:?}: the IM keeps it");
+    }
+}
+
 /// The Enter that asked for the keyboard (Enter from the world, "Enter
 /// returns to the last chat field used") is not taken as an empty Enter in
 /// the field it focused: the field keeps the keyboard and sends nothing.

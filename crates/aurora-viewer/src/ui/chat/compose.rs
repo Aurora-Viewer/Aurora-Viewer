@@ -266,7 +266,7 @@ pub(super) fn show(
                     st.used_conversation(st.selected);
                 }
                 draft.clear();
-                if returns_to_world(local, st.enter_toggles, st.keep_focus, sent, send_clicked) {
+                if returns_to_world(local, st.enter_toggles_in(local), st.keep_focus, sent, send_clicked) {
                     resp.surrender_focus();
                 } else {
                     resp.request_focus();
