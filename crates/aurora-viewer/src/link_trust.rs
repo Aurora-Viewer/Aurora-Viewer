@@ -522,6 +522,26 @@ mod tests {
     }
 
     #[test]
+    fn the_toolbar_sends_a_home_page_the_system_browser_accepts() {
+        // the toolbar button with "system browser for all links": an empty
+        // setting or a bare host must still open a page, not be refused
+        for (setting, expected) in [
+            ("", crate::ui::web_browser::DEFAULT_HOME.to_owned()),
+            ("example.org", "https://example.org/".to_owned()),
+            ("https://example.org/start", "https://example.org/start".to_owned()),
+        ] {
+            let home = crate::ui::web_browser::home_page(setting);
+            assert_eq!(home.trim_end_matches('/'), expected.trim_end_matches('/'), "{setting:?}");
+            assert!(refused_scheme(&home).is_none(), "{setting:?}");
+            assert!(should_use_system_browser(
+                &home,
+                crate::settings::BrowserBehavior::SystemForAll,
+                BrowserEntryPoint::Toolbar
+            ));
+        }
+    }
+
+    #[test]
     fn default_settings_keep_auroras_entry_point_routing() {
         use crate::settings::BrowserBehavior::BuiltInForSecondLife;
         use BrowserEntryPoint::*;

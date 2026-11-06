@@ -3022,13 +3022,13 @@ pub(crate) fn toolbar_row(
             continue;
         }
         if response.clicked() && !rlva_locked {
+            // the page the built-in window would open: the Legacy default for
+            // an empty setting, a scheme added to a bare host
+            let home = crate::ui::web_browser::home_page(row.browser_home_page);
             let a = if b.command == "webbrowser"
-                && crate::link_trust::should_use_system_browser(
-                    row.browser_home_page,
-                    row.browser_behavior,
-                    crate::link_trust::BrowserEntryPoint::Toolbar,
-                ) {
-                BarAction::OpenUrl(row.browser_home_page.to_owned())
+                && crate::link_trust::should_use_system_browser(&home, row.browser_behavior, crate::link_trust::BrowserEntryPoint::Toolbar)
+            {
+                BarAction::OpenUrl(home)
             } else {
                 run_command(ui.ctx(), &b.command, panels)
             };
