@@ -1579,10 +1579,14 @@ raw HAL and ordinary commands on the same encoder, so raw-only marker buffers
 are interleaved with ordinary segments. The three pre/scene/post batches still
 finish in parallel and submit in their original order. SSR shares the
 `scene-b (SSR/water/blend)` boundary; diagnostics do not split that pass.
-Photo tiles and probe captures use the same recorder. Default `auto` uses
-AMD markers or NVIDIA checkpoints if offered; `off` disables optional
-instrumentation. `AURORA_GPU_BREADCRUMBS=transfer` explicitly enables the
-more expensive transfer commands and execution barriers for deep diagnostics.
+Photo tiles and probe captures use the same recorder. The default (`fault`)
+enables only the driver's device-fault report, which costs nothing until a
+loss; `auto` adds AMD markers or NVIDIA checkpoints if offered (about 0.18 ms
+of render-thread time per frame on an RX 9070 XT, so opt-in until they are
+batched); `deep`, set by deep diagnostics, takes those markers or the
+transfer ones; `off` disables all optional instrumentation.
+`AURORA_GPU_BREADCRUMBS=transfer` explicitly enables the more expensive
+transfer commands and execution barriers.
 
 A long-lived worker requests driver detail once for the first loss and retains
 its device while the driver runs. The report writer never joins it. wgpu can
