@@ -326,7 +326,13 @@ fn no_tls_reply(error: &io::Error, first_byte: Option<u8>) -> bool {
             )
         );
     }
-    error.kind() == io::ErrorKind::UnexpectedEof
+    // A server without TLS that drops the connection on our ClientHello
+    // can surface as a reset, an abort or a broken pipe instead of an EOF
+    // (Windows especially): the same case, no TLS record came back.
+    matches!(
+        error.kind(),
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
+    )
 }
 
 fn handshake(conn: &mut rustls::ClientConnection, tcp: &mut TcpStream, stop: &AtomicBool) -> Result<(), HttpError> {
@@ -596,6 +602,15 @@ mod tests {
         assert!(!no_tls_reply(&io::ErrorKind::UnexpectedEof.into(), Some(22)));
         assert!(!no_tls_reply(&io::ErrorKind::TimedOut.into(), None));
         assert!(!no_tls_reply(&io::ErrorKind::ConnectionRefused.into(), None));
+        for kind in [
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionAborted,
+        ] {
+            assert!(no_tls_reply(&kind.into(), None), "{kind:?} before any reply");
+            assert!(!no_tls_reply(&kind.into(), Some(22)), "{kind:?} after a TLS handshake record");
+            assert!(no_tls_reply(&kind.into(), Some(b'H')), "{kind:?} after a plain reply byte");
+        }
         let record = io::Error::new(
             io::ErrorKind::InvalidData,
             rustls::Error::InvalidMessage(rustls::InvalidMessage::InvalidContentType),
