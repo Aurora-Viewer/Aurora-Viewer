@@ -121,6 +121,36 @@ impl ProbeSets {
     }
 }
 
+/// Side of the shadow map of the probe being captured, in texels: the tile
+/// of an atlas laid out like the main view's.
+pub const SHADOW_SIZE: u32 = 1024;
+/// How far around a probe its capture is shadowed (m):
+/// RenderReflectionProbeDrawDistance. Beyond it the sun is not stopped.
+pub const SHADOW_RANGE: f32 = 64.0;
+
+/// The sun's view of the place around a probe, for its capture
+/// (display_cube_face calls generateSunShadow for every cube face; the sun and
+/// the casters do not change between the faces of a capture, so one map is
+/// drawn per probe, and one is enough for an image of 256 x 256 that is then
+/// blurred).
+pub fn shadow_matrix(origin: Vec3, sun_dir: Vec3) -> Mat4 {
+    let light_dir = -sun_dir.normalize_or(Vec3::Z);
+    let up = if light_dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
+    let pad = crate::shadow_cull::CASCADE_DEPTH_PAD;
+    let eye = origin - light_dir * (SHADOW_RANGE + pad);
+    let view = glam::camera::rh::view::look_at_mat4(eye, origin, up);
+    let depth = SHADOW_RANGE * 2.0 + 2.0 * pad;
+    let proj = glam::camera::rh::proj::directx::orthographic(
+        -SHADOW_RANGE,
+        SHADOW_RANGE,
+        -SHADOW_RANGE,
+        SHADOW_RANGE,
+        0.1,
+        depth,
+    );
+    proj * view
+}
+
 /// How the surfaces of a probe's capture are lit by the probes
 /// (LLReflectionMapManager::updateUniforms, `is_ambiance_pass`): the bits of
 /// `frame.light_mode.z`, PROBE_CAPTURE_LIT and PROBE_CAPTURE_AMBIANCE of
@@ -787,6 +817,21 @@ mod tests {
         // what is further than the plane the extents are cut by
         assert!(src.contains("const PROBE_TILES_NEAREST: f32 = 0.01;"));
         const { assert!(light_tiles::NEAREST < 0.01) };
+    }
+
+    #[test]
+    fn a_probes_shadow_map_is_centred_on_it_and_sees_the_roof_before_the_floor() {
+        let origin = Vec3::new(100.0, 50.0, 30.0);
+        let m = shadow_matrix(origin, Vec3::new(0.3, 0.2, 0.8));
+        let at = |p: Vec3| m.project_point3(p);
+        let centre = at(origin);
+        assert!(centre.x.abs() < 1e-3 && centre.y.abs() < 1e-3, "{centre}");
+        assert!(at(origin + Vec3::Z * 5.0).z < at(origin - Vec3::Z * 5.0).z);
+        assert!((0.0..=1.0).contains(&centre.z));
+        // reaches the range all around, the sun straight up included
+        let up = shadow_matrix(origin, Vec3::Z);
+        let edge = up.project_point3(origin + Vec3::X * (SHADOW_RANGE - 1.0));
+        assert!(edge.x.abs() < 1.0 && edge.y.abs() < 1.0, "{edge}");
     }
 
     #[test]
