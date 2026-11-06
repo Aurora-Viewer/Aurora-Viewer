@@ -36,8 +36,22 @@ impl Scene {
     /// under a mesh body), is the avatar's; a ray through our collision
     /// volumes with nothing drawn of us there (the body not drawn yet or
     /// alpha-masked) too, except for an Alt click, which focuses what it
-    /// shows.
-    pub fn own_avatar_click(&self, world: &World, ray: (Vec3, Vec3), hit: Option<Vec3>, drawn: &Drawn, alt: bool) -> Option<Vec3> {
+    /// shows. When the GPU says what it drew under the cursor (`depth_only`
+    /// false and a drawn face), our displayed surface decides
+    /// (`own_avatar_surface`, #2592: empty space inside our bounds stays
+    /// empty); the collision volumes are for the clicks without that answer.
+    /// `depth`: the GPU depth point the click search started from.
+    #[allow(clippy::too_many_arguments)] // the click's inputs, as the caller holds them
+    pub fn own_avatar_click(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        hit: Option<Vec3>,
+        drawn: &Drawn,
+        alt: bool,
+        depth_only: bool,
+        depth: Option<Vec3>,
+    ) -> Option<Vec3> {
         let (o, d) = ray;
         let volumes = own_volumes(world, ray, Instant::now());
         let (worn, rigged) = self.own_drawn(world, ray, drawn);
@@ -55,6 +69,19 @@ impl Scene {
             && self.worn_clicker_of_another(world, p, ray).is_some()
         {
             return None;
+        }
+        if !depth_only && (drawn.blend.is_some() || drawn.opaque.is_some()) {
+            // A mesh rigged to us counts where the ray also meets our body
+            // (a mesh body), not hair or a hat above it: the Legacy Viewer
+            // picks an avatar by its collision volumes, and what is behind
+            // the hair keeps the click.
+            if worn.is_none() && rigged.is_none() && self.own_drawn(world, ray, drawn).1.is_some() {
+                return None;
+            }
+            // The depth is older than the posed surface. Only a surface
+            // actually found by the CPU can occlude that newer answer.
+            let found = hit.filter(|p| Some(*p) != depth);
+            return self.own_avatar_surface(world, drawn, ray, found);
         }
         match t {
             Some(t) if t < t0 - ON_BODY => None,
@@ -204,7 +231,7 @@ mod tests {
         assert_eq!(scene.interaction_at_ray(&world, hit, ray, true), Some(clicker));
         assert_eq!(scene.worn_clicker_of_another(&world, hit, ray), Some(clicker));
         assert_eq!(
-            scene.own_avatar_click(&world, ray, Some(hit), &Drawn::default(), false),
+            scene.own_avatar_click(&world, ray, Some(hit), &Drawn::default(), false, true, None),
             None,
             "not our avatar"
         );
@@ -289,7 +316,11 @@ mod tests {
             opaque: Some(drawn_at(0, hit)),
             blend: None,
         };
-        assert_eq!(scene.own_avatar_click(&world, ray, Some(hit), &pile, false), None, "the pile's");
+        assert_eq!(
+            scene.own_avatar_click(&world, ray, Some(hit), &pile, false, true, None),
+            None,
+            "the pile's"
+        );
         assert_eq!(scene.interaction_at_ray(&world, hit, ray, true), Some(object));
         // our rigged hair over our head does not hide it
         let hair = Drawn {
@@ -297,24 +328,37 @@ mod tests {
             ..pile
         };
         assert_eq!(
-            scene.own_avatar_click(&world, ray, Some(hit), &hair, false),
+            scene.own_avatar_click(&world, ray, Some(hit), &hair, false, true, None),
             None,
             "through our hair"
+        );
+        // the same when the GPU says what it drew (#2592's own surface rule)
+        assert_eq!(
+            scene.own_avatar_click(&world, ray, Some(hit), &pile, false, false, None),
+            None,
+            "the pile's, drawn"
+        );
+        assert_eq!(
+            scene.own_avatar_click(&world, ray, Some(hit), &hair, false, false, None),
+            None,
+            "through our hair, drawn"
         );
 
         // our head: nothing drawn yet, then drawn, then an Alt click behind it
         let ray = (eye, (head - eye).normalize());
-        let at = scene.own_avatar_click(&world, ray, None, &none, false).expect("our head");
+        let at = scene
+            .own_avatar_click(&world, ray, None, &none, false, true, None)
+            .expect("our head");
         assert!(at.distance(head) < 0.2, "{at:?} on our head at {head:?}");
         let far = ray.0 + ray.1 * 20.0;
-        assert!(scene.own_avatar_click(&world, ray, Some(far), &none, false).is_some());
-        assert_eq!(scene.own_avatar_click(&world, ray, Some(far), &none, true), None);
+        assert!(scene.own_avatar_click(&world, ray, Some(far), &none, false, true, None).is_some());
+        assert_eq!(scene.own_avatar_click(&world, ray, Some(far), &none, true, true, None), None);
         let skin = Drawn {
             opaque: Some(drawn_at(9, at - ray.1 * 0.02)),
             blend: None,
         };
         assert_eq!(
-            scene.own_avatar_click(&world, ray, Some(at - ray.1 * 0.02), &skin, true),
+            scene.own_avatar_click(&world, ray, Some(at - ray.1 * 0.02), &skin, true, true, None),
             Some(at - ray.1 * 0.02)
         );
         // our rigged hair over our head counts, over the volumes
@@ -322,17 +366,31 @@ mod tests {
             blend: Some(drawn_at(8, at - ray.1 * 0.1)),
             ..skin
         };
-        assert!(scene.own_avatar_click(&world, ray, Some(at - ray.1 * 0.1), &over, false).is_some());
+        assert!(
+            scene
+                .own_avatar_click(&world, ray, Some(at - ray.1 * 0.1), &over, false, true, None)
+                .is_some()
+        );
+        // the same two when the GPU says what it drew: our skin, then our hair over the head's volume
+        assert_eq!(
+            scene.own_avatar_click(&world, ray, Some(at - ray.1 * 0.02), &skin, false, false, None),
+            Some(at - ray.1 * 0.02)
+        );
+        assert!(
+            scene
+                .own_avatar_click(&world, ray, Some(at - ray.1 * 0.1), &over, false, false, None)
+                .is_some()
+        );
 
         // our body, and a prim in front of it
         let ray = (Vec3::new(-2.0, 0.0, 50.0), Vec3::X);
         let (entry, _) = own_volumes(&world, ray, now).expect("our pelvis");
         let body = ray.0 + ray.1 * entry;
-        assert!(scene.own_avatar_click(&world, ray, Some(body), &none, false).is_some());
+        assert!(scene.own_avatar_click(&world, ray, Some(body), &none, false, true, None).is_some());
         place(&mut world, &mut scene, object, body - Vec3::X * 0.5, 0.2);
         let front = body - Vec3::X * 0.6;
         assert_eq!(scene.interaction_at_ray(&world, front, ray, true), Some(object));
-        assert_eq!(scene.own_avatar_click(&world, ray, Some(front), &none, false), None);
+        assert_eq!(scene.own_avatar_click(&world, ray, Some(front), &none, false, true, None), None);
 
         // another resident's clicker over our body (a hug)
         scene.gpu[object].owner_avatar = Some(other);
@@ -341,7 +399,7 @@ mod tests {
             let p = body + Vec3::X * at;
             assert_eq!(scene.worn_clicker_of_another(&world, p, ray), Some(object));
             assert_eq!(
-                scene.own_avatar_click(&world, ray, Some(p), &none, false).is_some(),
+                scene.own_avatar_click(&world, ray, Some(p), &none, false, true, None).is_some(),
                 ours,
                 "{at} m in"
             );
@@ -350,7 +408,7 @@ mod tests {
         place(&mut world, &mut scene, object, body + Vec3::X * 0.15, 0.2);
         let p = body + Vec3::X * 0.05;
         assert!(
-            scene.own_avatar_click(&world, ray, Some(p), &none, false).is_some(),
+            scene.own_avatar_click(&world, ray, Some(p), &none, false, true, None).is_some(),
             "without an action"
         );
     }

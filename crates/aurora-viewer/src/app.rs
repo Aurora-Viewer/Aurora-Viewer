@@ -4667,9 +4667,10 @@ impl App {
         // on our avatar: its body or what it wears under the cursor, with
         // nothing in front (scene/self_click.rs), unless an attachment of
         // another resident with an action is where the click landed
-        let avatar_hit = ray
-            .filter(|_| shown.is_none_or(|d| !d.blend))
-            .and_then(|ray| self.scene.own_avatar_click(&self.world, ray, hit, &picked.drawn, alt));
+        let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|ray| {
+            self.scene
+                .own_avatar_click(&self.world, ray, hit, &picked.drawn, alt, picked.depth_only(), picked.depth)
+        });
         // or on our name tag
         let avatar_hit = avatar_hit.or_else(|| {
             let (idx, p) = self.pick_name_tag(hit, ray)?;
