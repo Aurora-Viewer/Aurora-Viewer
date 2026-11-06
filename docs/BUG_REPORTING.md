@@ -132,6 +132,16 @@ What each part tells the one who fixes it:
 - **XR runtime**: a fixed public category (SteamVR, Meta, Virtual Desktop,
   Monado, Windows Mixed Reality or other) and whether it created the Vulkan
   device. The runtime's own free-form name stays local.
+- **Flight recorder**: the 60 seconds before the first GPU loss (or stall,
+  panic, failure), sampled 10 times a second: CPU and GPU frame time and the
+  three heaviest GPU passes, video memory used / budget / headroom, texture
+  pages and pressure, bind-group rebuilds, the largest indirect draw, pipelines
+  compiling, uploads in flight, swapchain recreations, window state and process
+  memory, with a timeline of screen changes, teleports, region changes, preset
+  and effects changes, photo / poser and stall notices in seconds before the
+  incident; then min / max / last of each over 60 s and over the last 5 s.
+  Numbers and fixed labels only. Written at the first loss (never replaced by
+  what follows it) and every 5 s, so a hard crash keeps the seconds before it.
 - **Environment snapshot**: bounded module basenames with numeric version
   where available, fixed folder classifications and Windows signature categories,
   known overlay process
