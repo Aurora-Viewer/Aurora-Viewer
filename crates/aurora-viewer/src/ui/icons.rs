@@ -758,13 +758,6 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
 ];
 
 pub(crate) fn inventory_link_name(base: &str) -> &'static str {
-    if crate::ui::inventory::tree::is_folder_icon(base) {
-        return if base.ends_with("Open") {
-            "Inv_FolderOpen_Link"
-        } else {
-            "Inv_FolderClosed_Link"
-        };
-    }
     match base {
         "Inv_FolderClosed" => "Inv_FolderClosed_Link",
         "Inv_FolderOpen" => "Inv_FolderOpen_Link",
@@ -803,6 +796,14 @@ pub(crate) fn inventory_link_name(base: &str) -> &'static str {
         "Inv_TrashClosed" => "Inv_TrashClosed_Link",
         "Inv_SysClosed" => "Inv_SysClosed_Link",
         "Inv_Invalid" => "Inv_Invalid_Link",
+        // every other folder (the badged system folders) uses the folder link
+        _ if crate::ui::inventory::tree::is_folder_icon(base) => {
+            if base.ends_with("Open") {
+                "Inv_FolderOpen_Link"
+            } else {
+                "Inv_FolderClosed_Link"
+            }
+        }
         _ => "Inv_LinkItem",
     }
 }
@@ -1058,6 +1059,12 @@ mod tests {
                 assert!(icons.get(link).is_some(), "folder link icon {link}");
             }
         }
+        // a folder with its own link art keeps it (Trash, the system folders)
+        assert_eq!(
+            inventory_link_name(crate::ui::inventory::tree::folder_icon(14, false)),
+            "Inv_TrashClosed_Link"
+        );
+        assert_eq!(inventory_link_name("Inv_SysClosed"), "Inv_SysClosed_Link");
     }
 
     #[test]
