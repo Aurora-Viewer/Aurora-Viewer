@@ -183,7 +183,7 @@ pub fn read(folder: &Path) -> Lists {
     let mut lists = Lists::default();
     let mut failed = Vec::new();
     if let Some(data) = bytes(folder, tphistory::TELEPORT_HISTORY_FILE, &mut failed) {
-        lists.history = tphistory::parse(&String::from_utf8_lossy(&data));
+        lists.history = tphistory::places(String::from_utf8_lossy(&data).as_bytes());
     }
     if let Some(data) = bytes(folder, derender::FILE, &mut failed) {
         match FileEntries::from_xml(&data) {

@@ -1270,6 +1270,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
         settings.antialiasing = v;
     }
+    if let Some(v) = std::env::var("AURORA_FSR_QUALITY").ok().and_then(|v| v.parse::<u8>().ok()) {
+        settings.fsr_quality = v.min(4);
+    }
     if let Some(v) = std::env::var("AURORA_RENDER_SCALE").ok().and_then(|v| v.parse::<u32>().ok()) {
         settings.render_scale_percent = v.clamp(50, 100);
     }
@@ -11050,7 +11053,7 @@ impl App {
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
         let mut textures = std::mem::take(&mut full.textures_delta);
-        if gpu_recovery::enabled() {
+        if gpu_recovery::shadow_kept() {
             self.egui_shadow.note(&textures);
         }
         if std::mem::take(&mut self.egui_replay) {

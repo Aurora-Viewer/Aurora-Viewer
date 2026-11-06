@@ -700,7 +700,7 @@ impl App {
         );
         let (w, h) = renderer.size();
         let _ = writeln!(out, "Screen: {w}×{h} at {:.0} Hz", self.screen_rate.hz());
-        let aa = ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA"]
+        let aa = ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA", "FSR 3.1"]
             .get(self.settings.antialiasing as usize)
             .copied()
             .unwrap_or("?");

@@ -314,7 +314,8 @@ highlights clip to white instead of rolling off, emissive PBR objects go
 dark, and in Preferences › Graphics › Image the tone mapping, its mix and
 the sharpness are greyed (the exposure too, under Light).
 
-`AURORA_AA`: 0 none, 1 FXAA, 2 to 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. Without
+`AURORA_AA`: 0 none, 1 FXAA, 2 to 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA, 7 AMD
+FSR 3.1 (its mode from `AURORA_FSR_QUALITY`, see below). Without
 it, the demo keeps the setting saved in its profile: 6 (SMAA) for a new
 profile, 3 (MSAA 4x) for a profile created when that was the default. MSAA
 has its own multisampled depth, filled by its own prepass (terrain and
@@ -4986,7 +4987,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
-| `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new window and device instead of closing (work in progress) |
+| `AURORA_GPU_RECOVERY=1` / `=0` | Recover from a GPU device loss on a new window and device, or close, whatever Preferences › Graphics says (on by default) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_PHOTO_QUALITY_CRASH=1` | The "Photo quality turned off" card on the login screen |
@@ -7044,8 +7045,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   callback would set it, wgpu's own device stays alive. A list
   (`600,600,600`) gives one frame to each renderer of the run, the start's
   then each recovery's (a recovery's counts its frames from 0 again): with
-  `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
-  with the safe graphics level, then close.
+  the recovery on (the default), three losses within a minute recover,
+  recover with the safe graphics level, then close.
   The report's "Last state" table then shows the new device-lost fields
   (effects on, GPU frame times, session and region seconds,
   `GPU loss: first seen by` = `demo`), and its first table the
@@ -7060,9 +7061,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   device-lost callback follows (`GPU device lost (Unknown): Device is lost`).
   The reset is shared: other programs drawing with the GPU at that moment
   (a GPU-drawn terminal, a browser, another viewer) may lose their work or
-  close. Without `AURORA_GPU_RECOVERY=1` the viewer then closes as after
-  any loss. Once a run.
-- **`AURORA_GPU_RECOVERY=1`** (work in progress, off by default): a GPU
+  close. With the recovery off (`AURORA_GPU_RECOVERY=0`, or Preferences ›
+  Graphics) the viewer then closes as after any loss. Once a run.
+- **`AURORA_GPU_RECOVERY=1` / `=0`**: forces the recovery on or off for the
+  launch, whatever Preferences › Graphics › "Reopen after a graphics card
+  reset" says (`gpu_recovery`, on by default; `=0` also stops egui's CPU
+  copy). A VR session still closes. With the recovery on, a GPU
   device loss no longer ends the session. The window, the renderer and
   egui's input state are made again the way the start makes them
   (`app/gpu_recovery.rs`); the old window stays until the new one has
@@ -9722,6 +9726,11 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
 | `AURORA_TAA_MOTION=0` or `alt` | TAA reprojected through the camera alone, without the motion vectors, as before |
+| `AURORA_FSR_QUALITY=<0-4>` | FSR's mode for this launch, with `AURORA_AA=7`: native AA, quality, balanced, performance, ultra performance |
+| `AURORA_FSR_SHARPNESS=<0-1>` or `off` | FSR's RCAS sharpening for this launch, or none |
+| `AURORA_FSR_REACTIVE=0` | FSR without the reactive mask it generates from the blended faces |
+| `AURORA_FSR_BLEND_MOTION=0` | FSR without the depth and motion of the blended faces |
+| `AURORA_FSR_MIP_BIAS=0` | FSR's smaller modes without the textures' mip bias |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
@@ -10086,6 +10095,29 @@ What the inventory must show with these scenarios:
   (`AURORA_DEMO_CROWD=20`, `AURORA_DEMO_POS=129,134`): with `0` their
   edges smear and shimmer while they move, with the default they stay
   clean. A still scene is the same in both.
+- **`AURORA_FSR_*`**: AMD FSR 3.1 (`AURORA_AA=7`, `fsr.rs` and
+  `shaders/fsr/`) takes TAA's place: it accumulates the jittered frames and,
+  below native AA, draws the world smaller than the window and rebuilds it
+  at the window's size (quality 67 %, balanced 59 %, performance 50 %, ultra
+  performance 33 %). The post effects after it run at the window's size.
+  - `AURORA_FSR_QUALITY` chooses the mode for this launch (default: the
+    saved one, quality for a new profile).
+  - `AURORA_FSR_SHARPNESS` sets RCAS (default 0.8 from Preferences);
+    under FSR the CAS sharpening of Preferences › Graphics › Image is off,
+    since both on top of each other turn FSR's faint sub-pixel pattern
+    into a checkerboard on smooth highlights. Capture the demo with
+    `AURORA_DEMO_CAMERA=none`, `AURORA_FSR_QUALITY=3`, frame 645: the glass
+    sphere's highlight shows no checkerboard at 3x zoom.
+  - `AURORA_FSR_REACTIVE=0` drops the reactive mask generated from the
+    scene before and after the blended faces: glass and particles then
+    leave trails when they move.
+  - `AURORA_FSR_BLEND_MOTION=0` drops the depth and motion the blended
+    faces covered from 10 % give FSR: the edges of a glass panel turn
+    jagged.
+  - `AURORA_FSR_MIP_BIAS=0` keeps the textures' mips at 0 in the smaller
+    modes; by default they take `log2(render / window) - 1` (quality -1.58,
+    performance -2), as AMD's integration guide asks, for the window's
+    texture detail. Native AA has no bias.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility

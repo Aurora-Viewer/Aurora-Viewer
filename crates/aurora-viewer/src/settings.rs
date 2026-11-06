@@ -1200,8 +1200,13 @@ pub struct Settings {
     pub contact_shadows: bool,
     /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
-    /// featuretable.txt)
+    /// featuretable.txt), 7 AMD FSR 3.1 (beyond the Legacy Viewer)
     pub antialiasing: u8,
+    /// With FSR, its quality mode: 0 native AA, 1 quality (the default),
+    /// 2 balanced, 3 performance, 4 ultra performance.
+    pub fsr_quality: u8,
+    /// With FSR, its sharpening (RCAS) in percent; 0 turns it off.
+    pub fsr_sharpness: u32,
     /// World resolution as a percentage of the window; HUDs and UI stay native.
     pub render_scale_percent: u32,
     /// Geometric specular anti-aliasing (common.wgsl `specular_aa_roughness`):
@@ -1244,6 +1249,10 @@ pub struct Settings {
     /// again, before Windows resets the card (app/busy_pause.rs). On by
     /// default; not in the Legacy Viewer.
     pub background_gpu_pause: bool,
+    /// After a GPU device loss (a driver reset of the card, often caused
+    /// by another program), a new window and device instead of closing
+    /// (app/gpu_recovery.rs). On by default; the Legacy Viewer closes.
+    pub gpu_recovery: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
@@ -2047,6 +2056,8 @@ impl Default for Settings {
             projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,
+            fsr_quality: 1,
+            fsr_sharpness: 80,
             render_scale_percent: 100,
             specular_aa: true,
             colored_sky_ambient: false,
@@ -2060,6 +2071,7 @@ impl Default for Settings {
             background_fps_cap: true,
             background_fps_limit: 15,
             background_gpu_pause: true,
+            gpu_recovery: true,
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
@@ -2746,7 +2758,9 @@ impl Settings {
         self.projector_shadow_limit = self
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
-        self.antialiasing = self.antialiasing.min(6);
+        self.antialiasing = self.antialiasing.min(7);
+        self.fsr_quality = self.fsr_quality.min(4);
+        self.fsr_sharpness = self.fsr_sharpness.min(100);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 64);
@@ -2920,7 +2934,7 @@ impl Settings {
     }
 
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
-        use aurora_render::{AntiAliasing, AoMethod, Tonemapper};
+        use aurora_render::{AntiAliasing, AoMethod, FsrQuality, Tonemapper};
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
@@ -2933,8 +2947,16 @@ impl Settings {
                 3 => AntiAliasing::Msaa(4),
                 4 => AntiAliasing::Msaa(8),
                 5 => AntiAliasing::Taa,
+                7 => AntiAliasing::Fsr(match self.fsr_quality {
+                    0 => FsrQuality::NativeAa,
+                    1 => FsrQuality::Quality,
+                    2 => FsrQuality::Balanced,
+                    3 => FsrQuality::Performance,
+                    _ => FsrQuality::UltraPerformance,
+                }),
                 _ => AntiAliasing::Smaa,
             },
+            fsr_sharpness: (self.fsr_sharpness > 0).then(|| self.fsr_sharpness.min(100) as f32 / 100.0),
             tonemapper: if self.tonemapper == 1 {
                 Tonemapper::Aces
             } else {
