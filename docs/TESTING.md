@@ -5404,7 +5404,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   its colour, stacked downwards, and leave one at a time for the number, which
   counts up; `AURORA_DEMO_BARS=legacy`, or Reduce motion, to see the other looks. `earning`:
   from 12,480 L$, a sale or an object paid of 20 to 300 L$ at random every 10 seconds, for as
-  long as the viewer runs, with the saved switches, which can be turned meanwhile. Capture
+  long as the viewer runs, with the saved switches, which can be turned meanwhile (by default
+  the highlight alone: `sale`, `friend` and `off` turn the toast on for their run). Capture
   after frame 400, with `--language fr` and `--language en`.
 - **`AURORA_DEMO_DEBUG_SETTINGS`**: opens Debug Settings at the first frame.
   `1`: past the warning, nothing typed. `warning`: on the warning, with its

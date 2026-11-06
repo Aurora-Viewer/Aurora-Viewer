@@ -183,6 +183,12 @@ impl App {
             description: "Transaction".into(),
         };
         let paid = |n, source, amount, item: &str| gift(n, source, agent, amount, item);
+        if matches!(mode.as_str(), "sale" | "friend" | "off") {
+            self.demo_money_notices = Some((true, true));
+            // this frame's payments, before the next frame reads it
+            self.world.payments.notify_received = true;
+            self.world.payments.rise_into_balance = true;
+        }
         if mode == "sale" {
             let earned = |n: u128, kind, amount, item: &str| match paid(n, DEMO_NOVA, amount, item) {
                 NetEvent::MoneyTransaction {
@@ -217,8 +223,7 @@ impl App {
             return;
         }
         if mode == "balance" {
-            // for this run: the demo's settings are saved like the user's
-            self.demo_balance_only = true;
+            self.demo_money_notices = Some((false, true));
             self.world.apply(NetEvent::Balance(12480));
             let start = Instant::now() + std::time::Duration::from_secs(6);
             for (n, (after, source, amount)) in [(0, DEMO_NOVA, 100), (1, DEMO_TESS, 2500), (2, DEMO_FRIEND, 25)]

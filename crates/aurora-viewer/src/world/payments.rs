@@ -11,6 +11,7 @@
 //! no card get a toast and a line in the notification list, with its
 //! "Notify me when I receive L$" switch: the Legacy Viewer's PaymentReceived,
 //! persistent and logged to the payer's transcript (log_to_im, #2675). The
+//! switch is off by default (`Settings::notify_money_received`) and the
 //! rules differ in three places, on purpose. A toast names the object paid
 //! when the simulator gives its name, where reason_from_transaction_type
 //! leaves TRANS_PAY_OBJECT without one: a seller wants to know what sold.
