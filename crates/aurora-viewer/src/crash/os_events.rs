@@ -435,7 +435,8 @@ fn windows_graphics_settings(deadline: Instant) -> Vec<String> {
         if let Ok(output) = output
             && output.status.success()
         {
-            let value = String::from_utf8_lossy(&output.stdout)
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let value = stdout
                 .lines()
                 .find(|line| line.contains(name))
                 .unwrap_or("")
