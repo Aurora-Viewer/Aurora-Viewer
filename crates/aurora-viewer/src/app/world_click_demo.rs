@@ -126,6 +126,8 @@ impl App {
                     let p = t.rect.center() * self.egui_ctx.pixels_per_point();
                     (p.x, p.y)
                 })
+            } else if mode.starts_with("avatar-gap-") {
+                self.avatar_gap_point(mode).and_then(|point| self.build.cam.project_px(point))
             } else if mode.starts_with("avatar") {
                 self.world
                     .objects
@@ -329,6 +331,60 @@ impl App {
 
     fn world_click_fixture(&mut self, mode: &str) {
         let mode = mode.strip_suffix("-ctrl").unwrap_or(mode);
+        if mode.starts_with("avatar-gap-") {
+            let Some(point) = self.avatar_gap_point(mode) else { return };
+            let legs = mode == "avatar-gap-legs";
+            if legs {
+                // The default demo wears a system skirt: leave the gap
+                // between the legs visible instead of clicking its fabric.
+                let Some(idx) = self.world.objects.index_of_uuid(&self.world.agent_id) else {
+                    return;
+                };
+                let Some(o) = self.world.objects.get(idx) else { return };
+                let mut appearance = self
+                    .world
+                    .server_appearance()
+                    .cloned()
+                    .unwrap_or_else(|| aurora_net::AvatarAppearance {
+                        avatar_id: self.world.agent_id,
+                        texture_entry: o.te.clone(),
+                        visual_params: self.world.avatar_lib.shape_params.values_with(&[]),
+                        cof_version: 0,
+                        appearance_version: 0,
+                        hover_height: 0.0,
+                        attachments: 0,
+                    });
+                appearance.texture_entry = appearance.texture_entry.or_else(|| o.te.clone());
+                if let Some(te) = &mut appearance.texture_entry {
+                    let te = Arc::make_mut(te);
+                    let base = *te.face(0);
+                    te.faces.resize(te.faces.len().max(20), base);
+                    te.faces[19].texture = crate::scene::avatar::IMG_INVISIBLE;
+                }
+                // A bake change must advance the appearance generation;
+                // changing the object's TE alone leaves cached parts intact.
+                appearance.appearance_version = 0;
+                self.world.apply(NetEvent::Appearance(appearance));
+            }
+            self.settings.set_render_exception(self.world.agent_id, 2);
+            self.camera.set_view(
+                point + Vec3::new(-4.0, 0.0, if legs { 0.9 } else { 0.0 }),
+                point,
+                &mut self.world.agent,
+                &self.settings.camera,
+            );
+            let behind = if legs { 0.4 } else { 2.0 };
+            let mut panel = crate::demo::action_overlay(975, point + Vec3::X * behind, glam::Quat::IDENTITY);
+            if let NetEvent::ObjectUpdates { objects, .. } = &mut panel {
+                for o in objects {
+                    o.scale = Vec3::new(0.1, 2.0, 2.0);
+                    o.click_action = crate::interaction::code::TOUCH;
+                    o.update_flags = ui::context::flags::HANDLE_TOUCH;
+                }
+            }
+            self.world.apply(panel);
+            return;
+        }
         if mode.starts_with("photo-") {
             self.panels.snapshot = true;
             self.settings.photo_window = crate::settings::PhotoWindowStyle::Aurora;
@@ -623,5 +679,16 @@ impl App {
             }
             self.world.apply(wall);
         }
+    }
+
+    fn avatar_gap_point(&self, mode: &str) -> Option<Vec3> {
+        let idx = self.world.objects.index_of_uuid(&self.world.agent_id)?;
+        let pos = Scene::object_transform(&self.world, idx, Instant::now(), 0)?.0;
+        let offset = if mode == "avatar-gap-head" {
+            Vec3::new(0.0, 0.18, 0.8)
+        } else {
+            Vec3::new(0.0, 0.0, -0.65)
+        };
+        Some(pos + offset)
     }
 }
