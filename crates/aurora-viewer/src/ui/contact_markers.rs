@@ -1,8 +1,9 @@
 //! Markers over contact-set members (`world/contact_markers.rs` says who
 //! and where): a glass disc or diamond with a border and a symbol in the
 //! set's colour, seen through everything in the world. Near a resident it
-//! lands on their name plate and goes, leaving the plate alone: nothing
-//! shows through what stands in front of a plate. Off screen or behind the camera it stops at the edge of the room the bars leave and
+//! lands on the badge of its set on their name plate, or fades where it is
+//! without one, leaving the plate alone: nothing shows through what stands
+//! in front of a plate. Off screen or behind the camera it stops at the edge of the room the bars leave and
 //! gains a chevron toward the resident, like the destination beacon
 //! (`ui/minimap.rs`).
 
@@ -178,7 +179,7 @@ pub fn draw(
                 distance,
                 dt,
             )?;
-            let alpha = alpha * landing_alpha(placed.merge);
+            let alpha = alpha * placed.fade;
             (alpha > 0.0).then_some((distance, placed, entry.marker, alpha))
         })
         .collect();
@@ -211,9 +212,10 @@ struct Placed {
     merge: f32,
     /// The way toward its resident, pinned to the edge of the room.
     edge: Option<Vec2>,
+    /// Its opacity, as it goes near its plate.
+    fade: f32,
 }
 
-#[allow(clippy::too_many_arguments)]
 /// The chest bone, kept relative to `root`: while a marker eases in from its
 /// coarse position, it stays with the marker and not with the avatar.
 fn chest(world: &World, scene: &Scene, id: &Uuid, now: Instant, root: Vec3, tag_anchor: Vec3) -> Vec3 {
@@ -227,6 +229,7 @@ fn chest(world: &World, scene: &Scene, id: &Uuid, now: Instant, root: Vec3, tag_
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn place(
     id: &Uuid,
     entry: &mut Entry,
@@ -280,27 +283,39 @@ fn place(
         if inner.contains(at) {
             entry.direction = Some(glam::Vec2::new(way.x, way.y));
             let slot = tag.and_then(|tag| tag.marker_slot);
-            if let (true, Some(tag), Some(slot)) = (entry.landing(slot.is_some(), distance), tag, slot) {
+            if let (true, Some(tag), Some(slot)) = (entry.landing(tag.is_some(), distance), tag, slot) {
                 let offset = slot.center() - tag.rect.center_bottom();
                 entry.badge = Some((glam::Vec2::new(offset.x, offset.y), slot.width()));
             }
-            let merge = entry.ease_merge(slot.is_some(), distance, dt);
-            let landed = tag.zip(entry.badge).filter(|_| merge > 0.0);
-            let Some((tag, (offset, width))) = landed else {
+            let merge = entry.ease_merge(tag.is_some(), distance, dt);
+            let plate = tag.filter(|_| merge > 0.0);
+            let Some(plate) = plate else {
                 entry.drop_merge();
                 return Some(Placed {
                     at,
                     radius: full,
                     merge: 0.0,
                     edge: None,
+                    fade: 1.0,
                 });
             };
-            let badge = tag.rect.center_bottom() + vec2(offset.x, offset.y);
+            // a plate with no badge of its set: nowhere to land, it fades where it is
+            let Some((offset, width)) = entry.badge else {
+                return Some(Placed {
+                    at,
+                    radius: full,
+                    merge: 0.0,
+                    edge: None,
+                    fade: 1.0 - merge,
+                });
+            };
+            let badge = plate.rect.center_bottom() + vec2(offset.x, offset.y);
             return Some(Placed {
                 at: at + (badge - at) * merge,
                 radius: full + (width * 0.5 - full) * merge,
                 merge,
                 edge: None,
+                fade: landing_alpha(merge),
             });
         }
         way
@@ -317,6 +332,7 @@ fn place(
         radius: full_radius(entry.marker.shape),
         merge: 0.0,
         edge: Some(way),
+        fade: 1.0,
     })
 }
 
@@ -354,7 +370,9 @@ fn chevron(at: Pos2, radius: f32, way: Vec2) -> Vec<Pos2> {
 /// `blur`: the world shows through the glass; off in a window, which has
 /// its own background behind the preview.
 fn paint(painter: &egui::Painter, p: &Palette, placed: &Placed, marker: &Marker, alpha: f32, blur: bool) {
-    let &Placed { at, radius, merge, edge } = placed;
+    let &Placed {
+        at, radius, merge, edge, ..
+    } = placed;
     let color = super::colors::set_color(marker.color).to_opaque();
     // the resident's plate background; a plate's badge keeps the plain one
     let surface = marker
@@ -425,6 +443,7 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, marker: &Marker) {
         at: pos2(x, y),
         radius,
         merge: 0.0,
+        fade: 1.0,
         edge,
     };
     paint(&painter, p, &placed(rect.left() + radius, None), marker, 1.0, false);

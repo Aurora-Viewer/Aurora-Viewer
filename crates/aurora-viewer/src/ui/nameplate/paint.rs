@@ -425,28 +425,14 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
 }
 
 /// Where a contact-set marker lands on a plate (`ui/contact_markers.rs`):
-/// on the badge of its set's symbol, or else on the free place of a badge
-/// along the plate's top edge. The far pill has no badges, so no place.
+/// the badge of its set's symbol. Without one, it has nowhere to land.
 fn marker_slot(level: Level, c: &Content, face: &Face, rect: Rect) -> Option<Rect> {
     let marker = c.appearance.marker.filter(|_| level != Level::Far)?;
     // as `contents`: a plate changing size keeps its face centred
     let origin = Vec2::new(rect.left(), rect.center().y - face.layout.size.y * 0.5);
-    let own = face.badges.iter().zip(face.layout.badges).find_map(|(badge, r)| match badge {
+    face.badges.iter().zip(face.layout.badges).find_map(|(badge, r)| match badge {
         Badge::Contact { icon, .. } if Some(icon) == marker.icon => Some(r.translate(origin)),
         _ => None,
-    });
-    let m = &face.metrics;
-    own.or_else(|| {
-        let floating = level == Level::Full && face.badges.len() > 0;
-        let right = if floating {
-            face.layout.badges[0].left() + origin.x - m.badge_gap
-        } else {
-            rect.right() - 21.0 * m.scale
-        };
-        Some(Rect::from_min_size(
-            Pos2::new(right - m.badge, rect.top() - 14.0 * m.scale),
-            Vec2::splat(m.badge),
-        ))
     })
 }
 
