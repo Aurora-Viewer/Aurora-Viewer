@@ -3669,6 +3669,23 @@ The HUD faces turned away from the screen are rejected in `fs_hud`, before any c
 
 The HUD projection and lists are part of the copy of the frame packet (`DrawLists::copy_from`): the render thread owns its own copy while the main thread keeps the projection for picking. `HudView::screen_bounds` projects the normal screen rectangle for the editing outline in `app/hud_drag.rs`, using the same zoom and physical viewport as the HUDs and converting to egui points once. `BuildTool::sync_hud_zoom` tracks the HUD editing selection and restores 100% on deselection, a world/body selection, removal or closing Build; changing between HUDs preserves the zoom. Explicit World > HUDs zoom outside editing stays independent of this transition.
 
+`app/hud_drag.rs::hud_area` uses a projection reference independent of
+`Interface::last_room`, which remains the floater movement work area. The
+reference follows the Legacy Viewer's default `world_view_rect`: the full
+window below its 19-interface-unit menu/status strip, rounded to physical
+pixels (`main_view.xml`, `LLViewerWindow::updateWorldViewRect`). At 2560 x
+1369 and display scale 1, a HUD unit spans 1350 pixels, independently of
+Aurora's floating bars. The existing shared `HudView` keeps drawing,
+attachment anchors, picking, edit gestures and floating text in that same
+projection. Hidden UI, mouselook and full-frame captures use the full window.
+
+HUD move/rotate manipulators use the root's effective Move flag; Modify is
+required for stretching or editing individual linked parts, following
+`LLManipTranslate / Rotate::canAffectSelection`. The world selection distance
+limit does not hide HUD handles, whose orthographic depth range is independent
+of avatar distance. Handle sizing uses `HudView::unit`, including the viewport
+strip and view zoom, so drawing and hit testing retain the same pixel sizes.
+
 The world menus share a model of entries in `ui/context/entries.rs`
 (actions, rights, submenus, check marks). `ui/menu.rs` draws the existing list;
 `ui/context/pie.rs` lays out these same entries in eight sectors, with
