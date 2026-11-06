@@ -186,6 +186,9 @@ fn clean_map(
         if images[slot].as_ref().is_some_and(|image| image.asset.is_none()) {
             widgets::local_texture::paint(ui, p, picture.rect);
         }
+        if let Some(target) = crate::ui::resource_drop::Target::hovered(ui, picture.rect, false, true) {
+            actions.push(Action::MapDrop(id, slot, target));
+        }
         if texture.is_some() && picture.clicked() {
             actions.push(Action::Zoom(id, Some(slot)));
         }
@@ -350,6 +353,9 @@ fn map_card(
         let picture = widgets::picture(ui, p, texture, Vec2::splat(88.0), "photo-filled", aurora_i18n::tr!("import-no-map"));
         if images[slot].as_ref().is_some_and(|image| image.asset.is_none()) {
             widgets::local_texture::paint(ui, p, picture.rect);
+        }
+        if let Some(target) = crate::ui::resource_drop::Target::hovered(ui, picture.rect, false, true) {
+            actions.push(Action::MapDrop(id, slot, target));
         }
         if texture.is_some() {
             if let Some(icon) = crate::ui::icons::global("zoom-in-filled") {

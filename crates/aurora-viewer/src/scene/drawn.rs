@@ -331,7 +331,7 @@ mod tests {
     /// the clothing; a scripted rigged mesh keeps the touch.
     #[test]
     fn a_touch_goes_through_a_rigged_mesh_without_an_action() {
-        let (mut world, mut scene, clothing, prim) = super::super::picking::tests::scene_with_two_objects();
+        let (mut world, mut scene, clothing, prim) = super::super::picking::tests::indexed_scene_with_two_objects();
         // another resident wears it: a rigged mesh we wear never takes the touch
         let wearer = world
             .objects
@@ -450,7 +450,7 @@ mod tests {
     /// stops nothing.
     #[test]
     fn a_touch_reaches_an_invisible_clicker_inside_a_mesh_body() {
-        let (mut world, mut scene, body, clicker) = super::super::picking::tests::scene_with_two_objects();
+        let (mut world, mut scene, body, clicker) = super::super::picking::tests::indexed_scene_with_two_objects();
         let wearer = world.objects.avatars().next().map(|(idx, _)| idx);
         // the body's face at x = 2.5, the clicker's 15 cm behind it
         let o = world.objects.get_mut(clicker).unwrap();

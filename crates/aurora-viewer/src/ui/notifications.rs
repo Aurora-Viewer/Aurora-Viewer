@@ -564,6 +564,20 @@ pub(super) fn card(
                     buttons.push((aurora_i18n::tr!("rlva-im-share-always").into(), Response::Button(1), false));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }
+                // JoinGroupCanAfford: Join (the cost was named) or Cancel
+                Data::Group { confirming: true, .. } => {
+                    buttons.push((aurora_i18n::tr!("ui-group-profile-join").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("common-cancel").into(), Response::Decline, false));
+                }
+                // an invitation with a fee names it on its button
+                Data::Group { fee, .. } if *fee > 0 => {
+                    buttons.push((
+                        aurora_i18n::tr!("ui-group-profile-join-fee", fee = aurora_i18n::integer(i64::from(*fee))),
+                        Response::Accept,
+                        true,
+                    ));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
+                }
                 Data::Friend { .. } | Data::Group { .. } | Data::CallingCard { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
@@ -616,6 +630,12 @@ pub(super) fn card(
                         Response::BlockExperience,
                         false,
                     ));
+                }
+                // ScriptQuestionCaution: Deny is the default, Allow access
+                // a plain choice beside it
+                Data::Permissions { caution: Some(_), .. } => {
+                    buttons.push((aurora_i18n::tr!("ui-notifications-deny").into(), Response::Decline, true));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-allow-access").into(), Response::Accept, false));
                 }
                 Data::Permissions { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-allow").into(), Response::Accept, true));
