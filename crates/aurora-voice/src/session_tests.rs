@@ -312,6 +312,34 @@ fn wait_for(what: &str, timeout: Duration, mut cond: impl FnMut() -> bool) {
 }
 
 #[test]
+fn provisioning_reply_size_is_bounded() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/cap", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = sock.read(&mut buf);
+        // no length: the body runs until the connection closes
+        let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nConnection: close\r\n\r\n");
+        let pad = vec![b' '; 64 * 1024];
+        for _ in 0..MAX_REPLY_BYTES / pad.len() + 2 {
+            if sock.write_all(&pad).is_err() {
+                break;
+            }
+        }
+    });
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    // unbounded, this all-blank body would read as an empty answer
+    let reply = rt.block_on(post_llsd(&http, &url, &Llsd::Undef, Duration::from_secs(10)));
+    assert!(
+        matches!(reply, Err(PostError::Transport(ref e)) if e.contains("too large")),
+        "{reply:?}"
+    );
+    server.join().unwrap();
+}
+
+#[test]
 fn loopback_webrtc_session() {
     LOOPBACK_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
     check_loopback_channel(ChannelKind::Local { parcel_local_id: Some(5) });
