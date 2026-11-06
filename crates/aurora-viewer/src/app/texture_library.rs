@@ -607,7 +607,7 @@ impl App {
                 library::Action::ExportResult(message) => self.world.system_message(message),
                 library::Action::ExportTexture { item, png } => {
                     let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
-                    if self.world.inventory.items.get(&item).is_some_and(|it| it.owner_mask & full == full) {
+                    if self.world.inventory.items.get(&item).is_some_and(|it| contents_drop::agent_mask(it, self.world.agent_id) & full == full) {
                         self.texture_library.export_texture(item, png);
                     }
                 }
@@ -659,7 +659,7 @@ impl App {
         let own = item.owner == self.world.agent_id && !item.group_owned;
         let editable = own && item.owner_mask & rules::MODIFY != 0 && !rules::library(&self.world.inventory, id);
         let copy = name.is_some();
-        if item.asset_type != 57 || if copy { item.owner_mask & rules::COPY == 0 } else { !editable } {
+        if item.asset_type != 57 || if copy { contents_drop::agent_mask(&item, self.world.agent_id) & rules::COPY == 0 } else { !editable } {
             return;
         }
         if !editable && self.texture_library.material_draft_dirty(id) {
