@@ -402,6 +402,12 @@ pub fn gpu_loss_detected() {
     gpu_loss_snapshot();
 }
 
+fn gpu_loss_detected_at(dir: &Path, report: Option<&aurora_render::gpu_diagnostics::Report>) {
+    if let Some(report) = report {
+        save_gpu_diagnostics_at(dir, report);
+    }
+}
+
 /// A GPU device loss the viewer recovered from (app/gpu_recovery.rs), `ms`
 /// to its new window and renderer, `safe` with the safe graphics level: one
 /// line each in `gpu-recoveries.txt`, which the session's report counts if
@@ -442,11 +448,16 @@ pub fn gpu_lost_at_start() {
 /// The worker is never joined. A stuck driver leaves the first snapshot's
 /// "not collected within budget" status; a later ready result replaces it.
 fn snapshot_gpu_diagnostics() {
-    if let Some(report) = aurora_render::gpu_diagnostics::first_loss() {
-        save_gpu_diagnostics(&report);
+    if let Some(session) = SESSION.get() {
+        gpu_loss_detected_at(&session.dir, aurora_render::gpu_diagnostics::first_loss().as_ref());
     }
 }
 fn save_gpu_diagnostics(report: &aurora_render::gpu_diagnostics::Report) {
+    if let Some(session) = SESSION.get() {
+        save_gpu_diagnostics_at(&session.dir, report);
+    }
+}
+fn save_gpu_diagnostics_at(dir: &Path, report: &aurora_render::gpu_diagnostics::Report) {
     static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let Ok(_write) = WRITE.lock() else {
         return;
@@ -455,9 +466,7 @@ fn save_gpu_diagnostics(report: &aurora_render::gpu_diagnostics::Report) {
     // after the lock: an older pending snapshot cannot overwrite ready data.
     let latest = aurora_render::gpu_diagnostics::first_loss();
     let report = latest.as_ref().unwrap_or(report);
-    if let Some(session) = SESSION.get() {
-        let _ = std::fs::write(session.dir.join("gpu-breadcrumbs.txt"), report.encode_public());
-    }
+    let _ = crate::atomic_file::publish(&dir.join("gpu-breadcrumbs.txt"), report.encode_public().as_bytes());
 }
 
 fn mark_gpu_lost(when: &[u8]) {
@@ -792,6 +801,26 @@ mod tests {
             std::fs::read_to_string(dir.join("overlay-hooks-loss.txt")).unwrap(),
             "DiscordHook64.dll"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn gpu_loss_pending_snapshot_is_published_before_reconstruction_without_failing_the_session() {
+        let dir = std::env::temp_dir().join(format!("aurora-gpu-recovery-snapshot-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        // The fault worker has not replied, and recovery has not begun.
+        let pending = aurora_render::gpu_diagnostics::Report::decode_public("v1 5 1 1 7 42 20 2 0 2 0 0 0").unwrap();
+        gpu_loss_detected_at(&dir, Some(&pending));
+        let saved = std::fs::read_to_string(dir.join("gpu-breadcrumbs.txt"))
+            .expect("the pending first loss must be on disk before entering driver recovery");
+        assert_eq!(saved, pending.encode_public());
+        assert!(pending.fault().contains("not collected"));
+        assert!(!dir.join("failed").exists());
+        assert!(!dir.join("gpu-lost.txt").exists());
+        assert!(!dir.join("gpu-recoveries.txt").exists());
+        // A temporarily unavailable snapshot cannot erase the captured loss.
+        gpu_loss_detected_at(&dir, None);
+        assert_eq!(std::fs::read_to_string(dir.join("gpu-breadcrumbs.txt")).unwrap(), saved);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

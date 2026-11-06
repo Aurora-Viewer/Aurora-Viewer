@@ -1582,7 +1582,9 @@ after loss are best effort; plausible tokens show an observed boundary/stage,
 not a fault's cause. Fault arrays are bounded; vendor binaries stay disabled.
 Raw addresses and driver text stay in `gpu-device-fault-private.txt`, while
 `gpu-breadcrumbs.txt` is a numeric schema reconstructed from closed vocabulary
-in `crash/summary.rs`. Recovery never replaces the first-loss snapshot.
+in `crash/summary.rs`. Recovery never replaces the first-loss snapshot. The app
+publishes the pending first loss before rebuilding its window/device, so a stuck
+fault query or reconstruction cannot leave only startup metadata on disk.
 
 ## The crates
 
