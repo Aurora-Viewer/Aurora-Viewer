@@ -18,6 +18,7 @@ pub mod chat_log;
 pub mod collisions;
 pub mod contact_sets;
 pub mod derender;
+pub mod dialog_names;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
@@ -110,6 +111,8 @@ pub mod worldmap;
 
 #[cfg(test)]
 mod automated_chat_tests;
+#[cfg(test)]
+mod dialog_name_tests;
 #[cfg(test)]
 mod fee_permission_tests;
 #[cfg(test)]
@@ -1922,7 +1925,7 @@ impl World {
             "ui-experiences-log-notice",
             what = what,
             experience = experience,
-            object = entry.object_name.clone(),
+            object = dialog_names::shown(&entry.object_name).into_owned(),
             parcel = entry.parcel_name.clone()
         );
         self.system_message(text.to_string());
@@ -3054,6 +3057,8 @@ impl World {
                         buttons,
                     }
                 };
+                // the menu keeps the name for blocking; the card shows it on one line
+                let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
                 let title = format!("{object_name} ({owner_name})");
                 let id = self.notifications.push(notifications::Kind::Script, title, message, data);
                 self.link_object_notification(id, object_id, &object_name, &owner_name);
@@ -3102,6 +3107,7 @@ impl World {
                     }
                 } else {
                     self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+                    let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
                     // ScriptQuestionCaution (PermissionsCautionEnabled, on by
                     // default): taking L$ or privileged land access warns first
                     let caution = experiences::caution(questions).then(|| notifications::CautionPrompt {
@@ -3190,6 +3196,7 @@ impl World {
                 url,
             } => {
                 let body = format!("{message}\n{url}");
+                let object_name = dialog_names::shown(&object_name).into_owned();
                 let id = self.notifications.push(
                     notifications::Kind::Url,
                     aurora_i18n::tr!("extra-offers-a-link", object_name = object_name.to_string()),
@@ -4526,6 +4533,19 @@ impl World {
         Some((region, format!("{:.1}, {:.1}, {:.1}", position.x, position.y, position.z)))
     }
 
+    /// An owner's name as the dialogs of objects show it: without
+    /// " Resident" when legacy names are trimmed (LLCacheName::cleanFullName
+    /// in process_script_question, buildFullName in process_script_dialog),
+    /// on one line ([`dialog_names::shown`]).
+    fn dialog_owner(&self, name: &str) -> String {
+        let name = if self.social.avatar_names.options.trim_resident {
+            name.strip_suffix(" Resident").unwrap_or(name)
+        } else {
+            name
+        };
+        dialog_names::shown(name).into_owned()
+    }
+
     fn link_object_notification(&mut self, id: u64, object: Uuid, name: &str, owner_name: &str) {
         use notifications::NameTarget;
         self.notifications.link_name(id, name, NameTarget::Object(object));
@@ -4575,12 +4595,12 @@ impl World {
             aurora_i18n::tr!("world-experiences-land-scope")
         };
         let lines = notifications::permission_lines(q.questions);
-        // LLCacheName::cleanFullName: the owner without " Resident"
-        let owner = q.owner_name.strip_suffix(" Resident").unwrap_or(&q.owner_name);
+        let object = dialog_names::shown(&q.object_name).into_owned();
+        let owner = self.dialog_owner(&q.owner_name);
         let body = aurora_i18n::tr!(
             "world-experiences-question",
-            object_name = q.object_name.clone(),
-            owner_name = owner.to_owned(),
+            object_name = object.clone(),
+            owner_name = owner.clone(),
             scope = scope.to_owned(),
             experience = name.clone(),
             questions = lines.join("\n• ")
@@ -4604,7 +4624,7 @@ impl World {
         );
         self.notifications
             .link_name(id, name, notifications::NameTarget::Experience(q.experience));
-        self.link_object_notification(id, q.task, &q.object_name, owner);
+        self.link_object_notification(id, q.task, &object, &owner);
         // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
         self.ui_sounds.push(UiSound::ScriptFloaterOpen);
     }
