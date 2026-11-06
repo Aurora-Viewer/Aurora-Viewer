@@ -161,6 +161,11 @@ const FLAG_SKINNED: u32 = 128u;
 const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;
 const FLAG_TEX_ANIM: u32 = 1024u;
+// Added to the x of the prepass's encoded normal (in 0..1, object.wgsl
+// depth_normal) where FSR's history cannot follow the surface, a running
+// texture animation: FSR's transparency and composition mask
+// (fsr/reactivity.wgsl); GTAO's oct_decode takes it off.
+const NORMAL_COMPOSITION: f32 = 2.0;
 const FLAG_DOUBLE_SIDED: u32 = 2048u;
 // placed by the GPU: model relative to the anchor matrix palettes[flags.y]
 // (worn objects); skinned: skeleton placed by its own anchor

@@ -2,8 +2,8 @@
 // disocclusion against the reconstructed previous depth, shading change,
 // motion divergence, the accumulation count of each pixel, and the new
 // locks of thin features. The reactive mask is generated
-// (fs_autogen_reactive); no transparency and composition mask yet: it
-// reads as 0, as the SDK's default one.
+// (fs_autogen_reactive); the transparency and composition mask comes from
+// the prepass (`composition_mask`).
 
 @group(0) @binding(2) var dilated_motion_tex: texture_2d<f32>;
 @group(0) @binding(3) var dilated_depth_tex: texture_2d<f32>;
@@ -14,6 +14,10 @@
 // one f32 a pixel of the upscaled image, zeroed by the accumulation
 @group(0) @binding(8) var<storage, read_write> new_locks: array<f32>;
 @group(0) @binding(9) var reactive_tex: texture_2d<f32>;
+// the prepass's encoded normal and motion (prepare_inputs.wgsl motion_tex):
+// its x is over 1 on the faces whose texture moves over them
+// (NORMAL_COMPOSITION, object.wgsl normal_composition)
+@group(0) @binding(10) var normal_tex: texture_2d<f32>;
 
 struct ReactivityOut {
     @location(0) masks: vec4<f32>,
@@ -158,6 +162,16 @@ fn compute_shading_change(uv: vec2<f32>) -> f32 {
     return sat(textureSampleLevel(shading_change_tex, lin, su, 0.0).x);
 }
 
+// DilateTransparencyAndCompositionMasks: 1 on a running texture animation,
+// whose texture slides, turns or flips over a face the motion says is
+// still. The accumulation then keeps the history within this frame's
+// colours and drops the locks: the thin lines of a turning texture showed
+// twice, the history's locked one and this frame's.
+fn composition_mask(p: vec2<i32>) -> f32 {
+    let x = textureLoad(normal_tex, clamp_load(p, vec2<i32>(0), fsr.render_size), 0).x;
+    return select(0.0, fsr.composition_on, x > 1.5);
+}
+
 @fragment
 fn fs_prepare_reactivity(in: VsOut) -> ReactivityOut {
     let p = px_of(in);
@@ -166,8 +180,7 @@ fn fs_prepare_reactivity(in: VsOut) -> ReactivityOut {
     let depth = textureLoad(dilated_depth_tex, p, 0).x;
     let disocclusion = compute_disocclusions(uv, mv, view_space_depth(depth));
     let shading_change = max(dilate_reactive_masks(p), compute_shading_change(uv));
-    // no transparency and composition mask: the motion divergence alone
-    let reactive = compute_motion_divergence(uv, mv, depth);
+    let reactive = max(compute_motion_divergence(uv, mv, depth), composition_mask(p));
     let accumulation = update_accumulation(p, uv, mv, disocclusion, shading_change);
     let lock = thin_feature_confidence(p);
     if (lock > 1.0 / 100.0) {

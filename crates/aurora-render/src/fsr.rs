@@ -89,6 +89,13 @@ fn reactive_on() -> bool {
     *ON.get_or_init(|| std::env::var("AURORA_FSR_REACTIVE").map_or(true, |v| v.trim() != "0"))
 }
 
+/// `AURORA_FSR_COMPOSITION=0`: no transparency and composition mask (read
+/// once).
+fn composition_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_FSR_COMPOSITION").map_or(true, |v| v.trim() != "0"))
+}
+
 /// `AURORA_FSR_SHARPNESS=<0..1>|off`: RCAS's strength, or no RCAS, over
 /// the setting (read once).
 fn sharpness_override() -> Option<Option<f32>> {
@@ -132,7 +139,8 @@ struct FsrU {
     view_to_meters: f32,
     motion_on: f32,
     reactive_on: f32,
-    pad: [f32; 3],
+    composition_on: f32,
+    pad: [f32; 2],
 }
 
 /// What the frame gives FSR.
@@ -419,6 +427,7 @@ impl Fsr {
                 storage(7, true),
                 storage(8, false),
                 tex(9, true),
+                tex(10, true),
             ],
         );
         let l_accumulate = layout(
@@ -662,6 +671,7 @@ impl Fsr {
                         entry_buf(7, &reconstructed),
                         entry_buf(8, &new_locks),
                         entry_tex(9, &reactive),
+                        entry_tex(10, inputs.motion),
                     ],
                 ),
                 luma_instability: common(
@@ -789,7 +799,8 @@ impl Fsr {
             view_to_meters: 1.0,
             motion_on: if f.motion_on { 1.0 } else { 0.0 },
             reactive_on: if reactive_on() { 1.0 } else { 0.0 },
-            pad: [0.0; 3],
+            composition_on: if composition_on() { 1.0 } else { 0.0 },
+            pad: [0.0; 2],
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
         // nothing pushed yet: 0 is the farthest in reverse-Z
