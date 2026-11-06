@@ -111,6 +111,8 @@ pub mod worldmap;
 #[cfg(test)]
 mod automated_chat_tests;
 #[cfg(test)]
+mod fee_permission_tests;
+#[cfg(test)]
 mod flash_tests;
 #[cfg(test)]
 mod group_notice_tests;
@@ -355,6 +357,8 @@ pub struct World {
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
     pub chat_log: chat_log::ChatLog,
+    /// The last import's result, for the app.
+    pub import_report: Option<chat_log::import::Report>,
     /// History of the nearby chat (asked once per login).
     nearby_history: transcripts::HistoryState,
     pub script_debug: script_debug::Messages,
@@ -626,6 +630,8 @@ pub struct World {
     offline_im_requested: bool,
     /// Which group titles the name tags show (from the settings).
     pub group_titles: names::GroupTitles,
+    /// Whose shared portals are shown (from the settings, `portals::Sources`).
+    pub portal_sources: portals::Sources,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
     /// Bumps, pushes and hits (collisions.rs).
@@ -729,6 +735,7 @@ impl World {
             fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
+            import_report: None,
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
             sun: None,
@@ -862,6 +869,7 @@ impl World {
             arrival_wait_since: None,
             offline_im_requested: false,
             group_titles: Default::default(),
+            portal_sources: Default::default(),
             region_alerts: Default::default(),
             collisions: Default::default(),
             fly_after_teleport: false,
@@ -2295,6 +2303,15 @@ impl World {
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
                 self.chat_log.login(l.agent_id);
+                if self.chat_log.cfg.import_at_login
+                    && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
+                {
+                    self.chat_log.import_found(chat_log::import::Account {
+                        first: l.first_name.clone(),
+                        last: l.last_name.clone(),
+                        grid,
+                    });
+                }
                 // LLVOAvatar::getFullname, sent when an offline friendship
                 // offer is accepted
                 self.notifications.own_name = format!("{} {}", l.first_name, l.last_name);
@@ -2985,8 +3002,11 @@ impl World {
                 None
             }
             NetEvent::ScriptDialog {
-                object_id, object_name, ..
-            } if self.object_blocked(&object_id, &object_name) => None,
+                object_id,
+                object_name,
+                owner_id,
+                ..
+            } if self.script_dialog_blocked(&object_id, &object_name, &owner_id) => None,
             // RLVa @sendchat (LLScriptHandler::processNotification,
             // llnotificationscripthandler.cpp): a dialog or text box whose
             // answer would be said on public chat is not shown at all.
@@ -3007,6 +3027,7 @@ impl World {
                 object_id,
                 object_name,
                 owner_name,
+                owner_id: _,
                 message,
                 channel,
                 buttons,
@@ -3081,16 +3102,32 @@ impl World {
                     }
                 } else {
                     self.ui_sounds.push(UiSound::ScriptFloaterOpen);
-                    let lines = notifications::permission_lines(questions);
-                    let body = aurora_i18n::tr!(
-                        "extra-object-owned-by-requests-permission-to",
-                        object_name = object_name.to_string(),
-                        owner_name = owner_name.to_string(),
-                        value0 = lines.join("\n• ").to_string()
-                    );
+                    // ScriptQuestionCaution (PermissionsCautionEnabled, on by
+                    // default): taking L$ or privileged land access warns first
+                    let caution = experiences::caution(questions).then(|| notifications::CautionPrompt {
+                        object_name: object_name.clone(),
+                        owner_name: owner_name.clone(),
+                    });
+                    let (title, body) = if caution.is_some() {
+                        (
+                            aurora_i18n::tr!("world-notifications-caution-title").to_owned(),
+                            notifications::caution_body(questions, &object_name, &owner_name),
+                        )
+                    } else {
+                        let lines = notifications::permission_lines(questions);
+                        (
+                            aurora_i18n::tr!("world-mod-requested-permissions").to_owned(),
+                            aurora_i18n::tr!(
+                                "extra-object-owned-by-requests-permission-to",
+                                object_name = object_name.to_string(),
+                                owner_name = owner_name.to_string(),
+                                value0 = lines.join("\n• ").to_string()
+                            ),
+                        )
+                    };
                     let id = self.notifications.push(
                         notifications::Kind::Permissions,
-                        aurora_i18n::tr!("world-mod-requested-permissions"),
+                        title,
                         body,
                         notifications::Data::Permissions {
                             task: task_id,
@@ -3098,6 +3135,7 @@ impl World {
                             questions,
                             region,
                             experience: None,
+                            caution,
                         },
                     );
                     self.link_object_notification(id, task_id, &object_name, &owner_name);
@@ -4284,15 +4322,30 @@ impl World {
                 log::info!("group invitation to a group we are already in: not shown");
             }
             d::GROUP_INVITATION => {
+                // invite_bucket_t: the membership fee, shown with the
+                // invitation and confirmed on Accept (send_join_group_response).
+                // A bucket of another size is dropped there; kept here with
+                // no fee, as before.
+                let fee = notifications::group_invite_fee(&im.binary_bucket).unwrap_or_else(|| {
+                    log::info!("group invitation without its fee ({}-byte bucket)", im.binary_bucket.len());
+                    0
+                });
+                let body = if fee > 0 {
+                    format!("{}\n{}", im.message.trim_end(), notifications::group_fee_line(fee))
+                } else {
+                    im.message.clone()
+                };
                 self.ui_sounds.push(UiSound::GroupInvitation);
                 n.push(
                     Kind::Group,
                     aurora_i18n::tr!("world-mod-invitation-to-join-a-group"),
-                    im.message.clone(),
+                    body,
                     Data::Group {
                         group: im.from_agent_id,
                         tx: im.session_id,
                         offline: im.offline,
+                        fee,
+                        confirming: false,
                     },
                 );
             }
@@ -4450,6 +4503,29 @@ impl World {
         self.group_data.save_attachment(group, folder);
     }
 
+    /// Where the object of a caution question is, for its nearby chat line
+    /// (notify_cautioned_script_question): its region and its position
+    /// there, hidden under RLVa @showloc, None when it is not in the scene.
+    fn caution_place(&self, task: &Uuid) -> Option<(String, String)> {
+        if self.rlva.has("showloc") {
+            return Some((
+                aurora_i18n::tr!("rlva-hidden-region").to_owned(),
+                aurora_i18n::tr!("rlva-hidden-generic").to_owned(),
+            ));
+        }
+        let mut object = self.objects.get(self.objects.index_of_uuid(task)?)?;
+        let region = self.regions.get(&object.key.region)?.name.clone();
+        let mut position = object.position;
+        for _ in 0..64 {
+            let Some(parent) = self.objects.parent_of(object).and_then(|i| self.objects.get(i)) else {
+                break;
+            };
+            position = parent.position + parent.rotation * position;
+            object = parent;
+        }
+        Some((region, format!("{:.1}, {:.1}, {:.1}", position.x, position.y, position.z)))
+    }
+
     fn link_object_notification(&mut self, id: u64, object: Uuid, name: &str, owner_name: &str) {
         use notifications::NameTarget;
         self.notifications.link_name(id, name, NameTarget::Object(object));
@@ -4523,6 +4599,7 @@ impl World {
                     name: name.clone(),
                     object_name: q.object_name.clone(),
                 }),
+                caution: None,
             },
         );
         self.notifications
@@ -4544,6 +4621,48 @@ impl World {
         if let notifications::Response::OpenExperience(experience) = r {
             self.experiences.open_profile(experience);
             return (Vec::new(), None);
+        }
+        // send_join_group_response: joining for a fee is confirmed first,
+        // naming the cost (JoinGroupCanAfford); short of L$, the invitation
+        // stays and says so (JoinGroupCannotAfford, LLGroupActions::join)
+        if matches!(r, notifications::Response::Accept)
+            && let Some(notifications::Data::Group {
+                fee, confirming: false, ..
+            }) = &data
+            && *fee > 0
+        {
+            let fee = *fee;
+            if self.balance.is_some_and(|balance| balance < fee) {
+                self.notifications.push(
+                    notifications::Kind::Alert,
+                    aurora_i18n::tr!("ui-group-profile-join-title"),
+                    aurora_i18n::tr!("ui-group-profile-join-cannot-afford", cost = aurora_i18n::integer(i64::from(fee))),
+                    notifications::Data::None,
+                );
+            } else {
+                self.notifications.ask_group_fee(id);
+            }
+            return (Vec::new(), None);
+        }
+        // notify_cautioned_script_question: the answer to a caution
+        // question is told in the nearby chat
+        if let Some(notifications::Data::Permissions {
+            task,
+            questions,
+            caution: Some(prompt),
+            ..
+        }) = &data
+        {
+            let place = self.caution_place(task);
+            let granted = matches!(r, notifications::Response::Accept);
+            self.system_notice(
+                notifications::caution_chat_line(*questions, prompt, place, granted),
+                if granted {
+                    notice_topics::Topic::Info
+                } else {
+                    notice_topics::Topic::Warning
+                },
+            );
         }
         // script_question_cb: "Block object" (Mute) and "Block experience"
         // refuse the question first, then block
@@ -7079,6 +7198,7 @@ mod motion_tests {
                     object_id,
                     object_name: "HUD".into(),
                     owner_name: "Example Resident".into(),
+                    owner_id: Uuid::nil(),
                     message: "Choose".into(),
                     channel,
                     buttons: labels.clone(),
@@ -7099,6 +7219,7 @@ mod motion_tests {
             object_id,
             object_name: "HUD".into(),
             owner_name: "Example Resident".into(),
+            owner_id: Uuid::nil(),
             message: "Enter text".into(),
             channel: -42,
             buttons: vec!["!!llTextBox!!".into()],
@@ -7121,6 +7242,7 @@ mod motion_tests {
             object_id,
             object_name: aurora_i18n::tr!("world-mod-test-menu").into(),
             owner_name: aurora_i18n::tr!("world-mod-test-seller").into(),
+            owner_id: Uuid::nil(),
             message: aurora_i18n::tr!("world-mod-choose").into(),
             channel: -42,
             buttons: vec![aurora_i18n::tr!("common-yes").into(), aurora_i18n::tr!("common-no").into()],

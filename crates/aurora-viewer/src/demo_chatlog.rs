@@ -16,13 +16,18 @@
 //! - `restore`: saved private and group conversations, reopened without
 //!   an incoming message, including the old untyped file format; `restore:slow`
 //!   holds the mute reply until frame 1100 to check immediate display;
+//! - `import`: the import window of Preferences › Chat over a synthetic
+//!   Legacy Viewer folder (`import:run` imports and shows the merged
+//!   History, `import:again` imports twice, `import:login` as the import at
+//!   login does, `import:same` with the folder Aurora writes to, `import:none`
+//!   with no Legacy Viewer found);
 //! - `long:<n>`: a conversation of `n` lines, nothing written (to measure
 //!   the cost of the conversation view); `long:<n>:scroll` scrolls it up
 //!   with the wheel from frame 320 to 380, through lines never laid out.
 
 use crate::world::chat_log::{format, names, store};
 use aurora_net::{InstantMessage, NetEvent};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
@@ -40,7 +45,19 @@ pub enum Mode {
     History { find: bool },
     Offline,
     Restore,
+    Import(ImportStage),
     Long { lines: usize, scroll: bool },
+}
+
+/// What `import` goes through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportStage {
+    Window,
+    Run,
+    Again,
+    Login,
+    Same,
+    None,
 }
 
 pub fn mode() -> Option<Mode> {
@@ -51,6 +68,14 @@ pub fn mode() -> Option<Mode> {
         "history" => Mode::History { find: arg == "find" },
         "offline" => Mode::Offline,
         "restore" => Mode::Restore,
+        "import" => Mode::Import(match arg {
+            "run" => ImportStage::Run,
+            "again" => ImportStage::Again,
+            "login" => ImportStage::Login,
+            "same" => ImportStage::Same,
+            "none" => ImportStage::None,
+            _ => ImportStage::Window,
+        }),
         "long" => {
             let (lines, scroll) = arg.split_once(':').unwrap_or((arg, ""));
             Mode::Long {
@@ -134,10 +159,58 @@ fn sentences() -> [&'static str; 6] {
     ]
 }
 
+/// The synthetic Legacy Viewer of `import`, beside the demo's transcripts.
+pub fn legacy_root(dir: &Path) -> PathBuf {
+    dir.with_file_name("demo-legacy-viewer")
+}
+
+/// What a Legacy Viewer left for the demo account: the conversation Aurora
+/// has too, earlier and with a message both have, a group, the nearby chat
+/// by day, and a file of its own that is not a transcript.
+pub fn seed_legacy(root: &Path, own_name: &str, stage: ImportStage) -> std::io::Result<()> {
+    let _ = std::fs::remove_dir_all(root);
+    if stage == ImportStage::None {
+        return Ok(());
+    }
+    let dir = root.join(own_name.to_lowercase().replace(' ', "_"));
+    std::fs::create_dir_all(&dir)?;
+    let peer = peer_name();
+    let now = SystemTime::now();
+    let day = Duration::from_secs(86_400);
+    let s = sentences();
+    let line =
+        |ago: Duration, from: &str, text: &str| format!("{}\n", format::format_line(Some(&format::stamp(now - ago, true)), from, text));
+    let mut text = String::new();
+    for (i, sentence) in s.iter().enumerate() {
+        let from = if i % 2 == 0 { peer.as_str() } else { own_name };
+        text.push_str(&line(day * 30 - Duration::from_secs(600 * i as u64), from, sentence));
+    }
+    // the message Aurora's file has too
+    text.push_str(&line(day + Duration::from_secs(300), &peer, s[4]));
+    let path = names::file_path(&dir, &names::resident(&peer), None);
+    std::fs::write(path.ok_or_else(|| std::io::Error::other("no file name"))?, text)?;
+    std::fs::write(
+        dir.join("Demo Club (group).txt"),
+        // the last two are the group's history written again at a login
+        line(day * 3, &peer, s[0]) + &line(day * 2, own_name, s[1]) + &line(day, &peer, s[0]) + &line(day, own_name, s[1]),
+    )?;
+    std::fs::write(dir.join("chat-2026-10-12.txt"), line(day * 9, &peer, s[2]))?;
+    // told in the result line, not imported
+    std::fs::write(dir.join("Old Friend.txt"), format!("{}: {}\n", peer, s[3]))?;
+    std::fs::write(dir.join("search_history.txt"), "<llsd><array /></llsd>\n")
+}
+
 /// Write the transcripts of the scenario in the demo account's folder
 /// (each run starts from the same files).
 pub fn seed(dir: &Path, mode: Mode, own_name: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
+    if let Mode::Import(_) = mode {
+        // what the last run imported
+        for entry in std::fs::read_dir(dir)?.flatten() {
+            std::fs::remove_file(entry.path())?;
+        }
+        let _ = std::fs::remove_file(dir.with_extension("legacy-import.json"));
+    }
     let peer = peer_name();
     let Some(path) = names::file_path(dir, &names::resident(&peer), None) else {
         return Ok(());

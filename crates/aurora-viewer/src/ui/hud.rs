@@ -204,13 +204,9 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
     let Some(view) = scene.lists.hud_view else { return };
     let own = world.objects.index_of_uuid(&world.agent_id);
     let ppp = ctx.pixels_per_point();
-    let proj = Projector {
-        view_proj: view.matrix(),
-        width: view.width,
-        height: view.height,
-        ppp,
-    };
     let painter = ctx.layer_painter(egui::LayerId::background());
+    let now = Instant::now();
+    let mut labels = Vec::new();
     for (idx, o) in world.objects.texted() {
         if !world.rlva.hover_visible(o.full_id, true) {
             continue;
@@ -218,19 +214,26 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         if o.text_color[3] == 0 || !scene.gpu.get(idx).is_some_and(|g| g.hud && g.owner_avatar == own) {
             continue;
         }
-        let Some((pos, _, _)) = Scene::object_transform(world, idx, Instant::now(), 0) else {
+        let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
             continue;
         };
+        labels.push((idx, o, pos));
+    }
+    // LLHUDText::updateAll sorts HUD text by its +X distance, far first.
+    labels.sort_by(|a, b| b.2.x.total_cmp(&a.2.x));
+    for (idx, o, pos) in labels {
         let scale = world.hud_scale(idx);
-        let Some((point, _)) = proj.project(pos + Vec3::Z * o.scale.z * scale * 0.6) else {
+        // HUD text is never frustum-culled: an off-screen anchor can still
+        // have visible letters. Use the attachment geometry's projection.
+        let [x, y] = view.pixel(pos + Vec3::Z * o.scale.z * scale * 0.6);
+        let point = Pos2::new(x / ppp, y / ppp);
+        if !point.is_finite() {
             continue;
-        };
+        }
         let c = o.text_color;
         let color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
         let text = world.rlva_hover_privacy.apply(&o.text).into_owned();
-        let galley = super::bidi::no_wrap(ctx, text, egui::FontId::proportional(12.0 * scale), color);
-        let rect = egui::Align2::CENTER_BOTTOM.anchor_size(point, galley.size());
-        painter.galley(rect.min, galley, color);
+        super::floating_text::paint(&painter, text, point, 12.0 * scale, color, view.zoom);
     }
 }
 
@@ -619,7 +622,7 @@ pub fn draw(
             };
             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
             let text = world.rlva_hover_privacy.apply(&o.text);
-            let lines = text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
+            let lines = vec![(text.into_owned(), col, 12.0)];
             tags.push((d + 1000.0, sp, lines, None, None, None, anchor, 1.0, None));
         }
     }
@@ -633,6 +636,12 @@ pub fn draw(
         // the scene hides what it has in front of this point
         aurora_render::world_label_at(ctx, Some(at));
         let is_avatar = d < 1000.0;
+        if !is_avatar {
+            if let Some((text, color, size)) = lines.into_iter().next() {
+                super::floating_text::paint(&painter, text, sp, size, color, 1.0);
+            }
+            continue;
+        }
         let fade = if is_avatar {
             (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0) * alpha
         } else {
@@ -709,17 +718,6 @@ pub fn draw(
             let h = g.size().y;
             let pos = Pos2::new(text_x, y);
             let rect = Align2::CENTER_TOP.anchor_size(pos, g.size());
-            if !is_avatar {
-                // drop shadow (LLFontGL::DROP_SHADOW)
-                let a = g.job.sections.first().map(|s| s.format.color.a()).unwrap_or(255);
-                // the same galley in black: a right-to-left line is in
-                // sections that a plain copy of its text would lose
-                painter.galley_with_override_text_color(
-                    rect.min + egui::vec2(1.0, 1.0),
-                    g.clone(),
-                    Color32::from_black_alpha((a as f32 * 0.7) as u8),
-                );
-            }
             // every line was laid out with its own color: nothing to fall back on
             painter.galley(rect.min, g, Color32::PLACEHOLDER);
             y += h;
