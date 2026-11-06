@@ -5418,6 +5418,35 @@ pub fn events() -> Vec<NetEvent> {
         "",
     ));
     id += 1;
+    // AURORA_DEMO_ALPHA_SORT=1: a wide blue pane ahead of a small red
+    // pane. The blue pane's off-axis centre is farther in straight-line
+    // distance, despite its surface being nearer along the view axis.
+    if std::env::var_os("AURORA_DEMO_ALPHA_SORT").is_some() {
+        let start = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .map(|v| v.split(',').filter_map(|p| p.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+            .filter(|p| p.len() >= 2)
+            .map_or(Vec3::new(132.0, 126.0, 0.0), |p| Vec3::new(p[0], p[1], 0.0));
+        let look = Vec3::new(0.8, 0.4, 0.0).normalize();
+        let across = Vec3::new(-look.y, look.x, 0.0);
+        let height = g(start.x, start.y) + 2.0;
+        for (depth, side, size, color) in [
+            (20.0, -10.0, Vec3::new(0.04, 24.0, 4.0), [0.1, 0.25, 1.0, 0.65]),
+            (20.5, -3.0, Vec3::new(0.04, 2.0, 2.0), [1.0, 0.1, 0.1, 0.65]),
+        ] {
+            add(prim(
+                id,
+                (start + look * depth + across * side).with_z(height),
+                Quat::from_rotation_z(look.y.atan2(look.x)),
+                size,
+                boxp,
+                te(color, 0, true, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+    }
     // AURORA_DEMO_HALO: a wide translucent pane 3 m ahead of the start
     // position, facing the camera, so that the avatar stands between the
     // camera and the pane (issue #556: no halo around the avatar on it)

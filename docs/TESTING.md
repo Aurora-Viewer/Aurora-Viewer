@@ -3840,6 +3840,7 @@ both open states and the selection count. Capture at frame 620.
 
 | Variable | Effect |
 |---|---|
+| `AURORA_DEMO_ALPHA_SORT=1` | Overlapping off-axis alpha panes for view-depth ordering (#2575) |
 | `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, a leash chain, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
@@ -3866,6 +3867,13 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
 
 ### Details
+
+- **`AURORA_DEMO_ALPHA_SORT=1`** places a wide blue pane just in front of
+  a small red pane. The blue pane's centre is off-axis and farther from
+  the eye in straight-line distance. Its blue surface must still composite
+  over the red pane. Use `AURORA_DEMO_POS=200,200` and capture at frame 620;
+  compare the overlap before and after the view-depth change. The existing
+  rigged hair demos separately check that attachment ordering is retained.
 
 - **`AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,<frame>:<mode>…]`**: the
   anti-aliasing changes at each frame given (modes of `AURORA_AA`). A change
@@ -10212,8 +10220,11 @@ What the inventory must show with these scenarios:
   outer layer look see-through, with stair steps where they cross 50 %).
   `write`: their depth written from 1/255 into the scene depth, as the
   Legacy Viewer (#499): a ring around fur or hair where the glass behind is
-  missing. `sorted`: everything sorted by the distance of its object and
-  nothing writing depth (eyelashes showed through mesh hair). `alt`:
+  missing. `sorted`: everything sorted by view-axis depth and nothing
+  writing depth (eyelashes showed through mesh hair). A rigged skeleton
+  shares one depth without a per-mesh radius bias; ordinary objects use
+  the quarter-radius bias. The underwater list still separates rigged
+  groups with their usual skeleton distance. `alt`:
   `split` during one `perf summary` line out of three (`xmode=old`). See
   `AURORA_DEMO_HAIR`, `AURORA_DEMO_HAIR_CARDS`, `AURORA_DEMO_LASHES`,
   `AURORA_DEMO_SHEER` and `AURORA_DEMO_HALO`. Cost, `AURORA_DEMO_CROWD=40`

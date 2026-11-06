@@ -1101,6 +1101,7 @@ pub struct CullView {
     /// the cosine of half its widest field (LLViewerCamera's
     /// mCosHalfCameraFOV) and whether it moves too fast for the boost.
     /// Without `with_texture_camera` nothing is important to the camera.
+    /// The same normalized direction orders ordinary blended objects.
     pub forward: Vec3,
     pub cos_half_fov: f32,
     pub camera_fast: bool,
@@ -4550,6 +4551,7 @@ impl Scene {
         }
         fresh.clear();
         self.fresh_usage = fresh;
+        let rigged_apart = blend_order::rigged_apart();
         let full = !gpu_mode;
         let ctx = CullCtx {
             view,
@@ -4703,7 +4705,14 @@ impl Scene {
             // its skeleton, by the skeleton's distance (`blend_order`)
             let rig = g.rig_order.filter(|_| g.rigged);
             let blend_center = rig.and_then(|r| self.gpu.get(r.skeleton as usize)).map_or(g.center, |s| s.center);
-            let blend_d = (blend_center - view.eye).length();
+            let blend_d = blend_order::distance(blend_center, g.radius, view.eye, view.forward, g.rigged, rigged_apart);
+            // The underwater list always separates rigged groups, even when
+            // the diagnostic main list mixes them with ordinary alpha.
+            let blend_under_d = if g.rigged && !rigged_apart {
+                blend_order::distance(blend_center, g.radius, view.eye, view.forward, true, true)
+            } else {
+                blend_d
+            };
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
@@ -4810,7 +4819,10 @@ impl Scene {
                         };
                         let (after, before) = blend_order::water_sides(sc.z, sr, under_water_plane);
                         if before {
-                            l.blend_under.push(entry);
+                            l.blend_under.push(blend_order::BlendEntry {
+                                distance: blend_under_d,
+                                ..entry
+                            });
                         }
                         if after {
                             l.blend.push(entry);
@@ -4867,8 +4879,8 @@ impl Scene {
             ]
             .into_iter()
             .flat_map(|(cmds, glow, double_sided)| {
-                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                    distance: *d,
+                cmds.iter().map(move |(center, c)| blend_order::BlendEntry {
+                    distance: blend_order::distance(*center, 0.0, view.eye, view.forward, false, rigged_apart),
                     cmd: *c,
                     glow,
                     double_sided,
@@ -4879,7 +4891,7 @@ impl Scene {
                 })
             }),
         );
-        self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
+        self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, rigged_apart);
         self.lists.blend_depth_mode = blend_order::depth_mode();
         let runs = match self.lists.blend_depth_mode {
             aurora_render::RiggedBlendDepth::Layers => blend_order::each_object,

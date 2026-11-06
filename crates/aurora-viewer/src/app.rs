@@ -9741,7 +9741,6 @@ impl App {
             self.scene.portals.update(
                 &mut gfx.renderer,
                 &self.world,
-                self.camera.position,
                 &self.palette,
                 world_clock(),
                 !self.settings.reduce_motion,
