@@ -111,14 +111,14 @@ fn list_files(dir: &Path, ext: &str, bytes: std::ops::Range<u64>, most: usize, k
     all.sort();
     all.into_iter()
         .filter(|p| std::fs::metadata(p).is_ok_and(|m| bytes.contains(&m.len())))
-        .filter(|p| keep(p))
+        .filter(|p| super::source::usable(p) && keep(p))
         .take(most)
         .collect()
 }
 
 /// A mesh whose header reads, rigged (with a skin) or not.
 fn mesh_with_skin(path: &Path, skin: bool) -> bool {
-    crate::cache::read(path)
+    super::source::read(path)
         .ok()
         .and_then(|d| aurora_assets::parse_mesh_header(&d).ok())
         .is_some_and(|h| h.skin.is_some() == skin && h.lods.iter().any(Option::is_some))
@@ -276,7 +276,7 @@ impl ArrivalDemo {
                     }
                     let path = files.tex_dir.join(format!("{id}.j2c"));
                     served.requests[0].fetch_add(1, Ordering::Relaxed);
-                    return Some(if path.is_file() {
+                    return Some(if super::source::usable(&path) {
                         path
                     } else {
                         files.textures[(id.as_u128() % files.textures.len() as u128) as usize].clone()
