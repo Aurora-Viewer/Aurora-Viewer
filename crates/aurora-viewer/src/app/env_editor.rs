@@ -50,7 +50,7 @@ impl App {
                 .items
                 .values()
                 .filter(|it| it.asset_type == 56 && it.asset_id == asset)
-                .map(|it| Rights::from_item(it.owner_mask, 0).flags(0))
+                .map(|it| Rights::from_item(crate::world::inventory::actions::held(&self.world.inventory, it), 0).flags(0))
                 .reduce(|a, b| a & b),
             SourceRights::Unknown => None,
         }

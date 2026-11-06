@@ -563,7 +563,7 @@ impl App {
                     .filter(|item| item.asset_type == 10 && item.name == name)
                     .map(|item| {
                         let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, item.id, inv.lib_root);
-                        (item.id, include_use(item.owner_mask, library, item.creator, self.world.agent_id))
+                        (item.id, include_use(crate::world::inventory::actions::held(inv, item), library, item.creator, self.world.agent_id))
                     })
                     .max_by_key(|(_, use_)| *use_);
                 let target = found.filter(|(_, use_)| *use_ >= IncludeUse::Source).map(|(item, use_)| {
