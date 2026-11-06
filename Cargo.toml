@@ -66,7 +66,7 @@ too_many_arguments = "allow"
 type_complexity = "allow"
 
 # wgpu 30.0.1 with one upstream fix only, until a wgpu release has it
-# (30.0.2 or 31): gfx-rs/wgpu#10124, a Vulkan descriptor pool with
+# (31, or a 30.0.x that carries it): gfx-rs/wgpu#10124, a Vulkan descriptor pool with
 # `poolSizeCount = 0` that the Intel driver of 6th to 9th generation
 # integrated GPUs (`igvk64`) reads past and crashes on at every start
 # (#1302). The fork's branch `aurora/v30.0.1-empty-pool` is the v30.0.1 tag
