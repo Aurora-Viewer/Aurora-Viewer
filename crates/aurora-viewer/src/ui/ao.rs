@@ -172,6 +172,7 @@ pub fn show(
     open: &mut bool,
     movement: &mut super::movement::MovementUi,
     movement_prefs: &mut crate::movement::Preferences,
+    water_volumes: &mut crate::movement::water_volume::Settings,
     keys: &crate::keybinds::KeyBindings,
     movement_status: &str,
 ) -> Vec<Action> {
@@ -209,7 +210,7 @@ pub fn show(
                     let actions = egui::ScrollArea::vertical()
                         .id_salt("ao_movement")
                         .auto_shrink([false, false])
-                        .show(ui, |ui| movement.show(ui, p, movement_prefs, keys, movement_status))
+                        .show(ui, |ui| movement.show(ui, p, movement_prefs, water_volumes, keys, movement_status))
                         .inner;
                     if actions.changed {
                         out.push(Action::MovementPreferences);

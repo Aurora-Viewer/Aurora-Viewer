@@ -2,7 +2,7 @@
 use super::widgets;
 use crate::{
     keybinds::{Action as KeyAction, Binding, KeyBindings},
-    movement::Preferences,
+    movement::{Preferences, water_volume::Settings as WaterSettings},
     theme::Palette,
 };
 
@@ -23,8 +23,16 @@ pub struct Actions {
 }
 
 impl MovementUi {
-    pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences, keys: &KeyBindings, status: &str) -> Actions {
-        let before = prefs.clone();
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        prefs: &mut Preferences,
+        water: &mut WaterSettings,
+        keys: &KeyBindings,
+        status: &str,
+    ) -> Actions {
+        let before = (prefs.clone(), water.clone());
         let mut actions = Actions::default();
         let up = keys.get(KeyAction::Up);
         let down = keys.get(KeyAction::Down);
@@ -108,6 +116,16 @@ impl MovementUi {
             .on_hover_text(aurora_i18n::tr!("movement-float-help"));
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
             widgets::checkbox(ui, p, &mut prefs.jump_obstacles, aurora_i18n::tr!("movement-jump-obstacles"));
+            widgets::checkbox(ui, p, &mut water.enabled, aurora_i18n::tr!("movement-prim-water"))
+                .on_hover_text(aurora_i18n::tr!("movement-prim-water-help"));
+            ui.add_enabled_ui(water.enabled, |ui| {
+                ui.label(egui::RichText::new(aurora_i18n::tr!("movement-prim-water-words")).color(p.muted));
+                ui.add(
+                    egui::TextEdit::singleline(&mut water.words)
+                        .hint_text(crate::movement::water_volume::DEFAULT_WORDS)
+                        .desired_width(f32::INFINITY),
+                );
+            });
         });
         key_hint(ui, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-submerge"));
         key_hint(ui, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-leap"));
@@ -128,7 +146,7 @@ impl MovementUi {
             ui.label(&self.motor_status);
         }
         prefs.sanitize();
-        actions.changed = *prefs != before;
+        actions.changed = *prefs != before.0 || *water != before.1;
         actions
     }
 }
