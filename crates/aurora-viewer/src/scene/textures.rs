@@ -3225,6 +3225,7 @@ impl TextureStreamer {
         // "crowded" below stays on the driver's own figure)
         let shared = video.map(|v| aurora_render::vram::VideoMemory {
             budget: crate::instances::share_cap(v.budget, &self.peers),
+            shared_budget: crate::instances::share_cap(v.shared_budget, &self.peers),
             ..v
         });
         let load = self.gpu.get();

@@ -13060,6 +13060,7 @@ about-gpu = Graphics card
 about-graphics-api = Graphics API
 about-driver = Graphics driver
 about-vram = Graphics card memory
+about-vram-shared = { $dedicated } MB dedicated + { $shared } MB shared
 about-unknown = Unknown
 about-texture-budget = Texture memory budget
 about-display = Display

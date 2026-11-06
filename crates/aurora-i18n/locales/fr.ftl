@@ -13056,6 +13056,7 @@ about-gpu = Carte graphique
 about-graphics-api = API graphique
 about-driver = Pilote graphique
 about-vram = Mémoire vidéo
+about-vram-shared = { $dedicated } Mo dédiés + { $shared } Mo partagés
 about-unknown = Inconnue
 about-texture-budget = Budget de textures
 about-display = Affichage

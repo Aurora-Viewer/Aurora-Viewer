@@ -13035,6 +13035,7 @@ about-gpu = グラフィックカード
 about-graphics-api = グラフィックＡＰＩ
 about-driver = グラフィックドライバ
 about-vram = グラフィックカードのメモリ
+about-vram-shared = 専用{ $dedicated } MB + 共有{ $shared } MB
 about-unknown = 不明
 about-texture-budget = 割り当てられたテクスチャメモリ
 about-display = ディスプレイ

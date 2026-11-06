@@ -10019,9 +10019,11 @@ impl App {
                 self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer, &ids);
             }
             self.finish_describe(&gfx.renderer);
-            let texture_budget = self
-                .settings
-                .texture_budget(gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
+            let texture_budget = self.settings.texture_budget(
+                gfx.renderer.info.dedicated_mb,
+                gfx.renderer.info.shared_mb,
+                gfx.renderer.info.integrated,
+            );
             self.scene
                 .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024, frame_time);
         }
@@ -17716,9 +17718,9 @@ impl ApplicationHandler for App {
             };
             let level = crate::graphics_presets::Preset::for_machine(renderer.info.integrated, renderer.info.vram_mb, system_mb);
             log::info!(
-                "new profile: graphics level {level:?} (integrated {}, video memory {:?} MB, system memory {:?} MB)",
+                "new profile: graphics level {level:?} (integrated {}, video memory {}, system memory {:?} MB)",
                 renderer.info.integrated,
-                renderer.info.vram_mb,
+                renderer.info.memory_label(),
                 system_mb
             );
             level.apply(&mut self.settings);
