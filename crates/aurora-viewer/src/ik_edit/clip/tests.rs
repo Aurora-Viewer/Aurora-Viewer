@@ -161,7 +161,7 @@ fn studio_animation_timeline_stays_inside_narrow_viewports() {
         },
         ..Default::default()
     };
-    let id = egui::Id::unique("avatar-studio-animation-timeline-window-v2");
+    let id = egui::Id::unique("avatar-studio-animation-timeline-window-v3");
     for (width, height, zoom) in [
         (360.0, 720.0, 1.0),
         (640.0, 720.0, 1.0),
@@ -224,7 +224,7 @@ fn closing_studio_timeline_releases_its_egui_hit_layer() {
         screen_rect: Some(screen),
         ..Default::default()
     };
-    let id = egui::Id::unique("avatar-studio-animation-timeline-window-v2");
+    let id = egui::Id::unique("avatar-studio-animation-timeline-window-v3");
     let _ = ctx.run_ui(input.clone(), |ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world));
     assert!(ctx.memory(|memory| memory.areas().visible_layer_ids().iter().any(|layer| layer.id == id)));
 
