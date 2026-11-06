@@ -2545,3 +2545,41 @@ fn rlva_waits_for_requested_detaches_to_leave_the_avatar() {
     world.objects.remove_idx(index);
     assert!(!world.rlva_detach_in_flight(now), "landed");
 }
+
+#[test]
+fn empty_trash_ignores_rlva_locks_without_exempting_other_purges() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{
+        InvFolder,
+        operations::{Mutation, Operation},
+    };
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    command(&mut world.rlva, A, "@detach=n");
+    assert!(world.rlva.inventory_locked());
+    let trash = Uuid::from_u128(90);
+    let unloaded = Uuid::from_u128(91);
+    for (id, kind, state) in [(trash, 14, FetchState::Fetched), (unloaded, -1, FetchState::Unknown)] {
+        world.inventory.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    type_default: kind,
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![],
+                state,
+                library: false,
+            },
+        );
+    }
+    let purge = |id| Mutation {
+        operations: vec![Operation::Purge(id)],
+        ..Default::default()
+    };
+    assert!(world.rlva_inventory_mutation_allowed(&purge(trash), Uuid::nil()));
+    assert!(!world.rlva_inventory_mutation_allowed(&purge(unloaded), Uuid::nil()));
+    assert!(!world.rlva_inventory_mutation_allowed(&purge(Uuid::from_u128(92)), Uuid::nil()));
+}

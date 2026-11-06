@@ -7,10 +7,37 @@
 
 use std::path::{Path, PathBuf};
 
-/// The per-user folders read, by application name: each Legacy Viewer's, the
-/// 64-bit name first, then the macOS and former one. Any other goes through a
-/// folder dialog.
-const APPS: [&str; 5] = ["Firestorm_x64", "Firestorm", "SecondLife", "AlchemyNext", "Alchemy"];
+/// The per-user folders read, by application name: the `initAppDirs` name
+/// of each viewer of the Third Party Viewer Directory whose transcripts use
+/// the LL line format, the 64-bit name first, then the macOS and former one.
+/// `SecondLife` is also the folder of the RLV viewer, and of the Lovense
+/// viewer on macOS; Aperture shares `Firestorm` there. A name a system does
+/// not use costs one failed directory read. Viewers with another line
+/// format (Singularity, Genesis, Cool VL) and any other folder go through
+/// the folder dialog.
+const APPS: [&str; 14] = [
+    "Firestorm_x64",
+    "Firestorm",
+    "SecondLife",
+    "AlchemyNext",
+    // Alchemy's 2025-2026 test and develop builds
+    "AlchemyViewer",
+    "Alchemy",
+    "Aperture Viewer_x64",
+    "BlackDragon",
+    // the DirectX builds, then the OpenGL ones (Windows only)
+    "Kirstens S24 DX",
+    "Kirstens S24",
+    "Kokua",
+    "Catznip",
+    "Megapahit",
+    "SLLovenseViewer",
+];
+
+/// Alchemy's Linux folder since it follows the XDG layout
+/// (`~/.local/share/alchemynext`, LLDir_Linux of the Alchemy sources); older
+/// builds keep `~/.alchemynext`, which `APPS` covers.
+const XDG_APPS: [&str; 1] = ["alchemynext"];
 
 /// Label of the beta grid in the folder names (SECOND_LIFE_BETA_LABEL).
 const BETA_SUFFIX: &str = ".second_life_beta";
@@ -55,9 +82,11 @@ impl Account {
 
 /// `<user folder>/<application>` for a home folder and the system's folder
 /// of application data: `~/.firestorm_x64` on Linux, `%APPDATA%\\Firestorm_x64`
-/// on Windows and `~/Library/Application Support/Firestorm` on macOS.
+/// on Windows and `~/Library/Application Support/Firestorm` on macOS. On
+/// Linux `data` is `~/.local/share`, for the XDG folders.
 fn app_folders_in(home: &Path, data: &Path, dotted: bool) -> Vec<PathBuf> {
-    APPS.iter()
+    let mut folders: Vec<PathBuf> = APPS
+        .iter()
         .map(|app| {
             if dotted {
                 home.join(format!(".{}", app.to_lowercase()))
@@ -65,7 +94,11 @@ fn app_folders_in(home: &Path, data: &Path, dotted: bool) -> Vec<PathBuf> {
                 data.join(app)
             }
         })
-        .collect()
+        .collect();
+    if dotted {
+        folders.extend(XDG_APPS.iter().map(|app| data.join(app)));
+    }
+    folders
 }
 
 /// The application folders of this system.
@@ -116,6 +149,28 @@ mod tests {
         assert_eq!(app_folders_in(home, data, false)[0], Path::new("/data/Firestorm_x64"));
         // the macOS build's folder
         assert_eq!(app_folders_in(home, data, false)[1], Path::new("/data/Firestorm"));
+    }
+
+    #[test]
+    fn the_other_viewers_folders() {
+        let (home, data) = (Path::new("/home/j"), Path::new("/data"));
+        let windows = app_folders_in(home, data, false);
+        for app in [
+            "BlackDragon",
+            "Kokua",
+            "Catznip",
+            "Megapahit",
+            "Aperture Viewer_x64",
+            "Kirstens S24 DX",
+        ] {
+            assert!(windows.contains(&data.join(app)), "{app}");
+        }
+        // no XDG folder off Linux
+        assert_eq!(windows.len(), APPS.len());
+        let linux = app_folders_in(home, data, true);
+        assert!(linux.contains(&home.join(".blackdragon")));
+        assert!(linux.contains(&home.join(".aperture viewer_x64")));
+        assert_eq!(linux.last(), Some(&data.join("alchemynext")));
     }
 
     #[test]

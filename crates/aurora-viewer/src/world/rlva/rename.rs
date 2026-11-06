@@ -148,7 +148,7 @@ impl RenameOnWear {
                 self.candidates.pop_front();
                 continue;
             };
-            let (target, operation, refresh) = if item.owner_mask & actions::MODIFY != 0 {
+            let (target, operation, refresh) = if actions::held(inv, item) & actions::MODIFY != 0 {
                 let suffix = format!(" ({name})");
                 let mut end = item.name.len().min(63usize.saturating_sub(suffix.len()));
                 while !item.name.is_char_boundary(end) {
