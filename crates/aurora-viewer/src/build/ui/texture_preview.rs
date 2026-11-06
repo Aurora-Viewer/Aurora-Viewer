@@ -508,6 +508,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         tool.ui.texture_edit = Some(session);
     }
     tool.ui.picker.allow_local = tool.ui.pick_target.and_then(PickTarget::local_slot).is_some();
+    tool.ui.picker.required_permissions = tool.ui.pick_target.map_or(0, |target| {
+        super::texture::texture_drop::picker_permissions(world, &super::texture::selected(tool, world), target)
+    });
     tool.ui.picker.prepare_material_preview(ctx, env.scene);
     let accepted = tool.ui.picker.show(ctx, p, world, env.images);
     if let Some(id) = accepted {

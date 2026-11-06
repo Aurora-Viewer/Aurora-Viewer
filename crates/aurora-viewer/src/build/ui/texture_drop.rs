@@ -9,6 +9,7 @@ use super::{PickTarget, Sel};
 use crate::build::BuildTool;
 use crate::build::contents_drop;
 use crate::theme::Palette;
+use crate::ui::context::flags::OBJECT_MODIFY;
 use crate::world::World;
 use crate::world::inventory::actions as rules;
 use aurora_net::inventory::InvItem;
@@ -20,19 +21,41 @@ const AT_MATERIAL: i32 = 57;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Refusal {
     /// Not what the slot takes (allow_dnd: a material on the material, a
-    /// texture elsewhere), or the slot is disabled.
+    /// texture elsewhere), or several entries at once.
     Cargo,
     /// TooltipTextureRestrictedDrop: on a worn object, only a copy and
     /// transfer texture (FSPanelFace's immediate filter of attachments).
     Restricted,
     /// An object of the selection does not take the item
-    /// (isInventoryDropAcceptable, willObjectAcceptInventory).
+    /// (isInventoryDropAcceptable, willObjectAcceptInventory), or a worn one
+    /// cannot be modified.
     Object,
+    /// The item would do, but the slot is disabled for this selection.
+    Disabled,
 }
 
-/// Whether `item` may be dropped on `target` for the faces `sel`, in
-/// allowDrop's order: the cargo, the immediate permission filter, then the
-/// drag callback over the selection's roots. The PBR maps have neither.
+impl Refusal {
+    /// What the tooltip over the slot says: every refusal has a reason.
+    fn text(self, target: PickTarget) -> &'static str {
+        match self {
+            Self::Cargo if target == PickTarget::PbrMaterial => aurora_i18n::tr!("build-ui-texture-drop-single-material"),
+            Self::Cargo => aurora_i18n::tr!("build-ui-texture-drop-single-texture"),
+            Self::Restricted => aurora_i18n::tr!("build-ui-texture-drop-restricted"),
+            Self::Object => aurora_i18n::tr!("build-ui-texture-drop-object"),
+            Self::Disabled => aurora_i18n::tr!("build-ui-texture-drop-disabled"),
+        }
+    }
+}
+
+fn image(target: PickTarget) -> bool {
+    !matches!(target, PickTarget::PbrMaterial | PickTarget::PbrMap(_))
+}
+
+/// Whether `item` may be dropped on `target` for the faces `sel`: the cargo,
+/// then the immediate permission filter, then each root of the selection.
+/// A worn root takes an image on `worn_image_rights` and its own modify right
+/// (see there); any other case is the Legacy Viewer's drag callback. The PBR
+/// maps have neither.
 pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &InvItem) -> Result<(), Refusal> {
     let cargo = match target {
         PickTarget::PbrMaterial => item.asset_type == AT_MATERIAL,
@@ -45,19 +68,31 @@ pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &Inv
         return Ok(());
     }
     let roots: BTreeSet<(usize, bool)> = sel.iter().filter_map(|s| contents_drop::linkset(world, s.idx)).collect();
-    // attachments are in world and in inventory: the server does not
-    // support changing permissions in such a case
-    let both = rules::COPY | rules::TRANSFER;
-    if target != PickTarget::PbrMaterial
-        && roots.iter().any(|&(_, worn)| worn)
-        && contents_drop::agent_mask(item, world.agent_id) & both != both
-    {
+    let worn_image = |worn: bool| worn && image(target);
+    if roots.iter().any(|&(_, worn)| worn_image(worn)) && !contents_drop::worn_image_rights(item, world.agent_id) {
         return Err(Refusal::Restricted);
     }
-    if roots.is_empty() || roots.iter().any(|&(root, _)| contents_drop::accepts(world, root, item).is_err()) {
+    let takes = |&(root, worn): &(usize, bool)| {
+        if worn_image(worn) {
+            world.objects.get(root).is_some_and(|o| o.update_flags & OBJECT_MODIFY != 0)
+        } else {
+            contents_drop::accepts(world, root, item).is_ok()
+        }
+    };
+    if roots.is_empty() || !roots.iter().all(takes) {
         return Err(Refusal::Object);
     }
     Ok(())
+}
+
+/// The rights an item needs in the picker of `target` for the faces `sel`:
+/// LLTextureCtrl's immediate filter, which hides what a worn object refuses.
+pub(in crate::build::ui) fn picker_permissions(world: &World, sel: &[Sel], target: PickTarget) -> u32 {
+    let worn = sel
+        .iter()
+        .filter_map(|s| contents_drop::linkset(world, s.idx))
+        .any(|(_, worn)| worn);
+    if worn && image(target) { rules::COPY | rules::TRANSFER } else { 0 }
 }
 
 /// The drop over one slot: the copy cursor and outline while the item held
@@ -72,17 +107,24 @@ pub(in crate::build::ui) fn slot(
     target: PickTarget,
     enabled: bool,
 ) {
-    if let Some(drop) = crate::ui::resource_drop::Target::hovered(ui, rect, target == PickTarget::PbrMaterial, enabled)
-        && let Some(resource) = drop.receive(ui.ctx(), p, &world.inventory, |item| {
-            let verdict = allowed(world, &super::selected(tool, world), target, item);
-            if verdict == Err(Refusal::Restricted) {
-                egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), ui.scope_id().with("texture-drop-refused"), rect).show(|ui| {
-                    ui.label(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
-                });
-            }
-            verdict.is_ok()
-        })
-    {
+    let Some(drop) = crate::ui::resource_drop::Target::hovered(ui, rect, target == PickTarget::PbrMaterial, enabled) else {
+        return;
+    };
+    // Stays when `receive` finds no single item of the slot's kind.
+    let mut refusal = Some(Refusal::Cargo);
+    let resource = drop.receive(ui.ctx(), p, &world.inventory, |item| {
+        let verdict = allowed(world, &super::selected(tool, world), target, item);
+        refusal = verdict.err().or((!drop.enabled()).then_some(Refusal::Disabled));
+        verdict.is_ok()
+    });
+    // Nothing editable selected: the tab says so already.
+    let told = refusal == Some(Refusal::Object) && super::selected(tool, world).is_empty();
+    if let Some(refusal) = refusal.filter(|_| !told) {
+        egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), ui.scope_id().with("texture-drop-refused"), rect).show(|ui| {
+            ui.label(refusal.text(target));
+        });
+    }
+    if let Some(resource) = resource {
         // The direct drop is the latest choice; a previous picker cannot
         // subsequently restore the value captured before it.
         tool.dismiss_texture_picker();

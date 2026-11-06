@@ -23,6 +23,12 @@ instead of asking for a whole log.
 4. Keep **Hide residents' names** on (it is on by default): the names and
    ids of the residents in the text become "Avatar 1", "Avatar 2"…, yours
    "Me".
+   Asset ids (textures, materials, meshes, animations) are written in full
+   only for the assets your inventory holds with copy, modify and transfer
+   permissions, the built-in ones and your local textures. Any other reads
+   `hidden-` and a short tag, the same for one asset until the viewer
+   closes, so two faces with the same texture still read alike. While an
+   RLVa `@viewtexture` restriction holds, only the built-in ids are written.
 5. Press **Copy** and paste the text in your reply. When it is too long for
    a GitHub comment, the window says so: use **Save as .txt** and attach the
    file.
