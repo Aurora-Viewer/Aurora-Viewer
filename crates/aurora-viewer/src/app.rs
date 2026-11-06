@@ -9461,7 +9461,7 @@ impl App {
             );
             self.frame_profile.lap(Lap::Complexity);
             let hud_size = gfx.window.inner_size();
-            self.world.hud_area = self.hud_area();
+            self.world.hud_area = self.hud_area([hud_size.width, hud_size.height]);
             self.world.hud_aspect = match (self.snapshots.capturing, self.world.hud_area) {
                 // the HUD laid out for the photo's proportions
                 (Some(spec), _) => spec.width as f32 / spec.height.max(1) as f32,
@@ -11766,7 +11766,7 @@ impl App {
         }
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_HUDS")
-            && matches!(mode.as_str(), "menu" | "edit" | "edit-zoom")
+            && matches!(mode.as_str(), "menu" | "edit" | "edit-zoom" | "edit-no-mod" | "rotate-no-mod")
         {
             let key = crate::world::objects::ObjKey {
                 region: self.world.main_region.unwrap_or_default(),
@@ -11780,11 +11780,18 @@ impl App {
             } else if mode != "menu" {
                 if self.frame_count == 760 {
                     self.on_ctx_action(ui::context::CtxAction::EditAttachment(key));
+                    if mode == "rotate-no-mod" {
+                        self.build.edit_mode = crate::build::EditMode::Rotate;
+                    }
                     self.context_menu = None;
                 } else if self.frame_count == 800
                     && let Some(b) = self.build.bounds(&self.world, Instant::now())
                 {
-                    let handle = b.center + Vec3::Y * self.build.cam.meters_for_pixels(b.center, 45.0);
+                    let handle = if mode == "rotate-no-mod" {
+                        b.center + Vec3::new(0.0, 0.6, 0.8) * self.build.cam.meters_for_pixels(b.center, 100.0)
+                    } else {
+                        b.center + Vec3::Y * self.build.cam.meters_for_pixels(b.center, 45.0)
+                    };
                     if let Some(cursor) = self.build.cam.project_px(handle) {
                         self.cursor_pos = cursor;
                         self.click(click_pick::Click::Build);
@@ -11799,8 +11806,9 @@ impl App {
                     }) && let Some(o) = self.world.objects.get(idx)
                     {
                         log::info!(
-                            "demo HUD edit: local position={:?}, attachment={}",
+                            "demo HUD edit: local position={:?}, rotation={:?}, attachment={}",
                             o.position,
+                            o.rotation,
                             o.attachment_point()
                         );
                     }
@@ -19826,6 +19834,8 @@ impl ApplicationHandler for App {
                 }
                 let events = if mode == "blend-opacity" {
                     crate::demo::hud::opacity_events()
+                } else if matches!(mode.as_str(), "edit-no-mod" | "rotate-no-mod") {
+                    crate::demo::hud::no_modify_events()
                 } else if faces {
                     crate::demo::hud::face_events(mode == "faces-turned")
                 } else {
@@ -19859,9 +19869,16 @@ impl ApplicationHandler for App {
                 self.world.hud_scales = crate::world::hud_scale::HudScales::load(
                     crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
                 );
-                if mode == "blend-opacity" {
+                if matches!(mode.as_str(), "blend-opacity" | "edit-no-mod" | "rotate-no-mod") {
                     self.world.hud_scales = crate::world::hud_scale::HudScales::default();
                     self.world.hud_zoom = 1.0;
+                }
+                if matches!(mode.as_str(), "edit-no-mod" | "rotate-no-mod") {
+                    self.settings.build.edit_linked = false;
+                    self.settings.build.grid_mode = 0;
+                    self.settings.build.snap = false;
+                    self.settings.build.limit_select_distance = true;
+                    self.settings.build.max_select_distance = 128.0;
                 }
                 if matches!(
                     mode.as_str(),
