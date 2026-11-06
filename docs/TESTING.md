@@ -8642,6 +8642,14 @@ sky, material, link and varied permissions; library in the tree,
 root open and labels aligned left. Creations and mutations simulated
 offline; the files and snapshots uploaded in demo stay offline.
 
+In both layouts, give Inventory and Recent different type, permission and date
+filters, then switch back and forth with the finder open: its controls and
+results must follow the selected tab. Repeat with Worn, Favorites and Received.
+Reset and Keep by default affect only that tab; reopen a second inventory window
+or restart the demo to check saved defaults. Advanced searches and temporary
+Find links / Find similar filters must also stay with their tab. Repeat with
+separate searches enabled and disabled; that preference controls only the text.
+
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
   whatever Preferences › Aurora › Inventory says.
