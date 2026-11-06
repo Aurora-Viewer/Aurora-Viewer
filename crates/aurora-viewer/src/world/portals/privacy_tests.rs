@@ -27,7 +27,11 @@ fn private_destinations_are_never_announced_and_only_authenticated_friends_recei
         ..portal()
     };
     let now = Instant::now();
-    assert!(server.create(p.clone(), creator.agent.position, now, 1000));
+    assert!(
+        server
+            .create(p.clone(), BuildRight::Allowed, creator.agent.position, now, 1000)
+            .is_ok()
+    );
     receive(&mut server, &creator, stranger, Message::Discover { region: 256 }, now);
     assert!(server.out.iter().all(|(_, message)| match message {
         Message::Open(ad) => ad.destination.is_none(),
@@ -103,7 +107,11 @@ fn private_portal_can_finish_granting_access_while_its_creator_starts_teleportin
         ..portal()
     };
     let now = Instant::now();
-    assert!(server.create(p.clone(), creator.agent.position, now, 1000));
+    assert!(
+        server
+            .create(p.clone(), BuildRight::Allowed, creator.agent.position, now, 1000)
+            .is_ok()
+    );
     receive(&mut client, &observer, creator.agent_id, Message::Open(p.announcement()), now);
     let ask = request(&mut client, &observer, now);
 
@@ -149,7 +157,11 @@ fn private_portal_grant_after_a_refused_crossing_allows_a_nearby_retry() {
         ..portal()
     };
     let now = Instant::now();
-    assert!(server.create(p.clone(), creator.agent.position, now, 1000));
+    assert!(
+        server
+            .create(p.clone(), BuildRight::Allowed, creator.agent.position, now, 1000)
+            .is_ok()
+    );
     receive(&mut client, &observer, creator.agent_id, Message::Open(p.announcement()), now);
     let ask = request(&mut client, &observer, now);
     observer.agent.position = point(1.0);
@@ -242,7 +254,7 @@ fn group_grants_wait_for_one_fresh_complete_server_member_list_shared_by_all_req
         ..portal()
     };
     let now = Instant::now();
-    server.create(p.clone(), world.agent.position, now, 1000);
+    let _ = server.create(p.clone(), BuildRight::Allowed, world.agent.position, now, 1000);
     for peer in [member, stranger] {
         receive(
             &mut server,
@@ -324,7 +336,9 @@ fn public_portals_are_complete_without_requests_and_private_queues_cannot_broadc
         ..p.clone()
     };
     assert!(
-        !state.create(oversized, world.agent.position, now, 1000),
+        state
+            .create(oversized, BuildRight::Allowed, world.agent.position, now, 1000)
+            .is_err(),
         "the redacted announcement cannot hide an oversized detail response"
     );
     let ask = Message::Request {
@@ -342,7 +356,7 @@ fn public_portals_are_complete_without_requests_and_private_queues_cannot_broadc
             details: p.details()
         }
     ));
-    state.create(p, world.agent.position, now, 1000);
+    let _ = state.create(p, BuildRight::Allowed, world.agent.position, now, 1000);
     for peer in 3..(LIMIT * 6) {
         receive(&mut state, &world, Uuid::from_u128(peer as u128), ask.clone(), now);
     }

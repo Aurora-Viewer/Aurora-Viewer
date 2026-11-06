@@ -1,6 +1,7 @@
 //! Region-local, voluntary portal crossings. Invitations are immutable for
 //! their lifetime: replaying one never moves it or resets its proximity gate.
 use super::World;
+use super::land::BuildRight;
 use aurora_net::{
     NetCommand,
     bridge::{
@@ -27,6 +28,27 @@ const PER_RELAY: usize = 4;
 const PER_CREATOR: usize = 4;
 const CLEARANCE: f32 = 1.0;
 const SEND_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Why our portal was not opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// Outside the region, expired, too long to share, or too many portals.
+    Invalid,
+    /// We may not build where it would stand.
+    NoBuild,
+    /// The parcel there is not known yet; it is asked for.
+    LandUnknown,
+}
+
+impl Refusal {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Invalid => aurora_i18n::tr!("portal-invalid"),
+            Self::NoBuild => aurora_i18n::tr!("portal-no-build"),
+            Self::LandUnknown => aurora_i18n::tr!("portal-land-checking"),
+        }
+    }
+}
 
 pub fn fits_region(center: Vec3, size: [u32; 2]) -> bool {
     center.is_finite() && (WIDTH..=size[0] as f32 - WIDTH).contains(&center.x) && (WIDTH..=size[1] as f32 - WIDTH).contains(&center.y)
@@ -431,7 +453,15 @@ impl State {
         self.group_refresh.pop_front()
     }
 
-    pub fn create(&mut self, portal: Portal, position: Vec3, now: Instant, unix: u64) -> bool {
+    /// Open our portal. Placing one needs the right to build (rez) where
+    /// it stands, the land test of [`crate::world::land::agent_can_build`]:
+    /// an unknown parcel refuses too. A refusal keeps the portal already open.
+    pub fn create(&mut self, portal: Portal, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> Result<(), Refusal> {
+        match build {
+            BuildRight::Allowed => {}
+            BuildRight::Denied => return Err(Refusal::NoBuild),
+            BuildRight::Unknown => return Err(Refusal::LandUnknown),
+        }
         let private_fits = portal.access == Access::Everyone
             || Message::Details {
                 region: portal.region,
@@ -446,14 +476,14 @@ impl State {
             || !private_fits
             || Message::Open(portal.announcement()).encode().is_none()
         {
-            return false;
+            return Err(Refusal::Invalid);
         }
         if self.out.len() > LIMIT * 2 - 2 || self.entries.len() >= LIMIT && self.own().is_none() {
-            return false;
+            return Err(Refusal::Invalid);
         }
         self.close(unix);
         if self.entries.len() >= LIMIT {
-            return false;
+            return Err(Refusal::Invalid);
         }
         if let Access::Group(id) = portal.access
             && !self.group_refresh.contains(&id)
@@ -473,7 +503,7 @@ impl State {
             created: true,
             return_pass: false,
         });
-        true
+        Ok(())
     }
 
     pub fn close(&mut self, unix: u64) {

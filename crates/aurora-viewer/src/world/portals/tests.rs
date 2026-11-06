@@ -26,6 +26,67 @@ fn portal_placement_stays_inside_standard_and_variable_size_regions() {
     assert!(fits_region(Vec3::new(500.0, 200.0, 25.0), [512, 256]));
     assert!(!fits_region(Vec3::new(128.0, 300.0, 25.0), [512, 256]));
 }
+
+#[test]
+fn a_portal_opens_only_where_we_may_build_and_a_refusal_keeps_the_open_one() {
+    use aurora_net::parcel_flags as pf;
+    let (mut world, mut state) = fixture();
+    let center = Vec3::from(portal().center);
+    let open = |world: &World, state: &mut State, id: u128| {
+        let right = world.build_right_at(256, center, None);
+        state.create(
+            Portal {
+                id: Uuid::from_u128(id),
+                ..portal()
+            },
+            right,
+            world.agent.position,
+            Instant::now(),
+            1000,
+        )
+    };
+    // the parcel there is not known yet
+    assert_eq!(open(&world, &mut state, 1), Err(Refusal::LandUnknown));
+    // every cell of the region, someone else's, no build
+    let mut parcel = aurora_net::ParcelInfo {
+        owner_id: Uuid::from_u128(2),
+        group_id: Uuid::from_u128(50),
+        bitmap: vec![0xFF; 512],
+        ..Default::default()
+    };
+    world.parcel = Some(Arc::new(parcel.clone()));
+    assert_eq!(open(&world, &mut state, 1), Err(Refusal::NoBuild));
+    assert!(state.own().is_none());
+    // building for everyone
+    parcel.flags = pf::CREATE_OBJECTS;
+    world.parcel = Some(Arc::new(parcel.clone()));
+    assert_eq!(open(&world, &mut state, 2), Ok(()));
+    // our own land
+    parcel.flags = 0;
+    parcel.owner_id = world.agent_id;
+    world.parcel = Some(Arc::new(parcel.clone()));
+    assert_eq!(open(&world, &mut state, 3), Ok(()));
+    // group building, as a member
+    parcel.owner_id = Uuid::from_u128(2);
+    parcel.flags = pf::CREATE_GROUP_OBJECTS;
+    world.parcel = Some(Arc::new(parcel.clone()));
+    assert_eq!(open(&world, &mut state, 4), Err(Refusal::NoBuild), "not a member");
+    world.groups.groups.push(aurora_net::GroupMembership {
+        id: Uuid::from_u128(50),
+        name: String::new(),
+        insignia: Uuid::nil(),
+        powers: 0,
+        accept_notices: true,
+        list_in_profile: true,
+        contribution: 0,
+    });
+    assert_eq!(open(&world, &mut state, 5), Ok(()));
+    // the land closes: a new place is refused and the open portal stays
+    parcel.flags = 0;
+    world.parcel = Some(Arc::new(parcel));
+    assert_eq!(open(&world, &mut state, 6), Err(Refusal::NoBuild));
+    assert_eq!(state.own().map(|e| e.portal.id), Some(Uuid::from_u128(5)));
+}
 pub(super) fn wire(owner: Uuid, message: Message) -> String {
     format!("<auroraPortal>{owner}|{}</auroraPortal>", message.encode().unwrap())
 }
@@ -213,7 +274,11 @@ fn photo_isolation_hides_portal_surfaces_without_retiring_invitations_or_clearan
     use crate::snapshot::isolate::Mode;
     let (mut world, mut state) = fixture();
     world.agent.position = point(0.0);
-    assert!(state.create(portal(), world.agent.position, Instant::now(), 1000));
+    assert!(
+        state
+            .create(portal(), BuildRight::Allowed, world.agent.position, Instant::now(), 1000)
+            .is_ok()
+    );
     assert!(state.own().unwrap().waiting_for_clearance());
     assert_eq!(state.visible(&world).count(), 1);
     world.photo_isolation.open = true;
@@ -424,7 +489,17 @@ fn portal_permissions_are_checked_at_crossing_and_expiry_region_and_session_clea
     assert!(state.update(&world, Vec3::NEG_X, now + Duration::from_secs(1)).is_none());
     state.sync(&world, None, 1120);
     assert!(state.entries.is_empty());
-    assert!(state.create(Portal { expires: 1240, ..portal() }, world.agent.position, now, 1120));
+    assert!(
+        state
+            .create(
+                Portal { expires: 1240, ..portal() },
+                BuildRight::Allowed,
+                world.agent.position,
+                now,
+                1120
+            )
+            .is_ok()
+    );
     world.main_region = Some(512);
     state.sync(&world, None, 1120);
     assert!(state.entries.is_empty());
@@ -435,7 +510,7 @@ fn portal_permissions_are_checked_at_crossing_and_expiry_region_and_session_clea
 fn portal_discovery_is_targeted_once_per_peer_and_outgoing_traffic_is_bounded() {
     let (world, mut state) = fixture();
     let now = Instant::now();
-    assert!(state.create(portal(), world.agent.position, now, 1000));
+    assert!(state.create(portal(), BuildRight::Allowed, world.agent.position, now, 1000).is_ok());
     let owner = Uuid::from_u128(2);
     let discover = wire(owner, Message::Discover { region: 256 });
     state.receive(&world, &discover, now, 1000);
@@ -468,7 +543,7 @@ fn portal_late_sharing_failure_never_removes_or_retries_a_replaced_portal() {
         url: String::new(),
         token: Uuid::from_u128(4),
     };
-    assert!(state.create(portal(), world.agent.position, now, 1000));
+    assert!(state.create(portal(), BuildRight::Allowed, world.agent.position, now, 1000).is_ok());
     let Some(NetCommand::BridgeQuery { request, query, .. }) = state.command(Some(&endpoint), now) else {
         panic!("portal command");
     };
@@ -484,7 +559,11 @@ fn portal_late_sharing_failure_never_removes_or_retries_a_replaced_portal() {
         id: Uuid::from_u128(8),
         ..portal()
     };
-    assert!(state.create(replacement.clone(), world.agent.position, now, 1000));
+    assert!(
+        state
+            .create(replacement.clone(), BuildRight::Allowed, world.agent.position, now, 1000)
+            .is_ok()
+    );
     state.reply(request, &Err("unavailable".into()), now);
     assert_eq!(state.own().unwrap().portal.id, replacement.id);
     assert!(!state.failed && state.retries.is_empty());
@@ -506,7 +585,11 @@ fn portal_sharing_retries_the_same_redacted_action_and_reports_only_exhausted_fa
         };
         let mut invitation = portal();
         invitation.access = Access::Friends;
-        assert!(state.create(invitation.clone(), world.agent.position, now, 1000));
+        assert!(
+            state
+                .create(invitation.clone(), BuildRight::Allowed, world.agent.position, now, 1000)
+                .is_ok()
+        );
         state.discovered = true;
         let mut at = now;
         for attempt in 1..=3 {
@@ -559,7 +642,7 @@ fn portal_query_renewal_preserves_observer_gate_and_transport_retries_end_on_clo
     assert_eq!(state.entries.len(), 1);
     assert!(state.entries[0].waiting_for_clearance());
     state.discovered = true;
-    assert!(state.create(portal(), world.agent.position, now, 1000));
+    assert!(state.create(portal(), BuildRight::Allowed, world.agent.position, now, 1000).is_ok());
     let Some(NetCommand::BridgeQuery { request, .. }) = state.command(Some(&endpoint), now) else {
         panic!("open");
     };
