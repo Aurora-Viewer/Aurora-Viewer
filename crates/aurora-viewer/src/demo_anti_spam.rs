@@ -16,6 +16,7 @@ pub fn dialog(source: Uuid) -> NetEvent {
         object_id: source,
         object_name: aurora_i18n::tr!("anti-spam-demo-object").into(),
         owner_name: aurora_i18n::tr!("anti-spam-demo-resident").into(),
+        owner_id: Uuid::nil(),
         message: aurora_i18n::tr!("anti-spam-demo-prompt").into(),
         channel: -678,
         buttons: vec![aurora_i18n::tr!("common-ok").into()],
