@@ -187,8 +187,12 @@ fn font(cx: &mut Cx) {
                     .map_or_else(|| tr!("ui-options-no-system-font").to_owned(), |f| f.name.clone());
                 let mut changed = false;
                 let salt = ui.scope_id().with("system-font");
+                let popup_id = ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup");
                 if st.demo_font_list.is_some() {
-                    egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::unique("font-list-popup-test-id"), popup_id));
+                    egui::Popup::open_id(ui.ctx(), popup_id);
                 }
                 egui::ComboBox::from_id_salt(salt)
                     .width(COMBO_W)
@@ -196,10 +200,12 @@ fn font(cx: &mut Cx) {
                     .truncate()
                     .height(FONT_LIST_H + 40.0)
                     .show_ui(ui, |ui| {
+                        let width = FONT_LIST_W + crate::ui::widgets::scroll_strip(ui);
+                        ui.set_width(width);
                         ui.add(
                             egui::TextEdit::singleline(&mut st.font_filter)
                                 .hint_text(tr!("ui-options-search-fonts"))
-                                .desired_width(ui.available_width()),
+                                .desired_width(FONT_LIST_W),
                         );
                         let filter = st.font_filter.to_lowercase();
                         let shown: Vec<&fonts::SystemFont> = list
@@ -219,6 +225,7 @@ fn font(cx: &mut Cx) {
                         let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
                         let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
                         egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
                             .max_height(FONT_LIST_H)
                             .show_rows(ui, row_h, shown.len(), |ui, rows| {
                                 for i in rows {

@@ -1413,6 +1413,55 @@ fn preferences_keep_their_height_when_text_size_changes() {
 }
 
 #[test]
+fn system_font_popup_width_stays_fixed_across_ui_scales() {
+    let theme = crate::theme::Theme::default();
+    let mut widths = Vec::new();
+    for font_scale in [1.0, 1.25, 1.5] {
+        for pixels_per_point in [1.0, 1.25, 1.5] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let p = theme.palette();
+            theme.apply(&ctx, font_scale);
+            ctx.set_pixels_per_point(pixels_per_point);
+            let mut settings = Settings::default();
+            let mut state = OptionsUi {
+                page: Page::Appearance,
+                demo_font_list: Some(false),
+                system_fonts: Some(
+                    (0..40)
+                        .map(|n| crate::ui::fonts::SystemFont {
+                            name: format!("System font {n:02} with a very long sample name"),
+                            path: std::path::PathBuf::from(format!("/font/{n}")),
+                        })
+                        .collect(),
+                ),
+                ..Default::default()
+            };
+            let mut open = true;
+            for _ in 0..120 {
+                frames.run(Vec::new(), |ui| {
+                    show(ui.ctx(), &p, &Icons::default(), &mut settings, &mut state, &mut open);
+                });
+                let id = ctx.data(|data| data.get_temp::<egui::Id>(egui::Id::unique("font-list-popup-test-id")));
+                let popup = ctx.memory(|m| id.and_then(|id| m.area_rect(id))).expect("font popup area");
+                widths.push((font_scale, pixels_per_point, popup.width()));
+            }
+        }
+    }
+    for group in widths.as_chunks::<120>().0 {
+        let first = group[2].2;
+        assert!(
+            group[3..].iter().all(|(_, _, width)| (width - first).abs() < 0.5),
+            "popup grew at font scale {:?}, pixels per point {:?}: {:?} -> {:?}",
+            group[0].0,
+            group[0].1,
+            group[2].2,
+            group[119].2
+        );
+    }
+}
+
+#[test]
 fn the_content_ratings_follow_the_account() {
     use aurora_net::search::{AgentAccess, SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, SIM_ACCESS_PG};
     let ratings = |max| {
