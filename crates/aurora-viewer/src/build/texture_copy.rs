@@ -48,7 +48,7 @@ pub fn copy_item(inv: &Inventory, agent: Uuid, asset: Uuid, no_transfer: bool) -
         if item.asset_id != asset || item.asset_id.is_nil() || !contents_drop::copyable(item, agent) {
             continue;
         }
-        let transfer = contents_drop::agent_mask(item, agent) & rules::TRANSFER != 0;
+        let transfer = crate::world::inventory::actions::agent_mask(item, agent) & rules::TRANSFER != 0;
         let slot = if transfer != no_transfer { &mut preferred } else { &mut fallback };
         if slot.is_none_or(|id| item.id < id) {
             *slot = Some(item.id);
@@ -67,7 +67,7 @@ pub fn can_copy(inv: &Inventory, agent: Uuid, asset: Uuid) -> bool {
 /// (FSPanelFace::postBuild's setFilterPermissionMasks on those swatches).
 pub fn map_slot_takes(item: &InvItem, agent: Uuid) -> bool {
     let both = rules::COPY | rules::TRANSFER;
-    contents_drop::agent_mask(item, agent) & both == both
+    crate::world::inventory::actions::agent_mask(item, agent) & both == both
 }
 
 /// What a copied id may count on when it is pasted (set_item_availability).
@@ -176,7 +176,7 @@ pub fn material_copy_allowed(tool: &BuildTool, world: &World, idx: usize, faces:
 /// contents first: no copy, no transfer, or a material without modify
 /// (handleDropMaterialProtections, LLSelectMgr::selectionSetGLTFMaterial).
 pub fn restricted(item: &InvItem, agent: Uuid) -> bool {
-    let mask = contents_drop::agent_mask(item, agent);
+    let mask = crate::world::inventory::actions::agent_mask(item, agent);
     mask & rules::COPY == 0 || mask & rules::TRANSFER == 0 || item.asset_type == AT_MATERIAL && mask & rules::MODIFY == 0
 }
 

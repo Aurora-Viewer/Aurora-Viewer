@@ -104,7 +104,7 @@ fn drop_prims(world: &World, idx: usize, linkset: bool) -> Vec<usize> {
 /// the object does not hold yet (handleDropMaterialProtections). The asset of
 /// the library or of the object's contents costs nothing.
 fn no_copy_leaves(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, agent: Uuid, retained: bool) -> bool {
-    !retained && !rules::library(inv, item.id) && contents_drop::agent_mask(item, agent) & rules::COPY == 0
+    !retained && !rules::library(inv, item.id) && rules::agent_mask(item, agent) & rules::COPY == 0
 }
 
 impl App {
@@ -607,7 +607,13 @@ impl App {
                 library::Action::ExportResult(message) => self.world.system_message(message),
                 library::Action::ExportTexture { item, png } => {
                     let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
-                    if self.world.inventory.items.get(&item).is_some_and(|it| contents_drop::agent_mask(it, self.world.agent_id) & full == full) {
+                    if self
+                        .world
+                        .inventory
+                        .items
+                        .get(&item)
+                        .is_some_and(|it| rules::held(&self.world.inventory, it) & full == full)
+                    {
                         self.texture_library.export_texture(item, png);
                     }
                 }
@@ -616,7 +622,7 @@ impl App {
                     if !self.world.inventory.items.get(&item).is_some_and(|it| {
                         it.owner == self.world.agent_id
                             && !it.group_owned
-                            && it.owner_mask & rules::MODIFY != 0
+                            && rules::agent_mask(it, self.world.agent_id) & rules::MODIFY != 0
                             && !rules::library(&self.world.inventory, item)
                     }) {
                         continue;
@@ -657,9 +663,16 @@ impl App {
             return;
         };
         let own = item.owner == self.world.agent_id && !item.group_owned;
-        let editable = own && item.owner_mask & rules::MODIFY != 0 && !rules::library(&self.world.inventory, id);
+        let editable =
+            own && rules::agent_mask(&item, self.world.agent_id) & rules::MODIFY != 0 && !rules::library(&self.world.inventory, id);
         let copy = name.is_some();
-        if item.asset_type != 57 || if copy { contents_drop::agent_mask(&item, self.world.agent_id) & rules::COPY == 0 } else { !editable } {
+        if item.asset_type != 57
+            || if copy {
+                rules::held(&self.world.inventory, &item) & rules::COPY == 0
+            } else {
+                !editable
+            }
+        {
             return;
         }
         if !editable && self.texture_library.material_draft_dirty(id) {
@@ -1187,7 +1200,7 @@ impl App {
                 local_id: object.key.local_id,
                 item: Box::new(task),
             });
-            if contents_drop::agent_mask(item, self.world.agent_id) & rules::COPY == 0 {
+            if rules::agent_mask(item, self.world.agent_id) & rules::COPY == 0 {
                 self.world.inventory.consume_item(item.id);
             }
             self.build.request_contents(&self.world, idx, true);
