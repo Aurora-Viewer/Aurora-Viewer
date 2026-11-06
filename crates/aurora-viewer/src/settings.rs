@@ -678,6 +678,8 @@ pub struct Settings {
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
     pub window_maximized: bool,
+    /// Start in a borderless window covering the current monitor.
+    pub window_fullscreen: bool,
     /// Legacy single-account authorization, read once for migration only.
     #[serde(skip_serializing)]
     pub mfa_hash: String,
@@ -856,6 +858,10 @@ pub struct Settings {
     pub log_show_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
     pub log_dated_names: bool,
+    /// Import the Legacy Viewer's transcripts at each login. On by default
+    /// (an Aurora addition): moving between the two viewers keeps the
+    /// history, and a notice says what came in.
+    pub log_import_at_login: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
@@ -1021,6 +1027,9 @@ pub struct Settings {
     /// Preferences › Aurora › Behavior: make, wear and use the Aurora bridge
     /// (`world/bridge.rs`). On by default, as the Legacy Viewer's UseLSLBridge.
     pub use_bridge: bool,
+    /// Preferences › Aurora › Behavior: whose portals the bridge shows. Friends
+    /// by default; our own portals and returns are always shown.
+    pub portal_sources: crate::world::portals::Sources,
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
@@ -1227,6 +1236,11 @@ pub struct Settings {
     /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
     pub background_fps_limit: u32,
+    /// A window behind whose GPU frames crawl (another program in front
+    /// keeps the card busy) stops drawing its 3D until it has the focus
+    /// again, before Windows resets the card (app/busy_pause.rs). On by
+    /// default; not in the Legacy Viewer.
+    pub background_gpu_pause: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
@@ -1847,6 +1861,7 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            window_fullscreen: false,
             mfa_hash: String::new(),
             font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
@@ -1904,6 +1919,7 @@ impl Default for Settings {
             reopen_ims: false,
             log_show_history: true,
             log_dated_names: false,
+            log_import_at_login: true,
             warn_external_links: true,
             trusted_sites: Default::default(),
             mute_all_groups: false,
@@ -1958,6 +1974,7 @@ impl Default for Settings {
             predict_own_motion: false,
             synchronize_animations: false,
             use_bridge: true,
+            portal_sources: Default::default(),
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
@@ -2034,6 +2051,7 @@ impl Default for Settings {
             graphics_saved_active: None,
             background_fps_cap: true,
             background_fps_limit: 15,
+            background_gpu_pause: true,
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
@@ -2176,6 +2194,15 @@ pub fn cache_dir() -> PathBuf {
         return for_mode(chosen.to_path_buf());
     }
     for_mode(default_cache_root())
+}
+
+/// The folder of the sealed asset cache (cache.rs), inside [`cache_dir`].
+/// A folder of its own: the earlier versions keep files of another format
+/// right in [`cache_dir`], so that one never reads the other's files.
+pub const ASSET_STORE: &str = "store";
+
+pub fn asset_cache_dir() -> PathBuf {
+    cache_dir().join(ASSET_STORE)
 }
 
 pub(crate) fn default_cache_root() -> PathBuf {
@@ -2732,6 +2759,7 @@ impl Settings {
             window_x: old.window_x,
             window_y: old.window_y,
             window_maximized: old.window_maximized,
+            window_fullscreen: old.window_fullscreen,
             // a newer build's own values are not this build's to reset
             newer_file: old.newer_file,
             // Named profiles are user content, like separate preset files.
@@ -3063,6 +3091,17 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(disabled.render_settings().projector_shadow_limit, 0);
+    }
+
+    #[test]
+    fn legacy_chat_import_at_login_defaults_on_and_keeps_a_saved_off() {
+        use super::Settings;
+        assert!(Settings::default().log_import_at_login);
+        // preferences saved before the setting existed
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(old.log_import_at_login);
+        let off: Settings = serde_json::from_str(r#"{"log_import_at_login":false}"#).expect("preferences");
+        assert!(!off.log_import_at_login);
     }
 
     #[test]
@@ -3882,6 +3921,23 @@ mod tests {
         left.window_maximized = true;
         let json = serde_json::to_string(&left).expect("serialize synthetic settings");
         assert_eq!(state(&json), (true, false));
+    }
+
+    #[test]
+    fn borderless_fullscreen_defaults_off_and_round_trips() {
+        let defaults = Settings::default();
+        assert!(!defaults.window_fullscreen);
+
+        let path = scratch_settings_file();
+        let settings = Settings {
+            window_fullscreen: true,
+            ..defaults
+        };
+        settings.save_to(&path);
+        let loaded = Settings::load_from(&path);
+
+        assert!(loaded.window_fullscreen);
+        let _ = std::fs::remove_dir_all(path.parent().expect("settings directory"));
     }
 
     #[test]

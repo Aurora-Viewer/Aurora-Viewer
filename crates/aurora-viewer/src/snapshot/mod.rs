@@ -253,6 +253,9 @@ pub struct Settings {
     /// The warning before the first "Photo quality" was accepted: a modest
     /// PC may freeze or crash with every graphics setting at its maximum.
     pub quality_warned: bool,
+    /// "Photo quality" turned off at the next start when the viewer crashed
+    /// or was stopped while it was on (`crash::take_photo_quality_crash`).
+    pub quality_off_after_crash: bool,
     /// The viewfinder's display, AF area, peaking and beep.
     pub viewfinder: viewfinder::Prefs,
     /// The photo's looks, the first one drawn first (`looks`); none: the
@@ -289,6 +292,7 @@ impl Default for Settings {
             dof: Default::default(),
             quality: false,
             quality_warned: false,
+            quality_off_after_crash: true,
             viewfinder: Default::default(),
             looks: Vec::new(),
             look_settings: Default::default(),

@@ -26,6 +26,26 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-05 — Aurora 0.9.2: your chat history comes along, and a fullscreen mode
+Preferences › Chat › History imports your conversations from the Legacy Viewer and the other approved viewers that write the same files. The messages join your Aurora history in time order, each login adds only what is new, and the other viewer's files are only read. Preferences › Graphics gets a borderless fullscreen mode, and Alt+Enter turns it on or off at once, without a restart: a clean frame for videos, and the window comes back exactly as it was.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.2)
+
+## 2026-11-05 — Smoother motion, lighter clicks
+With TAA, moving avatars, animesh and objects no longer smear: the anti-aliasing follows each pixel's own motion. Ambient occlusion now runs at half resolution in a 1440p window too, for about 14 % more frames per second in a crowd with the same image. In busy regions a click on the world costs a tenth of what it did, and the hover cursor skips the worn rigged meshes it can never land on. Escalators and other looping keyframed objects loop without sliding back.
+
+## 2026-11-05 — Building, graphics card and fixes
+The texture eyedropper and local textures are back in the build and appearance editors, face drops flash and reach transparent faces, and the Legacy build window shows the link and face number. OBS Studio's Game Capture stays out unless you allow overlays, a window behind pauses its 3D while another program keeps the card busy, and Photo quality turns off after a crash. Stretched triangles on hair and plants are gone. Thanks to circuskid, Gaalrauch, KanikaBreed, Marakiinfinity and Odessa-Draekavik.
+
+## 2026-11-04 — Aurora 0.9.1: steadier logins, teleports and outfits
+A region slow to confirm your arrival no longer ends the session, and a refused two-factor code no longer locks the login out of the code field. Outfit changes send one appearance request at a time, for the newest version, so products and RLVa that change the outfit quickly no longer drown your appearance in failed updates. A key the viewer never saw pressed no longer makes your avatar jump or fly up after you switch windows. Imported Windlight skies save to the inventory.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.1)
+
+## 2026-11-04 — Photo roll, projector shadows, smoother busy places
+Photo mode keeps the session's last 10 photos in a small stack in the viewfinder: look through them, then upload, e-mail or delete one. Choose how many projectors cast shadows, from 1 to 16, in Preferences › Graphics › Light (2 by default). In busy regions, objects that spin or move by themselves are placed by the graphics card, flexible prims out of view hold their mesh, and the frame's buffer writes go out together: more frames per second, the same image.
+
+## 2026-11-04 — Building, avatars and crash reports
+Paper lanterns and other tortured spheres keep their shape, Legacy construction gets Tilt, Radius and Revolutions back, and objects rezzed from the inventory can be edited and focused right away. Worn objects follow animations that move their attachment point, an avatar hidden by an animation leaves the screen as on the Legacy Viewer, and the Poser works on every shape. Crash reports after a lost graphics card say what was in play. Thanks to anne-skydancer, Gaalrauch, Marakiinfinity and Odessa-Draekavik.
+
 ## 2026-11-04 — Aurora 0.9.0: OpenSim and Hypergrid, for real
 On OpenSim grids your avatar now bakes and is seen as you dress it, the land of large regions goes past 256 m, and the inventory, outfits and profiles save on grids without AIS. Buy and prices use the grid's own currency and money symbol. After a Hypergrid teleport Aurora follows the grid you are on, asks before a trip that would leave worn items behind, and offers to add an unknown grid from a link.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.0)

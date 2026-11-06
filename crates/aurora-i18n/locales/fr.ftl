@@ -1721,6 +1721,15 @@ demo-auto-blend = Auto : fondu
 demo-auto-mask = Auto : masque
 ui-inventory-properties-permissions = Autorisations
 world-mod-requested-permissions = Autorisations demandées
+world-notifications-caution-title = Attention : accès à votre compte
+world-notifications-caution-debit = L'objet « { $object_name } » de { $owner_name } demande un accès total à votre compte L$. Si vous l'autorisez, il pourra retirer des fonds de votre compte à tout moment, ou le vider entièrement, de façon continue et sans autre avertissement.
+world-notifications-caution-land = L'objet « { $object_name } » de { $owner_name } demande un accès privilégié à votre terrain. Si vous l'autorisez, il pourra vendre votre terrain sans autre avertissement.
+world-notifications-caution-advice = N'autorisez pas cet accès si vous ne comprenez pas parfaitement pourquoi il veut accéder à votre compte.
+world-notifications-caution-also = Si vous autorisez l'accès à votre compte, vous autoriserez aussi l'objet à :
+world-notifications-caution-granted = « { $object_name } », un objet de { $owner_name } situé dans { $region } en { $position }, a reçu l'autorisation de : { $permissions }.
+world-notifications-caution-denied = « { $object_name } », un objet de { $owner_name } situé dans { $region } en { $position }, s'est vu refuser l'autorisation de : { $permissions }.
+world-notifications-caution-unknown-region = (région inconnue)
+world-notifications-caution-unknown-position = (position inconnue)
 world-experiences-question-title = Expérience : { $name }
 world-experiences-question = { "« " }{ $object_name }{ " », un objet appartenant à « " }{ $owner_name }{ " », demande votre participation à l'expérience " }{ $scope }{ " :\u000A\u000A" }{ $experience }{ "\u000A\u000AUne fois l'autorisation accordée, vous ne verrez plus ce message pour cette expérience, sauf si elle est révoquée dans le profil de l'expérience.\u000A\u000ALes scripts associés à cette expérience pourront effectuer les actions suivantes dans les régions dans lesquelles l'expérience est active :\u000A• " }{ $questions }{ "\u000A\u000AAcceptez-vous ?" }
 world-experiences-grid-scope = à l'échelle de la grille
@@ -1788,6 +1797,8 @@ ui-experiences-log-long-sit = forcer votre avatar à s’asseoir
 ui-experiences-log-long-environment = modifier vos paramètres d’environnement
 ui-experiences-log-notice = Un objet a été autorisé à { $what } par l’expérience { $experience }. Objet : { $object }. Parcelle : { $parcel }.
 ui-notifications-allow = Autoriser
+ui-notifications-allow-access = Autoriser l'accès
+ui-notifications-deny = Refuser
 build-ui-floaters-allow-access-only-to-specified-urls = Autoriser l'accès uniquement aux URL spécifiés
 ui-land-general-allow-deeding-to-group = Autoriser la cession au groupe
 build-ui-floaters-allow-navigation-interaction = Autoriser la navigation & l'interactivité
@@ -2137,6 +2148,7 @@ ui-inventory-thumbnail-choose-object-picture = Choisir : Image pour l’objet
 build-ui-texture-choose-material = Choisir : matériau
 build-ui-texture-choose-normal-map = Choisir : normale
 build-ui-texture-choose-specular-map = Choisir : spéculaire
+build-ui-texture-drop-restricted = Seules les textures avec les droits de copie et de transfert sans restriction sont autorisées.
 build-ui-texture-choose-texture = Choisir : texture
 build-ui-features-choose-light-texture = Choisir : texture de la lumière
 build-ui-object-choose-sculpt-map = Choisir : texture de la sculptie
@@ -2555,10 +2567,10 @@ ui-options-slurl-links-open-help = Enregistre secondlife://, hop:// et x-grid-lo
 ui-options-slurl-links-other = Ces liens s'ouvrent actuellement dans { $program }.
 ui-options-backup = Sauvegarde
 ui-options-backup-save = Sauvegarder les réglages
-ui-options-backup-save-help = Enregistre les préférences, les couleurs, les raccourcis, les barres, la disposition des fenêtres, le skin et les fichiers de préférences de chaque compte (groupes de contacts, volumes des voix, assets bloqués…) dans un seul fichier, pour les remettre après une réinitialisation ou sur un autre PC. Rien de la connexion n'y figure.
+ui-options-backup-save-help = Enregistre les préférences, les couleurs, les raccourcis, les barres, la disposition des fenêtres, le skin et les fichiers de préférences de chaque compte (groupes de contacts, volumes des voix, assets bloqués…) dans un seul fichier, pour les remettre après une réinitialisation ou sur un autre PC. Rien de la connexion n'y figure, ni vos clés des services de GIF.
 ui-options-backup-save-button = Sauvegarder…
 ui-options-backup-restore = Restaurer les réglages
-ui-options-backup-restore-help = Lit un fichier de sauvegarde et remet aussitôt les parties choisies. Ce PC garde sa connexion, la taille de sa fenêtre, ses dossiers et ses périphériques audio.
+ui-options-backup-restore-help = Lit un fichier de sauvegarde et remet aussitôt les parties choisies. Ce PC garde sa connexion, la taille de sa fenêtre, ses dossiers, ses périphériques audio et ses clés des services de GIF.
 ui-options-backup-restore-button = Restaurer…
 ui-options-backup-file-type = Sauvegarde des réglages d'Aurora
 ui-options-backup-saved = Réglages sauvegardés dans { $path }.
@@ -3577,6 +3589,7 @@ ui-options-double-click-teleport = Se téléporter ici
 ui-sound-group-invitation = Invitation dans un groupe
 ui-sound-incoming-voice-call = Appel vocal entrant
 world-mod-invitation-to-join-a-group = Invitation à rejoindre un groupe
+world-notifications-group-fee = Frais d'inscription : L$ { $fee }
 ui-context-invite-to-group = Inviter dans un groupe
 ui-profile-invite-to-group-coming-soon = Inviter dans un groupe (à venir)
 ui-contacts-invite = Inviter...
@@ -3751,6 +3764,7 @@ ui-perf-the-graph-shows-fps-over-the-last-few-seconds = Le graphe montre les ima
 ui-land-environment-the-estate-manager-does-not-allow-parcel-environment-changes = Le gérant du domaine n'autorise pas la modification de l'environnement des parcelles dans cette région.
 common-the-link-is-broken = Le lien est cassé.
 link-trust-the-link-leads-to-an-ip-address-instead-of = Le lien mène à une adresse IP au lieu d'un nom de site.
+link-trust-the-link-leads-to-this-computer-or-local-network = Le lien mène à cet ordinateur ou à votre réseau local, pas à un site sur internet.
 ui-options-the-violet-wolf-howls-under-the-northern-lights = Le loup violet hurle sous l'aurore boréale.
 world-inventory-preview-the-material-is-unreadable = Le matériau est illisible.
 ui-contacts-your-chosen-name-for-this-person = Le nom choisi pour cette personne.
@@ -3907,6 +3921,10 @@ ui-options-avatar-physics-help = La poitrine, le ventre et les fesses des avatar
 ui-options-avatar-physics-detail = Détail de la physique des avatars
 ui-options-avatar-physics-detail-help = À 1, tous les avatars bougent ; plus bas, les avatars petits à l'écran gardent leur forme ; 0 arrête la physique (RenderAvatarPhysicsLODFactor)
 ui-options-limit-when-unfocused = Limiter hors focus
+ui-options-pause-when-card-busy = Mettre la 3D en pause quand la carte sature
+ui-options-pause-when-card-busy-tip = Quand un autre programme occupe la carte graphique pendant qu'Aurora est derrière, Aurora arrête de dessiner le monde jusqu'à ce que vous cliquiez dessus, pour que la carte ne soit pas réinitialisée. Désactivé, Aurora peut se fermer avec « la carte graphique a été perdue ». Activé par défaut
+busy-pause-notice = 3D en pause : la carte graphique est occupée par un autre programme. Cliquez pour reprendre.
+busy-pause-window-title = { $title } — En pause
 ui-land-sound-restrict-voice-chat-to-this-parcel = Limiter le chat vocal à cette parcelle
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = Limiter les sons des gestes et des objets à cette parcelle
 common-limits = Limites
@@ -4188,7 +4206,7 @@ ui-options-scripted-media = Médias par script
 ui-options-media-filter = Filtre média
 ui-options-media-filter-help = Demander avant qu'un média ou une musique se charge depuis un site absent de la liste (MediaEnableFilter)
 ui-options-media-filter-own-worn = Faire confiance à mes objets portés
-ui-options-media-filter-own-worn-help = Les médias de ce que vous portez (attachements, HUD) se chargent sans question ; les sites bloqués restent bloqués. Pour les objets des autres avatars, la question reste posée
+ui-options-media-filter-own-worn-help = Les médias de ce que vous portez (attachements, HUD) et avez créé vous-même se chargent sans question ; les sites bloqués restent bloqués. Pour les objets créés par quelqu'un d'autre et ceux des autres avatars, la question reste posée
 ui-options-media-filter-list = Sites
 ui-options-media-filter-list-help = Domaines (avec leurs sous-domaines) et adresses que ce compte autorise ou bloque
 ui-options-media-filter-empty = Aucun site pour l'instant : les réponses gardées depuis la question apparaissent ici.
@@ -5656,6 +5674,8 @@ ui-contacts-nickname = Surnom
 ui-contacts-set-nickname = Surnommer...
 ui-emoji-symbols = Symboles
 ui-options-vertical-synchronization = Synchronisation verticale
+ui-options-borderless-fullscreen = Plein écran
+ui-options-borderless-fullscreen-help = Remplit l'écran actuel, sans bordure. Alt+Entrée l'active ou le désactive (sauf pendant la saisie).
 ui-options-graphics-card = Carte graphique
 ui-options-graphics-card-automatic = Automatique
 ui-options-graphics-card-help = Automatique prend d'abord la carte dédiée. Appliqué au prochain démarrage.
@@ -5665,7 +5685,7 @@ ui-options-graphics-card-no-discrete = Seule la carte graphique intégrée est v
 ui-options-graphics-card-cannot-present = La carte dédiée ne peut pas dessiner la fenêtre du viewer : branchez l'écran sur les sorties de la carte dédiée, pas sur celles de la carte mère.
 ui-options-overlays = Overlays
 ui-options-allow-overlays = Autoriser les overlays des autres programmes
-ui-options-allow-overlays-help = Les overlays de Steam, RivaTuner (MSI Afterburner), Epic Games et d'autres s'insèrent dans l'affichage du viewer et provoquent souvent des plantages ou une fenêtre blanche : ils sont tenus à l'écart sauf si vous les autorisez. La capture de jeu d'OBS Studio fonctionne toujours. L'overlay de Discord ne peut pas être tenu à l'écart : si la fenêtre devient blanche, désactivez-le pour Aurora dans Discord. Appliqué au prochain démarrage.
+ui-options-allow-overlays-help = Les overlays de Steam, RivaTuner (MSI Afterburner), Epic Games et d'autres s'insèrent dans l'affichage du viewer et provoquent souvent des plantages ou une fenêtre blanche : ils sont tenus à l'écart sauf si vous les autorisez. La capture de jeu d'OBS Studio est aussi tenue à l'écart : sa capture de fenêtre fonctionne toujours. L'overlay de Discord ne peut pas être tenu à l'écart : si la fenêtre devient blanche, désactivez-le pour Aurora dans Discord. Appliqué au prochain démarrage.
 ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait = Synchronisation verticale, limite d'images/s, présentation, attente du thread de rendu
 build-ui-texture-synchronize-materials = Synchroniser les matériaux
 common-system = Système
@@ -6064,6 +6084,10 @@ login-safe-graphics-active-title = Graphismes de secours activés
 login-safe-graphics-active = Aurora tourne au niveau Patate depuis que la carte graphique a cessé de répondre. Une fois la cause corrigée (pilote à jour, overlays coupés), remettez vos propres réglages.
 login-safe-graphics-restore = Remettre mes graphismes
 login-safe-graphics-stay = Garder les graphismes de secours
+login-photo-quality-off-title = Qualité photo coupée
+login-photo-quality-off = Aurora s'est fermé de façon inattendue la dernière fois, pendant que la qualité photo poussait tous les réglages graphiques au maximum. Elle est coupée : la fenêtre photo s'ouvre normalement, et vos propres réglages graphiques n'ont pas changé. Vous pouvez la remettre dans la fenêtre photo ou dans Préférences › Graphismes.
+login-photo-quality-off-ok = OK
+login-photo-quality-off-back-on = La remettre
 ui-perf-downloaded = Téléchargé
 common-teleport-2 = Téléportation
 common-teleport-accepted = Téléportation acceptée…
@@ -6188,6 +6212,8 @@ demo-keywords-object-name = Lumières de la fête
 demo-keywords-object = Lumières allumées : la fête peut commencer.
 demo-keywords-plain = Il fait beau sur la place aujourd'hui.
 demo-notifs-lantern = Une lanterne en papier
+demo-notifs-fee-group-invitation = Tess Touch vous invite à rejoindre Lagoon Sailing Club.
+demo-notifs-fee-object = Boîte à pourboires
 demo-notifs-group-notice = Avis du groupe Aurora Builders : la place reçoit un nouveau sol
 demo-notifs-paid = Lune Exemple vous a payé 50 L$
 demo-scripted-textbox = Écrivez votre nom pour le livre d'or
@@ -6485,6 +6511,8 @@ photo-quality-warning-text = La qualité photo pousse tous les réglages graphiq
 photo-quality-warning-ok = Activer quand même
 photo-quality-loading = Chargement des détails… ({ $count } textures)
 photo-quality-reduced = Qualité réduite : mémoire vidéo presque pleine
+photo-quality-off-after-crash = Couper la qualité photo après un plantage
+photo-quality-off-after-crash-help = Si Aurora plante ou est arrêté pendant que la qualité photo est active, le démarrage suivant la coupe et le signale sur l'écran de connexion.
 photo-freeze-hint = Prise tout de suite et gardée à l'écran jusqu'à l'enregistrement
 photo-freeze-world = Figer le monde
 photo-freeze-world-hint = Les avatars, les animations et tout ce qui bouge restent immobiles, la caméra reste libre.
@@ -8989,6 +9017,12 @@ ui-options-aurora-move-hologram-moving = Objet déplacé
 ui-options-aurora-move-hologram-start = Point de départ
 ui-options-aurora-use-bridge = Utiliser le bridge Aurora
 ui-options-aurora-use-bridge-help = Un petit objet scripté qu’Aurora crée et vous fait porter : verrouillage de position, altitudes des avatars dans le radar, infos des scripts et des objets, demandes de pose et portails partagés. Désactivé, Aurora ne le crée plus, ne le porte plus et retire celui qui est porté : ces fonctions sont alors indisponibles.
+ui-options-aurora-portal-sources = Afficher les portails de
+ui-options-aurora-portal-sources-help = Les portails que d’autres résidents ouvrent près de vous avec leur bridge Aurora. Vos propres portails et le chemin du retour de vos voyages s’affichent toujours. La première fois que vous traversez le portail de quelqu’un qui n’est pas votre ami, Aurora vous demande avant de partir. Avec les groupes, un résident compte dès que la grille l’indique dans l’un de vos groupes (son profil ou une liste de membres chargée).
+ui-options-aurora-portal-sources-nobody = Personne
+ui-options-aurora-portal-sources-friends = Amis
+ui-options-aurora-portal-sources-groups = Amis et mes groupes
+ui-options-aurora-portal-sources-everyone = Tout le monde
 ui-options-aurora-gaze = Regard
 ui-options-aurora-aim = Où va votre regard
 ui-options-aurora-aim-help = Votre avatar regarde le point exact sous le curseur, ou tourne la tête vers le côté du curseur comme le Legacy Viewer.
@@ -9070,6 +9104,48 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count } fichiers effacés.
     }
 ui-options-chat-logs-erase-failed = Certains fichiers n'ont pas pu être effacés.
+ui-options-chat-logs-busy = L'historique est occupé par un import, un déplacement ou un effacement : réessayez dans un instant.
+ui-options-chat-logs-import-login = Importer à la connexion
+ui-options-chat-logs-import-login-help = À chaque connexion, ajoute ce que le Legacy Viewer a écrit pour ce compte depuis le dernier import. Ses fichiers sont seulement lus. Activé par défaut.
+ui-options-chat-logs-import-login-off = L'import à la connexion est maintenant désactivé, pour que cet historique ne revienne pas.
+ui-options-chat-logs-imported-at-login = Historique du Legacy Viewer : { $count ->
+    [one] { $count } message ajouté
+   *[other] { $count } messages ajoutés
+    } à { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    } Pour arrêter, désactivez Importer à la connexion (Préférences › Chat › Historique).
+ui-options-chat-logs-import = Importer depuis le Legacy Viewer…
+ui-options-chat-logs-import-title = Importer l'historique de chat du Legacy Viewer
+ui-options-chat-logs-import-text = Les conversations sont ajoutées aux fichiers de ce compte par ordre chronologique et les messages déjà présents sont ignorés : importer à nouveau n'ajoute que les nouveautés. Les fichiers du Legacy Viewer sont seulement lus.
+ui-options-chat-logs-import-searching = Recherche de l'historique du Legacy Viewer…
+ui-options-chat-logs-import-none = Aucun historique du Legacy Viewer trouvé pour ce compte. S'il est ailleurs, choisissez son dossier.
+ui-options-chat-logs-import-files = { $count ->
+    [one] { $count } fichier de conversation
+   *[other] { $count } fichiers de conversation
+    }
+ui-options-chat-logs-import-same = Aurora utilise déjà ce dossier : il n'y a rien à importer.
+ui-options-chat-logs-import-empty = Aucun fichier de conversation dans ce dossier.
+ui-options-chat-logs-import-choose = Choisir un dossier…
+ui-options-chat-logs-import-confirm = Importer
+ui-options-chat-logs-importing = Import : { $done } fichiers sur { $total }
+ui-options-chat-logs-imported = { $count ->
+    [one] { $count } message ajouté
+   *[other] { $count } messages ajoutés
+    } à { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    }
+ui-options-chat-logs-import-reopen = Une conversation déjà en cours les affichera à sa prochaine ouverture.
+ui-options-chat-logs-import-nothing = Rien de nouveau à importer.
+ui-options-chat-logs-import-failed = { $count ->
+    [one] { $count } fichier n'a pas pu être importé et reste inchangé : importez à nouveau pour réessayer.
+   *[other] { $count } fichiers n'ont pas pu être importés et restent inchangés : importez à nouveau pour réessayer.
+    }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] { $count } fichier texte sans heure a été laissé de côté : c'est peut-être une conversation enregistrée sans l'heure.
+   *[other] { $count } fichiers texte sans heure ont été laissés de côté : ce sont peut-être des conversations enregistrées sans l'heure.
+    }
 ui-chat-filter-conversation = Filtrer la conversation (Ctrl+F : rechercher)
 ui-chat-filter = Filtrer…
 ui-chat-find = Rechercher dans cette conversation…
@@ -12596,6 +12672,9 @@ portal-destination-hidden = Destination masquée
 portal-restricted = Vous n’avez pas accès
 portal-step-away = Éloignez-vous, puis revenez pour entrer
 portal-walk-through = Traversez pour vous téléporter
+portal-cross-title = Traverser ce portail ?
+portal-cross-text = { $name } a ouvert ce portail. Il mène à { $destination }.
+portal-cross-go = Y aller
 ui-appearance-selected-outfits = { $count } tenues sélectionnées
 
 # Spell checker and auto-replace (#675)
@@ -12690,7 +12769,7 @@ wearable-changed = Cet élément a changé ou n’est plus porté. Ouvrez-le à 
 wearable-error = Cet élément d’apparence n’a pas pu être lu ou enregistré.
 wearable-readonly = Cet élément n’est pas modifiable.
 wearable-texture-permissions = Choisissez une texture d’inventaire copiable et, pour un vêtement transférable, transférable.
-wearable-local-preview = Les textures locales servent d’aperçu privé. Importez la texture puis sélectionnez-la dans l’inventaire pour enregistrer.
+wearable-local-preview = L’enregistrement conserve les références locales sans importer les images.
 wearable-loading = Chargement de l’élément d’apparence…
 wearable-saving = Enregistrement…
 wearable-saved = Élément d’apparence enregistré.
@@ -13134,3 +13213,11 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+
+picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
+
+picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventaire.
+
+picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
+
+local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.

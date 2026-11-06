@@ -1146,7 +1146,7 @@ impl PreviewSource {
         }
         let discard = self.decoded?;
         let bytes = if self.bytes.is_empty() {
-            Arc::new(std::fs::read(&self.jpeg).ok()?)
+            Arc::new(crate::cache::read(&self.jpeg).ok()?)
         } else {
             self.bytes
         };
@@ -1212,8 +1212,8 @@ impl PreviewSource {
         let bytes = if self.bytes.is_empty() {
             // Progressive downloads may only have a .part cache. Their ready
             // coarse pixels are already visible in the main scene.
-            std::fs::read(&self.jpeg)
-                .or_else(|_| std::fs::read(self.jpeg.with_extension("part")))
+            crate::cache::read(&self.jpeg)
+                .or_else(|_| crate::cache::read(self.jpeg.with_extension("part")))
                 .ok()
                 .map(Arc::new)?
         } else {
