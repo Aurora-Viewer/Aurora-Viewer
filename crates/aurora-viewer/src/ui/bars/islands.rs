@@ -466,19 +466,19 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
         if money.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        menu::context_menu(&money, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+        menu::context_menu(&money, p, |ui| super::balance_menu(ui, p, st, action));
         if money.on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l")).clicked() {
             *action = BarAction::BuyCurrency;
         }
     }
-    menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+    menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st, action));
     // the demo cannot right-click: the same menu under the island
     let ctx = ui.ctx().clone();
     if super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr() >= 300 {
         let id = Id::unique("bars_account_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         let at = Pos2::new(rect.left(), island.bottom() + MARGIN);
-        menu::popup_at(&ctx, id, at, &mut open, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+        menu::popup_at(&ctx, id, at, &mut open, p, |ui| super::balance_menu(ui, p, st, action));
         ctx.data_mut(|d| d.insert_temp(id, open));
     }
     demo_open(ui.ctx(), &status, super::demo::Open::Status);
@@ -1141,6 +1141,7 @@ mod tests {
             balance: Some(1000),
             show_balance: true,
             balance_gains: Vec::new(),
+            balance_highlight: true,
             voice: (crate::voice::VoiceLight::Off, String::new()),
             slurl: String::new(),
             status: Default::default(),

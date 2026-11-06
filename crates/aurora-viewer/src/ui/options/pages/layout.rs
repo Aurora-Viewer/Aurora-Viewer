@@ -46,16 +46,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-balance-help"),
                     &field!(show_balance),
                 );
-                // the L$ received rising into it (#2675): nothing to rise
-                // into while it is hidden
-                let hidden = !cx.s.show_balance;
-                cx.subs(hidden, |cx| {
-                    cx.toggle(
-                        tr!("ui-options-balance-gain-animation"),
-                        tr!("ui-options-balance-gain-animation-hint"),
-                        &field!(balance_gain_animation),
-                    );
-                });
+                // the L$ received rising into it (#2675); also the
+                // balance's right click and the account island's
+                cx.toggle(
+                    tr!("ui-options-balance-gain-animation"),
+                    tr!("ui-options-balance-gain-animation-hint"),
+                    &field!(balance_gain_animation),
+                );
                 // also a left click on the clock, and the island's right click
                 use crate::settings::ClockZone;
                 cx.choice(
