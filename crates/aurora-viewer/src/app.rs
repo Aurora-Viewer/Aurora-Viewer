@@ -6802,7 +6802,7 @@ impl App {
         };
         // the surface under the cursor: face tool, grab surface info
         let surface = match (self.build.tool, target) {
-            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
+            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.build_touch_surface(&self.world, i, ray),
             _ => None,
         };
         let used = self.build.mouse_down(
@@ -9285,6 +9285,8 @@ impl App {
                 _ => None,
             };
             self.scene.set_debug_alpha(&mut self.world, debug_alpha);
+            self.scene
+                .set_pick_transparent(self.build.open && self.settings.build.select_invisible);
             self.scene.set_pass_view(&mut self.world, self.settings.debug.pass_view);
             // finished jobs only leave cheap work to the main thread (their
             // data is staged for the GPU by the jobs): a short budget is

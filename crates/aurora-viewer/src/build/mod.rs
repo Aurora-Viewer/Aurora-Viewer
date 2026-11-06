@@ -180,6 +180,10 @@ pub struct BuildSettings {
     pub land_brush_force: f32,
     /// Actual-root pivot: primary linkset root, or primary prim in linked editing.
     pub actual_root: bool,
+    /// SelectInvisibleObjects (on, saved): with the build floater open,
+    /// its left picks take invisible faces and texture holes too
+    /// (`Scene::set_pick_transparent`).
+    pub select_invisible: bool,
     /// SelectReflectionProbes: off at each start (settings.xml, Persist=0).
     #[serde(skip)]
     pub select_probes: bool,
@@ -598,6 +602,7 @@ impl Default for BuildSettings {
             land_brush_size: 2.0,
             land_brush_force: 1.0,
             actual_root: false,
+            select_invisible: true,
             select_probes: false,
             select_owned_only: false,
             select_movable_only: false,

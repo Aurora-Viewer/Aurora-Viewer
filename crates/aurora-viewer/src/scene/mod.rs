@@ -949,6 +949,9 @@ pub struct Scene {
     complexity_rules: u64,
     /// Debug "Show transparency": Some(rigged faces too).
     debug_alpha: Option<bool>,
+    /// The build tools' left picks take every face, invisible ones and
+    /// texture holes included (`set_pick_transparent`).
+    pick_transparent: bool,
     beacon_highlights: HashSet<usize>,
     pub beacon_markers: Vec<(Vec3, crate::world::beacons::Kind)>,
     land_overlays: world_overlays::LandOverlays,
@@ -1291,6 +1294,16 @@ impl Scene {
         self.debug_alpha = debug_alpha;
     }
 
+    /// LLViewerWindow::pickImmediate (indra/newview/llviewerwindow.cpp):
+    /// with the build floater open and SelectInvisibleObjects on, or with
+    /// Show transparency, every pick is `pick_transparent`, Select Face
+    /// included (#2318). Here, the build tools' left picks
+    /// (`left_selection_pick`, `left_edit_ray_hits`, `build_touch_surface`);
+    /// ordinary clicks keep their own rule. After `set_debug_alpha`.
+    pub fn set_pick_transparent(&mut self, build_select_invisible: bool) {
+        self.pick_transparent = build_select_invisible || self.debug_alpha.is_some();
+    }
+
     /// Dev Toolbox P4 "What changes when still" (AURORA_STILL_CHECK).
     pub fn set_still_check(&mut self, on: bool) {
         if on != self.still.is_some() {
@@ -1513,6 +1526,7 @@ impl Scene {
             selection_faces: Default::default(),
             selection_changed: None,
             debug_alpha: None,
+            pick_transparent: false,
             beacon_highlights: Default::default(),
             beacon_markers: Vec::new(),
             land_overlays: Default::default(),

@@ -78,6 +78,17 @@ pub fn final_action(world: &World, idx: usize) -> Option<u8> {
     })
 }
 
+/// LLViewerObject::specialHoverCursor (indra/newview/llviewerobject.cpp):
+/// physics, a touch script or a click action on this prim itself (its root
+/// does not count). Its faces at alpha 0 stay pickable without
+/// `pick_transparent` (LLVOVolume::lineSegmentIntersect).
+pub fn special_hover_cursor(o: &crate::world::objects::Object) -> bool {
+    o.update_flags & (USE_PHYSICS | crate::ui::context::flags::HANDLE_TOUCH) != 0 || o.click_action != 0
+}
+
+/// FLAGS_USE_PHYSICS (llprimitive.h).
+const USE_PHYSICS: u32 = 1 << 0;
+
 fn use_action(world: &World, idx: usize) -> bool {
     let Some((r, attached)) = root(world, idx) else { return false };
     !attached
@@ -461,6 +472,34 @@ mod tests {
         }
         w
     }
+    /// specialHoverCursor reads the prim alone: a root's touch script or
+    /// click action does not count; physics, a touch script or any click
+    /// action but Touch (0) does.
+    #[test]
+    fn special_hover_cursor_reads_the_prim_itself() {
+        let mut w = world();
+        let root = w.objects.index_of_uuid(&crate::demo::action_id(971)).unwrap();
+        let child = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        let r = w.objects.get_mut(root).unwrap();
+        r.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        r.click_action = code::SIT;
+        let o = w.objects.get_mut(child).unwrap();
+        o.update_flags = 0;
+        o.click_action = code::TOUCH;
+        assert!(!special_hover_cursor(w.objects.get(child).unwrap()), "the root's do not count");
+        for (flags, action) in [
+            (crate::ui::context::flags::HANDLE_TOUCH, code::TOUCH),
+            (USE_PHYSICS, code::TOUCH),
+            (0, code::SIT),
+            (0, code::DISABLED),
+        ] {
+            let o = w.objects.get_mut(child).unwrap();
+            o.update_flags = flags;
+            o.click_action = action;
+            assert!(special_hover_cursor(w.objects.get(child).unwrap()), "{flags} {action}");
+        }
+    }
+
     #[test]
     fn inheritance_overrides_disabled_and_attachments() {
         let mut w = world();

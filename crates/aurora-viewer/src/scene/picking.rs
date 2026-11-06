@@ -383,6 +383,23 @@ impl Scene {
         self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Surface)
     }
 
+    /// The face rule of the build tools' left picks: every face with
+    /// `pick_transparent` (Select invisible objects, Show transparency),
+    /// as LLVOVolume::lineSegmentIntersect takes them all then; otherwise
+    /// the left button's (texture holes let the pick through, #1574).
+    fn build_pick(&self) -> FacePick {
+        if self.pick_transparent { FacePick::Surface } else { FacePick::Left }
+    }
+
+    /// Whether a build pick in `mode` takes the faces of `o` at alpha 0:
+    /// always with `pick_transparent`; without it (Left), only when the
+    /// prim itself shows the special cursor (LLVOVolume::lineSegmentIntersect,
+    /// `interaction::special_hover_cursor`). Only the build picks run in
+    /// Left mode here (`left_selection_pick`, `left_edit_ray_hits`).
+    fn build_hidden(&self, mode: FacePick, o: &Object) -> bool {
+        mode != FacePick::Left || crate::interaction::special_hover_cursor(o)
+    }
+
     pub fn left_selection_pick(
         &self,
         world: &World,
@@ -392,7 +409,7 @@ impl Scene {
         select_probes: bool,
         far: f32,
     ) -> (Option<Vec3>, Option<usize>) {
-        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Left)
+        self.selection_pick_mode(world, ray, depth, build, select_probes, far, self.build_pick())
     }
 
     #[allow(clippy::too_many_arguments)] // Selection inputs plus the button's alpha policy.
@@ -431,7 +448,7 @@ impl Scene {
                 {
                     return None;
                 }
-                let hit = self.face_hit_mode(world, idx, ray, now, true, mode)?;
+                let hit = self.face_hit_mode(world, idx, ray, now, self.build_hidden(mode, o), mode)?;
                 (hit.t.is_finite() && hit.t <= limit).then_some((hit.t, idx))
             });
             let hit = nearest_hit(hits, |h| *h);
@@ -584,7 +601,7 @@ impl Scene {
         select_probes: bool,
         select_limit: Option<f32>,
     ) -> Vec<usize> {
-        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Left)
+        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, self.build_pick())
     }
 
     fn edit_ray_hits_mode(
@@ -619,7 +636,7 @@ impl Scene {
             {
                 return None;
             }
-            let hit = self.face_hit_mode(world, idx, ray, now, true, mode)?;
+            let hit = self.face_hit_mode(world, idx, ray, now, self.build_hidden(mode, o), mode)?;
             if !hit.t.is_finite() || (!hud && select_limit.is_some_and(|max| (ray.0 + ray.1 * hit.t).distance(world.agent.position) > max))
             {
                 return None;
@@ -1258,9 +1275,22 @@ impl Scene {
         self.touch_surface_mode(world, idx, ray, FacePick::Left)
     }
 
+    /// The surface the build tools' left pick took (face tool, grab and
+    /// placement), under the same rule as their search (`build_pick`).
+    pub fn build_touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
+        let mode = self.build_pick();
+        let hidden = world.objects.get(idx).is_some_and(|o| self.build_hidden(mode, o));
+        self.touch_surface_in(world, idx, ray, mode, hidden)
+    }
+
     fn touch_surface_mode(&self, world: &World, idx: usize, ray: (Vec3, Vec3), mode: FacePick) -> Option<TouchSurface> {
+        self.touch_surface_in(world, idx, ray, mode, true)
+    }
+
+    /// `touch_surface_mode`, faces at alpha 0 only with `include_hidden`.
+    fn touch_surface_in(&self, world: &World, idx: usize, ray: (Vec3, Vec3), mode: FacePick, include_hidden: bool) -> Option<TouchSurface> {
         let o = world.objects.get(idx)?;
-        let hit = self.face_hit_mode(world, idx, ray, Instant::now(), true, mode)?;
+        let hit = self.face_hit_mode(world, idx, ray, Instant::now(), include_hidden, mode)?;
         let tf = o.te.as_ref().map(|t| *t.face(hit.face)).unwrap_or_default();
         let uv = pick::te_transform(hit.uv, [tf.scale_s, tf.scale_t], [tf.offset_s, tf.offset_t], tf.rotation);
         let mut position = ray.0 + ray.1 * hit.t;
@@ -3892,5 +3922,85 @@ pub(crate) mod tests {
                 f.color[3] = 1.0;
             }
         }
+    }
+
+    /// #2318: with the build floater open and Select invisible objects on
+    /// (or Show transparency), Select Face and the other build picks take a
+    /// face under the library's Transparent texture, face 0 for the face
+    /// tool; off, they go through it to what is behind
+    /// (LLViewerWindow::pickImmediate forces `pick_transparent`).
+    #[test]
+    fn build_face_pick_reaches_transparent_faces_with_select_invisible() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let f = &mut scene.gpu[front].faces[0];
+        f.tex_id = aurora_prim::te::TRANSPARENT_TEXTURE;
+        f.base_slot = aurora_render::textures::TRANSPARENT;
+        f.pass = super::classify(f, AlphaKind::Mask);
+        assert_eq!(f.pass, Pass::Hidden);
+        // (nothing scripted: the build pick alone decides, not a touch rule)
+        let o = world.objects.get_mut(front).unwrap();
+        o.click_action = crate::interaction::code::DISABLED;
+        o.update_flags = 0;
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        let picks = |scene: &Scene, world: &World| {
+            (
+                scene.left_edit_ray_hits(world, ray, false, false, None).first().copied(),
+                scene.left_selection_pick(world, Some(ray), Some(depth), true, false, 100.0),
+                scene.build_touch_surface(world, front, ray).map(|t| t.face),
+            )
+        };
+        // build floater open, Select invisible objects on
+        scene.set_pick_transparent(true);
+        assert_eq!(picks(&scene, &world), (Some(front), (Some(front_point), Some(front)), Some(0)));
+        // off: through it
+        scene.set_pick_transparent(false);
+        assert_eq!(picks(&scene, &world), (Some(back), (Some(depth), Some(back)), None));
+        // Show transparency (Ctrl+Alt+T): as on, whatever the setting
+        scene.set_debug_alpha(&mut world, Some(false));
+        scene.set_pick_transparent(false);
+        assert_eq!(picks(&scene, &world), (Some(front), (Some(front_point), Some(front)), Some(0)));
+        // ordinary left clicks keep their own rule
+        assert!(scene.left_touch_surface(&world, front, ray).is_none());
+
+        // 100% transparency (TE alpha 0) over the default, opaque texture:
+        // without pick_transparent, LLVOVolume::lineSegmentIntersect skips
+        // the face unless the prim itself shows the special cursor
+        scene.set_debug_alpha(&mut world, None);
+        let f = &mut scene.gpu[front].faces[0];
+        f.tex_id = Uuid::nil();
+        f.base_slot = 0;
+        f.te_alpha = 0.0;
+        f.pass = Pass::Hidden;
+        for f in &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces {
+            f.color[3] = 0.0;
+        }
+        // (any click action but Touch is a special cursor, None included)
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::TOUCH;
+        scene.set_pick_transparent(false);
+        assert_eq!(picks(&scene, &world), (Some(back), (Some(depth), Some(back)), None), "off");
+        scene.set_pick_transparent(true);
+        assert_eq!(
+            picks(&scene, &world),
+            (Some(front), (Some(front_point), Some(front)), Some(0)),
+            "on"
+        );
+        // off, but a touch script on the prim itself
+        scene.set_pick_transparent(false);
+        world.objects.get_mut(front).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert_eq!(
+            picks(&scene, &world),
+            (Some(front), (Some(front_point), Some(front)), Some(0)),
+            "touch"
+        );
+        // ordinary left clicks: unchanged, they reach the invisible face of
+        // a prim with a touch script
+        assert!(scene.left_touch_surface(&world, front, ray).is_some());
     }
 }

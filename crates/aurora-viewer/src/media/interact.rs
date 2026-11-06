@@ -23,9 +23,6 @@ pub struct MediaHit {
     pub t: f32,
 }
 
-/// FLAGS_USE_PHYSICS (llprimitive.h).
-const FLAGS_USE_PHYSICS: u32 = 1 << 0;
-
 impl MediaManager {
     /// Faces of an object for picking (the prim volume at its LOD, or the
     /// cached mesh asset), kept while the object's shape is unchanged. A
@@ -149,7 +146,7 @@ impl MediaManager {
             // (specialHoverCursor: physics, a touch script, a click action),
             // so a hidden media panel in front of a HUD button lets the
             // button take the click
-            let special_cursor = o.update_flags & (FLAGS_USE_PHYSICS | crate::ui::context::flags::HANDLE_TOUCH) != 0 || o.click_action != 0;
+            let special_cursor = crate::interaction::special_hover_cursor(o);
             let shown = |fi: usize| special_cursor || self.build_mode || o.te.as_ref().is_none_or(|te| te.face(fi).color[3] > 0.0);
             let tris = faces.iter().enumerate().filter_map(|(fi, f)| {
                 let f = f.as_ref()?;

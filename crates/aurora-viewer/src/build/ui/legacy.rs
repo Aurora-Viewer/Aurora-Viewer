@@ -102,15 +102,17 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
             tool.set_edit_mode(world, s, mode);
         }
     }
-    let mut options = slot(ui, canvas, [143.0, 51.0, 134.0, 96.0], "legacy-edit-checks");
-    options.spacing_mut().interact_size.y = 16.0;
+    // (seven rows down to the links ruler)
+    let mut options = slot(ui, canvas, [143.0, 51.0, 134.0, 104.0], "legacy-edit-checks");
+    options.spacing_mut().interact_size.y = 14.0;
     for (value, label, id) in [
         (s.scale_uniform, aurora_i18n::tr!("build-compact-both-sides"), 0),
         (s.scale_stretch_textures, aurora_i18n::tr!("build-compact-stretch-textures"), 1),
         (s.snap, aurora_i18n::tr!("build-compact-snap"), 2),
         (s.actual_root, aurora_i18n::tr!("build-compact-root-axis"), 3),
         (s.show_highlight, aurora_i18n::tr!("build-compact-highlight"), 4),
-        (s.select_probes, aurora_i18n::tr!("build-legacy-probes"), 5),
+        (s.select_invisible, aurora_i18n::tr!("build-legacy-invisible"), 5),
+        (s.select_probes, aurora_i18n::tr!("build-legacy-probes"), 6),
     ] {
         let mut value = value;
         let response = widgets::checkbox(&mut options, p, &mut value, RichText::new(label).size(11.0)).on_hover_text(label);
@@ -125,6 +127,7 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
                 }),
                 3 => s.actual_root = value,
                 4 => s.show_highlight = value,
+                5 => s.select_invisible = value,
                 _ => s.select_probes = value,
             }
         }
