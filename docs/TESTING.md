@@ -6102,7 +6102,8 @@ failure. Grid validation and any paid upload are performed by the human.
   (window minimized at start: its bar flashes at each IM instead of the
   button, then stays tinted while they wait unread) also keep them, and click the first IM card at frame 1250: the
   Conversations window opens or expands, comes to the front on that
-  conversation, and its card leaves the list. Capture with
+  conversation, its card leaves the list and its field takes the keyboard,
+  ready to type in (typing must not go to the nearby chat). Capture with
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
   existing sounds. `emote`: the second IM and the group's are emotes

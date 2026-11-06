@@ -1307,6 +1307,37 @@ fn apply_test_overrides(settings: &mut Settings) {
     }
 }
 
+/// Shows `conversation` with its field taking the keyboard, ready to type
+/// in, as Firestorm's floater shown with the focus (LLFloaterReg::showInstance,
+/// LLFloater::setFocus → focusFirstItem).
+fn show_conversation_to_type(
+    ctx: &egui::Context,
+    world: &mut crate::world::World,
+    chat: &mut ui::chat::ChatUi,
+    conversations_open: &mut bool,
+    conversation: uuid::Uuid,
+) {
+    world.social.focus_im = Some(conversation);
+    chat.conv_focus_request = true;
+    ui::notifications::open_conversations(ctx, conversations_open);
+}
+
+/// A conversation's toast or card clicked: acknowledges the notification and
+/// shows its conversation ready to type in, as the Legacy Viewer's IM toast
+/// (FSFloaterIM::show → setFocus(true) → focusFirstItem,
+/// indra/newview/fsfloaterim.cpp). Returns the conversation opened.
+fn open_notification_to_type(
+    ctx: &egui::Context,
+    world: &mut crate::world::World,
+    chat: &mut ui::chat::ChatUi,
+    conversations_open: &mut bool,
+    id: u64,
+) -> Option<uuid::Uuid> {
+    let conversation = world.open_from_notification(id)?;
+    show_conversation_to_type(ctx, world, chat, conversations_open, conversation);
+    Some(conversation)
+}
+
 impl App {
     // Growing editor state must not accumulate large return-value temporaries
     // on the Windows main stack while the avatar library is being loaded.
@@ -7422,9 +7453,13 @@ impl App {
             self.world.met(id);
             self.world.ui_sounds.push(UiSound::StartIm);
         }
-        self.world.social.focus_im = Some(id);
-        self.chat_ui.conv_focus_request = true;
-        self.show_conversations();
+        self.show_conversation_to_type(id);
+    }
+
+    /// Shows a conversation the user asked for with its field ready to type
+    /// in (a notification's toast or card, `show_conversation_to_type`).
+    fn show_conversation_to_type(&mut self, id: uuid::Uuid) {
+        show_conversation_to_type(&self.egui_ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id);
     }
 
     /// The Conversations window for a conversation the user asked for (Send
@@ -11788,10 +11823,8 @@ impl App {
                     crate::world::notifications::Data::Message { session, .. } if session == crate::demo::DEMO_NOVA => Some(n.id),
                     _ => None,
                 });
-                if let Some(id) = nova
-                    && self.world.open_from_notification(id).is_some()
-                {
-                    ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
+                if let Some(id) = nova {
+                    open_notification_to_type(&self.egui_ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id);
                 }
             }
         }
@@ -16865,11 +16898,10 @@ impl App {
                             .list
                             .iter()
                             .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Presence { .. }));
-                        if self.world.open_from_notification(id).is_some() {
-                            if presence {
-                                self.world.ui_sounds.push(UiSound::StartIm);
-                            }
-                            ui::notifications::open_conversations(&ctx, &mut self.panels.chat);
+                        if open_notification_to_type(&ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id).is_some()
+                            && presence
+                        {
+                            self.world.ui_sounds.push(UiSound::StartIm);
                         }
                         continue;
                     }
@@ -21245,6 +21277,33 @@ mod tests {
             capture_files(Path::new("c/a.png"), "2560, 2500"),
             vec![(2500, PathBuf::from("c/a-2500.png")), (2560, PathBuf::from("c/a-2560.png"))]
         );
+    }
+
+    /// A clicked IM toast or card opens its conversation with the field
+    /// taking the keyboard, not the nearby chat.
+    #[test]
+    fn a_clicked_notification_opens_its_conversation_ready_to_type() {
+        use super::open_notification_to_type;
+        let ctx = egui::Context::default();
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut chat = crate::ui::chat::ChatUi::default();
+        let mut open = false;
+        let jane = uuid::Uuid::from_u128(0x2285);
+        let id = world.notifications.push_message(jane, jane, "Jane Doe", "hello", true);
+        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, id), Some(jane));
+        assert!(open, "the Conversations window opens");
+        assert!(chat.conv_focus_request, "the conversation's field takes the keyboard");
+        assert_eq!(world.social.focus_im, Some(jane), "the Conversations window shows that tab");
+        assert!(
+            !world.notifications.list.iter().any(|n| n.id == id),
+            "the click acknowledges the card"
+        );
+        // an offline friend is a toast that opens nothing and takes no keyboard
+        chat.conv_focus_request = false;
+        open = false;
+        let off = world.notifications.push_presence(jane, "Jane Doe is offline.", false);
+        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, off), None);
+        assert!(!open && !chat.conv_focus_request);
     }
 
     #[test]
