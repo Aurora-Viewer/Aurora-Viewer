@@ -171,11 +171,14 @@ pub enum TexSource {
     },
 }
 
+// LLImageGL::updatePickMask (indra/llrender/llimagegl.cpp, LGPL 2.1).
+const PICK_ALPHA_CUTOFF: u8 = 32;
+
 /// Picking follows LLImageGL::updatePickMask / getMask: one bit per 2×2
 /// block, alpha > 32 at its first texel, repeated UVs. Top-left decoded rows
 /// are indexed from the bottom, like world UVs. No OpenGL state or
 /// readback is involved; masks are built by decode workers and retired off-thread.
-/// A second, full-resolution bit plane preserves alpha > 0 for left clicks
+/// A second, full-resolution bit plane uses the same alpha > 32 for left clicks
 /// on world Blend faces, without changing the legacy mask used by HUDs.
 pub struct PickMask {
     width: u32,
@@ -206,7 +209,7 @@ impl PickMask {
         for y in 0..h {
             for x in 0..w {
                 let row = height - 1 - y * 2;
-                if rgba[((row * width + x * 2) as usize) * 4 + 3] > 32 {
+                if rgba[((row * width + x * 2) as usize) * 4 + 3] > PICK_ALPHA_CUTOFF {
                     let bit = (y * w + x) as usize;
                     bits[bit / 8] |= 1 << (bit % 8);
                 }
@@ -214,7 +217,7 @@ impl PickMask {
         }
         for y in 0..height {
             for x in 0..width {
-                if rgba[(((height - 1 - y) * width + x) as usize) * 4 + 3] != 0 {
+                if rgba[(((height - 1 - y) * width + x) as usize) * 4 + 3] > PICK_ALPHA_CUTOFF {
                     let bit = (y * width + x) as usize;
                     bits[coarse + bit / 8] |= 1 << (bit % 8);
                 }
@@ -227,7 +230,7 @@ impl PickMask {
         self.hits_plane(uv, self.width.div_ceil(2), self.height.div_ceil(2), 0)
     }
 
-    pub fn hits_nonzero(&self, uv: glam::Vec2) -> bool {
+    pub fn hits_exact(&self, uv: glam::Vec2) -> bool {
         let coarse = (self.width.div_ceil(2) as usize * self.height.div_ceil(2) as usize).div_ceil(8);
         self.hits_plane(uv, self.width, self.height, coarse)
     }
@@ -1352,13 +1355,11 @@ impl TextureStreamer {
 
     /// The transcoded chain of a texture (`texture_cache.rs`).
     fn transcoded_path(cache_dir: &std::path::Path, id: &Uuid) -> PathBuf {
-        cache_dir.join("tex").join(format!("{id}.bc7"))
+        crate::cache::path(cache_dir, "tex", id, "bc7")
     }
 
     fn cache_path(cache_dir: &std::path::Path, id: &Uuid, complete: bool) -> PathBuf {
-        cache_dir
-            .join("tex")
-            .join(format!("{id}.{}", if complete { "j2c" } else { "part" }))
+        crate::cache::path(cache_dir, "tex", id, if complete { "j2c" } else { "part" })
     }
 
     /// Reference a texture; returns its bindless slot (placeholder until loaded).
@@ -2762,8 +2763,8 @@ impl TextureStreamer {
                         e.data = Arc::default();
                         e.complete = false;
                         e.info = None;
-                        let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.j2c")));
-                        let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.part")));
+                        let _ = std::fs::remove_file(Self::cache_path(&self.cache_dir, &id, true));
+                        let _ = std::fs::remove_file(Self::cache_path(&self.cache_dir, &id, false));
                     }
                     e.retry_at = Some(Instant::now() + Duration::from_secs(2u64.pow(e.failures.min(6))));
                     Self::settle(&mut self.todo, &mut self.counts, id, e);
@@ -3732,7 +3733,7 @@ mod tests {
     }
 
     #[test]
-    fn nonzero_pick_mask_preserves_each_texel_and_survives_cache_round_trip() {
+    fn exact_pick_mask_uses_legacy_threshold_and_survives_cache_round_trip() {
         let mut rgba = vec![255; 3 * 3 * 4];
         for (pixel, alpha) in [(0, 0), (1, 1), (2, 32), (3, 33), (4, 0), (5, 127), (6, 255), (7, 0), (8, 1)] {
             rgba[pixel * 4 + 3] = alpha;
@@ -3743,9 +3744,9 @@ mod tests {
         for y in 0..3 {
             for x in 0..3 {
                 let uv = glam::Vec2::new((x as f32 + 0.5) / 3.0, (2.5 - y as f32) / 3.0);
-                let nonzero = rgba[(y * 3 + x) * 4 + 3] != 0;
-                assert_eq!(mask.hits_nonzero(uv), nonzero);
-                assert_eq!(restored.hits_nonzero(uv + glam::Vec2::new(-2.0, 3.0)), nonzero);
+                let blocks = rgba[(y * 3 + x) * 4 + 3] > 32;
+                assert_eq!(mask.hits_exact(uv), blocks);
+                assert_eq!(restored.hits_exact(uv + glam::Vec2::new(-2.0, 3.0)), blocks);
                 assert_eq!(restored.hits(uv), mask.hits(uv));
             }
         }
