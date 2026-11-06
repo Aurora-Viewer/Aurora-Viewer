@@ -405,7 +405,7 @@ pub(crate) fn usable(inv: &Inventory, it: &aurora_net::inventory::InvItem) -> bo
     it.asset_type == 0
         && !it.asset_id.is_nil()
         && !rules::in_type(inv, it.id, 14)
-        && (rules::library(inv, it.id) || it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
+        && (rules::library(inv, it.id) || rules::held(inv, it) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
 }
 /// A texture id that may become an item image (pasted, typed or picked):
 /// a built-in or local texture, any id in demo mode, or the asset of a
