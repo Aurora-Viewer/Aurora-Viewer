@@ -72,6 +72,17 @@ impl Fixture {
                     false,
                 ));
             }
+            actions.extend(mini::show(
+                ui.ctx(),
+                &crate::theme::Theme::default().palette(),
+                &self.catalog,
+                &self.inv,
+                &mut self.runtime,
+                &mut self.account,
+                &mut self.movement_prefs,
+                &mut self.manager_open,
+                false,
+            ));
             actions.extend(show(
                 ui.ctx(),
                 &crate::theme::Theme::default().palette(),
@@ -995,6 +1006,93 @@ fn quick_controls_share_preferences_and_preserve_water_mode_exclusion() {
     assert!(f.manager_open);
     assert!(!f.quick.as_ref().expect("quick").open);
     assert_eq!(f.inv.generation, generation, "quick controls must not mutate inventory");
+}
+
+#[test]
+fn quick_popup_names_the_selected_animation_and_tracks_manual_steps() {
+    let mut f = quick_fixture(true);
+    f.runtime.current = Some(State::Standing);
+    let set = f.catalog.selected(f.account.selected).expect("set").clone();
+    let selected_name = set.animation_config(State::Standing).expect("stands").steps[0].name.clone();
+    let selected_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = selected_name);
+    let mut shapes = f.draw(Vec::new()).1;
+    assert!(
+        shapes.iter_mut().any(|shape| contains_text(&shape.shape, &selected_text)),
+        "{selected_text}"
+    );
+    f.runtime.step(&set, State::Standing, true);
+    let next_name = set.animation_config(State::Standing).expect("stands").steps[1].name.clone();
+    let next_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = next_name);
+    let mut shapes = f.draw(Vec::new()).1;
+    assert!(
+        shapes.iter_mut().any(|shape| contains_text(&shape.shape, &next_text)),
+        "{next_text}"
+    );
+}
+
+#[test]
+fn quick_pin_opens_the_persistent_mini_window() {
+    let mut f = quick_fixture(true);
+    assert!(!f.account.mini_open);
+    f.click(aurora_i18n::tr!("ao-quick-pin"));
+    assert!(f.account.mini_open);
+    assert!(!f.quick.as_ref().expect("quick").open);
+}
+
+#[test]
+fn mini_ao_movement_switches_emit_preference_changes() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.mini_open = true;
+    f.settle();
+    assert!(
+        f.click(aurora_i18n::tr!("movement-swimming"))
+            .iter()
+            .any(|action| matches!(action, Action::MovementPreferences))
+    );
+    assert!(f.movement_prefs.swimming);
+}
+
+#[test]
+fn mini_ao_can_toggle_sit_override_without_opening_the_manager() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.mini_open = true;
+    f.settle();
+    assert!(matches!(f.click(aurora_i18n::tr!("ao-sits")).as_slice(), [Action::Edit(_, None)]));
+}
+
+#[test]
+fn mini_ao_shows_the_current_step_and_stays_open_after_outside_clicks() {
+    let mut f = quick_fixture(true);
+    f.quick = None;
+    f.account.enabled = true;
+    f.runtime.current = Some(State::Standing);
+    f.account.mini_open = true;
+    f.settle();
+    let set = f.catalog.selected(f.account.selected).expect("set").clone();
+    let name = set.animation_config(State::Standing).expect("stands").steps[0].name.clone();
+    let text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = name);
+    let mut shapes = f.draw(Vec::new()).1;
+    assert!(shapes.iter_mut().any(|shape| contains_text(&shape.shape, &text)), "{text}");
+    f.runtime.step(&set, State::Standing, true);
+    let next = set.animation_config(State::Standing).expect("stands").steps[1].name.clone();
+    let next_text = aurora_i18n::tr!("ao-now-playing", state = State::Standing.label(), name = next);
+    let mut shapes = f.draw(Vec::new()).1;
+    assert!(
+        shapes.iter_mut().any(|shape| contains_text(&shape.shape, &next_text)),
+        "{next_text}"
+    );
+    f.click_at(egui::pos2(20.0, 20.0));
+    assert!(f.account.mini_open, "world clicks do not dismiss the persistent window");
+}
+
+fn contains_text(shape: &egui::Shape, text: &str) -> bool {
+    match shape {
+        egui::Shape::Text(t) => t.galley.text() == text,
+        egui::Shape::Vec(shapes) => shapes.iter().any(|shape| contains_text(shape, text)),
+        _ => false,
+    }
 }
 
 #[test]

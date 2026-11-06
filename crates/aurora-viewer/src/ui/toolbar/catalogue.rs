@@ -48,6 +48,7 @@ pub const COMMANDS: &[Command] = commands![
     "performance", "Command_Performance_Icon", "common-performance", true;
     "sit", "groundsit", "extra-sit-on-ground-stand-up", true;
     "ao", "AO", "ao-title", true;
+    "ao_mini", "app-window-filled", "toolbar-command-ao-mini", true;
     "movement", "swimming", "movement-swimming", true;
     "preferences", "Command_Preferences_Icon", "common-preferences", true;
     "fly", "plane-tilt-filled", "extra-fly-land-f", true;
