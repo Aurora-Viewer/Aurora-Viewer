@@ -3752,6 +3752,7 @@ impl App {
                 self.restore_local_environment();
             }
             NetEvent::TeleportFinished { .. } => {
+                crate::crash::flight_recorder::teleport_ended();
                 self.stop_local_typing();
                 if self.world.tp_show_progress && matches!(self.screen, Screen::World) && !self.was_teleporting {
                     // Finish and arrival can be drained in the same frame.
@@ -7132,6 +7133,7 @@ impl App {
     }
 
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
+        crate::crash::flight_recorder::teleport_started();
         self.portal_journey = None;
         self.drop_clicks();
         self.stop_autopilot(true);
@@ -11685,7 +11687,7 @@ impl App {
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         // before the deep profile, which takes the frame's upload bytes
-        self.crash_frame();
+        self.crash_frame(&gfx.renderer, &gfx.window);
         self.end_deep_profile(&gfx.renderer);
         self.monitor_frame(&gfx.renderer);
         self.crash_state(&gfx.renderer, &gfx.window);

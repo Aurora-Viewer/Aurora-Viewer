@@ -237,6 +237,11 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             body.push_str(&format!("| {label} | {value} |\n"));
         }
     }
+    if let Some(flight) = super::flight_recorder::read_report(dir) {
+        body.push_str("\n### Flight recorder\n\n```text\n");
+        body.push_str(&flight);
+        body.push_str("```\n");
+    }
     let excerpt = super::privacy::excerpt(&tail);
     if !excerpt.is_empty() {
         body.push_str(&format!(

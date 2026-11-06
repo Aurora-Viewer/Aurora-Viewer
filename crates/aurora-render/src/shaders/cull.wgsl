@@ -47,6 +47,7 @@ const COUNT_PRE2: u32 = 37u;
 // rigged casters (avatars and rigged meshes), then their triangles
 const COUNT_SHADOW: u32 = 41u;
 const SHADOW_STATS: u32 = 9u;
+const COUNT_MAX_INDEX_COUNT: u32 = COUNT_SHADOW + SHADOW_STATS;
 
 // planes of a cascade's caster volume (CullFrame.shadow_planes)
 const SHADOW_PLANES: u32 = 12u;
@@ -327,7 +328,7 @@ fn merged_from_finer(k: u32, c: vec3<f32>, r: f32) -> bool {
 }
 
 var<workgroup> wg_bins: array<atomic<u32>, BINS>;
-var<workgroup> wg_stats: array<atomic<u32>, 2>;
+var<workgroup> wg_stats: array<atomic<u32>, 3>;
 var<workgroup> wg_shadow: array<atomic<u32>, SHADOW_STATS>;
 
 // Bins of face `i` this frame (0: not drawn anywhere).
@@ -445,7 +446,7 @@ fn cs_classify(
     if (lid < BINS) {
         atomicStore(&wg_bins[lid], 0u);
     }
-    if (lid < 2u) {
+    if (lid < 3u) {
         atomicStore(&wg_stats[lid], 0u);
     }
     if (lid < SHADOW_STATS) {
@@ -457,6 +458,9 @@ fn cs_classify(
     if (i < frame.sizes.x) {
         m = face_mask(i);
         masks[i] = m;
+        if (m != 0u) {
+            atomicMax(&wg_stats[2], faces[i].index_count);
+        }
     }
     for (var b = 0u; b < BINS; b++) {
         if (((m >> b) & 1u) != 0u) {
@@ -470,6 +474,7 @@ fn cs_classify(
     if (lid == 0u) {
         atomicAdd(&counts[COUNT_VISIBLE], atomicLoad(&wg_stats[0]));
         atomicAdd(&counts[COUNT_TRIANGLES], atomicLoad(&wg_stats[1]));
+        atomicMax(&counts[COUNT_MAX_INDEX_COUNT], atomicLoad(&wg_stats[2]));
     }
     if (lid < SHADOW_STATS && (frame.sizes.w & F_SHADOW_STATS) != 0u) {
         atomicAdd(&counts[COUNT_SHADOW + lid], atomicLoad(&wg_shadow[lid]));

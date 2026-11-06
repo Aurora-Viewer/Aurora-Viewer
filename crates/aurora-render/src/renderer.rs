@@ -6780,6 +6780,7 @@ impl Backend {
             stats.triangles += c.triangles as u64;
             stats.occluded = occl.then_some(self.occlusion.last_hidden + c.hidden);
             stats.visible_objects = Some(c.visible_objects);
+            stats.max_indirect_index_count = Some(c.max_indirect_index_count);
             stats.gpu_cull = true;
         }
 
@@ -8790,6 +8791,7 @@ impl Backend {
         }
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
+        stats.pipelines_compiling = self.pipeline_build.is_some();
         stats.gpu_pixels = self.timer.as_ref().map_or(0, |t| t.last_pixels);
         stats.target_bytes_per_pixel = self
             .target_bytes
