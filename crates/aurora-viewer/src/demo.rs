@@ -238,6 +238,9 @@ pub mod sound_parcels;
 /// reverb of the surroundings (AURORA_DEMO_SOUND_REVERB).
 #[path = "demo_sound_reverb.rs"]
 pub mod sound_reverb;
+/// The files the scenarios take from a folder, and which ones a build reads.
+#[path = "demo_source.rs"]
+pub mod source;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
 #[path = "demo_staff.rs"]
 pub mod staff;
@@ -6167,14 +6170,15 @@ pub fn chime() -> (Uuid, aurora_audio::SoundClip) {
     (u(0x50_0001), aurora_audio::SoundClip::from_pcm(&pcm, 1, rate))
 }
 
-/// AURORA_DEMO_SOUND: an interface sound for the offline demo, read (never
-/// written) from the real sound cache when a grid session already loaded it,
-/// else a short tick whose pitch depends on the asset (so that different
-/// sounds can be told apart).
+/// AURORA_DEMO_SOUND: an interface sound for the offline demo. A development
+/// build reads it (never writes it) from the sound cache of grid sessions
+/// when one already loaded it (`source`); otherwise a short tick whose pitch
+/// depends on the asset (so that different sounds can be told apart).
 pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
     let demo_cache = crate::settings::cache_dir();
-    if let Some(real) = demo_cache.parent()
-        && let Ok(data) = crate::cache::read(real.join(crate::settings::ASSET_STORE).join("sound").join(format!("{id}.ogg")))
+    if source::reads_cache_files()
+        && let Some(real) = demo_cache.parent()
+        && let Ok(data) = crate::cache::read(crate::scene::sounds::cache_file(&real.join(crate::settings::ASSET_STORE), &id))
         && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
     {
         return clip;
