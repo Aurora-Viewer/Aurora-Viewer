@@ -1726,8 +1726,15 @@ Teleport or the flags of later teleports/invitations.
 `world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
 roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,
 `world/bridge/ik.lsl`, with independent Mono memory and no movement, HTTP or
-periodic timer. It discovers regional publishers once on an authenticated
-arrival handshake and forwards negative-channel events using private owner chat.
+periodic timer. On an authenticated arrival handshake it asks, once, the
+roots avatars sit on and the wearer's own attachments (llRegionSayTo, never a
+region-wide discovery; others' worn publishers show at their next announcement)
+and forwards negative-channel events using private owner chat. Since bridge
+1.41 the viewer's hello goes on a channel derived from the worn root's key
+(new at each rez) and its relay commands on one derived from the relay's random
+session (`bridge::private_channel`); a worn bridge still at 1.40 is also asked
+on the old fixed channel after 10 s of silence while its version is unverified,
+answers with its old version and is updated.
 `world/hand_ik/relay.rs` authenticates relay envelopes, admits announced live
 seat/wearer sources, routes bounded definition requests and applies regional
 state events through the existing atomic revision/profile decoder.
