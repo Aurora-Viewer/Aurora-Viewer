@@ -1102,6 +1102,26 @@ fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
     matches!(screen, Screen::Login) && matches!(action, Some(Action::Preferences | Action::Quit))
 }
 
+/// The key the quit prompt answers itself: Enter (the keypad's too) quits,
+/// Escape cancels. It has no text field, so no other key is its own.
+fn exit_prompt_key(code: KeyCode) -> Option<egui::Key> {
+    match code {
+        KeyCode::Enter | KeyCode::NumpadEnter => Some(egui::Key::Enter),
+        KeyCode::Escape => Some(egui::Key::Escape),
+        _ => None,
+    }
+}
+
+/// The shortcut mask as egui reads it, for the prompt's own keys.
+fn exit_prompt_modifiers(mods: Mods) -> egui::Modifiers {
+    egui::Modifiers {
+        alt: mods.alt,
+        ctrl: mods.ctrl,
+        shift: mods.shift,
+        ..egui::Modifiers::NONE
+    }
+}
+
 /// A press winit made up from the keyboard state when the window gained the
 /// focus. Its synthetic releases stay: they only ever clear a held key.
 fn synthetic_press(is_synthetic: bool, state: ElementState) -> bool {
@@ -20254,6 +20274,23 @@ impl ApplicationHandler for App {
             return;
         }
 
+        // The quit prompt owns the keyboard: no press reaches the screen
+        // behind it (the login's Enter, a chat field, a menu). Enter quits,
+        // Escape cancels; it has no text field for any other key.
+        if self.exit_prompt.open
+            && let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && ke.state == ElementState::Pressed
+        {
+            if !ke.repeat
+                && let PhysicalKey::Code(code) = ke.physical_key
+                && let Some(key) = exit_prompt_key(code)
+                && let Some(action) = self.exit_prompt.key(key, exit_prompt_modifiers(self.key_mods(ke)))
+            {
+                self.confirm_exit(action);
+            }
+            return;
+        }
+
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
         if self.alt_code_key(&event) {
@@ -20912,9 +20949,27 @@ fn restart_with_vr() {
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
+    use super::{
+        RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, fullscreen_shortcut,
+    };
+    use crate::keybinds::Mods;
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_quit_prompt_answers_enter_and_escape_including_the_keypad() {
+        use winit::keyboard::KeyCode;
+        assert_eq!(exit_prompt_key(KeyCode::Enter), Some(egui::Key::Enter));
+        assert_eq!(exit_prompt_key(KeyCode::NumpadEnter), Some(egui::Key::Enter));
+        assert_eq!(exit_prompt_key(KeyCode::Escape), Some(egui::Key::Escape));
+        assert_eq!(exit_prompt_key(KeyCode::KeyA), None);
+        assert!(exit_prompt_modifiers(Mods::default()).is_none());
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        assert!(!exit_prompt_modifiers(ctrl).is_none());
+    }
 
     #[test]
     fn coarse_interface_handles_refine_independently_and_portraits_wait_for_full_ui_size() {

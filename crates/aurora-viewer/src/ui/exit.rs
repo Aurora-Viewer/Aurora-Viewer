@@ -24,6 +24,19 @@ impl ExitPrompt {
     pub fn request(&mut self) {
         self.open = true;
     }
+    /// The prompt's own key, before the screen behind reads it: Enter quits
+    /// (the default button, as `widgets::modal_keys` gives it) and Escape
+    /// cancels. Nothing while a logout is in flight, and only a plain key.
+    pub fn key(&self, key: egui::Key, modifiers: egui::Modifiers) -> Option<Action> {
+        if self.pending.is_some() || !modifiers.is_none() {
+            return None;
+        }
+        match key {
+            egui::Key::Enter => Some(Action::Quit),
+            egui::Key::Escape => Some(Action::Cancel),
+            _ => None,
+        }
+    }
     pub fn confirm(&mut self, action: Action, now: Instant) -> bool {
         if self.pending.is_some() {
             return false;
@@ -232,5 +245,22 @@ mod tests {
             prompt.confirm(action, now);
             assert_eq!(prompt.finish(false, now + Duration::from_secs(6)), Some(action));
         }
+    }
+
+    #[test]
+    fn the_prompt_takes_enter_and_escape_before_the_screen_behind() {
+        let none = egui::Modifiers::NONE;
+        let mut prompt = ExitPrompt::default();
+        prompt.request();
+        assert_eq!(prompt.key(egui::Key::Enter, none), Some(Action::Quit));
+        assert_eq!(prompt.key(egui::Key::Escape, none), Some(Action::Cancel));
+        assert_eq!(prompt.key(egui::Key::A, none), None);
+        for modifiers in [egui::Modifiers::SHIFT, egui::Modifiers::CTRL, egui::Modifiers::ALT] {
+            assert_eq!(prompt.key(egui::Key::Enter, modifiers), None);
+            assert_eq!(prompt.key(egui::Key::Escape, modifiers), None);
+        }
+        prompt.confirm(Action::Quit, Instant::now());
+        assert_eq!(prompt.key(egui::Key::Enter, none), None, "waiting for the logout");
+        assert_eq!(prompt.key(egui::Key::Escape, none), None, "pending logout cannot be cancelled");
     }
 }
