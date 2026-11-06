@@ -383,6 +383,7 @@ fn failed_compilation_does_not_request_a_save_of_unchanged_scripts() {
         result: Ok(aurora_net::scripts::ScriptSaved {
             asset: Uuid::nil(),
             compiled: false,
+            checked: true,
             errors: vec!["Synthetic compilation error".into()],
         }),
     });
@@ -1183,6 +1184,7 @@ fn an_early_hello_survives_the_upload_reply_and_boot_status_requires_the_exact_w
         result: Ok(aurora_net::scripts::ScriptSaved {
             asset: Uuid::new_v4(),
             compiled: true,
+            checked: true,
             errors: Vec::new(),
         }),
     });
