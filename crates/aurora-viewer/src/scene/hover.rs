@@ -227,6 +227,9 @@ const CLASSES_SWEPT_PER_SEARCH: usize = 16;
 /// whatever the ray whose class does not rule them out.
 #[derive(Default)]
 pub struct Candidates {
+    /// A rigged object is present, or a wearer may cover this ray: the cursor needs
+    /// the asynchronous drawn-face query used by left clicks.
+    drawn: bool,
     /// For `Scene::ignored_before`.
     ignore: Vec<usize>,
     /// For `Scene::transparent_action_point`.
@@ -481,6 +484,7 @@ impl PickIndex {
     /// without `classes`, as before the classes, while its class is not
     /// known, or if it has no bounds.
     fn hover_candidates(&self, probe: &Probe, classes: bool, out: &mut Candidates) {
+        out.drawn = false;
         out.ignore.clear();
         out.see_through.clear();
         out.point.clear();
@@ -488,6 +492,10 @@ impl PickIndex {
             if !e.pickable() {
                 continue;
             }
+            // Rigged bounds are only a proxy around the wearer (as in
+            // `ray_may_hit`): wings or a long animated mesh can extend far
+            // beyond it. Only the rigid bounds may rule out the GPU query.
+            out.drawn |= e.skinned || (e.aside && e.concerns(probe));
             if e.always && classes && c & class::KNOWN != 0 && e.radius > 0.0 {
                 if c & class::IGNORE != 0 {
                     out.ignore.push(i);
@@ -672,6 +680,7 @@ type HoverHit = (Option<Vec3>, Option<usize>);
 
 #[derive(Default)]
 pub struct HoverCache {
+    needs_drawn: bool,
     kept: Option<(Asked, HoverHit, Instant)>,
     /// Candidate lists, reused.
     candidates: Candidates,
@@ -745,6 +754,10 @@ fn profile_enabled() -> bool {
 }
 
 impl super::Scene {
+    pub fn hover_needs_drawn(&self) -> bool {
+        self.hover.needs_drawn
+    }
+
     /// The HUD object the hover cursor is over, including invisible Mask/Blend
     /// buttons, which comes before any object of the world.
     pub fn hover_hud(&mut self, world: &crate::world::World, cursor: (f32, f32)) -> Option<usize> {
@@ -772,7 +785,11 @@ impl super::Scene {
     /// The cached surface point as well, to bound a focused media's hover
     /// by the same foreground object as the world cursor.
     pub fn hover_pick(&mut self, world: &crate::world::World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, far: f32) -> HoverHit {
-        let Some(ray) = ray else { return (depth, None) };
+        let Some(ray) = ray else {
+            self.hover.needs_drawn = false;
+            self.hover.invalidate();
+            return (depth, None);
+        };
         let probe = Probe { ray, depth };
         let asked = Asked { probe, far };
         let now = Instant::now();
@@ -810,21 +827,28 @@ impl super::Scene {
         }
         let mut candidates = std::mem::take(&mut self.hover.candidates);
         self.pick.hover_candidates(&probe, classes, &mut candidates);
+        self.hover.needs_drawn = candidates.drawn;
         let t_index = profile.then(Instant::now);
-        // (the steps of `interaction_point`, each over its own candidates)
+        // The left-click action point, each step over its own candidates.
         let ignored = self.ignored_before(world, ray, depth, far, now, Some(&candidates.ignore));
         let point = if ignored {
             self.pick.candidates(&probe, &mut candidates.all);
-            self.point_behind_ignored(world, ray, far, now, Some(&candidates.all))
+            self.point_behind_ignored_mode(world, ray, far, now, Some(&candidates.all), super::picking::FacePick::Left)
         } else {
-            self.transparent_action_point(world, ray, depth, false, far, Some(&candidates.see_through))
+            self.transparent_action_point_mode(
+                world,
+                ray,
+                depth,
+                true,
+                far,
+                Some(&candidates.see_through),
+                super::picking::FacePick::Left,
+            )
         };
         let blend = self.blend_hit(world, ray, point, far, Some(&candidates.see_through));
         let point = blend.map(|(t, _)| ray.0 + ray.1 * t).or(point);
         let t_point = profile.then(Instant::now);
-        let object = blend
-            .map(|(_, idx)| idx)
-            .or_else(|| point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, Some(&candidates.point))));
+        let object = point.and_then(|point| self.interaction_at_ray_among(world, point, ray, true, Some(&candidates.point)));
         let answer = (point, object);
         if let (Some(t_index), Some(t_point)) = (t_index, t_point) {
             let done = Instant::now();
@@ -868,21 +892,18 @@ impl super::Scene {
     /// Reference search for AURORA_HOVER_CHECK, without the spatial index,
     /// classes or triangle hierarchies.
     fn full_hover_pick(&self, world: &crate::world::World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32) -> HoverHit {
-        let point = self.interaction_point(world, Some(ray), depth, false, far);
-        if let Some((t, idx)) = self.blend_hit(world, ray, point, far, None) {
-            return (Some(ray.0 + ray.1 * t), Some(idx));
-        }
+        let point = self.action_point_among(world, ray, depth, far, None);
         (
             point,
-            point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, None)),
+            point.and_then(|point| self.interaction_at_ray_among(world, point, ray, true, None)),
         )
     }
 
     /// The class of an object for the hover search ([`class`]), from what
     /// the steps of the search read: `ignored_before` looks at the objects
     /// set to IGNORE only, `transparent_action_point` at those with a
-    /// blended face that are not avatars, `interaction_at_ray` at neither
-    /// the avatars nor the meshes they wear.
+    /// blended/hidden face that are not avatars, `interaction_at_ray` at
+    /// neither avatars nor the visible faces of worn meshes.
     fn hover_class(&self, world: &crate::world::World, idx: usize) -> u8 {
         let mut c = class::KNOWN;
         // (no object: every step leaves the slot out)
@@ -904,12 +925,12 @@ impl super::Scene {
             if o.click_action == crate::interaction::code::IGNORE {
                 c |= class::IGNORE;
             }
-            if !g.is_avatar && (self.see_through_face(g, false) || self.has_blend_face(world, idx)) {
+            if !g.is_avatar && (self.see_through_face(g, true) || g.faces.len() < g.built_faces || self.has_blend_face(world, idx)) {
                 c |= class::SEE_THROUGH;
             }
         }
         // (what `interaction_at_ray` leaves out whatever the point)
-        if g.is_avatar || (g.owner_avatar.is_some() && o.volume.is_mesh()) {
+        if g.is_avatar || (g.owner_avatar.is_some() && o.visual_volume().is_mesh() && !super::picking::worn_unrigged_mesh(o, g)) {
             c |= class::OFF_POINT;
         }
         c
@@ -1093,6 +1114,36 @@ mod tests {
             always: true,
             aside: true,
             skinned: false,
+        }
+    }
+
+    #[test]
+    fn drawn_hover_uses_rigid_bounds_but_never_rejects_a_rigged_mesh_by_its_proxy() {
+        let mut index = PickIndex::default();
+        let mut candidates = Candidates::default();
+        for (entry, needed) in [
+            (sphere(5.0, 0.0, 1.0), false),
+            (always(5.0, 0.0), true),
+            (always(5.0, 20.0), false),
+            (
+                PickEntry {
+                    skinned: true,
+                    ..sphere(5.0, 0.0, 1.0)
+                },
+                true,
+            ),
+            (
+                PickEntry {
+                    skinned: true,
+                    ..sphere(5.0, 20.0, 1.0)
+                },
+                true,
+            ),
+            (PickEntry::NEVER, false),
+        ] {
+            index.set(0, entry);
+            index.hover_candidates(&PROBE, true, &mut candidates);
+            assert_eq!(candidates.drawn, needed, "{entry:?}");
         }
     }
 
