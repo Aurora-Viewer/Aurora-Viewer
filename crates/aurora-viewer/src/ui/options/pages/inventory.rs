@@ -7,6 +7,8 @@ use super::super::cx::{Cx, field};
 
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
+    cx.track(&field!(inventory.filter_defaults));
+    cx.track(&field!(inventory.tab_filter_defaults));
     cx.group(tr!("ui-options-sorting"), |cx| {
         cx.choice(
             tr!("ui-inventory-controls-display-order"),

@@ -1772,14 +1772,17 @@ fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
-// Record + 1, depth and surface coordinates: Mask keeps its displayed
-// cutout; Blend always intercepts the click, including zero-alpha texels.
+// LLImageGL::updatePickMask (indra/llrender/llimagegl.cpp, LGPL 2.1).
+const PICK_ALPHA_CUTOFF: f32 = 32.0 / 255.0;
+
+// Mask keeps its displayed cutout. World Blend left picks use the legacy
+// texture threshold; worn objects and right clicks keep their alpha policy.
 @fragment
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
     let world_left = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
-    if (world_left && sample_tex(rec.tex.x, in.uv).a <= 0.0) {
+    if (world_left && sample_tex(rec.tex.x, in.uv).a <= PICK_ALPHA_CUTOFF) {
         discard;
     }
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && !world_left) {
@@ -1804,9 +1807,7 @@ fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
     let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
-    let world_blend = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
-    let cutoff = select(32.0 / 255.0, 0.0, world_blend);
-    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= cutoff;
+    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= PICK_ALPHA_CUTOFF;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
     // fully_transparent): drawn, it stays a target.
     let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;
@@ -1860,7 +1861,7 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 fn fs_shadow(in: ShadowOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    let tex_alpha = sample_tex(rec.tex.x, in.uv).a;
+    let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {
