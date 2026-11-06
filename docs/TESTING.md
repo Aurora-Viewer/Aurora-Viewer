@@ -4597,8 +4597,9 @@ both open states and the selection count. Capture at frame 620.
     stream: region left`, then `demo stream: textures evicted`); read
     `s_maintain`, `sync`, `s_sync_list` and `r_submit` in `max:`.
   - With `,j2k=<folder>` after the numbers, the textures are the
-    `.j2c` files of that folder (a viewer's `cache\tex`, looped over
-    if there are fewer of them than objects) instead of drawn checkerboards:
+    `.j2c` files of that folder (looped over if there are fewer of them
+    than objects; plain files, or in a development build also a store's
+    `tex`, as for `AURORA_DEMO_ARRIVAL`) instead of drawn checkerboards:
     each file is handed to the streaming as a successful read of the disk
     cache and follows the real path from the JPEG2000 decode onwards, at
     the level its on-screen size asks for. This is the return to a
@@ -4640,9 +4641,11 @@ both open states and the selection count. Capture at frame 620.
   `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
   the folder's `mat` subfolder), whose textures are served from `tex`
   when it holds them, else one of the others in their place. `<folder>`
-  holds plain asset files, or is this installation's cache store
-  (`cache/store`, read through `crate::cache`; an earlier build cannot
-  serve it). Every asset is
+  holds plain asset files; a development build (`dev`, `ci`,
+  `debugging`) also reads files of the cache's format, such as the cache
+  store (`cache/store`, through `crate::cache`; an earlier build cannot
+  serve it), while a `--release` build leaves them out and takes plain
+  folders only (`demo_source.rs`; the log says so once). Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to
   this machine only), which answers each request after `net` milliseconds
   (200 by default; about 70 for the asset hosts on a good link); with
@@ -9413,7 +9416,8 @@ What the inventory must show with these scenarios:
   and the window). `stop` ends the stream after the last title: "No
   stream playing", the history kept. No sound is played.
 - **`AURORA_DEMO_SOUND=1|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
-  sounds (taken from the real sound cache if it exists, otherwise a brief
+  sounds (in a development build, taken from the sound cache of grid
+  sessions if it holds them; otherwise, and in a `--release` build, a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
   The wind sound is silent too, unless this or `AURORA_DEMO_WIND` is set.
