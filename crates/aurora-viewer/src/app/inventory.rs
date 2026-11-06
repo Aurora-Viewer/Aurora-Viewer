@@ -517,6 +517,16 @@ impl App {
             }
             InvAction::Restore(id) => {
                 if let Some(it) = self.world.inventory.items.get(&id).cloned() {
+                    if !rules::restorable(&it, self.world.home_grid.is_some()) {
+                        // CantRestoreToWorldNoCopy
+                        self.world.notifications.push(
+                            crate::world::notifications::Kind::Alert,
+                            aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
+                            aurora_i18n::tr!("ui-inventory-restore-no-copy"),
+                            crate::world::notifications::Data::None,
+                        );
+                        return;
+                    }
                     self.send(NetCommand::RestoreInventoryObject(it));
                 }
             }
