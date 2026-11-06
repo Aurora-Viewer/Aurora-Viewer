@@ -1261,8 +1261,8 @@ impl App {
 
     /// What the window shows of a photo for the inventory.
     pub(super) fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
-        // a photo of the reel sent again goes at its own size (fitted to the
-        // inventory's when it was read back): its price follows
+        // a photo of the reel sent again goes at its own size (never above
+        // the largest texture when it was read back): its price follows
         let capture = match &self.snapshots.reel.pending {
             Some((_, (w, h, _))) => (*w, *h),
             None => self.photo_size(window),

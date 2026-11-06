@@ -2850,6 +2850,11 @@ grid.
   secondary key, moving with the latter.
 - `menu`, `edit`, `edit-zoom`: right click on the child, Edit and
   moving the linkset by the Y handle, also at 50%.
+- `edit-no-mod`, `rotate-no-mod`: the same Edit entry on a HUD without
+  Modify, then a move arrow or rotation ring drag. Another HUD is 512 units
+  deep while the world selection limit stays at 128 m: handles must remain
+  visible. Capture at frame 790 for idle handles or 845 during the drag.
+  The whole linkset moves/rotates; resizing and linked-part edits stay denied.
 - `edit-scroll`: selects a HUD locally enlarged to 200%, then
   places it off screen (frame 740). Without the HUD key, five notches
   backwards in an empty area zoom all the HUDs out (frame 760); holding the
@@ -8641,6 +8646,14 @@ folder, subfolder, outfits, objects, documents, texture, sound, gesture,
 sky, material, link and varied permissions; library in the tree,
 root open and labels aligned left. Creations and mutations simulated
 offline; the files and snapshots uploaded in demo stay offline.
+
+In both layouts, give Inventory and Recent different type, permission and date
+filters, then switch back and forth with the finder open: its controls and
+results must follow the selected tab. Repeat with Worn, Favorites and Received.
+Reset and Keep by default affect only that tab; reopen a second inventory window
+or restart the demo to check saved defaults. Advanced searches and temporary
+Find links / Find similar filters must also stay with their tab. Repeat with
+separate searches enabled and disabled; that preference controls only the text.
 
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
