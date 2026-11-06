@@ -6663,8 +6663,9 @@ impl Backend {
                 frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
                 frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
             }
+            let index_count = (scene.indices.size() / 2).min(u64::from(u32::MAX)) as u32;
             self.cull
-                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
+                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, index_count, frame);
         }
         let cpu = &mut self.indirect_cpu;
         let hud_opaque_range = push(cpu, &lists.hud_opaque);

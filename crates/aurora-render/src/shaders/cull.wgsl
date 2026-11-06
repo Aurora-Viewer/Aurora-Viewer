@@ -43,6 +43,7 @@ const COUNT_TRIANGLES: u32 = 31u;
 const COUNT_HIDDEN: u32 = 32u;
 const COUNT_PRE1: u32 = 33u;
 const COUNT_PRE2: u32 = 37u;
+const COUNT_CLAMPED: u32 = 50u;
 // profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
 // rigged casters (avatars and rigged meshes), then their triangles
 const COUNT_SHADOW: u32 = 41u;
@@ -169,7 +170,7 @@ struct CullFrame {
     dist: vec4<f32>,
     // x faces, y objects, z slots per bin, w flags
     sizes: vec4<u32>,
-    // x classify workgroups
+    // x classify workgroups, y first-person avatar + 1, z index buffer length
     groups: vec4<u32>,
 }
 
@@ -537,9 +538,17 @@ fn pack_bins(m: u32) -> BinPack {
 
 fn write_args(slot: u32, f: CullFace, rec: u32, instances: u32) {
     let a = slot * 5u;
-    args[a] = f.index_count;
+    var first_index = f.first_index;
+    var index_count = f.index_count;
+    let index_limit = frame.groups.z;
+    if (first_index > index_limit || index_count > index_limit - min(first_index, index_limit)) {
+        first_index = min(first_index, index_limit);
+        index_count = 0u;
+        atomicAdd(&counts[COUNT_CLAMPED], 1u);
+    }
+    args[a] = index_count;
     args[a + 1u] = instances;
-    args[a + 2u] = f.first_index;
+    args[a + 2u] = first_index;
     args[a + 3u] = bitcast<u32>(f.base_vertex);
     args[a + 4u] = rec;
 }

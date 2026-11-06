@@ -113,9 +113,20 @@ pub const COUNT_PRE2: usize = COUNT_PRE1 + MAIN_BINS;
 /// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
 /// casters, then its rigged casters, then their triangles.
 const COUNT_SHADOW: usize = COUNT_PRE2 + MAIN_BINS;
+const COUNT_CLAMPED: usize = 50;
 #[cfg(test)]
 const SHADOW_STATS: usize = 9;
 const COUNTS: usize = 52;
+
+/// Keep the whole indirect index range inside the bound u16 index buffer.
+/// Invalid face metadata skips the draw rather than exposing an out-of-range
+/// GPU index read; the returned first index is always safe, even for an empty
+/// buffer.
+pub fn bound_index_range(first_index: u32, index_count: u32, index_limit: u32) -> (u32, u32, bool) {
+    let safe_first = first_index.min(index_limit);
+    let valid = first_index <= index_limit && index_count <= index_limit - safe_first;
+    (safe_first, if valid { index_count } else { 0 }, !valid)
+}
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -348,7 +359,8 @@ pub struct CullFrame {
     pub dist: [f32; 4],
     /// Faces, objects, slots per bin, `frame_flags`.
     pub sizes: [u32; 4],
-    /// Classify workgroups; y is first-person avatar index + 1 (0: none).
+    /// x classify workgroups, y first-person avatar index + 1 (0: none),
+    /// z bound index-buffer length in u16 indices.
     pub groups: [u32; 4],
 }
 
@@ -790,6 +802,8 @@ pub struct CullCounts {
     pub triangles: u32,
     /// Main-bin draws hidden by the occlusion.
     pub hidden: u32,
+    /// Indirect draws whose index range was rejected and zeroed.
+    pub clamped_draws: u32,
     /// With `frame_flags::SHADOW_STATS`, per cascade: triangles of its
     /// casters, its rigged casters (avatars and rigged meshes) and their
     /// triangles.
@@ -1088,8 +1102,17 @@ impl GpuCull {
 
     /// Size the buffers for `faces` face slots and upload the frame
     /// parameters (`frame.sizes` and `groups` are filled in here); `objects`:
-    /// entries of the scene's object table this frame.
-    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, faces: usize, objects: usize, mut frame: CullFrame) {
+    /// entries of the scene's object table this frame. `index_count` is the
+    /// bound geometry index buffer's length in u16 indices.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        faces: usize,
+        objects: usize,
+        index_count: u32,
+        mut frame: CullFrame,
+    ) {
         let limits = device.limits();
         let faces = faces.min(face_capacity(&limits) as usize) as u32;
         let now = std::time::Instant::now();
@@ -1164,6 +1187,7 @@ impl GpuCull {
         frame.sizes[1] = objects;
         frame.sizes[2] = self.cap;
         frame.groups[0] = self.groups;
+        frame.groups[2] = index_count;
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
     }
 
@@ -1293,10 +1317,17 @@ impl GpuCull {
                     c.visible_objects = n[COUNT_VISIBLE];
                     c.triangles = n[COUNT_TRIANGLES];
                     c.hidden = n[COUNT_HIDDEN];
+                    c.clamped_draws = n[COUNT_CLAMPED];
                     let stat = |i: usize| std::array::from_fn(|k| n[COUNT_SHADOW + i * 3 + k]);
                     c.shadow_triangles = stat(0);
                     c.shadow_rigged = stat(1);
                     c.shadow_rigged_triangles = stat(2);
+                    if c.clamped_draws > 0 && self.last.clamped_draws == 0 {
+                        log::warn!(
+                            "GPU culling: {} indirect draws had out-of-range indices and were skipped",
+                            c.clamped_draws
+                        );
+                    }
                     self.last = c;
                 }
                 buf.unmap();
@@ -1333,6 +1364,16 @@ impl GpuCull {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indirect_index_ranges_are_safe_or_zeroed() {
+        assert_eq!(bound_index_range(4, 6, 10), (4, 6, false));
+        assert_eq!(bound_index_range(10, 0, 10), (10, 0, false));
+        assert_eq!(bound_index_range(9, 2, 10), (9, 0, true));
+        assert_eq!(bound_index_range(11, 1, 10), (10, 0, true));
+        assert_eq!(bound_index_range(u32::MAX, u32::MAX, 10), (10, 0, true));
+        assert_eq!(bound_index_range(0, 1, 0), (0, 0, true));
+    }
 
     #[test]
     fn cull_capacity_respects_the_whole_binding_and_occlusion_dispatch() {
@@ -1406,7 +1447,9 @@ mod tests {
         );
         assert!(src.contains(&format!("shadow_planes: array<vec4<f32>, {}>,", 3 * SHADOW_PLANES)));
         assert!(src.contains(&format!("counts: array<atomic<u32>, {COUNTS}>;")));
+        assert!(src.contains(&format!("const COUNT_CLAMPED: u32 = {COUNT_CLAMPED}u;")));
         const { assert!(COUNT_SHADOW + SHADOW_STATS <= COUNTS && COUNT_PRE2 + MAIN_BINS <= COUNT_SHADOW) };
+        const { assert!(COUNT_SHADOW + SHADOW_STATS <= COUNT_CLAMPED && COUNT_CLAMPED < COUNTS) };
     }
 
     #[test]
@@ -1990,7 +2033,7 @@ mod tests {
         assert!(GpuCull::fits(&device, 4097, 0));
         assert!(!GpuCull::fits(&device, 4353, 0), "larger scenes must select the CPU lists");
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        cull.prepare(&device, &queue, 4097, 0, CullFrame::zeroed());
+        cull.prepare(&device, &queue, 4097, 0, u32::MAX, CullFrame::zeroed());
         let error = pollster::block_on(validation.pop());
         assert!(error.is_none(), "growth installed an invalid GPU buffer: {error:?}");
         assert!(cull.cap() >= 4097, "all faces still fit");
@@ -2017,14 +2060,14 @@ mod tests {
         let mut cull = GpuCull::new(&device);
         let size = cull.args().size();
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        cull.prepare(&device, &queue, 4097, 4097, CullFrame::zeroed());
+        cull.prepare(&device, &queue, 4097, 4097, u32::MAX, CullFrame::zeroed());
         assert_eq!(cull.cap(), 4096);
         assert_eq!(cull.sphere_cap, 4096);
         assert_eq!(cull.args().size(), size);
         assert_eq!((cull.faces, cull.objects), (4096, 4096));
         assert!(cull.face_backoff.waiting() && cull.sphere_backoff.waiting());
         // Existing scene entries remain usable while the excess waits.
-        cull.prepare(&device, &queue, 1024, 1024, CullFrame::zeroed());
+        cull.prepare(&device, &queue, 1024, 1024, u32::MAX, CullFrame::zeroed());
         assert_eq!((cull.faces, cull.objects), (1024, 1024));
         assert!(pollster::block_on(validation.pop()).is_none());
     }
@@ -2173,7 +2216,7 @@ mod tests {
             "some object is posed"
         );
         let n_faces = 70_000usize;
-        let faces: Vec<CullFace> = (0..n_faces)
+        let mut faces: Vec<CullFace> = (0..n_faces)
             .map(|_| {
                 if rand(20) == 0 {
                     return CullFace::NONE;
@@ -2188,6 +2231,15 @@ mod tests {
                 }
             })
             .collect();
+        // This visible opaque face deliberately points beyond the bound
+        // index buffer, while the surrounding draws remain valid.
+        faces[1] = CullFace {
+            index_count: 3,
+            first_index: 200_001,
+            object: 1,
+            bits: pass::OPAQUE | FACE_FIRST,
+            ..CullFace::NONE
+        };
         let mut table = GpuTable::new(&device, "faces", 16, CullFace::NONE);
         for (i, f) in faces.iter().enumerate() {
             table.set(i, *f);
@@ -2244,7 +2296,7 @@ mod tests {
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
         )
         .map(|p| p.to_array());
-        cull.prepare(&device, &queue, n_faces, tables.objects.len(), frame);
+        cull.prepare(&device, &queue, n_faces, tables.objects.len(), 200_000, frame);
         let mut f = frame;
         f.sizes[0] = n_faces as u32;
         f.sizes[1] = n_obj;
@@ -2330,17 +2382,36 @@ mod tests {
         }
         assert_eq!(counts[COUNT_VISIBLE], visible);
         assert_eq!(counts[COUNT_TRIANGLES], tris);
+        let invalid_draws = expect
+            .iter()
+            .enumerate()
+            .map(|(bin, draws)| {
+                let in_bin = draws
+                    .iter()
+                    .filter(|&&rec| bound_index_range(faces[rec as usize].first_index, faces[rec as usize].index_count, 200_000).2)
+                    .count();
+                in_bin
+                    + if bin < MAIN_BINS {
+                        draws
+                            .iter()
+                            .filter(|&&rec| was[rec as usize] != 0)
+                            .filter(|&&rec| bound_index_range(faces[rec as usize].first_index, faces[rec as usize].index_count, 200_000).2)
+                            .count()
+                    } else {
+                        0
+                    }
+            })
+            .sum::<usize>();
+        assert!(invalid_draws > 0, "the invalid face should be visible and emitted at least once");
+        assert_eq!(counts[COUNT_CLAMPED] as usize, invalid_draws);
         let cap = cull.cap() as usize;
         for (b, e) in expect.iter().enumerate() {
             assert_eq!(counts[b] as usize, e.len(), "bin {b} size");
             for (j, &rec) in e.iter().enumerate() {
                 let a = &args[(b * cap + j) * 5..(b * cap + j) * 5 + 5];
                 let fc = &faces[rec as usize];
-                assert_eq!(
-                    a,
-                    [fc.index_count, 1, fc.first_index, fc.base_vertex as u32, rec],
-                    "bin {b} slot {j}"
-                );
+                let (first_index, index_count, _) = bound_index_range(fc.first_index, fc.index_count, 200_000);
+                assert_eq!(a, [index_count, 1, first_index, fc.base_vertex as u32, rec], "bin {b} slot {j}");
             }
             if b < MAIN_BINS {
                 // phase 1 prepass list: the bin's draws visible last frame, any order

@@ -82,6 +82,11 @@ GPU-culling growth validates all replacement buffers before installing them,
 respects the complete storage binding and dispatch limits, and retains its
 working allocation with backoff after failure. Scenes beyond those limits
 select the existing CPU draw lists before list construction.
+`shaders/cull.wgsl::write_args` validates indexed-indirect ranges against the
+bound u16 index buffer and zeros invalid draws; a readback counter reports
+skipped draws. The scene texture table stores its bound page count in the
+header of the existing storage location buffer. `common.wgsl` uses that count
+to route out-of-range packed page lookups to reserved page 0.
 Reflection-probe capture mips use separate compute passes before the final
 radiance/irradiance pass. This avoids invalid Vulkan image layouts in wgpu
 30 when a mip written by one dispatch is sampled by later dispatches.
