@@ -1231,7 +1231,7 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
         p,
         aurora_i18n::tr!("common-profile"),
         aurora_i18n::tr!("ui-contacts-show-their-picture-groups-and-other-useful-information"),
-        n == 1 && world.rlva_can_pay(),
+        n == 1,
     ) {
         actions.push(ContactsAction::Profile(sel[0]));
     }
@@ -1252,7 +1252,7 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
         p,
         aurora_i18n::tr!("ui-contacts-pay"),
         aurora_i18n::tr!("ui-contacts-pay-help"),
-        n == 1,
+        n == 1 && world.rlva_can_pay(),
     ) {
         crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(sel[0]));
     }
