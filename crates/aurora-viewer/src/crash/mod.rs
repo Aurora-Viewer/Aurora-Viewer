@@ -401,6 +401,7 @@ const GPU_LOST_AT_START: &str = "start";
 /// The same before the first frame (app.rs): reported under its own title,
 /// apart from the driver resets of a running session.
 pub fn gpu_lost_at_start() {
+    gpu_loss_snapshot();
     mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
 }
 

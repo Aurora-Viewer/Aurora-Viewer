@@ -105,7 +105,7 @@ What each part tells the one who fixes it:
   hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
   game capture), named from the viewer's fixed list only; a separate
   snapshot records known hooks at the first confirmed GPU loss in the
-  session, including a loss followed by renderer recovery.
+  session, including a loss before the first frame or followed by renderer recovery.
 - **Vulkan layers installed**: names enumerated by the loader. Enumeration
   does not prove a layer was enabled or running in the instance.
 - **GPU errors**: sanitized operation names and counts from the retained
@@ -116,12 +116,16 @@ What each part tells the one who fixes it:
   the recorded session end, saved locally. The public report shows collection
   status and fixed GPU/reset labels; partial queries and queries that hit a
   cap are marked as partial or incomplete, and Windows event labels also show
-  their recorded times. Linux kernel messages, Windows event text, registry
+  their recorded times. Collection retains at most 60 matching records and
+  discloses when more were discarded. OS utility execution and pipe reading
+  share a two-second budget, including pipes retained by descendant processes.
+  Linux kernel messages, Windows event text, registry
   values and WATCHDOG dump names
   stay local. Linux uses the last heartbeat when the
   process end time is unavailable, so that window is approximate. Windows
-  also samples current TDR / HAGS / MPO values and WATCHDOG dump names and
-  times; they may have changed since the crash.
+  also attempts to sample current TDR / HAGS / MPO values and WATCHDOG dump
+  names and times; these may be unavailable or have changed since the crash.
+  Successful event-log collection does not establish that those samples succeeded.
 - **XR runtime**: a fixed public category (SteamVR, Meta, Virtual Desktop,
   Monado, Windows Mixed Reality or other) and whether it created the Vulkan
   device. The runtime's own free-form name stays local.

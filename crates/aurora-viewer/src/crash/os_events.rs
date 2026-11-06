@@ -15,6 +15,15 @@ const COLLECTION_BUDGET: Duration = Duration::from_secs(2);
 #[cfg(any(target_os = "linux", windows, test))]
 const MAX_COMMAND_OUTPUT: u64 = 4 * 1024 * 1024;
 
+/// Keep one look-ahead record so an exactly full result differs from a
+/// truncated one. The public status must disclose discarded evidence.
+#[cfg(any(target_os = "linux", windows, test))]
+fn bounded_records(records: impl IntoIterator<Item = String>) -> (Vec<String>, bool) {
+    let mut records = records.into_iter();
+    let kept = records.by_ref().take(60).collect();
+    (kept, records.next().is_some())
+}
+
 #[cfg(any(target_os = "linux", windows, test))]
 fn output_before(command: &mut Command, deadline: Instant) -> std::io::Result<Output> {
     if Instant::now() >= deadline {
@@ -23,29 +32,53 @@ fn output_before(command: &mut Command, deadline: Instant) -> std::io::Result<Ou
     command.stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = command.spawn()?;
     let stdout = child.stdout.take();
-    let reader = std::thread::spawn(move || {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    if let Err(error) = std::thread::Builder::new().name("aurora-os-read".into()).spawn(move || {
         let mut bytes = Vec::new();
         if let Some(stdout) = stdout {
             let mut stdout = stdout.take(MAX_COMMAND_OUTPUT);
             let _ = stdout.read_to_end(&mut bytes);
         }
-        bytes
-    });
+        let _ = sender.send(bytes);
+    }) {
+        stop_child(child);
+        return Err(error);
+    }
     let status = match wait_until(&mut child, deadline) {
         Ok(status) => status,
         Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = reader.join();
+            stop_child(child);
             return Err(error);
         }
     };
-    let stdout = reader.join().unwrap_or_default();
+    // Even a successfully exited utility can leave an inherited pipe open.
+    // The same budget covers reading; never join that potentially stuck reader.
+    let stdout = receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|error| match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "OS diagnostics output timed out")
+            }
+            std::sync::mpsc::RecvTimeoutError::Disconnected => std::io::Error::other("OS diagnostics reader stopped"),
+        })?;
     Ok(Output {
         status,
         stdout,
         stderr: Vec::new(),
     })
+}
+
+/// Cleanup is best effort under resource exhaustion: never wait or panic on
+/// the report thread, including when a new reaper thread cannot be created.
+#[cfg(any(target_os = "linux", windows, test))]
+fn stop_child(mut child: Child) {
+    let _ = child.kill();
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("aurora-os-reap".into()).spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 #[cfg(any(target_os = "linux", windows, test))]
@@ -94,7 +127,7 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
     };
     let mut capped =
         output.stdout.len() >= MAX_COMMAND_OUTPUT as usize || output.stdout.iter().filter(|&&byte| byte == b'\n').count() >= 1000;
-    let lines = if output.status.success() {
+    let (lines, records_capped) = if output.status.success() {
         parse_journal(&String::from_utf8_lossy(&output.stdout))
     } else {
         let fallback = output_before(std::process::Command::new("dmesg").args(["--time-format=raw"]), deadline);
@@ -114,7 +147,7 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
             until,
         )
     };
-    let status = kernel_status(&lines, capped);
+    let status = kernel_status(&lines, capped || records_capped);
     if lines.is_empty() {
         let _ = std::fs::write(dir.join("os-gpu-events.status"), status);
     } else {
@@ -139,7 +172,7 @@ fn public_status(records: Option<&[String]>) -> String {
 fn kernel_status(records: &[String], capped: bool) -> String {
     if capped {
         format!(
-            "collected (incomplete): {} matching kernel records; query reached its output cap",
+            "collected (incomplete): {} matching kernel records; query or retained-record limit reached",
             records.len()
         )
     } else {
@@ -182,9 +215,13 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
             queried += 1;
             let xml = String::from_utf8_lossy(&output.stdout);
             capped |= output.stdout.len() >= MAX_COMMAND_OUTPUT as usize || windows_event_count(&xml) >= 1000;
-            events.extend(parse_windows_events(&xml, since, until));
+            let (records, records_capped) = parse_windows_events(&xml, since, until);
+            capped |= records_capped;
+            events.extend(records);
         }
     }
+    let (events, records_capped) = bounded_records(events);
+    capped |= records_capped;
     if !events.is_empty() {
         let _ = std::fs::write(dir.join("os-gpu-events.txt"), events.join("\n"));
     }
@@ -206,7 +243,7 @@ fn windows_status(queried: u8, events: usize, capped: bool) -> String {
         "not collected: Windows event log query unavailable or denied".to_owned()
     } else if capped {
         format!(
-            "collected (incomplete): {events} Windows GPU reset events; at least one event channel reached the 1,000-record cap{}",
+            "collected (incomplete): {events} Windows GPU reset events; query or retained-record limit reached{}",
             if queried == 1 {
                 " and the other channel was unavailable"
             } else {
@@ -216,7 +253,7 @@ fn windows_status(queried: u8, events: usize, capped: bool) -> String {
     } else if queried == 1 {
         format!("collected (partial): {events} Windows GPU reset events; one event channel unavailable")
     } else {
-        format!("collected: {events} Windows GPU reset events in the time window; registry and dump metadata sampled")
+        format!("collected: {events} Windows GPU reset events in the time window")
     }
 }
 
@@ -228,49 +265,49 @@ fn windows_event_count(xml: &str) -> usize {
 }
 
 #[cfg(any(windows, test))]
-fn parse_windows_events(xml: &str, since: u64, until: u64) -> Vec<String> {
+fn parse_windows_events(xml: &str, since: u64, until: u64) -> (Vec<String>, bool) {
     let Ok(document) = roxmltree::Document::parse(xml) else {
-        return Vec::new();
+        return (Vec::new(), false);
     };
-    document
-        .descendants()
-        .filter(|node| node.tag_name().name() == "Event")
-        .filter_map(|event| {
-            let system = event.children().find(|node| node.tag_name().name() == "System")?;
-            let id: u32 = system
-                .children()
-                .find(|node| node.tag_name().name() == "EventID")?
-                .text()?
-                .parse()
-                .ok()?;
-            let provider = system
-                .children()
-                .find(|node| node.tag_name().name() == "Provider")?
-                .attribute("Name")?;
-            let created = system
-                .children()
-                .find(|node| node.tag_name().name() == "TimeCreated")?
-                .attribute("SystemTime")?;
-            let time = chrono::DateTime::parse_from_rfc3339(created).ok()?;
-            let timestamp = time.timestamp();
-            if timestamp < since as i64 || timestamp > until as i64 {
-                return None;
-            }
-            if id == 4101 && provider.eq_ignore_ascii_case("Display") {
-                return Some(format!("Display 4101 at {}", time.to_rfc3339()));
-            }
-            if id == 1001 && provider.to_ascii_lowercase().contains("error reporting") {
-                let code = event
-                    .descendants()
-                    .filter(|node| node.tag_name().name() == "Data")
-                    .filter_map(|node| node.text())
-                    .find_map(live_kernel_code)?;
-                return Some(format!("LiveKernelEvent {code} at {}", time.to_rfc3339()));
-            }
-            None
-        })
-        .take(60)
-        .collect()
+    bounded_records(
+        document
+            .descendants()
+            .filter(|node| node.tag_name().name() == "Event")
+            .filter_map(|event| {
+                let system = event.children().find(|node| node.tag_name().name() == "System")?;
+                let id: u32 = system
+                    .children()
+                    .find(|node| node.tag_name().name() == "EventID")?
+                    .text()?
+                    .parse()
+                    .ok()?;
+                let provider = system
+                    .children()
+                    .find(|node| node.tag_name().name() == "Provider")?
+                    .attribute("Name")?;
+                let created = system
+                    .children()
+                    .find(|node| node.tag_name().name() == "TimeCreated")?
+                    .attribute("SystemTime")?;
+                let time = chrono::DateTime::parse_from_rfc3339(created).ok()?;
+                let timestamp = time.timestamp();
+                if timestamp < since as i64 || timestamp > until as i64 {
+                    return None;
+                }
+                if id == 4101 && provider.eq_ignore_ascii_case("Display") {
+                    return Some(format!("Display 4101 at {}", time.to_rfc3339()));
+                }
+                if id == 1001 && provider.to_ascii_lowercase().contains("error reporting") {
+                    let code = event
+                        .descendants()
+                        .filter(|node| node.tag_name().name() == "Data")
+                        .filter_map(|node| node.text())
+                        .find_map(live_kernel_code)?;
+                    return Some(format!("LiveKernelEvent {code} at {}", time.to_rfc3339()));
+                }
+                None
+            }),
+    )
 }
 
 #[cfg(any(windows, test))]
@@ -294,7 +331,8 @@ mod windows_parser_tests {
         </Events>"#;
         let start = chrono::DateTime::parse_from_rfc3339("2026-11-04T09:59:00Z").unwrap().timestamp() as u64;
         let end = chrono::DateTime::parse_from_rfc3339("2026-11-04T10:05:00Z").unwrap().timestamp() as u64;
-        let events = super::parse_windows_events(xml, start, end);
+        let (events, capped) = super::parse_windows_events(xml, start, end);
+        assert!(!capped);
         assert_eq!(events.len(), 2);
         assert!(events[0].starts_with("Display 4101 at 2026-11-04T10:00:00"));
         assert!(events[1].starts_with("LiveKernelEvent 141 at 2026-11-04T10:00:01"));
@@ -303,7 +341,32 @@ mod windows_parser_tests {
 
     #[test]
     fn malformed_windows_event_xml_is_not_collected_as_a_record() {
-        assert!(super::parse_windows_events("<Event><System>", 0, u64::MAX).is_empty());
+        assert!(super::parse_windows_events("<Event><System>", 0, u64::MAX).0.is_empty());
+    }
+
+    #[test]
+    fn windows_event_status_does_not_claim_unverified_registry_or_dump_samples() {
+        let status = super::windows_status(2, 0, false);
+        assert!(!status.contains("registry"));
+        assert!(!status.contains("dump"));
+    }
+
+    #[test]
+    fn matching_windows_records_disclose_truncation_below_the_query_cap() {
+        let event = r#"<Event><System><Provider Name="Display"/><EventID>4101</EventID><TimeCreated SystemTime="2026-11-04T10:00:00Z"/></System></Event>"#;
+        for count in [60, 61] {
+            let xml = format!("<Events>{}</Events>", event.repeat(count));
+            let (records, capped) = super::parse_windows_events(&xml, 0, i64::MAX as u64);
+            assert_eq!(records.len(), 60);
+            assert_eq!(capped, count > 60);
+            assert_eq!(
+                super::windows_status(2, records.len(), capped).starts_with("collected (incomplete):"),
+                count > 60
+            );
+        }
+        let (combined, capped) = super::bounded_records((0..80).map(|n| n.to_string()));
+        assert_eq!(combined.len(), 60);
+        assert!(capped, "the combined channels have the same report limit");
     }
 
     #[test]
@@ -320,6 +383,19 @@ mod windows_parser_tests {
 #[cfg(all(test, unix))]
 mod timeout_tests {
     use super::*;
+
+    #[test]
+    fn inherited_stdout_cannot_extend_the_collection_deadline() {
+        for script in ["sleep 2 & exit 0", "sleep 2 & wait"] {
+            let started = Instant::now();
+            let result = output_before(
+                std::process::Command::new("sh").args(["-c", script]),
+                started + Duration::from_millis(50),
+            );
+            assert!(started.elapsed() < Duration::from_secs(1), "{script}");
+            assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        }
+    }
 
     #[test]
     fn os_command_is_killed_at_its_deadline() {
@@ -389,26 +465,23 @@ fn watchdog_dumps(since: u64, until: u64) -> Vec<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn parse_journal(text: &str) -> Vec<String> {
-    text.lines()
-        .filter(|line| gpu_kernel_line(line))
-        .take(60)
-        .map(|line| line.chars().take(2048).collect())
-        .collect()
+fn parse_journal(text: &str) -> (Vec<String>, bool) {
+    bounded_records(
+        text.lines()
+            .filter(|line| gpu_kernel_line(line))
+            .map(|line| line.chars().take(2048).collect()),
+    )
 }
 
 #[cfg(target_os = "linux")]
-fn parse_dmesg(text: &str, boot: u64, since: u64, until: u64) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| {
-            let rest = line.strip_prefix('[')?.trim_start();
-            let (seconds, message) = rest.split_once(']')?;
-            let time = seconds.trim().parse::<f64>().ok()?;
-            let unix = boot.saturating_add(time as u64);
-            (unix >= since && unix <= until && gpu_kernel_line(message)).then(|| line.chars().take(2048).collect())
-        })
-        .take(60)
-        .collect()
+fn parse_dmesg(text: &str, boot: u64, since: u64, until: u64) -> (Vec<String>, bool) {
+    bounded_records(text.lines().filter_map(|line| {
+        let rest = line.strip_prefix('[')?.trim_start();
+        let (seconds, message) = rest.split_once(']')?;
+        let time = seconds.trim().parse::<f64>().ok()?;
+        let unix = boot.saturating_add(time as u64);
+        (unix >= since && unix <= until && gpu_kernel_line(message)).then(|| line.chars().take(2048).collect())
+    }))
 }
 
 #[cfg(target_os = "linux")]
@@ -427,11 +500,15 @@ mod tests {
     #[test]
     fn journal_parser_filters_gpu_lines_and_caps_count_and_length() {
         let text = "noise\nkernel: amdgpu ring timeout\n";
-        assert_eq!(parse_journal(text), ["kernel: amdgpu ring timeout"]);
+        assert_eq!(parse_journal(text).0, ["kernel: amdgpu ring timeout"]);
         let many = (0..80).map(|n| format!("kernel: drm reset {n}")).collect::<Vec<_>>().join("\n");
-        assert_eq!(parse_journal(&many).len(), 60);
-        assert!(parse_journal(&"x".repeat(4096)).is_empty());
-        assert_eq!(parse_journal(&format!("kernel: nvidia {}", "x".repeat(3000)))[0].len(), 2048);
+        let (records, capped) = parse_journal(&many);
+        assert_eq!(records.len(), 60);
+        assert!(capped);
+        assert!(kernel_status(&records, capped).starts_with("collected (incomplete):"));
+        assert!(!parse_journal(&many.lines().take(60).collect::<Vec<_>>().join("\n")).1);
+        assert!(parse_journal(&"x".repeat(4096)).0.is_empty());
+        assert_eq!(parse_journal(&format!("kernel: nvidia {}", "x".repeat(3000))).0[0].len(), 2048);
     }
 
     #[test]
@@ -444,6 +521,6 @@ mod tests {
     #[test]
     fn dmesg_fallback_uses_the_boot_time_and_requested_window() {
         let text = "[ 100.0] amdgpu: ring timeout\n[ 200.0] drm: reset\n[ 100.0] unrelated\n";
-        assert_eq!(parse_dmesg(text, 1_000, 1_090, 1_150), ["[ 100.0] amdgpu: ring timeout"]);
+        assert_eq!(parse_dmesg(text, 1_000, 1_090, 1_150).0, ["[ 100.0] amdgpu: ring timeout"]);
     }
 }
