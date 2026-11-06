@@ -582,9 +582,10 @@ impl App {
                     .landmarks
                     .request_action(asset, crate::world::landmarks::Action::ShowOnMap, Instant::now());
             }
-            InvAction::ThumbnailCopied(asset) => {
+            InvAction::ThumbnailCopied { asset, clipboard } => {
                 self.inventory_ui.clipboard = vec![asset];
                 self.inventory_ui.cut = false;
+                self.thumbnail_copied(asset, clipboard);
             }
             InvAction::Thumbnail { request, item, input } => self.inventory_image_action(request, item, input),
             InvAction::TeleportLandmark(_) => {}
