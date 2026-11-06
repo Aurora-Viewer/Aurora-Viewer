@@ -5645,7 +5645,13 @@ impl Backend {
                 gpu.pixel_scale = world.session.height as f32 * eye.projection.y_axis.y;
             }
         };
-        let desktop_size = (packet.surface.width, packet.surface.height);
+        // minimised, the mirror gets 0 x 0 and draws nothing: like the
+        // desktop frames, it must not recreate the swapchain at the old size
+        let desktop_size = if packet.surface.minimised {
+            (0, 0)
+        } else {
+            (packet.surface.width, packet.surface.height)
+        };
         apply(&mut packet, 0);
         apply(&mut other, 1);
         packet.hover = None;
@@ -5869,6 +5875,11 @@ impl Backend {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })))
+        } else if surface.minimised {
+            // minimised: no image to ask for. The swapchain cannot be
+            // created at 0 x 0, and recreating it at the old size is out of
+            // spec and waits for the GPU each time.
+            None
         } else {
             match self.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(FrameTarget::Surface(t)),

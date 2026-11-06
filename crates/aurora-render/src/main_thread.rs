@@ -183,6 +183,8 @@ pub struct Renderer {
     /// The device can draw the GPU lists (and AURORA_CPU_CULL is not set).
     gpu_cull: bool,
     size: (u32, u32),
+    /// The window is 0 x 0 (minimised): `size` keeps the last real size.
+    minimised: bool,
     vsync: bool,
     settings: RenderSettings,
     msaa_supported: Vec<u32>,
@@ -576,6 +578,7 @@ impl Renderer {
             bind_generation: 0,
             gpu_cull,
             size: (width.max(1), height.max(1)),
+            minimised: width == 0 || height == 0,
             vsync,
             settings: RenderSettings::default(),
             msaa_supported,
@@ -851,12 +854,10 @@ impl Renderer {
     }
 
     /// The window was resized: the swapchain and the render targets follow
-    /// with the next frame.
+    /// with the next frame. Minimised (0 x 0), the last real size stays and
+    /// the frames stop asking the swapchain for an image until it is back.
     pub fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
-        }
-        self.size = (width, height);
+        (self.size, self.minimised) = follow_window(self.size, width, height);
     }
 
     /// The draw lists can be culled on the GPU (`DrawLists::gpu`).
@@ -1284,6 +1285,7 @@ impl Renderer {
                 width: self.size.0,
                 height: self.size.1,
                 vsync: self.vsync,
+                minimised: self.minimised,
             },
             settings: self.settings,
             hover: self.hover_request.take(),
@@ -1874,9 +1876,31 @@ fn texture_page_limit(limits: &wgpu::Limits, descriptors_in_all_pools: Option<u3
     }
 }
 
+/// The size to draw at and whether the window is minimised, for a window
+/// now `width` x `height`: 0 x 0 (minimised) keeps the last real size.
+fn follow_window(size: (u32, u32), width: u32, height: u32) -> ((u32, u32), bool) {
+    if width == 0 || height == 0 {
+        (size, true)
+    } else {
+        ((width, height), false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Minimised (0 x 0), the window keeps its last real size and is marked
+    /// minimised, so frames stop asking for a swapchain image; restored, it
+    /// takes its size back and the mark goes.
+    #[test]
+    fn a_minimised_window_keeps_its_size_and_is_marked() {
+        let size = (1920, 1009);
+        assert_eq!(follow_window(size, 0, 0), (size, true));
+        assert_eq!(follow_window(size, 0, 600), (size, true));
+        assert_eq!(follow_window(size, 1920, 1009), (size, false));
+        assert_eq!(follow_window(size, 1280, 720), ((1280, 720), false));
+    }
 
     #[test]
     fn bindless_pages_are_not_limited_by_ordinary_texture_slots() {
