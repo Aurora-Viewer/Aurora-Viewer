@@ -16,6 +16,7 @@
 //! Legacy Viewer), keeping an offer, a resident's or an object's, opens the
 //! inventory on what it gave once it is there (`World::take_inventory_reveal`).
 
+use super::dialog_names;
 use super::inventory::actions;
 use super::notification_history::Outcome;
 use super::notifications::{AT_CATEGORY, Data, Kind, NameLink, NameTarget, Response};
@@ -37,17 +38,21 @@ pub struct TaskOffer {
 }
 
 impl TaskOffer {
+    /// `owner`: as [`TaskOffer::shown_owner_name`] gives it.
     fn body(&self, owner: &str) -> String {
+        let object = dialog_names::shown(&self.object_name).into_owned();
         let text = if self.own_object {
-            aurora_i18n::tr!("world-inventory-offers-own-object", object = self.object_name.clone())
+            aurora_i18n::tr!("world-inventory-offers-own-object", object = object)
         } else {
-            aurora_i18n::tr!(
-                "world-inventory-offers-object",
-                object = self.object_name.clone(),
-                owner = owner.to_owned()
-            )
+            aurora_i18n::tr!("world-inventory-offers-object", object = object, owner = owner.to_owned())
         };
         format!("{text}\n{}", item_label(&self.item_name))
+    }
+
+    /// The owner's name in the offer's text and its link (dialog_names.rs);
+    /// blocking keeps [`TaskOffer::owner_name`].
+    fn shown_owner_name(&self, world: &World, owner: Uuid) -> String {
+        dialog_names::shown(&self.owner_name(world, owner)).into_owned()
     }
 
     fn owner_name(&self, world: &World, owner: Uuid) -> String {
@@ -213,7 +218,7 @@ pub fn item_label(item: &str) -> String {
     if item.is_empty() {
         aurora_i18n::tr!("world-mod-an-object").to_owned()
     } else {
-        format!("«\u{a0}{item}\u{a0}»")
+        format!("«\u{a0}{}\u{a0}»", dialog_names::shown(item))
     }
 }
 
@@ -245,7 +250,7 @@ impl World {
                 self.social.want_name(im.from_agent_id);
             }
         }
-        let owner = offer.owner_name(self, im.from_agent_id);
+        let owner = offer.shown_owner_name(self, im.from_agent_id);
         let target = if offer.from_group {
             NameTarget::Group(im.from_agent_id)
         } else {
@@ -254,7 +259,7 @@ impl World {
         let own_object = offer.own_object;
         let id = self.notifications.push(
             Kind::Inventory,
-            object_name,
+            dialog_names::shown(object_name).into_owned(),
             offer.body(&owner),
             Data::Inventory {
                 from: im.from_agent_id,
@@ -322,7 +327,7 @@ impl World {
             let object = format!(
                 "secondlife:///app/objectim/{}?name={}&owner={}&groupowned={}",
                 Uuid::nil(),
-                crate::slurl::encode(&offer.object_name),
+                crate::slurl::encode(&dialog_names::shown(&offer.object_name)),
                 im.from_agent_id,
                 u8::from(offer.from_group),
             );
@@ -358,7 +363,7 @@ impl World {
                 else {
                     return None;
                 };
-                let owner = offer.owner_name(self, *from);
+                let owner = offer.shown_owner_name(self, *from);
                 let target = if offer.from_group {
                     NameTarget::Group(*from)
                 } else {
