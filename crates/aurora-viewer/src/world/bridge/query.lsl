@@ -1,10 +1,10 @@
-// Aurora LSL Bridge query and posing-consent services v1.40: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.41: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.40";
+string VERSION = "1.41";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -81,6 +81,12 @@ query(key request, string kind, string targets) {
         if (llGetListLength(fields) != 3 || !validKey(nonce) || !validKey(target) || target == gOwner
             || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) {
             llHTTPResponse(request, 400, "invalid"); return;
+        }
+        // Accepted sessions may end and be asked again immediately. Refusals
+        // keep the request throttle; the viewer owns the longer reason-based wait.
+        if (action == "accept" || action == "withdraw") {
+            integer at = llListFindList(gPosePeers, [target]);
+            if (at >= 0) gPosePeers = llDeleteSubList(gPosePeers, at, at + 1);
         }
         // Explicit commands only: no advertisement, discovery or viewer probe.
         llRegionSayTo(target, POSE_CHANNEL, "pose1|" + (string)nonce + "|" + action + "|" + (string)target);

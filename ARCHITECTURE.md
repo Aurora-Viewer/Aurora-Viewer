@@ -1177,7 +1177,10 @@ documents, bounded file I/O and BVH export on the background pool. Native
 animation preparation reuses the existing document/codec and human-controlled
 import preview. Poser does not start IK-project autosaves or object imports.
 `world/poser_consent.rs` owns region-scoped request/accept/refuse/cancel/withdraw
-state, privacy, nonces, timeouts and cooldowns. `app/poser.rs` drives transport
+state, privacy, nonces, timeouts and cooldowns: 2 minutes after no answer,
+10 minutes after explicit refusal, and no peer cooldown after an accepted
+session ends. Ended nonces remain invalid independently of that retry policy.
+`app/poser.rs` drives transport
 and the independent target modal/reminder. Bridge 1.34 adds authenticated
 attachment-to-attachment consent relay to `world/bridge/query.lsl`, using the
 existing private HTTPS query service. It sends no IM or viewer probe.
