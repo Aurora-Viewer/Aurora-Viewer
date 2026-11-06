@@ -144,14 +144,16 @@ gestures, wearables and object contents.
   tests and the check by eye (section 7) cover both styles.
 - **Asset ids.** An asset id is never shown, copied to the clipboard, sent in
   chat or in a message, or written to an exported or shared file, unless the
-  rule allows it: full permissions, or a built-in texture. The viewer's log
-  file may keep asset ids, like the Legacy Viewer's log.
+  rule allows it: full permissions, a built-in texture, or one of the user's
+  own local textures. The viewer's log file may keep asset ids, like the
+  Legacy Viewer's log.
 - **No side route.** The developer tools (Dev Toolbox, explorers), the
   scripting bridge, the RLVa replies, drag and drop, the clipboard, the IK
   and other project or export files, the link previews, and the demo and test
   tools apply the same rule as the main windows.
   - An `AURORA_*` variable or a demo scenario never relaxes a permission
-    check.
+    check. The only exception is the offline demo's own assets: the viewer
+    makes them up and they belong to no one, so the demo may show their ids.
   - A published (release) build never serves the user's cache store to
     anything.
 - **The server's check is not a reason to skip the viewer's.** The Legacy
