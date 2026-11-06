@@ -74,6 +74,32 @@ pub struct GpuInfo {
     /// Blended faces can be drawn with stochastic transparency
     /// (oit_stochastic.rs): the scene can be multisampled.
     pub oit: bool,
+    /// The Vulkan driver's version and limits (Linden Lab's viewer
+    /// statistics); None on another backend.
+    pub vulkan: Option<VulkanLimits>,
+}
+
+/// What Linden Lab's viewer statistics report of the Vulkan driver, in
+/// place of the Legacy Viewer's OpenGL limits (LLGLManager::asLLSD) and
+/// with its Vulkan probe (llviewerstats.cpp): read once, when the device
+/// opens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VulkanLimits {
+    /// The loader's instance version (vkEnumerateInstanceVersion; 1.0 for
+    /// a loader without it), as wgpu read it.
+    pub instance_version: u32,
+    /// The most samples both a colour and a depth framebuffer take
+    /// (GL_MAX_SAMPLES).
+    pub max_samples: u32,
+    /// maxPerStageDescriptorSampledImages (GL_MAX_TEXTURE_IMAGE_UNITS).
+    pub texture_units: u32,
+    /// maxSampleMaskWords (GL_MAX_SAMPLE_MASK_WORDS).
+    pub sample_mask_words: u32,
+    /// The most samples of a sampled colour, depth and integer image
+    /// (GL_MAX_COLOR_TEXTURE_SAMPLES, _DEPTH_, GL_MAX_INTEGER_SAMPLES).
+    pub color_samples: u32,
+    pub depth_samples: u32,
+    pub integer_samples: u32,
 }
 
 /// The part of a range of skin bindings to send that is in a list of `len`.
@@ -460,6 +486,7 @@ impl Renderer {
             adapters,
             notice,
             oit: true,
+            vulkan: vulkan_limits(&adapter),
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -1810,6 +1837,35 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
         .filter(|h| h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
         .map(|h| h.size / (1024 * 1024))
         .max()
+}
+
+/// The Vulkan driver's version and limits the viewer statistics report.
+#[cfg(not(target_os = "macos"))]
+fn vulkan_limits(adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
+    use ash::vk;
+    // SAFETY: the hal adapter is only borrowed for this call; the physical
+    // device query does not change any state.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    let shared = hal.shared_instance();
+    // SAFETY: as above.
+    let limits = unsafe { shared.raw_instance().get_physical_device_properties(hal.raw_physical_device()) }.limits;
+    // the highest sample count of a set (each flag is its own count)
+    let most = |counts: vk::SampleCountFlags| 1u32 << (31 - counts.as_raw().max(1).leading_zeros());
+    Some(VulkanLimits {
+        instance_version: shared.instance_api_version(),
+        max_samples: most(limits.framebuffer_color_sample_counts & limits.framebuffer_depth_sample_counts),
+        texture_units: limits.max_per_stage_descriptor_sampled_images,
+        sample_mask_words: limits.max_sample_mask_words,
+        color_samples: most(limits.sampled_image_color_sample_counts),
+        depth_samples: most(limits.sampled_image_depth_sample_counts),
+        integer_samples: most(limits.sampled_image_integer_sample_counts),
+    })
+}
+
+/// Metal: no Vulkan driver.
+#[cfg(target_os = "macos")]
+fn vulkan_limits(_adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
+    None
 }
 
 /// Memory the GPU can use well, read from Metal: the recommended working

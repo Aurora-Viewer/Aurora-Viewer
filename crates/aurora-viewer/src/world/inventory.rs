@@ -8,6 +8,7 @@ use uuid::Uuid;
 #[path = "inventory/tests.rs"]
 mod action_tests;
 pub mod actions;
+pub mod asset_ids;
 pub mod background;
 pub mod demo;
 pub mod items;
@@ -38,6 +39,8 @@ pub struct Folder {
 pub struct Inventory {
     /// Root/system lookups retained until the inventory changes.
     pub(crate) system_folders: system::Cache,
+    /// Full-permission assets retained until the inventory changes.
+    pub(crate) full_assets: asset_ids::Cache,
     /// Session-only RLVa preview restrictions, shared by every inventory floater.
     pub rlva_preview_mask: u8,
     pub owner: Uuid,
@@ -721,7 +724,7 @@ pub struct CachedInventory {
 /// as `sort_children` gives it.
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
     let bytes = crate::cache::read_touch(path).ok()?;
-    let (doc, _) = aurora_llsd::from_binary(&bytes).ok()?;
+    let (doc, _) = aurora_llsd::from_binary_local(&bytes).ok()?;
     // Older files were populated by legacy reads that could discard other
     // favorites. Reload those folders through AIS once, even at equal versions.
     if doc["version"].as_i32() != 3 {

@@ -801,6 +801,7 @@ mod tests {
             adapters: vec!["Test GPU".into()],
             notice: None,
             oit: true,
+            vulkan: None,
         };
         let data = PerfData::default();
         for tab in super::super::monitor::Tab::ALL {

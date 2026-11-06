@@ -1854,6 +1854,7 @@ mod tests {
             adapters: Vec::new(),
             notice: None,
             oit: true,
+            vulkan: None,
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),

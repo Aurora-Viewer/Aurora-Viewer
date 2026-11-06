@@ -1500,6 +1500,9 @@ pub struct ProbeCapture {
     pub sky_only: bool,
     /// Last face of the cube: filter the radiance mips into `slot` afterwards.
     pub finish: bool,
+    /// What the irradiance pass multiplies the local lights by
+    /// (LLReflectionMapManager::mLightScale).
+    pub light_scale: f32,
 }
 
 /// Reflection probes for one frame (LLReflectionMapManager).
