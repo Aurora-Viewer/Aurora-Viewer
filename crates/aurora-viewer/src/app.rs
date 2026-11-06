@@ -8248,6 +8248,15 @@ impl App {
         if self.world.home_grid != home {
             self.world.home_grid = home;
         }
+        // the Linden Lab mark is for the Second Life grids' Lindens (the
+        // demo's come by key, `demo::staff`): one flag, no scan
+        crate::world::staff::set_second_life(
+            !self.demo
+                && matches!(
+                    self.settings.grid,
+                    crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta
+                ),
+        );
         crate::slurl::set_grid(crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras()));
         // the region's chat ranges, for every range the interface draws or
         // counts (OpenSim regions may set their own)
