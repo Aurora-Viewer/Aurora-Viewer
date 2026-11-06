@@ -268,6 +268,7 @@ pub(super) fn toolbar(
     ui: &mut egui::Ui,
     p: &Palette,
     item: &aurora_net::inventory::InvItem,
+    held: u32,
     dimensions: Option<(u32, u32)>,
     display: &mut Display,
     actions: &mut Vec<Action>,
@@ -278,7 +279,7 @@ pub(super) fn toolbar(
             actions.push(Action::RefreshTexture(item.asset_id));
         }
         // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions only
-        let full = item.owner_mask & rules::FULL == rules::FULL;
+        let full = held & rules::FULL == rules::FULL;
         if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), full) {
             ui.ctx().copy_text(item.asset_id.to_string());
         }

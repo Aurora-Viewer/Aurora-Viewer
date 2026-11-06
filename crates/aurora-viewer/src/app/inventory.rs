@@ -400,7 +400,7 @@ impl App {
                         self.open_physics_editor(it.id);
                         return;
                     }
-                    if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY != 0 {
+                    if matches!(it.asset_type, 7 | 10) && rules::held(&self.world.inventory, &it) & rules::COPY != 0 {
                         self.record_library_use(id);
                     }
                     if it.asset_type == 10 {
@@ -414,7 +414,7 @@ impl App {
                     if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
                         return;
                     }
-                    if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY == 0 {
+                    if matches!(it.asset_type, 7 | 10) && rules::held(&self.world.inventory, &it) & rules::COPY == 0 {
                         self.inventory_preview(
                             id,
                             it.asset_id,
@@ -550,7 +550,7 @@ impl App {
                                         .inventory
                                         .items
                                         .get(&id)
-                                        .filter(|it| it.owner_mask & rules::COPY == 0)
+                                        .filter(|it| rules::held(&self.world.inventory, it) & rules::COPY == 0)
                                         .map(|_| id)
                                 })
                                 .collect();

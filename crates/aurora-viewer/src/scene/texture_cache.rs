@@ -220,6 +220,17 @@ pub fn preview_discard(mut width: u32, mut height: u32) -> u8 {
     }
     discard
 }
+
+/// Dimensions of a texture level at `discard`.
+pub fn discard_size(width: u32, height: u32, discard: u8) -> (u32, u32) {
+    let divisor = 1u32 << discard.min(31);
+    (width.div_ceil(divisor), height.div_ceil(divisor))
+}
+
+/// Whether cached preview pixels meet the currently resident UI level.
+pub fn preview_is_fine_enough(cached: (u32, u32), wanted: (u32, u32)) -> bool {
+    cached.0 >= wanted.0 && cached.1 >= wanted.1
+}
 fn read_for(path: &Path, want: impl FnOnce(&[u8]) -> u8) -> Option<Transcoded> {
     // (sealed: only the chunks of the levels read are decrypted)
     let mut file = crate::cache::reader(path).ok()?;
@@ -493,5 +504,12 @@ mod tests {
         // what cannot be stored is refused when writing
         assert!(encode(&meta(0), None, &[]).is_none());
         assert!(encode(&meta(0), None, &[(16, 8, vec![0; 3])]).is_none());
+    }
+
+    #[test]
+    fn a_coarse_cached_preview_cannot_replace_a_finer_resident_level() {
+        assert!(!preview_is_fine_enough((256, 128), (512, 256)));
+        assert!(preview_is_fine_enough((512, 256), (256, 128)));
+        assert_eq!(discard_size(1024, 512, 2), (256, 128));
     }
 }

@@ -6178,7 +6178,11 @@ pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
     let demo_cache = crate::settings::cache_dir();
     if source::reads_cache_files()
         && let Some(real) = demo_cache.parent()
-        && let Ok(data) = crate::cache::read(crate::scene::sounds::cache_file(&real.join(crate::settings::ASSET_STORE), &id))
+        && let Ok(data) = crate::cache::read(
+            real.join(crate::settings::ASSET_STORE)
+                .join("sound")
+                .join(format!("{}.ogg", crate::cache::keyed_name(&id))),
+        )
         && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
     {
         return clip;
