@@ -8,6 +8,7 @@ use crate::scene::legacy_mat::LegacyMaterial;
 use crate::theme::Palette;
 use crate::world::{
     World,
+    inventory::actions as rules,
     objects::{LocalAppearance, LocalTextureSlot, ObjKey},
 };
 use aurora_assets::material::PbrOverride;
@@ -287,6 +288,23 @@ impl BuildTool {
         self.ui.texture_edit = Some(session);
     }
 
+    /// A picker choice (OK, or a live one) with the inventory item behind it:
+    /// the item's rules first (`admit_item`), once per choice.
+    fn apply_choice(&mut self, world: &mut World, env: &mut Env, id: Uuid, item: Option<Uuid>) {
+        if let Some(item) = item
+            && let Some(session) = &self.ui.texture_edit
+            && session.last_preview != Some(id)
+        {
+            let target = session.target;
+            let sel = session.resolve(self, world);
+            if let Err(text) = self.admit_item(world, item, &admit_targets(target, &sel)) {
+                world.system_notice(text, crate::world::notice_topics::Topic::Items);
+                return;
+            }
+        }
+        self.preview_texture(world, env, id);
+    }
+
     fn set_local_picker_channel(&mut self, world: &mut World, sel: &[Sel], slot: LocalTextureSlot, texture: Option<Uuid>) {
         for s in sel {
             let current = world.objects.get(s.idx).and_then(|object| object.local_appearance(s.face as usize));
@@ -508,10 +526,24 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         tool.ui.texture_edit = Some(session);
     }
     tool.ui.picker.allow_local = tool.ui.pick_target.and_then(PickTarget::local_slot).is_some();
+    if let Some(target) = tool.ui.pick_target {
+        // per frame while a build picker is open: the selected faces only
+        let sel = super::texture::selected(tool, world);
+        let owned = owned_and_not_for_sale(tool, world, &admit_targets(target, &sel));
+        let picker = &mut tool.ui.picker;
+        picker.required_permissions = super::texture::texture_drop::picker_permissions(world, &sel, target);
+        picker.drop_permissions = rules::COPY | rules::TRANSFER;
+        picker.live_permissions = match target {
+            PickTarget::PbrMaterial => rules::FULL,
+            _ => rules::COPY | rules::TRANSFER,
+        };
+        picker.owned_target = owned;
+    }
     tool.ui.picker.prepare_material_preview(ctx, env.scene);
     let accepted = tool.ui.picker.show(ctx, p, world, env.images);
     if let Some(id) = accepted {
-        tool.preview_texture(world, env, id);
+        let item = tool.ui.picker.chosen_item(id);
+        tool.apply_choice(world, env, id, item);
         tool.ui.texture_edit = None;
         tool.ui.pick_target = None;
     } else if !tool.ui.picker.open {
@@ -521,8 +553,30 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
             tool.dismiss_texture_picker();
         }
     } else if let Some(id) = tool.ui.picker.take_preview() {
-        tool.preview_texture(world, env, id);
+        let item = tool.ui.picker.chosen_item(id);
+        tool.apply_choice(world, env, id, item);
     }
+}
+
+/// The prims a choice for `target` goes on: the first one for the sculpt
+/// map and the projector (one object's parameter), every selected one else.
+pub(super) fn admit_targets(target: PickTarget, sel: &[Sel]) -> Vec<usize> {
+    match target {
+        PickTarget::Sculpt | PickTarget::LightTexture => sel.first().map(|s| s.idx).into_iter().collect(),
+        _ => sel.iter().map(|s| s.idx).collect(),
+    }
+}
+
+/// FSPanelFace::onTextureSelectionChanged's `is_object_owner && not_for_sale`
+/// over the roots of `objects`; unknown properties count as for sale.
+fn owned_and_not_for_sale(tool: &BuildTool, world: &World, objects: &[usize]) -> bool {
+    !objects.is_empty()
+        && objects.iter().all(|&idx| {
+            world.objects.get(crate::build::root_of(world, idx)).is_some_and(|root| {
+                root.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+                    && tool.props.get(&root.full_id).is_some_and(|p| p.sale_type == 0)
+            })
+        })
 }
 
 #[cfg(test)]
@@ -1267,7 +1321,8 @@ mod tests {
                     asset_id: asset,
                     inv_type: 0,
                     name: "A texture".into(),
-                    owner_mask: crate::world::inventory::actions::COPY,
+                    owner: world.agent_id,
+                    owner_mask: crate::world::inventory::actions::COPY | crate::world::inventory::actions::TRANSFER,
                     ..Default::default()
                 },
             );
@@ -1341,7 +1396,10 @@ mod tests {
                 set_texture(world, idx, 0, asset);
             }
             // Like Firestorm, no-copy items require OK instead of a preview.
-            world.inventory.items.get_mut(&item).unwrap().owner_mask = 0;
+            // A build picker previews only copy and transfer items; a
+            // no-transfer one is confirmed on objects the agent owns and
+            // does not sell, and its copy goes into each object's contents.
+            world.inventory.items.get_mut(&item).unwrap().owner_mask = crate::world::inventory::actions::COPY;
             world.inventory.items.get_mut(&item).unwrap().asset_id = Uuid::from_u128(16);
             world.inventory.generation += 1;
             open(tool, world, env, PickTarget::Diffuse);
@@ -1351,11 +1409,35 @@ mod tests {
                 assert_eq!(texture(world, idx, 0), asset);
             }
             let positions = frame(&ctx, tool, world, env, 13.0, vec![]);
-            assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-confirm-no-copy")));
+            assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-owner-only")));
+            for &idx in prims {
+                let o = world.objects.get_mut(idx).unwrap();
+                o.update_flags |= crate::ui::context::flags::OBJECT_YOU_OWNER;
+                let object = o.full_id;
+                tool.props.insert(
+                    object,
+                    aurora_net::build::ObjectProps {
+                        object_id: object,
+                        full: true,
+                        ..Default::default()
+                    },
+                );
+                tool.contents_ready(world, idx);
+                tool.on_task_inventory(world, object, Some(1), Vec::new());
+            }
+            let positions = frame(&ctx, tool, world, env, 13.5, vec![]);
+            assert!(positions.contains_key(aurora_i18n::tr!("ui-texture-picker-no-live-preview")));
+            tool.out.clear();
             click(&ctx, tool, world, env, 14.0, positions["OK"]);
             for &idx in prims {
                 assert_eq!(texture(world, idx, 0), Uuid::from_u128(16));
             }
+            let copies = tool
+                .out
+                .iter()
+                .filter(|c| matches!(c, aurora_net::NetCommand::Build(BuildCmd::UpdateTaskInventory { .. })))
+                .count();
+            assert_eq!(copies, prims.len(), "one copy into each object");
         });
     }
     #[test]
@@ -1492,6 +1574,38 @@ mod tests {
             assert_eq!(BuildTool::gltf_override(world, idx, 1), Default::default());
             assert_eq!(texture(world, idx, 1), map);
             assert_eq!(BuildTool::gltf_asset(world, idx, 0), None);
+        });
+    }
+
+    #[test]
+    fn blinn_phong_surface_drop_keeps_pbr_and_other_faces_unchanged() {
+        fixture(|world, tool, env, prims| {
+            let idx = prims[0];
+            let material = Uuid::from_u128(1907);
+            let map = Uuid::from_u128(1908);
+            tool.apply_inventory_surface(world, env, idx, &[1], material, true, false);
+            let original = BuildTool::gltf_override(world, idx, 1);
+            let other = texture(world, idx, 0);
+            world.objects.set_blinn_phong_preview(idx, true);
+            tool.out.clear();
+            tool.apply_inventory_surface(world, env, idx, &[1], map, false, false);
+            assert_eq!(texture(world, idx, 1), map);
+            assert_eq!(texture(world, idx, 0), other);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 1), Some(material));
+            assert_eq!(BuildTool::gltf_override(world, idx, 1), original);
+            assert!(!tool.out.iter().any(
+                |cmd| matches!(cmd, aurora_net::NetCommand::Build(crate::build::BuildCmd::Cap { cap, .. }) if cap == "ModifyMaterialParams")
+            ));
+
+            world.objects.set_blinn_phong_preview(idx, false);
+            let pbr_map = Uuid::from_u128(1909);
+            tool.apply_inventory_surface(world, env, idx, &[1], pbr_map, false, false);
+            assert_eq!(texture(world, idx, 1), map);
+            assert_eq!(BuildTool::gltf_override(world, idx, 1).textures[0], pbr_map);
+            world.objects.set_blinn_phong_preview(idx, true);
+            tool.apply_inventory_surface(world, env, idx, &[1], pbr_map, false, true);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 1), None);
+            assert_eq!(texture(world, idx, 1), pbr_map);
         });
     }
 

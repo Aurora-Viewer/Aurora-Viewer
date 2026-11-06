@@ -53,6 +53,8 @@ const GATHER_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the peer connection may take to come up after the answer.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Largest provisioning answer read: an SDP and a few keys take a few KB.
+const MAX_REPLY_BYTES: usize = 1 << 20;
 const LOGOUT_TIMEOUT: Duration = Duration::from_secs(5);
 /// UDP port range used by llwebrtc (`set_min_port(60000)` / `set_max_port(60100)`).
 const UDP_PORT_MIN: u16 = 60_000;
@@ -345,7 +347,7 @@ fn to_local_candidate(c: &RTCIceCandidate) -> LocalCandidate {
 }
 
 async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd, timeout: Duration) -> Result<Llsd, PostError> {
-    let resp = http
+    let mut resp = http
         .post(url)
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
@@ -358,7 +360,18 @@ async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd, timeout: Dura
     if !(200..300).contains(&status) {
         return Err(PostError::Status(status));
     }
-    let bytes = resp.bytes().await.map_err(|e| PostError::Transport(e.without_url().to_string()))?;
+    let too_large = || PostError::Transport("reply too large".into());
+    if resp.content_length().is_some_and(|n| n > MAX_REPLY_BYTES as u64) {
+        return Err(too_large());
+    }
+    // read piece by piece so that the size is bounded before it is kept
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| PostError::Transport(e.without_url().to_string()))? {
+        if bytes.len() + chunk.len() > MAX_REPLY_BYTES {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     if bytes.iter().all(|b| b.is_ascii_whitespace()) {
         return Ok(Llsd::Undef);
     }

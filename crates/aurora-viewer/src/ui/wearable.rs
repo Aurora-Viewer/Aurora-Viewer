@@ -337,8 +337,11 @@ pub fn show(
     } else if let Some(texture) = st.picker.take_preview() {
         changed |= st.preview_picker(world, texture);
     }
-    if let Some((slot, texture)) = dropped {
-        changed |= st.set_texture(world, slot, texture);
+    if let Some((slot, texture)) = dropped
+        && st.set_texture(world, slot, texture)
+    {
+        st.dismiss_picker();
+        changed = true;
     }
     st.wanted_images.extend(st.picker.wanted_images.drain());
     if changed {

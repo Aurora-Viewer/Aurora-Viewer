@@ -10,7 +10,7 @@
 
 use super::App;
 use crate::snapshot::reel::{self, Place, Reel};
-use crate::snapshot::save;
+use crate::snapshot::{inventory, save};
 use crate::ui::photo_reel::{QuickView, ReelAction, ReelView};
 use crate::ui::snapshot::Destination;
 use aurora_render::Renderer;
@@ -460,7 +460,7 @@ impl App {
     }
 
     /// Read the photo back on a worker, fitted to the destination (a disk
-    /// photo whole), to hold it.
+    /// photo whole, an inventory one at its own size), to hold it.
     fn photo_reel_send(&mut self, id: u64, destination: Destination, window: (u32, u32)) {
         let Some(photo) = self.snapshots.reel.reel.get(id) else {
             return;
@@ -469,14 +469,19 @@ impl App {
             return;
         };
         let size = photo.size;
-        let fit = (destination != Destination::Disk).then(|| {
-            let (w, h) = self.photo_size_for(destination, window);
-            let long = w.max(h);
-            reel::fit_inside(size, (long, long))
-        });
+        let side = match destination {
+            Destination::Disk => None,
+            Destination::Inventory => Some(inventory::reel_side(size)),
+            _ => {
+                let (w, h) = self.photo_size_for(destination, window);
+                let long = w.max(h);
+                let (w, h) = reel::fit_inside(size, (long, long));
+                Some(w.max(h))
+            }
+        };
         self.snapshots.reel.holding = Some(id);
         spawn(&self.snapshots.reel.tx, move || {
-            let result = reel::load(&file, fit.map(|(w, h)| w.max(h)));
+            let result = reel::load(&file, side);
             Done::Held(id, destination, window, result)
         });
     }
