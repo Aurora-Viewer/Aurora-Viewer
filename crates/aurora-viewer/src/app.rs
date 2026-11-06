@@ -10655,8 +10655,12 @@ impl App {
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if crate::deep_diagnostics::active() {
+                // just under the top bar (the work area is the screen
+                // without the bars), so it hides none of the bar's fields
+                let work = ui::layout::work_area(ui.ctx());
                 egui::Area::new(egui::Id::unique("deep-diagnostics-session-banner"))
-                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 10.0))
+                    .pivot(egui::Align2::CENTER_TOP)
+                    .fixed_pos(egui::pos2(work.center().x, work.top() + 8.0))
                     .order(egui::Order::Foreground)
                     .interactable(false)
                     .show(ui.ctx(), |ui| {
