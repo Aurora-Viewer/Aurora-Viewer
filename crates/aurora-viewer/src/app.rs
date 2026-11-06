@@ -20210,6 +20210,12 @@ impl ApplicationHandler for App {
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
                 let faces = matches!(mode.as_str(), "faces" | "faces-turned" | "faces-alpha");
+                let mask_cutoff = matches!(mode.as_str(), "mask-cutoff" | "mask-cutoff-zoom");
+                if mask_cutoff {
+                    for (id, material) in crate::demo::hud::mask_cutoff_materials() {
+                        self.scene.legacy_mats.insert(id, material);
+                    }
+                }
                 if mode == "blend-opacity" {
                     self.scene
                         .legacy_mats
@@ -20226,7 +20232,9 @@ impl ApplicationHandler for App {
                         self.scene.materials.insert(id, material);
                     }
                 }
-                let events = if mode == "blend-opacity" {
+                let events = if mask_cutoff {
+                    crate::demo::hud::mask_cutoff_events()
+                } else if mode == "blend-opacity" {
                     crate::demo::hud::opacity_events()
                 } else if matches!(mode.as_str(), "edit-no-mod" | "rotate-no-mod") {
                     crate::demo::hud::no_modify_events()
@@ -20266,6 +20274,10 @@ impl ApplicationHandler for App {
                 if matches!(mode.as_str(), "blend-opacity" | "edit-no-mod" | "rotate-no-mod") {
                     self.world.hud_scales = crate::world::hud_scale::HudScales::default();
                     self.world.hud_zoom = 1.0;
+                }
+                if mask_cutoff {
+                    self.world.hud_scales = crate::world::hud_scale::HudScales::default();
+                    self.world.hud_zoom = if mode == "mask-cutoff-zoom" { 0.5 } else { 1.0 };
                 }
                 if matches!(mode.as_str(), "edit-no-mod" | "rotate-no-mod") {
                     self.settings.build.edit_linked = false;

@@ -3624,6 +3624,13 @@ and the memory the main thread gives back (decoded levels, J2C data, picking
 triangles) is freed by a separate thread (`Jobs::discard`): while the tasks
 allocate on all the cores, freeing it in place cost several milliseconds.
 
+Alpha coverage restoration (`aurora-render/src/textures.rs`) only increases
+the box-filtered mip alpha. A texture may be shared by faces with different
+cutoffs; reducing its alpha to match coverage at 0.5 erased HUD panels cut
+at 200/255. Fuller mips keep their plain alpha, while foliage still receives
+the coverage boost. `scene/texture_cache.rs` uses mask code 4 to regenerate
+the old adjusted chains (code 3) without invalidating opaque/blended ones.
+
 ## Threads and data ownership
 
 A frame costs the longer of the two threads, not their sum: the main thread
