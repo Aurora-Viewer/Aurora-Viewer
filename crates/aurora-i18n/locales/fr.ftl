@@ -13271,12 +13271,15 @@ vr-view = Vue VR
 vr-unavailable = La VR est indisponible. Vérifiez que le runtime OpenXR et le casque sont connectés.
 vr-restart-title = Casque connecté
 vr-restart-body = Votre casque a été connecté après le démarrage d'Aurora. Aurora prépare la VR à son démarrage : redémarrez-le pour utiliser la VR. Il passera en VR tout seul une fois de retour dans le monde.
+vr-restart-body-set-up = Aurora prépare la VR à son démarrage, et seulement une fois que vous l'avez utilisée : redémarrez-le pour utiliser la VR. Il passera en VR tout seul une fois de retour dans le monde, et sera prêt pour la VR à chaque démarrage désormais.
 vr-restart-confirm = Redémarrer en VR
 ui-options-camera-vr = VR
 ui-options-camera-vr-view = Vue du casque
 ui-options-camera-vr-view-help = Où commence la vue quand vous passez en VR : dans les yeux de votre avatar, ou là où était la caméra.
 ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
+ui-options-camera-vr-at-start = Préparer la VR au démarrage
+ui-options-camera-vr-at-start-help = Le bouton VR passe alors en VR tout de suite. Désactivé, Aurora ne charge pas votre logiciel de VR au démarrage, et le bouton VR propose un redémarrage. S'applique au prochain démarrage.
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
 
