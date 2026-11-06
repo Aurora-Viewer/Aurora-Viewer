@@ -1861,7 +1861,7 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 fn fs_shadow(in: ShadowOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    let tex_alpha = sample_tex(rec.tex.x, in.uv).a;
+    let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {

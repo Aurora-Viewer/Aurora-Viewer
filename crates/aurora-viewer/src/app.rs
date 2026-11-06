@@ -1268,6 +1268,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
         settings.antialiasing = v;
     }
+    if let Some(v) = std::env::var("AURORA_FSR_QUALITY").ok().and_then(|v| v.parse::<u8>().ok()) {
+        settings.fsr_quality = v.min(4);
+    }
     if let Some(v) = std::env::var("AURORA_RENDER_SCALE").ok().and_then(|v| v.parse::<u32>().ok()) {
         settings.render_scale_percent = v.clamp(50, 100);
     }
