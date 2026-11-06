@@ -1688,6 +1688,7 @@ app-graphics-start-failed =
     À essayer :
     • mettre à jour le pilote de la carte graphique ;
     • sur un PC à deux cartes graphiques, vérifier qu'elles sont toutes deux activées dans le Gestionnaire de périphériques, et que l'écran est branché sur la carte qui doit dessiner ;
+    • sur un ordinateur portable avec des cartes graphiques AMD et NVIDIA, mettre aussi à jour le pilote AMD depuis le site d'AMD ;
     • redémarrer le PC.
 
     Détails : { $e }
@@ -2863,6 +2864,7 @@ dev-toolbox-r9 = Lumières
 dev-toolbox-r10 = Sondes de réflexion
 dev-toolbox-r11 = Tri des lumières locales
 dev-toolbox-r12 = Tri des sondes de réflexion
+dev-toolbox-r13 = Mettre le Render en pause
 dev-toolbox-o1 = Boîtes englobantes
 dev-toolbox-o2 = Niveaux de détail (LOD)
 dev-toolbox-o3 = Culling
@@ -3971,10 +3973,11 @@ ui-options-avatar-physics-help = La poitrine, le ventre et les fesses des avatar
 ui-options-avatar-physics-detail = Détail de la physique des avatars
 ui-options-avatar-physics-detail-help = À 1, tous les avatars bougent ; plus bas, les avatars petits à l'écran gardent leur forme ; 0 arrête la physique (RenderAvatarPhysicsLODFactor)
 ui-options-limit-when-unfocused = Limiter hors focus
-ui-options-pause-when-card-busy = Mettre la 3D en pause quand la carte sature
-ui-options-pause-when-card-busy-tip = Quand un autre programme occupe la carte graphique pendant qu'Aurora est derrière, Aurora arrête de dessiner le monde jusqu'à ce que vous cliquiez dessus, pour que la carte ne soit pas réinitialisée. Désactivé, Aurora peut se fermer avec « la carte graphique a été perdue ». Activé par défaut
-busy-pause-notice = 3D en pause : la carte graphique est occupée par un autre programme. Cliquez pour reprendre.
+ui-options-pause-when-card-busy = Mettre le Render en pause quand la carte sature
+ui-options-pause-when-card-busy-tip = Quand un autre programme occupe la carte graphique pendant qu'Aurora est derrière, Aurora arrête de dessiner le monde jusqu'à ce que vous cliquiez dessus, pour que la carte ne soit pas réinitialisée. Désactivé, Aurora peut se fermer avec « la carte graphique a été perdue ». Vaut pour toutes les fenêtres Aurora ouvertes. Activé par défaut
+busy-pause-notice = Render en pause : la carte graphique est occupée par un autre programme. Cliquez pour reprendre.
 busy-pause-window-title = { $title } — En pause
+busy-pause-forced-notice = Render en pause depuis la Dev Toolbox (R13). Appuyez de nouveau sur R13 pour reprendre.
 ui-land-sound-restrict-voice-chat-to-this-parcel = Limiter le chat vocal à cette parcelle
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = Limiter les sons des gestes et des objets à cette parcelle
 common-limits = Limites
