@@ -9,7 +9,10 @@ nothing else to install. macOS support is new: tell us what does not work
 
 - A Mac with Apple Silicon (M1, M2, M3, M4 or later). Intel Macs are not
   supported.
-- macOS 12 Monterey or later.
+- macOS 13 Ventura or later. The renderer draws every texture through
+  Metal 3, which Apple ships from macOS 13 on: on macOS 12 Monterey the
+  viewer cannot start, even on Apple Silicon. Every Apple Silicon Mac can
+  be updated to a newer macOS, free of charge.
 
 ## 1. Download and install
 
