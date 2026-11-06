@@ -145,6 +145,7 @@ impl App {
         }
         if let Some(id) = keyword_sound {
             log::debug!(target: "ui_sound", "UISndFSKeywordSound ({id})");
+            self.scene.sounds.want_kept(id);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
         }
     }
