@@ -163,7 +163,7 @@ fn photo_maxima() -> Values {
         water_reflections: 4,
         mirrors: 4,
         reflection_probes: 3,
-        probe_count: 64,
+        probe_count: 256,
         anisotropy: 16,
         ..Preset::Deluxe.values()
     }

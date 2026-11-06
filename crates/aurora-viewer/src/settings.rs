@@ -2066,7 +2066,7 @@ impl Default for Settings {
             screen_indirect_intensity: SCREEN_INDIRECT_INTENSITY,
             water_reflections: 1,
             reflection_probes: 3,
-            probe_count: 32,
+            probe_count: 256,
             probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
