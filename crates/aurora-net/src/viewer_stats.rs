@@ -65,6 +65,9 @@ pub struct ViewerSide {
     pub show_usernames: bool,
     /// LLInventoryModel::isInventoryUsable: the root folder is known.
     pub inventory_usable: bool,
+    /// Metres of the simulator's corrections of our avatar of more than
+    /// half a metre, since the start (AGENT_POSITION_SNAP).
+    pub position_snaps: f64,
 }
 
 /// The machine, read once by the viewer.
@@ -100,6 +103,29 @@ pub struct GpuInfo {
     /// Dedicated video memory, MB (0 when unknown).
     pub vram_mb: i32,
     pub max_texture_size: i32,
+    /// The Vulkan driver's version and limits, when the viewer draws with
+    /// Vulkan.
+    pub vulkan: Option<VulkanLimits>,
+}
+
+/// The Vulkan driver's version and limits the report gives in place of
+/// OpenGL's (`aurora_render::VulkanLimits`, copied by the viewer).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VulkanLimits {
+    /// VK_MAKE_API_VERSION's packing (variant, major, minor, patch).
+    pub instance_version: u32,
+    pub max_samples: u32,
+    pub texture_units: u32,
+    pub sample_mask_words: u32,
+    pub color_samples: u32,
+    pub depth_samples: u32,
+    pub integer_samples: u32,
+}
+
+/// A Vulkan version as the Legacy Viewer's probe writes it:
+/// "major.minor.patch.variant" (VK_API_VERSION_MAJOR and the others).
+pub fn vulkan_version_string(v: u32) -> String {
+    format!("{}.{}.{}.{}", (v >> 22) & 0x7f, (v >> 12) & 0x3ff, v & 0xfff, v >> 29)
 }
 
 impl GpuInfo {
@@ -330,29 +356,37 @@ pub fn body(v: &ViewerSide, n: &NetCounters, sim_fps: f64, unix_now: i64, region
     let g = &s.gpu;
     let vendor = g.vendor_short();
     // "%-6s Class %d " + LLGLManager::getRawGLString ("<vendor> <renderer>")
-    let gpu_class = -1; // GPU_CLASS_UNKNOWN: Aurora runs no GPU benchmark
+    // GPU_CLASS_UNKNOWN, the Legacy Viewer's own value before its GPU
+    // benchmark has run: Aurora runs none
+    let gpu_class = -1;
     let vendor6: String = vendor.chars().take(6).collect();
     let gpu = format!("{vendor6:<6} Class {gpu_class} {vendor} {}", g.name);
-    let gl = llsd_map! {
-        "gpu_vendor" => vendor,
-        "gpu_version" => g.driver.as_str(),
-        "opengl_version" => g.api.as_str(),
-        "vram" => g.vram_mb,
-        // OpenGL limits Vulkan has no counterpart for
-        "max_samples" => 0,
-        "num_texture_image_units" => 0,
-        "max_sample_mask_words" => 0,
-        "max_color_texture_samples" => 0,
-        "max_depth_texture_samples" => 0,
-        "max_integer_samples" => 0,
-        "max_vertex_range" => 0,
-        "max_index_range" => 0,
-        "max_texture_size" => g.max_texture_size,
-        "is_ati" => vendor == "AMD",
-        "is_nvidia" => vendor == "NVIDIA",
-        "is_intel" => vendor == "INTEL",
-        "gl_renderer" => g.name.as_str(),
-    };
+    let mut gl = Map::new();
+    gl.insert("gpu_vendor".into(), vendor.into());
+    gl.insert("gpu_version".into(), g.driver.as_str().into());
+    gl.insert("opengl_version".into(), g.api.as_str().into());
+    gl.insert("vram".into(), g.vram_mb.into());
+    // the OpenGL limits from their Vulkan counterparts; left out without
+    // Vulkan, and always for GL_MAX_ELEMENTS_VERTICES / _INDICES
+    // (max_vertex_range, max_index_range), which Vulkan has none of
+    if let Some(vk) = &g.vulkan {
+        for (key, value) in [
+            ("max_samples", vk.max_samples),
+            ("num_texture_image_units", vk.texture_units),
+            ("max_sample_mask_words", vk.sample_mask_words),
+            ("max_color_texture_samples", vk.color_samples),
+            ("max_depth_texture_samples", vk.depth_samples),
+            ("max_integer_samples", vk.integer_samples),
+        ] {
+            gl.insert(key.into(), Llsd::Integer(i32::try_from(value).unwrap_or(i32::MAX)));
+        }
+    }
+    gl.insert("max_texture_size".into(), g.max_texture_size.into());
+    gl.insert("is_ati".into(), (vendor == "AMD").into());
+    gl.insert("is_nvidia".into(), (vendor == "NVIDIA").into());
+    gl.insert("is_intel".into(), (vendor == "INTEL").into());
+    gl.insert("gl_renderer".into(), g.name.as_str().into());
+    let gl = Llsd::Map(gl);
     let system = llsd_map! {
         "ram" => s.ram_kb,
         "os" => s.os.as_str(),
@@ -408,19 +442,22 @@ pub fn body(v: &ViewerSide, n: &NetCounters, sim_fps: f64, unix_now: i64, region
     };
     let mut misc = Map::new();
     if cfg!(windows) {
-        // the Vulkan probe of the report (Dave Houlton 05/2020): Aurora draws
-        // with Vulkan, so its loader is there; the Legacy Viewer reads "1.0"
-        // when it cannot ask the loader for more
-        let vulkan = g.api == "Vulkan";
+        // the Vulkan probe of the report (Dave Houlton 05/2020): the
+        // loader's instance version, the one Aurora's Vulkan instance was
+        // made with; "0.0" without Vulkan, as the Legacy Viewer's default
+        let detected = g.vulkan.is_some();
         misc.insert(
             "string_1".into(),
-            Llsd::from(if vulkan {
+            Llsd::from(if detected {
                 "Vulkan driver is detected"
             } else {
                 "No Vulkan driver detected"
             }),
         );
-        misc.insert("VulkanMaxApiVersion".into(), Llsd::from(if vulkan { "1.0" } else { "0.0" }));
+        let version = g
+            .vulkan
+            .map_or_else(|| "0.0".to_owned(), |vk| vulkan_version_string(vk.instance_version));
+        misc.insert("VulkanMaxApiVersion".into(), Llsd::from(version));
     } else {
         misc.insert("string_1".into(), Llsd::from("Unused"));
     }
@@ -450,9 +487,8 @@ pub fn body(v: &ViewerSide, n: &NetCounters, sim_fps: f64, unix_now: i64, region
         "MinimalSkin" => false,
         // LLViewerStats::addToMessage
         "misc" => llsd_map! { "Version" => true, "Vertex Buffers Enabled" => 1.0 },
-        // (the Legacy Viewer sums the server corrections of our position
-        // over half a metre; Aurora does not count them)
-        "AgentPositionSnaps" => 0.0,
+        // the server's corrections of our position over half a metre
+        "AgentPositionSnaps" => v.position_snaps,
     }
 }
 
