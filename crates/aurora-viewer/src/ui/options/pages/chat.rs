@@ -157,12 +157,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-payment-sent-opens-conversation-hint"),
                     &field!(payment_sent_opens_conversation),
                 );
-                // PaymentReceived's toast (NotifyMoneyReceived, #2675)
-                cx.toggle(
-                    tr!("ui-options-notify-money-received"),
-                    tr!("ui-options-notify-money-received-hint"),
-                    &field!(notify_money_received),
-                );
                 // the L$ received rising into the balance
                 cx.toggle(
                     tr!("ui-options-balance-gain-animation"),
@@ -697,6 +691,12 @@ fn notifications(cx: &mut Cx) {
             tr!("ui-options-friends-online-in-chat"),
             tr!("ui-options-friends-online-in-chat-hint"),
             &field!(friends_online_in_chat),
+        );
+        // PaymentReceived's toast (NotifyMoneyReceived, #2675)
+        cx.toggle(
+            tr!("ui-options-notify-money-received"),
+            tr!("ui-options-notify-money-received-hint"),
+            &field!(notify_money_received),
         );
         // #465: an offer of friendship in the middle of the screen
         cx.toggle(
