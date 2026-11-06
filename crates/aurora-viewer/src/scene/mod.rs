@@ -832,6 +832,7 @@ pub struct Scene {
     pub studio_stage: avatar_studio::Stage,
     pub studio_pose: crate::avatar_studio::Pose,
     pub studio_floor_offset: f32,
+    pub studio_hover_height: f32,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
     /// not at the clock's.
@@ -1493,6 +1494,7 @@ impl Scene {
             studio_stage: Default::default(),
             studio_pose: Default::default(),
             studio_floor_offset: 0.0,
+            studio_hover_height: 0.0,
             held_at: None,
             photo_marks: Default::default(),
             give_marks: Default::default(),
@@ -5395,6 +5397,9 @@ impl Scene {
             }
             if *owner == world.agent_id {
                 avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
+                if world.avatar_studio {
+                    avatar_studio::lift_display_pose(studio_ground.map(|(model, _)| model), self.studio_hover_height, chunk);
+                }
             }
         });
         drop(jobs);
@@ -5449,6 +5454,9 @@ impl Scene {
                 }
                 if *owner == world.agent_id {
                     avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
+                    if world.avatar_studio {
+                        avatar_studio::lift_display_pose(studio_ground.map(|(model, _)| model), self.studio_hover_height, chunk);
+                    }
                 }
             });
         }

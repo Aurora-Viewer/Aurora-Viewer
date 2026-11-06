@@ -46,7 +46,7 @@ impl Default for Config {
             markers: true,
             natural: true,
             dof: false,
-            sensitivity: 0.5,
+            sensitivity: super::gizmo::DEFAULT_SENSITIVITY,
             also_bvh: false,
             unlock_pelvis: false,
             confirm_overwrite: false,
@@ -136,6 +136,11 @@ pub(super) fn group(name: &str) -> usize {
         _ => 3,
     }
 }
+impl State {
+    pub(super) fn cancel_scale_gizmo(&mut self) {
+        self.scale_gizmo.cancel();
+    }
+}
 impl Editor {
     pub(super) fn poser_edited(&self, bone: usize) -> bool {
         self.poser.active && self.poser.sessions.get(&self.poser.subject).is_some_and(|s| s.edited(bone))
@@ -159,6 +164,9 @@ impl Editor {
     pub fn poser_owns_pointer(&self) -> bool {
         self.poser.active && self.poser.pointer_owned
     }
+    pub fn manipulator_owns_pointer(&self) -> bool {
+        self.poser_owns_pointer() || self.manipulator_hovered
+    }
     /// The consent and Preferences actions chosen in the window since the
     /// last call.
     pub fn take_poser_requests(&mut self) -> Vec<Request> {
@@ -179,7 +187,7 @@ impl Editor {
             self.poser.config.sensitivity = if config.sensitivity.is_finite() {
                 config.sensitivity.clamp(0.05, 2.0)
             } else {
-                0.5
+                super::gizmo::DEFAULT_SENSITIVITY
             };
             self.poser.settings_loaded = true;
             self.space = if self.poser.natural { Space::Local } else { Space::World };
@@ -190,6 +198,15 @@ impl Editor {
         } else {
             false
         }
+    }
+    pub(super) fn set_poser_sensitivity(&mut self, sensitivity: f32) {
+        let sensitivity = if sensitivity.is_finite() {
+            sensitivity.clamp(0.05, 2.0)
+        } else {
+            super::gizmo::DEFAULT_SENSITIVITY
+        };
+        self.poser.sensitivity = sensitivity;
+        self.poser.config.sensitivity = sensitivity;
     }
     pub fn open_poser(&mut self) {
         if self.poser.active {
@@ -287,6 +304,7 @@ impl Editor {
                     let sample = ik::animations::Sample {
                         animation: Arc::new(BoundAnim::bind(animation, &world.avatar_lib.rig)),
                         frame: 0,
+                        time_seconds: None,
                     };
                     ik::animations::apply(&world.avatar_lib.rig, &mut pose, Vec3::ZERO, &[sample]);
                     let selective = matches!(mode, document::LoadMode::Selective | document::LoadMode::SelectiveRotations);
