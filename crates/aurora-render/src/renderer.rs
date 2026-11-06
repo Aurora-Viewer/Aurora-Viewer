@@ -701,9 +701,26 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
 /// The replay of a frame's write journal is logged over this (ms).
 const SLOW_WRITES_MS: f32 = 4.0;
 
+/// Keep the ordinary three-encoder path allocation-free when markers are off.
+enum FrameCommands<T> {
+    One(T),
+    Segments(Vec<T>),
+}
+impl<T> FrameCommands<T> {
+    fn append_to(self, commands: &mut Vec<T>) {
+        match self {
+            Self::One(command) => commands.push(command),
+            Self::Segments(segments) => commands.extend(segments),
+        }
+    }
+}
+
 /// Work of the helper threads (`Backend::finishers`).
-fn finish_encoders(encoders: Vec<wgpu::CommandEncoder>) -> Vec<wgpu::CommandBuffer> {
-    encoders.into_iter().map(wgpu::CommandEncoder::finish).collect()
+fn finish_encoders(encoders: FrameCommands<wgpu::CommandEncoder>) -> FrameCommands<wgpu::CommandBuffer> {
+    match encoders {
+        FrameCommands::One(encoder) => FrameCommands::One(encoder.finish()),
+        FrameCommands::Segments(encoders) => FrameCommands::Segments(encoders.into_iter().map(wgpu::CommandEncoder::finish).collect()),
+    }
 }
 
 /// View-projection matrix for positions given relative to `eye`, a point
@@ -1687,7 +1704,7 @@ pub(crate) struct Backend {
     particle_backoff: crate::gpu_alloc::Backoff,
     timer: Option<GpuTimer>,
     /// Two threads that finish command encoders beside this one.
-    finishers: Helpers<Vec<wgpu::CommandEncoder>, Vec<wgpu::CommandBuffer>>,
+    finishers: Helpers<FrameCommands<wgpu::CommandEncoder>, FrameCommands<wgpu::CommandBuffer>>,
     msaa_samples: u32,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
@@ -7555,8 +7572,8 @@ impl Backend {
             }),
         );
         let enc_pre = match &breadcrumbs {
-            Some(frame) => frame.take_encoders(enc_pre),
-            None => vec![enc_pre],
+            Some(frame) => FrameCommands::Segments(frame.take_encoders(enc_pre)),
+            None => FrameCommands::One(enc_pre),
         };
         mark(&mut encoder, MARK_SCENE_BEGIN);
         breadcrumb(&mut encoder, GpuBoundary::SceneBegin);
@@ -8204,8 +8221,8 @@ impl Backend {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame post") }),
         );
         let enc_scene = match &breadcrumbs {
-            Some(frame) => frame.take_encoders(enc_scene),
-            None => vec![enc_scene],
+            Some(frame) => FrameCommands::Segments(frame.take_encoders(enc_scene)),
+            None => FrameCommands::One(enc_scene),
         };
         breadcrumb(&mut encoder, GpuBoundary::PostBegin);
         // ---- temporal anti-aliasing
@@ -8721,12 +8738,16 @@ impl Backend {
         // encoder (finish 0.56 -> 0.51 ms, 1.9 -> 1.6 ms in the longest
         // frame of a second)
         let enc_post = match &breadcrumbs {
-            Some(frame) => frame.take_encoders(encoder),
-            None => vec![encoder],
+            Some(frame) => FrameCommands::Segments(frame.take_encoders(encoder)),
+            None => FrameCommands::One(encoder),
         };
         let (pre, post, scene) = self.finishers.pair(enc_pre, enc_post, move || finish_encoders(enc_scene));
         match (pre, post) {
-            (Some(pre), Some(post)) => extra_cmds.extend(pre.into_iter().chain(scene).chain(post)),
+            (Some(pre), Some(post)) => {
+                pre.append_to(&mut extra_cmds);
+                scene.append_to(&mut extra_cmds);
+                post.append_to(&mut extra_cmds);
+            }
             _ => {
                 log::error!("render: a command encoder thread panicked");
                 let spent = Spent { writes, lists: draw_lists };
