@@ -13,8 +13,8 @@ pub(super) fn exposes_asset_uuid(kind: i32) -> bool {
     matches!(kind, 0 | 1 | 3 | 5 | 7 | 13 | 20 | 21 | 56 | 57 | 58 | 59)
 }
 
-pub(super) fn copyable_asset_uuid(item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
-    (exposes_asset_uuid(item.asset_type) && item.owner_mask & rules::FULL == rules::FULL && !item.asset_id.is_nil())
+pub(super) fn copyable_asset_uuid(inv: &Inventory, item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
+    (exposes_asset_uuid(item.asset_type) && rules::held(inv, item) & rules::FULL == rules::FULL && !item.asset_id.is_nil())
         .then_some(item.asset_id)
 }
 
@@ -486,16 +486,24 @@ mod tests {
         for kind in -1..=60 {
             item.asset_type = kind;
             let allowed = [0, 1, 3, 5, 7, 13, 20, 21, 56, 57, 58, 59].contains(&kind);
-            assert_eq!(copyable_asset_uuid(&item), allowed.then_some(item.asset_id), "asset type {kind}");
+            assert_eq!(
+                copyable_asset_uuid(&Inventory::default(), &item),
+                allowed.then_some(item.asset_id),
+                "asset type {kind}"
+            );
         }
         item.asset_type = 0;
         for missing in [rules::COPY, rules::MODIFY, rules::TRANSFER] {
             item.owner_mask = full_perm & !missing;
-            assert_eq!(copyable_asset_uuid(&item), None, "missing permission {missing:x}");
+            assert_eq!(
+                copyable_asset_uuid(&Inventory::default(), &item),
+                None,
+                "missing permission {missing:x}"
+            );
         }
         item.owner_mask = full_perm;
         item.asset_id = Uuid::nil();
-        assert_eq!(copyable_asset_uuid(&item), None);
+        assert_eq!(copyable_asset_uuid(&Inventory::default(), &item), None);
     }
 
     #[test]

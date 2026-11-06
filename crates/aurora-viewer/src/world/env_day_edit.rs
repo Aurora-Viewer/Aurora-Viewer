@@ -124,6 +124,13 @@ impl DayDoc {
         self.map["flags"].as_u32()
     }
 
+    /// The day's flags with its frames' (`env_edit::source_flags`; none
+    /// without a `flags` key).
+    pub fn source_flags(&self) -> u32 {
+        let frames = self.tracks.iter().flatten().map(|(_, frame)| frame["flags"].as_u32());
+        frames.fold(self.flags(), |f, frame| f | frame)
+    }
+
     pub fn set_flags(&mut self, flags: u32) {
         self.map.insert("flags", flags as i32);
     }
@@ -467,6 +474,17 @@ mod tests {
         let rendered = d.day();
         assert!((rendered.sky_at(0.5, 0).gamma - 2.0).abs() < 1e-6);
         assert!((rendered.water_at(0.3).fog_density - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_days_source_flags_join_its_frames() {
+        use crate::world::env_edit::{FLAG_NOCOPY, FLAG_NOTRANS};
+        let mut d = day();
+        assert_eq!(d.source_flags(), 0, "no flags key: no restriction");
+        d.set_flags(FLAG_NOTRANS);
+        assert_eq!(d.source_flags(), FLAG_NOTRANS);
+        d.tracks[TRACK_GROUND][0].1.insert("flags", FLAG_NOCOPY as i32);
+        assert_eq!(d.source_flags(), FLAG_NOTRANS | FLAG_NOCOPY);
     }
 
     #[test]
