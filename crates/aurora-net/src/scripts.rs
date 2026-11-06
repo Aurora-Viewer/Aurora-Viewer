@@ -38,9 +38,14 @@ pub struct ScriptSaved {
 }
 
 /// A save's reply holds no compile failure: `compiled` is true, or absent
-/// (a grid that did not compile the script, see [`ScriptSaved::checked`]).
+/// with no `errors` (a grid that did not compile the script, see
+/// [`ScriptSaved::checked`]). A reply that lists errors is a failure even
+/// without `compiled`.
 pub fn compile_ok(ack: &Llsd) -> bool {
-    matches!(ack["compiled"], Llsd::Undef) || ack["compiled"].as_bool()
+    match &ack["compiled"] {
+        Llsd::Undef => ack["errors"].as_array().is_empty(),
+        _ => ack["compiled"].as_bool(),
+    }
 }
 
 pub fn upload_body(target: ScriptTarget, mono: bool, running: bool, experience: Option<Uuid>) -> Llsd {
@@ -252,5 +257,9 @@ mod tests {
         assert!(compile_ok(&ack));
         assert!(!compile_ok(&llsd_map! { "compiled" => false }));
         assert!(compile_ok(&llsd_map! { "compiled" => true }));
+        // errors without `compiled` stay a failure
+        assert!(!compile_ok(
+            &llsd_map! { "errors" => Llsd::Array(vec!["(4, 8) : ERROR : Syntax error".into()]) }
+        ));
     }
 }
