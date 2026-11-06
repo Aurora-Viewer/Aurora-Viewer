@@ -772,11 +772,11 @@ fn friends_tab(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     // the icons these actions have in the avatar menus
-                    if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
-                        actions.push(PeopleAction::OfferTeleport(f.id));
-                    }
                     if widgets::icon_button(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), f.online) {
                         context::request(ui.ctx(), context::CtxAction::RequestTeleport(f.id));
+                    }
+                    if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
+                        actions.push(PeopleAction::OfferTeleport(f.id));
                     }
                     if widgets::icon_button(
                         ui,
