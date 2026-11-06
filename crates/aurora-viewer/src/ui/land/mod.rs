@@ -126,12 +126,12 @@ const KEY_W: f32 = 140.0;
 struct Draft {
     text: String,
     base: String,
-    editing: bool,
+    editing: Option<egui::Id>,
 }
 
 impl Draft {
     fn sync(&mut self, server: &str) {
-        if !self.editing && self.base != server {
+        if self.editing.is_none() && self.base != server {
             self.base = server.to_owned();
             self.text = server.to_owned();
         }
@@ -139,13 +139,27 @@ impl Draft {
 
     /// Track the widget's focus; Some(text) when a change is committed.
     fn after(&mut self, r: &egui::Response) -> Option<String> {
-        self.editing = r.has_focus();
+        // The name appears in both the header and Manage. An unfocused copy
+        // must not end the other editor's draft or let a refresh erase it.
+        if r.has_focus() {
+            self.editing = Some(r.id);
+        } else if self.editing.is_some_and(|id| !r.ctx.memory(|m| m.has_focus(id))) {
+            self.editing = None;
+        }
         if r.lost_focus() && self.text != self.base {
             self.base = self.text.clone();
             return Some(self.text.clone());
         }
         None
     }
+}
+
+/// Legacy Viewer LLPanelLandGeneral: printable ASCII without pipes, at most
+/// 63 bytes (floater_about_land.xml). ASCII makes the character limit a byte limit.
+fn parcel_name_field(ui: &mut egui::Ui, editable: bool, draft: &mut Draft, width: f32) -> egui::Response {
+    widgets::restricted_text_field(ui, editable, &mut draft.text, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+        egui::TextEdit::singleline(b).desired_width(width).char_limit(63)
+    })
 }
 
 /// What the tabs read about the selection, its region and the agent.
@@ -533,6 +547,11 @@ impl LandUi {
         }
         self.demo = demo;
         let view = self.view(world);
+        if let Some(parcel) = &view.parcel {
+            // Once before either editor: committing the header must not be
+            // undone by Manage syncing the same frame's older snapshot.
+            self.name.sync(&parcel.name);
+        }
         let screen = ctx.content_rect();
         // FIRE-17280: no experiences tab where the region has none
         let has_xp = demo
@@ -1025,6 +1044,95 @@ fn money(v: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn name_frame(
+        ctx: &egui::Context,
+        draft: &mut Draft,
+        server: &str,
+        events: Vec<egui::Event>,
+        editable: bool,
+    ) -> (Vec<egui::Response>, Vec<String>) {
+        let mut responses = Vec::new();
+        let mut commits = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                draft.sync(server);
+                for location in ["header", "manage"] {
+                    ui.push_id(location, |ui| {
+                        let r = parcel_name_field(ui, editable, draft, 300.0);
+                        if let Some(name) = draft.after(&r) {
+                            commits.push(name);
+                        }
+                        responses.push(r);
+                    });
+                }
+            },
+        );
+        output.textures_delta.clear();
+        (responses, commits)
+    }
+
+    #[test]
+    fn parcel_rename_limits_typed_ascii_to_63_characters() {
+        for field in 0..2 {
+            let ctx = egui::Context::default();
+            let mut draft = Draft::default();
+            let (responses, _) = name_frame(&ctx, &mut draft, "", vec![], true);
+            ctx.memory_mut(|m| m.request_focus(responses[field].id));
+            name_frame(&ctx, &mut draft, "", vec![egui::Event::Text("a".repeat(70))], true);
+            assert_eq!(draft.text, "a".repeat(63));
+        }
+    }
+
+    #[test]
+    fn parcel_rename_shared_editors_keep_focus_and_commit_once() {
+        for field in 0..2 {
+            let ctx = egui::Context::default();
+            let mut draft = Draft::default();
+            let (responses, _) = name_frame(&ctx, &mut draft, "", vec![], true);
+            ctx.memory_mut(|m| m.request_focus(responses[field].id));
+            name_frame(&ctx, &mut draft, "", vec![egui::Event::Text("New".into())], true);
+            assert_eq!(draft.editing, Some(responses[field].id));
+            // A simulator refresh while either copy is focused cannot erase typing.
+            name_frame(&ctx, &mut draft, "Old name", vec![egui::Event::Text(" name".into())], true);
+            assert_eq!(draft.text, "New name");
+            let (_, commits) = name_frame(
+                &ctx,
+                &mut draft,
+                "Old name",
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                true,
+            );
+            assert_eq!(commits, ["New name"]);
+            assert_eq!(draft.text, "New name");
+            assert!(draft.editing.is_none());
+            let (_, commits) = name_frame(&ctx, &mut draft, "New name", vec![], true);
+            assert!(commits.is_empty());
+            assert_eq!(draft.text, "New name");
+        }
+    }
+
+    #[test]
+    fn parcel_rename_without_identity_power_cannot_change_the_name() {
+        let ctx = egui::Context::default();
+        let mut draft = Draft::default();
+        let (responses, _) = name_frame(&ctx, &mut draft, "Original", vec![], false);
+        ctx.memory_mut(|m| m.request_focus(responses[0].id));
+        let (_, commits) = name_frame(&ctx, &mut draft, "Original", vec![egui::Event::Text("Replacement".into())], false);
+        assert_eq!(draft.text, "Original");
+        assert!(commits.is_empty());
+    }
 
     #[test]
     fn dates_like_the_french_skin() {

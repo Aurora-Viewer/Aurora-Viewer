@@ -455,6 +455,10 @@ impl Session<'_> {
         let Some(addr) = self.land_sim(handle) else {
             return;
         };
+        log::info!(
+            "parcel {}: ParcelPropertiesUpdate capability unavailable, sending properties via UDP",
+            u.local_id
+        );
         let mut m = ParcelPropertiesUpdate::default();
         m.agent_data.agent_id = self.agent_id();
         m.agent_data.session_id = self.session_id();

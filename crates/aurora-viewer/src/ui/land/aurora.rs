@@ -12,7 +12,7 @@ use crate::theme::Palette;
 use crate::ui::sheet::{self, GAUGE_W, PICTURE, PageTab, fact, icon_at};
 use crate::ui::{presence, widgets};
 use crate::world::World;
-use crate::world::land::{PrimRoom, PrimUsage};
+use crate::world::land::{PrimRoom, PrimUsage, powers};
 use aurora_net::ParcelInfo;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, Rect, RichText, Sense, Shape, Vec2};
@@ -282,7 +282,15 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
     // name, rating and category
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.add(egui::Label::new(semibold(ui, &parcel.name, 19.0, p.ink)).truncate());
+        if v.can(powers::LAND_CHANGE_IDENTITY) {
+            let width = (ui.available_width() * 0.6).min(330.0);
+            let r = super::parcel_name_field(ui, true, &mut s.name, width).on_hover_text(aurora_i18n::tr!("common-name-2"));
+            if let Some(name) = s.name.after(&r) {
+                world.land.update(|u| u.name = name);
+            }
+        } else {
+            ui.add(egui::Label::new(semibold(ui, &parcel.name, 19.0, p.ink)).truncate());
+        }
         if let Some(r) = v.region.as_ref() {
             widgets::maturity_badge_of(ui, p, r.sim_access, 15.0);
         }
