@@ -1683,6 +1683,7 @@ app-graphics-start-failed =
     試すべきこと：
     ・グラフィックカードのドライバを更新する。
     ・グラフィックカードが複数あるＰＣでは、デバイスマネージャーで両方が有効になっていること、モニターが描画を担当するカードに接続されていることを確認する。
+    ・AMDとNVIDIAのグラフィックを搭載したノートＰＣでは、NVIDIAだけでなくAMDのウェブサイトからもAMDドライバを更新する。
     ・ＰＣを再起動する。
 
     詳細：{ $e }
@@ -2857,6 +2858,7 @@ dev-toolbox-r9 = ライト
 dev-toolbox-r10 = 反射プローブ
 dev-toolbox-r11 = ローカルライトの並べ替え
 dev-toolbox-r12 = 反射プローブの並べ替え
+dev-toolbox-r13 = Renderを一時停止
 dev-toolbox-o1 = バウンディングボックス
 dev-toolbox-o2 = 詳細レベル（ＬｏＤ）
 dev-toolbox-o3 = カリング
@@ -3929,10 +3931,11 @@ ui-options-avatar-physics-help = 物理演算レイヤーを着用したアバ�
 ui-options-avatar-physics-detail = アバター物理演算の詳細度
 ui-options-avatar-physics-detail-help = 1ではすべてのアバターが動きます。値を下げると画面上で小さいアバターは形状を保ちます。0で物理演算を停止します（RenderAvatarPhysicsLODFactor）。
 ui-options-limit-when-unfocused = 非アクティブ時に制限
-ui-options-pause-when-card-busy = グラフィックカードが過負荷のとき3Dを一時停止
-ui-options-pause-when-card-busy-tip = Auroraが背面にある間に別のプログラムがグラフィックカードを占有しているとき、カードがリセットされないよう、クリックするまでAuroraはワールドの描画を止めます。オフにすると、Auroraが「グラフィックカードが失われました」で終了することがあります。デフォルトで有効
-busy-pause-notice = 3Dを一時停止中：グラフィックカードが別のプログラムで使用中です。クリックで再開します。
+ui-options-pause-when-card-busy = グラフィックカードが過負荷のときRenderを一時停止
+ui-options-pause-when-card-busy-tip = Auroraが背面にある間に別のプログラムがグラフィックカードを占有しているとき、カードがリセットされないよう、クリックするまでAuroraはワールドの描画を止めます。オフにすると、Auroraが「グラフィックカードが失われました」で終了することがあります。開いているすべてのAuroraウィンドウに適用されます。デフォルトで有効
+busy-pause-notice = Renderを一時停止中：グラフィックカードが別のプログラムで使用中です。クリックで再開します。
 busy-pause-window-title = { $title } — 一時停止中
+busy-pause-forced-notice = Dev Toolbox（R13）からRenderを一時停止中です。もう一度R13を押すと再開します。
 ui-land-sound-restrict-voice-chat-to-this-parcel = ボイスチャットをこの区画に制限
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = ジェスチャーとオブジェクトのサウンドをこの区画に制限
 common-limits = 制限
@@ -4214,7 +4217,7 @@ ui-options-scripted-media = スクリプトによるメディア
 ui-options-media-filter = メディアフィルター
 ui-options-media-filter-help = リストにないサイトからメディアや音楽を読み込む前に確認します（MediaEnableFilter）。
 ui-options-media-filter-own-worn = 自分の装着アイテムを信頼
-ui-options-media-filter-own-worn-help = 自分が着用していて自分で作成したもの（装着アイテム、ＨＵＤ）のメディアは確認なしで読み込みます。ブロックしたサイトは引き続きブロックされます。他の人が作成したアイテムと他のアバターのアイテムは確認します。
+ui-options-media-filter-own-worn-help = 自分が着用しているもの（装着アイテム、ＨＵＤ）のメディアは確認なしで読み込みます。ブロックしたサイトは引き続きブロックされます。他のアバターのアイテムとワールド内のオブジェクトは確認します。
 ui-options-media-filter-list = サイト
 ui-options-media-filter-list-help = このアカウントで許可またはブロックするドメイン（サブドメインを含む）とアドレス
 ui-options-media-filter-empty = サイトはまだありません。確認ダイアログで保存した回答がここに表示されます。
