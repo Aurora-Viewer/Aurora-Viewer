@@ -581,19 +581,23 @@ fn xr_runtime_in(head: &str, tail: &str) -> Option<String> {
     ))
 }
 
-/// The GPU errors wgpu handed to the viewer, collapsed to operation names.
-/// Their complete messages and labels remain in the private session log.
+/// The GPU errors wgpu handed to the viewer, collapsed to operation names
+/// with their counts: `out-of-memory`, with the call when the log names it
+/// (`out-of-memory in Device::create_bind_group`, #2497), or the wgpu
+/// operation that failed. Their complete messages and labels remain in the
+/// private session log.
 fn gpu_errors_in(head: &str, tail: &str) -> Option<String> {
+    const OUT_OF_MEMORY: &str = "out-of-memory";
     let mut found: Vec<(String, usize)> = Vec::new();
     let texts: &[&str] = if head == tail { &[head] } else { &[head, tail] };
     for text in texts {
         // An error whose operation is still to come: the message goes on
-        // over the lines below its record.
-        let mut open = false;
+        // over the lines below its record. The word to note if none comes.
+        let mut open: Option<&str> = None;
         for line in text.lines() {
             if log_header(line) {
-                if std::mem::take(&mut open) {
-                    note_gpu_error(&mut found, "other", 1);
+                if let Some(unnamed) = open.take() {
+                    note_gpu_error(&mut found, unnamed, 1);
                 }
                 let Some((record, message)) = line.split_once("] wgpu error: ") else {
                     continue;
@@ -601,26 +605,37 @@ fn gpu_errors_in(head: &str, tail: &str) -> Option<String> {
                 if !record.ends_with(" ERROR aurora_render::main_thread") {
                     continue;
                 }
-                if message.starts_with("Out of Memory") {
-                    note_gpu_error(&mut found, "out-of-memory", 1);
+                open = Some(if message.starts_with("Out of Memory") {
+                    OUT_OF_MEMORY
                 } else {
-                    open = true;
-                }
-            } else if open && let Some(rest) = line.trim_start().strip_prefix("In ") {
-                open = false;
-                note_gpu_error(&mut found, gpu_operation(rest).unwrap_or("other"), 1);
+                    "other"
+                });
+            } else if open.is_some()
+                && let Some(rest) = line.trim_start().strip_prefix("In ")
+            {
+                let name = match (open.take(), gpu_operation(rest)) {
+                    (Some(OUT_OF_MEMORY), Some(operation)) => format!("{OUT_OF_MEMORY} in {operation}"),
+                    (Some(OUT_OF_MEMORY), None) => OUT_OF_MEMORY.to_owned(),
+                    (_, operation) => operation.unwrap_or("other").to_owned(),
+                };
+                note_gpu_error(&mut found, &name, 1);
             } else if let Some(repeated) = line
                 .trim()
                 .strip_prefix("(repeated ")
                 .and_then(|s| s.split_once(" times").map(|(n, _)| n))
                 && let Ok(repeated) = repeated.parse::<usize>()
-                && let Some((_, count)) = found.last_mut()
             {
-                *count = count.saturating_add(repeated);
+                // the error the repeat counts is noted first, named or not
+                if let Some(unnamed) = open.take() {
+                    note_gpu_error(&mut found, unnamed, 1);
+                }
+                if let Some((_, count)) = found.last_mut() {
+                    *count = count.saturating_add(repeated);
+                }
             }
         }
-        if open {
-            note_gpu_error(&mut found, "other", 1);
+        if let Some(unnamed) = open {
+            note_gpu_error(&mut found, unnamed, 1);
         }
     }
     if found.is_empty() {
@@ -1785,6 +1800,33 @@ mod tests {
         assert_eq!(gpu_errors_in(&log, "").as_deref(), expected);
         // the head and the tail of a short log are the same text
         assert_eq!(gpu_errors_in(&log, &log).as_deref(), expected);
+    }
+
+    #[test]
+    fn an_out_of_memory_error_says_which_call_when_the_log_does() {
+        let e = WGPU_ERROR;
+        let named = format!(
+            "{e}Out of Memory\n\nCaused by:\n  In Device::create_bind_group, label = 'Private Place'\n    Not enough memory left.\n\
+             [2026-11-04T10:00:01.000Z INFO  aurora_viewer] still here\n"
+        );
+        assert_eq!(
+            gpu_errors_in(&named, &named).as_deref(),
+            Some("out-of-memory in Device::create_bind_group (x1)")
+        );
+        // a name that is not an operation of wgpu's is not published
+        let odd = format!("{e}Out of Memory\n\nCaused by:\n  In Alice::resident\n");
+        assert_eq!(gpu_errors_in(&odd, "").as_deref(), Some("out-of-memory (x1)"));
+        // repeated: counted on the named error
+        let repeated = format!("{named}  (repeated 4 times)\n");
+        assert_eq!(
+            gpu_errors_in(&repeated, "").as_deref(),
+            Some("out-of-memory in Device::create_bind_group (x5)")
+        );
+        // the log of a build that wrote no sources, at its very end
+        assert_eq!(
+            gpu_errors_in(&format!("{e}Out of Memory\n"), "").as_deref(),
+            Some("out-of-memory (x1)")
+        );
     }
 
     #[test]

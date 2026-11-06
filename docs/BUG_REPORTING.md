@@ -109,7 +109,9 @@ What each part tells the one who fixes it:
 - **Vulkan layers installed**: names enumerated by the loader. Enumeration
   does not prove a layer was enabled or running in the instance.
 - **GPU errors**: sanitized operation names and counts from the retained
-  session log. Up to 50 distinct full wgpu error blocks, with their labels,
+  session log: `out-of-memory`, with the call when the log names it
+  (`out-of-memory in Device::create_bind_group`), or the wgpu operation that
+  failed (`Queue::write_buffer`). Up to 50 distinct full wgpu error blocks, with their labels,
   counts and age, are saved in `gpu-errors-private.txt`; they stay local.
 - **OS GPU reset records**: matching Linux kernel lines or Windows reset
   event names and times from two minutes before through five minutes after
