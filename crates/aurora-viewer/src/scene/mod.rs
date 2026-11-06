@@ -53,6 +53,7 @@ pub mod probes;
 pub mod rez;
 mod sculpt_watch;
 mod selection_demo;
+mod self_click;
 pub mod settings;
 pub mod shape;
 mod shown_bakes;

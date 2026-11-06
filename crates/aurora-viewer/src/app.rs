@@ -4485,54 +4485,6 @@ impl App {
         }
     }
 
-    /// Is a world point on (or very near) our own avatar?
-    /// Where a ray enters and leaves our avatar's box (the size the
-    /// simulator gives the avatar object, a little wider for the arms), and
-    /// where along it the ray passes within 0.2 m of the body's vertical axis
-    /// (the click finds the avatar before its body and clothes are drawn).
-    fn own_avatar_ray(&self, origin: Vec3, dir: Vec3) -> Option<(f32, f32, Option<f32>)> {
-        let a = &self.world.agent;
-        let size = self
-            .world
-            .objects
-            .index_of_uuid(&self.world.agent_id)
-            .and_then(|i| self.world.objects.get(i))
-            .map(|o| o.scale)
-            .filter(|s| s.z > 0.5 && s.is_finite())
-            .unwrap_or(Vec3::new(0.45, 0.6, 1.9));
-        let half = Vec3::new((size.x * 0.5).max(0.3) + 0.15, (size.y * 0.5).max(0.3) + 0.15, size.z * 0.5 + 0.1);
-        // box space: centered on the agent, turned with its body
-        let inv = a.body_rotation().inverse();
-        let o = inv * (origin - a.position);
-        let d = inv * dir;
-        let (mut t0, mut t1) = (0.0f32, f32::INFINITY);
-        for k in 0..3 {
-            if d[k].abs() < 1e-8 {
-                if o[k].abs() > half[k] {
-                    return None;
-                }
-                continue;
-            }
-            let (a, b) = ((-half[k] - o[k]) / d[k], (half[k] - o[k]) / d[k]);
-            t0 = t0.max(a.min(b));
-            t1 = t1.min(a.max(b));
-        }
-        if t0 > t1 {
-            return None;
-        }
-        // closest approach to the vertical axis, inside the box
-        let dxy = d.truncate();
-        let t = if dxy.length_squared() > 1e-8 {
-            -o.truncate().dot(dxy) / dxy.length_squared()
-        } else {
-            t0
-        };
-        let t = t.clamp(t0, t1);
-        let q = o + d * t;
-        let axis = (q.truncate().length() < 0.2).then_some(t);
-        Some((t0, t1, axis))
-    }
-
     /// The avatar whose name tag is under the cursor, and the point on the
     /// cursor ray at its tag. LLPipeline::lineSegmentIntersectInWorld tests
     /// the avatar tags after the world: a tag picks its avatar unless
@@ -4635,18 +4587,11 @@ impl App {
             .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
             .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
-        // on our avatar: a surface inside its box under the cursor (nothing
-        // in front of it); or, when the ray goes through the box without
-        // touching anything (body not drawn yet), close to the body's axis
-        let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|(o, d)| {
-            let (t0, t1, axis) = self.own_avatar_ray(o, d)?;
-            match hit.map(|p| (p - o).dot(d)) {
-                Some(t) if t < t0 - 0.05 => None,
-                Some(t) if t <= t1 + 0.05 => hit,
-                _ if alt => None,
-                _ => axis.map(|t| o + d * t),
-            }
-        });
+        // on our avatar (scene/self_click.rs), unless an attachment of
+        // another resident with an action is where the click landed
+        let avatar_hit = ray
+            .filter(|_| shown.is_none_or(|d| !d.blend))
+            .and_then(|ray| self.scene.own_avatar_click(&self.world, ray, hit, alt));
         // or on our name tag
         let avatar_hit = avatar_hit.or_else(|| {
             let (idx, p) = self.pick_name_tag(hit, ray)?;
