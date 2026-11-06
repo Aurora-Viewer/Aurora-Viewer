@@ -427,10 +427,10 @@ pub struct OptionsUi {
     /// Media plugins folder found (empty: none) and plugins running.
     pub media_plugins: String,
     pub media_running: usize,
-    /// Aurora's media plugins pack (set by the app), and its "Retry" button
-    /// (cleared by the app).
+    /// Aurora's media plugins pack (set by the app), and its "Download" or
+    /// "Retry" button (cleared by the app).
     pub media_pack: crate::media::pack::PackState,
-    pub media_pack_retry: bool,
+    pub media_pack_download: bool,
     /// The account's media filter list while logged in (set by the app when
     /// it changes); the changes made here, applied by the app; the site
     /// being typed.
