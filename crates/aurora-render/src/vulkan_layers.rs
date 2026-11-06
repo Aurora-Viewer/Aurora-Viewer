@@ -318,12 +318,28 @@ fn sanitize_log_value(value: &str) -> String {
         .or_else(|| std::env::var_os("HOME"))
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let value = if !home.is_empty() {
-        value.replace(&home, "<home>")
-    } else {
-        value.to_owned()
-    };
-    value.chars().filter(|ch| !ch.is_control()).take(256).collect()
+    redact_home(value, &home).chars().filter(|ch| !ch.is_control()).take(256).collect()
+}
+
+/// `value` with every `home` in it replaced by `<home>`, whatever the ASCII
+/// case: Windows paths ignore it (`c:\users\name` is `C:\Users\Name`), and
+/// on Linux a wider match only hides more. ASCII lowercasing keeps every
+/// byte offset, so the matches found in the lowercase copy cut the value at
+/// the same character boundaries.
+fn redact_home(value: &str, home: &str) -> String {
+    if home.is_empty() {
+        return value.to_owned();
+    }
+    let (lower, needle) = (value.to_ascii_lowercase(), home.to_ascii_lowercase());
+    let mut out = String::with_capacity(value.len());
+    let mut rest = 0;
+    for (at, _) in lower.match_indices(&needle) {
+        out.push_str(&value[rest..at]);
+        out.push_str("<home>");
+        rest = at + needle.len();
+    }
+    out.push_str(&value[rest..]);
+    out
 }
 
 /// Use ash directly to preserve the count-call VkResult that wgpu-hal logs
@@ -487,6 +503,18 @@ mod tests {
         ] {
             assert!(CRASHING.iter().chain(OVERLAYS).all(|l| l.name != kept), "{kept}");
         }
+    }
+
+    #[test]
+    fn the_home_folder_is_hidden_whatever_its_case() {
+        let home = "C:\\Users\\Someone";
+        assert_eq!(
+            redact_home("c:\\users\\someone\\layers;C:\\Users\\Someone\\b", home),
+            "<home>\\layers;<home>\\b"
+        );
+        assert_eq!(redact_home("D:\\Vulkan\\nvidia.json", home), "D:\\Vulkan\\nvidia.json");
+        assert_eq!(redact_home("C:\\Users\\Someone\\é\\x", home), "<home>\\é\\x");
+        assert_eq!(redact_home("anything", ""), "anything");
     }
 
     #[test]

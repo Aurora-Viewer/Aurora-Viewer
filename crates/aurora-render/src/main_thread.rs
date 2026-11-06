@@ -340,7 +340,9 @@ impl Renderer {
         // Some AMD switchable-graphics layer versions return VK_INCOMPLETE
         // from physical-device enumeration on hybrid laptops. Preserve the
         // normal path, but try a fresh plain instance without the layer before
-        // allowing Dozen back in.
+        // allowing Dozen back in. These lines do not start with "GPU: ":
+        // the crash report takes the first such line for the card of the
+        // session and its notice (crash/summary.rs, gpu_in, gpu_notice_in).
         #[cfg(windows)]
         if adapters.is_empty() {
             let keep = std::env::var("AURORA_VULKAN_LAYERS").ok();
@@ -354,7 +356,7 @@ impl Renderer {
                     break;
                 }
                 log::warn!(
-                    "GPU: raw Vulkan physical-device count before {retry:?}: {}",
+                    "Vulkan raw physical-device count before {retry:?}: {}",
                     crate::vulkan_layers::physical_device_count_probe()
                 );
                 match retry {
@@ -367,7 +369,7 @@ impl Renderer {
                             crate::vulkan_layers::loader_environment().join(", ")
                         );
                         log::warn!(
-                            "GPU: Vulkan listed no graphics card; trying again without {}",
+                            "Vulkan listed no graphics card; trying again without {}",
                             crate::vulkan_layers::AMD_SWITCHABLE_LAYER
                         );
                     }
@@ -390,28 +392,27 @@ impl Renderer {
                 adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
                 if adapters.is_empty() {
                     log::warn!(
-                        "GPU: raw Vulkan physical-device count after {retry:?}: {}",
+                        "Vulkan raw physical-device count after {retry:?}: {}",
                         crate::vulkan_layers::physical_device_count_probe()
                     );
                 } else if retry == crate::vulkan_layers::EnumerationRetry::AmdSwitchableOff {
                     log::warn!(
-                        "GPU: Vulkan adapter enumeration recovered without AMD's switchable graphics layer; updating the AMD driver from amd.com may prevent this issue"
+                        "Vulkan adapter enumeration recovered without AMD's switchable graphics layer; updating the AMD driver from amd.com may prevent this issue"
                     );
                 } else {
-                    log::info!("GPU: Vulkan adapter enumeration recovered after allowing Dozen");
+                    log::info!("Vulkan adapter enumeration recovered after allowing Dozen");
                 }
             }
         }
         if adapters.is_empty() {
             #[cfg(windows)]
             log::error!(
-                "GPU: Vulkan lists no graphics card after all retries; AMD switchable layer disabled={}; raw physical-device count: {}",
+                "Vulkan lists no graphics card after all retries; AMD switchable layer disabled={}; raw physical-device count: {}",
                 std::env::var_os(crate::vulkan_layers::AMD_SWITCHABLE_DISABLE_VARIABLE).is_some(),
                 crate::vulkan_layers::physical_device_count_probe()
             );
-            return Err(RenderError::NoAdapter(
-                "Vulkan lists no graphics card (vkEnumeratePhysicalDevices failed)".into(),
-            ));
+            // The raw count above says whether the call failed or found none
+            return Err(RenderError::NoAdapter(no_adapter_listed().into()));
         }
         // SAFETY: `window` goes to the host with the backend that owns the
         // surface and drops after it (`Host`'s field order and join), or
@@ -1879,6 +1880,17 @@ fn open_device(
         adapter_specific,
         max_textures,
     })
+}
+
+/// The start error when the graphics API lists no adapter at all: Metal on
+/// macOS, Vulkan elsewhere. It does not say the call failed: an empty list
+/// may also be a success with no driver installed.
+fn no_adapter_listed() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Metal lists no graphics card"
+    } else {
+        "Vulkan lists no graphics card"
+    }
 }
 
 /// Size of the largest device-local memory heap (the GPU's own VRAM on a

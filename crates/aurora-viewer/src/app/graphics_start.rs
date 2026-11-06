@@ -39,7 +39,7 @@ mod tests {
     #[test]
     fn the_message_names_the_error_and_the_log() {
         let log = std::path::Path::new("C:/logs/aurora.log");
-        let (title, body) = super::text("Vulkan lists no graphics card (vkEnumeratePhysicalDevices failed)", log);
+        let (title, body) = super::text("Vulkan lists no graphics card", log);
         assert!(!title.is_empty());
         assert!(body.contains("Vulkan lists no graphics card"));
         assert!(body.contains("aurora.log"));

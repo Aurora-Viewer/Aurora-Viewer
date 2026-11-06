@@ -157,25 +157,31 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
-    let vulkan_layers = aurora_render::vulkan_layers::offered_descriptions();
-    log::info!(
-        "Vulkan startup: loader {}; layers offered: {}; process elevated: {}; loader environment: {}",
-        aurora_render::vulkan_layers::loader_version(),
-        if vulkan_layers.is_empty() {
-            "none or unavailable".to_owned()
-        } else {
-            vulkan_layers.join(", ")
-        },
-        process_elevation(),
-        {
-            let variables = aurora_render::vulkan_layers::loader_environment();
+    // The loader scans the layer manifests (and may call their pre-instance
+    // hooks): on a thread of its own, like the crash report's list of layers
+    // (crash/mod.rs), so the window never waits for this log line
+    let spawned = std::thread::Builder::new().name("aurora-vulkan-facts".into()).spawn(|| {
+        let vulkan_layers = aurora_render::vulkan_layers::offered_descriptions();
+        let variables = aurora_render::vulkan_layers::loader_environment();
+        log::info!(
+            "Vulkan startup: loader {}; layers offered: {}; process elevated: {}; loader environment: {}",
+            aurora_render::vulkan_layers::loader_version(),
+            if vulkan_layers.is_empty() {
+                "none or unavailable".to_owned()
+            } else {
+                vulkan_layers.join(", ")
+            },
+            process_elevation(),
             if variables.is_empty() {
                 "none set".to_owned()
             } else {
                 variables.join(", ")
             }
-        }
-    );
+        );
+    });
+    if let Err(error) = spawned {
+        log::warn!("the Vulkan startup details are not logged: {error}");
+    }
     if !vulkan_layers_off.is_empty() {
         let names: Vec<_> = vulkan_layers_off.iter().map(|l| format!("{} ({})", l.name, l.program)).collect();
         log::info!(
