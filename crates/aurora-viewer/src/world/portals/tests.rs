@@ -157,6 +157,56 @@ fn a_return_is_announced_only_where_the_traveler_may_build_and_stays_crossable_e
 }
 
 #[test]
+fn a_return_waiting_for_its_land_is_shared_once_open_and_never_unshared() {
+    let opens = |state: &State, id: Uuid| {
+        state
+            .out
+            .iter()
+            .filter(|(_, m)| matches!(m, Message::Open(a) if a.id == id))
+            .count()
+    };
+    let creator = Uuid::from_u128(20);
+    let now = Instant::now();
+    // Unknown, then open to us: announced once, then no longer waiting
+    let (traveler, mut state) = fixture();
+    let p = portal();
+    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, traveler.agent.position, now, 1000));
+    assert_eq!(state.awaiting_land().len(), 1);
+    assert_eq!(opens(&state, p.id), 0);
+    state.land_known(creator, p.id, BuildRight::Unknown, 1000);
+    assert_eq!(opens(&state, p.id), 0, "still unknown");
+    state.land_known(creator, p.id, BuildRight::Allowed, 1000);
+    assert_eq!(opens(&state, p.id), 1);
+    assert!(state.awaiting_land().is_empty());
+    // a later arrival on land not known or closed never makes it private again
+    for build in [BuildRight::Unknown, BuildRight::Denied] {
+        assert!(state.share_return(p.clone(), creator, build, traveler.agent.position, now, 1000));
+        assert!(state.awaiting_land().is_empty(), "{build:?}");
+    }
+    state.receive(&traveler, &wire(Uuid::from_u128(5), Message::Discover { region: 256 }), now, 1000);
+    assert_eq!(opens(&state, p.id), 2, "still answered to late arrivals");
+    // Unknown, then closed: ours alone for good
+    let (traveler, mut state) = fixture();
+    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, traveler.agent.position, now, 1000));
+    state.land_known(creator, p.id, BuildRight::Denied, 1000);
+    assert!(state.awaiting_land().is_empty());
+    state.land_known(creator, p.id, BuildRight::Allowed, 1000);
+    assert_eq!(opens(&state, p.id), 0, "a closed land is final");
+    assert!(state.crossable(&traveler, creator, p.id).is_some());
+    // the return expires before the answer: nothing is announced
+    let (traveler, mut state) = fixture();
+    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, traveler.agent.position, now, 1000));
+    state.land_known(creator, p.id, BuildRight::Allowed, p.expires);
+    assert_eq!(opens(&state, p.id), 0, "expired");
+    let (traveler, mut state) = fixture();
+    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, traveler.agent.position, now, 1000));
+    state.sync(&traveler, None, p.expires);
+    assert!(state.awaiting_land().is_empty(), "gone with the return");
+    state.land_known(creator, p.id, BuildRight::Allowed, 1000);
+    assert_eq!(opens(&state, p.id), 0);
+}
+
+#[test]
 fn a_return_kept_to_the_traveler_answers_no_details_request() {
     let (traveler, mut state) = fixture();
     let now = Instant::now();

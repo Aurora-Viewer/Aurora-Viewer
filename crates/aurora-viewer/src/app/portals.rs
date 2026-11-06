@@ -96,6 +96,11 @@ impl App {
                 state.share_return(journey.portal, journey.creator, build, self.world.agent.position, now, unix);
             }
         }
+        // a return kept ours while its land was unknown: asked again until known
+        for (creator, id, center) in state.awaiting_land() {
+            let build = self.build_right_at(center);
+            state.land_known(creator, id, build, unix);
+        }
         if let Some(group) = state.take_group_refresh() {
             self.world.group_data.request_members(group);
         }

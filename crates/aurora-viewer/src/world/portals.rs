@@ -124,6 +124,9 @@ pub struct Entry {
     shared: bool,
     created: bool,
     return_pass: bool,
+    /// A return kept ours only because its land was not known yet: it is
+    /// announced once that land is known and open to us.
+    awaiting_land: bool,
 }
 
 impl Entry {
@@ -502,6 +505,7 @@ impl State {
             shared: true,
             created: true,
             return_pass: false,
+            awaiting_land: false,
         });
         Ok(())
     }
@@ -533,6 +537,7 @@ impl State {
     /// announced to nobody.
     pub fn share_return(&mut self, portal: Portal, creator: Uuid, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> bool {
         let share = build == BuildRight::Allowed;
+        let unknown = build == BuildRight::Unknown;
         let mut announcement = portal.announcement();
         announcement.creator = Some(creator);
         if creator.is_nil()
@@ -558,6 +563,8 @@ impl State {
             entry.gate.clearance = CLEARANCE;
             entry.gate.ready_at = now;
             entry.shared |= share;
+            // never back from shared to private
+            entry.awaiting_land = unknown && !entry.shared;
             entry.portal.creator = Some(creator);
             announcement = entry.portal.clone();
         } else {
@@ -574,17 +581,56 @@ impl State {
                 shared: share,
                 created: false,
                 return_pass: true,
+                awaiting_land: unknown,
             });
         }
         if !share {
             return true;
         }
-        if let Access::Group(group) = portal.access
+        self.announce(announcement, portal.access)
+    }
+
+    fn announce(&mut self, announcement: Announcement, access: Access) -> bool {
+        if let Access::Group(group) = access
             && !self.group_refresh.contains(&group)
         {
             self.group_refresh.push_back(group);
         }
         self.queue(Uuid::nil(), Message::Open(announcement))
+    }
+
+    /// Our returns waiting for their land to be known: (creator, id, center).
+    pub fn awaiting_land(&self) -> Vec<(Uuid, Uuid, Vec3)> {
+        self.entries
+            .iter()
+            .filter(|e| e.awaiting_land)
+            .map(|e| (e.owner, e.portal.id, Vec3::from(e.portal.center)))
+            .collect()
+    }
+
+    /// The land under a waiting return became known: open to us, it is
+    /// announced like any return; closed, it stays ours alone for good. A
+    /// return gone or expired meanwhile is not brought back.
+    pub fn land_known(&mut self, creator: Uuid, id: Uuid, build: BuildRight, unix: u64) {
+        if build == BuildRight::Unknown {
+            return;
+        }
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.awaiting_land && e.owner == creator && e.portal.id == id)
+        else {
+            return;
+        };
+        entry.awaiting_land = false;
+        if build != BuildRight::Allowed || !entry.portal.live(unix) {
+            return;
+        }
+        entry.shared = true;
+        let (announcement, access) = (entry.portal.clone(), entry.details.as_ref().map_or(Access::Everyone, |d| d.access));
+        if !self.announce(announcement, access) {
+            self.failed = true;
+        }
     }
 
     fn remember(&mut self, owner: Uuid, id: Uuid, unix: u64) {
@@ -682,6 +728,7 @@ impl State {
                     shared: false,
                     created: false,
                     return_pass: false,
+                    awaiting_land: false,
                 });
             }
             Message::Close { id, .. } => {

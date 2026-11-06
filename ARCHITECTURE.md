@@ -784,7 +784,10 @@ per-observer crossing gates. Opening our portal needs the right to build
 where it stands (`world/land.rs::agent_can_build`, allowAgentBuild); an
 unknown parcel refuses and is asked for (`app/land_rights.rs`). A traveler's return
 is announced only where they may build; elsewhere, or while that land is
-unknown, it stays theirs alone: shown and crossable, announced to nobody. `aurora-net/src/bridge/portal.rs` validates their
+unknown, it stays theirs alone: shown and crossable, announced to nobody.
+One kept private only because its land was unknown is announced once that
+land is known and open to them, while it lives; a shared return never
+becomes private again. `aurora-net/src/bridge/portal.rs` validates their
 bounded base64/JSON wire format. Bridge 1.37 uses an owner-authenticated,
 region-local relay to the independent query script; late arrivals discover
 existing portals once, with targeted replies and bounded traffic. The bridge
