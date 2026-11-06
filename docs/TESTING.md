@@ -90,7 +90,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
-| `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
+| `AURORA_RENDER_SCALE=50..100` | World resolution percentage; turns off the macOS automatic scale |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
 | `AURORA_MAX_TEXTURE_RES=512\|1024\|2048` | Overrides "Maximum texture resolution" (Graphics › Distance and detail) |
 | `AURORA_DEMO_TEXTURE_RES=1` | Boards with 2048 px streamed textures, tinted by the resolution shown |
@@ -325,15 +325,24 @@ to the vertex shaders or to the passes is therefore checked with both,
 the sky show through in patches
 (`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
 
-`AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100,
-100 by default), before spatial upscaling. HUDs, labels and controls stay at
-native resolution. RLVa's resolution divisor takes precedence; saved photos
-ignore the user scale. `AURORA_TEXTURE_BUDGET_MB` selects a manual texture
-budget (256–32768 MB). Both follow the normal saved graphics settings path;
-use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
-`AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
+`AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100),
+before spatial upscaling. HUDs, labels and controls stay at native
+resolution. On macOS the default follows the display's logical resolution
+(`100 / backing scale`: 50 on a 2× Retina display, 67 on 1.5× and 100 on 1×),
+as the Legacy Viewer does with `RenderHiDPI 0`; Preferences › Graphics ›
+Frames per second has the "Match the display" switch, and
+`AURORA_RENDER_SCALE` turns it off for the launch. Moving the window to a
+display of another scale recomputes the percentage without a restart. RLVa's
+resolution divisor takes precedence; saved photos ignore the user scale.
+`AURORA_TEXTURE_BUDGET_MB` selects a manual texture budget (256–32768 MB).
+Both follow the normal saved graphics settings path; use `AURORA_DEMO=1` for
+isolated comparisons. A Retina comparison can use
+`AURORA_WINDOW_SIZE=1440,900`, `AURORA_GRAPHICS_PRESET=high`,
 `AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
-frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
+frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50. Without
+`AURORA_RENDER_SCALE`, the same command checks the macOS automatic scale: the
+`world resolution` line should show half the window's physical size on a 2×
+display.
 
 `AURORA_MAX_TEXTURE_RES` sets Preferences › Graphics › Maximum texture
 resolution (the Legacy Viewer's RenderMaxTextureResolution), saved with the

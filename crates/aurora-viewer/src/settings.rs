@@ -1204,6 +1204,11 @@ pub struct Settings {
     pub antialiasing: u8,
     /// World resolution as a percentage of the window; HUDs and UI stay native.
     pub render_scale_percent: u32,
+    /// macOS: the world follows the display's logical resolution
+    /// (`100 / backing scale`, as the Legacy Viewer's RenderHiDPI 0 does on
+    /// Retina), with `render_scale_percent` holding the resolved value. An
+    /// explicit percentage turns this off. False elsewhere.
+    pub render_scale_auto: bool,
     /// Geometric specular anti-aliasing (common.wgsl `specular_aa_roughness`):
     /// highlights widened where the shading normal turns faster than a
     /// pixel, so they stop shimmering as the camera moves. An Aurora
@@ -1435,6 +1440,17 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
 }
 
 const SETTINGS_VERSION: u32 = 33;
+
+/// The world render percentage that makes macOS draw at the display's
+/// logical resolution, as the Legacy Viewer does with RenderHiDPI 0: 50 on a
+/// 2x Retina display, 67 on 1.5x and 100 on a 1x one. Rounded, then kept in
+/// the setting's range; an unreadable scale leaves the world native.
+pub fn auto_render_scale(scale_factor: f64) -> u32 {
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return 100;
+    }
+    (100.0 / scale_factor).round().clamp(50.0, 100.0) as u32
+}
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -2048,6 +2064,7 @@ impl Default for Settings {
             contact_shadows: false,
             antialiasing: 6,
             render_scale_percent: 100,
+            render_scale_auto: cfg!(target_os = "macos"),
             specular_aa: true,
             colored_sky_ambient: false,
             tonemapper: 1,
@@ -2626,6 +2643,29 @@ impl Settings {
             // still exactly on Potato or Low takes theirs (512 and 1024),
             // any other keeps 2048
             crate::graphics_presets::upgrade_max_texture_resolution(&mut self);
+            #[cfg(target_os = "macos")]
+            {
+                // macOS draws at the display's logical resolution by default
+                // now (the Legacy Viewer's RenderHiDPI 0). A profile still on
+                // the old 100 % default follows; an explicit 50–99 % is kept.
+                let mut migrated = false;
+                if self.render_scale_percent == 100 {
+                    self.render_scale_auto = true;
+                    migrated = true;
+                }
+                // A profile still exactly on the old Apple default (Medium)
+                // takes the Legacy Viewer's Mac MidHigh table; a custom, High
+                // or Deluxe profile and a named saved graphics profile are kept.
+                if self.graphics_saved_active.is_none()
+                    && crate::graphics_presets::Preset::matching(&self) == Some(crate::graphics_presets::Preset::Medium)
+                {
+                    crate::graphics_presets::macos::apply(&mut self);
+                    migrated = true;
+                }
+                if migrated {
+                    log::info!("settings v31: macOS defaults migrated (display render scale and/or Apple Silicon MidHigh)");
+                }
+            }
         }
         if self.settings_version < 32 {
             // the head turns toward the cursor's side by default, like the
@@ -2739,6 +2779,10 @@ impl Settings {
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         self.antialiasing = self.antialiasing.min(6);
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.render_scale_auto = false;
+        }
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 64);
@@ -3663,6 +3707,15 @@ mod tests {
             former.write(&mut old);
             assert_eq!(Preset::matching(&old), None, "{preset:?}");
             let now = old.sanitized();
+            #[cfg(target_os = "macos")]
+            if preset == Preset::Medium {
+                // the later v31 migration takes the old Apple default to
+                // the Mac MidHigh values
+                assert!(crate::graphics_presets::macos::matches(&now));
+            } else {
+                assert_eq!(Preset::matching(&now), Some(preset));
+            }
+            #[cfg(not(target_os = "macos"))]
             assert_eq!(Preset::matching(&now), Some(preset));
             // customized on that level: kept
             let mut custom = Settings {
@@ -4450,5 +4503,64 @@ mod tests {
         // a key no build writes any more is not carried forward
         assert!(written.get("former_key").is_none());
         assert_eq!(written["settings_version"], SETTINGS_VERSION);
+    }
+
+    #[test]
+    fn the_logical_resolution_follows_the_backing_scale() {
+        assert_eq!(super::auto_render_scale(1.0), 100);
+        assert_eq!(super::auto_render_scale(1.25), 80);
+        assert_eq!(super::auto_render_scale(1.5), 67);
+        assert_eq!(super::auto_render_scale(2.0), 50);
+        // no display reading: native, like the former default
+        assert_eq!(super::auto_render_scale(0.0), 100);
+        assert_eq!(super::auto_render_scale(f64::NAN), 100);
+        assert_eq!(super::auto_render_scale(f64::INFINITY), 100);
+    }
+
+    #[test]
+    fn a_new_profile_follows_the_display_on_macos_only() {
+        assert_eq!(Settings::default().render_scale_auto, cfg!(target_os = "macos"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn old_mac_defaults_move_to_the_display_and_the_mid_high_values_once() {
+        use crate::graphics_presets::Preset;
+        use crate::graphics_presets::macos::matches;
+        let mut old = Settings {
+            settings_version: 30,
+            render_scale_percent: 100,
+            render_scale_auto: false,
+            ..Settings::default()
+        };
+        Preset::Medium.apply(&mut old);
+        old.settings_version = 30;
+        old.render_scale_percent = 100;
+        old.render_scale_auto = false;
+        let migrated = old.clone().sanitized();
+        assert!(migrated.render_scale_auto);
+        assert_eq!(migrated.render_scale_percent, 100, "the app resolves it from the window");
+        assert!(matches(&migrated));
+
+        // an explicit lower percentage is the user's, and a named saved
+        // profile is not replaced
+        let mut explicit = old.clone();
+        explicit.render_scale_percent = 50;
+        let explicit = explicit.sanitized();
+        assert!(!explicit.render_scale_auto);
+        assert_eq!(explicit.render_scale_percent, 50);
+        let mut saved = old.clone();
+        saved.graphics_saved.insert("my profile".into(), Default::default());
+        saved.graphics_saved_active = Some("my profile".into());
+        let saved = saved.sanitized();
+        assert_eq!(crate::graphics_presets::Preset::matching(&saved), Some(Preset::Medium));
+        assert!(!matches(&saved));
+
+        // a customized profile keeps its settings
+        let mut custom = old;
+        custom.draw_distance = 200.0;
+        let custom = custom.sanitized();
+        assert!(!matches(&custom));
+        assert_eq!(custom.draw_distance, 200.0);
     }
 }

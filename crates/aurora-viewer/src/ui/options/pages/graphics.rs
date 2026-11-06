@@ -3,7 +3,7 @@
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
 //! depth of field), smoothness and parcel visibility.
 
-use super::super::cx::{Cx, Nothing, field};
+use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, preset_choice, stepped, toggle};
 use egui::RichText;
 
@@ -182,13 +182,42 @@ fn overlays(cx: &mut Cx) {
 fn frames_per_second(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-frames-per-second"), |cx| {
-        cx.slider(
-            tr!("ui-options-render-scale"),
-            tr!("ui-options-render-scale-help"),
-            &field!(render_scale_percent),
-            50..=100,
-            "%",
+        // macOS: draw at the display's logical resolution, as the Legacy
+        // Viewer does on Retina; an explicit percentage turns this off.
+        #[cfg(target_os = "macos")]
+        cx.toggle(
+            tr!("ui-options-render-scale-auto"),
+            tr!("ui-options-render-scale-auto-help"),
+            &field!(render_scale_auto),
         );
+        if cfg!(target_os = "macos") && cx.s.render_scale_auto {
+            // The resolved value is the display's, not a choice of the user:
+            // show it without the "modified" dot or a slider to drag.
+            let track = Custom {
+                path: "render_scale_percent",
+                modified: |_, _| false,
+                reset: |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
+                    s.render_scale_percent = d.render_scale_percent;
+                },
+            };
+            cx.row(
+                tr!("ui-options-render-scale"),
+                tr!("ui-options-render-scale-auto-help"),
+                &track,
+                |ui, s| {
+                    ui.label(format!("{} %", s.render_scale_percent));
+                    false
+                },
+            );
+        } else {
+            cx.slider(
+                tr!("ui-options-render-scale"),
+                tr!("ui-options-render-scale-help"),
+                &field!(render_scale_percent),
+                50..=100,
+                "%",
+            );
+        }
         // across, its switch in line with those of the limits below
         cx.wide().toggle(
             tr!("ui-options-vertical-synchronization"),

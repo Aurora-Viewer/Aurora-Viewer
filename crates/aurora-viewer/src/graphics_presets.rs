@@ -29,8 +29,14 @@
 //! What a level does not touch: the texture memory (sized from the video
 //! memory), the frame rate limits and vertical sync (comfort, not quality),
 //! occlusion culling (only a gain), the environment and the image tuning
-//! (exposure, tone mapping), and the limits of the worn surface and of the
+//! (exposure, tone mapping), the limits of the worn surface and of the
 //! complexity rule, which are choices about other people.
+//!
+//! On macOS only, a new Apple Silicon profile starts on a sixth set of
+//! values, the Legacy Viewer's Mac "MidHigh" table: it is not a level of the
+//! row (it does not rise from Medium in every setting), but the Mac's default
+//! and the one-time migration of a profile still exactly on the old Medium
+//! default.
 
 use crate::settings::{MAX_TEXTURE_RESOLUTION, Settings};
 
@@ -278,6 +284,84 @@ impl Preset {
     pub fn matching(s: &Settings) -> Option<Preset> {
         let current = Values::read(s).as_shown();
         Preset::ALL.into_iter().find(|p| p.values().as_shown() == current)
+    }
+}
+
+/// macOS only: the Legacy Viewer's Mac "MidHigh" default. Kept behind
+/// `cfg` so a non-mac build neither compiles nor sees these values.
+#[cfg(target_os = "macos")]
+pub(crate) mod macos {
+    use super::{Preset, Settings, Values};
+
+    /// The values of a new Apple Silicon profile: the Legacy Viewer's Mac
+    /// "MidHigh" list (`featuretable_mac.txt`, the class 3 default of
+    /// `llfeaturemanager.cpp`), mapped onto Aurora's Medium level. It keeps
+    /// the moderate distance, LOD and particle budget, turns the ambient
+    /// occlusion off (no RenderDeferredSSAO), uses FXAA, manual probes and no
+    /// screen-space effects; the avatar budget, complexity, probe count and
+    /// anisotropy follow the Mac table. Specular AA, an Aurora improvement
+    /// with no measurable cost, stays as the user has it.
+    pub(crate) fn values() -> Values {
+        Values {
+            max_avatars: 9,
+            max_complexity: 250_000,
+            ssao: 0,
+            ao_method: 0,
+            gtao_quality: 2,
+            probe_count: 64,
+            anisotropy: 2,
+            ..Preset::Medium.values()
+        }
+    }
+
+    /// Writes the Apple Silicon default (a new profile's level, and the
+    /// one-time migration of a profile still exactly on the old Mac default).
+    pub(crate) fn apply(s: &mut Settings) {
+        values().write(s);
+        s.graphics_saved_active = None;
+    }
+
+    /// Whether the profile is exactly the Apple Silicon default.
+    pub(crate) fn matches(s: &Settings) -> bool {
+        Values::read(s).as_shown() == values().as_shown()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::graphics_presets::Effects;
+
+        #[test]
+        fn the_apple_silicon_default_is_the_mac_mid_high_table() {
+            let v = values();
+            assert_eq!(v.draw_distance, 128.0);
+            assert_eq!(v.lod_factor, 2.0);
+            assert_eq!(v.max_avatars, 9);
+            assert_eq!(v.max_complexity, 250_000);
+            assert_eq!(v.max_particles, 4096);
+            assert_eq!((v.shadow_quality, v.ssao), (0, 0));
+            assert!(!v.projector_shadows);
+            assert_eq!((v.water_reflections, v.mirrors, v.ssr), (0, 0, false));
+            assert_eq!((v.reflection_probes, v.probe_count), (1, 64));
+            assert_eq!((v.antialiasing, v.anisotropy), (1, 2));
+            assert_eq!(v.sharpen, 0.0);
+            assert!(v.glow && v.hdr_emissive);
+            assert_eq!(v.effects, Effects::OFF);
+        }
+
+        #[test]
+        fn the_apple_silicon_default_is_recognized_and_is_not_a_level() {
+            let mut s = Settings::default();
+            apply(&mut s);
+            assert!(matches(&s));
+            assert_eq!(Preset::matching(&s), None, "it is the Mac default, not a row level");
+            Preset::Medium.apply(&mut s);
+            assert!(!matches(&s));
+            // a single setting moved by hand is Custom again
+            apply(&mut s);
+            s.draw_distance = 200.0;
+            assert!(!matches(&s));
+        }
     }
 }
 
