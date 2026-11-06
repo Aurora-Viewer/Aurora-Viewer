@@ -163,6 +163,9 @@ struct FrameU {
     /// ([`photo_part`]); zero otherwise. The screen-space reflections fade
     /// at the photo's edges, not the tile's.
     photo: [f32; 4],
+    /// x: the material textures' mip bias (main view under FSR drawing the
+    /// world smaller, [`crate::fsr::mip_bias`]); 0 in every other pass.
+    tex_lod: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -6140,6 +6143,9 @@ impl Backend {
         main.cam_up[3] = camera_water_level;
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
+        }
+        if self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
+            main.tex_lod[0] = crate::fsr::mip_bias(world_size.0, post_size.0);
         }
         {
             // after the scene moved as a whole, the last frame's camera is

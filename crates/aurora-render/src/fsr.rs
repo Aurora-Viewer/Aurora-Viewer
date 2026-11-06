@@ -54,6 +54,25 @@ pub(crate) fn device_to_view(proj: Mat4) -> [f32; 2] {
     [-proj.z_axis.z - f32::EPSILON, proj.w_axis.z]
 }
 
+/// The material textures' mip bias while FSR draws the world smaller
+/// than the window: `log2(render / display) - 1`, as AMD's integration
+/// guide asks, so that the textures keep the window's detail (Quality
+/// -1.58, Performance -2); 0 at the window's size, where the textures stay
+/// those of TAA and the Legacy Viewer. `AURORA_FSR_MIP_BIAS=0` keeps 0
+/// (comparison).
+pub(crate) fn mip_bias(render_width: u32, display_width: u32) -> f32 {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let on = *ON.get_or_init(|| std::env::var("AURORA_FSR_MIP_BIAS").map_or(true, |v| v.trim() != "0"));
+    if on { mip_bias_for(render_width, display_width) } else { 0.0 }
+}
+
+fn mip_bias_for(render_width: u32, display_width: u32) -> f32 {
+    if display_width <= render_width {
+        return 0.0;
+    }
+    (render_width.max(1) as f32 / display_width as f32).log2() - 1.0
+}
+
 /// ffxFsr3UpscalerGetRenderResolutionFromQualityMode: the display size
 /// divided by the mode's ratio.
 pub(crate) fn render_size(display: (u32, u32), ratio: f32) -> (u32, u32) {
@@ -941,6 +960,14 @@ mod tests {
         assert_eq!(jitter_phase_count(1920, 1920), 8);
         assert_eq!(jitter_phase_count(1280, 1920), 18);
         assert_eq!(jitter_phase_count(960, 1920), 32);
+    }
+
+    #[test]
+    fn mip_bias_follows_the_integration_guide() {
+        assert_eq!(mip_bias_for(1920, 1920), 0.0);
+        assert!((mip_bias_for(1280, 1920) - -1.585).abs() < 1e-3);
+        assert!((mip_bias_for(960, 1920) - -2.0).abs() < 1e-6);
+        assert!((mip_bias_for(640, 1920) - -2.585).abs() < 1e-3);
     }
 
     #[test]
