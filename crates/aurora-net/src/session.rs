@@ -431,12 +431,17 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         Ok(l) => Arc::new(l),
         Err(e) => {
             let (mfa, tos) = (matches!(e, LoginError::MfaRequired(_)), matches!(e, LoginError::TosRequired(_)));
+            let critical = matches!(e, LoginError::CriticalMessage(_));
             let bad_credentials = matches!(&e, LoginError::Refused { reason, .. } if reason == "key");
             let previous_session = e.previous_session();
             // The grid's own words (LLLoginInstance shows the message as it
             // comes), without the "login refused (presence)" prefix.
             let error = match &e {
                 LoginError::Refused { message, .. } if previous_session && !message.trim().is_empty() => message.trim().to_owned(),
+                // the text to read or accept, as LLFloaterTOS shows it
+                LoginError::TosRequired(message) | LoginError::CriticalMessage(message) if !message.trim().is_empty() => {
+                    message.trim().to_owned()
+                }
                 _ => e.to_string(),
             };
             emit(
@@ -445,6 +450,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     error,
                     mfa_required: mfa,
                     tos_required: tos,
+                    critical_required: critical,
                     bad_credentials,
                     previous_session,
                 },
@@ -473,6 +479,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     error: aurora_i18n::tr!("session-udp-bind-failed", e = format!("{}", e)),
                     mfa_required: false,
                     tos_required: false,
+                    critical_required: false,
                     bad_credentials: false,
                     previous_session: false,
                 },
@@ -4263,6 +4270,9 @@ impl Session<'_> {
                 self.main == Some(from),
             );
             let owner = format!("{} {}", field_str(&d.first_name), field_str(&d.last_name));
+            // process_script_dialog: the OwnerData block is missing from
+            // older simulators (getNumberOfBlocks("OwnerData")): nil then
+            let owner_id = m.owner_data.first().map_or(Uuid::nil(), |o| o.owner_id);
             emit(
                 self.sh,
                 NetEvent::ScriptDialog {
@@ -4270,6 +4280,7 @@ impl Session<'_> {
                     object_id: d.object_id,
                     object_name: field_str(&d.object_name),
                     owner_name: owner.trim().to_owned(),
+                    owner_id,
                     message: field_str(&d.message),
                     channel: d.chat_channel,
                     buttons: m.buttons.iter().map(|b| field_str(&b.button_label)).collect(),
@@ -6913,6 +6924,12 @@ mod script_dialog_tests {
                         button_label: str_field(label),
                     })
                     .collect();
+                // the owner's block on new simulators only: nil without it
+                let owner = (channel > 0).then(|| Uuid::from_u128(0x0E));
+                menu.owner_data = owner
+                    .map(|owner_id| msgs::script_dialog::OwnerData { owner_id })
+                    .into_iter()
+                    .collect();
                 let mut bytes = Vec::new();
                 aurora_msg::build_packet(&menu, 1, true, false, &[], &mut bytes);
                 session
@@ -6921,6 +6938,7 @@ mod script_dialog_tests {
                 let NetEvent::ScriptDialog {
                     sender,
                     object_id,
+                    owner_id,
                     channel: received_channel,
                     buttons,
                     ..
@@ -6930,6 +6948,7 @@ mod script_dialog_tests {
                 };
                 assert_eq!(sender, origin_addr);
                 assert_eq!((object_id, received_channel), (object, channel));
+                assert_eq!(owner_id, owner.unwrap_or_default());
                 for (index, label) in buttons.into_iter().enumerate() {
                     session.on_command(NetCommand::ScriptDialogReply {
                         sender: Some(sender),

@@ -284,7 +284,7 @@ pub(super) fn toolbar(
         if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), copy_uuid) {
             ui.ctx().copy_text(item.asset_id.to_string());
         }
-        let full = item.owner_mask & rules::FULL == rules::FULL;
+        let full = rules::held(inventory, item) & rules::FULL == rules::FULL;
         ui.add_enabled_ui(full, |ui| {
             egui::ComboBox::from_id_salt("texture_export")
                 .selected_text(aurora_i18n::tr!("common-save-as"))

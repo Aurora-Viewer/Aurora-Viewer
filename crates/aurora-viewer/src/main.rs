@@ -56,6 +56,7 @@ mod interface_colors;
 mod joystick;
 mod keybinds;
 mod keywords;
+mod legacy_profile;
 mod link_preview;
 mod link_trust;
 mod links;
@@ -156,6 +157,31 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    // The loader scans the layer manifests (and may call their pre-instance
+    // hooks): on a thread of its own, like the crash report's list of layers
+    // (crash/mod.rs), so the window never waits for this log line
+    let spawned = std::thread::Builder::new().name("aurora-vulkan-facts".into()).spawn(|| {
+        let vulkan_layers = aurora_render::vulkan_layers::offered_descriptions();
+        let variables = aurora_render::vulkan_layers::loader_environment();
+        log::info!(
+            "Vulkan startup: loader {}; layers offered: {}; process elevated: {}; loader environment: {}",
+            aurora_render::vulkan_layers::loader_version(),
+            if vulkan_layers.is_empty() {
+                "none or unavailable".to_owned()
+            } else {
+                vulkan_layers.join(", ")
+            },
+            process_elevation(),
+            if variables.is_empty() {
+                "none set".to_owned()
+            } else {
+                variables.join(", ")
+            }
+        );
+    });
+    if let Err(error) = spawned {
+        log::warn!("the Vulkan startup details are not logged: {error}");
+    }
     if !vulkan_layers_off.is_empty() {
         let names: Vec<_> = vulkan_layers_off.iter().map(|l| format!("{} ({})", l.name, l.program)).collect();
         log::info!(
@@ -181,6 +207,48 @@ fn main() -> anyhow::Result<()> {
     }
     crash::finished(result.is_ok());
     result
+}
+
+#[cfg(windows)]
+fn process_elevation() -> &'static str {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    let mut token = std::ptr::null_mut();
+    // SAFETY: GetCurrentProcess returns a pseudo-handle; OpenProcessToken
+    // writes a token handle into the valid output pointer.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return "unknown";
+    }
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut returned = 0;
+    // SAFETY: the output buffer is correctly sized for TOKEN_ELEVATION.
+    let ok = unsafe {
+        GetTokenInformation(
+            token,
+            TokenElevation,
+            (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        )
+    } != 0;
+    // SAFETY: token was created by OpenProcessToken above.
+    unsafe { CloseHandle(token) };
+    if !ok {
+        "unknown"
+    } else if elevation.TokenIsElevated != 0 {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+#[cfg(not(windows))]
+fn process_elevation() -> &'static str {
+    "not applicable"
 }
 
 fn run_viewer() -> anyhow::Result<()> {
