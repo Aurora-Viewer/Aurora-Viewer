@@ -285,10 +285,26 @@ impl H {
 
     fn bar_frame(&mut self, events: Vec<egui::Event>) -> Option<super::OutgoingChat> {
         let mut sent = None;
-        self.frames.run(events, |ui| {
+        let texts = self.frames.run(events, |ui| {
             sent = super::bar(ui, &crate::theme::Theme::default().palette(), &mut self.st, &self.gestures, 400.0);
         });
+        self.texts = texts;
         sent
+    }
+
+    fn bar_at(&mut self, pos: egui::Pos2) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.bar_frame(vec![egui::Event::PointerMoved(pos)]);
+        self.bar_frame(vec![button(true)]);
+        self.bar_frame(vec![button(false)]);
+        for _ in 0..3 {
+            self.bar_frame(Vec::new());
+        }
     }
 
     fn take(&mut self) -> Vec<ConvAction> {
@@ -1580,7 +1596,10 @@ fn the_field_acts() {
         h.st.show_channel = true;
         h.open(None);
         h.type_text("/5 secret");
-        assert!(h.painted("/5"), "{style:?}: the chip shows the channel");
+        assert!(
+            h.shown(control_id("box-channel")).is_some(),
+            "{style:?}: the chip shows the channel"
+        );
         h.press(control_id("box-channel"));
         h.press_text(aurora_i18n::tr!("ui-chat-channel-reset"));
         assert_eq!(h.st.draft_mut(None), "secret", "{style:?}: channel reset");
@@ -1612,7 +1631,10 @@ fn the_field_acts() {
         for _ in 0..20 {
             h.settle();
         }
-        assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: narrow, no channel chip");
+        assert!(
+            h.shown(control_id("box-channel")).is_some(),
+            "{style:?}: the channel chip stays in a narrow field"
+        );
         h.press(control_id("box-volume"));
         h.press_text(aurora_i18n::tr!("ui-chat-volume-whisper"));
         assert_eq!(h.st.volume, Volume::Whisper, "{style:?}: narrow");
@@ -1639,6 +1661,65 @@ fn the_field_acts() {
             "{style:?}: send"
         );
     }
+}
+
+#[test]
+fn the_channel_selector_works_in_every_conversation_style() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.open(None);
+        assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: hidden by default");
+
+        h.st.show_channel = true;
+        h.open(None);
+        h.type_text("/5 secret");
+        assert!(h.shown(control_id("box-channel")).is_some(), "{style:?}: shown when enabled");
+        h.enter(Default::default());
+        assert!(
+            has(
+                &h.take(),
+                |a| matches!(a, ConvAction::Local(c) if c.channel == 5 && c.message == "secret")
+            ),
+            "{style:?}: the selected channel is sent"
+        );
+    }
+}
+
+#[test]
+fn the_chat_bar_channel_selector_is_visible_and_keeps_the_channel_on_send() {
+    let mut h = H::new(ChatStyle::Aurora);
+    h.st.show_channel = true;
+    h.st.input = "hello".into();
+    h.st.focus_request = true;
+    h.bar_frame(Vec::new());
+    let chip = h.shown(super::bar_channel_id()).expect("the nearby chat bar shows the selector");
+    h.bar_at(chip.center());
+    let value = h.text_rect("0").center();
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.bar_frame(vec![egui::Event::PointerMoved(value)]);
+    h.bar_frame(vec![button(value, true)]);
+    h.bar_frame(vec![egui::Event::PointerMoved(value + egui::vec2(25.0, 0.0))]);
+    h.bar_frame(vec![button(value + egui::vec2(25.0, 0.0), false)]);
+    assert_eq!(super::parse_channel(&h.st.input).0, 5, "the selector chooses channel 5");
+    let input = h.shown(super::bar_input_id()).expect("the local chat input is visible");
+    h.bar_at(input.center());
+
+    let sent = h.bar_frame(vec![egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    assert!(
+        sent.is_some_and(|chat| chat.channel == 5 && chat.message == "hello"),
+        "the selected channel and text are sent from the chat bar"
+    );
 }
 
 /// Inventory dragged with an IM shown (#627): its messages fade behind
