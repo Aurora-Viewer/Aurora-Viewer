@@ -19,6 +19,8 @@
 //!
 //! Candidates are found again every 500 ms by a pass over every object,
 //! spread over several frames (`ScanPass`) so that no frame pays for all of it.
+//! An automatic probe that changes or leaves keeps showing its capture until
+//! what replaces it is ready (`commit`, `retire`).
 //!
 //! The closest probes get the cube slots; one cube face is captured per frame,
 //! the probe needing it most first (never captured, then the oldest).
@@ -49,6 +51,13 @@ const MAX_LEVEL: u8 = 4;
 /// The camera point the cell sizes are measured from moves on this grid
 /// (m): cells change size only when the camera crosses it, not every frame.
 const ANCHOR_GRID: f32 = 32.0;
+/// How far the camera goes from the anchor on one axis before the anchor
+/// moves (m), past the half grid where it would round to the next point: a
+/// camera going back and forth over that point does not resize the cells.
+const ANCHOR_STICK: f32 = 20.0;
+/// How long a probe no scan finds any more waits for the new probes around
+/// it to be captured, at most (`retired`).
+const RETIRE_LIMIT: Duration = Duration::from_secs(5);
 /// Near clip of an automatic probe's capture, at most (m): half its radius
 /// (LL), which in a large cell would clip the trees around its centre away.
 const MAX_AUTO_NEAR: f32 = 8.0;
@@ -103,16 +112,21 @@ struct Probe {
     fade: f32,
     /// Distance to the camera minus the radius (sorting, LL mDistance).
     distance: f32,
+    /// When a scan stopped finding this automatic probe (its cell changed
+    /// size, its objects left). Its capture stays shown until the new probes
+    /// around it are captured, then it fades out (`retire`): a large cell
+    /// dropped at once would flash a wide area to the default probe.
+    retired: Option<Instant>,
 }
 
 /// A candidate scan in progress: the next slots to visit and what the
 /// visited ones gave.
 #[derive(Default)]
 struct ScanPass {
-    /// The camera the cell sizes of this pass are measured from, on the
-    /// anchor grid (`probe_cell`), taken at its first step: one pass never
-    /// mixes two sizes of the same place.
-    anchor: Option<Vec3>,
+    /// The camera the cell sizes and the range of this pass are measured
+    /// from, on the anchor grid (`next_anchor`), taken at its start: one pass
+    /// never mixes two sizes of the same place.
+    anchor: Vec3,
     next_gpu: usize,
     next_obj: usize,
     /// Object bounds per cell (automatic probes, `probe_cell`).
@@ -143,6 +157,8 @@ pub struct ProbeManager {
     last_scan: Option<Instant>,
     pass: Option<ScanPass>,
     last_frame: Option<Instant>,
+    /// The last scan's anchor (`next_anchor`).
+    anchor: Option<Vec3>,
     /// How far from the camera automatic probes are placed (m): the
     /// Legacy Viewer keeps every probe of the objects within the draw
     /// distance (LLReflectionMapManager::update sorts them by distance and
@@ -164,6 +180,7 @@ impl Default for ProbeManager {
             last_scan: None,
             pass: None,
             last_frame: None,
+            anchor: None,
             range: 512.0,
         }
     }
@@ -183,6 +200,21 @@ fn edge_fade(distance: f32, edge: f32) -> f32 {
     ((edge - distance) / band).clamp(0.0, 1.0)
 }
 
+/// The point of the anchor grid the cells are measured from: the nearest to
+/// the camera, kept on each axis until the camera is [`ANCHOR_STICK`] from it.
+fn next_anchor(previous: Option<Vec3>, eye: Vec3) -> Vec3 {
+    let nearest = (eye / ANCHOR_GRID).round() * ANCHOR_GRID;
+    let Some(previous) = previous else {
+        return nearest;
+    };
+    let axis = |prev: f32, eye: f32, near: f32| if (eye - prev).abs() <= ANCHOR_STICK { prev } else { near };
+    Vec3::new(
+        axis(previous.x, eye.x, nearest.x),
+        axis(previous.y, eye.y, nearest.y),
+        axis(previous.z, eye.z, nearest.z),
+    )
+}
+
 impl ProbeManager {
     /// Forget every capture (settings change, teleport).
     pub fn reset(&mut self) {
@@ -192,6 +224,7 @@ impl ProbeManager {
         self.updating = None;
         self.last_scan = None;
         self.pass = None;
+        self.anchor = None;
     }
 
     /// Draw every capture again, the default probe first then the closest,
@@ -217,8 +250,32 @@ impl ProbeManager {
     }
 
     pub fn counts(&self) -> (usize, usize) {
-        let complete = self.probes.values().filter(|p| p.complete && p.slot.is_some()).count();
-        (self.probes.len(), complete + usize::from(self.default_complete))
+        let live = || self.probes.values().filter(|p| p.retired.is_none());
+        let complete = live().filter(|p| p.complete && p.slot.is_some()).count();
+        (live().count(), complete + usize::from(self.default_complete))
+    }
+
+    /// Fade out and forget the retired probes whose place is taken: no probe
+    /// around them is still waiting for its capture, or [`RETIRE_LIMIT`] has
+    /// passed.
+    fn retire(&mut self, dt: f32, now: Instant) {
+        let waiting: Vec<(Vec3, f32)> = self
+            .probes
+            .values()
+            .filter(|p| p.kind == 0.0 && p.retired.is_none() && !p.complete)
+            .map(|p| (p.origin, p.radius))
+            .collect();
+        self.probes.retain(|_, p| {
+            let Some(since) = p.retired else {
+                return true;
+            };
+            let held =
+                now.duration_since(since) < RETIRE_LIMIT && p.complete && waiting.iter().any(|(o, r)| o.distance(p.origin) < r + p.radius);
+            if !held {
+                p.fade -= dt;
+            }
+            p.fade > 0.0
+        });
     }
 
     /// Probes to sample and the face to capture this frame.
@@ -233,15 +290,21 @@ impl ProbeManager {
         self.last_frame = Some(now);
         if self.pass.is_none() && self.last_scan.is_none_or(|t| now.duration_since(t) >= SCAN_PERIOD) {
             self.last_scan = Some(now);
-            self.pass = Some(ScanPass::default());
+            let anchor = next_anchor(self.anchor, eye);
+            self.anchor = Some(anchor);
+            self.pass = Some(ScanPass {
+                anchor,
+                ..Default::default()
+            });
         }
         if let Some(mut pass) = self.pass.take() {
             if self.scan_step(&mut pass, scene, world, eye, now) {
-                self.commit(pass, world);
+                self.commit(pass, world, now);
             } else {
                 self.pass = Some(pass);
             }
         }
+        self.retire(dt, now);
         // distances, then cube slots for the closest probes (slot 0 = default)
         for p in self.probes.values_mut() {
             p.distance = (p.origin - eye).length() - p.radius;
@@ -278,7 +341,7 @@ impl ProbeManager {
             }
         }
         for p in self.probes.values_mut() {
-            if p.complete {
+            if p.complete && p.retired.is_none() {
                 p.fade = (p.fade + dt).min(1.0);
             }
         }
@@ -332,7 +395,7 @@ impl ProbeManager {
             let default_due = !self.default_complete || self.default_last.is_none_or(|t| now.duration_since(t) >= DEFAULT_PERIOD);
             let candidate = order
                 .iter()
-                .filter(|k| self.probes.get(k).is_some_and(|p| p.slot.is_some()))
+                .filter(|k| self.probes.get(k).is_some_and(|p| p.slot.is_some() && p.retired.is_none()))
                 .min_by(|a, b| {
                     let (pa, pb) = (&self.probes[a], &self.probes[b]);
                     // never captured first (closest), then the oldest capture
@@ -404,10 +467,12 @@ impl ProbeManager {
         let n = scene.gpu.len();
         if self.level >= level::FULL {
             // object bounds per cell (objects that fit in a 16 m node)
-            let anchor = *pass.anchor.get_or_insert_with(|| (eye / ANCHOR_GRID).round() * ANCHOR_GRID);
+            // (from the anchor, not the camera: walking does not move a
+            // large cell's bounds at each scan as objects enter its range)
+            let anchor = pass.anchor;
             let end = (pass.next_gpu + n.div_ceil(SCAN_SLICES).max(SCAN_MIN_SLICE)).min(n);
             for g in scene.gpu.get(pass.next_gpu..end).unwrap_or_default() {
-                if !auto_candidate(g) || (g.center - eye).length() > self.range + g.radius {
+                if !auto_candidate(g) || (g.center - anchor).length() > self.range + g.radius {
                     continue;
                 }
                 let cell = probe_cell(g.center, anchor);
@@ -466,6 +531,7 @@ impl ProbeManager {
                         last_update: None,
                         fade: 0.0,
                         distance: 0.0,
+                        retired: None,
                     },
                 );
             }
@@ -477,7 +543,7 @@ impl ProbeManager {
     }
 
     /// A finished pass becomes the candidate probes.
-    fn commit(&mut self, pass: ScanPass, world: &World) {
+    fn commit(&mut self, pass: ScanPass, world: &World, now: Instant) {
         let ScanPass { cells, mut found, .. } = pass;
         for (cell, (lo, hi)) in cells {
             let mut origin = (lo + hi) * 0.5;
@@ -505,6 +571,7 @@ impl ProbeManager {
                     last_update: None,
                     fade: 0.0,
                     distance: 0.0,
+                    retired: None,
                 },
             );
         }
@@ -514,11 +581,22 @@ impl ProbeManager {
             if let Some(old) = self.probes.remove(&k) {
                 let moved = (old.origin - p.origin).length() > 0.5 || (old.radius - p.radius).abs() > 0.5;
                 p.slot = old.slot;
-                p.complete = old.complete && !moved;
+                // a manual probe that moved is drawn again before it shows,
+                // as in the Legacy Viewer. An automatic one keeps showing its
+                // capture until the new one replaces it (`refresh`), its
+                // first in line: objects entering a large cell would else
+                // send a wide area to the default probe at each scan.
+                p.complete = old.complete && (!moved || p.kind == 0.0);
                 p.last_update = if moved { None } else { old.last_update };
                 p.fade = if p.complete { old.fade } else { 0.0 };
             }
             next.insert(k, p);
+        }
+        for (k, mut old) in self.probes.drain() {
+            if old.kind == 0.0 && old.complete && old.slot.is_some() {
+                old.retired.get_or_insert(now);
+                next.insert(k, old);
+            }
         }
         self.probes = next;
     }
@@ -587,6 +665,146 @@ mod tests {
             }
         }
         assert!(cells.len() < 64, "{}", cells.len());
+    }
+
+    #[test]
+    fn the_anchor_stays_while_the_camera_crosses_its_rounding_point() {
+        let first = next_anchor(None, Vec3::new(15.0, 0.0, 0.0));
+        assert_eq!(first, Vec3::ZERO);
+        // back and forth over 16 m, where rounding alone would flip it
+        for x in [17.0, 15.0, 18.0, 14.0, 20.0] {
+            assert_eq!(next_anchor(Some(first), Vec3::new(x, 0.0, 0.0)), first, "{x}");
+        }
+        let moved = next_anchor(Some(first), Vec3::new(21.0, 0.0, 0.0));
+        assert_eq!(moved, Vec3::new(32.0, 0.0, 0.0));
+        // and it does not come back at the same point
+        assert_eq!(next_anchor(Some(moved), Vec3::new(15.0, 0.0, 0.0)), moved);
+        // each axis on its own
+        assert_eq!(next_anchor(Some(first), Vec3::new(5.0, -40.0, 3.0)), Vec3::new(0.0, -32.0, 0.0));
+    }
+
+    fn cell_probe(origin: Vec3, radius: f32, complete: bool) -> Probe {
+        Probe {
+            origin,
+            radius,
+            kind: 0.0,
+            box_inv: Mat4::IDENTITY,
+            ambiance: 0.0,
+            near: 1.0,
+            slot: complete.then_some(1),
+            complete,
+            last_update: None,
+            fade: if complete { 1.0 } else { 0.0 },
+            distance: 0.0,
+            retired: None,
+        }
+    }
+
+    fn cell_key(x: i32) -> Key {
+        Key::Cell(0, IVec3::new(x, 0, 0))
+    }
+
+    #[test]
+    fn a_retired_probe_stays_until_the_probes_around_it_are_captured() {
+        let now = Instant::now();
+        let mut m = ProbeManager::default();
+        let mut old = cell_probe(Vec3::ZERO, 50.0, true);
+        old.retired = Some(now);
+        m.probes.insert(cell_key(0), old);
+        m.probes.insert(cell_key(1), cell_probe(Vec3::new(30.0, 0.0, 0.0), 20.0, false));
+        // the new probe around it is not captured: full weight
+        m.retire(0.5, now);
+        assert_eq!(m.probes[&cell_key(0)].fade, 1.0);
+        assert_eq!(m.counts().0, 1, "the retired probe is not a candidate");
+        // captured: it fades out, then goes
+        m.probes.get_mut(&cell_key(1)).expect("new probe").complete = true;
+        m.retire(0.5, now);
+        assert_eq!(m.probes[&cell_key(0)].fade, 0.5);
+        m.retire(0.5, now);
+        assert!(!m.probes.contains_key(&cell_key(0)));
+    }
+
+    #[test]
+    fn a_retired_probe_does_not_wait_for_ever_nor_for_a_probe_elsewhere() {
+        let now = Instant::now();
+        let mut m = ProbeManager::default();
+        let mut old = cell_probe(Vec3::ZERO, 10.0, true);
+        old.retired = Some(now);
+        m.probes.insert(cell_key(0), old);
+        let mut near = cell_probe(Vec3::new(15.0, 0.0, 0.0), 10.0, false);
+        near.slot = None;
+        m.probes.insert(cell_key(1), near);
+        m.retire(0.25, now + RETIRE_LIMIT);
+        assert_eq!(m.probes[&cell_key(0)].fade, 0.75, "past the limit");
+        m.probes.get_mut(&cell_key(0)).expect("old probe").fade = 1.0;
+        m.probes.get_mut(&cell_key(1)).expect("new probe").origin = Vec3::new(500.0, 0.0, 0.0);
+        m.retire(0.25, now);
+        assert_eq!(m.probes[&cell_key(0)].fade, 0.75, "nothing waits around it");
+    }
+
+    #[test]
+    fn a_scan_keeps_what_it_no_longer_finds_shown() {
+        let world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let now = Instant::now();
+        let mut m = ProbeManager::default();
+        let cell = |lo: f32, hi: f32| (Vec3::splat(lo), Vec3::splat(hi));
+        let pass = |cells: &[((u8, IVec3), (Vec3, Vec3))]| ScanPass {
+            cells: cells.iter().copied().collect(),
+            ..Default::default()
+        };
+        let (a, b) = ((0u8, IVec3::ZERO), (1u8, IVec3::ONE));
+        m.commit(pass(&[(a, cell(40.0, 50.0))]), &world, now);
+        let ka = Key::Cell(a.0, a.1);
+        {
+            let p = m.probes.get_mut(&ka).expect("probe");
+            p.complete = true;
+            p.slot = Some(3);
+            p.fade = 1.0;
+            p.last_update = Some(now);
+        }
+        // its bounds move: still shown, and first in line for a new capture
+        m.commit(pass(&[(a, cell(40.0, 60.0))]), &world, now);
+        let p = &m.probes[&ka];
+        assert!(p.complete && p.fade == 1.0 && p.retired.is_none() && p.slot == Some(3));
+        assert!(p.last_update.is_none());
+        // gone from the scan: retired, not dropped; found again: back
+        m.commit(pass(&[(b, cell(40.0, 60.0))]), &world, now);
+        assert_eq!(m.probes[&ka].retired, Some(now));
+        assert!(!m.probes[&Key::Cell(b.0, b.1)].complete);
+        m.commit(pass(&[(a, cell(40.0, 60.0))]), &world, now);
+        assert!(m.probes[&ka].retired.is_none() && m.probes[&ka].complete);
+    }
+
+    #[test]
+    fn a_manual_probe_that_moved_is_captured_again_before_it_shows() {
+        let world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let now = Instant::now();
+        let mut m = ProbeManager::default();
+        let id = Uuid::from_u128(7);
+        let manual = |x: f32| Probe {
+            kind: 1.0,
+            ..cell_probe(Vec3::new(x, 0.0, 0.0), 5.0, false)
+        };
+        m.probes.insert(
+            Key::Object(id),
+            Probe {
+                complete: true,
+                slot: Some(2),
+                fade: 1.0,
+                ..manual(0.0)
+            },
+        );
+        let pass = |x: f32| ScanPass {
+            found: [(Key::Object(id), manual(x))].into_iter().collect(),
+            ..Default::default()
+        };
+        m.commit(pass(0.0), &world, now);
+        assert!(m.probes[&Key::Object(id)].complete, "it did not move");
+        m.commit(pass(3.0), &world, now);
+        assert!(!m.probes[&Key::Object(id)].complete);
+        // and one no scan finds goes at once
+        m.commit(ScanPass::default(), &world, now);
+        assert!(!m.probes.contains_key(&Key::Object(id)));
     }
 
     #[test]
