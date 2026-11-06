@@ -1616,17 +1616,33 @@ impl Scene {
             return depth;
         }
         let ray = ray?;
-        let point = if self.ignored_before(world, ray, depth, far, Instant::now(), None) {
-            self.point_behind_ignored_mode(world, ray, far, Instant::now(), None, FacePick::Left)
+        // Only the objects the ray can meet (hover.rs, `PickIndex`): the
+        // steps walked every object of the region, 2 to 4 ms a click with
+        // 23,000 of them, a spike in the frame graph at each click. Same
+        // tests, same order, same answer (AURORA_HOVER_CHECK compares).
+        let mut candidates = Vec::new();
+        self.pick.point_candidates(ray, depth, &mut candidates);
+        let point = self.action_point_among(world, ray, depth, far, Some(&candidates));
+        if super::hover::check_enabled() {
+            let full = self.action_point_among(world, ray, depth, far, None);
+            if full != point {
+                log::warn!("click index check: action point {point:?} from the index, {full:?} from every object");
+            }
+        }
+        point
+    }
+
+    /// `action_point` over the objects of `among` (None: all).
+    fn action_point_among(&self, world: &World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32, among: Option<&[usize]>) -> Option<Vec3> {
+        let point = if self.ignored_before(world, ray, depth, far, Instant::now(), among) {
+            self.point_behind_ignored_mode(world, ray, far, Instant::now(), among, FacePick::Left)
         } else {
             depth
         };
-        let point = self.transparent_action_point_mode(world, ray, point, true, far, None, FacePick::Left);
+        let point = self.transparent_action_point_mode(world, ray, point, true, far, among, FacePick::Left);
         // Unlike HUDs and worn clickers, world Blend faces let alpha-zero
         // texels through (#1574). Hover keeps its existing geometric policy.
-        let mut candidates = Vec::new();
-        self.pick.ray_candidates(ray, &mut candidates);
-        self.blend_hit_mode(world, ray, point, far, Some(&candidates), FacePick::LeftBlend)
+        self.blend_hit_mode(world, ray, point, far, among, FacePick::LeftBlend)
             .map(|(t, _)| ray.0 + ray.1 * t)
             .or(point)
     }
@@ -1703,8 +1719,18 @@ impl Scene {
     /// LLViewerWindow::cursorIntersect / LLVOVolume::lineSegmentIntersect:
     /// identify the hit surface, not the smallest overlapping prim box. The
     /// depth point bounds the ray so terrain and avatars still occlude objects.
+    /// Among the objects around the ray and the point (`action_point`).
     pub fn interaction_at_ray(&self, world: &World, point: Vec3, ray: (Vec3, Vec3), include_hidden: bool) -> Option<usize> {
-        self.interaction_at_ray_among(world, point, ray, include_hidden, None)
+        let mut candidates = Vec::new();
+        self.pick.point_candidates(ray, Some(point), &mut candidates);
+        let idx = self.interaction_at_ray_among(world, point, ray, include_hidden, Some(&candidates));
+        if super::hover::check_enabled() {
+            let full = self.interaction_at_ray_among(world, point, ray, include_hidden, None);
+            if full != idx {
+                log::warn!("click index check: object {idx:?} at {point:?} from the index, {full:?} from every object");
+            }
+        }
+        idx
     }
 
     /// `interaction_at_ray` over the objects of `among` (None: all).
@@ -1870,7 +1896,7 @@ pub(crate) mod tests {
     fn invisible_worn_mesh_without_a_skin_takes_the_touch() {
         // #488: a clicker worn by another avatar, a mesh without a skin
         // whose faces are all at alpha 0. The GPU never draws it.
-        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let (mut world, mut scene, front, _) = indexed_scene_with_two_objects();
         let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         let front_point = Vec3::new(2.5, 0.0, 50.0);
         let behind = Vec3::new(6.5, 0.0, 50.0);
@@ -1919,7 +1945,7 @@ pub(crate) mod tests {
         // A slapper's mesh worn by another avatar, hidden by the transparent
         // texture with its alpha left at 1: built (Pass::Hidden) but never
         // drawn, so only the CPU can find it.
-        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let (mut world, mut scene, front, _) = indexed_scene_with_two_objects();
         let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         let front_point = Vec3::new(2.5, 0.0, 50.0);
         let behind = Vec3::new(6.5, 0.0, 50.0);
@@ -2098,6 +2124,17 @@ pub(crate) mod tests {
         // and a ray that does meet its face still picks it
         let side = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         assert_eq!(scene.selection_pick(&world, Some(side), None, false, false, 100.0).1, Some(front));
+    }
+
+    /// `scene_with_two_objects` with both objects in the pick index, as
+    /// the sync puts them (no bounds yet: candidates of every search),
+    /// for the searches of a click (`action_point`, `interaction_at_ray`).
+    pub(crate) fn indexed_scene_with_two_objects() -> (World, Scene, usize, usize) {
+        let (world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        (world, scene, front, back)
     }
 
     pub(crate) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
@@ -3737,7 +3774,7 @@ pub(crate) mod tests {
 
     #[test]
     fn ignore_picks_through_disabled_occludes_and_build_includes_both() {
-        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let (mut world, mut scene, front, back) = indexed_scene_with_two_objects();
         let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         let depth = Vec3::new(2.5, 0.0, 50.0);
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
@@ -3780,7 +3817,7 @@ pub(crate) mod tests {
 
     #[test]
     fn linked_chair_surface_wins_over_touch_root_with_overlapping_bounds() {
-        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let (mut world, mut scene, front, back) = indexed_scene_with_two_objects();
         let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         let depth = Vec3::new(2.5, 0.0, 50.0);
         // A hollow table's smaller box contains the chair's surface, but its
@@ -3849,7 +3886,7 @@ pub(crate) mod tests {
 
     #[test]
     fn ray_pick_uses_real_geometry_bounds_and_preserves_hidden_face_rules() {
-        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let (mut world, mut scene, front, _) = indexed_scene_with_two_objects();
         for key in [
             GeomKey::Prim { hash: 2, lod: 0 },
             GeomKey::Sculpt { hash: 2, lod: 0 },
