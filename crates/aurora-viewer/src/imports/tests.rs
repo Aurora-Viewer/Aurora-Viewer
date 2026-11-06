@@ -2,6 +2,133 @@ use super::*;
 use std::path::Path;
 
 #[test]
+fn failed_free_material_does_not_cancel_the_rest_of_the_batch() {
+    let ctx = egui::Context::default();
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut first = Entry::new(
+        "first.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: Box::new([None, None, None, None]),
+        }),
+        Default::default(),
+    );
+    let mut second = Entry::new(
+        "second.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: Box::new([None, None, None, None]),
+        }),
+        Default::default(),
+    );
+    first.status = Status::Preparing;
+    second.status = Status::Preparing;
+    let first_id = first.id;
+    let second_id = second.id;
+    let step = |entry: Uuid| Step {
+        key: entry,
+        entry: Some(entry),
+        kind: Kind::Material,
+        folder: Uuid::nil(),
+        name: "material".into(),
+        description: String::new(),
+        source: Source::Material {
+            value: Default::default(),
+            images: Box::new([None, None, None, None]),
+        },
+        options: Default::default(),
+        sound_options: Default::default(),
+        cost: 0,
+        permissions: Default::default(),
+    };
+    let request = Uuid::new_v4();
+    let mut imports = Imports {
+        entries: vec![first, second],
+        current: Some((request, step(first_id))),
+        queue: VecDeque::from([step(second_id)]),
+        ..Default::default()
+    };
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Preparing));
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert_eq!(imports.current.as_ref().and_then(|(_, step)| step.entry), Some(second_id));
+    assert!(matches!(imports.entries[1].status, Status::Preparing));
+}
+
+#[test]
+fn failed_material_map_only_fails_materials_that_depend_on_it() {
+    let map = files::local_image((*image(4, 4)).clone(), "map".into());
+    let options = import_texture::Options::default();
+    let key = map.upload_key(options);
+    let mut dependent = Entry::new(
+        "dependent.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: Box::new([Some(map.clone()), None, None, None]),
+        }),
+        options,
+    );
+    let mut independent = Entry::new(
+        "independent.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: Box::new([None, None, None, None]),
+        }),
+        options,
+    );
+    dependent.status = Status::Preparing;
+    independent.status = Status::Preparing;
+    let dependent_id = dependent.id;
+    let independent_id = independent.id;
+    let request = Uuid::new_v4();
+    let mut imports = Imports {
+        entries: vec![dependent, independent],
+        current: Some((
+            request,
+            Step {
+                key,
+                entry: None,
+                kind: Kind::Texture,
+                folder: Uuid::nil(),
+                name: "map".into(),
+                description: String::new(),
+                source: Source::Texture(map.pixels),
+                options,
+                sound_options: Default::default(),
+                cost: 0,
+                permissions: Default::default(),
+            },
+        )),
+        queue: VecDeque::from([Step {
+            key: independent_id,
+            entry: Some(independent_id),
+            kind: Kind::Material,
+            folder: Uuid::nil(),
+            name: "independent".into(),
+            description: String::new(),
+            source: Source::Material {
+                value: Default::default(),
+                images: Box::new([None, None, None, None]),
+            },
+            options,
+            sound_options: Default::default(),
+            cost: 0,
+            permissions: Default::default(),
+        }]),
+        ..Default::default()
+    };
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Preparing));
+    assert_eq!(imports.queue.front().and_then(|step| step.entry), Some(independent_id));
+    assert_ne!(dependent_id, independent_id);
+}
+
+#[test]
 fn protected_upload_defaults_survive_loading_locking_and_queueing_every_asset_type() {
     use crate::world::inventory::actions;
     use aurora_net::inventory::{InvFolder, mesh_upload::Quote};

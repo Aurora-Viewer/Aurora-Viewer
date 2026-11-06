@@ -2795,6 +2795,8 @@ Open-source technologies that could set Aurora apart (human request of 2026-10-1
 
 ## Miscellaneous, to fix later
 
+- 🔧 Material batch uploads ([#2517](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2517)): a refused free material or prerequisite map marks that material as failed and lets independent materials continue; paid uncertain outcomes still stop the batch. The material save error is retained for the user and logged. Human validation: import a glTF with three materials, set one to Blend, and check that the others upload if one fails.
+
 - 🟡 Backup and bug report defaults (2026-11-05; task `backup-and-report-defaults`; no issue): a settings backup leaves out the GIF service keys and the GIF random id (`gifs.giphy_key`, `gifs.klipy_key`, `gifs.customer_id`), and a restore keeps this PC's values of them, like the audio devices; the backup help texts say so (en/fr/ja). The built-in bug report form (out of the build for now, see `main.rs`) starts its Location field unticked, like the avatar name, for when it comes back. Unit tests in `settings/backup.rs`.
   - ⬜ To verify by the human: back up with a GIF key entered, open the file (no key in it), restore it on a profile with another key (that key stays).
 
