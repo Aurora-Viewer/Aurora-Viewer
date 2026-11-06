@@ -50,6 +50,21 @@ const SCAN_MIN_SLICE: usize = 512;
 /// LL_PROBE flags (llprimitive.h LLReflectionProbeParams).
 const FLAG_BOX: u8 = 0x01;
 const FLAG_MIRROR: u8 = 0x04;
+/// RenderReflectionProbeMaxLocalLightAmbiance (settings.xml): the highest
+/// ambiance the local lights of an irradiance capture count for.
+const MAX_LOCAL_LIGHT_AMBIANCE: f32 = 4.0;
+
+/// What a probe's irradiance capture multiplies the local lights by
+/// (LLReflectionMapManager::updateProbeFace): the capture is multiplied by the
+/// probe's ambiance when sampled, so that a high ambiance does not multiply a
+/// lamp by as much as the rest of the room.
+fn local_light_scale(ambiance: f32) -> f32 {
+    if ambiance > MAX_LOCAL_LIGHT_AMBIANCE {
+        MAX_LOCAL_LIGHT_AMBIANCE / ambiance
+    } else {
+        1.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Key {
@@ -301,6 +316,7 @@ impl ProbeManager {
                     face: u.face,
                     sky_only: true,
                     finish,
+                    light_scale: 1.0,
                 })
             }
             Some(k) => match self.probes.get_mut(&k) {
@@ -317,6 +333,7 @@ impl ProbeManager {
                         face: u.face,
                         sky_only: false,
                         finish,
+                        light_scale: local_light_scale(p.ambiance),
                     })
                 }
                 // the probe went away or lost its slot: start over next frame
@@ -461,6 +478,15 @@ fn auto_candidate(g: &ObjGpu) -> bool {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn only_a_high_ambiance_dims_the_local_lights_of_its_capture() {
+        for ambiance in [0.0, 1.0, 4.0] {
+            assert_eq!(local_light_scale(ambiance), 1.0, "ambiance {ambiance}");
+        }
+        assert_eq!(local_light_scale(8.0), 0.5);
+        assert_eq!(local_light_scale(40.0), 0.1);
+    }
 
     #[test]
     fn candidate_scan_is_spread_over_frames() {

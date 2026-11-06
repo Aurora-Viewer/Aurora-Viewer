@@ -113,3 +113,40 @@ fn private_portal_labels_hide_even_cached_destinations_after_friendship_is_revok
     world.social.end_friendship(&owner);
     assert!(!label_text(&world, entry, unix).contains(destination));
 }
+
+#[test]
+fn crossing_question_names_the_relay_and_the_destination() {
+    use aurora_net::bridge::portal::{LIFETIME, Message, Portal};
+    let mut world = World::new(Arc::new(AvatarLibrary::load()));
+    world.agent_id = Uuid::from_u128(1);
+    world.main_region = Some(256);
+    world.portal_sources = portals::Sources::Everyone;
+    let unix = portals::unix_time();
+    let portal = Portal {
+        id: Uuid::from_u128(3),
+        region: 256,
+        center: [10.0, 10.0, 25.0],
+        yaw: 0.0,
+        destination: "Demo destination".into(),
+        position: [128.0, 64.0, 25.0],
+        access: Access::Everyone,
+        expires: unix + LIFETIME,
+    };
+    let mut state = portals::State::default();
+    state.sync(&world, None, unix);
+    let relay = Uuid::from_u128(2);
+    let mut announcement = portal.announcement();
+    announcement.creator = Some(Uuid::from_u128(20));
+    let wire = Message::Open(announcement).encode().unwrap();
+    state.receive(
+        &world,
+        &format!("<auroraPortal>{relay}|{wire}</auroraPortal>"),
+        std::time::Instant::now(),
+        unix,
+    );
+    let entry = state.entries.first().expect("kept");
+    assert_eq!(entry.label_owner(), relay, "a claimed creator is not named");
+    let text = CrossingAsk::new(&world, entry, portal).text();
+    assert!(text.contains("Demo destination (128, 64, 25)"), "{text}");
+    assert!(text.contains(aurora_i18n::tr!("poser-resident")), "{text}");
+}
