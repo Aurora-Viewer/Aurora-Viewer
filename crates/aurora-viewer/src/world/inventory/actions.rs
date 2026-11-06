@@ -32,6 +32,14 @@ pub fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
     if owned { item.owner_mask } else { item.everyone_mask }
 }
 
+/// [`agent_mask`] for an item of an object's contents, the same reading
+/// (LLViewerInventoryItem::getIsFullPerm): an object we may only modify
+/// keeps its owner's mask for its owner.
+pub fn task_agent_mask(item: &aurora_net::build::TaskItem, agent: Uuid) -> u32 {
+    let owned = !item.group_owned && (item.owner_id == agent || item.owner_id.is_nil() || agent.is_nil());
+    if owned { item.owner_mask } else { item.everyone_mask }
+}
+
 /// [`agent_mask`] for the agent whose inventory `inv` is.
 pub fn held(inv: &Inventory, item: &InvItem) -> u32 {
     agent_mask(item, inv.owner)
