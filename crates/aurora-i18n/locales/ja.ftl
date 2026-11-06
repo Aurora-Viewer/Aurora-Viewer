@@ -8432,6 +8432,7 @@ script-preproc-directive = 無効または認識できないプリプロセッ�
 script-preproc-conditional = 条件ディレクティブが正しく対応していません。
 script-preproc-include-limit = インクルードの上限に達しました。再帰的なインクルードがないか確認してください。
 script-preproc-include-missing = インクルードするスクリプトがないか、読み込めません：{ $name }
+script-preproc-include-no-transfer = インクルードするスクリプトは再販・譲渡できず、作成者でもありません：{ $name }
 script-preproc-include-timeout = インクルードするスクリプトの読み込みがタイムアウトしました。
 script-preproc-cancelled = 前処理がキャンセルされました。
 script-preproc-lsl-extension = switch文または遅延リストの構文が無効です。

@@ -8442,6 +8442,7 @@ script-preproc-directive = Invalid or unrecognized preprocessor directive.
 script-preproc-conditional = Conditional directives are not correctly paired.
 script-preproc-include-limit = Include limit reached; check for recursive includes.
 script-preproc-include-missing = Include script missing or unreadable: { $name }
+script-preproc-include-no-transfer = Include script cannot be transferred, and you are not its creator: { $name }
 script-preproc-include-timeout = Loading an include script timed out.
 script-preproc-cancelled = Preprocessing cancelled.
 script-preproc-lsl-extension = Invalid syntax in a switch statement or lazy list.

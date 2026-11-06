@@ -8435,6 +8435,7 @@ script-preproc-directive = Directive de préprocesseur invalide ou non reconnue.
 script-preproc-conditional = Les directives conditionnelles ne sont pas correctement appariées.
 script-preproc-include-limit = La limite des inclusions a été atteinte ; vérifie les inclusions récursives.
 script-preproc-include-missing = Script d’inclusion introuvable ou illisible : { $name }
+script-preproc-include-no-transfer = Script d’inclusion non transférable, dont tu n’es pas le créateur : { $name }
 script-preproc-include-timeout = Le chargement d’un script d’inclusion a expiré.
 script-preproc-cancelled = Prétraitement annulé.
 script-preproc-lsl-extension = Syntaxe invalide dans une instruction switch ou une liste étendue.
