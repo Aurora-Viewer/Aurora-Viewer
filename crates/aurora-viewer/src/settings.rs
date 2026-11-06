@@ -669,7 +669,7 @@ pub struct Settings {
     /// their conversation on its card (#1198); a payment from anyone else
     /// shows there only when it is open. On by default.
     pub payment_opens_conversation: bool,
-    /// Preferences › Chat › Conversations: L$ received show a toast
+    /// Preferences › Chat › Notifications: L$ received show a toast
     /// (NotifyMoneyReceived, on by default, #2675).
     pub notify_money_received: bool,
     /// Preferences › Chat › Conversations: L$ received rise into the balance
