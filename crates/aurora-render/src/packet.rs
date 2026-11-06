@@ -64,6 +64,10 @@ pub(crate) struct SurfaceState {
     pub width: u32,
     pub height: u32,
     pub vsync: bool,
+    /// The window is minimised (0 x 0): no image is asked of the swapchain,
+    /// which cannot be created at that size (Vulkan: `imageExtent` must be
+    /// the window's current extent, (0, 0) once minimised).
+    pub minimised: bool,
 }
 
 /// The scene's data on the GPU for one frame: handles (reference counted)
