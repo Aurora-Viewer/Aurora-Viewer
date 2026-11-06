@@ -68,7 +68,7 @@ fn can_preview(inv: &Inventory, id: Uuid) -> bool {
     let Some(original) = actions::original(inv, id) else { return false };
     inv.items
         .get(&original)
-        .is_some_and(|item| item.owner_mask & actions::COPY != 0 || actions::library(inv, original))
+        .is_some_and(|item| actions::held(inv, item) & actions::COPY != 0 || actions::library(inv, original))
 }
 
 #[derive(Default)]

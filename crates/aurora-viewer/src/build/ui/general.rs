@@ -81,7 +81,9 @@ fn standard_texture(id: Uuid) -> bool {
 /// the export back.
 fn item_lets_export(item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
     allows_export(item.base_mask, item.everyone_mask)
-        || (item.creator == agent && item.base_mask & perm::EXPORT != 0 && item.owner_mask & perm::EXPORT != 0)
+        || (item.creator == agent
+            && item.base_mask & perm::EXPORT != 0
+            && crate::world::inventory::actions::agent_mask(item, agent) & perm::EXPORT != 0)
 }
 
 /// Whether the agent may tick Export (LLPanelPermissions::refresh, FS:CR):
