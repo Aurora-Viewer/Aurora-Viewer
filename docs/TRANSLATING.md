@@ -77,11 +77,16 @@ Japanese, beyond the plural:
 - Buttons, menu items, titles and short labels are concise nouns or verb
   stems (保存, 削除, フレンドに追加), without です／ます nor a final 。;
   sentences, hints and errors use the polite です／ます form.
-- Japanese punctuation is full width (、。「」（）！？：); no space between
-  Japanese text and a placeable, a number or a unit (`{ $seconds }秒`,
-  `{ $distance }ｍ`).
+- Japanese punctuation is full width (、。「」（）！？：), the colon of a
+  label included (`オブジェクト：{ $object }`); no space between Japanese
+  text and a placeable, a number or a unit (`{ $seconds }秒`,
+  `{ $distance }ｍ`, `{ $key }キー`, `{ $time }㎳`). A name inserted in a
+  sentence goes between 「」 (`「{ $experience }」という体験`).
+- Dimensions use ✕ without spaces (`{ $x }✕{ $y }✕{ $z }ｍ`); a gap
+  inside the Japanese text is a full-width space (`{ $first }…　{ $last }`).
 - Abbreviations, units and digits written in the Japanese text are full
-  width (ＵＵＩＤ, ＬＳＬ, ＨＵＤ, ＵＲＬ, ３Ｄ, ｍ, ＭＢ, ％, １つ):
+  width (ＵＵＩＤ, ＬＳＬ, ＨＵＤ, ＵＲＬ, ＶＲ, ＰＢＲ, ３Ｄ, ｍ, ＭＢ, ％,
+  １つ, １度):
   half-width capitals look squashed next to kana and kanji, and the Legacy
   Viewer's Japanese interface writes them the same way. The value of a
   placeable is formatted by the code and stays as it is, and so does what
@@ -89,14 +94,32 @@ Japanese, beyond the plural:
   commands, file names and extensions, the identifiers of the Dev Toolbox
   tools (J2, L1).
 - Terms: アバター, インベントリ, フレンド, グループ, 区画 (parcel),
-  リージョン, 不動産 (estate), オブジェクト, 装着 (attach), アウトフィット,
-  容姿 (appearance), 初期設定 (Preferences), 設定 (Aurora's own settings),
-  近くのチャット, テレポート, ランドマーク, スクリプト, テクスチャ, フォルダ,
-  ごみ箱; look an existing one up in `ja.ftl` before choosing a new one.
-  Second Life, L$ and product names (Blender) stay in Latin letters. The
+  リージョン, 不動産 (estate), オブジェクト, 装着 (attach), 装着物
+  (attachment), アウトフィット, 容姿 (appearance), 所有者 (owner),
+  初期設定 (Preferences), 設定 (Aurora's own settings), 近くのチャット,
+  テレポート, ランドマーク, スクリプト, テクスチャ, フォルダ, ごみ箱,
+  コピー (copy, the permission included), モニター (a display),
+  ビルド (build: the tools, the window, the permission), 建物 (a building
+  in the world), 体験 (experience), 自然環境 (environment, EEP), 露光
+  (exposure), 射影テクスチャ (a light's projected texture), メタル (metal);
+  look an existing one up in `ja.ftl` before choosing a new one. Never
+  持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー, 複製 nor
+  モニタ: they are the variants these replace. 建築 stays only in the
+  residents' own words of the demo (今夜は広場を建築するよ), never for the
+  tools.
+- A material map keeps its Japanese name with the usual katakana between
+  brackets on its label: 拡散（ディフューズ）, 法線（ノーマル）,
+  鏡面反射（スペキュラ）, 粗さ（ラフネス）, ベースカラー（アルベド）. A
+  sentence or a compound uses the Japanese name alone (法線＋鏡面反射).
+- The maturity ratings General, Moderate and Adult stay in Latin letters,
+  as in the Legacy Viewer (Moderate向けイベント, Adult指定).
+- Second Life, L$ and product names (Blender) stay in Latin letters. The
   viewers are Auroraビューア and レガシービューア: "Legacy" is レガシー, as in
   the option labels the Legacy Viewer's Japanese interface already
   translates (昼間（レガシー）).
+- LiveMesh is ライブメッシュ on screen, to read like the ライブオブジェクト and
+  ライブマテリアル of the same feature. The Blender add-on keeps its real
+  name where the user has to find it: Aurora LiveMesh.
 - A label quoted in a hint (「…」) is the exact text of that label in
   `ja.ftl`.
 - A continuation line of a multi-line message cannot start with `*`, `[`
