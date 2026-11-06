@@ -4426,6 +4426,18 @@ mod tests {
         st.start_chat(&ctx, open, exists);
         st.follow_bar_mode(&ctx, &mut open);
         assert_eq!(st.selected, Some(group), "the last field used");
+        // ... but not in a minimized Conversations window (#2436's rule):
+        // the window expands on Nearby chat
+        let ctx = egui::Context::default();
+        let mut st = window_only();
+        st.enter_last_field = true;
+        st.last_field = ChatField::Conversation(Some(group));
+        st.selected = Some(group);
+        let mut open = true;
+        super::super::widgets::minimize_floater(&ctx, "conversations");
+        st.start_chat(&ctx, open, exists);
+        st.follow_bar_mode(&ctx, &mut open);
+        on_nearby(&st, "last field used, window minimized");
         // the other modes: the bar takes it
         for bar_mode in [ChatBar::Always, ChatBar::WhenTyping] {
             let mut st = ChatUi {
