@@ -492,10 +492,13 @@ pub struct Settings {
     pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
-    /// The shape editor stands our avatar up and plays the customise
+    /// AppearanceCameraMovement (llpaneleditwearable.cpp): frame the edited
+    /// body part automatically. Independent of the customise animation.
+    pub appearance_camera_movement: bool,
+    /// The appearance editors stand our avatar up and play the customise
     /// animation, which turns it to face the camera (on, as the Legacy
     /// Viewer always does; Preferences › Avatars › Animations). Off, our
-    /// avatar keeps its pose and the camera frames it from the front.
+    /// avatar keeps its pose. Camera framing is controlled independently.
     pub customize_animation: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
@@ -1766,6 +1769,7 @@ impl Default for Settings {
             shape_show_hints: true,
             shape_height_feet: false,
             customize_animation: true,
+            appearance_camera_movement: true,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
@@ -3077,6 +3081,25 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn appearance_camera_and_pose_preferences_default_on_and_persist_independently() {
+        use super::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(old.appearance_camera_movement && old.customize_animation);
+        for camera in [false, true] {
+            for pose in [false, true] {
+                let settings = Settings {
+                    appearance_camera_movement: camera,
+                    customize_animation: pose,
+                    ..Settings::default()
+                };
+                let bytes = serde_json::to_vec(&settings).expect("save preferences");
+                let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
+                assert_eq!((restored.appearance_camera_movement, restored.customize_animation), (camera, pose));
+            }
+        }
+    }
+
     #[test]
     fn projector_shadow_budget_survives_restart_and_clamps_untrusted_values() {
         use super::Settings;
