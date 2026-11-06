@@ -8,11 +8,13 @@
 //!
 //! The card is for direct payments. One that shows no card gets a toast and
 //! a line in the notification list: the Legacy Viewer's PaymentReceived,
-//! persistent and logged to the payer's transcript (log_to_im, #2675). So
-//! does every other L$ received (a sale, an object paid, a parcel, a group's
-//! money) with the "Notify me of sales" switch. It is off by default
-//! (`Settings::notify_money_received`), and the rules differ in three
-//! places, on purpose. A toast names the object paid
+//! persistent and logged to the payer's transcript (log_to_im, #2675), with
+//! its own switch, on by default like NotifyMoneyReceived. So does every
+//! other L$ received (a sale, an object paid, a parcel, a group's money)
+//! with the "Notify me of sales" switch, off by default
+//! (`Settings::notify_money_received`). The Legacy Viewer has one switch
+//! for both, and the rules differ in three places, on purpose. A toast
+//! names the object paid
 //! when the simulator gives its name, where reason_from_transaction_type
 //! leaves TRANS_PAY_OBJECT without one: a seller wants to know what sold.
 //! It is stricter too: only for L$ to us that succeeded and that come from
@@ -66,7 +68,9 @@ pub struct Payments {
     pub open_for_friends: bool,
     /// Our own payment opens the payee's conversation, from the preferences.
     pub open_when_paying: bool,
-    /// L$ received show a toast (NotifyMoneyReceived), from the preferences.
+    /// A resident's direct payment shows a toast, from the preferences.
+    pub notify_direct: bool,
+    /// Other L$ received show a toast, from the preferences.
     pub notify_received: bool,
     /// L$ received rise into the balance, from the preferences.
     pub rise_into_balance: bool,
@@ -210,10 +214,13 @@ impl World {
         if self.payments.rise_into_balance {
             self.payments.gains.push(*amount);
         }
-        // someone chose to send us these: only the sales have a switch
-        let direct = *kind == GIFT && !*source_group;
+        let wanted = if *kind == GIFT && !*source_group {
+            self.payments.notify_direct
+        } else {
+            self.payments.notify_received
+        };
         // process_money_balance_reply: nothing to display without a description
-        if (direct || self.payments.notify_received) && !card && !description.is_empty() {
+        if wanted && !card && !description.is_empty() {
             self.received_notice(other, *source_group, *kind, *amount, item);
         }
     }
@@ -465,6 +472,7 @@ mod tests {
 
     fn noticing() -> World {
         let mut w = world();
+        w.payments.notify_direct = true;
         w.payments.notify_received = true;
         w.social.names.insert(JANE, "Jane Doe".into());
         w
@@ -618,6 +626,7 @@ mod tests {
     #[test]
     fn by_default_a_sale_is_highlighted_without_a_toast() {
         let settings = crate::settings::Settings::default();
+        assert!(settings.notify_direct_payment);
         assert!(!settings.notify_money_received);
         assert!(settings.balance_gain_animation);
     }
@@ -625,6 +634,7 @@ mod tests {
     #[test]
     fn a_direct_payment_notifies_with_the_sales_switch_off() {
         let mut w = world();
+        w.payments.notify_direct = true;
         w.social.names.insert(JANE, "Jane Doe".into());
         w.payment(&received(130, GIFT, JANE, 100, "Payment"));
         assert_eq!(notices(&w), [from_jane(" paid you L$100")]);
@@ -643,6 +653,20 @@ mod tests {
         w.social.session_mut(JANE);
         w.payment(&received(135, GIFT, JANE, 30, "Payment"));
         assert_eq!(notices(&w).len(), 1);
+    }
+
+    #[test]
+    fn a_sale_notifies_with_the_direct_switch_off() {
+        let mut w = world();
+        w.payments.notify_received = true;
+        w.payment(&received(140, GIFT, JANE, 100, "Payment"));
+        assert!(notices(&w).is_empty(), "a direct payment has its own switch");
+        w.payment(&received(141, trans::OBJECT_SALE, JANE, 50, "Hat"));
+        assert_eq!(notices(&w).len(), 1);
+        // the card does not depend on it
+        w.social.session_mut(JANE);
+        w.payment(&received(142, GIFT, JANE, 30, "Payment"));
+        assert_eq!(cards(&w, JANE).len(), 1);
     }
 
     #[test]

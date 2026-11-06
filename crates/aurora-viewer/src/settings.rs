@@ -673,9 +673,11 @@ pub struct Settings {
     /// that are not a resident's direct payment show a toast (#2675). Off by
     /// default, where the Legacy Viewer's NotifyMoneyReceived is on: the
     /// highlight at the balance says it without covering the world, and a
-    /// busy seller would get one toast per sale. A direct payment always has
-    /// its toast or its card.
+    /// busy seller would get one toast per sale.
     pub notify_money_received: bool,
+    /// Preferences › Chat › Notifications: a resident's direct payment with
+    /// no card shows a toast (NotifyMoneyReceived, on by default, #2675).
+    pub notify_direct_payment: bool,
     /// Preferences › Layout › Bars: L$ received rise into the balance
     /// (`ui/balance_gains.rs`, Aurora's own, on by default).
     pub balance_gain_animation: bool,
@@ -1900,6 +1902,7 @@ impl Default for Settings {
             always_track_payments: false,
             payment_opens_conversation: true,
             notify_money_received: false,
+            notify_direct_payment: true,
             balance_gain_animation: true,
             payment_sent_opens_conversation: false,
             maps: MapSettings::default(),
