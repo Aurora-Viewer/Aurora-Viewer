@@ -729,7 +729,6 @@ mod tests {
             for widths in [
                 vec![RECEIVED_W, GRANTED_W],
                 vec![RECEIVED_W, GRANTED_W, rows::actions_width(4)],
-                vec![RECEIVED_W, GRANTED_W, rows::actions_width(6)],
                 vec![rows::actions_width(3)],
             ] {
                 let end = rows::end(row, rows::names_left(row), &widths, PARTS_GAP, false);

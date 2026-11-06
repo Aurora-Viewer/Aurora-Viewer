@@ -250,7 +250,7 @@ pub(super) fn show(
             let friend = world.social.is_friend(&other);
             let slots = 7 + usize::from(!friend) + usize::from(can_add_people(world, &other));
             if request_fits(width, slots) {
-                let request = if can_request_teleport(world, &other) {
+                let request = if world.social.can_request_teleport(&other) {
                     Tone::Plain
                 } else {
                     Tone::Off
@@ -365,12 +365,6 @@ pub(super) fn show(
 /// request's among them.
 pub(super) fn request_fits(width: f32, slots: usize) -> bool {
     8.0 + slots as f32 * (TOOL + 2.0) + 12.0 + PIC <= width
-}
-
-/// A teleport can be requested from anyone but a friend known to be offline
-/// (LLAvatarActions::canRequestTeleport, indra/newview/llavataractions.cpp).
-pub(super) fn can_request_teleport(world: &World, other: &Uuid) -> bool {
-    world.social.friends.iter().find(|f| f.id == *other).is_none_or(|f| f.online)
 }
 
 /// People can be added to a conversation with a resident or a

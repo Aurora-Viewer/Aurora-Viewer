@@ -167,7 +167,7 @@ pub(super) fn show(
                                 icons,
                                 super::head::REQUEST_TELEPORT_ICON,
                                 aurora_i18n::tr!("common-request-teleport"),
-                                super::head::can_request_teleport(world, &other),
+                                world.social.can_request_teleport(&other),
                                 false,
                             ) {
                                 crate::ui::context::request(ui.ctx(), CtxAction::RequestTeleport(other));
@@ -357,7 +357,7 @@ pub(super) fn more_items(
                         p,
                         super::head::REQUEST_TELEPORT_ICON,
                         aurora_i18n::tr!("common-request-teleport"),
-                        super::head::can_request_teleport(world, &other),
+                        world.social.can_request_teleport(&other),
                     )
                 {
                     crate::ui::context::request(ui.ctx(), CtxAction::RequestTeleport(other));
