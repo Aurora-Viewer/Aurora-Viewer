@@ -11173,6 +11173,7 @@ texture-library-wait-inventory = オブジェクトの中身を読み込んで�
 texture-library-locked = この面はこのテクスチャまたはマテリアルを受け付けません。
 texture-library-no-copy-drop = コピー不可のアイテムを適用しようとしています。このアイテムはオブジェクトのコンテンツに移動し、インベントリからなくなります。
 texture-library-no-copy-drop-question = アイテムを移動しますか？
+texture-library-no-copy-drop-move = 移動
 texture-library-worn-drop-all-faces = すべての面
 texture-library-worn-drop-linked = リンクされたすべてのアイテム
 texture-library-applied = テクスチャまたはマテリアルを適用しました。

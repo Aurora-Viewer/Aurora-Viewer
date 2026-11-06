@@ -1022,7 +1022,7 @@ impl App {
                     ui,
                     p,
                     "check",
-                    aurora_i18n::text("common-move"),
+                    aurora_i18n::tr!("texture-library-no-copy-drop-move"),
                     ui::widgets::ActionKind::Primary,
                     egui::vec2(0.0, 28.0),
                 )

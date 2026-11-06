@@ -11185,6 +11185,7 @@ texture-library-wait-inventory = Chargement du contenu de l’objet. Recommencez
 texture-library-locked = Cette surface ne peut pas recevoir cette texture ou ce matériau.
 texture-library-no-copy-drop = Vous appliquez un élément sans copie. Il sera déplacé dans le contenu de l’objet et quittera votre inventaire.
 texture-library-no-copy-drop-question = Déplacer l’élément ?
+texture-library-no-copy-drop-move = Déplacer
 texture-library-worn-drop-all-faces = Toutes les faces
 texture-library-worn-drop-linked = Tous les éléments liés
 texture-library-applied = Texture ou matériau appliqué.
