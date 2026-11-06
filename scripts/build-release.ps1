@@ -118,10 +118,12 @@ Push-Location $src
 # its tag. The local build resolves the version from this checkout's Git.
 $previousVersionTag = [Environment]::GetEnvironmentVariable('AURORA_VERSION_TAG', 'Process')
 try {
-    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $null, 'Process')
+    # Not SetEnvironmentVariable(…, $null): PowerShell passes '', which .NET 9 and
+    # later keep as an empty variable, and the build refuses an empty tag.
+    Remove-Item Env:AURORA_VERSION_TAG -ErrorAction SilentlyContinue
     Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer }
 } finally {
-    [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    if ($null -ne $previousVersionTag) { [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process') }
     Pop-Location
 }
 
