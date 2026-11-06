@@ -2857,6 +2857,12 @@ child button; another avatar's HUD is hidden. No access to a
 grid.
 
 - `1`: display only.
+- `mask-cutoff`: three procedural panels with legacy material cutoffs of
+  128, 200 and 255. All three must stay visible at the normal 100% view;
+  `mask-cutoff-zoom` repeats at 50%. Capture at frame 710 with a 1600x900
+  window. Each texture has an opaque centre and a one-texel transparent
+  border; the former alpha-coverage adjustment erased the 200 and 255 panels
+  at these mip levels. No grid assets are used.
 - `touch`: simulates press, drag and release on the child (frames
   720–900), then changes the colour of the HUD.
 - `zoom`: scales down to 50%; `hidden`: hides the HUDs; `media`: shows the
@@ -10795,10 +10801,13 @@ What the inventory must show with these scenarios:
   mask are box-filtered as they come (`build_mips`), so a leaf, a blade of
   grass, a strand or a fence wire falls under the alpha cutoff a few levels
   down and the foliage thins out with the distance. By default each level
-  keeps level 0's share of texels at or above the 0.5 cutoff
-  (`preserve_alpha_coverage`, Castaño 2010), computed once at decode and
-  stored in the transcoded cache (a file made the other way is decoded
-  again). It is read at start: compare two launches. See
+  restores level 0's share of texels at or above the 0.5 cutoff
+  (`preserve_alpha_coverage`, Castaño 2010) when it has lost coverage. Alpha
+  is only increased: a fuller mip stays as the Legacy Viewer's plain
+  average, preserving HUD panels with higher material cutoffs. This happens
+  once at decode, and the result is stored in the transcoded cache (a file
+  made the other way is decoded again). It is read at start: compare two
+  launches. See
   `AURORA_DEMO_FOLIAGE`.
 - **`AURORA_MIP_FILTER=weighted`**: the colour of each mip texel is the
   average of its four texels weighted by their alpha, as Aurora did before,
