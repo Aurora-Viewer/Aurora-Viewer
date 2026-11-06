@@ -510,7 +510,12 @@ impl App {
         }
         match day {
             Some(doc) => {
+                // the parcel's or region's day: the rights of its flags and
+                // its frames'; edited and committed back where it is, saved
+                // to the inventory only when they allow it
+                let rights = crate::world::env_edit::Rights::of_source(Some(doc.source_flags()));
                 self.day_editor.start_in(doc, context, timing);
+                self.day_editor.rights = rights;
                 self.show_day_edit();
             }
             None => self.day_editor.wait_default = true,

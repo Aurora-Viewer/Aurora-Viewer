@@ -61,6 +61,7 @@ mod derender;
 mod describe;
 mod dev_toolbox;
 mod folders;
+mod hover_pick;
 mod texture_picker;
 use folders::chat_log_root;
 mod contents_drop_demo;
@@ -472,6 +473,7 @@ pub struct App {
     world_mouse_walk_pending: bool,
     /// Clicks that wait for the depth under them, and what follows them.
     clicks: click_pick::ClickWait,
+    hover_drawn: hover_pick::HoverDrawn,
     script_clicks: script_clicks::ScriptClicks,
     /// Displacement while the right button is held (click vs orbit drag).
     right_gesture: RightGesture,
@@ -1453,6 +1455,7 @@ impl App {
             left_down: false,
             world_mouse_walk_pending: false,
             clicks: Default::default(),
+            hover_drawn: Default::default(),
             script_clicks: Default::default(),
             right_gesture: RightGesture::default(),
             context_menu: None,
@@ -2750,7 +2753,17 @@ impl App {
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
-            } else if mode == "mfa-refused" || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty()) {
+            } else if mode == "mfa-refused"
+                || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
+                || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
+            {
+                if mode == "terms" {
+                    log::info!(
+                        "demo login: agree_to_tos {}, read_critical {}",
+                        self.login_form.agree_tos,
+                        self.login_form.read_critical
+                    );
+                }
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
                 self.demo_mfa_challenge = Some(std::time::Instant::now() + std::time::Duration::from_millis(1200));
@@ -2824,7 +2837,7 @@ impl App {
             password,
             start,
             agree_to_tos: self.login_form.agree_tos,
-            read_critical: self.login_form.agree_tos,
+            read_critical: self.login_form.read_critical,
             mfa_token: self.login_form.mfa_token.trim().to_owned(),
             mfa_hash: self
                 .login_form
@@ -2835,6 +2848,7 @@ impl App {
             mac,
             id0,
             last_exec: self.last_exec(),
+            platform: crate::system_info::login_platform(),
         };
         self.login_form.busy = true;
         self.login_form.error = None;
@@ -3545,6 +3559,7 @@ impl App {
                 error,
                 mfa_required,
                 tos_required,
+                critical_required,
                 bad_credentials,
                 previous_session,
             } => {
@@ -3582,6 +3597,8 @@ impl App {
                     self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
+                } else if critical_required {
+                    self.login_form.critical_message = Some(error);
                 } else {
                     self.login_form.error = Some(error);
                 }
@@ -3728,6 +3745,7 @@ impl App {
                 self.login_form.password.clear();
                 self.login_form.mfa_token.clear();
                 self.login_form.agree_tos = false;
+                self.login_form.read_critical = false;
                 self.settings.mfa_hash.clear();
                 if let Some(path) = self.name_cache_path() {
                     self.world.social.avatar_names.load(&path);
@@ -4497,9 +4515,8 @@ impl App {
         }
     }
 
-    /// Is a world point on (or very near) our own avatar?
-    /// Where a ray enters and leaves our avatar's box (the size the
-    /// simulator gives the avatar object, a little wider for the arms), and
+    /// Diagnostic depth-only picking: where a ray enters and leaves our
+    /// avatar's box (the simulator's object size, widened for the arms), and
     /// where along it the ray passes within 0.2 m of the body's vertical axis
     /// (the click finds the avatar before its body and clothes are drawn).
     fn own_avatar_ray(&self, origin: Vec3, dir: Vec3) -> Option<(f32, f32, Option<f32>)> {
@@ -4641,10 +4658,16 @@ impl App {
             .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
             .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
-        // on our avatar: a surface inside its box under the cursor (nothing
-        // in front of it); or, when the ray goes through the box without
-        // touching anything (body not drawn yet), close to the body's axis
+        // Only our displayed body takes the press, not empty space inside
+        // its bounding box. Keep the old approximation solely for the
+        // diagnostic synchronous read, which has no drawn-face identity.
         let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|(o, d)| {
+            if !picked.depth_only() {
+                // The depth is older than the posed surface. Only a surface
+                // actually found by the CPU can occlude that newer answer.
+                let found = hit.filter(|p| Some(*p) != picked.depth);
+                return self.scene.own_avatar_surface(&self.world, &picked.drawn, (o, d), found);
+            }
             let (t0, t1, axis) = self.own_avatar_ray(o, d)?;
             match hit.map(|p| (p - o).dot(d)) {
                 Some(t) if t < t0 - 0.05 => None,
@@ -8234,6 +8257,15 @@ impl App {
         if self.world.home_grid != home {
             self.world.home_grid = home;
         }
+        // the Linden Lab mark is for the Second Life grids' Lindens (the
+        // demo's come by key, `demo::staff`): one flag, no scan
+        crate::world::staff::set_second_life(
+            !self.demo
+                && matches!(
+                    self.settings.grid,
+                    crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta
+                ),
+        );
         crate::slurl::set_grid(crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras()));
         // the region's chat ranges, for every range the interface draws or
         // counts (OpenSim regions may set their own)
@@ -9828,9 +9860,10 @@ impl App {
             let since_arrival = self.move_complete_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
             if (self.attachments_logged == 0 && since_arrival >= 40) || (self.attachments_logged == 1 && since_arrival >= 120) {
                 self.attachments_logged += 1;
+                let ids = crate::world::inventory::asset_ids::AssetIds::diagnostics(&self.world);
                 self.scene
-                    .log_attachments(&self.world, self.world.agent_id, &gfx.renderer, &|_| None, None);
-                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer);
+                    .log_attachments(&self.world, self.world.agent_id, &gfx.renderer, &|_| None, &ids, None);
+                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer, &ids);
             }
             self.finish_describe(&gfx.renderer);
             let texture_budget = self
@@ -10704,14 +10737,23 @@ impl App {
             && !ctx.is_pointer_over_egui()
             && !ctx.egui_wants_pointer_input()
         {
-            let hovered = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
+            let hud = self.scene.hover_hud(&self.world, self.cursor_pos);
+            if hud.is_some() {
+                self.hover_drawn.cancel(&mut gfx.renderer);
+            }
+            let hovered = hud.or_else(|| {
                 // Preserve the world hover cache (scene/hover.rs).
                 let ray = gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1);
-                let (point, idx) = self.scene.hover_pick(
+                let depth = gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1);
+                let (point, idx) = self.hover_drawn.pick(
+                    &mut gfx.renderer,
+                    &mut self.scene,
                     &self.world,
+                    self.cursor_pos,
                     ray,
-                    gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
+                    depth,
                     self.settings.draw_distance,
+                    self.clicks.waiting(),
                 );
                 // the same pick gives the look-at its point
                 self.look_hover = point.map(|p| (idx, p));
@@ -10723,7 +10765,10 @@ impl App {
                 }
                 idx
             });
-            if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+            if self.demo
+                && ((self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some())
+                    || (self.frame_count == 699 && std::env::var_os("AURORA_DEMO_WORLD_CLICKS").is_some()))
+            {
                 log::info!(
                     "demo cursor hover: prim={:?}, action={:?}",
                     hovered.and_then(|idx| self.world.objects.get(idx)).map(|o| o.key.local_id),
@@ -10746,6 +10791,8 @@ impl App {
                     full.platform_output.cursor_image = self.cursors.image(action, self.media.parcel_status_playing());
                 }
             }
+        } else {
+            self.hover_drawn.cancel(&mut gfx.renderer);
         }
         self.track_toolbox_hover(&gfx.renderer);
         if self.plate_cursor() {
@@ -14692,7 +14739,27 @@ impl App {
                     self.login_form.error = None;
                     self.start_login();
                 }
-                if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
+                if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the Terms of Service first (reason "tos"), then a
+                    // critical message (reason "critical"), one step each
+                    let tos = !self.login_form.agree_tos;
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: if tos {
+                            "Demo terms of service: the offline login server asks to accept them before logging in."
+                        } else {
+                            "Demo critical message: the offline login server asks to read this message before logging in."
+                        }
+                        .to_owned(),
+                        mfa_required: false,
+                        tos_required: tos,
+                        critical_required: !tos,
+                        bad_credentials: false,
+                        previous_session: false,
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
                     // A request that carried a code is refused the way the grid
                     // refuses a wrong one (reason "key", message id
@@ -14707,6 +14774,7 @@ impl App {
                         },
                         mfa_required: !refused,
                         tos_required: false,
+                        critical_required: false,
                         bad_credentials: refused,
                         previous_session: false,
                     });
@@ -17611,6 +17679,7 @@ impl ApplicationHandler for App {
                         | "first"
                         | "first-mfa"
                         | "mfa-refused"
+                        | "terms"
                         | "add"
                         | "password"
                         | "connecting"
@@ -17620,7 +17689,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -17658,7 +17727,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -17668,7 +17737,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if mode == "add-mfa" {
+                        if mode == "add-mfa" || mode == "terms" {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
