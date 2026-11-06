@@ -85,6 +85,26 @@ pub(crate) fn row_width(caps: &[Keycap]) -> f32 {
     caps.iter().map(Keycap::width).sum::<f32>() + GAP * caps.len().saturating_sub(1) as f32
 }
 
+/// A small legend, one line per binding: its caps in a column, then what it
+/// does. Lines whose flag is set stand out while one is set.
+pub(crate) fn legend(ui: &mut egui::Ui, p: &Palette, rows: &[(crate::keybinds::Binding, &str, bool)]) {
+    const LINE: f32 = 20.0;
+    const AFTER_CAPS: f32 = 8.0;
+    let lines: Vec<_> = rows.iter().map(|(binding, _, _)| caps(ui, binding, p.panel)).collect();
+    let column = lines.iter().map(|caps| row_width(caps)).fold(0.0, f32::max);
+    let held = rows.iter().any(|(_, _, active)| *active);
+    ui.spacing_mut().item_spacing.y = 0.0;
+    for (caps, (_, text, active)) in lines.iter().zip(rows) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(column + AFTER_CAPS, LINE), egui::Sense::hover());
+            paint_row(ui, p, caps, rect.left_center(), p.panel);
+            let color = if held && !active { p.muted } else { p.ink };
+            ui.label(egui::RichText::new(*text).color(color));
+        });
+    }
+}
+
 /// Draw `caps` side by side from `left_center`.
 pub(crate) fn paint_row(ui: &egui::Ui, p: &Palette, caps: &[Keycap], left_center: egui::Pos2, behind: Color32) {
     let mut x = left_center.x;
