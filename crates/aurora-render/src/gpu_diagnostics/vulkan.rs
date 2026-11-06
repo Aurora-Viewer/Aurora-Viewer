@@ -194,7 +194,15 @@ impl Native {
                 .filter(|(i, m)| requirements.memory_type_bits & (1 << i) != 0 && m.property_flags.contains(flags))
                 // Device-coherent types are illegal unless their feature was enabled.
                 .filter(|(_, m)| plan.enabled.coherent || !m.property_flags.contains(vk::MemoryPropertyFlags::DEVICE_COHERENT_AMD))
-                .max_by_key(|(_, m)| m.property_flags.contains(vk::MemoryPropertyFlags::DEVICE_COHERENT_AMD))
+                // System memory first: video memory can be wiped by the very
+                // reset the markers are there to explain (amdgpu "VRAM is
+                // lost"); then device-coherent, so the last writes reach it.
+                .max_by_key(|(_, m)| {
+                    (
+                        !m.property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL),
+                        m.property_flags.contains(vk::MemoryPropertyFlags::DEVICE_COHERENT_AMD),
+                    )
+                })
                 .map(|(i, _)| i as u32)
                 .ok_or(vk::Result::ERROR_FEATURE_NOT_PRESENT)?;
             native.memory = raw.allocate_memory(
