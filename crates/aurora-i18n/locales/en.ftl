@@ -987,10 +987,12 @@ script-save-failed = Saving failed. Your changes have been kept; try again.
 script-timeout = The simulator did not respond in time. Try again.
 script-transfer-invalid = The script transfer is incomplete or invalid. Try again.
 script-no-permission = You need Copy and Modify permissions to read and edit this script.
+script-object-no-modify = This script is in an object you cannot modify, so it cannot be opened.
 script-load-failed = Could not load the script. Refresh to try again.
 script-save-unavailable = This region does not support saving scripts.
 script-saving = Saving and compiling…
 script-saved = Script saved and compiled.
+script-saved-not-compiled = Script saved. This grid compiles scripts when they are placed in an object.
 script-compile-failed = Source saved, but compilation failed. Correct the errors below.
 script-save-hint = Save and compile the script (Ctrl+S).
 script-mono-hint = Compile with Mono. Uncheck to use the classic LSL compiler.
@@ -1683,6 +1685,7 @@ app-graphics-start-failed =
     What to try:
     • update the graphics card driver;
     • on a PC with two graphics cards, check that both are enabled in Device Manager, and that the monitor is plugged into the card that should draw;
+    • on a laptop with AMD and NVIDIA graphics, update the AMD driver from AMD's website as well as the NVIDIA driver;
     • restart the PC.
 
     Details: { $e }
@@ -2091,6 +2094,7 @@ world-groups-the-server-closed-this-session-the-message-may-not = The server clo
 ui-inventory-dialogs-this-deletion-is-permanent = This deletion is permanent.
 world-appearance-this-outfit-contains-a-link-that-cannot-be-worn = This outfit contains a link that cannot be worn.
 app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer = This texture must allow copying and transfer.
+app-inventory-thumbnail-this-texture-is-not-in-your-inventory = Use a texture from your inventory that allows copying and transfer.
 ui-options-camera-vertical-field-of-view-60-by-default-as-with = Vertical field of view (60° by default), as with Ctrl+0 / Ctrl+8 in the Legacy Viewer
 ui-context-change-outfit = Change outfit
 ui-profile-change-image = Change image
@@ -2146,6 +2150,10 @@ build-ui-texture-choose-material = Choose: material
 build-ui-texture-choose-normal-map = Choose: normal map
 build-ui-texture-choose-specular-map = Choose: specular map
 build-ui-texture-drop-restricted = Only textures with unrestricted copy and transfer permissions are allowed.
+build-ui-texture-drop-object = This object cannot receive this item. You need permission to modify it.
+build-ui-texture-drop-disabled = This slot cannot be changed right now.
+build-ui-texture-drop-single-texture = This slot only accepts a single texture.
+build-ui-texture-drop-single-material = This slot only accepts a single material.
 build-ui-texture-choose-texture = Choose: texture
 build-ui-features-choose-light-texture = Choose: light texture
 build-ui-object-choose-sculpt-map = Choose: sculpt map
@@ -2277,6 +2285,9 @@ common-paste = Paste
 ui-inventory-context-paste-as-link = Paste as link
 ui-inventory-thumbnail-paste-from-clipboard = Paste from clipboard
 build-ui-texture-paste-texture-settings-from-the-clipboard = Paste texture settings from the clipboard
+build-ui-texture-paste-not-in-inventory = Paste failed. One or more textures not found in inventory.
+build-ui-texture-paste-wait-contents = Unable to add texture. Please wait a few seconds and try again.
+build-ui-texture-paste-limited = You applied a texture with limited permissions, object will inherit permissions from texture.
 ui-options-commands = Commands
 common-camera-and-display-commands = Camera and display commands
 common-teleport-commands = Teleport commands
@@ -2291,6 +2302,8 @@ ui-options-maximum-avatar-complexity = Maximum avatar complexity
 common-behavior = Behavior
 ui-profile-account = Account:
 ui-login-terms-of-service = Terms of service
+ui-login-terms-of-service-read = Read the Terms of Service
+ui-login-critical-message = Important message
 ui-contacts-configure = { "Configure: " }{ $set }
 ui-contacts-configure-selected-contact-set = Configure selected contact set
 world-groups-conference = Conference
@@ -2848,6 +2861,7 @@ dev-toolbox-r9 = Lights
 dev-toolbox-r10 = Reflection probes
 dev-toolbox-r11 = Sort of the local lights
 dev-toolbox-r12 = Sort of the reflection probes
+dev-toolbox-r13 = Pause the Render
 dev-toolbox-o1 = Bounding boxes
 dev-toolbox-o2 = Detail levels (LOD)
 dev-toolbox-o3 = Culling
@@ -3592,6 +3606,7 @@ ui-context-invite-to-group = Invite to group
 ui-profile-invite-to-group-coming-soon = Invite to group (coming soon)
 ui-contacts-invite = Invite...
 ui-login-i-accept-the-terms-and-want-to-log-in = I accept the terms and want to log in
+ui-login-critical-message-read = I have read this message and want to log in
 demo-arriving-with-textures = Arriving with textures ✨
 demo-flash-message = Are you there? ({ $n })
 demo-snooze-message = Group update number { $n } from the plaza
@@ -3919,10 +3934,11 @@ ui-options-avatar-physics-help = The breasts, belly and butt of avatars wearing 
 ui-options-avatar-physics-detail = Avatar physics detail
 ui-options-avatar-physics-detail-help = At 1 every avatar moves; lower, avatars small on screen keep their shape; 0 stops the physics (RenderAvatarPhysicsLODFactor)
 ui-options-limit-when-unfocused = Limit when unfocused
-ui-options-pause-when-card-busy = Pause the 3D when the card is overloaded
-ui-options-pause-when-card-busy-tip = When another program keeps the graphics card busy while Aurora is behind, Aurora stops drawing the world until you click on it, so the card is not reset. Turned off, Aurora can close with "the graphics card was lost". Enabled by default
-busy-pause-notice = 3D paused: the graphics card is busy with another program. Click to resume.
+ui-options-pause-when-card-busy = Pause the Render when the card is overloaded
+ui-options-pause-when-card-busy-tip = When another program keeps the graphics card busy while Aurora is behind, Aurora stops drawing the world until you click on it, so the card is not reset. Turned off, Aurora can close with "the graphics card was lost". Applies to every Aurora window open. Enabled by default
+busy-pause-notice = Render paused: the graphics card is busy with another program. Click to resume.
 busy-pause-window-title = { $title } — Paused
+busy-pause-forced-notice = Render paused from the Dev Toolbox (R13). Press R13 again to resume.
 ui-land-sound-restrict-voice-chat-to-this-parcel = Restrict voice chat to this parcel
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = Restrict gesture and object sounds to this parcel
 common-limits = Limits
@@ -4757,7 +4773,7 @@ ui-options-camera-preset = Preset
 ui-options-warn-before-external-links = Warn before external links
 ui-options-link-previews = Link previews
 ui-options-link-previews-load = Load by themselves
-ui-options-link-previews-load-hint = Pictures and videos under links, in the Conversations window (Aurora, Compact and Bubbles styles). Known sites: those whose links have the green check. Another site would see your IP address, so its previews wait for a click
+ui-options-link-previews-load-hint = Pictures and videos under links, in the Conversations window (Aurora, Compact and Bubbles styles). Known sites: those whose links have the green check. Another site would see your IP address, so its previews wait for a click. The links objects send, and links to a region or a script, always wait for a click
 ui-options-link-previews-never = Never
 ui-options-link-previews-trusted = Known sites
 ui-options-link-previews-all = All links
@@ -5008,6 +5024,7 @@ ui-place-details-notes = Notes:
 ui-options-camera-restores-the-preset-s-camera-position-and-focus-point = Restores the preset's camera position and focus point
 ui-options-reset-all-settings = Reset all settings
 ui-inventory-context-return-to-last-location = Return to last location
+ui-inventory-restore-no-copy = A no-copy object is not returned to its last location: it could be lost on the way.
 ui-inventory-dialogs-replace = Replace
 ui-inventory-context-replace-current-outfit = Replace current outfit
 ui-land-media-replace-texture = Replace texture:
@@ -5704,6 +5721,7 @@ ui-land-dialogs-select-2 = Select
 build-mod-select-at-least-two-objects-to-link = Select at least two objects to link
 build-land-select-land-first-the-select-land-tool = Select land first (the “Select land” tool).
 build-mod-select-the-objects-to-copy-first = Select the objects to copy first.
+build-mod-no-copyable-object = None of the selected objects can be copied.
 world-inventory-actions-select-items-from-the-same-folder = Select items from the same folder.
 build-ui-general-select-the-whole-object = Select the whole object
 build-ui-floaters-selected-2 = Selected
@@ -6080,6 +6098,10 @@ login-safe-graphics-active-title = Safe graphics are on
 login-safe-graphics-active = Aurora runs on the Potato level since the graphics card stopped answering. Once the cause is fixed (driver updated, overlays off), put your own settings back.
 login-safe-graphics-restore = Restore my graphics
 login-safe-graphics-stay = Keep the safe graphics
+login-photo-quality-off-title = Photo quality turned off
+login-photo-quality-off = Aurora closed unexpectedly last time while Photo quality had every graphics setting at its maximum. It is off now, so the photo window opens normally; your own graphics settings have not changed. You can turn it back on in the photo window or in Preferences › Graphics.
+login-photo-quality-off-ok = OK
+login-photo-quality-off-back-on = Turn it back on
 ui-perf-downloaded = Downloaded
 common-teleport-2 = Teleport
 common-teleport-accepted = Teleport accepted…
@@ -6098,6 +6120,8 @@ ui-inventory-thumbnail-image-uuid = Image UUID
 ui-inventory-thumbnail-invalid-image-uuid = Invalid image UUID.
 ui-texture-picker-invalid-uuid = Invalid UUID
 ui-texture-picker-confirm-no-copy = No-copy texture: confirm with OK.
+ui-texture-picker-no-live-preview = No live preview for a no-copy or no-transfer texture: confirm with OK.
+ui-texture-picker-owner-only = A no-transfer texture can only go on an object you own that is not for sale.
 ui-texture-picker-preview = Preview
 ui-texture-picker-adjust-list-width = Adjust list width
 ui-texture-picker-local-files = Local files
@@ -6503,6 +6527,8 @@ photo-quality-warning-text = Photo quality raises every graphics setting to its 
 photo-quality-warning-ok = Turn on anyway
 photo-quality-loading = Loading the details… ({ $count } textures)
 photo-quality-reduced = Quality reduced: video memory almost full
+photo-quality-off-after-crash = Turn photo quality off after a crash
+photo-quality-off-after-crash-help = When Aurora crashes or is stopped while Photo quality is on, the next start turns it off and says so on the login screen.
 photo-freeze-hint = Taken now and kept on screen until saved
 photo-freeze-world = Freeze the world
 photo-freeze-world-hint = Avatars, animations and everything that moves hold still while the camera moves on.
@@ -7533,6 +7559,10 @@ ui-env-editor-load-failed = Could not load the settings "{ $name }".
 ui-env-editor-applied = Applied to you only.
 ui-env-editor-saved = Saved to your inventory.
 ui-env-editor-copied = A copy is on its way to your inventory.
+ui-env-editor-source-unknown = The permissions of the settings shown are not known: these can be edited and applied to yourself only.
+ui-env-editor-source-no-save = The settings shown may not be saved: these can only be applied to yourself.
+ui-env-editor-source-no-copy = The settings shown cannot be copied or modified: these are not saved as new settings.
+ui-env-editor-source-no-transfer = The settings shown cannot be transferred: settings saved from them cannot be transferred either.
 ui-env-editor-import-failed = This file is not a Windlight preset that can be converted.
 ui-day-editor-title = Edit Day Cycle
 ui-day-editor-help = Edits a day cycle: choose a track, place the time cursor on the timeline, then add, move or edit its key frames. The world shows the day at the time cursor, for you only, until you save it or apply it to yourself.
@@ -8433,6 +8463,7 @@ script-preproc-directive = Invalid or unrecognized preprocessor directive.
 script-preproc-conditional = Conditional directives are not correctly paired.
 script-preproc-include-limit = Include limit reached; check for recursive includes.
 script-preproc-include-missing = Include script missing or unreadable: { $name }
+script-preproc-include-no-transfer = Include script cannot be transferred, and you are not its creator: { $name }
 script-preproc-include-timeout = Loading an include script timed out.
 script-preproc-cancelled = Preprocessing cancelled.
 script-preproc-lsl-extension = Invalid syntax in a switch statement or lazy list.
@@ -9106,6 +9137,48 @@ ui-options-chat-logs-erased = { $count ->
    *[other] { $count } files erased.
     }
 ui-options-chat-logs-erase-failed = Some files could not be erased.
+ui-options-chat-logs-busy = The history is busy with an import, a move or an erasing: try again in a moment.
+ui-options-chat-logs-import-login = Import at login
+ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import. Its files are only read. On by default.
+ui-options-chat-logs-import-login-off = Import at login is now off, so that this history does not come back.
+ui-options-chat-logs-imported-at-login = Chat history from the Legacy Viewer: { $count ->
+    [one] { $count } message added
+   *[other] { $count } messages added
+    } to { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    } To stop this, turn off Import at login (Preferences › Chat › History).
+ui-options-chat-logs-import = Import from the Legacy Viewer…
+ui-options-chat-logs-import-title = Import chat history from the Legacy Viewer
+ui-options-chat-logs-import-text = Conversations are added to this account's files in time order, and the messages already there are skipped, so importing again adds only what is new. The Legacy Viewer's files are only read.
+ui-options-chat-logs-import-searching = Looking for the Legacy Viewer's history…
+ui-options-chat-logs-import-none = No Legacy Viewer history was found for this account. If it is somewhere else, choose its folder.
+ui-options-chat-logs-import-files = { $count ->
+    [one] { $count } conversation file
+   *[other] { $count } conversation files
+    }
+ui-options-chat-logs-import-same = Aurora already uses this folder: there is nothing to import.
+ui-options-chat-logs-import-empty = No conversation files in this folder.
+ui-options-chat-logs-import-choose = Choose a folder…
+ui-options-chat-logs-import-confirm = Import
+ui-options-chat-logs-importing = Importing: { $done } of { $total } files
+ui-options-chat-logs-imported = { $count ->
+    [one] { $count } message added
+   *[other] { $count } messages added
+    } to { $files ->
+    [one] { $files } conversation.
+   *[other] { $files } conversations.
+    }
+ui-options-chat-logs-import-reopen = A conversation already in progress shows them the next time it opens.
+ui-options-chat-logs-import-nothing = Nothing new to import.
+ui-options-chat-logs-import-failed = { $count ->
+    [one] { $count } file could not be imported and was left as it was: import again to retry.
+   *[other] { $count } files could not be imported and were left as they were: import again to retry.
+    }
+ui-options-chat-logs-import-left-out = { $count ->
+    [one] { $count } text file has no timestamps and was left out: it may be a conversation logged without them.
+   *[other] { $count } text files have no timestamps and were left out: they may be conversations logged without them.
+    }
 ui-chat-filter-conversation = Filter the conversation (Ctrl+F: find)
 ui-chat-filter = Filter…
 ui-chat-find = Find in this conversation…
@@ -11198,6 +11271,11 @@ texture-library-copy = Copy allowed
 texture-library-no-copy = No copy: applying moves this item to the object.
 texture-library-wait-inventory = Loading the object contents. Try the drop again when they are ready.
 texture-library-locked = This surface cannot receive this texture or material.
+texture-library-no-copy-drop = You are applying a no-copy item. It will move to the object’s contents and leave your inventory.
+texture-library-no-copy-drop-question = Move the item?
+texture-library-no-copy-drop-move = Move
+texture-library-worn-drop-all-faces = All faces
+texture-library-worn-drop-linked = All linked items
 texture-library-applied = Texture or material applied.
 texture-library-no-results = No matching resources.
 texture-library-demo-wood = Wood
@@ -12907,6 +12985,7 @@ about-copied = Copied
 about-copy-hint = Copies all of the above in English, for a support request or a bug report.
 about-click-to-copy = Click to copy this value
 about-build-pill = { $profile } build
+about-third-party-viewer = Aurora Viewer is a third-party viewer, not provided or supported by Linden Lab, the makers of Second Life.
 about-release-notes = Release notes
 about-licence-title = Aurora Viewer's license
 about-licence-gpl = GNU GPL v3
@@ -13027,7 +13106,9 @@ particle-editor-inject = Inject
 particle-editor-inject-tip = Put a script with this particle system into the object
 particle-editor-copy-tip = Copy the particle system as an LSL script to the clipboard
 particle-editor-copied = The LSL script of this particle system is on the clipboard: paste it into a new script to use it.
+particle-editor-copied-without-texture = The LSL script of this particle system is on the clipboard, without the texture key: paste that key into the script yourself.
 particle-editor-injected = The particle script was put into the object.
+particle-editor-injected-without-texture = The particle script was put into the object, without the texture key: the default particle is used until you add it.
 particle-editor-folder-failed = No inventory folder was found for the new script.
 particle-editor-upload-failed = The particle script could not be saved: { $reason }
 particle-editor-object-gone = The object is gone: the script stays in your inventory.
