@@ -50,6 +50,8 @@ mod buttons_tests;
 #[cfg(test)]
 mod contact_visual_tests;
 #[cfg(test)]
+mod earshot_tests;
+#[cfg(test)]
 mod volume_tests;
 
 use super::context::CtxAction;
@@ -289,6 +291,15 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// How far residents can hear the selected nearby chat volume.
+    pub(crate) fn earshot_range(&self, ranges: crate::world::radar::ChatRanges) -> f32 {
+        match self.volume {
+            compose::Volume::Whisper => ranges.whisper,
+            compose::Volume::Say => ranges.say,
+            compose::Volume::Shout => ranges.shout,
+        }
+    }
+
     /// Recreate only the account-independent nearby window. IMs, messages,
     /// drafts and focus never cross sessions. Its stable floater id lets the
     /// existing layout restore position, size and minimized state.
@@ -581,6 +592,11 @@ impl ChatUi {
     pub fn stop_local_typing(&mut self) -> bool {
         self.local_typing.stop()
     }
+}
+
+/// Count residents whose known range is within the selected nearby chat range.
+pub(crate) fn earshot_count(entries: impl IntoIterator<Item = Option<f32>>, range: f32) -> usize {
+    entries.into_iter().filter(|distance| distance.is_some_and(|d| d <= range)).count()
 }
 
 pub struct OutgoingChat {
