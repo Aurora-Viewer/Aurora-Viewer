@@ -4709,7 +4709,7 @@ both open states and the selection count. Capture at frame 620.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
+| `AURORA_DEMO_TOOLBAR=1` | Toolbar customization, side bars, labels and menu commands. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 
@@ -4763,6 +4763,16 @@ dock in icons and labels, the left toolbar in labels). Capture at frame 780.
 `empty-left` / `empty-right` move all bottom buttons to that side for this
 run only, without opening the editor. With Aurora bars, the empty bottom
 dock must be invisible while nearby chat remains available (#1631).
+
+`menu-add` / `menu-remove` test the menu command context popup (#2341).
+Use `AURORA_DEMO_BARS=islands` and `AURORA_DEMO_MENU_SEARCH=Import`
+(or the translated Import label, such as `Importer` with `--language fr`).
+The existing search scenario opens the wolf menu and types the query; the
+new scenario right-clicks the Import result at frames 650–651. `menu-add`
+starts without its button, `menu-remove` includes it in the bottom bar.
+Capture frames 620 and 750: the filtered result, then the Add/Remove popup,
+which must remain readable after the parent menu closes. The fixture's
+layout changes are temporary and do not alter saved toolbars.
 
 Combine the face modes below with `AURORA_DEMO_ACTIONS=face-drops`, which
 seeds the static action cubes without running the action-click scenario.
