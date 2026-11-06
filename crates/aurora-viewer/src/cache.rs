@@ -23,8 +23,13 @@ pub const DIRS: [&str; 9] = [
     "inventory",
     "sound",
     "settings",
-    "clipboard-images",
+    CLIPBOARD_IMAGES,
 ];
+
+/// The pictures copied from the chat, as PNG files for a paste in the file
+/// explorer (`ui/chat/previews/clipboard.rs`): plain files, in the store
+/// like the rest so that its size limit and Clear Cache take them too.
+pub const CLIPBOARD_IMAGES: &str = "clipboard-images";
 
 /// Bytes written to the cache since the last walk.
 static WRITTEN: AtomicU64 = AtomicU64::new(0);
@@ -374,6 +379,21 @@ mod tests {
         let sealed = key().seal(&plain).expect("seal");
         assert_eq!(open(sealed.clone(), false).expect("sealed"), plain);
         assert_eq!(open(sealed, true).expect("sealed"), plain);
+    }
+
+    #[test]
+    fn clear_takes_the_copied_pictures() {
+        let root = std::env::temp_dir().join(format!("aurora-cache-test-{}", uuid::Uuid::new_v4()));
+        let cache = DiskCache::new(root.clone(), 100);
+        let picture = root.join(CLIPBOARD_IMAGES).join("Aurora-image-0123456789abcdef.png");
+        write_plain(&picture, b"png").expect("picture");
+        cache.clear();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while (picture.exists() || cache.is_clearing()) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!picture.exists(), "cleared with the cache");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
