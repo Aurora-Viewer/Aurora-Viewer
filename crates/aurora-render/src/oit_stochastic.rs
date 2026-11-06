@@ -30,10 +30,12 @@
 //! whatever the scene's: their depth starts as the opaque depth spread over
 //! those samples (`oit_stochastic_expand.wgsl`). With MSAA the total alpha
 //! and the composite stay at the scene's samples (each scene sample dimmed by
-//! its own transparency). Without (SMAA, FXAA, TAA or none: one sample) the
+//! its own transparency). Without (SMAA, FXAA, TAA, FSR or none: one sample) the
 //! total alpha runs at the passes' samples against that spread depth and the
 //! composite dims each pixel by its resolved transparency; the scene's
 //! anti-aliasing then runs over the result as over the per-object order.
+//! Under FSR that is the render size, before the upscale. The temporal
+//! blend is off under TAA, on under FSR (`temporal_weight`).
 //! More samples than a pass
 //! holds (`AURORA_OIT_SAMPLES`): the passes 3 and 4 run again with the next
 //! bits of one stratified mask (paper footnote 1). The masks come from a table of random S-choose-R
@@ -99,6 +101,35 @@ pub enum Seed {
     White = 0,
     R2 = 1,
     Blue = 2,
+}
+
+/// The scene's own accumulation over the frames, after the composite
+/// (`temporal_weight`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SceneHistory {
+    /// SMAA, FXAA, MSAA or none: the blend averages the noise
+    None,
+    /// the scene's TAA
+    Taa,
+    /// FSR 3.1 (fsr.rs), in TAA's place: its own history and locks
+    Fsr,
+}
+
+/// The temporal blend's weight under `history`. 0 under TAA, whose history
+/// would hold the blend's trail a second time (a double ghost); the seeds
+/// then stay the same from frame to frame, as with `notemporal`, and TAA
+/// keeps that grain steady. `wanted` otherwise, FSR included: its reactive
+/// mask (the scene copy against the composited colour) marks the blended
+/// faces, where FSR takes this frame's colour rather than its history, so
+/// a static grain would stay, enlarged by the upscale and sharpened by
+/// RCAS, while the blend averages it as without a scene history (8 panes
+/// under FSR Quality: the grain gone, as smooth as OIT off; no trail seen
+/// on the hair fly-through).
+pub(crate) fn temporal_weight(wanted: f32, history: SceneHistory) -> f32 {
+    match history {
+        SceneHistory::None | SceneHistory::Fsr => wanted,
+        SceneHistory::Taa => 0.0,
+    }
 }
 
 impl Default for Config {
@@ -479,8 +510,10 @@ struct Targets {
 
 pub(crate) struct Stochastic {
     shared: Shared,
-    /// the configuration in force (its temporal weight 0 under TAA)
+    /// the configuration in force (its temporal weight 0 under TAA or FSR)
     config: Config,
+    /// the scene history the last `prepare` saw (its log line on a change)
+    scene_history: SceneHistory,
     /// the temporal weight the environment and the defaults ask for
     wanted_temporal: f32,
     /// the mask table for `config.samples` and the blue-noise tile (bound
@@ -688,6 +721,7 @@ impl Stochastic {
                 expand_module,
             },
             wanted_temporal: config.temporal,
+            scene_history: SceneHistory::None,
             config,
             _masks: masks,
             _blue: blue,
@@ -735,7 +769,7 @@ impl Stochastic {
         samples: u32,
         reproj: [[f32; 4]; 4],
         glow: bool,
-        taa: bool,
+        scene_history: SceneHistory,
     ) -> bool {
         let pass = self.shared.pass_samples(samples);
         if pass < 2 {
@@ -743,14 +777,19 @@ impl Stochastic {
         }
         // the scene's TAA accumulates already: a second history would ghost
         // twice, so the blend (and its seeds changing every frame) is off
-        let temporal = if taa { 0.0 } else { self.wanted_temporal };
-        if temporal != self.config.temporal {
-            log::info!(
-                "oit stochastic: temporal blend {}",
-                if taa { "off, the scene's TAA accumulates" } else { "on" }
-            );
+        // there; on under FSR (`temporal_weight`)
+        let temporal = temporal_weight(self.wanted_temporal, scene_history);
+        if temporal != self.config.temporal || scene_history != self.scene_history {
+            let why = match scene_history {
+                SceneHistory::Taa => "off, the scene's TAA accumulates",
+                _ if temporal == 0.0 => "off",
+                SceneHistory::Fsr => "on, before FSR (its reactive mask leaves the blended faces to this frame)",
+                SceneHistory::None => "on",
+            };
+            log::info!("oit stochastic: temporal blend {why}");
             self.config.temporal = temporal;
         }
+        self.scene_history = scene_history;
         let history = plan(&self.config).history;
         let stale = self
             .targets
@@ -1596,6 +1635,16 @@ mod tests {
         // the temporal blend is the default; `notemporal` turns it off
         assert_eq!(parse_config(None, None).temporal, 0.125);
         assert_eq!(parse_config(None, Some("notemporal")).temporal, 0.0);
+    }
+
+    #[test]
+    fn the_temporal_blend_is_off_under_taa_only() {
+        let wanted = parse_config(None, None).temporal;
+        assert_eq!(temporal_weight(wanted, SceneHistory::None), 0.125);
+        assert_eq!(temporal_weight(wanted, SceneHistory::Taa), 0.0);
+        assert_eq!(temporal_weight(wanted, SceneHistory::Fsr), 0.125);
+        assert_eq!(temporal_weight(0.0, SceneHistory::Fsr), 0.0);
+        assert_eq!(temporal_weight(0.0, SceneHistory::None), 0.0);
     }
 
     #[test]

@@ -8318,12 +8318,20 @@ impl Backend {
             let ready = self.pipelines.st_resolve.as_ref().is_some_and(|r| r.samples() == samples);
             let (device, queue) = (&self.device, &self.queue);
             let reproj = main.motion_reproj;
-            let taa = self.settings.aa == AntiAliasing::Taa;
+            // the scene's own history, after the composite (FSR runs at
+            // the render size like the scene, its reactive mask comparing
+            // the scene copy with the composited colour as with the
+            // per-object order)
+            let history = match self.settings.aa {
+                AntiAliasing::Taa => crate::oit_stochastic::SceneHistory::Taa,
+                AntiAliasing::Fsr(_) => crate::oit_stochastic::SceneHistory::Fsr,
+                _ => crate::oit_stochastic::SceneHistory::None,
+            };
             ready
                 && self
                     .st
                     .as_mut()
-                    .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj, !st_glow.is_empty(), taa))
+                    .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj, !st_glow.is_empty(), history))
         };
         // off, its targets are freed (as `Bloom::release`)
         if method != crate::oit_stochastic::Method::Stochastic

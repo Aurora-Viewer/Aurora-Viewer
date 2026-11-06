@@ -10404,15 +10404,24 @@ What the inventory must show with these scenarios:
   opaque depth spread over those samples (each takes the scene sample
   nearest to it). With MSAA (`AURORA_AA=2`, `3`, `4`) the total alpha and
   the composite stay at the scene's samples, each dimmed by its own
-  transparency. Without (`AURORA_AA=0` none, `1` FXAA, `5` TAA, `6` SMAA)
-  the total alpha runs at the passes' samples against that spread depth,
+  transparency. Without (`AURORA_AA=0` none, `1` FXAA, `5` TAA, `6` SMAA,
+  `7` FSR) the total alpha runs at the passes' samples against that spread depth,
   the composite dims each pixel by its resolved transparency, and the
   anti-aliasing then runs over the result as with `AURORA_OIT=0`: check
   the edges of opaque objects in front of and behind the panes of
   `AURORA_DEMO_ALPHA_PLANES=8,0.4,0.5` (no halo, the same edge as with
   `AURORA_OIT=0`), and under TAA the hair fly-through
   (`AURORA_DEMO_CAMERA=hair`; the grain is the same every frame, so TAA
-  neither averages it out nor ghosts it). The log gives the configuration and the counts the device
+  neither averages it out nor ghosts it). Under FSR (`AURORA_AA=7`,
+  `AURORA_FSR_QUALITY`) the passes and their targets are at the render
+  size, before the upscale (the log's `targets` line gives it), and FSR's
+  reactive mask compares the scene copy with the composited colour as it
+  does with the per-object order. The temporal blend stays on there (FSR
+  takes this frame's colour on the blended faces, so a static grain would
+  show, enlarged and sharpened): check the 8 panes (as smooth as
+  `AURORA_OIT=0`), the coplanar panes of `AURORA_DEMO_ALPHA_PLANES=2,0.5,0`
+  across frames and the hair fly-through for a trail.
+  The log gives the configuration and the counts the device
   takes (`oit stochastic: Config …; pass sample counts the device takes:
   [2, 4, 8]`), the route (`oit stochastic: the sample mask route` or `the
   sample index route`) and the targets (`oit stochastic: targets <w>x<h>,
@@ -10432,7 +10441,8 @@ What the inventory must show with these scenarios:
   of the accumulated colour guided by the total alpha, radius 1 to 4,
   alpha sigma 0.1 by default), `temporal[=<n>]` (on by default with n = 8,
   and off when the scene's anti-aliasing is TAA, which accumulates already
-  (logged once as `oit stochastic: temporal blend off`); `notemporal` turns it off: the resolved colour
+  (logged once as `oit stochastic: temporal blend off, the scene's TAA
+  accumulates`; under FSR it stays on, `on, before FSR …`); `notemporal` turns it off: the resolved colour
   blended 1/n with the last frame's reprojected through the nearest
   transparent depth and clamped to the 3 x 3 neighbourhood; the seeds then
   change every frame; ghosts under motion), `index` (the coverage by one
