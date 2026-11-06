@@ -1431,6 +1431,45 @@ mod tests {
         assert_eq!(mask_table(8), mask_table(8));
     }
 
+    /// The shader's `st_hash` (PCG) and its per-pixel, per-layer subset index.
+    fn st_hash(v: u32) -> u32 {
+        let mut x = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+        x = ((x >> ((x >> 28) + 4)) ^ x).wrapping_mul(277_803_737);
+        (x >> 22) ^ x
+    }
+
+    fn subset_index(layer_seed: u32, px: u32, py: u32) -> u32 {
+        let h = st_hash(layer_seed ^ st_hash(px | (py << 16)) ^ 0x5bd1_e995) >> 8;
+        ((h as f32 / 16_777_216.0) * SEEDS as f32) as u32
+    }
+
+    #[test]
+    fn two_layers_never_share_a_subset_over_their_overlap() {
+        // Before, the index was (pixel value + layer offset) mod 1: two layers
+        // whose offsets met had the same subset at every pixel. Now the index
+        // is hashed per pixel and layer: any two seeds, however close, differ
+        // at most pixels, and each layer's indices stay inside the table.
+        let (a, b) = (st_hash(7), st_hash(7) + 1);
+        let mut same = 0;
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..64 {
+            for x in 0..64 {
+                let (ia, ib) = (subset_index(a, x, y), subset_index(b, x, y));
+                assert!(ia < SEEDS && ib < SEEDS);
+                same += u32::from(ia == ib);
+                seen.insert(ia);
+            }
+        }
+        // chance level is 4096 / 2048 = 2 pixels
+        assert!(same < 40, "{same} of 4096 pixels share a subset");
+        assert!(seen.len() > 1200, "one layer covers {} of {SEEDS} subsets", seen.len());
+        // every index picks a valid R-subset of the table
+        let t = mask_table(16);
+        for i in 0..64 {
+            assert_eq!(t[(5 * SEEDS + subset_index(a, i, 3)) as usize].count_ones(), 5);
+        }
+    }
+
     #[test]
     fn the_pass_takes_the_most_samples_up_to_8() {
         let all = [2, 4, 8, 16];

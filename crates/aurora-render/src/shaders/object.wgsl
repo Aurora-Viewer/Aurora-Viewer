@@ -1713,7 +1713,11 @@ fn st_mask(px: vec2<u32>, tie: u32, prim: u32, a: f32) -> u32 {
     // ...rotates the pixel's two values (white noise: a plain mix)
     let pv = st_pixel_values(px);
     let rot = vec2<f32>(f32(seed >> 8u), f32(st_hash(seed) >> 8u)) / 16777216.0;
-    let v = fract(pv + rot);
+    var v = fract(pv + rot);
+    // the subset is hashed from the layer's seed and the pixel, whatever the
+    // pixel values: two layers whose rotations met on one table index would
+    // otherwise share a subset over their whole overlap and hide the back one
+    v.y = f32(st_hash(seed ^ st_hash(px.x | (px.y << 16u)) ^ 0x5bd1e995u) >> 8u) / 16777216.0;
     let s = st.samples;
     if ((st.flags & 1u) == 0u) {
         // naive: one alpha-weighted coin per sample
