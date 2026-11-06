@@ -457,6 +457,8 @@ pub struct Settings {
     pub camera: crate::camera::CameraSettings,
     /// The crosshair in mouselook (ShowCrosshairs; #1166).
     pub crosshair: crate::ui::crosshair::Settings,
+    /// Size and appearance of the ordinary mouse pointer.
+    pub pointer: crate::cursors::Preferences,
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
     /// Ground foot geometry after wearing/detaching a body attachment.
@@ -1752,6 +1754,7 @@ impl Default for Settings {
             build: Default::default(),
             camera: Default::default(),
             crosshair: Default::default(),
+            pointer: Default::default(),
             joystick: Default::default(),
             auto_hover_height: false,
             auto_hover_offset: 0.0,
@@ -2680,6 +2683,7 @@ impl Settings {
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);
+        self.pointer.size = self.pointer.size.clamp(16, 64);
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
         self.font_scale = self.font_scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX);
