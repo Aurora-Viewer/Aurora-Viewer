@@ -49,7 +49,7 @@ const MAX_LOOKBACK: usize = 30;
 const POP_FRONT: usize = 12;
 
 /// The transaction types named in the list (lltransactiontypes.h).
-mod trans {
+pub(crate) mod trans {
     pub const GROUP_CREATE: i32 = 1002;
     pub const GROUP_JOIN: i32 = 1004;
     pub const UPLOAD_CHARGE: i32 = 1101;

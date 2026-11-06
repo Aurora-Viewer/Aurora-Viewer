@@ -627,6 +627,10 @@ pub struct App {
     /// AURORA_DEMO_LOOKAT=targets: the crosshairs shown, every avatar
     /// looking somewhere.
     demo_look_at_targets: bool,
+    /// The L$ received on their way into the balance.
+    balance_gains: ui::balance_gains::BalanceGains,
+    /// `AURORA_DEMO_PAYMENT=balance`: the payments still to come.
+    demo_gains: std::collections::VecDeque<(Instant, NetEvent)>,
     look_focus: Option<Vec3>,
     look_cursor: (f32, f32),
     look_root_at: Vec3,
@@ -1598,6 +1602,8 @@ impl App {
             demo_look_at: false,
             demo_look_ahead: false,
             demo_look_at_targets: false,
+            balance_gains: Default::default(),
+            demo_gains: Default::default(),
             look_focus: None,
             look_cursor: (0.0, 0.0),
             look_root_at: Vec3::X,
@@ -8867,6 +8873,8 @@ impl App {
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
         self.world.payments.open_when_paying = self.settings.payment_sent_opens_conversation;
+        self.world.payments.notify_received = self.settings.notify_money_received;
+        self.world.payments.rise_into_balance = self.settings.balance_gain_animation;
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700
@@ -11099,6 +11107,7 @@ impl App {
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
         crate::theme::apply_motion(&self.egui_ctx, self.settings.reduce_motion);
+        self.demo_gains_tick(Instant::now());
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
             crate::crash::update(&self.skin.theme, &self.settings);
@@ -15267,6 +15276,18 @@ impl App {
                     self.settings.chat_thumbnails_flash,
                     self.settings.reduce_motion,
                 );
+                let show_balance = if self.demo {
+                    ui::bars::demo::get().show_balance.unwrap_or(self.settings.show_balance)
+                } else {
+                    self.settings.show_balance
+                };
+                let now = Instant::now();
+                for amount in self.world.payments.gains.drain(..) {
+                    self.balance_gains.push(amount, now);
+                }
+                let balance = self
+                    .balance_gains
+                    .update(self.world.balance, show_balance, self.settings.reduce_motion, now);
                 let status = ui::bars::StatusInfo {
                     location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
@@ -15296,12 +15317,9 @@ impl App {
                     flying: self.world.agent.flying,
                     seated: self.world.agent.is_sitting(),
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
-                    balance: self.world.balance,
-                    show_balance: if self.demo {
-                        ui::bars::demo::get().show_balance.unwrap_or(self.settings.show_balance)
-                    } else {
-                        self.settings.show_balance
-                    },
+                    balance: balance.balance,
+                    show_balance,
+                    balance_gains: balance.rows,
                     voice: (self.voice.light, self.voice.status.clone()),
                     slurl: if self.world.rlva.has("showloc") {
                         String::new()

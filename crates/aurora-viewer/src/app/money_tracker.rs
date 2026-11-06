@@ -105,7 +105,21 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_PAYMENT=card|legacy|sent|sent-open|friend|off
+    /// The payments of `AURORA_DEMO_PAYMENT=balance` as their times come.
+    pub(super) fn demo_gains_tick(&mut self, now: Instant) {
+        while self.demo_gains.front().is_some_and(|(at, _)| *at <= now) {
+            let Some((_, ev)) = self.demo_gains.pop_front() else {
+                return;
+            };
+            if let NetEvent::MoneyTransaction { amount, .. } = ev {
+                self.world.payment(&ev);
+                let balance = self.world.balance.unwrap_or(0) + amount;
+                self.world.apply(NetEvent::Balance(balance));
+            }
+        }
+    }
+
+    /// AURORA_DEMO_PAYMENT=card|legacy|sent|sent-open|friend|off|sale|balance
     /// (docs/TESTING.md): a resident's conversation open on their message,
     /// then their two payments as cards, in the bubbles or the legacy lines;
     /// `sent`: then ours to them (the demo keeps no transcript: what comes
@@ -113,7 +127,8 @@ impl App {
     /// `sent-open`: no conversation open, ours opens it with "Open the
     /// conversation when you pay a resident" on; `friend`: a friend's payment opens their conversation, a stranger's
     /// (no conversation) shows nowhere; `off`: the same with the option off,
-    /// no conversation opens.
+    /// no conversation opens; `sale`: the toasts of L$ received without a
+    /// card; `balance`: payments rising into the balance, no toast.
     pub(super) fn demo_payment(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_PAYMENT") else {
             return;
@@ -130,9 +145,58 @@ impl App {
             dest_group: false,
             amount,
             item: item.into(),
-            description: String::new(),
+            description: "Transaction".into(),
         };
         let paid = |n, source, amount, item: &str| gift(n, source, agent, amount, item);
+        if mode == "sale" {
+            let earned = |n: u128, kind, amount, item: &str| match paid(n, DEMO_NOVA, amount, item) {
+                NetEvent::MoneyTransaction {
+                    id,
+                    success,
+                    source,
+                    source_group,
+                    dest,
+                    dest_group,
+                    amount,
+                    item,
+                    description,
+                    ..
+                } => NetEvent::MoneyTransaction {
+                    id,
+                    success,
+                    kind,
+                    source,
+                    source_group,
+                    dest,
+                    dest_group,
+                    amount,
+                    item,
+                    description,
+                },
+                other => other,
+            };
+            self.world.payment(&earned(7, OBJECT_SALE, 100, "Steel helmet"));
+            self.world.payment(&earned(8, PAY_OBJECT, 25, "Tip jar"));
+            self.world.payment(&earned(9, PAY_OBJECT, 5, ""));
+            self.world.payment(&paid(10, DEMO_TESS, 20, "Payment"));
+            return;
+        }
+        if mode == "balance" {
+            self.settings.notify_money_received = false;
+            self.settings.balance_gain_animation = true;
+            self.world.payments.notify_received = false;
+            self.world.payments.rise_into_balance = true;
+            self.world.apply(NetEvent::Balance(12480));
+            let start = Instant::now() + std::time::Duration::from_secs(6);
+            for (n, (after, source, amount)) in [(0, DEMO_NOVA, 100), (1, DEMO_TESS, 2500), (2, DEMO_FRIEND, 25)]
+                .into_iter()
+                .enumerate()
+            {
+                let at = start + std::time::Duration::from_millis(after * 900);
+                self.demo_gains.push_back((at, paid(11 + n as u128, source, amount, "Payment")));
+            }
+            return;
+        }
         self.panels.perf = false;
         self.panels.chat = true;
         ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 300.0), egui::vec2(600.0, 440.0));
