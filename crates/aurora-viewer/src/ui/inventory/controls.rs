@@ -61,6 +61,17 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
         aurora_i18n::tr!("ui-inventory-controls-favorites-tab"),
         &mut prefs.show_favorites,
     );
+    if prefs.show_favorites {
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            changed |= check(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-inventory-controls-favorites-starred-only"),
+                &mut prefs.favorites_starred_only,
+            );
+        });
+    }
     changed |= check(
         ui,
         p,

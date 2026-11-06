@@ -4372,6 +4372,7 @@ common-teleport-offer-sent = { "Teleport offer sent to " }{ $name }
 ui-perf-sun-shadows-depth-prepass-occlusion = Sun shadows, depth prepass, occlusion
 ui-perf-shadows-and-depth = Shadows and depth
 ui-inventory-controls-favorites-tab = Favorites tab
+ui-inventory-controls-favorites-starred-only = Starred items only
 ui-inventory-controls-worn-tab = Worn tab
 ui-inventory-controls-recent-tab = Recent tab
 build-ui-floaters-opacity = Opacity:

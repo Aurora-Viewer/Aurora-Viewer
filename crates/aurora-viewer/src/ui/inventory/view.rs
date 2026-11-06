@@ -352,6 +352,9 @@ pub struct InventoryPreferences {
     pub show_recent: bool,
     pub show_worn: bool,
     pub show_favorites: bool,
+    /// List only starred entries at the root of Favorites, keeping starred
+    /// folders' contents beneath them.
+    pub favorites_starred_only: bool,
     pub thumbnail_tooltips: bool,
     pub separate_searches: bool,
     pub double_click_add_objects: bool,
@@ -399,6 +402,7 @@ impl Default for InventoryPreferences {
             show_recent: true,
             show_worn: true,
             show_favorites: true,
+            favorites_starred_only: false,
             thumbnail_tooltips: true,
             separate_searches: false,
             double_click_add_objects: false,
@@ -514,6 +518,7 @@ struct Query {
     outfits: bool,
     filters: Filters,
     tab: usize,
+    favorites_starred_only: bool,
     target: Option<Uuid>,
     agent: Uuid,
     cutoff: i64,
@@ -732,6 +737,7 @@ impl ViewCache {
             outfits: prefs.search_outfits,
             filters: filters.clone(),
             tab,
+            favorites_starred_only: tab == 4 && prefs.favorites_starred_only,
             target,
             agent,
             cutoff,
@@ -917,17 +923,49 @@ impl ViewCache {
         // is independent of whether the folder itself passes item filters.
         // A walk stops at an ancestor already in: the ones above it are too.
         let mut included = IdSet::default();
-        for id in &self.results {
-            let mut parent = *id;
-            while parent != root && included.insert(parent) {
-                if received && received_roots.contains(&parent) {
-                    break;
+        if query.favorites_starred_only {
+            // Starred items stand on their own at the root. Descendants of a
+            // starred folder keep only the path back to that folder, never
+            // the unstarred ancestors above it.
+            let mut starred_folders_with_matches = IdSet::default();
+            for id in &self.results {
+                included.insert(*id);
+                let mut parent = if inv.folders.contains_key(id) {
+                    *id
+                } else {
+                    rules::parent(inv, *id).unwrap_or(root)
+                };
+                while parent != root {
+                    if favorites.contains(&parent) {
+                        starred_folders_with_matches.insert(parent);
+                        break;
+                    }
+                    if !favored.contains(&parent) {
+                        break;
+                    }
+                    included.insert(parent);
+                    let Some(next) = rules::parent(inv, parent) else { break };
+                    parent = next;
                 }
-                if parent == inv.lib_root && root == inv.root {
-                    break;
+            }
+            // A starred folder can fail the search predicate while one of
+            // its children matches. Keep that folder as the visible root.
+            for folder in starred_folders_with_matches {
+                included.insert(folder);
+            }
+        } else {
+            for id in &self.results {
+                let mut parent = *id;
+                while parent != root && included.insert(parent) {
+                    if received && received_roots.contains(&parent) {
+                        break;
+                    }
+                    if parent == inv.lib_root && root == inv.root {
+                        break;
+                    }
+                    let Some(next) = rules::parent(inv, parent) else { break };
+                    parent = next;
                 }
-                let Some(next) = rules::parent(inv, parent) else { break };
-                parent = next;
             }
         }
         self.result_children.clear();
@@ -937,7 +975,22 @@ impl ViewCache {
                 self.result_children.insert(*parent, children);
             }
         }
-        if received {
+        if query.favorites_starred_only {
+            let mut top_ids: IdSet = favorites.iter().filter(|id| included.contains(id)).copied().collect();
+            top_ids.extend(
+                self.results
+                    .iter()
+                    .filter(|id| inv.items.contains_key(id) && rules::is_favorite(inv, **id))
+                    .copied(),
+            );
+            let top: Vec<Uuid> = self
+                .entries
+                .iter()
+                .filter(|entry| top_ids.contains(&entry.id))
+                .map(|entry| entry.id)
+                .collect();
+            self.result_children.insert(root, top);
+        } else if received {
             let mut top: Vec<Uuid> = inbox.into_iter().collect();
             if let Some(received_root) = received_root {
                 top.extend(
@@ -1421,6 +1474,52 @@ mod tests {
     }
 
     #[test]
+    fn favorites_starred_only_lists_starred_entries_flat() {
+        use super::super::smart::{Field, Node, Op, Rule};
+
+        let (mut inv, facts) = fixture();
+        folder(&mut inv, 20, id(2), -1, "B");
+        folder(&mut inv, 30, id(2), -1, "Favorite folder");
+        folder(&mut inv, 31, id(30), -1, "Nested");
+        let mut starred_item = item(21, id(20), "Starred item", 100);
+        starred_item.favorite = true;
+        inv.add_items(vec![starred_item, item(32, id(31), "Subtree item", 100)]);
+        inv.folders.get_mut(&id(30)).expect("favorite folder").info.favorite = true;
+
+        let mut prefs = InventoryPreferences::default();
+        let filters = [
+            Filters::default(),
+            smart(vec![Node::Rule(Rule::text(Field::Name, Op::Contains, "item"))], false),
+        ];
+        for filters in filters {
+            let mut cache = ViewCache::default();
+            cache.search(&inv, inv.root, "", &prefs, &filters, 4, None, &facts, facts.agent, 1000);
+            assert!(
+                cache.result_children[&inv.root].contains(&id(2)),
+                "default view keeps ancestor folders"
+            );
+
+            // Reuse the cache so this also checks that the preference is part
+            // of the query key and rebuilds the flattened tree when changed.
+            prefs.favorites_starred_only = true;
+            cache.search(&inv, inv.root, "", &prefs, &filters, 4, None, &facts, facts.agent, 1000);
+
+            let root: HashSet<_> = cache.result_children[&inv.root].iter().copied().collect();
+            assert_eq!(
+                root,
+                HashSet::from([id(21), id(30)]),
+                "filters: {filters:?}, results: {:?}",
+                cache.results
+            );
+            assert!(!cache.results.contains(&id(2)), "the unstarred ancestor A stays hidden");
+            assert!(!cache.results.contains(&id(20)), "the unstarred ancestor B stays hidden");
+            assert!(cache.result_children[&id(30)].contains(&id(31)));
+            assert!(cache.result_children[&id(31)].contains(&id(32)));
+            prefs.favorites_starred_only = false;
+        }
+    }
+
+    #[test]
     fn defaults_keep_system_folders_first_and_items_newest_even_with_library() {
         let (inv, _) = fixture();
         let prefs = InventoryPreferences::default();
@@ -1873,6 +1972,7 @@ mod tests {
         assert!(!prefs.received_sort.folders_by_name);
         assert!(prefs.received_sort.system_first);
         assert!(prefs.show_details, "the details stay shown until hidden");
+        assert!(!prefs.favorites_starred_only, "older preferences keep the default");
         let changed = InventoryPreferences {
             sort: Sort {
                 by_date: false,
@@ -1891,6 +1991,7 @@ mod tests {
                 ..Default::default()
             },
             show_details: false,
+            favorites_starred_only: true,
             ..prefs
         };
         let json = serde_json::to_string(&changed).expect("serialize preferences");

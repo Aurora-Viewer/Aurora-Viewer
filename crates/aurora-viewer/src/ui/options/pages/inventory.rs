@@ -58,6 +58,13 @@ pub fn page(cx: &mut Cx) {
         });
         cx.toggle(tr!("ui-inventory-controls-worn-tab"), "", &field!(inventory.show_worn));
         cx.toggle(tr!("ui-inventory-controls-favorites-tab"), "", &field!(inventory.show_favorites));
+        cx.subs(!cx.s.inventory.show_favorites, |cx| {
+            cx.toggle(
+                tr!("ui-inventory-controls-favorites-starred-only"),
+                "",
+                &field!(inventory.favorites_starred_only),
+            );
+        });
         cx.toggle(
             tr!("ui-inventory-controls-separate-search-in-each-tab"),
             "",
