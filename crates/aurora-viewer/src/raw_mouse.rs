@@ -88,12 +88,15 @@ pub fn motion(delta: (f64, f64)) -> Option<(f64, f64)> {
 
 /// Read each raw packet before winit does: winit's message hook runs on the
 /// main thread for each message taken from the queue, before its dispatch.
+/// The same hook joins the surrogate halves winit drops (wide_chars.rs):
+/// winit keeps one hook only.
 #[cfg(windows)]
 pub fn install(builder: &mut winit::event_loop::EventLoopBuilder<()>) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MSG, WM_INPUT};
     use winit::platform::windows::EventLoopBuilderExtWindows;
 
     let mut absolute = Absolute::default();
+    let mut pairs = crate::wide_chars::Pairs::default();
     builder.with_msg_hook(move |msg| {
         // SAFETY: winit gives the `MSG` it has just taken from the queue,
         // alive for the duration of the call.
@@ -102,6 +105,7 @@ pub fn install(builder: &mut winit::event_loop::EventLoopBuilder<()>) {
             let motion = read(msg.lParam).and_then(|packet| absolute.packet(packet, screen));
             PENDING.with(|pending| pending.set(motion));
         }
+        crate::wide_chars::hook(&mut pairs, msg);
         // winit handles the message as usual
         false
     });
