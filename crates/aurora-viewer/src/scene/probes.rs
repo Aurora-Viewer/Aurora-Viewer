@@ -64,6 +64,10 @@ const MAX_AUTO_NEAR: f32 = 8.0;
 /// Part of the probe field, at its far end, over which the probes fade into
 /// the default one (`edge_fade`).
 const EDGE_FADE: f32 = 0.3;
+/// The narrowest of that fade (m), when the slots end close to the camera.
+const EDGE_FADE_MIN: f32 = 8.0;
+/// How fast the edge of the field follows its target (time constant, s).
+const EDGE_EASE: f32 = 0.5;
 const DEFAULT_PERIOD: Duration = Duration::from_secs(2);
 const SCAN_PERIOD: Duration = Duration::from_millis(500);
 /// The candidate scan visits every object of the scene and of the world: it
@@ -159,6 +163,8 @@ pub struct ProbeManager {
     last_frame: Option<Instant>,
     /// The last scan's anchor (`next_anchor`).
     anchor: Option<Vec3>,
+    /// Where the field of automatic probes ends now (`eased_edge`).
+    edge: Option<f32>,
     /// How far from the camera automatic probes are placed (m): the
     /// Legacy Viewer keeps every probe of the objects within the draw
     /// distance (LLReflectionMapManager::update sorts them by distance and
@@ -181,23 +187,34 @@ impl Default for ProbeManager {
             pass: None,
             last_frame: None,
             anchor: None,
+            edge: None,
             range: 512.0,
         }
     }
 }
 
-/// Weight of a probe at `distance` (to the camera, minus its radius) in a
-/// field that ends at `edge`: 1, then down to 0 over the last [`EDGE_FADE`]
-/// of the field, so that the field ends in a blend into the default probe,
-/// not on a line around the camera (the Legacy Viewer has the line, further
-/// out with its 256 probes).
+/// Weight of an automatic probe at `distance` (to the camera, minus its
+/// radius) in a field that ends at `edge`: 1, then down to 0 over the last
+/// [`EDGE_FADE`] of the field, so that the field ends in a blend into the
+/// default probe, not on a line around the camera (the Legacy Viewer has the
+/// line, further out with its 256 probes). A probe around the camera has its
+/// full weight wherever the edge is: with few slots they can all be around it.
 fn edge_fade(distance: f32, edge: f32) -> f32 {
-    if !edge.is_finite() {
-        // (no edge: infinity over infinity would weigh the probe NaN)
+    if distance <= 0.0 {
         return 1.0;
     }
-    let band = (edge * EDGE_FADE).max(1.0);
+    if edge <= 0.0 {
+        return 0.0;
+    }
+    let band = (edge * EDGE_FADE).max(EDGE_FADE_MIN).min(edge);
     ((edge - distance) / band).clamp(0.0, 1.0)
+}
+
+/// The edge of the field after `dt`, going towards `target`: where the slots
+/// run out jumps when a probe comes or goes, and the ambient light of what
+/// is around that edge would pop with it.
+fn eased_edge(edge: Option<f32>, target: f32, dt: f32) -> f32 {
+    edge.map_or(target, |edge| edge + (target - edge) * (1.0 - (-dt / EDGE_EASE).exp()))
 }
 
 /// The point of the anchor grid the cells are measured from: the nearest to
@@ -225,6 +242,7 @@ impl ProbeManager {
         self.last_scan = None;
         self.pass = None;
         self.anchor = None;
+        self.edge = None;
     }
 
     /// Draw every capture again, the default probe first then the closest,
@@ -346,8 +364,11 @@ impl ProbeManager {
             }
         }
         // where the field ends: the farthest probe kept when the slots run
-        // out, else the range (automatic probes only)
-        let full = (keep > 0 && order.len() > keep).then(|| self.probes[&order[keep - 1]].distance);
+        // out, else the range
+        let live: Vec<&Key> = order.iter().filter(|k| self.probes[*k].retired.is_none()).collect();
+        let full = (keep > 0 && live.len() > keep).then(|| self.probes[live[keep - 1]].distance);
+        let edge = eased_edge(self.edge, full.map_or(self.range, |f| f.min(self.range)), dt);
+        self.edge = Some(edge);
         let capture = self.next_capture(&order, eye, now);
         // probe list for the shaders, closest first (refSphere order)
         let mut list = Vec::with_capacity(self.slots as usize);
@@ -367,15 +388,12 @@ impl ProbeManager {
             if list.len() >= self.slots as usize {
                 break;
             }
-            let edge = match (p.kind == 0.0, full) {
-                (true, Some(f)) => f.min(self.range),
-                (true, None) => self.range,
-                (false, Some(f)) => f,
-                (false, None) => f32::INFINITY,
-            };
+            // (manual probes do not fade: LLReflectionMapManager keeps or
+            // drops them by distance, and they are the creator's)
+            let edge_weight = if p.kind == 0.0 { edge_fade(p.distance, edge) } else { 1.0 };
             list.push(ProbeGpu {
                 center_radius: [p.origin.x, p.origin.y, p.origin.z, p.radius],
-                params: [p.ambiance.max(sky_ambiance), 1.0, p.fade * edge_fade(p.distance, edge), p.kind],
+                params: [p.ambiance.max(sky_ambiance), 1.0, p.fade * edge_weight, p.kind],
                 slot: [slot, 0, 0, 0],
                 box_inv: p.box_inv.to_cols_array_2d(),
             });
@@ -815,8 +833,63 @@ mod tests {
         assert!((edge_fade(85.0, 100.0) - 0.5).abs() < 1e-5);
         assert_eq!(edge_fade(100.0, 100.0), 0.0);
         assert_eq!(edge_fade(120.0, 100.0), 0.0);
-        // manual probes with free slots: no edge
-        assert_eq!(edge_fade(400.0, f32::INFINITY), 1.0);
+        // around the camera: full weight, wherever the edge is
+        assert_eq!(edge_fade(-5.0, -5.0), 1.0);
+        assert_eq!(edge_fade(-100.0, 100.0), 1.0);
+        assert_eq!(edge_fade(0.0, 3.0), 1.0);
+        // slots ending close to the camera: no step at its surface, a ramp
+        // wider than a metre, and nothing past an edge inside the camera's
+        assert_eq!(edge_fade(0.5, 20.0), 1.0);
+        assert!((edge_fade(16.0, 20.0) - 0.5).abs() < 1e-5);
+        assert!((edge_fade(1.5, 3.0) - 0.5).abs() < 1e-5);
+        assert_eq!(edge_fade(5.0, -5.0), 0.0);
+    }
+
+    #[test]
+    fn the_edge_of_the_field_eases_to_its_target() {
+        assert_eq!(eased_edge(None, 230.0, 0.016), 230.0, "the first frame takes it");
+        // the slots run out: from the range towards a closer edge
+        let mut edge = 230.0;
+        let first = eased_edge(Some(edge), 60.0, 0.016);
+        assert!((first - 230.0).abs() < 7.0, "no jump in a frame: {first}");
+        for _ in 0..240 {
+            edge = eased_edge(Some(edge), 60.0, 0.016);
+        }
+        assert!((edge - 60.0).abs() < 1e-1, "{edge}");
+        // a long frame does not overshoot
+        assert!(eased_edge(Some(230.0), 60.0, 100.0) >= 60.0);
+    }
+
+    #[test]
+    fn only_automatic_probes_fade_at_the_edge() {
+        let world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let now = Instant::now();
+        let mut m = ProbeManager {
+            slots: 4,
+            default_complete: true,
+            default_last: Some(now),
+            last_scan: Some(now),
+            edge: Some(10.0),
+            ..Default::default()
+        };
+        let at = |x: f32| cell_probe(Vec3::new(x, 0.0, 0.0), 1.0, true);
+        m.probes.insert(cell_key(0), at(5.0));
+        m.probes.insert(Key::Object(Uuid::from_u128(1)), Probe { kind: 1.0, ..at(9.0) });
+        m.probes.insert(Key::Object(Uuid::from_u128(2)), Probe { kind: -1.0, ..at(10.0) });
+        m.probes.insert(cell_key(1), at(11.0));
+        m.probes.insert(cell_key(2), at(400.0));
+        for p in m.probes.values_mut() {
+            p.last_update = Some(now);
+        }
+        let frame = m.update(&scene, &world, Vec3::ZERO, 0.0, now);
+        let weights: Vec<(f32, f32)> = frame.probes[1..].iter().map(|p| (p.params[3], p.params[2])).collect();
+        // the first three by distance; both manual ones whole, past the edge
+        assert_eq!(weights.len(), 3, "{weights:?}");
+        assert_eq!(weights[1], (1.0, 1.0));
+        assert_eq!(weights[2], (-1.0, 1.0));
+        assert_eq!(weights[0].0, 0.0);
+        assert!(weights[0].1 > 0.0 && weights[0].1 <= 1.0, "{weights:?}");
     }
 
     #[test]
