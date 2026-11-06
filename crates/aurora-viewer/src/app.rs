@@ -1293,7 +1293,9 @@ impl App {
         // (not the demo's: its folder is shared by the demo runs of every
         // build, and holds nothing from the grid)
         if std::env::var_os("AURORA_DEMO").is_none() {
+            aurora_net::objcache::name_with(crate::cache::key().names());
             crate::cache::remove_unsealed(crate::settings::cache_dir());
+            crate::cache::rename_to_keyed_names(crate::settings::asset_cache_dir());
         }
         let cache = crate::settings::asset_cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);

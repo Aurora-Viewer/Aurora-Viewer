@@ -1352,13 +1352,11 @@ impl TextureStreamer {
 
     /// The transcoded chain of a texture (`texture_cache.rs`).
     fn transcoded_path(cache_dir: &std::path::Path, id: &Uuid) -> PathBuf {
-        cache_dir.join("tex").join(format!("{id}.bc7"))
+        crate::cache::path(cache_dir, "tex", id, "bc7")
     }
 
     fn cache_path(cache_dir: &std::path::Path, id: &Uuid, complete: bool) -> PathBuf {
-        cache_dir
-            .join("tex")
-            .join(format!("{id}.{}", if complete { "j2c" } else { "part" }))
+        crate::cache::path(cache_dir, "tex", id, if complete { "j2c" } else { "part" })
     }
 
     /// Reference a texture; returns its bindless slot (placeholder until loaded).
@@ -2762,8 +2760,8 @@ impl TextureStreamer {
                         e.data = Arc::default();
                         e.complete = false;
                         e.info = None;
-                        let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.j2c")));
-                        let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.part")));
+                        let _ = std::fs::remove_file(Self::cache_path(&self.cache_dir, &id, true));
+                        let _ = std::fs::remove_file(Self::cache_path(&self.cache_dir, &id, false));
                     }
                     e.retry_at = Some(Instant::now() + Duration::from_secs(2u64.pow(e.failures.min(6))));
                     Self::settle(&mut self.todo, &mut self.counts, id, e);

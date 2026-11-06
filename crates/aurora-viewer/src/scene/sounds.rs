@@ -544,7 +544,7 @@ impl SoundManager {
             }
             if c.state == 0 {
                 c.state = 1;
-                let path = self.cache_dir.join("sound").join(format!("{id}.ogg"));
+                let path = crate::cache::path(&self.cache_dir, "sound", id, "ogg");
                 let tx = self.tx.clone();
                 let id = *id;
                 jobs.spawn(move || {
@@ -625,7 +625,7 @@ impl SoundManager {
         };
         match r.data {
             Ok(d) => {
-                let path = self.cache_dir.join("sound").join(format!("{id}.ogg"));
+                let path = crate::cache::path(&self.cache_dir, "sound", &id, "ogg");
                 let tx = self.tx.clone();
                 jobs.spawn(move || {
                     let clip = match SoundClip::decode(&d) {

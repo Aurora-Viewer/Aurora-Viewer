@@ -22,10 +22,15 @@
 //!
 //! `ring` does the AES (hardware AES and carry-less multiply): about 13 GB/s
 //! on one core, some 12 µs for a texture of the cache.
+//!
+//! The store's file names derive from the installation key too
+//! ([`Names`]): an HMAC-SHA256 of the asset id, under a key of its own
+//! (HKDF of the installation key), so that a name says nothing of the asset
+//! without the key.
 
 use ring::aead::{self, Aad, LessSafeKey, Nonce};
-use ring::hkdf;
 use ring::rand::{SecureRandom, SystemRandom};
+use ring::{hkdf, hmac};
 use std::io::{self, Read, Seek, SeekFrom};
 
 pub const MAGIC: &[u8; 4] = b"AUSL";
@@ -36,6 +41,10 @@ pub const HEADER: usize = 4 + SALT + 8;
 pub const CHUNK: usize = 64 << 10;
 const TAG: usize = 16;
 const INFO: &[u8] = b"aurora cache file v1";
+const NAMES_SALT: &[u8] = b"aurora cache names";
+const NAMES_INFO: &[u8] = b"aurora cache names v1";
+/// Hex digits of a store file name (128 bits of the HMAC).
+pub const NAME_LEN: usize = 32;
 
 /// The installation key. Its bytes never reach a log (no `Debug` of them).
 #[derive(Clone, PartialEq, Eq)]
@@ -99,6 +108,14 @@ impl Key {
             .expand(&[INFO], &aead::AES_256_GCM)
             .map_err(|_| io::Error::other("sealed cache file: key derivation"))?;
         Ok(LessSafeKey::new(aead::UnboundKey::from(okm)))
+    }
+
+    /// The key of the store's file names.
+    pub fn names(&self) -> Names {
+        let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, NAMES_SALT).extract(&self.0);
+        // (HKDF refuses only an output longer than 255 hashes: this one is one)
+        let okm = prk.expand(&[NAMES_INFO], hmac::HMAC_SHA256).expect("one SHA-256 output");
+        Names(hmac::Key::from(okm))
     }
 
     /// The sealed file of `plain`.
@@ -165,6 +182,28 @@ impl Key {
         }
         file.truncate(write);
         Ok(file)
+    }
+}
+
+/// The file names of the store ([`Key::names`]).
+pub struct Names(hmac::Key);
+
+impl std::fmt::Debug for Names {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Names(..)")
+    }
+}
+
+impl Names {
+    /// The stem of the file of `id`: [`NAME_LEN`] lowercase hex digits.
+    pub fn name(&self, id: &uuid::Uuid) -> String {
+        let tag = hmac::sign(&self.0, id.as_bytes());
+        let mut out = String::with_capacity(NAME_LEN);
+        for b in &tag.as_ref()[..NAME_LEN / 2] {
+            out.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0'));
+            out.push(char::from_digit(u32::from(b & 15), 16).unwrap_or('0'));
+        }
+        out
     }
 }
 
@@ -363,6 +402,20 @@ mod tests {
         let mut tail = Vec::new();
         r.read_to_end(&mut tail).expect("read");
         assert_eq!(tail, plain[150..]);
+    }
+
+    #[test]
+    fn names_are_stable_per_key_and_say_nothing_of_the_id() {
+        let key = Key::random().expect("random");
+        let names = key.names();
+        let id = uuid::Uuid::from_u128(0x1234_5678_9abc_def0_0fed_cba9_8765_4321);
+        let name = names.name(&id);
+        assert_eq!(name.len(), NAME_LEN);
+        assert!(name.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+        assert_eq!(key.names().name(&id), name, "same key, same name");
+        assert_ne!(Key::random().expect("random").names().name(&id), name, "another key");
+        assert_ne!(names.name(&uuid::Uuid::from_u128(1)), name, "another id");
+        assert!(!name.contains(&id.simple().to_string()[..8]));
     }
 
     #[test]
