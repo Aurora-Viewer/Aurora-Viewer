@@ -19,6 +19,7 @@ use egui::RichText;
 const TYPING_H: f32 = 18.0;
 pub(super) const BOX_H: f32 = 42.0;
 const BUTTON: f32 = 28.0;
+pub(super) const CHANNEL_WIDTH: f32 = 30.0;
 
 /// What the field takes under the messages: typing line, box and margin.
 pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>) -> f32 {
@@ -147,11 +148,10 @@ pub(super) fn show(
                             volume_button(ui, p, st, roomy);
                         }
                         // the right end first: what it takes fixes the field's width
-                        let (channel, _) = parse_channel(&draft);
                         // the channel's chip: when the preferences show it, not
                         // in the narrow layout ("/n" before the text still works)
                         let chip = local && roomy && st.show_channel;
-                        let chip_w = if chip { 34.0 } else { 0.0 };
+                        let chip_w = if chip { CHANNEL_WIDTH + ui.spacing().item_spacing.x } else { 0.0 };
                         let field_w = (ui.available_width() - chip_w - BUTTON - 12.0).max(40.0);
                         let hint = super::input::hint(
                             ui,
@@ -181,7 +181,7 @@ pub(super) fn show(
                         suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
                         // `chip` is only for the nearby chat
                         if chip {
-                            channel_chip(ui, p, &mut draft, channel);
+                            channel_chip(ui, p, &mut draft);
                         }
                         let has_text = !draft.trim().is_empty();
                         send_clicked = send_button(ui, p, has_text).clicked() && has_text;
@@ -381,9 +381,10 @@ fn volume_button(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, named: bool) {
 
 /// The nearby chat's channel ("/0"): a click opens its number, which
 /// rewrites the "/n" opening the text.
-fn channel_chip(ui: &mut egui::Ui, p: &Palette, draft: &mut String, channel: i32) {
+pub(super) fn channel_chip(ui: &mut egui::Ui, p: &Palette, draft: &mut String) {
+    let (channel, _) = parse_channel(draft);
     let text = format!("/{channel}");
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 22.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(CHANNEL_WIDTH, 22.0), egui::Sense::hover());
     let resp = ui.interact(rect, sidebar::control_id("box-channel"), egui::Sense::click());
     ui.painter().rect_filled(
         rect,

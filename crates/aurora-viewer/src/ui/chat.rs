@@ -3279,9 +3279,12 @@ fn classic_pane(
                 let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
                 gif_picker::button(&b, p, st);
             }
-            // leave exactly the send button + spacing (else the row overflows
-            // and the resizable window grows every frame)
-            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+            // Leave room for Send, the optional channel selector, and their spacing.
+            // If the row overflows, the resizable window grows every frame.
+            let spacing = ui.spacing().item_spacing.x;
+            let show_channel = st.selected.is_none() && st.show_channel;
+            let channel_w = if show_channel { compose::CHANNEL_WIDTH + spacing } else { 0.0 };
+            let field_w = (ui.available_width() - channel_w - SEND_BTN_W - spacing).floor().max(40.0);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
@@ -3301,6 +3304,9 @@ fn classic_pane(
                 Some(id) => suggest::Scope::Session(id, &people),
             };
             suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
+            if show_channel {
+                compose::channel_chip(ui, p, &mut draft);
+            }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
             output
