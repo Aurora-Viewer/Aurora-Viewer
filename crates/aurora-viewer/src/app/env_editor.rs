@@ -6,24 +6,63 @@
 
 use super::App;
 use crate::ui::env_editor::{self, EditorAction};
-use crate::world::env_edit::{self, Rights, SettingsDoc};
+use crate::world::eep_env::SourceRights;
+use crate::world::env_edit::{self, FLAG_NOSAVE, Rights, SettingsDoc};
 use crate::world::env_select::SettingsKind;
 use aurora_net::NetCommand;
 use uuid::Uuid;
 
 impl App {
-    /// "new" editors start from what is shown (onOpen without an item).
+    /// "new" editors start from what is shown (onOpen without an item),
+    /// with the rights of the settings shown (`Rights::of_source`).
     pub(super) fn open_env_editor_snapshot(&mut self, kind: SettingsKind) {
         let (sky, water) = self.world.eep.current();
-        let doc = if kind == SettingsKind::Water {
+        // an open editor of the same kind shows its own settings
+        let source = match &self.env_editor.doc {
+            Some(doc) if self.env_editor.open && doc.kind() == kind => self.env_editor.rights.source_flags(doc.flags()),
+            _ => self.source_flags(self.world.eep.current_rights(kind)),
+        };
+        let mut doc = if kind == SettingsKind::Water {
             SettingsDoc::snapshot_water(&water, aurora_i18n::tr!("ui-env-editor-snapshot-water"))
         } else {
             SettingsDoc::snapshot_sky(&sky, aurora_i18n::tr!("ui-env-editor-snapshot-sky"))
         };
-        self.env_editor.start(doc, None, Rights::FREE);
-        self.env_editor.message = None;
+        let rights = Rights::of_source(source);
+        // the copy keeps them: applied to a parcel, they go with it
+        doc.set_flags(rights.flags(source.unwrap_or(0) & FLAG_NOSAVE));
+        log::info!("environment editor: snapshot of the {kind:?} shown, source flags {source:?}");
+        self.env_editor.start(doc, None, rights);
+        self.env_editor.message = source_notice(rights).map(|text| (text.to_owned(), false));
         self.env_editor_scan();
         self.show_env_edit();
+    }
+
+    /// The settings flags `rights` stand for, None when they are not
+    /// known. An asset applied from the inventory has the rights of the
+    /// items holding it (the most open of them: any of them could be opened
+    /// in the editor); the inventory is only read here, on a user action.
+    fn source_flags(&self, rights: SourceRights) -> Option<u32> {
+        match rights {
+            SourceRights::Flags(flags) => Some(flags),
+            SourceRights::Asset(asset) => self
+                .world
+                .inventory
+                .items
+                .values()
+                .filter(|it| it.asset_type == 56 && it.asset_id == asset)
+                .map(|it| Rights::from_item(crate::world::inventory::actions::held(&self.world.inventory, it), 0).flags(0))
+                .reduce(|a, b| a & b),
+            SourceRights::Unknown => None,
+        }
+    }
+
+    /// The rights the editor's settings keep once applied to oneself.
+    fn env_editor_source_rights(&self) -> SourceRights {
+        let flags = self.env_editor.doc.as_ref().map_or(0, SettingsDoc::flags);
+        self.env_editor
+            .rights
+            .source_flags(flags)
+            .map_or(SourceRights::Unknown, SourceRights::Flags)
     }
 
     /// The Load list needs the settings items: the selector's folder scan.
@@ -70,7 +109,7 @@ impl App {
             self.env_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = name), true));
             return;
         };
-        let rights = Rights::from_item(it.owner_mask, doc.flags());
+        let rights = Rights::from_item(crate::world::inventory::actions::held(&self.world.inventory, &it), doc.flags());
         if rights.save {
             doc.set_name(&it.name);
             rights.apply(&mut doc);
@@ -131,6 +170,17 @@ impl App {
             if checked && !self.env_editor_settings_ok() {
                 continue;
             }
+            // settings that may not be saved (a snapshot of settings whose
+            // rights are not known, or that forbid saving) are not applied
+            // to a parcel or a region either: they would be saved there
+            if matches!(action, EditorAction::ApplyParcel | EditorAction::ApplyRegion)
+                && self.env_editor.item.is_none()
+                && !self.env_editor.rights.save
+            {
+                let notice = source_notice(self.env_editor.rights).unwrap_or_default();
+                self.env_editor.message = Some((notice.to_owned(), true));
+                continue;
+            }
             match action {
                 EditorAction::Changed => self.show_env_edit(),
                 EditorAction::Load(item) => self.env_editor_load(item),
@@ -144,9 +194,10 @@ impl App {
                     // doApplyEnvironment(ACTION_APPLY_LOCAL): ENV_LOCAL, at once
                     // shown once the editor closes
                     if let Some(doc) = &self.env_editor.doc {
+                        let rights = self.env_editor_source_rights();
                         match env_editor::frames(doc) {
-                            (Some(sky), _) => self.world.eep.apply_local_sky(sky),
-                            (_, Some(water)) => self.world.eep.apply_local_water(water),
+                            (Some(sky), _) => self.world.eep.apply_local_sky(sky, rights),
+                            (_, Some(water)) => self.world.eep.apply_local_water(water, rights),
                             _ => {}
                         }
                         self.env_editor.message = Some((aurora_i18n::tr!("ui-env-editor-applied").into(), false));
@@ -247,16 +298,35 @@ impl App {
                 });
             }
             (name, it) => {
+                let rights = self.env_editor.rights;
+                if !(rights.save && rights.copy) {
+                    // new settings from a source that may not be copied or
+                    // saved (the menu entry is off: a direct call stops here)
+                    let notice = source_notice(rights).unwrap_or_default();
+                    self.env_editor.message = Some((notice.to_owned(), true));
+                    return;
+                }
                 // the edited item's folder, else the Settings folder (a library
                 // or Marketplace item goes to the Settings folder)
                 let inv = &self.world.inventory;
                 let settings_folder = crate::world::inventory::actions::system(inv, 56).unwrap_or(inv.root);
                 let own = it.as_ref().filter(|it| !crate::world::inventory::actions::library(inv, it.id));
                 let parent = own.map_or(settings_folder, |it| it.parent);
-                let next_owner_mask = own.map(|it| it.next_owner_mask);
+                // without transfer at the source, the new item's next owner
+                // gets none either (the defaults otherwise)
+                let next_owner_mask = match own {
+                    Some(it) => Some(rights.next_owner_mask(it.next_owner_mask)),
+                    None if !rights.transfer => self
+                        .settings
+                        .inventory
+                        .creation_permissions
+                        .for_item(aurora_net::inventory::operations::NewItem::Settings(subtype_of(&doc)))
+                        .map(|p| rights.next_owner_mask(p.next_owner)),
+                    None => None,
+                };
                 let name = name.unwrap_or_else(|| doc.name().to_owned());
                 doc.set_name(&name);
-                let subtype = if doc.kind() == SettingsKind::Water { 1 } else { 0 };
+                let subtype = subtype_of(&doc);
                 self.env_editor.saving = Some(request);
                 self.send(NetCommand::CreateSettingsItem {
                     request,
@@ -276,7 +346,7 @@ impl App {
         self.env_editor.saving = None;
         match result {
             Ok(it) => {
-                let rights = Rights::from_item(it.owner_mask, 0);
+                let rights = Rights::from_item(crate::world::inventory::actions::agent_mask(&it, self.world.agent_id), 0);
                 self.world.inventory.add_items(vec![it.clone()]);
                 self.env_editor.saved(it.id, &it.name, rights);
                 log::info!("environment settings saved: {} ({})", it.name, it.asset_id);
@@ -335,5 +405,53 @@ impl App {
                 }
             }
         }
+    }
+}
+
+/// The settings item subtype of a document (LLSettingsType: sky 0, water 1).
+fn subtype_of(doc: &SettingsDoc) -> u8 {
+    if doc.kind() == SettingsKind::Water { 1 } else { 0 }
+}
+
+/// What the editor says of a source's rights when it opens on a snapshot
+/// (the save entries it turns off), None when they allow everything.
+fn source_notice(rights: Rights) -> Option<&'static str> {
+    if rights == Rights::PREVIEW_ONLY {
+        Some(aurora_i18n::tr!("ui-env-editor-source-unknown"))
+    } else if !rights.save {
+        Some(aurora_i18n::tr!("ui-env-editor-source-no-save"))
+    } else if !rights.copy {
+        Some(aurora_i18n::tr!("ui-env-editor-source-no-copy"))
+    } else if !rights.transfer {
+        Some(aurora_i18n::tr!("ui-env-editor-source-no-transfer"))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::env_edit::{FLAG_NOCOPY, FLAG_NOTRANS};
+
+    #[test]
+    fn a_snapshot_says_which_save_entries_its_source_turns_off() {
+        assert_eq!(source_notice(Rights::FREE), None);
+        assert_eq!(
+            source_notice(Rights::of_source(None)),
+            Some(aurora_i18n::tr!("ui-env-editor-source-unknown"))
+        );
+        assert_eq!(
+            source_notice(Rights::of_source(Some(FLAG_NOSAVE))),
+            Some(aurora_i18n::tr!("ui-env-editor-source-no-save"))
+        );
+        assert_eq!(
+            source_notice(Rights::of_source(Some(FLAG_NOCOPY | FLAG_NOTRANS))),
+            Some(aurora_i18n::tr!("ui-env-editor-source-no-copy"))
+        );
+        assert_eq!(
+            source_notice(Rights::of_source(Some(FLAG_NOTRANS))),
+            Some(aurora_i18n::tr!("ui-env-editor-source-no-transfer"))
+        );
     }
 }
