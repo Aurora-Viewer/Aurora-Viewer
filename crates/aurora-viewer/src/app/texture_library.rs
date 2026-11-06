@@ -1245,6 +1245,70 @@ mod tests {
         assert!(!no_copy_leaves(&inv, &no_copy, agent, true), "already in the object");
         assert!(!no_copy_leaves(&inv, &item(rules::COPY | rules::TRANSFER), agent, false));
     }
+    /// The copy right is the agent's: the everyone mask of a group-owned
+    /// item or of someone else's, whatever their owner mask; a Library item
+    /// never leaves.
+    #[test]
+    fn a_no_copy_move_reads_the_agents_mask_and_spares_the_library() {
+        let agent = Uuid::from_u128(0xa6);
+        let mut inv = crate::world::inventory::Inventory::default();
+        let full = rules::FULL;
+        let group = InvItem {
+            owner: Uuid::from_u128(0x6a),
+            group_owned: true,
+            owner_mask: full,
+            everyone_mask: rules::TRANSFER,
+            ..Default::default()
+        };
+        assert!(no_copy_leaves(&inv, &group, agent, false), "group-owned: the everyone mask");
+        assert!(!no_copy_leaves(
+            &inv,
+            &InvItem {
+                everyone_mask: full,
+                ..group.clone()
+            },
+            agent,
+            false
+        ));
+        // a group-owned item keeps the everyone mask even when its owner field is the agent
+        let own_group = InvItem { owner: agent, ..group };
+        assert!(no_copy_leaves(&inv, &own_group, agent, false));
+        let others = InvItem {
+            owner: Uuid::from_u128(0xb7),
+            owner_mask: full,
+            everyone_mask: rules::MODIFY | rules::TRANSFER,
+            ..Default::default()
+        };
+        assert!(no_copy_leaves(&inv, &others, agent, false), "someone else's: the everyone mask");
+        assert!(!no_copy_leaves(&inv, &others, agent, true), "already in the object");
+        let library = Uuid::from_u128(0x11b);
+        inv.folders.insert(
+            library,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: library,
+                    name: "Library".into(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: crate::world::inventory::FetchState::Fetched,
+                library: true,
+            },
+        );
+        let from_library = InvItem {
+            id: Uuid::from_u128(0x11c),
+            parent: library,
+            everyone_mask: rules::TRANSFER,
+            ..others
+        };
+        inv.items.insert(from_library.id, from_library.clone());
+        assert!(
+            !no_copy_leaves(&inv, &from_library, agent, false),
+            "the Library's asset costs nothing"
+        );
+    }
     #[test]
     fn only_ctrl_shift_over_what_is_worn_takes_the_whole_linkset() {
         assert!(linkset_drop(true, true, true));

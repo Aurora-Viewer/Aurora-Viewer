@@ -383,6 +383,38 @@ fn a_restricted_material_already_in_a_worn_objects_contents_is_refused() {
     assert_eq!(tool.admit_item(&mut w, id, &[a]), Ok(()));
 }
 
+/// A Library item on a worn object: the agent's rights (its everyone mask)
+/// and its base rights, with no Library exception (TextureApplyFunctor,
+/// LLInventoryFilter::checkAgainstPermissions through getPermissionMask).
+#[test]
+fn a_library_item_on_a_worn_object_follows_the_same_rule() {
+    let (mut w, a) = world();
+    let avatar = w.objects.index_of_uuid(&w.agent_id).expect("the agent's avatar");
+    let avatar_id = w.objects.get(avatar).expect("the agent's avatar").key.local_id;
+    let o = w.objects.get_mut(a).expect("object");
+    o.parent_id = avatar_id;
+    o.state = 1;
+    library_folder(&mut w);
+    let lib = give(&mut w, 1, ASSET, FULL);
+    {
+        let item = w.inventory.items.get_mut(&lib).expect("item");
+        item.parent = LIBRARY;
+        item.owner = Uuid::from_u128(0x11b0);
+        item.everyone_mask = rules::COPY;
+    }
+    assert!(library(&w.inventory, lib));
+    let mut tool = BuildTool::default();
+    assert_eq!(
+        tool.admit_item(&mut w, lib, &[a]),
+        Err(aurora_i18n::tr!("build-ui-texture-drop-restricted"))
+    );
+    w.inventory.items.get_mut(&lib).expect("item").everyone_mask = rules::COPY | rules::TRANSFER;
+    assert_eq!(tool.admit_item(&mut w, lib, &[a]), Ok(()));
+    w.inventory.items.get_mut(&lib).expect("item").base_mask = rules::COPY | rules::TRANSFER;
+    assert_eq!(tool.admit_item(&mut w, lib, &[a]), Err(aurora_i18n::tr!("texture-library-locked")));
+    assert!(tool.out.is_empty());
+}
+
 /// The picker's apply onto an attachment RLVa locks: refused, like any
 /// drop on it (willObjectAcceptInventory).
 #[test]

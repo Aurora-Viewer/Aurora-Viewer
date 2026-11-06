@@ -230,6 +230,57 @@ fn a_worn_object_takes_only_a_material_with_unrestricted_base_rights() {
     }
 }
 
+/// On a worn object the rights that count are the agent's: the everyone
+/// mask of a group-owned item and of someone else's, never their owner
+/// mask; the base rights stay unrestricted for both.
+#[test]
+fn a_worn_object_reads_the_agents_rights_on_a_group_owned_or_someone_elses_item() {
+    let (mut w, sel) = world();
+    wear(&mut w, sel[0].idx);
+    let idx = sel[0].idx;
+    let all = contents_drop::UNRESTRICTED;
+    let both = rules::COPY | rules::TRANSFER;
+    let group = InvItem {
+        owner: Uuid::from_u128(0x6a),
+        group_owned: true,
+        owner_mask: all,
+        everyone_mask: rules::COPY,
+        ..item(&w, TEXTURE)
+    };
+    let others = InvItem {
+        owner: Uuid::from_u128(0xb7),
+        group_owned: false,
+        ..group.clone()
+    };
+    for (what, mut texture) in [("group-owned", group), ("someone else's", others)] {
+        assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &texture), Err(Refusal::Restricted), "{what}");
+        assert!(contents_drop::worn_refused(&w, idx, &texture), "{what}");
+        texture.everyone_mask = both;
+        assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &texture), Ok(()), "{what}");
+        assert!(!contents_drop::worn_refused(&w, idx, &texture), "{what}");
+        texture.base_mask = both;
+        assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &texture), Err(Refusal::Object), "{what}");
+        assert!(contents_drop::worn_refused(&w, idx, &texture), "{what}");
+        // a material: unrestricted base rights and a transfer right
+        let mut material = InvItem {
+            asset_type: AT_MATERIAL,
+            inv_type: AT_MATERIAL,
+            base_mask: all,
+            everyone_mask: rules::COPY,
+            ..texture
+        };
+        assert!(contents_drop::worn_refused(&w, idx, &material), "{what} material without transfer");
+        material.everyone_mask = rules::TRANSFER;
+        assert!(!contents_drop::worn_refused(&w, idx, &material), "{what} material");
+    }
+    // the agent's own material needs no everyone right
+    let own = InvItem {
+        everyone_mask: 0,
+        ..item(&w, MATERIAL)
+    };
+    assert!(!contents_drop::worn_refused(&w, idx, &own));
+}
+
 /// A restriction from the worn object itself, as its script would send it.
 fn rlva_restrict(w: &mut World, source: Uuid, message: &str) {
     assert!(w.rlva.receive(&aurora_net::ChatMessage {
