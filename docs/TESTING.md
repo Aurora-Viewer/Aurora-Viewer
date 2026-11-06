@@ -4990,6 +4990,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_PHOTO_QUALITY_CRASH=1` | The "Photo quality turned off" card on the login screen |
+| `AURORA_DEMO_CAMERA_LIMITS=1` | The "Camera limits are back on" card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
@@ -7090,6 +7091,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   "Keep the safe graphics" drops them). Without the variable the real state
   is shown: the crash root's `gpu-trouble` mark, consumed at start, or the
   file kept aside.
+- **`AURORA_DEMO_CAMERA_LIMITS=1`**, with `AURORA_DEMO=1` and
+  `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's card that
+  version 33 of the settings shows once, after it turned the camera's
+  limits back on ("Unrestricted camera" and "Disable camera collisions"
+  off, the Legacy Viewer's defaults). "Camera preferences" opens
+  Preferences › Camera › Behavior on those two switches, "OK" hides the
+  card. The demo changes no setting; without the variable the card shows
+  only when the migration changed this settings file.
 - **`AURORA_DEMO_PHOTO_QUALITY_CRASH=1`**, with `AURORA_DEMO=1` and
   `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's card after a
   session that crashed (or was stopped) with the photo window's "Photo
@@ -9144,7 +9153,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_PARCEL_MEDIA=<url>` or `1` | Parcel media |
 | `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
-| `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
+| `AURORA_DEMO_MEDIA_PACK=consent`, `declined`, `downloading`, `installing` or `failed` | The download's consent card, or a fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
@@ -9398,17 +9407,25 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_HUDS=media`.
 - **Media plugins.** The media scenarios need Aurora's media plugins pack
   (SLPlugin, CEF, LibVLC; on Linux GStreamer instead of LibVLC, from the
-  system). A viewer that finds no plugins downloads it once
-  from the Aurora release `media-plugins-<n>` into
-  `%LOCALAPPDATA%\Aurora\AuroraViewer\data\media-plugins\<n>`, in demo mode
-  too; every later run and every worktree reuses it. The media wait for it
+  system). A viewer that finds no plugins asks first (the card "Download
+  web and media support?", answered once per settings file, the demo's
+  included; a PC that already has a pack is not asked), then downloads it
+  once from the Aurora release `media-plugins-<n>` into
+  `%LOCALAPPDATA%\Aurora\AuroraViewer\data\media-plugins\<n>`; every later
+  run and every worktree reuses it. The media wait for it
   and start by themselves; the log says `media: downloading the plugins
   pack` then `media: plugins in …`. An installed Firestorm is no longer
   used, unless its folder is set in Preferences › Sound and voice › Media.
 - **`AURORA_DEMO_MEDIA_PACK`**, with `AURORA_DEMO=1`: shows a state of that
   download without the network, whatever is installed (the media then have
-  no plugins). `downloading` is at 45 %, `installing` is the extraction,
-  `failed` shows the error and its "Retry" button. To look at with
+  no plugins). `consent` shows the card that asks before the download
+  (its "Download" shows `downloading`, "Not now" `declined`; neither is
+  saved nor reaches the network), `declined` the "Download" buttons left
+  after "Not now", `downloading` is at 45 %, `installing` is the
+  extraction, `failed` shows the error and its "Retry" button. With
+  `declined`, `AURORA_DEMO_MEDIA_CLICK` also shows the button under the
+  media controls of a media face, and `AURORA_DEMO_WEB_BROWSER` the one
+  in place of the page. To look at with
   `AURORA_DEMO_OPTIONS`, in the Media group of the "Sound and voice" tab,
   and in the "Feed" tab of a profile, which shows the same progress
   instead of the page.
