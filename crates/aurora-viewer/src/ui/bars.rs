@@ -1172,9 +1172,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::check(
             ui,
             p,
-            "label-filled",
-            aurora_i18n::tr!("ui-bars-immersive-show-tags"),
-            st.show_name_tags,
+            "label-off",
+            aurora_i18n::tr!("ui-bars-immersive-hide-tags"),
+            !st.show_name_tags,
             true,
         ) {
             *action = BarAction::ToggleNameTags;
@@ -2942,7 +2942,7 @@ pub(crate) fn toolbar_row(
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
         } else if b.command == "name_tags" {
-            toolbar.show_name_tags
+            !toolbar.show_name_tags
         } else if b.command == "RFO" {
             toolbar.friends_only_active
         } else if b.command == "vr_view" {
@@ -2970,9 +2970,9 @@ pub(crate) fn toolbar_row(
             )
         } else if b.command == "name_tags" {
             if active {
-                aurora_i18n::tr!("ui-bars-immersive-hide-tags")
+                aurora_i18n::tr!("toolbar-use-name-tag-preferences")
             } else {
-                aurora_i18n::tr!("ui-bars-immersive-show-tags")
+                aurora_i18n::tr!("ui-bars-immersive-hide-tags")
             }
             .to_owned()
         } else if !super::toolbar::ready(&b.command) {
@@ -2996,11 +2996,7 @@ pub(crate) fn toolbar_row(
             p,
             icons,
             &b.command,
-            if b.command == "name_tags" && !active {
-                "label-off"
-            } else {
-                &b.icon
-            },
+            if b.command == "name_tags" && active { "label-off" } else { &b.icon },
             super::toolbar::label(b),
             &tip,
             active,

@@ -151,6 +151,7 @@ toolbar-command-picks = ピック
 toolbar-command-poser = ポーザー
 toolbar-command-flickr = Flickr
 toolbar-command-primfeed = Primfeed
+toolbar-use-name-tag-preferences = 名前タグの設定を使用
 toolbar-command-friends-only = フレンドのみ表示
 toolbar-command-grid-status = グリッド状況
 toolbar-command-voice = 近くのボイス

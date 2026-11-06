@@ -151,6 +151,7 @@ toolbar-command-picks = Favoris du profil
 toolbar-command-poser = Poseur
 toolbar-command-flickr = Flickr
 toolbar-command-primfeed = Primfeed
+toolbar-use-name-tag-preferences = Utiliser les préférences des étiquettes des avatars
 toolbar-command-friends-only = Ne montrer que les amis
 toolbar-command-grid-status = État de la grille
 toolbar-command-voice = Voix à proximité
