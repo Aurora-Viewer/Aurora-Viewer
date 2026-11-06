@@ -867,7 +867,7 @@ fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut
             .items
             .values()
             .find(|i| i.asset_id == asset)
-            .map_or(u32::MAX, |i| i.owner_mask);
+            .map_or(u32::MAX, |i| crate::world::inventory::actions::held(&world.inventory, i));
         let (day_length, day_offset) = match world.land.sel.as_ref().map(|s| &s.env) {
             Some(crate::world::land::EnvState::Ready(e)) => (e.day_length as i32, e.day_offset as i32),
             _ => (-1, -1),
