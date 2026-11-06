@@ -347,14 +347,21 @@ impl MediaFilter {
     /// to load: the list, then this session's answers, else the question.
     /// A refusal is told in the local chat.
     pub fn check(&mut self, url: &str, source: Source) -> Verdict {
-        self.decide(url, source, true)
+        self.decide(url, source, true, true)
+    }
+
+    /// Radio checks run each frame while its toggle stays on. Keep pending
+    /// questions alive and honor edited rules without repeating denial notices;
+    /// the radio's status and the answer dialog already explain the refusal.
+    pub fn check_music(&mut self, url: &str) -> Verdict {
+        self.decide(url, Source::Music, true, false)
     }
 
     /// The same for a media the resident trusts without being asked (on
     /// worn items they made): a site the list or this session refused stays
     /// refused, any other loads, and no question is queued.
     pub fn check_trusted(&mut self, url: &str, source: Source) -> Verdict {
-        self.decide(url, source, false)
+        self.decide(url, source, false, true)
     }
 
     /// A URL whose scheme never loads (`REFUSED`): told in the local chat,
@@ -372,20 +379,22 @@ impl MediaFilter {
         true
     }
 
-    fn decide(&mut self, url: &str, source: Source, ask: bool) -> Verdict {
+    fn decide(&mut self, url: &str, source: Source, ask: bool, notify_denial: bool) -> Verdict {
         let url = url.trim();
         let host = match target(url) {
             Target::Site(host) => host,
             Target::Blank => return Verdict::Allow,
             Target::Refused(_) => {
-                self.refuse_scheme(url, source);
+                if notify_denial {
+                    self.refuse_scheme(url, source);
+                }
                 return Verdict::Deny;
             }
         };
         match rule_for(&self.rules, url, &host).or_else(|| self.session.get(url).copied()) {
             Some(Action::Allow) => Verdict::Allow,
             Some(Action::Deny) => {
-                if !self.just_denied.remove(url) {
+                if !self.just_denied.remove(url) && notify_denial {
                     log::info!("media filter: {host} blocked");
                     self.messages.push(match source {
                         Source::Music => aurora_i18n::tr!("media-filter-music-blocked", domain = host),
@@ -621,6 +630,26 @@ mod tests {
         ] {
             assert_eq!(refused_scheme(url), None, "{url:?}");
         }
+    }
+
+    #[test]
+    fn parcel_music_filter_rechecks_rules_without_repeating_denials() {
+        let mut f = MediaFilter::default();
+        let url = "https://radio.example/stream";
+        assert_eq!(f.check_music(url), Verdict::Ask);
+        assert_eq!(f.questions.len(), 1);
+        f.answer(url, false, Remember::Once);
+        let told = f.messages.len();
+        for _ in 0..10 {
+            assert_eq!(f.check_music(url), Verdict::Deny);
+        }
+        assert_eq!(f.messages.len(), told);
+        f.apply(Edit::Set("radio.example".into(), Action::Allow));
+        assert_eq!(f.check_music(url), Verdict::Allow);
+        for _ in 0..10 {
+            assert_eq!(f.check_music("file:///private"), Verdict::Deny);
+        }
+        assert_eq!(f.messages.len(), told);
     }
 
     #[test]

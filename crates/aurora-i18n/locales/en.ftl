@@ -13225,3 +13225,22 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+
+# Parcel radio state and stream failures
+music-state-connecting = Connecting…
+music-state-filter-waiting = Waiting for your answer (media filter)
+music-state-filter-blocked = Blocked by the media filter
+music-state-channel-off = Music channel off
+music-state-muted = Sound muted or volume at zero
+music-state-no-device = Audio output unavailable
+music-state-error = Can't play: { $reason }
+music-error-web-page = This address is a web page, not a stream
+music-error-playlist = This address is a playlist, not a stream
+music-error-http = HTTP status { $code }
+music-error-tls = Secure connection failed
+music-error-connection = Connection failed
+music-error-address = Invalid or unsupported stream address
+music-error-format = Unsupported or invalid audio format
+music-error-interrupted = Audio stream interrupted
+music-error-notice = Parcel music: { $status }
+music-error-worker = Cannot start the music player
