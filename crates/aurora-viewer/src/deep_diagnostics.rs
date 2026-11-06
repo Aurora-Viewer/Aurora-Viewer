@@ -163,12 +163,7 @@ fn startup_environment_plan(
         }
     }
     if startup.enabled {
-        for (name, value) in [
-            ("AURORA_GPU_VALIDATION", "1"),
-            ("WGPU_DEBUG", "1"),
-            ("WGPU_VALIDATION_INDIRECT_CALL", "1"),
-            ("AURORA_GPU_BREADCRUMBS", "deep"),
-        ] {
+        for (name, value) in [("AURORA_GPU_VALIDATION", "1"), ("AURORA_GPU_BREADCRUMBS", "deep")] {
             if values.contains_key(name) {
                 values.insert(name.to_owned(), Some(value.to_owned()));
             }
@@ -560,7 +555,9 @@ mod tests {
         };
         let marker = startup_environment_plan(&mut inherited, None, &first).unwrap();
         assert_eq!(inherited["AURORA_GPU_VALIDATION"].as_deref(), Some("1"));
-        assert_eq!(inherited["WGPU_DEBUG"].as_deref(), Some("1"));
+        // wgpu's own variables are left alone: AURORA_GPU_VALIDATION sets
+        // the debugging flags, indirect-call validation included
+        assert_eq!(inherited["WGPU_DEBUG"].as_deref(), Some("wgpu_core=warn"));
         assert_eq!(inherited["AURORA_GPU_BREADCRUMBS"].as_deref(), Some("deep"));
 
         let child = Startup::default();

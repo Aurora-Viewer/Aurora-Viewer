@@ -12069,7 +12069,7 @@ bundled. See [VR setup](VR.md) for platform requirements and validation status.
 Help › Diagnostics (opens Preferences › Language and updates › GPU diagnostics) has a one-session switch.
 It is off by default. When enabled, Aurora consumes the saved switch before
 starting worker threads, then enables wgpu debug/validation flags, detailed
-render/device logging, transfer breadcrumbs and 30 Hz flight-recorder sampling
+render/device logging, GPU breadcrumbs (`AURORA_GPU_BREADCRUMBS=deep`: the driver's markers when offered, the transfer ones otherwise) and 30 Hz flight-recorder sampling
 for that run. The setting is cleared before the process starts, so a crash does
 not re-enable it. A banner stays visible during the diagnostic session. GPU
 timestamps and pass labels are collected when the adapter/backend supports
