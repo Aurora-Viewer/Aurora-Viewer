@@ -71,21 +71,73 @@ pub fn copyable(item: &InvItem, agent: Uuid) -> bool {
     rules::agent_mask(item, agent) & rules::COPY != 0
 }
 
-/// Whether the agent may put the image `item` on a worn object's face: both
-/// copy and transfer, so nothing has to go into the object's contents, which
-/// a worn object cannot take (it is in the world and in inventory at once).
-/// **Wanted difference from the Legacy Viewer**, which also asks for the base
-/// modify right through willObjectAcceptInventory: painting a face does not
-/// change the image, so a no-modify texture is accepted here.
-pub(crate) fn worn_image_rights(item: &InvItem, agent: Uuid) -> bool {
+/// The texture controls' immediate filter on a worn object: copy and
+/// transfer for the agent (setImmediateFilterPermMask, FSPanelFace::refresh,
+/// indra/newview/fspanelface.cpp). What it refuses gets the
+/// TooltipTextureRestrictedDrop reason; the picker greys it out.
+pub(crate) fn worn_image_filter(item: &InvItem, agent: Uuid) -> bool {
     let both = rules::COPY | rules::TRANSFER;
     rules::agent_mask(item, agent) & both == both
 }
 
-/// Whether the prim `idx` is worn and its faces must refuse the texture
-/// `item`, even one its contents already hold.
-pub(crate) fn worn_image_refused(world: &World, idx: usize, item: &InvItem) -> bool {
-    item.asset_type == AT_TEXTURE && linkset(world, idx).is_some_and(|(_, worn)| worn) && !worn_image_rights(item, world.agent_id)
+/// Whether the agent may put the image `item` on a worn object's face: the
+/// immediate filter, and unrestricted base rights (modify, copy and
+/// transfer), which willObjectAcceptInventory asks of any drop on an
+/// attachment (indra/newview/lltooldraganddrop.cpp), as the server does not
+/// hold an item in the world and in inventory at once. The Texture tab's drop
+/// (FSPanelFace::onDragTexture through isInventoryDropAcceptable), the world
+/// drop (dad3dApplyToObject) and the picker's apply (TextureApplyFunctor,
+/// indra/newview/llselectmgr.cpp) all go through it.
+pub(crate) fn worn_image_rights(item: &InvItem, agent: Uuid) -> bool {
+    worn_image_filter(item, agent) && item.base_mask & UNRESTRICTED == UNRESTRICTED
+}
+
+/// Whether the agent may put `item` on a worn object's face: an image on
+/// `worn_image_rights`, a material on unrestricted base rights and the
+/// transfer check of willObjectAcceptInventory (an item of the agent, or one
+/// the agent may transfer), which dad3dApplyToObject asks before
+/// dropMaterial.
+pub(crate) fn worn_rights(item: &InvItem, agent: Uuid) -> bool {
+    if item.asset_type != AT_MATERIAL {
+        return worn_image_rights(item, agent);
+    }
+    let own = item.owner == agent && !item.group_owned;
+    item.base_mask & UNRESTRICTED == UNRESTRICTED && (own || rules::agent_mask(item, agent) & rules::TRANSFER != 0)
+}
+
+/// Whether the prim `idx` is worn and its faces must refuse the texture or
+/// material `item`, even one its contents already hold, and always when RLVa
+/// locks it (`attachment_locked`): the Legacy Viewer
+/// asks willObjectAcceptInventory before it looks at the contents
+/// (dad3dApplyToObject, then handleDropMaterialProtections). Every path that
+/// applies an inventory item to a face asks it: the Texture tab's drop, the
+/// world drop, the picker's apply and the library's selection.
+pub(crate) fn worn_refused(world: &World, idx: usize, item: &InvItem) -> bool {
+    linkset(world, idx).is_some_and(|(_, worn)| worn) && (!worn_rights(item, world.agent_id) || attachment_locked(world, idx))
+}
+
+/// RLVa: whether the prim `idx` belongs to a worn object the user may not
+/// take off, which refuses every inventory drop (willObjectAcceptInventory,
+/// gRlvAttachmentLocks.isLockedAttachment on the root).
+pub(crate) fn attachment_locked(world: &World, idx: usize) -> bool {
+    let Some((root, true)) = linkset(world, idx) else {
+        return false;
+    };
+    world
+        .objects
+        .get(root)
+        .and_then(|o| world.rlva_attachment_item(o.full_id))
+        .is_some_and(|item| !world.rlva_can_remove(item, Uuid::nil()))
+}
+
+/// What a refusal of `worn_refused` says: the immediate filter's reason for
+/// an image it stops (TooltipTextureRestrictedDrop), the surface's otherwise.
+pub(crate) fn worn_refusal_text(item: &InvItem, agent: Uuid) -> &'static str {
+    if item.asset_type != AT_MATERIAL && !worn_image_filter(item, agent) {
+        aurora_i18n::tr!("build-ui-texture-drop-restricted")
+    } else {
+        aurora_i18n::tr!("texture-library-locked")
+    }
 }
 
 /// The root of the prim `idx`'s linkset, and whether it is worn (its root
@@ -136,7 +188,7 @@ pub fn surface_allowed(world: &World, idx: usize) -> Result<(), &'static str> {
 
 /// willObjectAcceptInventory for the prim `idx`: a volume whose linkset you
 /// may modify, or that allows inventory drops (scripts always need Modify),
-/// and an item its owner may receive.
+/// and an item its owner may receive; never an attachment RLVa locks.
 pub fn accepts(world: &World, idx: usize, item: &InvItem) -> Result<(), &'static str> {
     let o = world.objects.get(idx).ok_or("rez-no-surface")?;
     let (root, attached) = linkset(world, idx).ok_or("rez-no-surface")?;
@@ -150,6 +202,7 @@ pub fn accepts(world: &World, idx: usize, item: &InvItem) -> Result<(), &'static
         || item.asset_type == AT_LSL_TEXT && root.update_flags & OBJECT_MODIFY == 0
         // the server does not support an item in the world and in inventory at once
         || attached && item.base_mask & UNRESTRICTED != UNRESTRICTED
+        || attached && attachment_locked(world, idx)
     {
         return Err("rez-contents-denied");
     }
