@@ -155,6 +155,15 @@ walking a large inventory root while drawing visible rows (#1963).
 `ui/appearance/perf_tests.rs` provides an ignored offline benchmark for the three
 Appearance tabs with thousands of outfits or 200,000 ordinary inventory items.
 
+`world/inventory/asset_ids.rs` is the asset id display rule shared by the Dev
+Toolbox texts (`scene/describe.rs`, `scene/animesh_report.rs`,
+`scene/sculpt_watch.rs`), the Sound and Animation Explorers, the Asset
+blacklist, the item image window and the build tools' material tooltip: the
+rule of `actions::asset_uuid_shown`, with the full-permission assets indexed
+once per inventory generation, plus built-in ids, local textures and demo mode.
+Other ids are written `hidden-<tag>` (a per-launch keyed hash), which
+`dev_toolbox/legend.rs` shortens like a UUID.
+
 AO account settings retain the last animation link/group UUID per state or track
 folder (`ao::Account::animations`). `ao/runtime.rs` restores cursor positions by
 identity and reports changed selections; `app/ao.rs` saves them through the existing
