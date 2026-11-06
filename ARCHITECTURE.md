@@ -229,6 +229,20 @@ attachment or has a touch script or click action of its own, and a prim whose
 click action is None does not count; otherwise a visible actionable object
 behind it, such as a scripted piece behind an invisible or clear prim, takes
 the click and the cursor.
+
+Faces omitted for zero TE alpha or classified as Hidden remain left-click
+surfaces, including panels using the built-in transparent texture (#2269).
+The ordinary ray search and the large-face hierarchy share `left_face_mask`:
+explicitly invisible faces bypass the texture-hole mask, so the accepted face
+also supplies valid touch UVs. The exact texture
+threshold still filters inactive Blend faces. Scripted Mask surfaces enter the
+CPU interaction search and the GPU transparent answer, while its visible opaque
+answer retains the posed attachment behind a cutout. System avatar alpha layers
+keep their displayed cutouts; HUD and camera pick policies remain separate.
+Priority comparisons reuse the full-ray CPU candidates of the click or
+hover query, excluding rigged geometry while retaining its GPU-hover request.
+Distance-only Left queries share the large-face hierarchies and alpha tests;
+the diagnostic reference still walks every object's triangles independently.
 CPU interactions (touch, hover, menus, media, selection and placement), including
 the large-mesh hover hierarchy, also reject back-facing triangles,
 matching the GPU; explicitly double-sided PBR materials and their overrides

@@ -1783,6 +1783,19 @@ fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
+// LLToolPie::handleMouseDown's transparent pick includes object Mask holes.
+// System avatar alpha layers keep their displayed cutouts: their hidden
+// body triangles must not occlude a worn clicker.
+@fragment
+fn fs_pick_mask(in: PickOut) -> @location(0) vec4<u32> {
+    let rec = records[in.record];
+    if ((rec.flags.w & FLAG_OBJECT_MASK_PICK) == 0u) {
+        discard;
+    }
+    portal_clip(rec, in.world_pos);
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
+}
+
 // LLImageGL::updatePickMask (indra/llrender/llimagegl.cpp, LGPL 2.1).
 const PICK_ALPHA_CUTOFF: f32 = 32.0 / 255.0;
 

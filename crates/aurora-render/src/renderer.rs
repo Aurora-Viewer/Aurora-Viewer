@@ -1002,6 +1002,8 @@ struct Pipelines {
     pick_visible: wgpu::RenderPipeline,
     pick_left: wgpu::RenderPipeline,
     pick_left_2s: wgpu::RenderPipeline,
+    pick_mask: wgpu::RenderPipeline,
+    pick_mask_2s: wgpu::RenderPipeline,
     pick_left_visible: wgpu::RenderPipeline,
     pick_overlay: wgpu::RenderPipeline,
 }
@@ -4084,6 +4086,14 @@ impl Backend {
             fs: Some("fs_pick_overlay"),
             ..pick_desc("transparency overlay pick", None)
         });
+        let pick_mask = pipe(PipeDesc {
+            fs: Some("fs_pick_mask"),
+            ..pick_desc("mask interaction pick", Some(wgpu::Face::Back))
+        });
+        let pick_mask_2s = pipe(PipeDesc {
+            fs: Some("fs_pick_mask"),
+            ..pick_desc("mask interaction pick 2s", None)
+        });
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
         let shadow_desc = |label, fs| PipeDesc {
             label,
@@ -4235,6 +4245,8 @@ impl Backend {
             pick_visible,
             pick_left,
             pick_left_2s,
+            pick_mask,
+            pick_mask_2s,
             pick_left_visible,
             pick_overlay,
         }
@@ -8259,6 +8271,7 @@ impl Backend {
                 _ => &self.pipelines.pick,
             };
             let left = drawn_px.is_some_and(|(_, _, mode)| matches!(mode, crate::DrawnMode::Left | crate::DrawnMode::LeftVisible));
+            let mask_interaction = drawn_px.is_some_and(|(_, _, mode)| mode == crate::DrawnMode::Left);
             let (solid_pick, solid_pick_2s) = if left {
                 (&self.pipelines.pick_left, &self.pipelines.pick_left_2s)
             } else {
@@ -8278,6 +8291,20 @@ impl Backend {
                     (blend_pick, rg.blend, None),
                     // under the water too: found by a click from above
                     (blend_pick, rg.blend_under, None),
+                    // LLToolPie's transparent pick reaches Mask cutouts too.
+                    // Keep the visible opaque answer underneath, so a passive
+                    // mask cannot hide a posed attachment's actionable face.
+                    // HUDs and camera/menu queries do not enter these ranges.
+                    (
+                        &self.pipelines.pick_mask,
+                        if mask_interaction { rg.mask } else { (0, 0) },
+                        mask_interaction.then_some(2),
+                    ),
+                    (
+                        &self.pipelines.pick_mask_2s,
+                        if mask_interaction { rg.mask_2s } else { (0, 0) },
+                        mask_interaction.then_some(3),
+                    ),
                     // LLViewerWindow::pickAsync / pickImmediate: debug alpha
                     // makes transparent surfaces pickable. Reuse the actual
                     // overlay lists, including hidden faces and only the

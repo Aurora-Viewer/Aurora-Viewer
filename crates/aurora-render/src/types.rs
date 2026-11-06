@@ -184,6 +184,9 @@ pub mod flags {
     pub const PORTAL_CLIP: u32 = 16384;
     /// Procedural Aurora portal surface; uses the ordinary sorted blend/glow.
     pub const PORTAL_EFFECT: u32 = 32768;
+    /// Bit of flags[3], above texture animation: world and worn object
+    /// geometry, excluding HUDs and the system avatar's masked body.
+    pub const OBJECT_MASK_PICK: u32 = 1 << 30;
     /// Bit of flags[3], above the texture animation's 24 packed bits.
     /// World faces whose material permits Blend texture alpha only.
     pub const WORLD_BLEND_PICK: u32 = 1 << 31;
@@ -2094,17 +2097,18 @@ mod tests {
     fn world_blend_pick_survives_zoom_packing_without_changing_texture_animation() {
         let animation = 1 | (7 << 8) | (15 << 16);
         let mut record = DrawRecord {
-            flags: [flags::PLANAR | flags::TEX_ANIM, 42, 128, animation],
+            flags: [flags::PLANAR | flags::TEX_ANIM, 42, 128, animation | flags::OBJECT_MASK_PICK],
             ..Default::default()
         };
         record.set_world_blend_pick(true);
         for zoom in [1.0, 0.1, 2.0, 8.0] {
             record.set_hud_zoom(zoom);
             assert_ne!(record.flags[3] & flags::WORLD_BLEND_PICK, 0);
+            assert_ne!(record.flags[3] & flags::OBJECT_MASK_PICK, 0);
             assert_eq!(record.flags[3] & 0x00ff_ffff, animation);
             assert_eq!(record.flags[0] & 0xffff, flags::PLANAR | flags::TEX_ANIM);
         }
         record.set_world_blend_pick(false);
-        assert_eq!(record.flags[3], animation);
+        assert_eq!(record.flags[3], animation | flags::OBJECT_MASK_PICK);
     }
 }

@@ -88,7 +88,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
-| `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
+| `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (0: uncapped; 10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
@@ -364,8 +364,8 @@ of a screenshot (neither position nor maximised state saved) and its size is
 not remembered for the next launch. The actual size is at the start of the
 `perf settings` line.
 
-`AURORA_FPS_LIMIT`: user cap for tests (10–500 fps; positive values are
-brought back into this range, an invalid value is ignored). The lower cap in
+`AURORA_FPS_LIMIT`: user cap for tests (0 disables the user cap; positive
+values are brought back into 10–500 fps, an invalid value is ignored). The lower cap in
 the background still applies outside screenshots.
 
 ## Screenshots
@@ -1737,12 +1737,22 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-own-animesh|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-clear[-mesh]|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|panel-texture|panel-te|panel-mask|panel-linked-texture|panel-linked-te|panel-linked-mask|worn-other-mask|worn-other-mask-mesh|worn-mesh-mask|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-own-animesh|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-clear[-mesh]|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. Add `-seated` to a `worn-*` mode (before any `-moving` / `-held`
 suffix) to seat the wearer on a rotated prim with the synthetic sitting
 animation before installing the attachment.
+Worn-object fixtures snap their initial camera view so an uncapped run does
+not aim and press while the camera is still smoothing toward the wearer.
+`panel-texture` and `panel-te` place an invisible scripted panel before Buy,
+using the built-in transparent texture or a blank texture at zero TE alpha.
+`panel-mask` and `panel-linked-mask` use zero-alpha texels with an explicit
+Mask material. `worn-other-mask`, `worn-other-mask-mesh` and `worn-mesh-mask`
+exercise the same cutout on a worn prim, unrigged mesh and rigged mesh.
+`panel-linked-texture` and `panel-linked-te` inherit Touch from the opaque root
+behind the panel. Every panel mode must log `demo touch_start: prim=976` with
+a valid face and UV; neither Buy nor the opaque root must receive the click.
 Ordinary attachments must retain their attachment/script target while seated;
 the buried fixtures below also exercise the body occlusion boundary.
 `demo worn posture` confirms the seat parent. This covers our own and other
@@ -2301,8 +2311,9 @@ No real L$ and no connection to a grid.
   exit faces with Blank: they must not intercept the interaction. Explicitly
   double-sided PBR faces remain targets on both visible sides.
   `mask-zero` uses the zero-alpha texture in Mask mode:
-  the click must reach Buy (971), with `dialog=true` and no panel in the GPU
-  response. Capture after frame 620.
+  the passive panel must let Buy (971) receive the click, with `dialog=true`.
+  The GPU's second answer may contain the Mask panel, while its first keeps
+  the visible surface behind it. Capture after frame 620.
 - Add `-ready` to the Blend / Mask modes above to test hover without
   an automatic click. At frame 650, `demo cursor hover` must report
   `prim=Some(971), action=Some(Buy)` through zero/faint Blend and the
