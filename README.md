@@ -571,9 +571,11 @@ are planned or in progress: they are not in the viewer yet.
   move ([setup and limits](docs/VR.md)).
 - **Portals to walk through**: open a portal to a place, drop a landmark
   into the world, or drag a place there from Favorites, Places, the teleport
-  history or search results, and walk, run or fly through it to teleport. Other Aurora
+  history or search results, and walk, run or fly through it to teleport.
+  A portal opens where you may build, like rezzing an object. Other Aurora
   users see it too: your friends by default, everyone if you choose, and a
-  portal that appears on someone never pulls them in.
+  portal that appears on someone never pulls them in. The portal back home
+  is yours alone on land where you may not build.
 - **Just your parcel, if you like**: hide what stands outside the current
   parcel, everywhere or only on the parcels you list, with exceptions that
   stay visible and options for neighbouring parcels of the same owner or
@@ -672,7 +674,7 @@ The texture memory budget is set automatically from the detected VRAM.
   sky, water and day-cycle editors, experience environments, world sounds
   with occlusion, headphone HRTF and room reverb (experimental), parcel
   music and media
-  on prims, with Aurora's downloadable media plugins pack; an area search
+  on prims, with Aurora's media plugins pack, downloaded once you agree; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
   walk-through portals shared with other Aurora users, with friend/group
