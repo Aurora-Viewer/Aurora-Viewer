@@ -527,7 +527,12 @@ impl State {
 
     /// A crossing grants this traveler a return, without making their friends
     /// friends of the original creator. Only the creator can grant Friends.
-    pub fn share_return(&mut self, portal: Portal, creator: Uuid, position: Vec3, now: Instant, unix: u64) -> bool {
+    /// It is announced only where the traveler may build (`build`, the land
+    /// test of [`create`](Self::create)); elsewhere, or while that land is
+    /// unknown, it stays the traveler's own: shown and crossable here,
+    /// announced to nobody.
+    pub fn share_return(&mut self, portal: Portal, creator: Uuid, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> bool {
+        let share = build == BuildRight::Allowed;
         let mut announcement = portal.announcement();
         announcement.creator = Some(creator);
         if creator.is_nil()
@@ -552,7 +557,7 @@ impl State {
             entry.return_pass = true;
             entry.gate.clearance = CLEARANCE;
             entry.gate.ready_at = now;
-            entry.shared = true;
+            entry.shared |= share;
             entry.portal.creator = Some(creator);
             announcement = entry.portal.clone();
         } else {
@@ -566,10 +571,13 @@ impl State {
                 gate: Gate::new(Vec3::from(portal.center), position, now),
                 expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
                 relays: Vec::new(),
-                shared: true,
+                shared: share,
                 created: false,
                 return_pass: true,
             });
+        }
+        if !share {
+            return true;
         }
         if let Access::Group(group) = portal.access
             && !self.group_refresh.contains(&group)
@@ -684,7 +692,7 @@ impl State {
                     }
                 }
                 self.entries
-                    .retain(|entry| entry.portal.id != id || entry.shared || !entry.relays.is_empty());
+                    .retain(|entry| entry.portal.id != id || entry.shared || entry.return_pass || !entry.relays.is_empty());
                 self.fetches.remove(&(owner, id));
                 self.out
                     .retain(|(target, message)| !(*target == owner && matches!(message, Message::Request { id: old, .. } if *old == id)));

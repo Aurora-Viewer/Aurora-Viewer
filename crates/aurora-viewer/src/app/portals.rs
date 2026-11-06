@@ -78,8 +78,10 @@ impl App {
             && let Some(region) = self.world.main_region
         {
             journey.portal.region = region;
+            // announced only where we may build; elsewhere it is ours alone
             if journey.source.region == region {
-                state.share_return(journey.source, journey.creator, self.world.agent.position, now, unix);
+                let build = self.build_right_at(Vec3::from(journey.source.center));
+                state.share_return(journey.source, journey.creator, build, self.world.agent.position, now, unix);
             }
             // Landing points can redirect a request within the same region.
             // The first shared aperture wins when other travelers arrive.
@@ -90,7 +92,8 @@ impl App {
             if self.world.main().is_some_and(|r| {
                 crate::world::portals::fits_region(Vec3::from(journey.portal.center), [r.heightmap.size_x, r.heightmap.size_y])
             }) {
-                state.share_return(journey.portal, journey.creator, self.world.agent.position, now, unix);
+                let build = self.build_right_at(Vec3::from(journey.portal.center));
+                state.share_return(journey.portal, journey.creator, build, self.world.agent.position, now, unix);
             }
         }
         if let Some(group) = state.take_group_refresh() {
@@ -197,7 +200,7 @@ impl App {
                 },
                 expires: unix + LIFETIME,
             };
-            if mode == "no-build" {
+            if mode.ends_with("no-build") {
                 self.demo_close_land();
             }
             let build = self.build_right_at(center);
@@ -213,7 +216,7 @@ impl App {
                     &mut self.world.agent,
                     &self.settings.camera,
                 );
-                state.share_return(portal.clone(), creator, position, now, unix);
+                state.share_return(portal.clone(), creator, build, position, now, unix);
                 let mut announcement = portal.announcement();
                 announcement.creator = Some(creator);
                 for peer in [0xA771, 0xA772] {

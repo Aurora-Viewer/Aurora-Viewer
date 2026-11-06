@@ -91,6 +91,7 @@ fn portals_show_friends_by_default_and_our_own_whatever_the_setting() {
             ..portal()
         },
         stranger,
+        BuildRight::Allowed,
         world.agent.position,
         Instant::now(),
         1000

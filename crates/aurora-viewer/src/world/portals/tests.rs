@@ -120,6 +120,71 @@ fn portal_can_be_entered_immediately_from_nearby_and_after_a_distant_stall() {
 }
 
 #[test]
+fn a_return_is_announced_only_where_the_traveler_may_build_and_stays_crossable_everywhere() {
+    for build in [BuildRight::Allowed, BuildRight::Denied, BuildRight::Unknown] {
+        let (mut traveler, mut state) = fixture();
+        let now = Instant::now();
+        let creator = Uuid::from_u128(20);
+        let p = portal();
+        assert!(state.share_return(p.clone(), creator, build, traveler.agent.position, now, 1000));
+        let shared = build == BuildRight::Allowed;
+        let opens = |state: &State| {
+            state
+                .out
+                .iter()
+                .filter(|(_, m)| matches!(m, Message::Open(a) if a.id == p.id))
+                .count()
+        };
+        assert_eq!(opens(&state) > 0, shared, "{build:?}: announced in the region");
+        // the traveler still sees it and may go back through it
+        assert_eq!(state.visible(&traveler).count(), 1, "{build:?}");
+        assert!(state.crossable(&traveler, creator, p.id).is_some(), "{build:?}");
+        // a late arrival asking what is open learns of it only when shared
+        let before = opens(&state);
+        state.receive(&traveler, &wire(Uuid::from_u128(5), Message::Discover { region: 256 }), now, 1000);
+        assert_eq!(opens(&state) > before, shared, "{build:?}: discovery");
+        // a peer closing that id does not take our own return away
+        state.receive(
+            &traveler,
+            &wire(Uuid::from_u128(6), Message::Close { region: 256, id: p.id }),
+            now,
+            1000,
+        );
+        traveler.agent.position = point(3.0);
+        state.update(&traveler, Vec3::ZERO, now);
+        assert!(state.crossable(&traveler, creator, p.id).is_some(), "{build:?}: after a close");
+    }
+}
+
+#[test]
+fn a_return_kept_to_the_traveler_answers_no_details_request() {
+    let (traveler, mut state) = fixture();
+    let now = Instant::now();
+    let creator = Uuid::from_u128(20);
+    let p = Portal {
+        access: Access::Friends,
+        ..portal()
+    };
+    assert!(state.share_return(p.clone(), creator, BuildRight::Denied, traveler.agent.position, now, 1000));
+    state.receive(
+        &traveler,
+        &wire(
+            creator,
+            Message::Request {
+                region: 256,
+                id: p.id,
+                nonce: creator,
+            },
+        ),
+        now,
+        1000,
+    );
+    state.update(&traveler, Vec3::ZERO, now);
+    assert!(state.out.is_empty(), "nothing leaves for a return nobody else knows");
+    assert!(state.crossable(&traveler, creator, p.id).is_some());
+}
+
+#[test]
 fn portal_return_arrivals_share_one_aperture_and_preserve_the_observers_gate() {
     let (mut observer, mut state) = fixture();
     let now = Instant::now();
@@ -152,7 +217,7 @@ fn portal_return_arrivals_share_one_aperture_and_preserve_the_observers_gate() {
         1000,
     );
     assert_eq!(state.entries.len(), 1, "one departing relay does not close the shared return");
-    assert!(state.share_return(portal(), creator, observer.agent.position, now, 1000));
+    assert!(state.share_return(portal(), creator, BuildRight::Allowed, observer.agent.position, now, 1000));
     assert_eq!(state.entries.len(), 1);
     assert!(
         state.entries[0].waiting_for_clearance(),
@@ -178,7 +243,7 @@ fn private_return_preserves_travelers_rights_without_granting_the_relays_friends
         access: Access::Friends,
         ..portal()
     };
-    assert!(state.share_return(p.clone(), creator, traveler.agent.position, now, 1000));
+    assert!(state.share_return(p.clone(), creator, BuildRight::Allowed, traveler.agent.position, now, 1000));
     assert!(state.entries[0].allowed(&traveler), "the traveler retains a personal return");
     assert!(state.entries[0].portal.destination.is_none());
     for peer in [creator, stranger] {
