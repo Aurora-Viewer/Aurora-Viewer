@@ -51,13 +51,6 @@ pub(super) struct Drop {
     remove_pbr: bool,
 }
 
-fn permissions(item: &aurora_net::inventory::InvItem, agent: Uuid) -> u32 {
-    if item.owner == agent && !item.group_owned {
-        item.owner_mask
-    } else {
-        item.everyone_mask
-    }
-}
 /// Ctrl+Shift over what we wear: every face of its linkset. Ctrl alone would
 /// go into a worn object's contents, which it refuses, so nothing is lost.
 /// A **wanted difference** from dropTextureAllFaces, which stops at the prim
@@ -111,7 +104,7 @@ fn drop_prims(world: &World, idx: usize, linkset: bool) -> Vec<usize> {
 /// the object does not hold yet (handleDropMaterialProtections). The asset of
 /// the library or of the object's contents costs nothing.
 fn no_copy_leaves(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, agent: Uuid, retained: bool) -> bool {
-    !retained && !rules::library(inv, item.id) && permissions(item, agent) & rules::COPY == 0
+    !retained && !rules::library(inv, item.id) && contents_drop::agent_mask(item, agent) & rules::COPY == 0
 }
 
 impl App {
@@ -1194,7 +1187,7 @@ impl App {
                 local_id: object.key.local_id,
                 item: Box::new(task),
             });
-            if permissions(item, self.world.agent_id) & rules::COPY == 0 {
+            if contents_drop::agent_mask(item, self.world.agent_id) & rules::COPY == 0 {
                 self.world.inventory.consume_item(item.id);
             }
             self.build.request_contents(&self.world, idx, true);
