@@ -64,6 +64,7 @@ mod folders;
 mod hover_pick;
 mod texture_picker;
 use folders::chat_log_root;
+mod avatar_studio;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod dof;
@@ -412,6 +413,9 @@ pub struct App {
     /// Throttle of the "sky frame" log line.
     sky_log: crate::world::env::SkyLog,
     camera: Camera,
+    avatar_studio: crate::avatar_studio::Studio,
+    studio_transition: crate::avatar_studio::Transition,
+    studio_photo_session: Option<crate::avatar_studio::PhotoSession>,
     /// The desktop camera, and our avatar's yaw and pitch, before VR: put
     /// back when VR ends (the first-person entry turns the avatar to the
     /// view, as mouselook does).
@@ -1489,6 +1493,9 @@ impl App {
             probes: Default::default(),
             sky_log: Default::default(),
             camera: Camera::default(),
+            avatar_studio: Default::default(),
+            studio_transition: Default::default(),
+            studio_photo_session: None,
             vr_camera: None,
             vr_toggle: false,
             vr_start_in: 0,
@@ -4082,6 +4089,24 @@ impl App {
 
     /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
+        if self.studio_transition.busy() {
+            return;
+        }
+        if self.avatar_studio.active && !self.viewfinder_on() {
+            if self.avatar_studio.panning_plane {
+                let height = self.gfx.as_ref().map_or(900.0, |g| g.renderer.size().1 as f32);
+                self.avatar_studio.pan_view(dx, dy, height);
+                return;
+            }
+            if self.avatar_studio.rotating {
+                self.avatar_studio.rotate(dx);
+            }
+            if self.avatar_studio.panning && self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
+                let height = self.gfx.as_ref().map_or(900.0, |g| g.renderer.size().1 as f32);
+                self.avatar_studio.pan_vertical(dy, height);
+            }
+            return;
+        }
         // in VR the head turns the view; the mouse must not turn the avatar
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged()) {
             return;
@@ -4460,6 +4485,14 @@ impl App {
 
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
+        if (self.avatar_studio.active || self.studio_transition.busy())
+            && !self.viewfinder_on()
+            && pressed
+            && input == Input::key(winit::keyboard::KeyCode::Escape)
+        {
+            self.panels.avatar_studio = false;
+            return;
+        }
         let mods = self.binding_mods(matches!(input, Input::Mouse(_)));
         let action = self.settings.keybinds.update_held_input(&mut self.down, &input, pressed, mods);
         if let Some(group) = self.run_group(&input) {
@@ -7102,6 +7135,9 @@ impl App {
     /// Wheel clicks on the world (SL sign: positive zooms out): the held
     /// mouselook zoom's angle, or the camera's own use of the wheel.
     fn camera_wheel(&mut self, clicks: f32) {
+        if self.avatar_studio.active && !self.viewfinder_on() {
+            return;
+        }
         let aspect = self.view_aspect();
         if self.camera.scroll_mouselook_zoom(clicks, aspect) {
             return;
@@ -7570,6 +7606,10 @@ impl App {
     }
 
     fn update_move_input(&mut self, typing: bool, dt: f32) {
+        if (self.avatar_studio.active && !self.viewfinder_on()) || self.studio_transition.busy() {
+            self.input = MoveInput::default();
+            return;
+        }
         self.poll_joystick(dt);
         if self.joystick_flycam_step(dt) {
             return;
@@ -7650,6 +7690,9 @@ impl App {
             i.up || joystick_up,
         );
         self.joystick_avatar(&mut i);
+        if self.avatar_studio.active && self.camera.free().is_none() {
+            i = MoveInput::default();
+        }
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start).
@@ -8899,6 +8942,9 @@ impl App {
         let shift = self.world.take_origin_shift();
         if shift != Vec3::ZERO {
             self.camera.shift(shift);
+            if let Some(session) = &mut self.studio_photo_session {
+                session.camera.shift(shift);
+            }
             if let Some(ap) = &mut self.autopilot {
                 ap.shift(shift);
             }
@@ -9137,8 +9183,10 @@ impl App {
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
         self.photo_update(&gfx.renderer);
+        self.studio_photo_frame(&mut gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
         self.photo_isolate_frame(&mut gfx.renderer);
+        self.studio_frame(&mut gfx.renderer, dt);
         let photo = self.photo_frame(&mut gfx.renderer);
         let window_aspect = w as f32 / h.max(1) as f32;
         let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
@@ -9175,7 +9223,10 @@ impl App {
             self.update_attention();
         }
         if self.in_world() {
-            let ml = self.camera.mouselook();
+            let ml = self
+                .studio_photo_session
+                .as_ref()
+                .map_or_else(|| self.camera.mouselook(), |session| session.camera.mouselook());
             // the clocks the other avatars and the objects move along
             // (world/motion.rs); offline there is no simulator to slow them
             let build = &self.build;
@@ -9256,7 +9307,10 @@ impl App {
                 self.camera.target = target;
                 self.interface.set_hidden(&self.egui_ctx, true);
             }
-            let at = self.camera.forward();
+            let at = self
+                .studio_photo_session
+                .as_ref()
+                .map_or_else(|| self.camera.forward(), |session| session.camera.forward());
             let step_back = self.settings.walk_backwards_without_turning;
             // (Body::update turns a little even without time: held apart)
             if !frozen {
@@ -9265,7 +9319,7 @@ impl App {
             self.trace_own_motion();
             self.update_pointing();
             self.update_look_at(w as f32, h as f32);
-            let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+            let mut c = self.studio_agent_controls();
             // the walk to a double-clicked point (src/autopilot.rs)
             c.control_flags = self.autopilot_controls(c.control_flags);
             c.control_flags = crate::movement::controls(
@@ -9505,12 +9559,23 @@ impl App {
             self.world.agent.pitch = pitch;
             gfx.renderer.cut_motion_history();
         }
-        let mut view = self.camera.view();
-        let mut proj = frame_proj(&self.camera);
+        let studio_view = self.studio_view(aspect);
+        let render_eye = studio_view.map_or(self.camera.position, |v| v.eye);
+        let render_fov = if studio_view.is_some() && self.studio_photo_session.is_none() {
+            crate::avatar_studio::FOV
+        } else {
+            self.camera.fov_y
+        };
+        let mut view = studio_view.map_or_else(|| self.camera.view(), |v| v.view);
+        let mut proj = if self.studio_photo_session.is_some() {
+            frame_proj(&self.camera)
+        } else {
+            studio_view.map_or_else(|| frame_proj(&self.camera), |v| photo_tile * v.proj)
+        };
         let mut vp = proj * view;
         let camera_fast = self.texture_motion.update(self.camera.position, self.camera.forward(), dt);
-        let mut cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
-            self.camera.forward(),
+        let mut cull = CullView::new(vp, render_eye, lod_height as f32, render_fov).with_texture_camera(
+            studio_view.map_or_else(|| self.camera.forward(), |v| (v.target - v.eye).normalize()),
             aspect,
             camera_fast,
         );
@@ -9622,8 +9687,7 @@ impl App {
             }
             self.ik_editor.tick_project(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.ik_editor.tick_animations(&mut self.scene.anims, &mut self.world.inventory);
-            self.ik_editor
-                .tick_clip(&self.scene.jobs, &self.egui_ctx, self.world.avatar_lib.rig.clone());
+            self.ik_editor.tick_clip(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.scene.ik_edit = self.ik_editor.request();
             if self.demo
                 && let Ok(mode) = std::env::var("AURORA_DEMO_POSER")
@@ -9715,10 +9779,10 @@ impl App {
             // this in UI preparation let an older simulator echo reach the GPU
             // for one frame, before the manipulator restored the current size.
             self.build.cam = crate::build::geom::Cam::new(
-                self.camera.position,
-                self.camera.target,
+                render_eye,
+                studio_view.map_or(self.camera.target, |v| v.target),
                 vp,
-                self.camera.fov_y,
+                render_fov,
                 w as f32,
                 h as f32,
                 self.egui_ctx.pixels_per_point(),
@@ -9729,13 +9793,14 @@ impl App {
             {
                 self.build.cam = crate::build::geom::Cam::for_hud(view, self.egui_ctx.pixels_per_point());
             }
-            let pan = if self.build.open && self.build.tool == crate::build::Tool::Edit && self.camera.third_person() {
-                self.build
-                    .manip
-                    .camera_pan(&self.settings.build, &self.build.cam, self.cursor_pos, dt)
-            } else {
-                Vec3::ZERO
-            };
+            let pan =
+                if studio_view.is_none() && self.build.open && self.build.tool == crate::build::Tool::Edit && self.camera.third_person() {
+                    self.build
+                        .manip
+                        .camera_pan(&self.settings.build, &self.build.cam, self.cursor_pos, dt)
+                } else {
+                    Vec3::ZERO
+                };
             let panned = self.camera.pan_edit(pan, &mut self.world.agent, &self.settings.camera);
             if panned {
                 self.build.cam = crate::build::geom::Cam::new(
@@ -9807,7 +9872,7 @@ impl App {
                 if let Some(controls) = late_controls {
                     // AgentUpdate must describe the displayed eye and aim,
                     // keeping the movement, script and RLVa flags prepared above.
-                    let current = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+                    let current = self.studio_agent_controls();
                     self.net.set_controls(aurora_net::AgentControls {
                         control_flags: (controls.control_flags & !control::MOUSELOOK) | (current.control_flags & control::MOUSELOOK),
                         state: controls.state,
@@ -9819,11 +9884,11 @@ impl App {
             }
             // every change of the viewing angle goes to the simulator, as
             // LLViewerCamera::setView (the end of a zoom's easing excepted)
-            if (self.camera.fov_y - self.sent_fov).abs() > FOV_SEND_EPSILON {
+            if self.studio_photo_session.is_none() && (self.camera.fov_y - self.sent_fov).abs() > FOV_SEND_EPSILON {
                 self.sent_fov = self.camera.fov_y;
                 self.net.send(NetCommand::SetFov(self.sent_fov));
             }
-            if camera_changed {
+            if camera_changed && (studio_view.is_none() || self.studio_photo_session.is_some()) {
                 view = self.camera.view();
                 proj = frame_proj(&self.camera);
                 vp = proj * view;
@@ -9851,6 +9916,9 @@ impl App {
             }
             self.scene.update_beacons(&mut self.world, &self.settings.beacons, &cull);
             self.scene.held_at = hold.map(|h| h.at);
+            if studio_view.is_some() {
+                self.scene.fov_y = render_fov;
+            }
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -9970,9 +10038,7 @@ impl App {
             self.scene
                 .update_land_overlays(&mut gfx.renderer, &self.world, overlays, &self.palette);
             self.scene.set_first_person(
-                self.camera
-                    .first_person_view()
-                    .then_some(self.settings.camera.show_avatar_in_mouselook),
+                (self.camera.first_person_view() && studio_view.is_none()).then_some(self.settings.camera.show_avatar_in_mouselook),
             );
             self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
@@ -10280,6 +10346,16 @@ impl App {
                 &sky_frame,
                 crate::world::env::colored_ambient_now(self.settings.colored_sky_ambient),
             );
+        if studio_view.is_some() && self.avatar_studio.lighting == crate::avatar_studio::Lighting::Studio {
+            env = Environment::from_eep(
+                &crate::world::eep::SkyFrame::with_sun(
+                    glam::Quat::from_rotation_z(self.avatar_studio.yaw) * Vec3::new(0.3, -0.4, 0.86).normalize(),
+                ),
+                &crate::world::eep::WaterFrame::default(),
+                glam::Vec2::ZERO,
+                64.0,
+            );
+        }
         if let Some(sun) = self.demo.then(crate::demo::sun_override).flatten() {
             env.sun_dir = sun;
         }
@@ -10368,7 +10444,7 @@ impl App {
             }
             t_part = Instant::now();
         }
-        let (lights, spot_shadows) = if in_world {
+        let (lights, spot_shadows) = if in_world && studio_view.is_none() {
             let view = crate::scene::lights::LightView {
                 eye: self.camera.position,
                 forward: self.camera.forward(),
@@ -10388,7 +10464,7 @@ impl App {
             (Vec::new(), [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS])
         };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
-        let probes = if in_world {
+        let probes = if in_world && studio_view.is_none() {
             let slots = self.settings.probe_count.clamp(8, 64);
             if self.probes.slots != slots || self.probes.level != self.settings.reflection_probes {
                 self.probes.slots = slots;
@@ -10464,10 +10540,14 @@ impl App {
             photo_tile,
             photo_scale,
             photo_context,
-            camera_pos: self.camera.position,
-            near: self.camera.near,
+            camera_pos: render_eye,
+            near: if studio_view.is_some() {
+                crate::avatar_studio::NEAR
+            } else {
+                self.camera.near
+            },
             far: self.settings.draw_distance,
-            fov_y: self.camera.fov_y,
+            fov_y: render_fov,
             time: if self.demo {
                 crate::demo::water::inspection_time(world_clock())
             } else {
@@ -10521,6 +10601,9 @@ impl App {
             cutout: self.world.photo_isolation.empty_background(),
             look: None,
         };
+        if let Some(view) = studio_view {
+            self.studio_render(&mut gfx.renderer, &mut fp, view);
+        }
         // a photo's look, or the live view's in the photo mode
         let focus = fp.dof.as_ref().map(|d| d.focus);
         self.snapshots.look_focus = focus;
@@ -10847,6 +10930,7 @@ impl App {
             // gets no input events: what the first pass clicked must survive
             // the second, or a click that changed a row's size is lost.
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
+            self.studio_overlay(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
@@ -11085,6 +11169,7 @@ impl App {
             log::info!("GPU recovery: egui's textures sent again ({} KB)", self.egui_shadow.bytes() >> 10);
             textures = self.egui_shadow.replay(textures);
         }
+        self.studio_fade(&ctx, &mut full.shapes);
         let egui_frame = self
             .egui_hand_over
             .frame(&ctx, std::mem::take(&mut full.shapes), textures, full.pixels_per_point);
@@ -15162,7 +15247,7 @@ impl App {
                         &self.scene,
                         projector,
                         self.camera.position,
-                        !self.camera.mouselook(),
+                        !self.camera.mouselook() && !(self.avatar_studio.active && self.avatar_studio.animation_editor),
                         !self.interface.immersive || self.settings.immersive_name_tags,
                         &self.settings,
                         &mut self.name_tag_visibility,
@@ -15531,6 +15616,26 @@ impl App {
                         buttons.push(ui::skin::ToolButton {
                             icon: c.icon.into(),
                             command: c.id.into(),
+                            tooltip: String::new(),
+                        });
+                    }
+                    t.buttons = Some(buttons);
+                    demo_toolbar = Some(t);
+                }
+                if self.demo && std::env::var_os("AURORA_DEMO_AVATAR_STUDIO").is_some() {
+                    let layout = if classic_bars {
+                        layout.clone()
+                    } else {
+                        self.dock_layout.of(layout, autohide_chat_bar).clone()
+                    };
+                    let mut t = demo_toolbar
+                        .take()
+                        .unwrap_or_else(|| self.settings.toolbar.clone().unwrap_or_default());
+                    let mut buttons = t.buttons(&layout).to_vec();
+                    if !buttons.iter().any(|b| b.command == "avatar_studio") {
+                        buttons.push(ui::skin::ToolButton {
+                            icon: "man-filled".into(),
+                            command: "avatar_studio".into(),
                             tooltip: String::new(),
                         });
                     }
@@ -20556,6 +20661,30 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    // The animation editor owns its accelerators before the
+                    // global keybind table (Home=Fly, Ctrl+S=Resync). egui
+                    // already received this event above; only route it when
+                    // no text field or focused widget owns keyboard input.
+                    if pressed
+                        && !ke.repeat
+                        && !altgr_text
+                        && let Some(key) = crate::ik_edit::Editor::map_timeline_key(&ke.logical_key)
+                        && self.ik_editor.handle_timeline_shortcut(
+                            &self.egui_ctx,
+                            key,
+                            egui::Modifiers {
+                                alt: self.alt,
+                                ctrl: self.ctrl,
+                                shift: self.shift,
+                                mac_cmd: self.command,
+                                command: self.command,
+                            },
+                        )
+                    {
+                        self.down.remove(&Input::key(code));
+                        self.egui_ctx.request_repaint();
+                        return;
+                    }
                     // egui received Close Window above (Ctrl+W and
                     // Command+W) or Close All Windows (Ctrl+Shift+W and
                     // Command+Shift+W). Both keys are mods.ctrl. Reserve
@@ -20785,6 +20914,9 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
+                if self.studio_scroll(steps) {
+                    return;
+                }
                 if self.on_build_scroll(steps) || self.on_hud_scroll(steps) || self.viewfinder_wheel(steps) {
                     return;
                 }

@@ -195,6 +195,7 @@ impl Stack {
                 Some(Sample {
                     animation: r.clip.clone()?,
                     frame: r.frame,
+                    time_seconds: None,
                 })
             })
             .collect()

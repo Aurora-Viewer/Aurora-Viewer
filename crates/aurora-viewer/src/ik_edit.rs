@@ -82,6 +82,7 @@ pub struct Editor {
     orient: bool,
     filter: String,
     drag: Option<Drag>,
+    manipulator_hovered: bool,
     refresh: bool,
     tool: Tool,
     space: Space,
@@ -106,6 +107,7 @@ enum Drag {
         rotation: Quat,
         right: Vec3,
         up: Vec3,
+        fine: bool,
     },
 }
 
@@ -171,6 +173,50 @@ fn ray(proj: &Projector, at: Pos2) -> Option<(Vec3, Vec3)> {
 }
 
 impl Editor {
+    /// Open the existing native clip editor in the Avatar Studio context.
+    /// The clip editor owns its document and preview lifecycle; Studio only
+    /// supplies the entry point and keeps its inspection camera active.
+    pub fn open_animation_editor_from_studio(&mut self, world: &World) {
+        self.open_from_avatar_studio(world);
+    }
+
+    pub fn close_animation_editor_from_studio(&mut self) {
+        self.close_from_avatar_studio();
+    }
+
+    pub fn reset_animation_from_avatar_studio(&mut self, world: &World) {
+        self.reset_animation_from_studio(world);
+    }
+
+    pub fn demo_animation_editor_from_studio(&mut self, world: &World) {
+        self.wave_demo_from_avatar_studio(world);
+    }
+
+    pub fn demo_jump_animation_editor_from_studio(&mut self, world: &World) {
+        let Some(frame) = Frame::new(world) else { return };
+        self.jump_demo_from_avatar_studio(world, &frame);
+    }
+
+    pub fn animation_editor_active(&self) -> bool {
+        self.clip.active
+    }
+
+    pub fn studio_animation_timeline_open(&self) -> bool {
+        self.clip.timeline_open
+    }
+
+    pub fn show_studio_animation_timeline(&mut self) {
+        self.clip.timeline_open = true;
+    }
+
+    pub fn animation_editor_return_pending(&self) -> bool {
+        self.clip.return_after_upload
+    }
+
+    pub fn studio_animation_timeline(&mut self, ctx: &egui::Context, palette: &Palette, world: &World) {
+        self.studio_timeline_overlay(ctx, palette, world);
+    }
+
     fn active_tool(&self, modifiers: egui::Modifiers) -> Tool {
         if modifiers.ctrl {
             Tool::Rotate
@@ -182,6 +228,10 @@ impl Editor {
     }
     fn gizmo_visible(&self, modifiers: egui::Modifiers) -> bool {
         self.gizmo.dragging() || modifiers.ctrl || !modifiers.shift
+    }
+
+    fn bone_overlays_visible(&self) -> bool {
+        !(self.clip.active && self.clip.is_playing())
     }
 
     fn point_drag_enabled(&self, modifiers: egui::Modifiers) -> bool {
@@ -218,7 +268,7 @@ impl Editor {
         )
     }
 
-    fn start_drag(&mut self, proj: &Projector, frame: &Frame, pointer: Pos2, rotate: bool) {
+    fn start_drag(&mut self, proj: &Projector, frame: &Frame, pointer: Pos2, rotate: bool, fine: bool) {
         self.drag = if rotate {
             // Unproject an entire near-plane span: a one-pixel difference
             // loses precision at region coordinates far from the origin.
@@ -239,6 +289,7 @@ impl Editor {
                 },
                 right,
                 up,
+                fine,
             })
         } else {
             let center = egui::pos2(proj.width / proj.ppp * 0.5, proj.height / proj.ppp * 0.5);
@@ -268,10 +319,12 @@ impl Editor {
                 rotation,
                 right,
                 up,
+                fine,
             }) => {
                 let delta = pointer - origin;
+                let rate = if fine { 0.001 } else { 0.01 };
                 let rotation =
-                    (Quat::from_axis_angle(right, delta.y * 0.01) * Quat::from_axis_angle(up, delta.x * 0.01) * rotation).normalize();
+                    (Quat::from_axis_angle(right, delta.y * rate) * Quat::from_axis_angle(up, delta.x * rate) * rotation).normalize();
                 if self.control == Control::Pole {
                     self.rotate_pole(rotation);
                 } else {
@@ -861,7 +914,7 @@ impl Editor {
         let point_hit = ctx
             .input(|i| i.pointer.interact_pos())
             .is_some_and(|p| self.point_owns_pointer(ctx, rig, p));
-        let (owns, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit);
+        let (owns, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit, self.poser.sensitivity);
         if let Some((pose, tool)) = change {
             if self.limb_controls
                 && self.mode == Mode::Ik
@@ -884,6 +937,7 @@ impl Editor {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, palette: &Palette, world: &World, proj: &Projector) {
+        self.manipulator_hovered = false;
         if !self.open {
             return;
         }
@@ -921,6 +975,7 @@ impl Editor {
         };
         let rig = &world.avatar_lib.rig;
         if self.clip.active {
+            self.clip.finish_auto_key_on_release(ctx.input(|i| i.pointer.primary_down()));
             self.capture_clip(world, &frame);
         } else {
             self.update_bindings(world, &frame);
@@ -951,148 +1006,158 @@ impl Editor {
         self.sync_clip_selection(&frame);
         self.sync_authored_selection(&frame);
         self.sync_prim_draft();
-        // World overlays stay in Background, like the build gizmos. Middle
-        // joint areas can rise above a floater after being clicked.
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("ik-skeleton")));
-        let segments = self.skeleton_segments(world, proj, &frame);
-        self.draw_segments(&painter, palette, &segments);
-        if let Some(bone) = self.selected
-            && self.visibility.visible(&rig.canonical_names[bone])
-            && let Some((point, _)) = proj.project(frame.joints[bone].transform_point3(self.contact))
-        {
-            painter.circle_stroke(point, 7.0, Stroke::new(2.0, palette.teal));
-        }
-        let graph_owns = !self.clip.active && self.graph_overlay(ctx, palette, world, proj, &frame);
-        // A selected virtual bone owns the shared manipulator. Do not let the
-        // real-bone renderer cancel its in-progress modifier drag afterwards.
-        let gizmo_owns = if self.graph.selected.is_some() {
-            graph_owns
+        if !self.bone_overlays_visible() {
+            // A clean playback preview needs no bone picking, handles, or gizmo
+            // work. Preserve the selection and restore overlays when paused.
+            self.drag = None;
+            self.pole_orbit = None;
+            self.gizmo.cancel();
+            self.poser.cancel_scale_gizmo();
         } else {
-            self.show_gizmo(ctx, palette, proj, &frame, rig) || graph_owns
-        };
-        let selected_pole = self.control == Control::Pole;
-        if !selected_pole {
-            self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
-        }
-        let limb_list = if self.limb_controls {
-            limbs(rig).into_iter().filter(|l| self.limb_enabled(l.end)).collect()
-        } else {
-            Vec::new()
-        };
-        if (!self.picking || self.links.bone_pick)
-            && (!self.prims.object_handles || self.links.bone_pick)
-            && !ctx.input(|i| i.modifiers.alt)
-        {
-            let chosen = self.selected;
-            let handles = names
-                .iter()
-                .filter(|n| chosen != Some(n.0) && !limb_list.iter().any(|l| l.end == n.0))
-                .chain(
-                    names
-                        .iter()
-                        .filter(|n| chosen != Some(n.0) && limb_list.iter().any(|l| l.end == n.0)),
-                )
-                .chain(names.iter().filter(|n| chosen == Some(n.0)));
-            for &(joint, name) in handles {
-                if !self.visibility.visible(name) {
-                    continue;
-                }
-                let selected = self.selected == Some(joint);
-                let limb = limb_list.iter().find(|l| l.end == joint);
-                let point = if self.links.bone_pick {
-                    frame.joints[joint].w_axis.truncate()
-                } else if selected {
-                    frame.joints[joint].transform_point3(self.contact)
-                } else if limb.is_some() {
-                    let contact = self.goals.iter().find(|g| g.bone == joint).map_or(Vec3::ZERO, |g| g.contact);
-                    frame.joints[joint].transform_point3(contact)
-                } else {
-                    frame.joints[joint].w_axis.truncate()
-                };
-                let Some((anchor, _)) = proj.project(point) else {
-                    continue;
-                };
-                let at = anchor;
-                let half = if limb.is_some() { 12.0 } else { 6.0 };
-                let response = egui::Area::new(egui::Id::unique(("ik-joint", joint)))
-                    .fixed_pos(at - egui::vec2(half, half))
-                    .order(egui::Order::Background)
-                    .movable(false)
-                    .interactable(!gizmo_owns && !self.clip.waiting_source())
-                    .show(ctx, |ui| {
-                        let sense = if self.links.bone_pick {
-                            Sense::click()
-                        } else if gizmo_owns || self.clip.waiting_source() {
-                            Sense::hover()
-                        } else {
-                            Sense::click_and_drag()
-                        };
-                        let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(half * 2.0), sense);
-                        if let Some(limb) = limb {
-                            ui.painter().circle_stroke(rect.center(), 10.0, Stroke::new(3.0, palette.teal));
-                            ui.painter().text(
-                                rect.center() + egui::vec2(11.0, -10.0),
-                                egui::Align2::LEFT_BOTTOM,
-                                aurora_i18n::text(limb.label),
-                                egui::FontId::proportional(12.0),
-                                palette.teal,
-                            );
-                        }
-                        ui.painter().circle_filled(
-                            rect.center(),
-                            if selected { 4.5 } else { 2.5 },
-                            if selected { palette.teal } else { palette.ink },
-                        );
-                        response
-                    })
-                    .inner;
-                if self.links.bone_pick && response.clicked() {
-                    self.picked_bone(
-                        world,
-                        &frame,
-                        crate::world::rig_graph::Target::Bone {
-                            avatar: Uuid::nil(),
-                            bone: name.to_owned(),
-                        },
-                    );
-                    response.on_hover_text(name);
-                    continue;
-                }
-                if response.clicked() || response.drag_started() {
-                    self.select(joint, rig, &frame);
-                    if self.mode == Mode::Ik
-                        && self.pole.is_none()
-                        && let Some(limb) = limb
-                    {
-                        self.pole = Some(limb.pole(&frame));
-                    }
-                }
-                if self.point_drag_enabled(ctx.input(|i| i.modifiers))
-                    && response.dragged()
-                    && let Some(pointer) = response.interact_pointer_pos()
-                {
-                    let rotate = self.active_tool(ctx.input(|i| i.modifiers)) == Tool::Rotate;
-                    let changed_mode = self.drag.is_some_and(|drag| matches!(drag, Drag::Rotate { .. }) != rotate);
-                    if self.drag.is_none() || changed_mode {
-                        let origin = if response.drag_started() {
-                            ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer)
-                        } else {
-                            pointer
-                        };
-                        self.start_drag(proj, &frame, origin, rotate);
-                    }
-                    self.drag_to(proj, &frame, rig, pointer);
-                }
-                if response.drag_stopped() {
-                    self.drag = None;
-                }
-                response.on_hover_text(name);
+            // World overlays stay in Background, like the build gizmos. Middle
+            // joint areas can rise above a floater after being clicked.
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("ik-skeleton")));
+            let segments = self.skeleton_segments(world, proj, &frame);
+            self.draw_segments(&painter, palette, &segments);
+            if let Some(bone) = self.selected
+                && self.visibility.visible(&rig.canonical_names[bone])
+                && let Some((point, _)) = proj.project(frame.joints[bone].transform_point3(self.contact))
+            {
+                painter.circle_stroke(point, 7.0, Stroke::new(2.0, palette.teal));
             }
+            let graph_owns = !self.clip.active && self.graph_overlay(ctx, palette, world, proj, &frame);
+            // A selected virtual bone owns the shared manipulator. Do not let the
+            // real-bone renderer cancel its in-progress modifier drag afterwards.
+            let gizmo_owns = if self.graph.selected.is_some() {
+                graph_owns
+            } else {
+                self.show_gizmo(ctx, palette, proj, &frame, rig) || graph_owns
+            };
+            self.manipulator_hovered = gizmo_owns;
+            let selected_pole = self.control == Control::Pole;
+            if !selected_pole {
+                self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
+            }
+            let limb_list = if self.limb_controls {
+                limbs(rig).into_iter().filter(|l| self.limb_enabled(l.end)).collect()
+            } else {
+                Vec::new()
+            };
+            if (!self.picking || self.links.bone_pick)
+                && (!self.prims.object_handles || self.links.bone_pick)
+                && !ctx.input(|i| i.modifiers.alt)
+            {
+                let chosen = self.selected;
+                let handles = names
+                    .iter()
+                    .filter(|n| chosen != Some(n.0) && !limb_list.iter().any(|l| l.end == n.0))
+                    .chain(
+                        names
+                            .iter()
+                            .filter(|n| chosen != Some(n.0) && limb_list.iter().any(|l| l.end == n.0)),
+                    )
+                    .chain(names.iter().filter(|n| chosen == Some(n.0)));
+                for &(joint, name) in handles {
+                    if !self.visibility.visible(name) {
+                        continue;
+                    }
+                    let selected = self.selected == Some(joint);
+                    let limb = limb_list.iter().find(|l| l.end == joint);
+                    let point = if self.links.bone_pick {
+                        frame.joints[joint].w_axis.truncate()
+                    } else if selected {
+                        frame.joints[joint].transform_point3(self.contact)
+                    } else if limb.is_some() {
+                        let contact = self.goals.iter().find(|g| g.bone == joint).map_or(Vec3::ZERO, |g| g.contact);
+                        frame.joints[joint].transform_point3(contact)
+                    } else {
+                        frame.joints[joint].w_axis.truncate()
+                    };
+                    let Some((anchor, _)) = proj.project(point) else {
+                        continue;
+                    };
+                    let at = anchor;
+                    let half = if limb.is_some() { 12.0 } else { 6.0 };
+                    let response = egui::Area::new(egui::Id::unique(("ik-joint", joint)))
+                        .fixed_pos(at - egui::vec2(half, half))
+                        .order(egui::Order::Background)
+                        .movable(false)
+                        .interactable(!gizmo_owns && !self.clip.waiting_source())
+                        .show(ctx, |ui| {
+                            let sense = if self.links.bone_pick {
+                                Sense::click()
+                            } else if gizmo_owns || self.clip.waiting_source() {
+                                Sense::hover()
+                            } else {
+                                Sense::click_and_drag()
+                            };
+                            let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(half * 2.0), sense);
+                            if let Some(limb) = limb {
+                                ui.painter().circle_stroke(rect.center(), 10.0, Stroke::new(3.0, palette.teal));
+                                ui.painter().text(
+                                    rect.center() + egui::vec2(11.0, -10.0),
+                                    egui::Align2::LEFT_BOTTOM,
+                                    aurora_i18n::text(limb.label),
+                                    egui::FontId::proportional(12.0),
+                                    palette.teal,
+                                );
+                            }
+                            ui.painter().circle_filled(
+                                rect.center(),
+                                if selected { 4.5 } else { 2.5 },
+                                if selected { palette.teal } else { palette.ink },
+                            );
+                            response
+                        })
+                        .inner;
+                    if self.links.bone_pick && response.clicked() {
+                        self.picked_bone(
+                            world,
+                            &frame,
+                            crate::world::rig_graph::Target::Bone {
+                                avatar: Uuid::nil(),
+                                bone: name.to_owned(),
+                            },
+                        );
+                        response.on_hover_text(name);
+                        continue;
+                    }
+                    if response.clicked() || response.drag_started() {
+                        self.select(joint, rig, &frame);
+                        if self.mode == Mode::Ik
+                            && self.pole.is_none()
+                            && let Some(limb) = limb
+                        {
+                            self.pole = Some(limb.pole(&frame));
+                        }
+                    }
+                    if self.point_drag_enabled(ctx.input(|i| i.modifiers))
+                        && response.dragged()
+                        && let Some(pointer) = response.interact_pointer_pos()
+                    {
+                        let rotate = self.active_tool(ctx.input(|i| i.modifiers)) == Tool::Rotate;
+                        let changed_mode = self.drag.is_some_and(|drag| matches!(drag, Drag::Rotate { .. }) != rotate);
+                        if self.drag.is_none() || changed_mode {
+                            let origin = if response.drag_started() {
+                                ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer)
+                            } else {
+                                pointer
+                            };
+                            self.start_drag(proj, &frame, origin, rotate, ctx.input(|i| i.modifiers.shift));
+                        }
+                        self.drag_to(proj, &frame, rig, pointer);
+                    }
+                    if response.drag_stopped() {
+                        self.drag = None;
+                    }
+                    response.on_hover_text(name);
+                }
+            }
+            if selected_pole {
+                self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
+            }
+            self.pick_segment(ctx, palette, world, &frame, &segments, gizmo_owns);
         }
-        if selected_pole {
-            self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
-        }
-        self.pick_segment(ctx, palette, world, &frame, &segments, gizmo_owns);
         let mut open = self.open;
         let mut floater = Floater::new(
             "ik-edit",

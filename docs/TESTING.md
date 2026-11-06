@@ -3467,7 +3467,11 @@ That ignored test creates and removes its own isolated profile.
   priority/track switches, `clip-settings` shows native timing, and `clip-crop`
   trims to 15–45. `clip-import` stages native bytes in the ordinary inspector
   without uploading. `clip-release` closes at 720 (capture 800 for restoration).
-  See [ANIMATION_CREATION.md](ANIMATION_CREATION.md).
+  Lower Poser settings' **Sensitivity** and drag a move axis, rotation ring,
+  scale axis and uniform scale handle: each should move proportionally less;
+  at the default 0.5, transforms retain their existing response. Close and
+  reopen Poser settings to confirm the chosen value persists. See
+  [ANIMATION_CREATION.md](ANIMATION_CREATION.md).
   `graph` opens a parented procedural virtual control; the virtual list pairs
   each name with its parent. `graph-empty` opens the same tab without virtual
   controls; Add control must directly follow the tabs, with no instruction text.
@@ -5082,6 +5086,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
+| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -8392,6 +8397,171 @@ hand would (log: `demo physics edit: sliders at the lively layer`); the
 `demo physics: frame …` offsets of `own` go from zero to a bounce while those
 of `other` keep bouncing. Save stores the asset and applies it as the
 appearance, as a simulator bake would.
+
+**Avatar Studio.** `AURORA_DEMO_AVATAR_STUDIO=1` opens the studio at frame 640.
+Capture after frame 850. Inspect the circular podium, neutrally lit avatar,
+surrounding water, stars and animated aurora in the login screen's colours.
+Entry and exit fade to black before switching the scene, then uncover it:
+120 ms out, a covered switch, 180 ms in. The entering avatar initially has
+fullbright white radiance, preserving alpha/cutouts, holds white through
+the fade plus 80 ms, then blends linearly into its normal appearance over
+850 ms. A single small burst of sparks drifts away and fades within 1.2 s.
+`white` and `reveal` hold the visual effect at 0.22 and 0.65 seconds for
+captures at frame 850; the actual scene transition still runs normally.
+`cycle` also leaves the studio at frame 960; capture after frame 1050 to
+check the restored world. Reduced motion skips white/particles, while the
+short black fade remains; a particle budget of zero also suppresses sparks.
+Toggle quickly during either fade, press Escape during entry, and repeat
+at 30/120 FPS: no uncovered camera cut, stuck black frame or repeated burst.
+Avatar and attachment animations must continue, and HUD textures must retain
+their normal colours throughout the reveal. No worn material is modified.
+The controls overlay uses the top bars' glass island surface and 36-point height,
+with smaller mouse diagrams, inline captions and subtle dividers. Pose and
+Lighting dropdowns precede Reset/Leave studio on the right. The
+wheel diagram also has scroll arrows. Hover each hint for the full instruction.
+Inspect English, French and Japanese: captions should align, remain readable
+at ordinary UI scale, and avoid the avatar's head.
+Pose defaults to AO / In-world. T-Pose uses the shaped rest skeleton; A-Pose
+lowers both straight arms 45 degrees. `t-pose` and `a-pose` show those states;
+`pose-cycle` selects T until frame 800, A until frame 960, then returns to the
+current animation. Its clock, signals and worn attachments must keep working.
+Both presets normalize the displayed feet to the fixed podium, including mesh
+pelvis offsets. `grounding` puts the entry floor 1.25 m lower before selecting
+A-Pose: the avatar must still stand on the podium. The camera and podium remain
+fixed while switching poses. The bar keeps 10-point side padding, the top bars'
+vertical inset, and an optically centred title.
+`hover-height` raises only the displayed avatar 0.35 m above the fixed podium;
+use the toolbar's Hover control to adjust or reset the offset. This does not
+change animation keys or the avatar's world transform.
+`animation-editor-hover` opens the looping wave editor at frame 800 with the
+same 0.35 m display-only lift for combined UI testing.
+`hover-menu`, `pose-menu` and `lighting-menu` open those menus at frame 800 for
+captures. The Hover panel should stay compact around its wrapped hint, slider
+and Reset button; it must not grow to fill the available screen height.
+`animation-editor` opens the native clip editor with a looping right-arm wave
+sampled from the current rig. The seeded preview is five seconds; a new editor
+project starts at 30 seconds and can be extended to the 60-second Second Life
+animation limit at every supported FPS; changing FPS preserves elapsed time.
+  `animation-jump` opens the Pose tab at the mPelvis track's jump apex with the
+  timeline window closed so the Root height slider is visible. Check the slider,
+  then reopen **Timeline** from the Studio toolbar and play the takeoff/apex/
+  landing keys to confirm the entire avatar rises and returns smoothly.
+Before opening it, set the Poser to Scale. In animation mode the Pose controls
+should offer rotation and position only; return to posing and confirm Scale is
+selected again.
+Use the timeline zoom buttons to inspect adjacent keys, pan to later frames,
+and Fit to restore the complete clip range; the vertical playhead should cross
+all tracks and follow playback. Hover a key marker to check its highlight,
+frame tooltip and grab cursor; drag it and confirm the cursor changes to
+grabbing and the preview marker follows it.
+Resize the timeline to a narrow width and short height; scroll over its body to
+reach every control and bone track, including when the toolbar wraps. Change
+the auto-key Step from 0.5 s to 1.5 s, apply it to existing keys, and confirm
+the key times spread by the same 3× ratio, the timeline grows as needed, and
+Undo restores the previous timing. Also try a step that would exceed 60 seconds
+or collapse keys at the current FPS; the retime should be rejected without
+partially changing the animation. Resize the viewer through narrow and wide
+widths and try 1.25×–1.5× UI zoom; the bottom timeline must stay inside the
+window, with its controls reachable and track rows usable.
+Scrub and pause it in the bottom timeline,
+inspect the keyed shoulder, elbow, wrist and five Bento finger-root tracks,
+capture a key and drag a single marker; only that bone track should move while
+sibling tracks stay put,
+and the playhead should track the pointer during the drag. Copy/paste a pose,
+delete a selected bone key and whole-frame keys separately, toggle auto-key and
+pose a bone to confirm one key is
+recorded on drag release, and try undo/redo, FPS and every interpolation mode.
+Try Space to play/pause, Home to return to the start, Ctrl+Z/Y to undo/redo,
+Ctrl+C/V to copy/paste a pose, Delete for the selected bone key and Ctrl+S to
+save the project. Focus the animation-name or numeric fields first; their text
+editing must receive those keys without triggering timeline actions.
+Select Curve on a track, drag both Bézier handles and change their numeric
+values; scrubbing should reflect the easing immediately, and the curve should
+survive save/reopen. Older project files without curve values should load with
+the default straight curve.
+Build a short looping walk with a pelvis bob and opposing hip swings, then
+export and re-import it to compare its native playback with the editor preview.
+Add a head turn and a Bento finger track to the same project and verify both
+remain present after export/import.
+Open compatible `.anim` and `.bvh` files as editable tracks (BVH import uses
+the avatar's native skeleton and rejects unmapped joints instead of dropping
+them; zero-duration ANIM poses should open as a one-frame clip), then save and
+reopen an `.auroraanim` project to verify editor settings and keys survive.
+Prepare an upload and confirm it opens Aurora's normal upload inspector for
+explicit review. Dense project round-trip coverage includes a 60-second clip
+with more than 16 MiB of key data. In the Studio toolbar, choose Reset, cancel the
+confirmation once, then confirm it and verify the avatar returns to its
+default pose; use Undo to
+restore the previous keys. Close the editor and verify that Studio returns to its previous pose;
+leave Studio to confirm the preview is released. This demo does not upload or
+contact a grid.
+Lighting defaults to Studio. `environment` instead uses the current sky,
+sun/moon, ambient and water settings, without the studio lights or aurora.
+Combine with `AURORA_DEMO_SKY=midday` to inspect a region environment. On the
+grid, the human checks that local overrides and Shared environment are both
+respected, including later changes while Studio stays open. The selector must
+not alter the saved environment, and returning to Studio restores its backdrop.
+Studio framing has no avatar-height focus bounds, pan radius or framing zoom
+limits. Drag above/below the avatar, pan several body lengths, and zoom beyond
+the initial distance or in closer than 35 cm. Reset must restore the composition
+while retaining the selected pose and lighting. Only finite camera values and
+a numerical eye/target separation are required.
+Opening Photo mode / the viewfinder hands its camera the current Studio view.
+Its autofocus clicks, right-drag/Alt framing, wheel lens/exposure controls,
+camera pad, depth of field and shutter take priority. The Studio guide hides
+while the viewfinder shows; the ocean/stage, pose and lighting choices remain.
+Closing Photo mode restores Studio's controls and the saved world camera/aim;
+the temporary photo camera is not sent to the simulator. Combine `grounding`
+with `AURORA_DEMO_SNAPSHOT=viewfinder-focus` and
+`AURORA_DEMO_SNAPSHOT_FRAME=1000`, then capture after frame 1100: the AF face
+marker should follow the grounded preset head. The human checks native photo
+capture, tilt, lens/aperture/exposure changes, free-camera controls, Photo-mode
+exit, and subsequent Studio framing/Reset with their live avatar.
+The water should reflect the sky; distant ridgelines stay near the horizon.
+`pedestal` lowers the focus to the feet and zooms in one wheel step for a
+repeatable close-up; capture at frame 850. Rounded upper/lower shoulders should catch
+the studio lights with a satin-metal finish, and the underside must be closed.
+The pedestal also participates in planar water reflection/refraction captures;
+its near wall must occlude reflections of the soles rather than showing the
+avatar through the plinth. Check GPU culling and `AURORA_CPU_CULL=1` at
+high and low focal heights, and compare planar reflections enabled/disabled.
+Region terrain must appear neither directly nor through water reflections or
+refraction, including classic and PBR terrain outside the main camera view.
+Right-click the avatar and its attachments: the normal menus, including skeleton
+reset and attachment edit/detach, must remain available. Small pointer jitter
+under 10 UI points must neither move focus nor suppress the menu. Right-drag
+beyond that threshold must adjust focus and never open a menu on release,
+including after returning to the starting point. Release a drag over a window:
+it stops without opening a menu. Select Edit on an attachment, then select and
+drag its build handles: editing must own the left button without rotating Studio.
+Close the editor: left-drag orbits again. Photo mode keeps its native controls.
+For offline menu captures, keep the viewer focused (focus loss cancels Studio
+gestures) and combine `AURORA_DEMO_AVATAR_STUDIO=a-pose` with
+`AURORA_DEMO_CLICKS=1000,800,300,menu` at 1600 × 1000. A mesh-head shape
+fixture (`AURORA_DEMO_SHAPE=mesh-head`) also exercises the attachment target.
+Reduced motion holds the aurora still. Left-drag the exposed view horizontally to turn. Right-drag up/down
+to move the focus vertically through the avatar's centre; horizontal motion
+must not move that height control sideways. Hold the middle mouse button and
+drag horizontally/vertically to pan in the current viewing plane: eye and
+focus translate together, without rotation or zoom. Orbit after panning;
+the avatar should retain its screen position. Release over an editor/HUD
+and move the pointer again: panning must stop. Starting over UI/HUDs must
+leave their controls usable; losing window focus must cancel the drag.
+Reset restores avatar-centred framing and clears pan. Wheel zoom must ease in/out about that
+focus even with the pointer over the sky or water, and must not change its height.
+Compare 30 and 120 FPS for the same smooth response. Reset restores full-body framing; Leave
+studio, Escape and the toolbar toggle restore the ordinary world. Add Avatar
+Studio through Toolbar buttons and verify its active indication and removal
+from any of the three bars. Wolf menu > Build > Avatar Studio appears before
+Poser and IK Edit, toggles the same mode, and is checked while open. Use
+`AURORA_DEMO_MENU_SEARCH=Avatar Studio` to capture its Build path without
+entering the studio. Combine with `AURORA_DEMO_SHAPE=body|mesh-head`
+and `AURORA_DEMO_APPEARANCE=worn`: the windows remain usable, edits appear
+on the studio avatar and Cancel restores the draft. Compare the ordinary
+scene before and after leaving, including SMAA and MSAA. Human grid checks:
+a worn mesh body/head, rigid and flexible attachments, creator HUD clicks,
+shape edits and outfit changes. The stage is local; no teleport, rezzed object,
+agent relocation or inspection-driven heading change should occur.
 
 **`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head|t-pose`**
 opens the editor with a synthetic worn shape, without reading a real inventory or
