@@ -812,6 +812,21 @@ fn the_agent_holds_the_owner_mask_of_its_items_and_the_everyone_mask_of_others()
 }
 
 #[test]
+fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
+    let (agent, friend) = (id(9921), id(9922));
+    let item = |owner_id, group_owned| aurora_net::build::TaskItem {
+        owner_id,
+        group_owned,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(task_agent_mask(&item(agent, false), agent), FULL, "its own object's contents");
+    assert_eq!(task_agent_mask(&item(friend, false), agent), COPY, "an object it may only modify");
+    assert_eq!(task_agent_mask(&item(agent, true), agent), COPY, "group owned");
+}
+
+#[test]
 fn a_library_item_shows_its_asset_uuid_by_what_it_allows_everyone() {
     let (agent, library, asset) = (id(9911), id(9912), id(9913));
     let mut inv = Inventory {

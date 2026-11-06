@@ -68,7 +68,7 @@ fn lacks_rights(item: &InvItem, agent: Uuid, required: u32) -> bool {
 /// library texture, or one whose owner may copy and transfer it.
 fn copy_and_transfer(inv: &Inventory, item: &aurora_net::inventory::InvItem) -> bool {
     let both = actions::COPY | actions::TRANSFER;
-    actions::library(inv, item.id) || item.owner_mask & both == both
+    actions::library(inv, item.id) || actions::held(inv, item) & both == both
 }
 
 fn can_preview(inv: &Inventory, id: Uuid) -> bool {

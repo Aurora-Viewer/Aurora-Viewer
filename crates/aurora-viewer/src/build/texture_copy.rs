@@ -120,7 +120,7 @@ pub fn availability(inv: &Inventory, agent: Uuid, asset: Uuid, creator: bool, he
         && contents_drop::copyable(it, agent)
     {
         out.item = Some(it.id);
-        out.full = it.owner_mask & rules::FULL == rules::FULL;
+        out.full = rules::agent_mask(it, agent) & rules::FULL == rules::FULL;
     }
     out
 }
@@ -146,7 +146,7 @@ pub fn held(tool: &BuildTool, world: &World, idx: usize, asset: Uuid) -> Option<
     inv.items
         .iter()
         .find(|i| i.asset_id == asset)
-        .map(|i| i.owner_mask & rules::FULL == rules::FULL)
+        .map(|i| rules::task_agent_mask(i, world.agent_id) & rules::FULL == rules::FULL)
 }
 
 /// LLMaterialEditor::canClipboardObjectsMaterial for the faces `faces` of
@@ -216,7 +216,7 @@ impl BuildTool {
                 inv.items
                     .iter()
                     .find(|i| i.asset_id == material)
-                    .is_none_or(|i| i.owner_mask & rules::MODIFY != 0)
+                    .is_none_or(|i| rules::task_agent_mask(i, world.agent_id) & rules::MODIFY != 0)
             })
     }
 }
