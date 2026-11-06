@@ -49,6 +49,7 @@ mod buy_currency;
 mod buy_land;
 mod camera_presets;
 mod chat_commands;
+mod chat_import;
 mod click_pick;
 mod color_picker;
 mod contents_copy;
@@ -60,6 +61,7 @@ mod derender;
 mod describe;
 mod dev_toolbox;
 mod folders;
+mod hover_pick;
 mod texture_picker;
 use folders::chat_log_root;
 mod contents_drop_demo;
@@ -319,6 +321,52 @@ struct LogoData {
     icon: Option<(Vec<u8>, u32, u32)>,
 }
 
+fn ui_copy_needs_refine(have: [usize; 2], target_w: u32, target_h: u32) -> bool {
+    have[0] < target_w as usize || have[1] < target_h as usize
+}
+
+/// (not bounded by the target: an odd-sized texture's upload copy can be
+/// larger than its halved UI size, and is still the finer one)
+fn ui_copy_can_improve(have: [usize; 2], next: [usize; 2], target_w: u32, target_h: u32) -> bool {
+    ui_copy_needs_refine(have, target_w, target_h) && (next[0] > have[0] || next[1] > have[1])
+}
+
+/// How long an interface image is followed without any of its handles
+/// getting finer (a texture that never does is given up after that).
+const UI_FOLLOWED: Duration = Duration::from_secs(300);
+
+/// An interface image followed toward its UI size: the sizes of its
+/// handles (`ui_images`, `avatar_pic_images`), and when it is given up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct UiFollow {
+    sizes: [Option<[usize; 2]>; 2],
+    until: Instant,
+}
+
+/// The follow of an image after a look at its handles: its deadline moves
+/// on when one of them grew (or appeared), None once it has passed.
+fn ui_follow_step(follow: Option<UiFollow>, sizes: [Option<[usize; 2]>; 2], now: Instant) -> Option<UiFollow> {
+    let grew = follow.is_none_or(|f| {
+        f.sizes.iter().zip(&sizes).any(|(before, after)| match (before, after) {
+            (Some(b), Some(a)) => a[0] > b[0] || a[1] > b[1],
+            (None, Some(_)) => true,
+            _ => false,
+        })
+    });
+    if grew {
+        return Some(UiFollow {
+            sizes,
+            until: now + UI_FOLLOWED,
+        });
+    }
+    let until = follow?.until;
+    (now < until).then_some(UiFollow { sizes, until })
+}
+
+fn login_portrait_is_full(width: u32, height: u32, target_w: u32, target_h: u32) -> bool {
+    width >= target_w && height >= target_h
+}
+
 pub struct App {
     settings: Settings,
     disk_cache: crate::cache::DiskCache,
@@ -471,6 +519,7 @@ pub struct App {
     world_mouse_walk_pending: bool,
     /// Clicks that wait for the depth under them, and what follows them.
     clicks: click_pick::ClickWait,
+    hover_drawn: hover_pick::HoverDrawn,
     script_clicks: script_clicks::ScriptClicks,
     /// Displacement while the right button is held (click vs orbit drag).
     right_gesture: RightGesture,
@@ -870,10 +919,9 @@ pub struct App {
     avatar_pic_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// Our login portrait (texture and saved file): agent, picture shown.
     login_portrait_source: Option<(uuid::Uuid, uuid::Uuid)>,
-    /// Interface images (pictures included) first shown from the coarse
-    /// levels of a progressive download, by texture: width held, since
-    /// when. A finer copy replaces their pixels in place.
-    ui_coarse: std::collections::HashMap<uuid::Uuid, (u32, Instant)>,
+    /// Interface images (pictures included) whose individual handles still
+    /// need a finer copy from a progressive download, until given up.
+    ui_coarse: std::collections::HashMap<uuid::Uuid, UiFollow>,
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
@@ -1007,6 +1055,7 @@ pub struct App {
     neighbours_refused: bool,
     /// The cache and transcript folders being chosen (app/folders.rs).
     folders: folders::Folders,
+    chat_import: chat_import::ChatImport,
     /// The settings backup being written or read (app/settings_backup.rs).
     settings_backup: settings_backup::Job,
     /// The stream list being exported or imported (app/stream_list.rs).
@@ -1291,7 +1340,9 @@ impl App {
         // (not the demo's: its folder is shared by the demo runs of every
         // build, and holds nothing from the grid)
         if std::env::var_os("AURORA_DEMO").is_none() {
+            aurora_net::objcache::name_with(crate::cache::key().names());
             crate::cache::remove_unsealed(crate::settings::cache_dir());
+            crate::cache::rename_to_keyed_names(crate::settings::asset_cache_dir());
         }
         let cache = crate::settings::asset_cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);
@@ -1420,6 +1471,7 @@ impl App {
             favorites_access_applied: None,
             favorite_images: Default::default(),
             history_ui: Default::default(),
+            chat_import: Default::default(),
             perf: PerfData::default(),
             monitor: ui::monitor::Monitor::default(),
             monitor_feed: monitor::MonitorFeed::default(),
@@ -1450,6 +1502,7 @@ impl App {
             left_down: false,
             world_mouse_walk_pending: false,
             clicks: Default::default(),
+            hover_drawn: Default::default(),
             script_clicks: Default::default(),
             right_gesture: RightGesture::default(),
             context_menu: None,
@@ -2688,6 +2741,9 @@ impl App {
             log_nearby: s.log_nearby,
             show_history: s.log_show_history,
             dated_names: s.log_dated_names,
+            // the demo never reads the PC's real Legacy Viewer folders: its
+            // import scenario starts its own import on its own files
+            import_at_login: s.log_import_at_login && !self.demo,
         };
         // the demo keeps no transcripts unless its scenario asks for them:
         // a run must not change what the next one shows
@@ -2744,7 +2800,17 @@ impl App {
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
-            } else if mode == "mfa-refused" || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty()) {
+            } else if mode == "mfa-refused"
+                || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
+                || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
+            {
+                if mode == "terms" {
+                    log::info!(
+                        "demo login: agree_to_tos {}, read_critical {}",
+                        self.login_form.agree_tos,
+                        self.login_form.read_critical
+                    );
+                }
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
                 self.demo_mfa_challenge = Some(std::time::Instant::now() + std::time::Duration::from_millis(1200));
@@ -2818,7 +2884,7 @@ impl App {
             password,
             start,
             agree_to_tos: self.login_form.agree_tos,
-            read_critical: self.login_form.agree_tos,
+            read_critical: self.login_form.read_critical,
             mfa_token: self.login_form.mfa_token.trim().to_owned(),
             mfa_hash: self
                 .login_form
@@ -2829,6 +2895,7 @@ impl App {
             mac,
             id0,
             last_exec: self.last_exec(),
+            platform: crate::system_info::login_platform(),
         };
         self.login_form.busy = true;
         self.login_form.error = None;
@@ -2957,6 +3024,7 @@ impl App {
         self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
+        self.chat_import_closed();
         self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
@@ -3538,6 +3606,7 @@ impl App {
                 error,
                 mfa_required,
                 tos_required,
+                critical_required,
                 bad_credentials,
                 previous_session,
             } => {
@@ -3575,6 +3644,8 @@ impl App {
                     self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
+                } else if critical_required {
+                    self.login_form.critical_message = Some(error);
                 } else {
                     self.login_form.error = Some(error);
                 }
@@ -3721,6 +3792,7 @@ impl App {
                 self.login_form.password.clear();
                 self.login_form.mfa_token.clear();
                 self.login_form.agree_tos = false;
+                self.login_form.read_critical = false;
                 self.settings.mfa_hash.clear();
                 if let Some(path) = self.name_cache_path() {
                     self.world.social.avatar_names.load(&path);
@@ -4490,9 +4562,8 @@ impl App {
         }
     }
 
-    /// Is a world point on (or very near) our own avatar?
-    /// Where a ray enters and leaves our avatar's box (the size the
-    /// simulator gives the avatar object, a little wider for the arms), and
+    /// Diagnostic depth-only picking: where a ray enters and leaves our
+    /// avatar's box (the simulator's object size, widened for the arms), and
     /// where along it the ray passes within 0.2 m of the body's vertical axis
     /// (the click finds the avatar before its body and clothes are drawn).
     fn own_avatar_ray(&self, origin: Vec3, dir: Vec3) -> Option<(f32, f32, Option<f32>)> {
@@ -4634,10 +4705,16 @@ impl App {
             .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
             .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
-        // on our avatar: a surface inside its box under the cursor (nothing
-        // in front of it); or, when the ray goes through the box without
-        // touching anything (body not drawn yet), close to the body's axis
+        // Only our displayed body takes the press, not empty space inside
+        // its bounding box. Keep the old approximation solely for the
+        // diagnostic synchronous read, which has no drawn-face identity.
         let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|(o, d)| {
+            if !picked.depth_only() {
+                // The depth is older than the posed surface. Only a surface
+                // actually found by the CPU can occlude that newer answer.
+                let found = hit.filter(|p| Some(*p) != picked.depth);
+                return self.scene.own_avatar_surface(&self.world, &picked.drawn, (o, d), found);
+            }
             let (t0, t1, axis) = self.own_avatar_ray(o, d)?;
             match hit.map(|p| (p - o).dot(d)) {
                 Some(t) if t < t0 - 0.05 => None,
@@ -6480,7 +6557,9 @@ impl App {
                         .get(&id)
                         .filter(|item| {
                             item.asset_type == 7
-                                && item.owner_mask & crate::world::inventory::actions::COPY != 0
+                                && crate::world::inventory::actions::held(&self.world.inventory, item)
+                                    & crate::world::inventory::actions::COPY
+                                    != 0
                                 && !self.world.inventory.in_folder_type(id, 14)
                         })
                         .cloned()
@@ -7950,7 +8029,7 @@ impl App {
                 }
                 let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
                 self.ui_images.insert(image, t);
-                self.note_ui_copy(image, w);
+                self.note_ui_copy(image);
             }
         }
         self.update_inventory_hover_images(renderer);
@@ -7966,7 +8045,7 @@ impl App {
             .egui_ctx
             .load_texture(format!("banner-{image}"), banner, egui::TextureOptions::LINEAR);
         self.profile_ui.banners.insert(image, banner);
-        self.note_ui_copy(image, w);
+        self.note_ui_copy(image);
         self.save_login_portrait(image, w, h, rgba);
     }
 
@@ -8006,7 +8085,9 @@ impl App {
         }
         // a picture shown before (ours earlier, someone else's) has no
         // pixels left for the file: decoded again
-        if self.login_portrait_source != Some((agent, image)) {
+        // (still coarse: its copies go to the refine loop, which saves it
+        // once full)
+        if self.login_portrait_source != Some((agent, image)) && !self.ui_coarse.contains_key(&image) {
             self.scene.textures.want_ui_image(renderer, image, &self.scene.jobs);
             if let Some((w, h, rgba)) = self.scene.textures.take_ui_image(&image)
                 && rgba.len() == (w * h * 4) as usize
@@ -8020,6 +8101,12 @@ impl App {
     fn save_login_portrait(&mut self, image: uuid::Uuid, w: u32, h: u32, rgba: Vec<u8>) {
         let agent = self.world.agent_id;
         if self.demo || !self.world.profiles.get(&agent).is_some_and(|p| p.sl_image == image) {
+            return;
+        }
+        let Some((target_w, target_h)) = self.scene.textures.ui_image_size(&image) else {
+            return;
+        };
+        if !login_portrait_is_full(w, h, target_w, target_h) {
             return;
         }
         self.login_portrait_source = Some((agent, image));
@@ -8039,12 +8126,28 @@ impl App {
         });
     }
 
-    /// An interface image taken `width` px wide: followed while coarser than
-    /// its texture's UI size (the first levels of a progressive download).
-    fn note_ui_copy(&mut self, image: uuid::Uuid, width: u32) {
-        if self.scene.textures.ui_image_width(&image).is_some_and(|full| width < full) {
-            let since = self.ui_coarse.get(&image).map_or_else(Instant::now, |c| c.1);
-            self.ui_coarse.insert(image, (width, since));
+    /// Track an image while either consumer's own copy remains coarse.
+    fn note_ui_copy(&mut self, image: uuid::Uuid) {
+        let Some((target_w, target_h)) = self.scene.textures.ui_image_size(&image) else {
+            return;
+        };
+        let coarse = self
+            .ui_images
+            .get(&image)
+            .is_some_and(|t| ui_copy_needs_refine(t.size(), target_w, target_h))
+            || self
+                .avatar_pic_images
+                .get(&image)
+                .is_some_and(|t| ui_copy_needs_refine(t.size(), target_w, target_h));
+        if coarse {
+            let sizes = [
+                self.ui_images.get(&image).map(egui::TextureHandle::size),
+                self.avatar_pic_images.get(&image).map(egui::TextureHandle::size),
+            ];
+            match ui_follow_step(self.ui_coarse.get(&image).copied(), sizes, Instant::now()) {
+                Some(follow) => self.ui_coarse.insert(image, follow),
+                None => self.ui_coarse.remove(&image),
+            };
         } else {
             self.ui_coarse.remove(&image);
         }
@@ -8056,37 +8159,94 @@ impl App {
     /// replaces the pixels of the egui texture in place (every clone of the
     /// handle follows: name plates, lists, profiles).
     fn refine_ui_copies(&mut self) {
-        // (a texture that never gets finer is given up after that)
-        const FOLLOWED: Duration = Duration::from_secs(300);
         // (an image dropped meanwhile, a texture refreshed: its next copy is
         // the one its loader takes)
         let (pics, images) = (&self.avatar_pic_images, &self.ui_images);
-        self.ui_coarse.retain(|id, _| pics.contains_key(id) || images.contains_key(id));
-        let coarse: Vec<(uuid::Uuid, u32)> = self.ui_coarse.iter().map(|(id, (w, _))| (*id, *w)).collect();
-        for (image, have) in coarse {
+        // (one that stops getting finer is given up: its level is no longer
+        // held for it, its copy no longer decoded again)
+        let textures = &self.scene.textures;
+        let now = Instant::now();
+        self.ui_coarse.retain(|id, follow| {
+            if !(pics.contains_key(id) || images.contains_key(id)) || textures.is_unavailable(id) {
+                return false;
+            }
+            let sizes = [
+                images.get(id).map(egui::TextureHandle::size),
+                pics.get(id).map(egui::TextureHandle::size),
+            ];
+            match ui_follow_step(Some(*follow), sizes, now) {
+                Some(next) => {
+                    *follow = next;
+                    true
+                }
+                None => false,
+            }
+        });
+        let coarse: Vec<_> = self.ui_coarse.keys().copied().collect();
+        for image in coarse {
+            let Some((target_w, target_h)) = self.scene.textures.ui_image_size(&image) else {
+                self.ui_coarse.remove(&image);
+                continue;
+            };
+            let (pics, images) = (&self.avatar_pic_images, &self.ui_images);
+            let have = images
+                .get(&image)
+                .map(egui::TextureHandle::size)
+                .filter(|size| ui_copy_needs_refine(*size, target_w, target_h))
+                .into_iter()
+                .chain(
+                    pics.get(&image)
+                        .map(egui::TextureHandle::size)
+                        .filter(|size| ui_copy_needs_refine(*size, target_w, target_h)),
+                )
+                .min_by_key(|size| size[0].saturating_mul(size[1]));
+            let Some(have) = have else {
+                self.ui_coarse.remove(&image);
+                continue;
+            };
             match self.scene.textures.take_ui_image(&image) {
-                Some((w, h, rgba)) if w > have && rgba.len() == (w * h * 4) as usize => {
+                Some((w, h, rgba))
+                    if (images
+                        .get(&image)
+                        .is_some_and(|t| ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h))
+                        || pics
+                            .get(&image)
+                            .is_some_and(|t| ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)))
+                        && rgba.len() == (w * h * 4) as usize =>
+                {
                     let ci = || egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
-                    if let Some(t) = self.ui_images.get_mut(&image) {
+                    if let Some(t) = self.ui_images.get_mut(&image)
+                        && ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)
+                    {
                         t.set(ci(), egui::TextureOptions::LINEAR);
                         if let Some(mask) = crate::world::rlva::effects::AlphaMask::from_rgba(w, h, &rgba) {
                             self.ui_image_masks.insert(image, mask);
                         }
                     }
-                    if let Some(t) = self.avatar_pic_images.get_mut(&image) {
+                    let mut picture_updated = false;
+                    if let Some(t) = self.avatar_pic_images.get_mut(&image)
+                        && ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)
+                    {
                         t.set(ci(), egui::TextureOptions::LINEAR);
+                        picture_updated = true;
+                    }
+                    if picture_updated {
                         self.picture_pixels(image, w, h, rgba);
                     } else {
-                        self.note_ui_copy(image, w);
+                        self.note_ui_copy(image);
+                        // (our picture's own handle already full: the file
+                        // from these pixels, follow_login_portrait waiting)
+                        if self.login_portrait_source != Some((self.world.agent_id, image)) {
+                            self.save_login_portrait(image, w, h, rgba);
+                        }
                     }
                 }
-                _ => self.scene.textures.refine_ui_image(image, have, &self.scene.jobs),
+                _ => self
+                    .scene
+                    .textures
+                    .refine_ui_image_size(image, (have[0] as u32, have[1] as u32), &self.scene.jobs),
             }
         }
-        let now = Instant::now();
-        let textures = &self.scene.textures;
-        self.ui_coarse
-            .retain(|id, (_, since)| now.duration_since(*since) < FOLLOWED && !textures.is_unavailable(id));
     }
 
     /// Place profiles and "Places": arrivals saved in the history, landmark
@@ -8227,6 +8387,15 @@ impl App {
         if self.world.home_grid != home {
             self.world.home_grid = home;
         }
+        // the Linden Lab mark is for the Second Life grids' Lindens (the
+        // demo's come by key, `demo::staff`): one flag, no scan
+        crate::world::staff::set_second_life(
+            !self.demo
+                && matches!(
+                    self.settings.grid,
+                    crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta
+                ),
+        );
         crate::slurl::set_grid(crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras()));
         // the region's chat ranges, for every range the interface draws or
         // counts (OpenSim regions may set their own)
@@ -8417,6 +8586,12 @@ impl App {
         self.scene.textures.set_window_state(self.focused, minimized);
         // (a demo or a timed run neither publishes nor reads, instances.rs)
         let timed = self.capture.is_some() || self.frame_profile.enabled();
+        // the busy card's switch, the same in every viewer (instances.rs)
+        let switch = self.busy_pause.follow.frame(
+            &mut self.settings.background_gpu_pause,
+            self.instances.newest_switch(),
+            crate::instances::unix_ms(),
+        );
         self.instances.tick(
             !self.demo && !timed,
             crate::instances::Own {
@@ -8424,6 +8599,7 @@ impl App {
                 active: self.focused && !minimized,
                 luid: self.scene.textures.card_luid(),
             },
+            switch,
         );
         self.scene.textures.set_card_sharing(!self.demo && !timed);
         self.scene.textures.set_peers(&self.instances.peers());
@@ -8677,6 +8853,7 @@ impl App {
             self.world.notify_deliveries(&deliveries);
         }
         self.world.poll_transcripts();
+        self.poll_chat_import();
         self.update_hover_height();
         self.update_avatar_health();
         if self.demo {
@@ -9453,7 +9630,7 @@ impl App {
             );
             self.frame_profile.lap(Lap::Complexity);
             let hud_size = gfx.window.inner_size();
-            self.world.hud_area = self.hud_area();
+            self.world.hud_area = self.hud_area([hud_size.width, hud_size.height]);
             self.world.hud_aspect = match (self.snapshots.capturing, self.world.hud_area) {
                 // the HUD laid out for the photo's proportions
                 (Some(spec), _) => spec.width as f32 / spec.height.max(1) as f32,
@@ -9554,7 +9731,7 @@ impl App {
             }
             // The UI pass retains drag feedback for the next world frame.
             // Merge it before sync/list construction, alongside real selection.
-            if let Some((idx, mask)) = self.library_drag.highlighted {
+            for &(idx, mask) in &self.library_drag.highlighted {
                 *selected_faces.entry(idx).or_default() |= mask;
             }
             self.scene.set_face_selection(&mut self.world, selected_faces);
@@ -9820,9 +9997,10 @@ impl App {
             let since_arrival = self.move_complete_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
             if (self.attachments_logged == 0 && since_arrival >= 40) || (self.attachments_logged == 1 && since_arrival >= 120) {
                 self.attachments_logged += 1;
+                let ids = crate::world::inventory::asset_ids::AssetIds::diagnostics(&self.world);
                 self.scene
-                    .log_attachments(&self.world, self.world.agent_id, &gfx.renderer, &|_| None, None);
-                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer);
+                    .log_attachments(&self.world, self.world.agent_id, &gfx.renderer, &|_| None, &ids, None);
+                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer, &ids);
             }
             self.finish_describe(&gfx.renderer);
             let texture_budget = self
@@ -10212,7 +10390,7 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: if self.library_drag.highlighted.is_some() {
+            selection_pulse: if !self.library_drag.highlighted.is_empty() {
                 self.scene.selection_pulse(Instant::now(), true)
             } else {
                 self.imports
@@ -10613,8 +10791,11 @@ impl App {
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
-                    library_drop = self.texture_library_drag_input(ui.ctx(), &gfx.renderer);
+                    library_drop = self.texture_library_drag_input(ui.ctx(), &mut gfx.renderer);
                 }
+            }
+            if library_drop.is_none() {
+                library_drop = self.no_copy_drop_prompt(ui.ctx());
             }
             // after every window: their text fields have been drawn
             self.text_menu.after(ui.ctx(), &self.palette);
@@ -10696,14 +10877,23 @@ impl App {
             && !ctx.is_pointer_over_egui()
             && !ctx.egui_wants_pointer_input()
         {
-            let hovered = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
+            let hud = self.scene.hover_hud(&self.world, self.cursor_pos);
+            if hud.is_some() {
+                self.hover_drawn.cancel(&mut gfx.renderer);
+            }
+            let hovered = hud.or_else(|| {
                 // Preserve the world hover cache (scene/hover.rs).
                 let ray = gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1);
-                let (point, idx) = self.scene.hover_pick(
+                let depth = gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1);
+                let (point, idx) = self.hover_drawn.pick(
+                    &mut gfx.renderer,
+                    &mut self.scene,
                     &self.world,
+                    self.cursor_pos,
                     ray,
-                    gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
+                    depth,
                     self.settings.draw_distance,
+                    self.clicks.waiting(),
                 );
                 // the same pick gives the look-at its point
                 self.look_hover = point.map(|p| (idx, p));
@@ -10715,7 +10905,10 @@ impl App {
                 }
                 idx
             });
-            if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+            if self.demo
+                && ((self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some())
+                    || (self.frame_count == 699 && std::env::var_os("AURORA_DEMO_WORLD_CLICKS").is_some()))
+            {
                 log::info!(
                     "demo cursor hover: prim={:?}, action={:?}",
                     hovered.and_then(|idx| self.world.objects.get(idx)).map(|o| o.key.local_id),
@@ -10738,6 +10931,8 @@ impl App {
                     full.platform_output.cursor_image = self.cursors.image(action, self.media.parcel_status_playing());
                 }
             }
+        } else {
+            self.hover_drawn.cancel(&mut gfx.renderer);
         }
         self.track_toolbox_hover(&gfx.renderer);
         if self.plate_cursor() {
@@ -11758,7 +11953,7 @@ impl App {
         }
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_HUDS")
-            && matches!(mode.as_str(), "menu" | "edit" | "edit-zoom")
+            && matches!(mode.as_str(), "menu" | "edit" | "edit-zoom" | "edit-no-mod" | "rotate-no-mod")
         {
             let key = crate::world::objects::ObjKey {
                 region: self.world.main_region.unwrap_or_default(),
@@ -11772,11 +11967,18 @@ impl App {
             } else if mode != "menu" {
                 if self.frame_count == 760 {
                     self.on_ctx_action(ui::context::CtxAction::EditAttachment(key));
+                    if mode == "rotate-no-mod" {
+                        self.build.edit_mode = crate::build::EditMode::Rotate;
+                    }
                     self.context_menu = None;
                 } else if self.frame_count == 800
                     && let Some(b) = self.build.bounds(&self.world, Instant::now())
                 {
-                    let handle = b.center + Vec3::Y * self.build.cam.meters_for_pixels(b.center, 45.0);
+                    let handle = if mode == "rotate-no-mod" {
+                        b.center + Vec3::new(0.0, 0.6, 0.8) * self.build.cam.meters_for_pixels(b.center, 100.0)
+                    } else {
+                        b.center + Vec3::Y * self.build.cam.meters_for_pixels(b.center, 45.0)
+                    };
                     if let Some(cursor) = self.build.cam.project_px(handle) {
                         self.cursor_pos = cursor;
                         self.click(click_pick::Click::Build);
@@ -11791,8 +11993,9 @@ impl App {
                     }) && let Some(o) = self.world.objects.get(idx)
                     {
                         log::info!(
-                            "demo HUD edit: local position={:?}, attachment={}",
+                            "demo HUD edit: local position={:?}, rotation={:?}, attachment={}",
                             o.position,
+                            o.rotation,
                             o.attachment_point()
                         );
                     }
@@ -13048,6 +13251,7 @@ impl App {
             LoginAction::ReportBug => self.open_issue_chooser(),
             LoginAction::CopyVersion => self.copy_version(),
             LoginAction::SafeGraphics(choice) => self.safe_graphics_choice(choice),
+            LoginAction::PhotoQualityOff(back_on) => self.photo_quality_off_answer(back_on),
             LoginAction::DismissDriverNotice => {
                 if let Some(notice) = self.login_form.driver_notice.take() {
                     log::info!("graphics driver warning dismissed for {}", notice.key);
@@ -14382,7 +14586,17 @@ impl App {
         }
         if let Some(done) = self.world.chat_log.take_erased() {
             self.options_ui.chat_log_status = match done {
-                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
+                Ok(count) if self.settings.log_import_at_login => {
+                    // what was erased must not come back at the next login
+                    self.settings.log_import_at_login = false;
+                    self.folders.settings_changed = true;
+                    format!(
+                        "{} {}",
+                        aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
+                        aurora_i18n::tr!("ui-options-chat-logs-import-login-off")
+                    )
+                }
+                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count).to_owned(),
                 Err(e) => {
                     log::warn!("conversation transcripts: erasing failed ({e})");
                     aurora_i18n::tr!("ui-options-chat-logs-erase-failed").to_owned()
@@ -14519,8 +14733,18 @@ impl App {
                 log::warn!("cannot open the transcripts folder: {e}");
             }
         }
+        if res.find_legacy_logs {
+            self.chat_import_opened();
+        }
+        if let Some(folders) = res.import_legacy_logs.take() {
+            self.chat_import_start(folders);
+        }
         if res.erase_chat_logs {
-            self.options_ui.chat_log_status.clear();
+            self.options_ui.chat_log_status = if self.world.chat_log.busy() {
+                aurora_i18n::tr!("ui-options-chat-logs-busy").to_owned()
+            } else {
+                String::new()
+            };
             self.world.chat_log.erase();
         }
         if let Some((folder, choice)) = res.folder {
@@ -14655,7 +14879,27 @@ impl App {
                     self.login_form.error = None;
                     self.start_login();
                 }
-                if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
+                if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the Terms of Service first (reason "tos"), then a
+                    // critical message (reason "critical"), one step each
+                    let tos = !self.login_form.agree_tos;
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: if tos {
+                            "Demo terms of service: the offline login server asks to accept them before logging in."
+                        } else {
+                            "Demo critical message: the offline login server asks to read this message before logging in."
+                        }
+                        .to_owned(),
+                        mfa_required: false,
+                        tos_required: tos,
+                        critical_required: !tos,
+                        bad_credentials: false,
+                        previous_session: false,
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
                     // A request that carried a code is refused the way the grid
                     // refuses a wrong one (reason "key", message id
@@ -14670,6 +14914,7 @@ impl App {
                         },
                         mfa_required: !refused,
                         tos_required: false,
+                        critical_required: false,
                         bad_credentials: refused,
                         previous_session: false,
                     });
@@ -14903,6 +15148,9 @@ impl App {
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
+                if self.demo && crate::demo::floating_text::scenario() {
+                    crate::demo::floating_text::guides(&ctx, &self.world, &self.scene);
+                }
                 t = self.ui_parts.lap(Part::UiTags, t);
                 let parcel_landmark = self.parcel_landmark();
                 self.follow_favorites_access();
@@ -17446,6 +17694,7 @@ impl ApplicationHandler for App {
         self.note_gpus(&renderer);
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
+        self.photo_quality_at_start();
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
         self.gfx = Some(Gfx {
@@ -17570,6 +17819,7 @@ impl ApplicationHandler for App {
                         | "first"
                         | "first-mfa"
                         | "mfa-refused"
+                        | "terms"
                         | "add"
                         | "password"
                         | "connecting"
@@ -17579,7 +17829,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -17617,7 +17867,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -17627,7 +17877,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if mode == "add-mfa" {
+                        if mode == "add-mfa" || mode == "terms" {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -18718,6 +18968,34 @@ impl ApplicationHandler for App {
                         self.world.im_messages.clear();
                     }
                     Mode::Offline => {}
+                    Mode::Import(stage) => {
+                        use chatlog::ImportStage;
+                        let legacy = self.world.chat_log.dir().map(chatlog::legacy_root);
+                        if let Some(root) = &legacy
+                            && let Err(e) = chatlog::seed_legacy(root, &self.world.own_name(), stage)
+                        {
+                            log::warn!("demo Legacy Viewer transcripts not written: {e}");
+                        }
+                        let apps = legacy.into_iter().filter(|_| stage != ImportStage::None).collect();
+                        self.world.chat_log.set_legacy_apps(apps);
+                        // a conversation open on its history alone, which an
+                        // import brings up to date
+                        self.world.social.session_mut(chatlog::PEER);
+                        if stage == ImportStage::Login {
+                            if let Some((account, _)) = self.chat_import_account() {
+                                self.world.chat_log.import_found(account);
+                            }
+                        } else {
+                            self.panels.settings = true;
+                            self.options_ui.open(ui::options::Page::Chat, 3);
+                            self.chat_import_opened();
+                            if stage == ImportStage::Same
+                                && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
+                            {
+                                self.chat_import_chosen(dir);
+                            }
+                        }
+                    }
                     Mode::Im | Mode::Find | Mode::History { .. } => {
                         self.world.apply(chatlog::new_message(me));
                     }
@@ -19735,6 +20013,11 @@ impl ApplicationHandler for App {
             }
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.
+            if crate::demo::floating_text::scenario() {
+                for ev in crate::demo::floating_text::events() {
+                    self.world.apply(ev);
+                }
+            }
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
                 let faces = matches!(mode.as_str(), "faces" | "faces-turned" | "faces-alpha");
                 if mode == "blend-opacity" {
@@ -19755,6 +20038,8 @@ impl ApplicationHandler for App {
                 }
                 let events = if mode == "blend-opacity" {
                     crate::demo::hud::opacity_events()
+                } else if matches!(mode.as_str(), "edit-no-mod" | "rotate-no-mod") {
+                    crate::demo::hud::no_modify_events()
                 } else if faces {
                     crate::demo::hud::face_events(mode == "faces-turned")
                 } else {
@@ -19788,9 +20073,16 @@ impl ApplicationHandler for App {
                 self.world.hud_scales = crate::world::hud_scale::HudScales::load(
                     crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
                 );
-                if mode == "blend-opacity" {
+                if matches!(mode.as_str(), "blend-opacity" | "edit-no-mod" | "rotate-no-mod") {
                     self.world.hud_scales = crate::world::hud_scale::HudScales::default();
                     self.world.hud_zoom = 1.0;
+                }
+                if matches!(mode.as_str(), "edit-no-mod" | "rotate-no-mod") {
+                    self.settings.build.edit_linked = false;
+                    self.settings.build.grid_mode = 0;
+                    self.settings.build.snap = false;
+                    self.settings.build.limit_select_distance = true;
+                    self.settings.build.max_select_distance = 128.0;
                 }
                 if matches!(
                     mode.as_str(),
@@ -20580,6 +20872,46 @@ mod tests {
     use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn coarse_interface_handles_refine_independently_and_portraits_wait_for_full_ui_size() {
+        let target = (256, 128);
+        let coarse = [128, 64];
+        let full = [256, 128];
+        assert!(super::ui_copy_needs_refine(coarse, target.0, target.1));
+        assert!(!super::ui_copy_needs_refine(full, target.0, target.1));
+        assert!(super::ui_copy_can_improve(coarse, [256, 128], target.0, target.1));
+        assert!(!super::ui_copy_can_improve(full, [256, 128], target.0, target.1));
+        assert!(!super::login_portrait_is_full(128, 64, target.0, target.1));
+        assert!(super::login_portrait_is_full(256, 128, target.0, target.1));
+        // an odd-sized texture: its 256 px upload copy beats the halved size
+        assert!(super::ui_copy_can_improve([65, 65], [256, 256], 129, 129));
+        assert!(!super::ui_copy_can_improve([129, 129], [256, 256], 129, 129));
+    }
+
+    /// A followed interface image is given up 300 s after its handles last
+    /// grew, and each growth (or a new handle) gives it another 300 s.
+    #[test]
+    fn a_followed_interface_image_is_given_up_once_it_stops_growing() {
+        use super::{UI_FOLLOWED, ui_follow_step};
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let second = Duration::from_secs(1);
+        let first = ui_follow_step(None, [Some([64, 64]), None], t0).unwrap();
+        assert_eq!(first.until, t0 + UI_FOLLOWED);
+        // no growth: kept until the deadline, then dropped
+        let still = ui_follow_step(Some(first), [Some([64, 64]), None], t0 + UI_FOLLOWED - second);
+        assert_eq!(still.map(|f| f.until), Some(t0 + UI_FOLLOWED));
+        assert!(ui_follow_step(Some(first), [Some([64, 64]), None], t0 + UI_FOLLOWED).is_none());
+        // a handle grew: the deadline starts over
+        let later = t0 + UI_FOLLOWED - second;
+        let grown = ui_follow_step(Some(first), [Some([128, 128]), None], later).unwrap();
+        assert_eq!(grown.until, later + UI_FOLLOWED);
+        assert!(ui_follow_step(Some(grown), [Some([128, 128]), None], t0 + UI_FOLLOWED).is_some());
+        // a second handle appearing counts as growth too
+        let picture = ui_follow_step(Some(grown), [Some([128, 128]), Some([32, 32])], later + second).unwrap();
+        assert_eq!(picture.until, later + second + UI_FOLLOWED);
+    }
 
     #[test]
     fn alt_enter_toggles_fullscreen_only_when_unclaimed() {

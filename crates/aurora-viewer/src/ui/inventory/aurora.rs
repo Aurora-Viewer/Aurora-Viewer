@@ -220,8 +220,9 @@ impl Counts {
                     && (prefs.search_library || !library.contains(&it.parent))
             })
             .count();
-        self.favorites =
-            inv.items.keys().filter(|id| rules::is_favorite(inv, **id)).count() + inv.folders.values().filter(|f| f.info.favorite).count();
+        // Count explicit favorites, not every outfit link whose original
+        // has a star (LLInventoryFavoritesItemsPanel::findAndInitRootContent).
+        self.favorites = inv.items.values().filter(|it| it.favorite).count() + inv.folders.values().filter(|f| f.info.favorite).count();
         let held = |kind: i32| {
             rules::system(inv, kind)
                 .and_then(|id| inv.folders.get(&id))
@@ -1137,5 +1138,67 @@ mod tests {
         assert_eq!(counts.favorites, 2, "a favourite item and a favourite folder");
         assert_eq!(counts.received, 1);
         assert_eq!(counts.trash, 1);
+    }
+
+    #[test]
+    fn favorites_count_uses_own_flags_not_link_targets() {
+        use aurora_net::inventory::{InvFolder, InvItem};
+        let id = Uuid::from_u128;
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        inv.created_folders(vec![
+            InvFolder {
+                id: inv.root,
+                type_default: 8,
+                ..Default::default()
+            },
+            InvFolder {
+                id: id(2),
+                parent: inv.root,
+                favorite: true,
+                ..Default::default()
+            },
+        ]);
+        inv.add_items(vec![InvItem {
+            id: id(10),
+            parent: inv.root,
+            favorite: true,
+            ..Default::default()
+        }]);
+        inv.add_items(
+            (100..200)
+                .map(|n| InvItem {
+                    id: id(n),
+                    parent: id(2),
+                    asset_type: 24,
+                    asset_id: id(10),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        inv.add_items(vec![InvItem {
+            id: id(20),
+            parent: inv.root,
+            asset_type: 25,
+            asset_id: id(2),
+            ..Default::default()
+        }]);
+        let prefs = InventoryPreferences::default();
+        let mut counts = Counts::default();
+        counts.update(&inv, &prefs, 0);
+        assert_eq!(counts.favorites, 2, "one explicit item and one explicit folder, not their aliases");
+        assert!(rules::is_favorite(&inv, id(100)) && rules::is_favorite(&inv, id(20)));
+        inv.items.get_mut(&id(100)).expect("link").favorite = true;
+        inv.generation += 1;
+        counts.at = None;
+        counts.update(&inv, &prefs, 0);
+        assert_eq!(counts.favorites, 3, "an explicitly flagged link still counts");
+        inv.items.get_mut(&id(10)).expect("original").favorite = false;
+        inv.generation += 1;
+        counts.at = None;
+        counts.update(&inv, &prefs, 0);
+        assert_eq!(counts.favorites, 2, "a changed original must not add or remove alias entries");
     }
 }
