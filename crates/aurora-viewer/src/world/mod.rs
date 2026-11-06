@@ -7255,6 +7255,7 @@ mod motion_tests {
             object_id,
             object_name: "Test object".into(),
             owner_name: "Owner".into(),
+            owner_id: Uuid::nil(),
             message: message.into(),
             channel,
             buttons: if textbox { vec!["!!llTextBox!!".into()] } else { vec!["OK".into()] },
