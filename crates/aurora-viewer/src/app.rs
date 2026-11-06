@@ -13645,6 +13645,10 @@ impl App {
                 self.settings.place_bar_rights_text = rights_text;
                 self.settings.save();
             }
+            BarAction::BalanceHighlight(on) => {
+                self.settings.balance_gain_animation = on;
+                self.settings.save();
+            }
             BarAction::ShowBugButton(shown) => {
                 self.settings.show_bug_report = shown;
                 self.settings.save();
@@ -15326,6 +15330,7 @@ impl App {
                     balance: balance.balance,
                     show_balance,
                     balance_gains: balance.rows,
+                    balance_highlight: self.settings.balance_gain_animation,
                     voice: (self.voice.light, self.voice.status.clone()),
                     slurl: if self.world.rlva.has("showloc") {
                         String::new()
