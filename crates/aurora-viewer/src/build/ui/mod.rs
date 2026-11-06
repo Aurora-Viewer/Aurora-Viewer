@@ -106,6 +106,15 @@ pub struct FaceClip {
     pub face: aurora_prim::te::TextureFace,
     pub legacy: Option<crate::scene::legacy_mat::LegacyMaterial>,
     pub gltf: Option<(Uuid, aurora_assets::material::PbrOverride)>,
+    /// What the diffuse, the material and its four override maps may count
+    /// on when pasted (`texture_copy::availability`).
+    pub image: crate::build::texture_copy::Availability,
+    pub material: crate::build::texture_copy::Availability,
+    pub maps: [crate::build::texture_copy::Availability; 4],
+    /// The normal / specular map could not be copied: `legacy` holds none
+    /// and the paste keeps the target's own (NormMapNoCopy, SpecMapNoCopy).
+    pub normal_kept: bool,
+    pub specular_kept: bool,
 }
 
 /// Object parameters copied with "Copy" of the Object tab (LLPanelObject::onCopyParams).

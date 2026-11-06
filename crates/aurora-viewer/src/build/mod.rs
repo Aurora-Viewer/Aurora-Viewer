@@ -40,6 +40,7 @@ pub mod silhouette;
 #[cfg(test)]
 mod take_tests;
 pub mod task_inventory;
+pub mod texture_copy;
 pub mod ui;
 
 use crate::scene::Scene;
