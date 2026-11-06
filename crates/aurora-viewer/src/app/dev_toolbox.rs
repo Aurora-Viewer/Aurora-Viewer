@@ -258,6 +258,7 @@ impl App {
             "R10" => d.probes,
             "R11" => d.check_light_sets,
             "R12" => d.check_probe_sets,
+            "R13" => self.busy_pause.forced,
             "O1" => d.bounds,
             "O2" => d.lod_info,
             "O3" => d.culling,
@@ -295,6 +296,8 @@ impl App {
             "R10" => d.probes = on,
             "R11" => d.check_light_sets = on,
             "R12" => d.check_probe_sets = on,
+            // the busy card's pause on demand (busy_pause.rs)
+            "R13" => self.busy_pause.forced = on,
             "O1" => d.bounds = on,
             "O2" => d.lod_info = on,
             "O3" => d.culling = on,

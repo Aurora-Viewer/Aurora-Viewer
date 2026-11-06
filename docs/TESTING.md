@@ -4979,7 +4979,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
-| `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the 3D pauses, with its notice and window title, until a click |
+| `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
@@ -6147,12 +6147,12 @@ failure. Grid validation and any paid upload are performed by the human.
   taken as behind with GPU frames of 300 ms (another program keeping the
   card busy, #2355): after two of them the world is no longer drawn, its
   3D targets shrink, what is left is blurred and darkened, the notice
-  "3D paused…" shows in amber in the middle, under the windows, and the
+  "Render paused…" shows in amber in the middle, under the windows, and the
   window title ends with "— Paused"; the textures stay. The log says
-  `3D paused behind: the GPU frames take …`. A click in the window ends
+  `render paused behind: the GPU frames take …`. A click in the window ends
   the demo's busy card: the world is drawn again at once, sharp, and the
-  log says `3D drawing resumed`. With Preferences › Graphics › "Pause the
-  3D when the card is overloaded" off, nothing pauses. A capture run
+  log says `render resumed`. With Preferences › Graphics › "Pause the
+  Render when the card is overloaded" off, nothing pauses. A capture run
   pauses too (a real one never does): `AURORA_FPS_LIMIT=60`,
   `AURORA_DEMO_BUSY_PAUSE=900` and `AURORA_CAPTURE_FRAMES=1000`.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
@@ -7698,9 +7698,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     two runs, the result line ends on "Nothing new to import" and the file
     left out. `import:login`: what Import at login does, no window, and
     the notice it leaves in the nearby chat (messages and conversations
-    added, where to turn it off). Outside this mode the demo never imports
-    at login, whatever the setting: it would read the PC's real Legacy
-    Viewer folders.
+    added, where to turn it off). As Save nearby chat is off by default,
+    the seeded nearby chat file stays out of this import, while `import:run`
+    takes it. Outside this mode the demo never imports at login, whatever
+    the setting: it would read the PC's real Legacy Viewer folders.
     `import:same`: the list also has the folder Aurora writes to, unticked
     and greyed. `import:none`: no folder found, the window says so
     and offers the folder dialog.
@@ -9420,8 +9421,8 @@ What the inventory must show with these scenarios:
   object worn on our back (that of `AURORA_DEMO_WORN`), `hud` on a worn HUD
   screen, both worn from an inventory item we made: no question, as "Trust
   my worn items" is on (the log has no `media filter: asking about` line).
-  `worn-gift` / `hud-gift` make that item someone else's creation, and the
-  question comes; `worn-ask` / `hud-ask` turn the option off for the run,
+  `worn-gift` / `hud-gift` make that item someone else's creation: no
+  question either, worn items are trusted whoever made them; `worn-ask` / `hud-ask` turn the option off for the run,
   and the question comes; `worn-blocked` / `hud-blocked` put the site in
   the list as blocked: refused without a question, told in the local chat.
 - **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|blacklist-ignored|avatar-menu|avatar-menu-mixed|avatar-menu-pie`** exercises Sound Explorer

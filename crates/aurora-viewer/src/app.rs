@@ -5612,7 +5612,7 @@ impl App {
             // media on an item we wear (on our back, or a HUD) and made, on a
             // site the list does not know: no question unless `-ask` turns
             // filter_trust_own_worn off; `-blocked` puts the site in the list
-            // as blocked; `-gift`: an item someone else made, asked about
+            // as blocked; `-gift`: an item someone else made, trusted too
             "worn" | "worn-ask" | "worn-blocked" | "worn-gift" | "hud" | "hud-ask" | "hud-blocked" | "hud-gift" => {
                 let url = "https://media.example.com/earring/index.html";
                 self.settings.media.filter_trust_own_worn = !mode.ends_with("-ask");
@@ -8586,6 +8586,12 @@ impl App {
         self.scene.textures.set_window_state(self.focused, minimized);
         // (a demo or a timed run neither publishes nor reads, instances.rs)
         let timed = self.capture.is_some() || self.frame_profile.enabled();
+        // the busy card's switch, the same in every viewer (instances.rs)
+        let switch = self.busy_pause.follow.frame(
+            &mut self.settings.background_gpu_pause,
+            self.instances.newest_switch(),
+            crate::instances::unix_ms(),
+        );
         self.instances.tick(
             !self.demo && !timed,
             crate::instances::Own {
@@ -8593,6 +8599,7 @@ impl App {
                 active: self.focused && !minimized,
                 luid: self.scene.textures.card_luid(),
             },
+            switch,
         );
         self.scene.textures.set_card_sharing(!self.demo && !timed);
         self.scene.textures.set_peers(&self.instances.peers());
