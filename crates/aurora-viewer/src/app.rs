@@ -8356,7 +8356,7 @@ impl App {
             match result {
                 ActionResult::Slurl(url) => self.egui_ctx.copy_text(url),
                 ActionResult::Map(global) => {
-                    self.world.map.track_location(global.x, global.y, global.z as f32, false);
+                    self.world.map.show_location(global.x, global.y, global.z as f32);
                     ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
                 }
                 ActionResult::Unavailable => self.inventory_ui.message = aurora_i18n::tr!("inventory-landmark-location-unknown").into(),
@@ -13814,7 +13814,7 @@ impl App {
                 );
             }
             FavAction::ShowOnMap(g) => {
-                self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                self.world.map.show_location(g.x, g.y, g.z as f32);
                 self.panels.world_map = true;
             }
             FavAction::Edit(item) => self.landmark_star(ui::bars::StarAction::Edit(item)),
@@ -14205,7 +14205,7 @@ impl App {
                 SearchAction::RefreshGroup(id) => self.send(NetCommand::GroupProfileRequest(id)),
                 SearchAction::JoinGroup(id) => self.group_profile_ui.join(&self.world, id),
                 SearchAction::ShowOnMap(g) => {
-                    self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                    self.world.map.show_location(g.x, g.y, g.z as f32);
                     self.panels.world_map = true;
                 }
                 SearchAction::Teleport(g) => {
@@ -14385,7 +14385,7 @@ impl App {
                 // onMapButton: "use the agent's z-height"
                 GroupAction::ShowOnMap { x, y } => {
                     let z = self.world.agent_global().map_or(0.0, |g| g.z as f32);
-                    self.world.map.track_location(x, y, z, false);
+                    self.world.map.show_location(x, y, z);
                     self.panels.world_map = true;
                 }
                 GroupAction::AboutLand { x, y } => {
@@ -17115,7 +17115,7 @@ impl App {
                             self.send(cmd);
                         }
                         ui::profile::ProfileAction::ShowOnMap(g) => {
-                            self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                            self.world.map.show_location(g.x, g.y, g.z as f32);
                             self.panels.world_map = true;
                         }
                         ui::profile::ProfileAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
@@ -17160,7 +17160,7 @@ impl App {
                         ui::place_details::PlaceAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
                         ui::place_details::PlaceAction::TeleportLandmark { asset, name } => self.places_ui.confirm_landmark(asset, name),
                         ui::place_details::PlaceAction::ShowOnMap(g) => {
-                            self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                            self.world.map.show_location(g.x, g.y, g.z as f32);
                             self.panels.world_map = true;
                         }
                         ui::place_details::PlaceAction::Close(serial) => self.world.place_details.close_window(serial),
@@ -17173,7 +17173,7 @@ impl App {
                         PlacesAction::TeleportLandmark(asset) => a.landmark = Some(asset),
                         PlacesAction::CreateLandmark(dest) => self.open_create_landmark(dest),
                         PlacesAction::ShowOnMap(g) => {
-                            self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                            self.world.map.show_location(g.x, g.y, g.z as f32);
                             self.panels.world_map = true;
                         }
                         PlacesAction::OpenProfile(source) => {
@@ -18587,6 +18587,8 @@ impl ApplicationHandler for App {
                         self.world.map.track_avatar(crate::demo::DEMO_FRIEND, "Nova ♪");
                     } else if word == "legacy" {
                         self.worldmap_ui.demo_style = Some(crate::settings::WorldMapStyle::Legacy);
+                    } else if word == "show-on-map" {
+                        self.world.map.show_location(256000.0 + 128.0, 256256.0 + 128.0, 25.0);
                     }
                 }
             }
