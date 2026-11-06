@@ -261,6 +261,14 @@ fn hero(ui: &mut egui::Ui, p: &Palette, logo: Option<&egui::TextureHandle>) {
             ui.spacing_mut().item_spacing.y = 4.0;
             ui.label(sheet::semibold(ui, "Aurora Viewer", 22.0, p.ink));
             ui.label(RichText::new(crate::ui::login::client_tagline()).size(12.0).color(p.violet_pale));
+            ui.add(
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("about-third-party-viewer"))
+                        .size(11.5)
+                        .color(p.muted),
+                )
+                .wrap(),
+            );
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
