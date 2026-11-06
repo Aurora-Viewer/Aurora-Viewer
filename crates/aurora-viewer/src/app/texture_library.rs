@@ -100,7 +100,7 @@ fn drop_prims(world: &World, idx: usize, linkset: bool) -> Vec<usize> {
 /// the object does not hold yet (handleDropMaterialProtections). The asset of
 /// the library or of the object's contents costs nothing.
 fn no_copy_leaves(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, agent: Uuid, retained: bool) -> bool {
-    !retained && !rules::library(inv, item.id) && permissions(item, agent) & rules::COPY == 0
+    !retained && !rules::library(inv, item.id) && rules::agent_mask(item, agent) & rules::COPY == 0
 }
 fn selection_copy_denied(item: &aurora_net::inventory::InvItem, agent: Uuid, objects: usize) -> bool {
     objects > 1 && rules::agent_mask(item, agent) & rules::COPY == 0
