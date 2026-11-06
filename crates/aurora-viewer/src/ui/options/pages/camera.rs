@@ -182,6 +182,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         (VrView::DesktopCamera, tr!("ui-options-camera-vr-view-desktop-camera"), false),
                     ],
                 );
+                // read by open_renderer at the next start (#2309)
+                cx.toggle(
+                    tr!("ui-options-camera-vr-at-start"),
+                    tr!("ui-options-camera-vr-at-start-help"),
+                    &field!(camera.vr_at_start),
+                );
             });
         }
         1 => {

@@ -117,7 +117,7 @@ pub(super) fn start(source: String, name: String, settings: ScriptSettings, envi
             };
             match result {
                 Ok(include) => Ok(include),
-                Err(_) if settings.disk_includes && !settings.include_directory.is_empty() => {
+                Err(reason) if settings.disk_includes && !settings.include_directory.is_empty() => {
                     let root = std::path::Path::new(&settings.include_directory);
                     let from = std::path::Path::new(from);
                     let relative = from
@@ -125,6 +125,10 @@ pub(super) fn start(source: String, name: String, settings: ScriptSettings, envi
                         .filter(|p| !p.as_os_str().is_empty())
                         .map(|p| root.join(p).join(include));
                     let path = relative.filter(|p| p.is_file()).unwrap_or_else(|| root.join(include));
+                    if !path.is_file() {
+                        // no file on disk either: why the inventory's was not used
+                        return Err(reason);
+                    }
                     super::files::read(&path, false).map(|source| Include {
                         source,
                         asset: Uuid::nil(),
