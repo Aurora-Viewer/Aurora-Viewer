@@ -354,6 +354,8 @@ impl Bench {
                     self.islands,
                     None,
                     &bars::favorites::View::default(),
+                    crate::settings::BrowserBehavior::AuroraDefault,
+                    crate::ui::web_browser::DEFAULT_HOME,
                 );
                 let favorites = bars::favorites::View::default();
                 let row = bars::Row {
@@ -369,6 +371,8 @@ impl Bench {
                     bar: Bar::Bottom,
                     style: Style::default(),
                     editing: false,
+                    browser_behavior: crate::settings::BrowserBehavior::AuroraDefault,
+                    browser_home_page: crate::ui::web_browser::DEFAULT_HOME,
                 };
                 bars::side::bars(
                     ui,

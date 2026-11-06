@@ -5,7 +5,7 @@
 
 use super::super::cx::{Cx, Nothing, field, fields};
 use super::super::{Folder, FolderChoice, SLIDER_W, format_bytes, path_label};
-use crate::settings::DownloadConnections;
+use crate::settings::{BrowserBehavior, DownloadConnections};
 use crate::ui::widgets::{self, ActionKind, action_button};
 use egui::{RichText, Vec2};
 
@@ -147,6 +147,28 @@ pub fn page(cx: &mut Cx) {
         );
     });
     cx.group(tr!("ui-options-web-browser"), |cx| {
+        cx.row(
+            tr!("ui-options-browser-behavior"),
+            tr!("ui-options-browser-behavior-help"),
+            &field!(browser_behavior),
+            |ui, s| {
+                let mut changed = false;
+                let selected = s.browser_behavior;
+                ui.vertical(|ui| {
+                    for (behavior, label) in [
+                        (BrowserBehavior::SystemForAll, tr!("ui-options-browser-system-all")),
+                        (BrowserBehavior::BuiltInForSecondLife, tr!("ui-options-browser-second-life")),
+                        (BrowserBehavior::BuiltInForAll, tr!("ui-options-browser-internal-all")),
+                    ] {
+                        if widgets::radio(ui, &p, selected == behavior, label).clicked() {
+                            changed |= s.browser_behavior != behavior;
+                            s.browser_behavior = behavior;
+                        }
+                    }
+                });
+                changed
+            },
+        );
         // Network & Files › Browser home page (panel_preferences_setup.xml,
         // FSBrowserHomePage)
         cx.row(

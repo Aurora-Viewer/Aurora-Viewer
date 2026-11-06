@@ -160,10 +160,8 @@ impl MarketplaceUi {
             let shown = location.to_owned();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let label = aurora_i18n::tr!("search-web-open-external");
-                // the page itself, in the system browser (loadURLExternal): not
-                // through the links' routing, which would bring it back here
                 if widgets::action_button(ui, p, "external-link-filled", label, ActionKind::Flat, Vec2::new(0.0, 22.0)).clicked() {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(shown.clone()));
+                    super::context::request(ui.ctx(), super::context::CtxAction::OpenUrlExternal(shown.clone()));
                 }
                 ui.add(egui::Label::new(RichText::new(shown).size(12.0).color(p.muted)).truncate());
             });

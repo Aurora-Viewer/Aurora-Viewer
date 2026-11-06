@@ -7,6 +7,42 @@ use crate::ui::context::{CtxAction, Facts, ObjectFacts, Target};
 use uuid::Uuid;
 
 impl App {
+    pub(super) fn route_web_link(&mut self, url: String, entry: crate::link_trust::BrowserEntryPoint) {
+        let marketplace = self.marketplace_home();
+        let marketplace_url = marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home));
+        let system = crate::link_trust::should_use_system_browser(&url, self.settings.browser_behavior, entry);
+        if system {
+            self.egui_ctx.open_url(egui::OpenUrl::new_tab(url));
+        } else if marketplace_url {
+            self.marketplace_ui.open(Some(url));
+        } else {
+            self.web_browser_ui.go_to(&url);
+            self.panels.web_browser = true;
+        }
+    }
+
+    fn open_web_link(&mut self, url: String, requested_entry: Option<crate::link_trust::BrowserEntryPoint>) {
+        use crate::link_trust::Trust;
+
+        if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
+            log::warn!("link not opened: the {scheme} scheme is not a web page");
+            return;
+        }
+        let marketplace = self.marketplace_home();
+        let marketplace_url = marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home));
+        let entry = requested_entry.unwrap_or(if marketplace_url {
+            crate::link_trust::BrowserEntryPoint::MarketplaceLink
+        } else {
+            crate::link_trust::BrowserEntryPoint::Link
+        });
+        let trust = crate::link_trust::classify(&url);
+        match trust {
+            Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why), entry)),
+            Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None, entry)),
+            _ => self.route_web_link(url, entry),
+        }
+    }
+
     /// Right click on the world: the menu of what is under the cursor.
     pub(super) fn open_context_menu(&mut self) {
         self.click(click_pick::Click::Menu);
@@ -829,31 +865,9 @@ impl App {
                 self.teleport_to_location(region, pos);
             }
             CtxAction::AppLink(link) => self.run_app_link(link),
-            CtxAction::OpenUrl(url) => {
-                use crate::link_trust::Trust;
-                // only web pages go to the system, as the links of a
-                // notification: a link of a text, a profile or a server reply
-                // must not start a local program (the scheme alone is logged)
-                if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
-                    log::warn!("link not opened: the {scheme} scheme is not a web page");
-                    return;
-                }
-                // LLWeb::loadURLInternal: a Marketplace page opens in the
-                // Marketplace window (Firestorm's default browser choice keeps
-                // the Second Life sites inside the viewer)
-                let marketplace = self.marketplace_home();
-                if marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home))
-                    && !matches!(crate::link_trust::classify(&url), Trust::Dangerous(_))
-                {
-                    self.marketplace_ui.open(Some(url));
-                } else {
-                    match crate::link_trust::classify(&url) {
-                        Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why))),
-                        Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None)),
-                        _ => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
-                    }
-                }
-            }
+            CtxAction::OpenUrl(url) => self.open_web_link(url, None),
+            CtxAction::OpenUrlExternal(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::ExplicitExternal)),
+            CtxAction::OpenUrlSearch(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::SearchExternal)),
             CtxAction::TeleportToPlaceConfirmed(region, pos) => {
                 self.teleport_to_location(region, pos);
             }

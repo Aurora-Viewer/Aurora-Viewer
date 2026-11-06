@@ -620,7 +620,7 @@ pub struct App {
     suitcase_passed: bool,
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
-    url_confirm: Option<(String, bool, Option<&'static str>)>,
+    url_confirm: Option<(String, bool, Option<&'static str>, crate::link_trust::BrowserEntryPoint)>,
     /// The media filter's question on screen.
     media_filter_prompt: ui::media_filter::PromptUi,
     script_dialogs_were: usize,
@@ -13200,6 +13200,7 @@ impl App {
             self.panels.appearance = true;
         }
         match a.bar {
+            BarAction::OpenUrl(url) => self.on_ctx_action(ui::context::CtxAction::OpenUrl(url)),
             BarAction::ImportStreamList => self.import_stream_list(),
             BarAction::ExportStreamList => self.export_stream_list(),
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
@@ -15333,6 +15334,8 @@ impl App {
                         !classic_bars,
                         Some(&mut self.emoji),
                         &favorites,
+                        self.settings.browser_behavior,
+                        &self.settings.browser_home_page,
                     )
                 };
                 // what the bars leave: where the windows are laid out and
@@ -15375,6 +15378,8 @@ impl App {
                     bar: ui::toolbar::Bar::Left,
                     style: Default::default(),
                     editing: self.toolbar_ui.open && !toolbar_settings.locked,
+                    browser_behavior: self.settings.browser_behavior,
+                    browser_home_page: &self.settings.browser_home_page,
                 };
                 let (room, side_action) = ui::bars::side::bars(
                     ui,
@@ -16424,17 +16429,17 @@ impl App {
                     self.answer_suitcase(ask, yes);
                 }
                 self.portal_crossing_question(&ctx, &p);
-                if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
+                if let Some((url, dont_warn, danger, entry)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {
-                    let (url, dont_warn) = (url.clone(), *dont_warn);
+                    let (url, dont_warn, entry) = (url.clone(), *dont_warn, *entry);
                     self.url_confirm = None;
                     if yes {
                         if dont_warn {
                             self.settings.warn_external_links = false;
                             self.settings.save();
                         }
-                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                        self.route_web_link(url, entry);
                     }
                 }
                 self.media_filter_question(&ctx, &p);
