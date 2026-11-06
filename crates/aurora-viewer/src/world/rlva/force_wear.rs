@@ -11,6 +11,9 @@ use uuid::Uuid;
 
 /// How long the queue waits for a requested detach to land before going on.
 const DETACH_WAIT: Duration = Duration::from_secs(10);
+/// How long a forced wear stands for its repeats (MIN_RETRY_REQUEST_TIME,
+/// llattachmentsmgr.cpp): scripts send these many times a second.
+const WEAR_RETRY: Duration = Duration::from_secs(5);
 
 /// The `Force` batch of `source` at the end of the queue, opened if needed.
 fn batch(queue: &mut Vec<(Uuid, Action)>, source: Uuid) -> (&mut Vec<Uuid>, &mut Vec<WearRequest>) {
@@ -85,6 +88,30 @@ impl World {
         remove.retain(|r| *r != request.item);
         wear.retain(|w| !dropped.contains(&w.item));
         wear.push(request);
+    }
+
+    /// Whether a forced batch is to be skipped when its turn comes
+    /// (`appearance::force_changes_nothing`). If not, its attachments count as
+    /// requested from now until they arrive, like
+    /// LLAttachmentsMgr::onAttachmentRequested and onAttachmentArrived.
+    pub fn rlva_force_settled(&mut self, action: &Action, now: Instant) -> bool {
+        let points = self.outfit_attachment_points();
+        self.rlva
+            .requested_wears
+            .retain(|item, at| !points.contains_key(item) && now.saturating_duration_since(*at) < WEAR_RETRY);
+        let requested = self.rlva.requested_wears.keys().copied().collect();
+        if appearance::force_changes_nothing(&self.inventory, action, &points, &requested) {
+            return true;
+        }
+        if let Action::Force { wear, .. } = action {
+            for request in wear {
+                let item = super::super::inventory::actions::original(&self.inventory, request.item).unwrap_or(request.item);
+                if self.inventory.items.get(&item).is_some_and(|it| it.asset_type == 6) && !points.contains_key(&item) {
+                    self.rlva.requested_wears.insert(item, now);
+                }
+            }
+        }
+        false
     }
 
     /// A detach this viewer asked for is still on the avatar: the next RLVa

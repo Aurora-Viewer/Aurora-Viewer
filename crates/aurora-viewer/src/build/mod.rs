@@ -40,6 +40,7 @@ pub mod silhouette;
 #[cfg(test)]
 mod take_tests;
 pub mod task_inventory;
+pub mod texture_copy;
 pub mod ui;
 
 use crate::scene::Scene;
@@ -317,6 +318,30 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
         return false;
     };
     root.update_flags & OBJECT_MOVE != 0 && (!(linked || mode == EditMode::Stretch) || root.update_flags & OBJECT_MODIFY != 0)
+}
+
+/// A copy of this object can be rezzed: its root has Copy and it is not
+/// worn (getFirstCopyableObject: permCopy and not an attachment).
+pub fn copyable_object(world: &World, idx: usize) -> bool {
+    use crate::ui::context::flags::OBJECT_COPY;
+    select_type(world, idx) == SelectType::World
+        && world
+            .objects
+            .get(root_of(world, idx))
+            .is_some_and(|root| root.update_flags & OBJECT_COPY != 0)
+}
+
+/// LLSelectMgr::enableLinkObjects: two roots or more, one of them
+/// modifiable and not a permanent (pathfinding) object.
+pub fn link_allowed(world: &World, roots: &[usize]) -> bool {
+    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_MODIFY};
+    roots.len() >= 2
+        && roots.iter().any(|&r| {
+            world
+                .objects
+                .get(r)
+                .is_some_and(|o| o.update_flags & OBJECT_MODIFY != 0 && o.update_flags & AFFECTS_NAVMESH == 0)
+        })
 }
 
 /// SelectOwnedOnly / SelectMovableOnly in LLSelectMgr::canSelectObject
@@ -1370,6 +1395,25 @@ impl BuildTool {
         self.select_type(world) != SelectType::World
     }
 
+    /// The selected roots a copy can be made of (LLSelectMgr::canDuplicate).
+    pub fn copyable_roots(&self, world: &World) -> Vec<usize> {
+        if self.attachment_selected(world) {
+            return Vec::new();
+        }
+        self.roots(world).into_iter().filter(|&r| copyable_object(world, r)).collect()
+    }
+
+    /// The toolbar's Link: the context menu's rule, outside attachments.
+    pub fn can_link(&self, world: &World) -> bool {
+        !self.attachment_selected(world) && link_allowed(world, &self.roots(world))
+    }
+
+    /// LLSelectMgr::enableUnlinkObjects: a selected prim we may modify,
+    /// outside attachments.
+    pub fn can_unlink(&self, world: &World) -> bool {
+        !self.attachment_selected(world) && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+    }
+
     fn advance_link(&mut self, world: &mut World, now: Instant) {
         if let Some((members, started)) = &self.pending_link {
             if let Some(root) = members.first()
@@ -1606,11 +1650,12 @@ impl BuildTool {
     /// Ctrl+D: copies 0.5 m away, selected (LLSelectMgr::duplicate).
     /// Group selection follows packDuplicateHeader (indra/newview/llselectmgr.cpp).
     pub fn duplicate(&mut self, world: &mut World, s: &BuildSettings, offset: Vec3, select_copy: bool) {
-        if self.attachment_selected(world) {
+        if self.attachment_selected(world) || self.roots(world).is_empty() {
             return;
         }
-        let roots = self.roots(world);
+        let roots = self.copyable_roots(world);
         if roots.is_empty() {
+            self.status = aurora_i18n::tr!("build-mod-no-copyable-object").into();
             return;
         }
         if select_copy {
@@ -1637,6 +1682,9 @@ impl BuildTool {
         let roots = self.roots(world);
         if roots.len() < 2 {
             self.status = aurora_i18n::tr!("build-mod-select-at-least-two-objects-to-link").into();
+            return;
+        }
+        if !link_allowed(world, &roots) {
             return;
         }
         let first = world.objects.get(roots[0]).map(|o| (o.key.region, o.owner_id));
@@ -1675,7 +1723,12 @@ impl BuildTool {
         if self.attachment_selected(world) {
             return;
         }
-        let prims: Vec<usize> = self.highlighted(world).into_iter().map(|(i, _)| i).collect();
+        let prims: Vec<usize> = self
+            .highlighted(world)
+            .into_iter()
+            .map(|(i, _)| i)
+            .filter(|&i| self.can_modify(world, i))
+            .collect();
         if prims.is_empty() {
             return;
         }
@@ -2287,9 +2340,13 @@ impl BuildTool {
     /// where the ray hits (LLToolPlacer::addDuplicate).
     fn place_copy(&mut self, world: &mut World, s: &BuildSettings, hit: Option<Vec3>, target: Option<usize>, cursor: (f32, f32)) {
         let Some(point) = hit else { return };
-        let roots = self.roots(world);
-        if roots.is_empty() {
+        if self.roots(world).is_empty() {
             self.status = aurora_i18n::tr!("build-mod-select-the-objects-to-copy-first").into();
+            return;
+        }
+        let roots = self.copyable_roots(world);
+        if roots.is_empty() {
+            self.status = aurora_i18n::tr!("build-mod-no-copyable-object").into();
             return;
         }
         // raycastForNewObjPos refuses the duplicate's surface too

@@ -116,7 +116,7 @@ fn write(prefs: &Preferences) -> Result<String, String> {
 pub(crate) fn available(inv: &Inventory, id: Uuid) -> Option<&InvItem> {
     inv.items
         .get(&id)
-        .filter(|item| item.asset_type == 7 && item.owner_mask & actions::COPY != 0 && !inv.in_folder_type(id, 14))
+        .filter(|item| item.asset_type == 7 && actions::held(inv, item) & actions::COPY != 0 && !inv.in_folder_type(id, 14))
 }
 
 pub(crate) fn export(st: &mut InventoryUi, inv: &Inventory, name: String, text: String) -> Option<NetCommand> {

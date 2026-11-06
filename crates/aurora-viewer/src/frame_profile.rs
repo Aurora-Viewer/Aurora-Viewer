@@ -69,6 +69,27 @@ pub enum Lap {
     Tail,
 }
 
+/// One frame of a `click frames` line: its time, the main thread steps
+/// over 1 ms, the render thread and the GPU (with its largest element).
+fn click_frame(frame: &[f32; LAPS], render: &RenderStats) -> String {
+    let mut line = format!("{:.1}", frame.iter().sum::<f32>());
+    for (lap, ms) in Lap::ALL.iter().zip(frame) {
+        if *ms >= 1.0 {
+            line += &format!(" {}={ms:.1}", lap.key());
+        }
+    }
+    line += &format!(" rt={:.1}", render.thread_ms);
+    if let Some(g) = render.gpu_elements {
+        let (top, ms) = GpuElement::ALL
+            .iter()
+            .zip(g)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map_or(("", 0.0), |(e, ms)| (e.key(), ms));
+        line += &format!(" gpu={:.1} g_{top}={ms:.1}", g.iter().sum::<f32>());
+    }
+    line
+}
+
 impl Lap {
     const ALL: [Lap; 21] = [
         Lap::Between,
@@ -375,6 +396,9 @@ pub struct SceneCounts {
     /// Flexible prims swept again, and simulated with their mesh held.
     pub flexies: usize,
     pub flexies_held: usize,
+    /// Objects that move by themselves placed by the GPU from an anchor of
+    /// their own (anchors.rs).
+    pub movers: usize,
 }
 
 /// Sums over the current period.
@@ -448,7 +472,7 @@ struct Period {
     texture_pages: u32,
     texture_page_bytes: u64,
     geometry_bytes: u64,
-    scene: [u64; 14],
+    scene: [u64; 15],
     /// Interface: egui shapes, meshes and vertices, and the most vertices
     /// in a single frame.
     ui: [u64; 3],
@@ -477,7 +501,22 @@ pub struct FrameProfile {
     /// Added to the summary lines: the variant an A/B run was on during
     /// the line's second (`xmode=`).
     mark: &'static str,
+    /// The frames that follow a click on the world (`click frames`).
+    click: Option<ClickFrames>,
 }
+
+/// AURORA_PROFILE: the frames from a click on the world to a few frames
+/// after it is answered, one line for them all, so that a spike in the
+/// frame graph at each click names its side (main thread step, render
+/// thread, GPU element). The GPU times come back two or three frames
+/// late: the line covers them.
+struct ClickFrames {
+    frames: Vec<String>,
+}
+
+/// Frames a click trace covers: the press, the two or three frames of the
+/// pick, the click run again, and the GPU times of those frames.
+const CLICK_FRAMES: usize = 9;
 
 impl Default for FrameProfile {
     fn default() -> Self {
@@ -500,6 +539,16 @@ impl FrameProfile {
             periods: 0,
             settings: String::new(),
             mark: "",
+            click: None,
+        }
+    }
+
+    /// A click on the world asked for the depth under the cursor: the
+    /// frames from this one on are written in a `click frames` line. A
+    /// click during a trace starts it again.
+    pub fn trace_click(&mut self) {
+        if self.enabled {
+            self.click = Some(ClickFrames { frames: Vec::new() });
         }
     }
 
@@ -618,6 +667,13 @@ impl FrameProfile {
         let started = *self.started.get_or_insert(now);
         let frame = std::mem::replace(&mut self.frame, [0.0; LAPS]);
         let cycles = std::mem::replace(&mut self.frame_cycles, [0; LAPS]);
+        if let Some(c) = &mut self.click {
+            c.frames.push(click_frame(&frame, render));
+            if c.frames.len() >= CLICK_FRAMES {
+                log::info!("click frames: {}", c.frames.join(" | "));
+                self.click = None;
+            }
+        }
         let p = &mut self.period;
         p.frames += 1;
         p.frame_ms.push(frame.iter().sum());
@@ -708,6 +764,7 @@ impl FrameProfile {
             s.anchored,
             s.flexies,
             s.flexies_held,
+            s.movers,
         ]) {
             *sum += v as u64;
         }
@@ -995,7 +1052,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let _ = write!(
         out,
         " | draws={:.0} calls={:.0} tris_k={:.0} shadow_draws={:.0} particles={:.0} occluded={:.0} cull={} \
-         blend={:.0} blend_tris_k={:.0} blend_early={:.2} blend_glow={:.0} glow_alpha={:.0} lights={:.0} light_tiles={:.2} probes={:.0} | objects={:.0} visible={:.0} synced={:.0} anchored={:.0} flexies={:.0} flexies_held={:.0} rebuilt={:.1} posed={:.1} \
+         blend={:.0} blend_tris_k={:.0} blend_early={:.2} blend_glow={:.0} glow_alpha={:.0} lights={:.0} light_tiles={:.2} probes={:.0} | objects={:.0} visible={:.0} synced={:.0} anchored={:.0} movers={:.0} flexies={:.0} flexies_held={:.0} rebuilt={:.1} posed={:.1} \
          records_kb={:.1} palettes_kb={:.1} cull_kb={:.1} vertices_kb={:.1} journal_kb={:.1} | textures={} texture_mb={} texture_pages={} pages_mb={} geometry_mb={} \
          jobs={:.0} geom_pending={:.0} sync_backlog={:.0}",
         count(p.draws),
@@ -1017,6 +1074,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(s[1]),
         count(s[2]),
         count(s[11]),
+        count(s[14]),
         count(s[12]),
         count(s[13]),
         count(s[3]),
@@ -1088,6 +1146,7 @@ mod tests {
             anchored: 7,
             flexies: 4,
             flexies_held: 9,
+            movers: 5,
             posed: 2,
             ..Default::default()
         };
@@ -1107,7 +1166,10 @@ mod tests {
             l.contains(" g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_bloom=0.000 | shadow_path="),
             "{l}"
         );
-        assert!(l.contains(" synced=30 anchored=7 flexies=4 flexies_held=9 rebuilt="), "{l}");
+        assert!(
+            l.contains(" synced=30 anchored=7 movers=5 flexies=4 flexies_held=9 rebuilt="),
+            "{l}"
+        );
         assert!(l.contains(" posed=2.0 "), "{l}");
         assert!(l.contains(" records_kb=2.0 "), "{l}");
         assert!(
