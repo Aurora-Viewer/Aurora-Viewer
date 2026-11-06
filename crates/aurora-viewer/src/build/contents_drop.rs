@@ -114,13 +114,28 @@ pub(crate) fn worn_rights(item: &InvItem, agent: Uuid) -> bool {
 }
 
 /// Whether the prim `idx` is worn and its faces must refuse the texture or
-/// material `item`, even one its contents already hold: the Legacy Viewer
+/// material `item`, even one its contents already hold, and always when RLVa
+/// locks it (`attachment_locked`): the Legacy Viewer
 /// asks willObjectAcceptInventory before it looks at the contents
 /// (dad3dApplyToObject, then handleDropMaterialProtections). Every path that
 /// applies an inventory item to a face asks it: the Texture tab's drop, the
 /// world drop, the picker's apply and the library's selection.
 pub(crate) fn worn_refused(world: &World, idx: usize, item: &InvItem) -> bool {
-    linkset(world, idx).is_some_and(|(_, worn)| worn) && !worn_rights(item, world.agent_id)
+    linkset(world, idx).is_some_and(|(_, worn)| worn) && (!worn_rights(item, world.agent_id) || attachment_locked(world, idx))
+}
+
+/// RLVa: whether the prim `idx` belongs to a worn object the user may not
+/// take off, which refuses every inventory drop (willObjectAcceptInventory,
+/// gRlvAttachmentLocks.isLockedAttachment on the root).
+pub(crate) fn attachment_locked(world: &World, idx: usize) -> bool {
+    let Some((root, true)) = linkset(world, idx) else {
+        return false;
+    };
+    world
+        .objects
+        .get(root)
+        .and_then(|o| world.rlva_attachment_item(o.full_id))
+        .is_some_and(|item| !world.rlva_can_remove(item, Uuid::nil()))
 }
 
 /// What a refusal of `worn_refused` says: the immediate filter's reason for
@@ -181,7 +196,7 @@ pub fn surface_allowed(world: &World, idx: usize) -> Result<(), &'static str> {
 
 /// willObjectAcceptInventory for the prim `idx`: a volume whose linkset you
 /// may modify, or that allows inventory drops (scripts always need Modify),
-/// and an item its owner may receive.
+/// and an item its owner may receive; never an attachment RLVa locks.
 pub fn accepts(world: &World, idx: usize, item: &InvItem) -> Result<(), &'static str> {
     let o = world.objects.get(idx).ok_or("rez-no-surface")?;
     let (root, attached) = linkset(world, idx).ok_or("rez-no-surface")?;
@@ -195,6 +210,7 @@ pub fn accepts(world: &World, idx: usize, item: &InvItem) -> Result<(), &'static
         || item.asset_type == AT_LSL_TEXT && root.update_flags & OBJECT_MODIFY == 0
         // the server does not support an item in the world and in inventory at once
         || attached && item.base_mask & UNRESTRICTED != UNRESTRICTED
+        || attached && attachment_locked(world, idx)
     {
         return Err("rez-contents-denied");
     }

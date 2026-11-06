@@ -383,6 +383,34 @@ fn a_restricted_material_already_in_a_worn_objects_contents_is_refused() {
     assert_eq!(tool.admit_item(&mut w, id, &[a]), Ok(()));
 }
 
+/// The picker's apply onto an attachment RLVa locks: refused, like any
+/// drop on it (willObjectAcceptInventory).
+#[test]
+fn the_picker_apply_refuses_a_locked_attachment() {
+    let (mut w, a) = world();
+    let avatar = w.objects.index_of_uuid(&w.agent_id).expect("the agent's avatar");
+    let avatar_id = w.objects.get(avatar).expect("the agent's avatar").key.local_id;
+    let o = w.objects.get_mut(a).expect("object");
+    o.parent_id = avatar_id;
+    o.state = 1;
+    let object = o.full_id;
+    let full = give(&mut w, 1, ASSET, FULL);
+    let mut tool = BuildTool::default();
+    w.rlva_configure(true);
+    assert_eq!(tool.admit_item(&mut w, full, &[a]), Ok(()));
+    let agent = w.agent_id;
+    assert!(w.rlva.receive(&aurora_net::ChatMessage {
+        from_name: "Controller".to_owned(),
+        source_id: object,
+        owner_id: agent,
+        source_type: aurora_net::ChatSourceType::Object,
+        chat_type: aurora_net::ChatType::OwnerSay,
+        position: glam::Vec3::ZERO,
+        message: "@detach=n".to_owned(),
+    }));
+    assert_eq!(tool.admit_item(&mut w, full, &[a]), Err(aurora_i18n::tr!("texture-library-locked")));
+}
+
 #[test]
 fn pbr_controls_edit_with_modify_on_the_object_and_its_material_item() {
     let (mut w, idx) = world();

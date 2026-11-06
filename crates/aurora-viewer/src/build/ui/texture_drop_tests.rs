@@ -230,6 +230,46 @@ fn a_worn_object_takes_only_a_material_with_unrestricted_base_rights() {
     }
 }
 
+/// A restriction from the worn object itself, as its script would send it.
+fn rlva_restrict(w: &mut World, source: Uuid, message: &str) {
+    assert!(w.rlva.receive(&aurora_net::ChatMessage {
+        from_name: "Controller".to_owned(),
+        source_id: source,
+        owner_id: w.agent_id,
+        source_type: aurora_net::ChatSourceType::Object,
+        chat_type: aurora_net::ChatType::OwnerSay,
+        position: glam::Vec3::ZERO,
+        message: message.to_owned(),
+    }));
+}
+
+/// willObjectAcceptInventory: RLVa's locked attachment refuses every drop,
+/// a full-permission texture or material included, and its contents too.
+#[test]
+fn a_locked_attachment_refuses_every_drop() {
+    let (mut w, sel) = world();
+    wear(&mut w, sel[0].idx);
+    let idx = sel[0].idx;
+    let object = w.objects.get(idx).expect("selected prim").full_id;
+    w.rlva_configure(true);
+    let (texture, material) = (item(&w, TEXTURE), item(&w, MATERIAL));
+    assert!(!contents_drop::attachment_locked(&w, idx), "no lock yet");
+    assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &texture), Ok(()));
+    rlva_restrict(&mut w, object, "@detach=n");
+    assert!(contents_drop::attachment_locked(&w, idx));
+    for target in [PickTarget::Diffuse, PickTarget::Normal, PickTarget::Specular] {
+        assert_eq!(allowed(&w, &sel, target, &texture), Err(Refusal::Object), "{target:?}");
+    }
+    assert_eq!(allowed(&w, &sel, PickTarget::PbrMaterial, &material), Err(Refusal::Object));
+    assert!(contents_drop::worn_refused(&w, idx, &texture));
+    assert!(contents_drop::worn_refused(&w, idx, &material));
+    assert_eq!(contents_drop::accepts(&w, idx, &texture), Err("rez-contents-denied"));
+    // the same object in the world is not an attachment
+    w.objects.get_mut(idx).expect("selected prim").parent_id = 0;
+    assert!(!contents_drop::attachment_locked(&w, idx));
+    assert!(!contents_drop::worn_refused(&w, idx, &texture));
+}
+
 #[test]
 fn only_a_worn_selection_narrows_the_picker() {
     let (mut w, sel) = world();
