@@ -86,6 +86,10 @@ What each part tells the one who fixes it:
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
+- **Risk factors**: the graphics effects, known overlay hooks, memory
+  headroom and session uptime captured before a GPU loss. This is a summary
+  of available signals, not a diagnosis. It identifies the unavailable
+  60-second memory minimum, driver age and full scene-event timeline.
 - **GPU work at the loss**: the frame last submitted to the card and the
   last one it finished, each with its age at the loss, and what that says:
   a hang (the last frame not finished 0.5 s or more after its submission:
@@ -98,8 +102,56 @@ What each part tells the one who fixes it:
   five when in the session, how long the recovery took and whether it came
   back with the safe graphics. Only shown when the session ended badly later.
 - **Overlay hooks**: the overlay or capture programs that injected their
-  hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
-  game capture), named from the viewer's fixed list only.
+  hook into the viewer during the session (Discord's legacy hook, Steam,
+  RivaTuner, OBS, Medal, NVIDIA Share, FPS Monitor, Bandicam), named from the
+  viewer's fixed list only; a separate snapshot records known hooks at the
+  first confirmed GPU loss in the session, including a loss before the first
+  frame or followed by renderer recovery.
+- **Vulkan layers installed**: names enumerated by the loader. Enumeration
+  does not prove a layer was enabled or running in the instance.
+- **GPU errors**: sanitized operation names and counts from the retained
+  session log: `out-of-memory`, with the call when the log names it
+  (`out-of-memory in Device::create_bind_group`), or the wgpu operation that
+  failed (`Queue::write_buffer`). Up to 50 distinct full wgpu error blocks, with their labels,
+  counts and age, are saved in `gpu-errors-private.txt`; they stay local.
+- **OS GPU reset records**: matching Linux kernel lines or Windows reset
+  event names and times from two minutes before through five minutes after
+  the recorded session end, saved locally. The public report shows collection
+  status and fixed GPU/reset labels; partial queries and queries that hit a
+  cap are marked as partial or incomplete, and Windows event labels also show
+  their recorded times. Collection retains at most 60 matching records and
+  discloses when more were discarded. OS utility execution and pipe reading
+  share a two-second budget, including pipes retained by descendant processes.
+  Linux kernel messages, Windows event text, registry
+  values and WATCHDOG dump names
+  stay local. Linux uses the last heartbeat when the
+  process end time is unavailable, so that window is approximate. Windows
+  also attempts to sample current TDR / HAGS / MPO values and WATCHDOG dump
+  names and times; these may be unavailable or have changed since the crash.
+  Successful event-log collection does not establish that those samples succeeded.
+- **XR runtime**: a fixed public category (SteamVR, Meta, Virtual Desktop,
+  Monado, Windows Mixed Reality or other) and whether it created the Vulkan
+  device. The runtime's own free-form name stays local.
+- **Flight recorder**: the 60 seconds before the first GPU loss (or stall,
+  panic, failure), sampled 10 times a second: CPU and GPU frame time and the
+  three heaviest GPU passes, video memory used / budget / headroom, texture
+  pages and pressure, bind-group rebuilds, the largest indirect draw, pipelines
+  compiling, uploads in flight, swapchain recreations, window state and process
+  memory, with a timeline of screen changes, teleports, region changes, preset
+  and effects changes, photo / poser and stall notices in seconds before the
+  incident; then min / max / last of each over 60 s and over the last 5 s.
+  Numbers and fixed labels only. Written at the first loss (never replaced by
+  what follows it) and every 5 s, so a hard crash keeps the seconds before it.
+- **Environment snapshot**: bounded module basenames with numeric version
+  where available, fixed folder classifications and Windows signature categories,
+  known overlay process
+  labels, display resolution class and refresh rate, Windows HDR state,
+  and a fixed power-plan category plus AC / battery state. A snapshot is taken
+  at session start and again on confirmed GPU device loss. Active VRR is
+  reported as unknown because the queried APIs do not expose its current
+  state. Full paths,
+  command lines, device names, and arbitrary plan names are not included;
+  module details remain local and the report lists only third-party names.
 - **Vulkan layers on offer**: the `VK_LAYER_*` names the Vulkan loader offers
   to the viewer, noted at the very start, so a crash while Vulkan starts has
   them too.

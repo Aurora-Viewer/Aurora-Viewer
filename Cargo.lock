@@ -748,6 +748,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
+ "roxmltree 0.21.1",
  "resvg",
  "rfd",
  "ron",
