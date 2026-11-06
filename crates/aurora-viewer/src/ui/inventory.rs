@@ -200,7 +200,13 @@ pub enum InvAction {
     },
     Marketplace(Uuid, crate::ui::marketplace_listings::Command),
     Profile(Uuid),
-    ThumbnailCopied(Uuid),
+    /// The item image was copied; `clipboard`: its id is on the system
+    /// clipboard too (the asset id rule allows it), else the copy stays in
+    /// the viewer (LLFloaterChangeItemThumbnail::onCopyToClipboard).
+    ThumbnailCopied {
+        asset: Uuid,
+        clipboard: bool,
+    },
     Thumbnail {
         request: Uuid,
         item: Uuid,

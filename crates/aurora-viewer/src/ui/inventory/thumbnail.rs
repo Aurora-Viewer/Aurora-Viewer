@@ -133,7 +133,10 @@ impl ThumbnailUi {
                 ) {
                     self.picker_open = true;
                     self.selected = (!asset.is_nil()).then_some(asset);
-                    self.uuid_text = asset.to_string();
+                    // the picker's UUID field, as LLFloaterTexturePicker
+                    // writes it: zeros unless the asset id rule allows it
+                    let shown = crate::world::inventory::asset_ids::AssetIds::of(world).shown(&asset);
+                    self.uuid_text = if shown { asset } else { Uuid::nil() }.to_string();
                     self.filter.clear();
                 }
                 if toolbar_button(
@@ -144,8 +147,11 @@ impl ThumbnailUi {
                     !asset.is_nil(),
                     &mut caption,
                 ) {
-                    ctx.copy_text(asset.to_string());
-                    actions.push(InvAction::ThumbnailCopied(asset));
+                    let clipboard = crate::world::inventory::asset_ids::AssetIds::of(world).shown(&asset);
+                    if clipboard {
+                        ctx.copy_text(asset.to_string());
+                    }
+                    actions.push(InvAction::ThumbnailCopied { asset, clipboard });
                 }
                 if toolbar_button(
                     ui,
