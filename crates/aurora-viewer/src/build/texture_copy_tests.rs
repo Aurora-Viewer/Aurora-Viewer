@@ -324,8 +324,11 @@ fn a_full_item_or_a_typed_id_needs_nothing_more() {
     assert!(tool.out.is_empty());
 }
 
+/// TextureApplyFunctor (llselectmgr.cpp): an attachment takes only an item
+/// whose base rights are unrestricted, on top of the picker's copy and
+/// transfer filter.
 #[test]
-fn a_worn_object_takes_an_image_with_copy_and_transfer() {
+fn a_worn_object_takes_an_image_with_copy_transfer_and_unrestricted_base_rights() {
     let (mut w, a) = world();
     let avatar = w.objects.index_of_uuid(&w.agent_id).expect("the agent's avatar");
     let avatar_id = w.objects.get(avatar).expect("the agent's avatar").key.local_id;
@@ -340,6 +343,13 @@ fn a_worn_object_takes_an_image_with_copy_and_transfer() {
         Err(aurora_i18n::tr!("build-ui-texture-drop-restricted"))
     );
     assert_eq!(tool.admit_item(&mut w, full, &[a]), Ok(()));
+    let no_modify_base = give(&mut w, 3, ASSET, rules::COPY | rules::TRANSFER);
+    w.inventory.items.get_mut(&no_modify_base).expect("item").base_mask = rules::COPY | rules::TRANSFER;
+    assert_eq!(
+        tool.admit_item(&mut w, no_modify_base, &[a]),
+        Err(aurora_i18n::tr!("texture-library-locked"))
+    );
+    assert!(tool.out.is_empty(), "nothing goes into a worn object's contents");
 }
 
 #[test]

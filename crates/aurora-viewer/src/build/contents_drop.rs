@@ -79,15 +79,25 @@ pub(crate) fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
     }
 }
 
-/// Whether the agent may put the image `item` on a worn object's face: both
-/// copy and transfer, so nothing has to go into the object's contents, which
-/// a worn object cannot take (it is in the world and in inventory at once).
-/// **Wanted difference from the Legacy Viewer**, which also asks for the base
-/// modify right through willObjectAcceptInventory: painting a face does not
-/// change the image, so a no-modify texture is accepted here.
-pub(crate) fn worn_image_rights(item: &InvItem, agent: Uuid) -> bool {
+/// The texture controls' immediate filter on a worn object: copy and
+/// transfer for the agent (setImmediateFilterPermMask, FSPanelFace::refresh,
+/// indra/newview/fspanelface.cpp). What it refuses gets the
+/// TooltipTextureRestrictedDrop reason; the picker greys it out.
+pub(crate) fn worn_image_filter(item: &InvItem, agent: Uuid) -> bool {
     let both = rules::COPY | rules::TRANSFER;
     agent_mask(item, agent) & both == both
+}
+
+/// Whether the agent may put the image `item` on a worn object's face: the
+/// immediate filter, and unrestricted base rights (modify, copy and
+/// transfer), which willObjectAcceptInventory asks of any drop on an
+/// attachment (indra/newview/lltooldraganddrop.cpp), as the server does not
+/// hold an item in the world and in inventory at once. The Texture tab's drop
+/// (FSPanelFace::onDragTexture through isInventoryDropAcceptable), the world
+/// drop (dad3dApplyToObject) and the picker's apply (TextureApplyFunctor,
+/// indra/newview/llselectmgr.cpp) all go through it.
+pub(crate) fn worn_image_rights(item: &InvItem, agent: Uuid) -> bool {
+    worn_image_filter(item, agent) && item.base_mask & UNRESTRICTED == UNRESTRICTED
 }
 
 /// Whether the prim `idx` is worn and its faces must refuse the texture

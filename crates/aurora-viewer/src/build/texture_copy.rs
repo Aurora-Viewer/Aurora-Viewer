@@ -300,9 +300,9 @@ impl BuildTool {
     /// An inventory item chosen in a build control (picker OK, a slot drop)
     /// before its id goes on the prims `objects`: LLSelectMgr::selectionSetImage,
     /// selectionSetGLTFMaterial and LLPanelVolume::setLightTextureID. A no-copy
-    /// item goes on one object only; a worn object takes an image with copy and
-    /// transfer (`contents_drop::worn_image_rights`) and a material with
-    /// unrestricted base rights; a restricted item goes into each object's
+    /// item goes on one object only; a worn object takes an image with copy,
+    /// transfer and unrestricted base rights (`contents_drop::worn_image_rights`)
+    /// and a material with unrestricted base rights; a restricted item goes into each object's
     /// contents (moved when it cannot be copied). Without an item (a typed id,
     /// a built-in button) the id is applied as it is, like the Legacy Viewer.
     /// Runs once per action. The error is the text to show.
@@ -327,7 +327,13 @@ impl BuildTool {
                 contents_drop::worn_image_rights(&item, agent)
             };
             if worn && !free && !takes {
-                return Err(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
+                return Err(
+                    if item.asset_type != AT_MATERIAL && !contents_drop::worn_image_filter(&item, agent) {
+                        aurora_i18n::tr!("build-ui-texture-drop-restricted")
+                    } else {
+                        aurora_i18n::tr!("texture-library-locked")
+                    },
+                );
             }
         }
         if !requires_contents(inv, &item, agent) {

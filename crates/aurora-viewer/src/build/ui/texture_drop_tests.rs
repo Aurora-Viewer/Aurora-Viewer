@@ -162,16 +162,19 @@ fn wear(w: &mut World, idx: usize) {
     o.state = 1;
 }
 
-/// The texture's own modify right does not matter on a worn object: only
-/// the object's, and copy and transfer on the texture.
+/// willObjectAcceptInventory: a worn object takes an image whose base
+/// rights are unrestricted, on top of the immediate copy and transfer
+/// filter. A no-modify texture passes the filter and is refused by the
+/// object, without the filter's reason.
 #[test]
-fn a_worn_object_takes_a_no_modify_texture_with_copy_and_transfer() {
+fn a_worn_object_refuses_a_texture_without_unrestricted_base_rights() {
     let (mut w, sel) = world();
     wear(&mut w, sel[0].idx);
     let no_modify = item(&w, NO_MODIFY_TEXTURE);
     assert_eq!(no_modify.base_mask & rules::MODIFY, 0);
     for target in [PickTarget::Diffuse, PickTarget::Normal, PickTarget::Specular] {
-        assert_eq!(allowed(&w, &sel, target, &no_modify), Ok(()), "{target:?}");
+        assert_eq!(allowed(&w, &sel, target, &item(&w, TEXTURE)), Ok(()), "{target:?}");
+        assert_eq!(allowed(&w, &sel, target, &no_modify), Err(Refusal::Object), "{target:?}");
         for refused in [NO_COPY_TEXTURE, NO_TRANSFER_TEXTURE] {
             assert_eq!(
                 allowed(&w, &sel, target, &item(&w, refused)),
@@ -181,10 +184,15 @@ fn a_worn_object_takes_a_no_modify_texture_with_copy_and_transfer() {
         }
     }
     let idx = sel[0].idx;
-    assert!(!contents_drop::worn_image_refused(&w, idx, &no_modify));
-    assert!(contents_drop::worn_image_refused(&w, idx, &item(&w, NO_COPY_TEXTURE)));
-    assert!(contents_drop::worn_image_refused(&w, idx, &item(&w, NO_TRANSFER_TEXTURE)));
-    // the base rule keeps guarding what goes into a worn object's contents
+    assert!(!contents_drop::worn_image_refused(&w, idx, &item(&w, TEXTURE)));
+    for refused in [NO_MODIFY_TEXTURE, NO_COPY_TEXTURE, NO_TRANSFER_TEXTURE] {
+        assert!(contents_drop::worn_image_refused(&w, idx, &item(&w, refused)), "{refused}");
+    }
+    // the base rights count even when the agent's own rights are complete
+    let mut base_limited = item(&w, TEXTURE);
+    base_limited.base_mask &= !rules::MODIFY;
+    assert!(contents_drop::worn_image_filter(&base_limited, w.agent_id));
+    assert!(contents_drop::worn_image_refused(&w, idx, &base_limited));
     assert_eq!(contents_drop::accepts(&w, idx, &no_modify), Err("rez-contents-denied"));
 }
 

@@ -906,7 +906,9 @@ impl App {
                     !crate::build::BuildTool::surface_takes_texture(&self.world, prim, &faces, override_ok, self.alt)
                 })
             });
-        if worn_refused || pbr_refused {
+        if worn_refused && contents_drop::worn_image_filter(item, self.world.agent_id) {
+            reason = Some(aurora_i18n::tr!("texture-library-locked"));
+        } else if worn_refused || pbr_refused {
             reason = Some(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
         } else if allowed
             && let Some((idx, _)) = target

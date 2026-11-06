@@ -53,10 +53,12 @@ fn image(target: PickTarget) -> bool {
 
 /// Whether `item` may be dropped on `target` for the faces `sel`: the cargo,
 /// then the immediate permission filter, then each root of the selection.
-/// A worn root takes an image on `worn_image_rights` and its own modify right
-/// (see there); any other case is the Legacy Viewer's drag callback. The PBR
-/// maps and the sculpt map take only a copy and transfer item, the filter of
-/// their controls (`texture_copy::map_slot_takes`).
+/// A worn root refuses an image its immediate filter refuses
+/// (`worn_image_filter`, with its reason), then takes it on
+/// `worn_image_rights` and its own modify right; any other case is the
+/// Legacy Viewer's drag callback. The PBR maps and the sculpt map take only a
+/// copy and transfer item, the filter of their controls
+/// (`texture_copy::map_slot_takes`).
 pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &InvItem) -> Result<(), Refusal> {
     let cargo = match target {
         PickTarget::PbrMaterial => item.asset_type == AT_MATERIAL,
@@ -73,12 +75,13 @@ pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &Inv
     }
     let roots: BTreeSet<(usize, bool)> = sel.iter().filter_map(|s| contents_drop::linkset(world, s.idx)).collect();
     let worn_image = |worn: bool| worn && image(target);
-    if roots.iter().any(|&(_, worn)| worn_image(worn)) && !contents_drop::worn_image_rights(item, world.agent_id) {
+    if roots.iter().any(|&(_, worn)| worn_image(worn)) && !contents_drop::worn_image_filter(item, world.agent_id) {
         return Err(Refusal::Restricted);
     }
     let takes = |&(root, worn): &(usize, bool)| {
         if worn_image(worn) {
             world.objects.get(root).is_some_and(|o| o.update_flags & OBJECT_MODIFY != 0)
+                && contents_drop::worn_image_rights(item, world.agent_id)
         } else {
             contents_drop::accepts(world, root, item).is_ok()
         }
