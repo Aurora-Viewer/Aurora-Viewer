@@ -38,6 +38,9 @@ pub(super) struct BusyPause {
     /// or without the setting, until R13 is pressed again (a click in the
     /// window does not end it: the button itself is one).
     pub(super) forced: bool,
+    /// The setting follows the newest change made in any Aurora window
+    /// (instances.rs): the one that pauses is the window behind.
+    pub(super) follow: crate::instances::SwitchFollow,
 }
 
 impl BusyPause {
