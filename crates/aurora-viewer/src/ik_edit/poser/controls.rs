@@ -128,6 +128,8 @@ impl Editor {
             .sessions
             .get(&self.poser.subject)
             .is_some_and(|s| s.pose.locks.contains_key(&bone));
+        let enabled = self.poser.sessions.get(&self.poser.subject).is_some_and(|s| s.pose.enabled[bone]);
+        let counterpart = (self.poser.side == Side::Mirror).then(|| self.mirrors.counterpart(bone)).flatten();
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -138,6 +140,15 @@ impl Editor {
                 };
                 ui.label(egui::RichText::new(title).size(16.0).strong().color(p.ink));
                 ui.label(egui::RichText::new(name).size(11.5).monospace().color(p.muted_dim));
+                if let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) {
+                    let mut joint_enabled = session.pose.enabled[bone];
+                    if widgets::switch_labeled(ui, p, &mut joint_enabled, aurora_i18n::tr!("poser-joint-pose")).changed()
+                        && enabled != joint_enabled
+                    {
+                        session.toggle_joint(bone, counterpart);
+                        self.refresh = true;
+                    }
+                }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if widgets::icon_button(ui, p, "restore", aurora_i18n::text("ik-edit-reset-bone"), true) {

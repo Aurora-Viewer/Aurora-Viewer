@@ -13198,3 +13198,4 @@ picker-pipette-no-texture = コピー可能なテクスチャがインベント�
 picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
+poser-joint-pose = この関節をポーズする

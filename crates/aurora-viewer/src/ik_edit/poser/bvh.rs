@@ -56,7 +56,7 @@ pub(super) fn encode(rig: &Rig, pose: &SubjectPose, unlock_pelvis: bool) -> Resu
                 };
                 let _ = write!(out, "{:.6} {:.6} {:.6} ", p.x, p.y, p.z);
             }
-            let q = if frame == 0 || bone == rig.pelvis && !unlock_pelvis {
+            let q = if frame == 0 || !pose.enabled[bone] || bone == rig.pelvis && !unlock_pelvis {
                 Quat::IDENTITY
             } else {
                 basis.inverse() * pose.rotations[bone] * basis

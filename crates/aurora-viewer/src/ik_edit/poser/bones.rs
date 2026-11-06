@@ -279,6 +279,10 @@ impl Editor {
                     label,
                     self.selected == Some(rig.pelvis) && self.poser.transform == 1,
                     edited,
+                    self.poser
+                        .sessions
+                        .get(&self.poser.subject)
+                        .is_none_or(|s| s.pose.enabled[rig.pelvis]),
                     "mPelvis",
                 ) {
                     self.select_pose_bone(rig.pelvis, rig, frame);
@@ -341,13 +345,14 @@ impl Editor {
                 .map(|b| rig.canonical_names[*b].as_str())
                 .collect::<Vec<_>>()
                 .join(" · ");
-            if self.joint_row(ui, p, &label(&base), selected, edited, &names) {
+            let enabled = self.poser.sessions.get(&self.poser.subject).is_none_or(|s| s.pose.enabled[bone]);
+            if self.joint_row(ui, p, &label(&base), selected, edited, enabled, &names) {
                 self.select_pose_bone(bone, rig, frame);
             }
         }
     }
     /// A selectable joint row; true when clicked.
-    fn joint_row(&self, ui: &mut egui::Ui, p: &Palette, label: &str, selected: bool, edited: bool, tip: &str) -> bool {
+    fn joint_row(&self, ui: &mut egui::Ui, p: &Palette, label: &str, selected: bool, edited: bool, enabled: bool, tip: &str) -> bool {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::click());
         let hovered = response.hovered();
         if selected || hovered {
@@ -363,10 +368,18 @@ impl Editor {
             egui::FontId::proportional(13.0),
             ink,
         );
-        if edited {
+        if edited || !enabled {
             let dot = if selected { p.on_accent } else { p.violet_light };
-            ui.painter()
-                .circle_filled(egui::pos2(rect.right() - 10.0, rect.center().y), DOT, dot);
+            if enabled {
+                ui.painter()
+                    .circle_filled(egui::pos2(rect.right() - 10.0, rect.center().y), DOT, dot);
+            } else {
+                ui.painter().circle_stroke(
+                    egui::pos2(rect.right() - 10.0, rect.center().y),
+                    DOT,
+                    egui::Stroke::new(1.0, p.muted_dim),
+                );
+            }
         }
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
         response.on_hover_text(tip).clicked()
@@ -450,6 +463,7 @@ impl Editor {
                         self.selected == Some(bone) || self.poser.side == Side::Mirror && self.selected.is_some() && self.selected == other;
                     let edited =
                         self.subject_edited(bone) || self.poser.side == Side::Mirror && other.is_some_and(|o| self.subject_edited(o));
+                    let enabled = self.poser.sessions.get(&self.poser.subject).is_none_or(|s| s.pose.enabled[bone]);
                     let (rect, response) = ui.allocate_exact_size(egui::vec2(cell_w, CELL_H), Sense::click());
                     let face = if selected {
                         p.violet
@@ -464,7 +478,11 @@ impl Editor {
                         (false, true) => p.violet_light,
                         (false, false) => p.raised,
                     };
-                    ui.painter().circle_filled(rect.center(), DOT, dot);
+                    if enabled {
+                        ui.painter().circle_filled(rect.center(), DOT, dot);
+                    } else {
+                        ui.painter().circle_stroke(rect.center(), DOT, egui::Stroke::new(1.0, p.muted_dim));
+                    }
                     let label = aurora_i18n::tr!("poser-numbered-bone", name = name, number = joint).to_string();
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &label));
                     if response.on_hover_text(&rig.canonical_names[bone]).clicked() {

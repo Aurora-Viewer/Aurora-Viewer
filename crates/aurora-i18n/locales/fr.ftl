@@ -13221,3 +13221,4 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+poser-joint-pose = Poser cette articulation

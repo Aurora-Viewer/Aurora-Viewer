@@ -49,6 +49,78 @@ pub(super) fn selected_fixture() -> (World, Editor) {
     editor.select(rig.names["mHead"], rig, &frame);
     (world, editor)
 }
+#[test]
+fn poser_joint_toggle_falls_back_tracks_undo_and_survives_saved_pose_loads() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let bone = rig.names["mHead"];
+    let mut session = data::Session::new(SubjectPose::capture(rig, &frame).unwrap());
+    let animated_rotation = (rig.local_rot[bone] * Quat::from_rotation_z(0.42)).normalize();
+    let animated_position = rig.local_pos[bone] + Vec3::new(0.03, 0.0, 0.0);
+    let mut rotations = rig.local_rot.clone();
+    let mut positions = rig.local_pos.clone();
+    rotations[bone] = animated_rotation;
+    positions[bone] = animated_position;
+    session.toggle_joint(bone, None);
+    assert!(!session.pose.enabled[bone]);
+    let actual = session
+        .pose
+        .matrices_with_animation(rig, frame.model, &rotations, &positions, Vec3::ZERO);
+    let mut expected_rotations = session.pose.rotations.clone();
+    let mut expected_positions = session.pose.positions.clone();
+    expected_rotations[bone] = animated_rotation;
+    expected_positions[bone] = animated_position;
+    let expected = rig.world_with(&expected_rotations, Vec3::ZERO, &expected_positions, &session.pose.scales);
+    assert!(
+        actual[bone].abs_diff_eq(expected[bone], 1e-5),
+        "disabled joint follows its live animation"
+    );
+    let pelvis_offset = Vec3::new(0.08, -0.03, 0.02);
+    let mut pelvis_pose = (*session.pose).clone();
+    pelvis_pose.enabled[rig.pelvis] = false;
+    let actual = pelvis_pose.matrices_with_animation(rig, frame.model, &rotations, &positions, pelvis_offset);
+    let expected = rig.world_with(&rotations, pelvis_offset, &positions, &pelvis_pose.scales);
+    assert!(
+        actual[rig.pelvis].abs_diff_eq(expected[rig.pelvis], 1e-5),
+        "disabled pelvis keeps the live offset"
+    );
+
+    session.history(false);
+    assert!(session.pose.enabled[bone], "undo restores the enabled state");
+    session.history(true);
+    assert!(!session.pose.enabled[bone], "redo restores the disabled state");
+
+    let document = document::Document::capture(rig, &session, "Disabled head".into(), 4);
+    let encoded = serde_json::to_string(&document).unwrap();
+    assert!(encoded.contains("\"enabled\":false"));
+    let decoded: document::Document = serde_json::from_str(&encoded).unwrap();
+    let mut loaded = data::Session::new(SubjectPose::capture(rig, &frame).unwrap());
+    assert!(decoded.apply(rig, &mut loaded, document::LoadMode::All, frame.model));
+    assert!(!loaded.pose.enabled[bone], "saved pose keeps a disabled joint");
+    loaded = data::Session::new(SubjectPose::capture(rig, &frame).unwrap());
+    assert!(decoded.apply(rig, &mut loaded, document::LoadMode::Selective, frame.model));
+    assert!(loaded.pose.enabled[bone], "selective load enables joints it applies");
+
+    let authored = session.authored(rig, frame.model).unwrap();
+    assert!(
+        !storage::native(rig, &authored, &[], "Disabled head".into(), 4)
+            .unwrap()
+            .animation
+            .joints
+            .iter()
+            .any(|joint| joint.joint_name == "mHead")
+    );
+    let bvh = bvh::encode(rig, &authored, false).unwrap();
+    let mut neutral_head = authored.clone();
+    neutral_head.enabled[bone] = true;
+    neutral_head.rotations[bone] = Quat::IDENTITY;
+    assert_eq!(
+        bvh,
+        bvh::encode(rig, &neutral_head, false).unwrap(),
+        "disabled head exports neutral rotation"
+    );
+}
 pub(super) fn projector(point: Vec3) -> Projector {
     let eye = point + Vec3::new(-2.0, -3.0, 0.3);
     Projector {
@@ -1043,6 +1115,7 @@ fn poser_exports_nothing_of_a_captured_animation_through_any_format() {
         scales: rig.scale.clone(),
         locks: Default::default(),
         origin: rig.local_rot.clone(),
+        enabled: vec![true; rig.len()],
     });
     assert!(decoded.apply(rig, &mut other, document::LoadMode::All, Mat4::IDENTITY));
     assert!(

@@ -23,6 +23,15 @@ pub(super) struct Joint {
     /// complete joints and in the files saved before it existed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     change: bool,
+    /// Absent in existing pose files; all joints used to be enabled.
+    #[serde(default = "enabled_by_default", skip_serializing_if = "is_enabled")]
+    enabled: bool,
+}
+fn enabled_by_default() -> bool {
+    true
+}
+fn is_enabled(enabled: &bool) -> bool {
+    *enabled
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,6 +68,7 @@ impl Document {
                         scale: (session.pose.scales[bone] / session.base.scales[bone]).to_array(),
                         locked: session.pose.locks.contains_key(&bone),
                         change: !complete,
+                        enabled: session.pose.enabled[bone],
                     }
                 })
                 .collect(),
@@ -111,6 +121,8 @@ impl Document {
                 pose.scales[bone] = session.base.scales[bone] * Vec3::from_array(joint.scale);
             }
             pose.locks.remove(&bone);
+            // The Legacy Viewer's selective load re-enables each loaded joint.
+            pose.enabled[bone] = if selective { true } else { joint.enabled };
             if joint.locked {
                 lock.push(bone);
             }
