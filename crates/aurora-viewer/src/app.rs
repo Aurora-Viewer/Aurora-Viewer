@@ -9598,7 +9598,7 @@ impl App {
             }
             // The UI pass retains drag feedback for the next world frame.
             // Merge it before sync/list construction, alongside real selection.
-            if let Some((idx, mask)) = self.library_drag.highlighted {
+            for &(idx, mask) in &self.library_drag.highlighted {
                 *selected_faces.entry(idx).or_default() |= mask;
             }
             self.scene.set_face_selection(&mut self.world, selected_faces);
@@ -10257,7 +10257,7 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: if self.library_drag.highlighted.is_some() {
+            selection_pulse: if !self.library_drag.highlighted.is_empty() {
                 self.scene.selection_pulse(Instant::now(), true)
             } else {
                 self.imports
@@ -10658,8 +10658,11 @@ impl App {
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
-                    library_drop = self.texture_library_drag_input(ui.ctx(), &gfx.renderer);
+                    library_drop = self.texture_library_drag_input(ui.ctx(), &mut gfx.renderer);
                 }
+            }
+            if library_drop.is_none() {
+                library_drop = self.no_copy_drop_prompt(ui.ctx());
             }
             // after every window: their text fields have been drawn
             self.text_menu.after(ui.ctx(), &self.palette);
