@@ -121,6 +121,19 @@ try {
     Assert-Triage ((@($freezeSig.Frames) -join '|') -eq 'aurora_render::cull|aurora_render::draw|aurora_viewer::run::closure') "Unexpected freeze signature frames: $(@($freezeSig.Frames) -join '|')"
     Assert-Triage ($freezeSig.Id -ne $sig.Id) 'A freeze is not the crash at the same place.'
     Assert-Triage ((Get-TriageTitle $freeze $freezeSig) -eq 'Crash: freeze in aurora_render::cull') 'Unexpected freeze title.'
+    # Device loss is its own report kind, distinct from a stalled render or
+    # frozen window; startup loss is a separate signature too.
+    $lost = Read-CrashReport (New-Report 'GPU device lost' @('00 dxgi+0x1000', '01 vulkan-1+0x2000', '02 aurora_viewer+0x1015', '03 aurora_viewer+0x2011'))
+    Assert-Triage ($lost.Kind -eq 'GPU device lost') 'A GPU device-loss report must be read.'
+    $lostSig = Get-CrashSignature $lost (Get-SymbolizedFrames $lost $symFile)
+    Assert-Triage ($lostSig.Id -ne $stallSig.Id -and $lostSig.Id -ne $freezeSig.Id) 'A device loss is not a GPU stall or a frozen window.'
+    Assert-Triage ((@($lostSig.Frames) -join '|') -eq 'aurora_render::cull|aurora_render::draw|aurora_viewer::run::closure') 'Unresolved driver frames must not hide the first stable viewer frames.'
+    Assert-Triage ((Get-TriageTitle $lost $lostSig) -eq 'Crash: GPU device lost in aurora_render::cull') 'Unexpected device-loss title.'
+    $lostAtStart = Read-CrashReport (New-Report 'GPU device lost at startup' @('00 aurora_viewer+0x1015', '01 aurora_viewer+0x2011'))
+    Assert-Triage ($lostAtStart.Kind -eq 'GPU device lost at startup') 'A startup device-loss report must be read.'
+    $lostAtStartSig = Get-CrashSignature $lostAtStart (Get-SymbolizedFrames $lostAtStart $symFile)
+    Assert-Triage ($lostAtStartSig.Id -ne $lostSig.Id) 'A startup device loss is distinct from a later device loss.'
+    Assert-Triage ((Get-TriageTitle $lostAtStart $lostAtStartSig) -eq 'Crash: GPU device lost at startup in aurora_render::cull') 'Unexpected startup device-loss title.'
     # The GPU kept a frame: the render thread's stack, another kind again.
     $stall = Read-CrashReport (New-Report 'GPU not responding' @('00 kernelbase+0x2dda7', '01 aurora_viewer+0x1015', '02 aurora_viewer+0x2011'))
     Assert-Triage ($stall.Kind -eq 'GPU not responding') 'A GPU stall report must be read.'

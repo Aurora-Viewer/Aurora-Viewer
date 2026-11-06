@@ -192,14 +192,26 @@ pub fn disable_amd_switchable_for_retry(adapters_empty: bool) -> bool {
 }
 
 /// The layers to disable: none with `AURORA_VULKAN_LAYERS=keep` (`keep`),
-/// the crashing ones only when overlays are allowed, and none whose
-/// variable is already set (`is_set`).
+/// only the non-OBS overlays with `obs-only`, all overlays with
+/// `overlays-off`, or the preference-selected set by default. Never override
+/// a variable already set by the user (`is_set`).
 pub fn to_disable(keep: Option<&str>, allow_overlays: bool, is_set: impl Fn(&str) -> bool) -> Vec<Layer> {
     if keep.is_some_and(|v| v.trim().eq_ignore_ascii_case("keep")) {
         return Vec::new();
     }
-    let overlays = if allow_overlays { &[][..] } else { OVERLAYS };
-    CRASHING.iter().chain(overlays).copied().filter(|l| !is_set(l.variable)).collect()
+    let obs_only = keep.is_some_and(|v| v.trim().eq_ignore_ascii_case("obs-only"));
+    let force_overlays_off = keep.is_some_and(|v| v.trim().eq_ignore_ascii_case("overlays-off"));
+    let overlays = if allow_overlays && !force_overlays_off && !obs_only {
+        &[][..]
+    } else {
+        OVERLAYS
+    };
+    CRASHING
+        .iter()
+        .chain(overlays)
+        .copied()
+        .filter(|l| !is_set(l.variable) && !(obs_only && l.name == "VK_LAYER_OBS_HOOK"))
+        .collect()
 }
 
 /// The names of the Vulkan layers the loader offers an instance now: the
@@ -552,6 +564,25 @@ mod tests {
             names(&to_disable(None, true, |_| false)),
             ["VK_LAYER_OW_OVERLAY", "VK_LAYER_OW_OBS_HOOK", "VK_LAYER_bandicam_helper"]
         );
+    }
+
+    #[test]
+    fn obs_only_keeps_other_overlays_and_crashing_layers_out() {
+        let disabled = names(&to_disable(Some("obs-only"), true, |_| false));
+        assert!(disabled.contains(&"VK_LAYER_OW_OVERLAY"));
+        assert!(disabled.contains(&"VK_LAYER_VALVE_steam_overlay"));
+        assert!(!disabled.contains(&"VK_LAYER_OBS_HOOK"));
+        assert_eq!(disabled.len(), CRASHING.len() + OVERLAYS.len() - 1);
+    }
+
+    #[test]
+    fn overlays_off_ignores_the_preference_and_disables_all_overlay_layers() {
+        for allow in [false, true] {
+            assert_eq!(
+                names(&to_disable(Some("overlays-off"), allow, |_| false)),
+                names(&to_disable(None, false, |_| false))
+            );
+        }
     }
 
     #[test]

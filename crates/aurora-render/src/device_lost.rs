@@ -85,8 +85,8 @@ pub struct DeviceLost {
 }
 
 /// The GPU work the render thread last gave the device and the last it saw
-/// finished: at a loss, [`DeviceLost::work_at_loss`] tells a hang from a
-/// fault, which the crash reports could not ([`hang_or_fault`]). Each
+/// finished: at a loss, [`DeviceLost::work_at_loss`] describes the newest
+/// submitted and completed frames without claiming a specific GPU cause. Each
 /// submission has its own token: the eyes of an XR frame, or the journal's
 /// submits and the frame's own, share a frame number.
 #[derive(Debug, Default)]
@@ -200,7 +200,7 @@ impl DeviceLost {
     }
 
     /// What the GPU had in hand at the loss (the device-lost callback logs
-    /// it): see [`hang_or_fault`].
+    /// it): see [`describe_work_at_loss`].
     pub fn work_at_loss(&self) -> String {
         let now = Instant::now();
         let Ok(w) = self.work.lock() else {
@@ -211,7 +211,7 @@ impl DeviceLost {
             (Some((s, _)), Some((f, _))) => f.token >= s.token,
             _ => false,
         };
-        hang_or_fault(
+        describe_work_at_loss(
             w.submitted.map(|(s, at)| (s.frame, age(at))),
             w.finished.map(|(f, at)| (f.frame, age(at))),
             done,
@@ -237,13 +237,13 @@ pub fn submit_tracked(
 }
 
 /// The fixed endings of the line of a loss, in the order of
-/// [`hang_or_fault`]'s cases: the crash report only publishes one of them
+/// [`describe_work_at_loss`]'s cases: the crash report only publishes one of them
 /// (aurora-viewer crash/summary.rs).
 pub const GPU_WORK_VERDICTS: [&str; 4] = [
-    "a fault found after that frame ended (not a hang)",
-    "a hang (the driver reset the card while that frame ran)",
-    "a fault in the work of that frame (not a hang)",
-    "undecided (a slow frame that faulted, or a hang)",
+    "loss observed after the submitted work finished (cause unknown)",
+    "submission unfinished for at least 0.5 s (likely GPU hang)",
+    "loss soon after submission while the frame was unfinished (cause unknown)",
+    "submission unfinished for 0.1-0.5 s (hang vs slow frame unknown)",
 ];
 
 /// The line of a loss before any submission.
@@ -277,26 +277,20 @@ impl DeviceLost {
     }
 }
 
-/// A submission the GPU had not finished this long after it, when the
-/// loss came, hung: the driver's watchdog reset the card. Measured, not
-/// the 2 s of the Windows TDR setting: an RTX 5070 Ti (driver 621.01)
-/// declared `AURORA_DEMO_GPU_HANG`'s submission lost 1.101 s after it.
+/// A submission still unfinished this long after it is a likely GPU hang.
+/// The `AURORA_DEMO_GPU_HANG` test on an RTX 5070 Ti (driver 621.01) was
+/// reported lost 1.101 s after submission.
 const HANG_AFTER: Duration = Duration::from_millis(500);
-/// A loss this soon after a submission the GPU had not finished is a fault
-/// the driver found in that work (an invalid access on NVIDIA:
-/// VK_ERROR_DEVICE_LOST at once, well within a frame).
-const FAULT_WITHIN: Duration = Duration::from_millis(100);
+/// A loss this soon after an unfinished submission is reported separately
+/// from a hang. Timing alone does not identify a GPU fault or the failing pass.
+const EARLY_LOSS_WITHIN: Duration = Duration::from_millis(100);
 
-/// Hang or fault: the line the device-lost callback logs, from the newest
-/// submission and the newest finished one, each with its frame and its age
-/// at the loss, and whether the newest submission is the finished one
-/// (`done`). A loss with the last submission finished is a fault found
-/// after it; one with it not finished is a hang past [`HANG_AFTER`], a
-/// fault within [`FAULT_WITHIN`], and left undecided between the two (a
-/// frame that slow may have faulted, or hung). The crash reports showed
-/// neither: the main thread's own stall warning (STALL_AFTER, 2 s) comes
-/// too late for a hang.
-fn hang_or_fault(submitted: Option<(u64, Duration)>, finished: Option<(u64, Duration)>, done: bool) -> String {
+/// Describes the newest submission and completion, their frame numbers and
+/// ages at loss, and whether the newest submission had finished. The age
+/// bands are timing observations: they cannot prove a GPU fault or identify
+/// a pass. The main thread's own stall warning (STALL_AFTER, 2 s) comes too
+/// late for some GPU hangs.
+fn describe_work_at_loss(submitted: Option<(u64, Duration)>, finished: Option<(u64, Duration)>, done: bool) -> String {
     let secs = |d: Duration| format!("{:.3} s", d.as_secs_f64());
     let Some((frame, age)) = submitted else {
         return GPU_WORK_NONE.to_owned();
@@ -311,7 +305,7 @@ fn hang_or_fault(submitted: Option<(u64, Duration)>, finished: Option<(u64, Dura
         GPU_WORK_VERDICTS[0]
     } else if age >= HANG_AFTER {
         GPU_WORK_VERDICTS[1]
-    } else if age < FAULT_WITHIN {
+    } else if age < EARLY_LOSS_WITHIN {
         GPU_WORK_VERDICTS[2]
     } else {
         GPU_WORK_VERDICTS[3]
@@ -478,29 +472,28 @@ mod tests {
         assert!(!in_guarded_poll());
     }
 
-    /// The line of the loss tells a hang (the last frame not finished after
-    /// `HANG_AFTER`: the real hang of `AURORA_DEMO_GPU_HANG` on an RTX 5070
-    /// Ti was declared lost 1.101 s after its submission) from a fault (the
-    /// last frame finished, or lost within `FAULT_WITHIN` of its
-    /// submission), and leaves the band between undecided.
+    /// The line records timing of submitted and completed work. The
+    /// `AURORA_DEMO_GPU_HANG` run on an RTX 5070 Ti was declared lost 1.101 s
+    /// after its submission; other timing bands are observations, not a
+    /// diagnosis of the failing GPU operation.
     #[test]
-    fn the_loss_names_a_hang_or_a_fault_from_the_work_in_hand() {
+    fn the_loss_describes_work_timing_without_claiming_a_gpu_cause() {
         let ms = Duration::from_millis;
-        assert_eq!(hang_or_fault(None, None, false), GPU_WORK_NONE);
-        let hang = hang_or_fault(Some((601, ms(1101))), Some((599, ms(1103))), false);
+        assert_eq!(describe_work_at_loss(None, None, false), GPU_WORK_NONE);
+        let long_pending = describe_work_at_loss(Some((601, ms(1101))), Some((599, ms(1103))), false);
         assert_eq!(
-            hang,
+            long_pending,
             "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, \
-             a hang (the driver reset the card while that frame ran)"
+             submission unfinished for at least 0.5 s (likely GPU hang)"
         );
-        assert!(hang_or_fault(Some((812, ms(500))), Some((811, ms(510))), false).ends_with(GPU_WORK_VERDICTS[1]));
-        let fault = hang_or_fault(Some((812, ms(9))), Some((812, ms(1))), true);
-        assert!(fault.ends_with(GPU_WORK_VERDICTS[0]), "{fault}");
-        let early = hang_or_fault(Some((812, ms(8))), Some((811, ms(9))), false);
+        assert!(describe_work_at_loss(Some((812, ms(500))), Some((811, ms(510))), false).ends_with(GPU_WORK_VERDICTS[1]));
+        let after_finish = describe_work_at_loss(Some((812, ms(9))), Some((812, ms(1))), true);
+        assert!(after_finish.ends_with(GPU_WORK_VERDICTS[0]), "{after_finish}");
+        let early = describe_work_at_loss(Some((812, ms(8))), Some((811, ms(9))), false);
         assert!(early.ends_with(GPU_WORK_VERDICTS[2]), "{early}");
-        let slow = hang_or_fault(Some((812, ms(120))), Some((811, ms(130))), false);
+        let slow = describe_work_at_loss(Some((812, ms(120))), Some((811, ms(130))), false);
         assert!(slow.ends_with(GPU_WORK_VERDICTS[3]), "{slow}");
-        let first = hang_or_fault(Some((0, ms(3000))), None, false);
+        let first = describe_work_at_loss(Some((0, ms(3000))), None, false);
         assert!(
             first.contains("none finished yet") && first.ends_with(GPU_WORK_VERDICTS[1]),
             "{first}"
