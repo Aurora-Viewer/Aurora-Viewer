@@ -574,6 +574,19 @@ impl App {
             // aimed at (`rigged`), and the posed bounds of the object
             // designated, which must hold the point read from the GPU
             let local = |idx: usize| self.world.objects.get(idx).map(|o| o.key.local_id);
+            if self.demo {
+                let clicker = self.world.objects.index_of_uuid(&crate::demo::action_id(975));
+                if let (Some(idx), Some(ray), Some(body)) = (clicker, picked.ray, picked.drawn.opaque)
+                    && let Some(surface) = self.scene.left_touch_surface(&self.world, idx, ray)
+                    && let Some(offset) = self.world.objects.get(idx).and_then(|o| self.world.region_offset(o.key.region))
+                {
+                    log::info!(
+                        "demo attachment clearance: body={:?}, gap={:.6}m",
+                        self.scene.record_object(body.record).and_then(|(i, _)| local(i)),
+                        (surface.position + offset - body.point).dot(ray.1)
+                    );
+                }
+            }
             let got = shown.and_then(|d| local(d.idx));
             let raw = |f: Option<aurora_render::DrawnFace>| f.and_then(|f| self.scene.record_object(f.record)).and_then(|(i, _)| local(i));
             let aimed = match self.clicks.demo.expected.take() {

@@ -68,7 +68,7 @@ pub(super) enum FacePick {
     Inventory,
     Blend,
     HudMove,
-    /// Left button: only world Blend faces test exact nonzero texels.
+    /// Left button: only world Blend faces test exact texels at the legacy alpha threshold.
     Left,
     LeftBlend,
 }
@@ -935,7 +935,7 @@ impl Scene {
                     self.textures
                         .pick_masks
                         .get(&texture)
-                        .is_none_or(|mask| mask.hits_nonzero(self.inventory_uv(world, o, hit, model, ray, now)))
+                        .is_none_or(|mask| mask.hits_exact(self.inventory_uv(world, o, hit, model, ray, now)))
                 },
             );
         }
@@ -1640,8 +1640,8 @@ impl Scene {
             depth
         };
         let point = self.transparent_action_point_mode(world, ray, point, true, far, among, FacePick::Left);
-        // Unlike HUDs and worn clickers, world Blend faces let alpha-zero
-        // texels through (#1574). Hover keeps its existing geometric policy.
+        // World Blend presses use the legacy texture alpha > 32 threshold.
+        // HUDs, worn clickers and hover retain their existing policies.
         self.blend_hit_mode(world, ray, point, far, among, FacePick::LeftBlend)
             .map(|(t, _)| ray.0 + ray.1 * t)
             .or(point)
@@ -2650,7 +2650,10 @@ pub(crate) mod tests {
             (None, Some(legacy_mat::alpha_mode::MASK), AlphaKind::Blend),
         ] {
             scene.textures.alpha_by_slot[0] = texture_alpha;
-            for (alpha, texel_alpha) in [1.0, 0.5, 0.001, 0.0].into_iter().flat_map(|a| [0, 127, 255].map(|t| (a, t))) {
+            for (alpha, texel_alpha) in [1.0, 0.5, 0.001, 0.0]
+                .into_iter()
+                .flat_map(|a| [0, 1, 32, 33, 127, 255].map(|t| (a, t)))
+            {
                 scene.textures.pick_masks.insert(
                     texture,
                     super::super::textures::PickMask::from_rgba(1, 1, &[255, 255, 255, texel_alpha]).unwrap(),
@@ -2674,7 +2677,7 @@ pub(crate) mod tests {
                 assert_eq!(touch.face, 0);
                 assert!(touch.st.abs_diff_eq(Vec3::new(0.5, 0.5, 0.0), 1e-5));
                 assert_eq!(scene.hover_hud(&world, cursor), Some(front));
-                let moved = if alpha >= 0.004 && texel_alpha > 0 { front } else { back };
+                let moved = if alpha >= 0.004 && texel_alpha > 32 { front } else { back };
                 assert_eq!(scene.hud_move_pick(&world, cursor), Some(moved));
                 assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
             }
@@ -3370,14 +3373,14 @@ pub(crate) mod tests {
             scene.textures.alpha_by_slot[0] = texture_alpha;
             scene.gpu[front].faces[0].pbr_alpha = pbr;
             scene.gpu[front].faces[0].legacy_alpha = legacy;
-            for texel_alpha in [0, 1, 32, 127, 255] {
+            for texel_alpha in [0, 1, 31, 32, 33, 127, 255] {
                 scene.textures.pick_masks.insert(
                     texture,
                     super::super::textures::PickMask::from_rgba(1, 1, &[255, 255, 255, texel_alpha]).unwrap(),
                 );
-                let expected = if texel_alpha == 0 { depth } else { front_point };
+                let expected = if texel_alpha <= 32 { depth } else { front_point };
                 assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None), Some(expected));
-                assert_eq!(scene.left_touch_surface(&world, front, ray).is_some(), texel_alpha > 0);
+                assert_eq!(scene.left_touch_surface(&world, front, ray).is_some(), texel_alpha > 32);
                 assert!(scene.touch_surface(&world, front, ray).is_some());
                 for action in [
                     crate::interaction::code::NONE,
@@ -3397,7 +3400,7 @@ pub(crate) mod tests {
                     scene.selection_pick(&world, Some(ray), Some(depth), false, false, 100.0),
                     (Some(front_point), Some(front))
                 );
-                let target = if texel_alpha == 0 { back } else { front };
+                let target = if texel_alpha <= 32 { back } else { front };
                 assert_eq!(
                     scene.left_selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
                     (Some(expected), Some(target))
