@@ -61,7 +61,7 @@ fn inventory_asset(inv: &Inventory, id: Uuid, materials: bool) -> Option<Uuid> {
 /// Whether the item misses one of the rights `required` (agent_mask: the
 /// same reading as the Texture tab's slots).
 fn lacks_rights(item: &InvItem, agent: Uuid, required: u32) -> bool {
-    crate::build::contents_drop::agent_mask(item, agent) & required != required
+    crate::world::inventory::actions::agent_mask(item, agent) & required != required
 }
 
 /// A drop that needs copy and transfer (`drop_target_copy_transfer`): a
@@ -75,7 +75,7 @@ fn can_preview(inv: &Inventory, id: Uuid) -> bool {
     let Some(original) = actions::original(inv, id) else { return false };
     inv.items
         .get(&original)
-        .is_some_and(|item| item.owner_mask & actions::COPY != 0 || actions::library(inv, original))
+        .is_some_and(|item| actions::held(inv, item) & actions::COPY != 0 || actions::library(inv, original))
 }
 
 #[derive(Default)]
