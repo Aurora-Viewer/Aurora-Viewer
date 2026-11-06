@@ -915,6 +915,14 @@ struct Inspector {
 }
 
 impl Inspector {
+    /// The object's contents as the simulator lists them: the PBR controls
+    /// can be edited once they are known.
+    fn list_contents(&mut self, idx: usize) {
+        let object = self.world.objects.get(idx).unwrap().full_id;
+        self.tool.contents_ready(&self.world, idx);
+        self.tool.on_task_inventory(&self.world, object, Some(1), Vec::new());
+    }
+
     fn new() -> Self {
         let (world, mut tool, settings) = fixture();
         tool.tab = 1;
@@ -1429,6 +1437,7 @@ fn material_previews_are_larger_above_their_options_and_open_the_correct_picker(
         if pbr {
             inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, asset)];
             inspector.scene.materials.insert(asset, Default::default());
+            inspector.list_contents(idx);
         }
         for _ in 0..5 {
             inspector.show(vec![]);
@@ -1537,6 +1546,7 @@ fn pbr_number_scrubbing_keeps_the_chosen_inspector_width() {
             let idx = inspector.world.objects.index_of(&key).unwrap();
             let asset = uuid::Uuid::from_u128(0x7992);
             inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, asset)];
+            inspector.list_contents(idx);
             inspector.scene.materials.insert(
                 asset,
                 aurora_assets::PbrMaterial {
@@ -2019,6 +2029,7 @@ fn material_spinner_drags_commit_all_uv_channels_and_glow_only_on_release() {
             let idx = inspector.world.objects.index_of(&key).unwrap();
             if pbr {
                 inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, uuid::Uuid::from_u128(9100))];
+                inspector.list_contents(idx);
             }
             inspector.show(vec![]);
             crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 1500.0));

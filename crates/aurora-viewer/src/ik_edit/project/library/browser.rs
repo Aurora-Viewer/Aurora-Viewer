@@ -141,10 +141,12 @@ impl Editor {
                                         "pencil-filled" => self.begin_library_row_edit(&entry, EditKind::Rename),
                                         "copy-filled" => self.begin_library_row_edit(&entry, EditKind::Duplicate),
                                         "file-export" => {
-                                            self.project.library.command = Some(Command::Manage(entry.id, Management::File));
+                                            self.project.library.command =
+                                                Some(Command::Manage(entry.id, Management::File(Default::default())));
                                         }
                                         "note" => {
-                                            self.project.library.command = Some(Command::Manage(entry.id, Management::Notecard));
+                                            self.project.library.command =
+                                                Some(Command::Manage(entry.id, Management::Notecard(Default::default())));
                                         }
                                         _ => {
                                             self.begin_project_creation();

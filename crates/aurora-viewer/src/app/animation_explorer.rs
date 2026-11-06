@@ -190,6 +190,7 @@ impl App {
     fn animation_rows(&mut self) -> Vec<Row> {
         let entries: Vec<_> = self.world.animation_log.entries().rev().copied().collect();
         let mut rows = Vec::with_capacity(entries.len());
+        let ids = crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world);
         for entry in entries {
             let own = entry.source == self.world.agent_id;
             let object = self
@@ -228,6 +229,7 @@ impl App {
                 playing: self.world.animation_playing_from(&entry.source, &entry.animation),
                 started: entry.started,
                 priority: self.scene.anims.peek(&entry.animation).map(|b| b.anim.base_priority),
+                animation_shown: ids.shown(&entry.animation),
             });
         }
         rows
