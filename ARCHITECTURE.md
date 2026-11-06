@@ -608,6 +608,13 @@ contact, appearance, environment, texture export and Marketplace paths execute
 the commands after the menu returns; Marketplace menus share their eligibility
 and dispatch with `ui/marketplace_listings/commands.rs`.
 
+The shape and layer editors share `ui/shape.rs::appearance_controls`: independent
+persistent Camera (`Settings::appearance_camera_movement`) and A-Pose
+(`customize_animation`) switches, also exposed in Avatars > Animations.
+`app/shape_editor.rs::sync_appearance_camera` owns camera capture/release;
+disabling drops the saved return view and stops an active appearance turn
+at its displayed framing without blocking manual camera controls.
+
 `wearable_editor.rs`, `wearable_editor/catalog.rs`, `ui/wearable.rs` and
 `app/wearable_editor.rs` edit the remaining body parts and system clothing.
 They retain complete wearable assets, texture slots and tint parameters,

@@ -8351,11 +8351,16 @@ over the category row goes forward/backward, stays within Body/Legs and does not
 scroll the parameter list. The self-avatar/attachment menu's Appearance › Edit
 Shape opens this editor. Asset arrivals and AO cycles must keep ready hint images
 visible, with no repeated "Preparing preview" placeholders.
-The right-aligned T-pose switch beside the height units shares the saved
-customise-animation setting in Preferences › Avatars › Animations. Toggle it in either place while editing:
-the other control must follow immediately, the choice must survive reopening,
-and the shape must stay unmodified. On the grid, disabling releases the editing
-animation; enabling uses the existing stand-up/customise animation sequence.
+The right-aligned Camera and A-Pose switches (Camera above A-Pose) share saved
+settings with every layer editor and Preferences > Avatars > Animations.
+Toggle each in either place: the other controls must follow, the choices must
+survive reopening and restarting, and the wearable draft must stay unmodified.
+With Camera off, opening, changing category, toggling A-Pose and closing must
+keep the camera framing. Switching Camera off mid-turn must stop at the
+displayed view; manual orbit, zoom and pan must still work. Switching it on
+while editing frames the selected category again. On the grid, disabling
+A-Pose releases the editing animation; enabling uses the existing
+stand-up/customise animation sequence, independently of Camera.
 `t-pose` supplies synthetic pelvis turn/return motions and starts with the switch
 on. Toggle it both ways: the camera must ease around the avatar over a half-turn,
 keeping its distance and the edited part in view. Reverse it mid-transition to
