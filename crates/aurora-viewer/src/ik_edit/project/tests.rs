@@ -110,3 +110,56 @@ fn a_temporarily_missing_avatar_does_not_consume_the_recoverable_local_draft() {
     assert_eq!(editor.project.draft, Some(bytes));
     assert!(editor.project.autosave_blocked || editor.project.draft.is_some());
 }
+
+fn animation_item(id: u128, owner_mask: u32) -> InvItem {
+    InvItem {
+        id: Uuid::from_u128(id),
+        asset_type: 20,
+        asset_id: Uuid::from_u128(id << 8),
+        name: format!("Layer {id}"),
+        owner_mask,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn project_files_that_name_every_asset_still_load_and_stored_copies_name_full_permission_assets_only() {
+    let (mut world, _, mut editor) = fixture();
+    let full = animation_item(0x11, actions::FULL);
+    let no_copy = animation_item(0x12, actions::FULL & !actions::COPY);
+    for it in [&full, &no_copy] {
+        world.inventory.items.insert(it.id, it.clone());
+        editor.animations.add(&world.inventory, it.id);
+    }
+    // A file of an earlier version: every row names its asset, and a row
+    // may come without an item.
+    let mut value = serde_json::to_value(editor.project_document()).unwrap();
+    let profile = value["profile"].as_u64().unwrap() as usize;
+    let rows = value["animations"][profile]["rows"].as_array_mut().unwrap();
+    assert!(rows.iter().all(|r| r["asset"].is_string()));
+    rows.push(serde_json::json!({
+        "asset": Uuid::from_u128(0x1300).to_string(),
+        "name": "Old layer",
+        "frame": 2,
+        "enabled": true,
+    }));
+    let mut loaded = Editor::default();
+    loaded.apply_project(&world, &serde_json::to_vec(&value).unwrap()).unwrap();
+    let rows = loaded.animations.save().rows;
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].asset, Some(full.asset_id));
+    assert_eq!((rows[2].item, rows[2].asset), (None, Some(Uuid::from_u128(0x1300))));
+    let stored = loaded.stored_document(&world.inventory);
+    let assets: Vec<_> = stored.animations[profile].rows.iter().map(|r| r.asset).collect();
+    assert_eq!(assets, [Some(full.asset_id), None, None]);
+    let bytes = stored.encode().unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(!text.contains(&no_copy.asset_id.to_string()));
+    assert!(text.contains(&no_copy.id.to_string()));
+    assert!(Document::decode(&bytes).is_ok());
+    value["animations"][profile]["rows"][0]["extra"] = serde_json::json!(1);
+    assert!(
+        Document::decode(&serde_json::to_vec(&value).unwrap()).is_err(),
+        "unknown row fields stay rejected"
+    );
+}

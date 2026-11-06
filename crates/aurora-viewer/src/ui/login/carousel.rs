@@ -27,12 +27,14 @@ pub(super) fn select(settings: &mut Settings, form: &mut LoginForm, index: usize
     form.mfa_authorization = None;
     form.mfa_for = None;
     form.agree_tos = false;
+    form.read_critical = false;
     form.stored = None;
     form.stored_for = None;
     form.show_password = false;
     form.focused = false;
     form.error = None;
     form.tos_message = None;
+    form.critical_message = None;
 }
 
 fn snapshot(ctx: &Context, layer: LayerId, rect: Rect, action: Rect) -> derez::Snapshot {
@@ -121,7 +123,7 @@ pub fn show(
         }
         return LoginAction::None;
     }
-    if form.error.is_some() || form.show_mfa || form.tos_message.is_some() {
+    if form.error.is_some() || form.show_mfa || form.tos_message.is_some() || form.critical_message.is_some() {
         form.editing = true;
     }
     let first_account = form.accounts.is_empty();
