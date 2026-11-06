@@ -10660,13 +10660,11 @@ impl App {
                     .order(egui::Order::Foreground)
                     .interactable(false)
                     .show(ui.ctx(), |ui| {
-                        egui::Frame::new()
-                            .fill(self.palette.warn.gamma_multiply(0.92))
-                            .corner_radius(egui::CornerRadius::same(5))
-                            .inner_margin(egui::Margin::symmetric(12, 6))
-                            .show(ui, |ui| {
-                                ui.label(egui::RichText::new(aurora_i18n::tr!("deep-diagnostics-active")).color(self.palette.ink));
-                            });
+                        // the theme's panel over the world (AGENTS §7), the
+                        // warning colour for the text
+                        ui::widgets::overlay(ui, &self.palette, egui::Margin::symmetric(12, 6), |ui| {
+                            ui.label(egui::RichText::new(aurora_i18n::tr!("deep-diagnostics-active")).color(self.palette.warn));
+                        });
                     });
             }
             if inventory_drop.is_empty() {
