@@ -1355,6 +1355,13 @@ impl App {
             crate::cache::remove_unsealed(crate::settings::cache_dir());
             crate::cache::rename_to_keyed_names(crate::settings::asset_cache_dir());
         }
+        // the photos of the sessions that ended without deleting them
+        let spawned = std::thread::Builder::new()
+            .name("aurora-photo-reel-sweep".into())
+            .spawn(|| crate::snapshot::reel::sweep_leftovers(&crate::settings::cache_dir()));
+        if let Err(e) = spawned {
+            log::warn!("photo reel: cannot start its sweep: {e}");
+        }
         let cache = crate::settings::asset_cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);
         net.set_object_cache_dir(Some(cache.join("objects")));
