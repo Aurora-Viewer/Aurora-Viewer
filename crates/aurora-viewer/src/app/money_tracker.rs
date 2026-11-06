@@ -121,17 +121,17 @@ impl App {
             // the source of the demo's chance: no crate only for this
             let random = uuid::Uuid::new_v4();
             let number = random.as_u128();
-            let (kind, item) = if number & 1 == 0 {
-                (OBJECT_SALE, "Steel helmet")
-            } else {
-                (PAY_OBJECT, "Tip jar")
+            let (kind, item) = match number % 3 {
+                0 => (OBJECT_SALE, "Steel helmet"),
+                1 => (PAY_OBJECT, "Tip jar"),
+                _ => (GIFT, "Payment"),
             };
             let payers = [crate::demo::DEMO_NOVA, crate::demo::DEMO_TESS, crate::demo::DEMO_FRIEND];
             let ev = NetEvent::MoneyTransaction {
                 id: random,
                 success: true,
                 kind,
-                source: payers[(number >> 1) as usize % payers.len()],
+                source: payers[(number >> 4) as usize % payers.len()],
                 source_group: false,
                 dest: self.world.agent_id,
                 dest_group: false,
@@ -163,7 +163,8 @@ impl App {
     /// (no conversation) shows nowhere; `off`: the same with the option off,
     /// no conversation opens; `sale`: the toasts of L$ received without a
     /// card; `balance`: payments rising into the balance, no toast;
-    /// `earning`: 20 to 300 L$ every 10 seconds, with the saved switches.
+    /// `earning`: 20 to 300 L$ every 10 seconds, a sale, an object paid or
+    /// a direct payment, with the saved switches.
     pub(super) fn demo_payment(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_PAYMENT") else {
             return;
@@ -183,7 +184,7 @@ impl App {
             description: "Transaction".into(),
         };
         let paid = |n, source, amount, item: &str| gift(n, source, agent, amount, item);
-        if matches!(mode.as_str(), "sale" | "friend" | "off") {
+        if mode == "sale" {
             self.demo_money_notices = Some((true, true));
             // this frame's payments, before the next frame reads it
             self.world.payments.notify_received = true;

@@ -669,10 +669,12 @@ pub struct Settings {
     /// their conversation on its card (#1198); a payment from anyone else
     /// shows there only when it is open. On by default.
     pub payment_opens_conversation: bool,
-    /// Preferences › Chat › Notifications: L$ received show a toast
-    /// (NotifyMoneyReceived, #2675). Off by default, where the Legacy
-    /// Viewer's is on: the highlight at the balance says it without covering
-    /// the world, and a busy seller would get one toast per sale.
+    /// Preferences › Chat › Notifications: sales, objects paid and other L$
+    /// that are not a resident's direct payment show a toast (#2675). Off by
+    /// default, where the Legacy Viewer's NotifyMoneyReceived is on: the
+    /// highlight at the balance says it without covering the world, and a
+    /// busy seller would get one toast per sale. A direct payment always has
+    /// its toast or its card.
     pub notify_money_received: bool,
     /// Preferences › Layout › Bars: L$ received rise into the balance
     /// (`ui/balance_gains.rs`, Aurora's own, on by default).
