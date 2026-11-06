@@ -5268,8 +5268,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   friend's payment" off: no conversation opens, both are notifications. `sale` (#2675): no
   conversation; notifications for a sale ("for Steel helmet"), an object paid with its name
   ("for Tip jar") and without, and a stranger's L$20, no card. `balance`: the toast off; 6
-  seconds after the start, three payments 0.9 s apart rise under the balance (12,480 L$) in
-  the skin's accent colour, stacked downwards, and leave one at a time for the number, which
+  seconds after the start, three payments 0.9 s apart rise under the balance (12,480 L$), in
+  its colour, stacked downwards, and leave one at a time for the number, which
   counts up; `AURORA_DEMO_BARS=classic`, or Reduce motion, to see the other looks. Capture
   after frame 400, with `--language fr` and `--language en`.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
