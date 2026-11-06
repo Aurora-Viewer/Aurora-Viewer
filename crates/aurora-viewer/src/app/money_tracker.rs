@@ -217,10 +217,8 @@ impl App {
             return;
         }
         if mode == "balance" {
-            self.settings.notify_money_received = false;
-            self.settings.balance_gain_animation = true;
-            self.world.payments.notify_received = false;
-            self.world.payments.rise_into_balance = true;
+            // for this run: the demo's settings are saved like the user's
+            self.demo_balance_only = true;
             self.world.apply(NetEvent::Balance(12480));
             let start = Instant::now() + std::time::Duration::from_secs(6);
             for (n, (after, source, amount)) in [(0, DEMO_NOVA, 100), (1, DEMO_TESS, 2500), (2, DEMO_FRIEND, 25)]
