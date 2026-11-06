@@ -161,6 +161,7 @@ fn graphics_card(cx: &mut Cx) {
                 .0
             },
         );
+        cx.toggle(tr!("ui-options-vr-support"), tr!("ui-options-vr-support-help"), &field!(vr_support));
     });
 }
 

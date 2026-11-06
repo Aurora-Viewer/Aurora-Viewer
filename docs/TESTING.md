@@ -373,6 +373,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_DEMO_RENDER_TEXTURE=1` | Captures the demo world through a caller-owned render target |
+| `AURORA_XR=on\|off` | Opt into OpenXR for this launch, or keep it unloaded even with the saved preference/demo flags |
 | `AURORA_DEMO_XR_DEVICE=1` | Uses OpenXR-compatible Vulkan initialization for the Linux demo |
 | `AURORA_OPENXR_LOADER=<path>` | Explicit macOS OpenXR loader dylib for runtime tests |
 | `AURORA_DEMO_XR_WORLD=1` | Sends the native demo world to OpenXR for a short stereo test |
@@ -12005,6 +12006,26 @@ Check ordinary `AURORA_DEMO_INVENTORY=1` and the existing attachment regressions
 alongside it. Online validation is done by the human: check returned objects,
 startup orphan retrieval and ordinary script attachments remaining in Objects or
 their original folder. No credentials or grid actions are automated.
+
+`AURORA_XR=on|off`: overrides Preferences › Graphics › VR headset support for this
+launch. Support is off by default, including settings files saved before the
+preference existed. `off` wins over the saved preference and the presence of
+`AURORA_DEMO_XR_DEVICE` or `AURORA_DEMO_XR_WORLD`; `on` explicitly loads the active
+runtime. Otherwise either XR demo flag opts in, and other values use the saved
+preference. A setting change takes effect only after restarting, including after
+GPU device recovery. `--vr` requests entry after login; it does not enable support.
+With support off the VR controls show guidance without probing a runtime.
+The startup log says `OpenXR: not loaded (VR headset support off)` or
+`OpenXR: loading the active runtime (VR headset support on)` before any loader call.
+A crash report distinguishes a deliberately skipped runtime from a loading attempt;
+a loading attempt alone does not prove that a runtime or Vulkan device was created.
+
+Offline regression: start a fresh isolated profile with
+`AURORA_DEMO=1 AURORA_DEMO_OPTIONS=graphics/5`, capture the unchecked preference,
+and confirm the skipped log line. Repeat with a saved true preference and
+`AURORA_XR=off`; it must still skip. Hardware validation remains separate: with
+SteamVR installed, ordinary desktop startup must not launch it or change Windows
+playback/recording defaults; opt in and restart, then check normal VR entry.
 
 `AURORA_DEMO_XR_DEVICE`: Linux/Windows/macOS offline demo only. With the active OpenXR runtime running and the headset connected, initializes the actual viewer graphics device through OpenXR Vulkan-enable2, requesting Aurora's normal bindless and rendering features. Desktop output remains on the window; combine with `AURORA_DEMO_RENDER_TEXTURE=1` and a capture to validate the full world-rendering output. This does not start an XR session or send the world to the headset. Runtime initialization errors fail this explicit experiment rather than silently testing another device.
 

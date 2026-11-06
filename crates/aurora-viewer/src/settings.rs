@@ -514,6 +514,8 @@ pub struct Settings {
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
     pub gpu_adapter: String,
+    /// Load the active VR runtime at the next start; desktop-only by default.
+    pub vr_support: bool,
     /// The graphics driver whose "out of date" warning the user dismissed
     /// on the login screen (`gpu_driver::Notice::key`): a newer driver that
     /// is still too old warns again.
@@ -1778,6 +1780,7 @@ impl Default for Settings {
             start_region: String::new(),
             draw_distance: 96.0,
             gpu_adapter: String::new(),
+            vr_support: false,
             gpu_driver_dismissed: String::new(),
             allow_overlays: false,
             vsync: false,
@@ -3165,6 +3168,22 @@ mod tests {
                 let loaded: Settings = serde_json::from_slice(&bytes).expect("restore automatic flight choices");
                 assert_eq!((loaded.automatic_fly, loaded.automatic_land), (automatic_fly, automatic_land));
             }
+        }
+    }
+
+    #[test]
+    fn openxr_preference_defaults_off_and_round_trips() {
+        assert!(!Settings::default().vr_support);
+        let old: Settings = serde_json::from_str("{}").expect("old settings");
+        assert!(!old.vr_support);
+        for enabled in [false, true] {
+            let settings = Settings {
+                vr_support: enabled,
+                ..Settings::default()
+            };
+            let saved = serde_json::to_vec(&settings).expect("save settings");
+            let loaded: Settings = serde_json::from_slice(&saved).expect("load settings");
+            assert_eq!(loaded.vr_support, enabled);
         }
     }
 

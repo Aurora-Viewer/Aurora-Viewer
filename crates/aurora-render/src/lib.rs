@@ -78,6 +78,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
+pub mod xr_policy;
 pub use vr_control::VrState;
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed

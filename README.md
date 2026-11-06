@@ -566,7 +566,8 @@ are planned or in progress: they are not in the viewer yet.
   Sound; HRTF and reverb are off by default.
 - <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"> **VR headset viewing**: look around the world in stereo with an
   OpenXR headset, tested on Windows and Linux (the macOS path awaits its
-  first headset), from your avatar's
+  first headset). Enable VR headset support in Preferences › Graphics and restart;
+  support is off by default. View from your avatar's
   eyes or the desktop camera. Viewing only: exit with Esc to chat, build or
   move ([setup and limits](docs/VR.md)).
 - **Portals to walk through**: open a portal to a place, drop a landmark

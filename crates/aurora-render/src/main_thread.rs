@@ -168,6 +168,7 @@ pub struct Renderer {
     /// thread has left before the scene's stores go.
     host: Host,
     vr: Arc<crate::vr_control::Control>,
+    vr_support: bool,
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     _xr_graphics: Option<crate::xr_device::Graphics>,
     pub device: wgpu::Device,
@@ -299,7 +300,7 @@ impl Renderer {
     /// the old window open behind a new one. The renderer's host keeps
     /// `window` instead, dropped after the backend, or kept by a render
     /// thread left behind in the driver (`render_thread::KeepAlive`).
-    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str) -> Result<Renderer, RenderError>
+    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str, vr_support: bool) -> Result<Renderer, RenderError>
     where
         W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
     {
@@ -314,16 +315,27 @@ impl Renderer {
             };
             desc
         };
+        let demo_xr = std::env::var_os("AURORA_DEMO_XR_DEVICE").is_some() || std::env::var_os("AURORA_DEMO_XR_WORLD").is_some();
+        let vr_support = crate::xr_policy::should_load_openxr(vr_support, std::env::var("AURORA_XR").ok().as_deref(), demo_xr);
+        if vr_support {
+            log::info!("OpenXR: loading the active runtime (VR headset support on)");
+        } else {
+            log::info!("OpenXR: not loaded (VR headset support off)");
+        }
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-        let xr_graphics = match crate::xr_device::Graphics::new(desc().flags) {
-            Ok(graphics) => Some(graphics),
-            Err(e) => {
-                log::info!("OpenXR initialization unavailable: {e}");
-                if std::env::var_os("AURORA_DEMO_XR_DEVICE").is_some() || std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
-                    return Err(RenderError::Device(e.to_string()));
+        let xr_graphics = if vr_support {
+            match crate::xr_device::Graphics::new(desc().flags) {
+                Ok(graphics) => Some(graphics),
+                Err(e) => {
+                    log::info!("OpenXR initialization unavailable: {e}");
+                    if demo_xr {
+                        return Err(RenderError::Device(e.to_string()));
+                    }
+                    None
                 }
-                None
             }
+        } else {
+            None
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let mut instance = xr_graphics
@@ -581,6 +593,7 @@ impl Renderer {
         Ok(Renderer {
             host,
             vr,
+            vr_support,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             _xr_graphics: xr_graphics,
             device,
@@ -1146,11 +1159,11 @@ impl Renderer {
         self.drawn_answers.extend(asked);
     }
 
-    /// Close the frame and have it drawn: with a render thread the packet
-    /// is handed over (after the frame before it is presented) and this
-    /// returns at once, with the statistics of that frame before; without,
-    /// the frame is drawn here. A frame that carries a capture is waited
-    /// for: `captured` holds it when this returns.
+    /// Effective opt-in at device creation, including the startup overrides.
+    pub fn vr_support_enabled(&self) -> bool {
+        self.vr_support
+    }
+
     pub fn vr_state(&self) -> crate::VrState {
         self.vr.state()
     }
@@ -1161,6 +1174,11 @@ impl Renderer {
         self.vr.request(on)
     }
 
+    /// Close the frame and have it drawn: with a render thread the packet
+    /// is handed over (after the frame before it is presented) and this
+    /// returns at once, with the statistics of that frame before; without,
+    /// the frame is drawn here. A frame that carries a capture is waited
+    /// for: `captured` holds it when this returns.
     pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<crate::EguiFrame>) -> RenderStats {
         self.render_output(params, lists, ui, None)
     }

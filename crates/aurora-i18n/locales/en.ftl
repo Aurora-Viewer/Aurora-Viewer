@@ -5689,6 +5689,8 @@ ui-options-graphics-card = Graphics card
 ui-options-graphics-card-automatic = Automatic
 ui-options-graphics-card-help = Automatic takes the dedicated card first. Applied at the next start.
 ui-options-graphics-card-in-use = In use: { $name }.
+ui-options-vr-support = VR headset support
+ui-options-vr-support-help = Loads your VR runtime (SteamVR, Meta…) when Aurora starts; takes effect at the next start
 ui-options-graphics-card-choice = Card to use
 ui-options-graphics-card-no-discrete = Only the integrated graphics is visible to the viewer. On a PC with an NVIDIA card, set "Preferred graphics processor" to the NVIDIA card for aurora-viewer.exe in the NVIDIA Control Panel, then restart the PC if the card still does not show.
 ui-options-graphics-card-cannot-present = The dedicated card cannot draw the viewer's window: plug the monitor into the dedicated card's outputs, not the motherboard's.
@@ -13236,6 +13238,7 @@ import-local-stage-upload = Add to upload ({ $count })
 import-local-stage-upload-help = Keep the local previews and prepare uploads of the checked files, including hidden files. Upload fees are confirmed separately.
 
 vr-view = VR view
+vr-support-disabled = VR needs VR headset support: turn it on in Preferences › Graphics, then restart Aurora
 vr-unavailable = VR is unavailable. Check that an OpenXR runtime and headset are connected.
 vr-restart-title = Headset connected
 vr-restart-body = Your headset was connected after Aurora started. Aurora sets up VR when it starts: restart it to use VR. It will enter VR on its own once you are back in the world.

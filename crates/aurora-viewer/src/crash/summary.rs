@@ -135,6 +135,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         rows.push(("System", label(&record.os, 120)));
     }
     let (head, tail) = log(&dir.join("session.log"));
+    if let Some(xr) = xr_runtime_in(&head, &tail) {
+        rows.push(("OpenXR runtime", xr));
+    }
     let gpu = gpu_in(&head).map(|gpu| label(gpu, 160));
     if let Some(gpu) = &gpu {
         rows.push(("GPU", gpu.clone()));
@@ -320,6 +323,33 @@ fn vulkan_layers(text: &str) -> Option<String> {
     let layer =
         |token: &str| token.len() <= 48 && token.starts_with("VK_LAYER_") && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
     (text.len() <= 900 && text.split(',').all(layer)).then(|| text.to_owned())
+}
+
+/// Publish only the startup policy and the known runtime vocabulary. Neither
+/// loader errors nor runtime-supplied names are safe to copy into public reports.
+fn xr_runtime_in(head: &str, tail: &str) -> Option<String> {
+    let lines = || [head, tail].into_iter().flat_map(str::lines);
+    if lines().any(|line| line.ends_with(" OpenXR: not loaded (VR headset support off)")) {
+        return Some("not loaded: VR headset support off".into());
+    }
+    const KNOWN: [&str; 5] = ["SteamVR", "Meta", "Virtual Desktop", "Monado", "Windows Mixed Reality"];
+    let runtime = lines()
+        .filter_map(|line| line.split_once(" OpenXR runtime loaded: ").map(|(_, name)| name))
+        .find(|name| KNOWN.contains(name) || *name == "other OpenXR runtime");
+    if let Some(runtime) = runtime {
+        let created = lines().any(|line| line.ends_with(" OpenXR runtime created Vulkan device"));
+        return Some(format!(
+            "collected: {runtime} loaded; {}",
+            if created {
+                "runtime created the Vulkan device"
+            } else {
+                "runtime device creation not recorded"
+            }
+        ));
+    }
+    lines()
+        .any(|line| line.ends_with(" OpenXR: loading the active runtime (VR headset support on)"))
+        .then(|| "loading requested: VR headset support on; runtime loading not confirmed".into())
 }
 
 /// The GPU errors wgpu handed to the viewer (`wgpu error: …`, logged by
@@ -788,6 +818,38 @@ fn log(path: &Path) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn openxr_skipped_runtime_is_published_in_the_crash_report() {
+        let (dir, record) = session();
+        std::fs::write(
+            dir.join("session.log"),
+            "[t INFO aurora_render::main_thread] OpenXR: not loaded (VR headset support off)\n",
+        )
+        .unwrap();
+        let summary = build_at(&record, &dir, None);
+        assert!(summary.body.contains("| OpenXR runtime | not loaded: VR headset support off |"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn openxr_report_distinguishes_skipped_loading_and_confirmed_runtime() {
+        let off = "[INFO aurora_render::main_thread] OpenXR: not loaded (VR headset support off)";
+        assert_eq!(super::xr_runtime_in(off, "").as_deref(), Some("not loaded: VR headset support off"));
+        assert_eq!(super::xr_runtime_in("", off).as_deref(), Some("not loaded: VR headset support off"));
+        let on = "[INFO aurora_render::main_thread] OpenXR: loading the active runtime (VR headset support on)";
+        assert_eq!(
+            super::xr_runtime_in(on, "").as_deref(),
+            Some("loading requested: VR headset support on; runtime loading not confirmed")
+        );
+        let loaded = "[INFO] OpenXR runtime loaded: SteamVR\n[INFO] OpenXR runtime created Vulkan device";
+        assert_eq!(
+            super::xr_runtime_in(on, loaded).as_deref(),
+            Some("collected: SteamVR loaded; runtime created the Vulkan device")
+        );
+        assert!(super::xr_runtime_in("[INFO] OpenXR runtime loaded: /private/name", "").is_none());
+        assert!(super::xr_runtime_in("", "").is_none());
+    }
+
     use super::*;
 
     fn session() -> (std::path::PathBuf, super::super::Record) {

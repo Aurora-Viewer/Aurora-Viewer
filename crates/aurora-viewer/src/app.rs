@@ -79,6 +79,7 @@ mod gestures;
 mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
+mod vr_support;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
 mod graphics_start;
 mod grid_status;
@@ -369,6 +370,8 @@ fn login_portrait_is_full(width: u32, height: u32, target_w: u32, target_h: u32)
 
 pub struct App {
     settings: Settings,
+    /// Saved VR opt-in for this launch, also used after device recovery.
+    vr_support_at_start: bool,
     disk_cache: crate::cache::DiskCache,
     skin: Skin,
     palette: Palette,
@@ -1406,6 +1409,7 @@ impl App {
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
         Ok(Box::new(App {
             area_search_ui: ui::area_search::AreaSearchUi::from_saved(&settings.area_search),
+            vr_support_at_start: settings.vr_support,
             settings,
             disk_cache,
             skin,
@@ -11087,15 +11091,23 @@ impl App {
             self.vr_start_in -= 1;
             self.vr_toggle |= self.vr_start_in == 0;
         }
-        // no VR device at startup: a headset there now needs a restart (the
-        // GPU device is opened through the VR runtime, at startup only)
-        if self.vr_toggle && gfx.renderer.vr_state() == aurora_render::VrState::Unavailable {
-            self.vr_toggle = false;
-            if aurora_render::vr_headset_ready() {
-                self.vr_restart_offer = true;
-            } else {
-                self.world
-                    .system_notice(aurora_i18n::tr!("vr-unavailable"), crate::world::notice_topics::Topic::Warning);
+        if self.vr_toggle {
+            use vr_support::Toggle;
+            let action = vr_support::toggle(
+                gfx.renderer.vr_support_enabled(),
+                gfx.renderer.vr_state() != aurora_render::VrState::Unavailable,
+                aurora_render::vr_headset_ready,
+            );
+            self.vr_toggle = action == Toggle::Request;
+            match action {
+                Toggle::Disabled => self
+                    .world
+                    .system_notice(aurora_i18n::tr!("vr-support-disabled"), crate::world::notice_topics::Topic::Warning),
+                Toggle::Unavailable => self
+                    .world
+                    .system_notice(aurora_i18n::tr!("vr-unavailable"), crate::world::notice_topics::Topic::Warning),
+                Toggle::Restart => self.vr_restart_offer = true,
+                Toggle::Request => {}
             }
         }
         if std::mem::take(&mut self.vr_toggle) {

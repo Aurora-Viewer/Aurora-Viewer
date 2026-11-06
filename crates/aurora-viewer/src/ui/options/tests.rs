@@ -1557,6 +1557,10 @@ fn the_graphics_card_group_shows_the_startup_notice() {
         }
         let shows = |text: &str| texts.iter().any(|t| t.source == text);
         assert!(shows(&group), "the card choice is on the Fluidity tab");
+        assert!(
+            shows(aurora_i18n::tr!("ui-options-vr-support")),
+            "VR opt-in is beside the card choice"
+        );
         for text in [&no_discrete, &cannot_present] {
             assert_eq!(shows(text), shown == Some(text), "{text} with {notice:?}");
         }

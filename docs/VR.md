@@ -1,5 +1,10 @@
 # Experimental VR scene viewing
 
+First enable **Preferences › Graphics › VR headset support**, then restart Aurora.
+Support is off by default: ordinary desktop startup does not load your VR runtime.
+For a single launch, `AURORA_XR=on` opts in; `AURORA_XR=off` overrides the saved
+preference and XR demo flags. `--vr` requests entry but does not enable support.
+
 Use the bottom-toolbar headset button. By default the view starts at the avatar's
 eyes, as in mouselook, with the head and what is worn on it hidden; Preferences ›
 Camera › VR, "Headset view", can start it where the desktop camera is instead.
@@ -34,7 +39,7 @@ tests, simulator rendering and physical headset streaming are separate gates.
   loader built in (`xr-static-loader`, CMake needed to build it; a local build
   without it loads the runtime's loader); Linux uses the distribution's loader package (WiVRn and Monado
   install it), macOS the installed loader. VR is set up when
-  Aurora starts: with the headset connected later, the headset button offers
+  Aurora starts with support enabled: with the headset connected later, the headset button offers
   "Restart in VR" (the viewer restarts with `--vr` and enters VR once the world
   shows). VR is optional: without a runtime, the viewer starts as usual.
 - Head-mounted display, two-view `PRIMARY_STEREO`, `LOCAL` and `VIEW` reference
