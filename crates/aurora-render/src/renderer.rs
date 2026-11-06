@@ -163,6 +163,9 @@ struct FrameU {
     /// ([`photo_part`]); zero otherwise. The screen-space reflections fade
     /// at the photo's edges, not the tile's.
     photo: [f32; 4],
+    /// x: the material textures' mip bias (main view under FSR drawing the
+    /// world smaller, [`crate::fsr::mip_bias`]); 0 in every other pass.
+    tex_lod: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -679,6 +682,9 @@ struct Taa {
     /// whichever one existed when they were made (`remake_taa` follows
     /// every rebuild of the targets).
     motion: Option<wgpu::TextureView>,
+    /// FSR 3.1 in the place of the TAA pass (`AURORA_FSR=1`, fsr.rs), with
+    /// the post bind group reading its image.
+    fsr: Option<(crate::fsr::Fsr, wgpu::BindGroup)>,
     parity: usize,
     reset: bool,
 }
@@ -696,6 +702,27 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
         .as_ref()
         .map(|g| &g.normals)
         .or_else(|| taa.and_then(|t| t.motion.as_ref()))
+}
+
+/// The coverage from which a blended face gives FSR its own depth and
+/// motion (`fsr_blend_normal`): the glass faint enough to show what lies
+/// behind keeps its edges anti-aliased, the softest fringes (smoke, hair
+/// tips) leave the motion to what is behind them.
+const FSR_BLEND_ALPHA: f64 = 0.1;
+
+/// FSR's upscale ratio under `aa`, none without FSR.
+fn fsr_ratio(aa: AntiAliasing) -> Option<f32> {
+    match aa {
+        AntiAliasing::Fsr(q) => Some(q.ratio()),
+        _ => None,
+    }
+}
+
+/// `AURORA_FSR_BLEND_MOTION=0`: the blended faces give FSR no motion of
+/// their own (read once).
+fn fsr_blend_motion() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_FSR_BLEND_MOTION").map_or(true, |v| v.trim() != "0"))
 }
 
 /// The replay of a frame's write journal is logged over this (ms).
@@ -947,6 +974,10 @@ struct Pipelines {
     pre_contact: SidedPipelines,
     /// `pre_contact` with GTAO's mesh normals, into the occlusion's depth.
     pre_contact_normal: SidedPipelines,
+    /// FSR only (`AURORA_FSR=1`): the blended faces covered from
+    /// `FSR_BLEND_ALPHA`, with their motion, into the occlusion's depth
+    /// once the occlusion and the contact shadows have read it.
+    fsr_blend_normal: SidedPipelines,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): ordinary / portal-clipped, each one-sided and two-sided.
     pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
@@ -971,6 +1002,8 @@ struct Pipelines {
     pick_visible: wgpu::RenderPipeline,
     pick_left: wgpu::RenderPipeline,
     pick_left_2s: wgpu::RenderPipeline,
+    pick_mask: wgpu::RenderPipeline,
+    pick_mask_2s: wgpu::RenderPipeline,
     pick_left_visible: wgpu::RenderPipeline,
     pick_overlay: wgpu::RenderPipeline,
 }
@@ -1696,6 +1729,8 @@ pub(crate) struct Backend {
     present_modes: Vec<wgpu::PresentMode>,
     settings: RenderSettings,
     taa: Option<Taa>,
+    /// This frame's TAA jitter in pixels, y down: where it moved the image.
+    taa_jitter: glam::Vec2,
     prev_view_proj: Option<Mat4>,
     /// The last frame's projection and view, without the jitter, for the
     /// motion vectors.
@@ -1929,6 +1964,31 @@ struct PipeDesc<'a> {
     polygon_line: bool,
     /// Preserve water geometry in front of the near plane.
     unclipped_depth: bool,
+}
+
+/// The main view's draws, in the order of their indirect arguments, each list
+/// with what the occlusion does to it. `shaders/occlusion.wgsl` reads its table
+/// by index against those arguments, so both are made from this one array. A
+/// cut-out photo leaves the ground and the water out of the view (cutout.rs);
+/// the reflections and the probes keep them, for the light they give.
+fn main_view_lists<'a>(lists: &'a DrawLists, cutout: bool) -> [(&'a [DrawCmd], u32); 13] {
+    use crate::occlusion::{KIND_NONE, KIND_PREPASS, KIND_TESTED};
+    let background = |list: &'a [DrawCmd]| -> &'a [DrawCmd] { if cutout { &[] } else { list } };
+    [
+        (background(&lists.terrain), KIND_NONE),
+        (background(&lists.terrain_pbr), KIND_NONE),
+        (background(&lists.terrain_mask), KIND_NONE),
+        (&lists.opaque, KIND_PREPASS),
+        (&lists.opaque_two_sided, KIND_PREPASS),
+        (&lists.mask, KIND_PREPASS),
+        (&lists.mask_two_sided, KIND_PREPASS),
+        (background(&lists.water), KIND_NONE),
+        (&lists.water_exclusion, KIND_NONE),
+        (&lists.blend, KIND_TESTED),
+        (&lists.glow, KIND_TESTED),
+        (&lists.glow_alpha, KIND_TESTED),
+        (&lists.blend_under_water, KIND_TESTED),
+    ]
 }
 
 /// Draws of `list` whose bounding sphere touches the view of `view_proj`
@@ -3267,6 +3327,7 @@ impl Backend {
             present_modes,
             settings,
             taa: None,
+            taa_jitter: glam::Vec2::ZERO,
             prev_view_proj: None,
             prev_motion_view: None,
             frame_index: 0,
@@ -3930,6 +3991,17 @@ impl Backend {
                 blend_cull(side != 0),
             )
         });
+        let fsr_blend_normal = std::array::from_fn(|side| {
+            pipe(PipeDesc {
+                cull: blend_cull(side != 0),
+                samples: 1,
+                format: Some(crate::gtao::NORMAL_FORMAT),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("DEPTH_CONTACT_ALPHA", FSR_BLEND_ALPHA)],
+                ..base("fsr blended faces motion", "vs_depth_mask_normal", "fs_depth_contact_normal")
+            })
+        });
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>, clipped: bool| {
                 pipe(PipeDesc {
@@ -4013,6 +4085,14 @@ impl Backend {
         let pick_overlay = pipe(PipeDesc {
             fs: Some("fs_pick_overlay"),
             ..pick_desc("transparency overlay pick", None)
+        });
+        let pick_mask = pipe(PipeDesc {
+            fs: Some("fs_pick_mask"),
+            ..pick_desc("mask interaction pick", Some(wgpu::Face::Back))
+        });
+        let pick_mask_2s = pipe(PipeDesc {
+            fs: Some("fs_pick_mask"),
+            ..pick_desc("mask interaction pick 2s", None)
         });
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
         let shadow_desc = |label, fs| PipeDesc {
@@ -4148,6 +4228,7 @@ impl Backend {
             pre_normal_portal,
             pre_contact,
             pre_contact_normal,
+            fsr_blend_normal,
             pre_msaa,
             refl_sky,
             refl_terrain,
@@ -4164,6 +4245,8 @@ impl Backend {
             pick_visible,
             pick_left,
             pick_left_2s,
+            pick_mask,
+            pick_mask_2s,
             pick_left_visible,
             pick_overlay,
         }
@@ -4294,7 +4377,10 @@ impl Backend {
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
-        let ao_depth = (s.ssao > 0 && (legacy_ao || gtao_ao)).then(|| {
+        // FSR reads it too: the blended faces at least half covered drawn
+        // there, with their motion, keep their history instead of taking
+        // the motion of what lies behind them
+        let ao_depth = ((s.ssao > 0 && (legacy_ao || gtao_ao)) || matches!(s.aa, AntiAliasing::Fsr(_))).then(|| {
             // copied in turn for the contact shadows
             let copies = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
             make_view(device, "occlusion depth", w, h, DEPTH_FORMAT, 1, sampled | copies)
@@ -4814,6 +4900,17 @@ impl Backend {
         (self.targets.color_tex.width(), self.targets.color_tex.height())
     }
 
+    /// With FSR, its upscale ratio: the world drawn smaller than the
+    /// window, FSR drawing it at the window's size. None for a photo drawn
+    /// at its own size (at its full size) and under RLVa's reduced
+    /// resolution, which must stay coarse.
+    fn fsr_upscale(&self) -> Option<f32> {
+        match self.settings.aa {
+            AntiAliasing::Fsr(q) if self.snapshot_window.is_none() && self.rlva_resolution_divisor <= 1 => Some(q.ratio()),
+            _ => None,
+        }
+    }
+
     fn rebuild_targets(&mut self) {
         self.occlusion.invalidate();
         self.depth_pick.scene_changed();
@@ -4822,7 +4919,11 @@ impl Backend {
         } else {
             self.settings.render_scale_percent
         };
-        let size = crate::rlva::resolution::render_size((self.config.width, self.config.height), self.rlva_resolution_divisor, scale);
+        let window = (self.config.width, self.config.height);
+        let size = match self.fsr_upscale() {
+            Some(ratio) => crate::fsr::render_size(window, ratio),
+            None => crate::rlva::resolution::render_size(window, self.rlva_resolution_divisor, scale),
+        };
         log::info!(
             "world resolution: {}x{} (output {}x{}, scale {}%)",
             size.0,
@@ -5008,6 +5109,7 @@ impl Backend {
         let pipelines_dirty = rebuilt.is_some();
         let targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
+            || fsr_ratio(s.aa) != fsr_ratio(self.settings.aa)
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
@@ -5048,8 +5150,9 @@ impl Backend {
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
         self.settings = s;
-        if s.aa == AntiAliasing::Taa {
-            if !taa_was {
+        if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
+            // FSR in the place of the TAA pass, or the TAA pass again
+            if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
                 self.remake_taa();
             }
         } else {
@@ -5122,12 +5225,15 @@ impl Backend {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let with_fsr = matches!(self.settings.aa, AntiAliasing::Fsr(_));
+        // unread under FSR, whose own history replaces it
+        let history_size = if with_fsr { (1, 1) } else { self.scene_size() };
         let mk = || {
             make_view(
                 device,
                 "taa history",
-                self.scene_size().0,
-                self.scene_size().1,
+                history_size.0,
+                history_size.1,
                 HDR_FORMAT,
                 1,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -5210,6 +5316,29 @@ impl Backend {
             })
         };
         let post_bgs = [post_bg(&history[0]), post_bg(&history[1])];
+        let fsr = with_fsr.then(|| {
+            let display = if self.fsr_upscale().is_some() {
+                (self.config.width, self.config.height)
+            } else {
+                self.scene_size()
+            };
+            let fsr = crate::fsr::Fsr::new(
+                device,
+                self.scene_size(),
+                display,
+                DEPTH_FORMAT,
+                &crate::fsr::Inputs {
+                    color: &self.targets.color,
+                    // the prepass and the blended faces at least half
+                    // covered, whose motion the same pass wrote
+                    depth: self.targets.ao_depth.as_ref().map_or(&self.targets.depth_ss, |(_, view)| view),
+                    motion: motion_read,
+                    opaque: &self.targets.scene_copy,
+                },
+            );
+            let bg = post_bg(fsr.output());
+            (fsr, bg)
+        });
         Taa {
             pipeline,
             layout,
@@ -5218,6 +5347,7 @@ impl Backend {
             bind_groups,
             post_bgs,
             motion,
+            fsr,
             parity: 0,
             reset: true,
         }
@@ -5781,6 +5911,13 @@ impl Backend {
             self.depth_pick.hover(x, y);
         }
         let world_size = self.scene_size();
+        // the image after the anti-aliasing: FSR's output size, larger than
+        // the world's when it upscales
+        let post_size = self
+            .taa
+            .as_ref()
+            .and_then(|t| t.fsr.as_ref())
+            .map_or(world_size, |(fsr, _)| fsr.display_size());
 
         // egui textures first, so they are never lost on a skipped frame
         if let Some(ui) = &mut egui_frame {
@@ -5920,7 +6057,7 @@ impl Backend {
         let surface_view = self.ui_blur.as_ref().map_or_else(|| present_view.clone(), |blur| blur.view.clone());
 
         if !lists.select_faces.is_empty() {
-            let size = [world_size.0, world_size.1];
+            let size = [post_size.0, post_size.1];
             if self.selection.as_ref().is_none_or(|selection| selection.size != size) {
                 self.selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
             }
@@ -5955,8 +6092,14 @@ impl Backend {
         let jittered;
         // where the scene's depth has a pixel of the image, in pixels (y down)
         let mut depth_jitter = glam::Vec2::ZERO;
-        let fu: &FrameParams = if self.taa.is_some() {
-            let i = (self.frame_index % 16) + 1;
+        let fu: &FrameParams = if let Some(taa) = &self.taa {
+            // FSR's own number of phases (ffxFsr3UpscalerGetJitterOffset)
+            let period = match &taa.fsr {
+                Some(_) => u64::from(crate::fsr::jitter_phase_count(world_size.0, post_size.0)),
+                None => 16,
+            };
+            let i = (self.frame_index % period) + 1;
+            self.taa_jitter = glam::Vec2::new(halton(i, 2), -halton(i, 3));
             let jx = halton(i, 2) * 2.0 / world_size.0 as f32;
             let jy = halton(i, 3) * 2.0 / world_size.1 as f32;
             depth_jitter = glam::Vec2::new(
@@ -6012,6 +6155,9 @@ impl Backend {
         main.cam_up[3] = camera_water_level;
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
+        }
+        if self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
+            main.tex_lod[0] = crate::fsr::mip_bias(world_size.0, post_size.0);
         }
         {
             // after the scene moved as a whole, the last frame's camera is
@@ -6345,7 +6491,7 @@ impl Backend {
             let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
             let (strength, keep) = crate::bloom::Override::from_env().strength(if debug_view { 0.0 } else { f.bloom }, secs);
             if keep && !debug_view {
-                self.bloom.ensure(&self.device, world_size);
+                self.bloom.ensure(&self.device, post_size);
             } else {
                 self.bloom.release();
             }
@@ -6374,7 +6520,13 @@ impl Backend {
                 }
             },
             fxaa: if self.settings.aa == AntiAliasing::Fxaa { 1.0 } else { 0.0 },
-            sharpen: if hdr { f.sharpen.clamp(0.0, 1.0) } else { 0.0 },
+            // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
+            // faint sub-pixel pattern into a visible checkerboard
+            sharpen: if hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_)) {
+                f.sharpen.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
             glow: if glow_on { 1.0 } else { 0.0 },
             debug_glow: {
                 static DEBUG_GLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -6562,25 +6714,39 @@ impl Backend {
             (start, l.len() as u32)
         };
         let cpu = &mut self.indirect_cpu;
-        // a cut-out photo leaves the ground and the water out of the view
-        // (cutout.rs); the reflections and the probes keep them, for the
-        // light they give
-        let (terrain, water): (&[DrawCmd], &[DrawCmd]) = if f.cutout { (&[], &[]) } else { (&lists.terrain, &lists.water) };
-        let mut rg = Ranges {
-            terrain: push(cpu, terrain),
-            terrain_pbr: push(cpu, if f.cutout { &[] } else { &lists.terrain_pbr }),
-            terrain_mask: push(cpu, if f.cutout { &[] } else { &lists.terrain_mask }),
-            opaque: push(cpu, &lists.opaque),
-            opaque_2s: push(cpu, &lists.opaque_two_sided),
-            mask: push(cpu, &lists.mask),
-            mask_2s: push(cpu, &lists.mask_two_sided),
-            water: push(cpu, water),
-            water_exclusion: push(cpu, &lists.water_exclusion),
-            blend: push(cpu, &lists.blend),
-            glow: push(cpu, &lists.glow),
-            glow_alpha: push(cpu, &lists.glow_alpha),
-            blend_under: push(cpu, &lists.blend_under_water),
-            ..Default::default()
+        let main_lists = main_view_lists(lists, f.cutout);
+        let mut rg = {
+            let [
+                terrain,
+                terrain_pbr,
+                terrain_mask,
+                opaque,
+                opaque_2s,
+                mask,
+                mask_2s,
+                water,
+                water_exclusion,
+                blend,
+                glow,
+                glow_alpha,
+                blend_under,
+            ] = main_lists.map(|(list, _)| push(cpu, list));
+            Ranges {
+                terrain,
+                terrain_pbr,
+                terrain_mask,
+                opaque,
+                opaque_2s,
+                mask,
+                mask_2s,
+                water,
+                water_exclusion,
+                blend,
+                glow,
+                glow_alpha,
+                blend_under,
+                ..Default::default()
+            }
         };
         let main_count = cpu.len();
         // GPU draw lists this frame (gpu_cull.rs)
@@ -6591,25 +6757,10 @@ impl Backend {
             && (main_count > 0 || gpu.is_some())
             && !*NO_OCCLUSION.get_or_init(|| std::env::var_os("AURORA_NO_OCCLUSION").is_some());
         if occl {
-            use crate::occlusion::{CullDraw, KIND_NONE, KIND_PREPASS, KIND_TESTED};
+            use crate::occlusion::CullDraw;
             let mut cull = std::mem::take(&mut self.cull_cpu);
             cull.clear();
-            let lists_kinds: [(&[DrawCmd], u32); 13] = [
-                (&lists.terrain, KIND_NONE),
-                (&lists.terrain_pbr, KIND_NONE),
-                (&lists.terrain_mask, KIND_NONE),
-                (&lists.opaque, KIND_PREPASS),
-                (&lists.opaque_two_sided, KIND_PREPASS),
-                (&lists.mask, KIND_PREPASS),
-                (&lists.mask_two_sided, KIND_PREPASS),
-                (&lists.water, KIND_NONE),
-                (&lists.water_exclusion, KIND_NONE),
-                (&lists.blend, KIND_TESTED),
-                (&lists.glow, KIND_TESTED),
-                (&lists.glow_alpha, KIND_TESTED),
-                (&lists.blend_under_water, KIND_TESTED),
-            ];
-            for (l, kind) in lists_kinds {
+            for (l, kind) in main_lists {
                 cull.extend(l.iter().map(|c| CullDraw {
                     sphere: c.bounds,
                     kind,
@@ -7307,6 +7458,35 @@ impl Backend {
             self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
+        // ---- FSR: the blended faces drawn over what lies behind them, even
+        // faint glass, give their own depth and motion, so their edges keep
+        // their history (the occlusion and the contact shadows have read
+        // that depth; GTAO those normals)
+        if let (pipe, Some((_, view)), true, true) = (
+            &self.pipelines.fsr_blend_normal,
+            &self.targets.ao_depth,
+            normals.is_some() && n_blend > 0,
+            self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) && fsr_blend_motion(),
+        ) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fsr blended faces motion"),
+                color_attachments: normal_target(wgpu::LoadOp::Load).as_slice(),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.a);
+            draw_sided(&mut pass, pipe, rg.blend, 0);
+            draw_under(&mut pass, pipe, rg.blend_under);
+        }
         self.water_effects.encode(&mut encoder);
         // ---- planar reflections
         let refl_passes = [
@@ -8091,6 +8271,7 @@ impl Backend {
                 _ => &self.pipelines.pick,
             };
             let left = drawn_px.is_some_and(|(_, _, mode)| matches!(mode, crate::DrawnMode::Left | crate::DrawnMode::LeftVisible));
+            let mask_interaction = drawn_px.is_some_and(|(_, _, mode)| mode == crate::DrawnMode::Left);
             let (solid_pick, solid_pick_2s) = if left {
                 (&self.pipelines.pick_left, &self.pipelines.pick_left_2s)
             } else {
@@ -8110,6 +8291,20 @@ impl Backend {
                     (blend_pick, rg.blend, None),
                     // under the water too: found by a click from above
                     (blend_pick, rg.blend_under, None),
+                    // LLToolPie's transparent pick reaches Mask cutouts too.
+                    // Keep the visible opaque answer underneath, so a passive
+                    // mask cannot hide a posed attachment's actionable face.
+                    // HUDs and camera/menu queries do not enter these ranges.
+                    (
+                        &self.pipelines.pick_mask,
+                        if mask_interaction { rg.mask } else { (0, 0) },
+                        mask_interaction.then_some(2),
+                    ),
+                    (
+                        &self.pipelines.pick_mask_2s,
+                        if mask_interaction { rg.mask_2s } else { (0, 0) },
+                        mask_interaction.then_some(3),
+                    ),
                     // LLViewerWindow::pickAsync / pickImmediate: debug alpha
                     // makes transparent surfaces pickable. Reuse the actual
                     // overlay lists, including hidden faces and only the
@@ -8171,47 +8366,81 @@ impl Backend {
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
         let mut post_src = &self.targets.color;
+        // the scene's depth at the size of the image the passes below read
+        let mut post_depth = &self.targets.depth_ss;
+        // the history the TAA pass wrote; read below, once the passes are
+        // recorded, through a shared borrow
+        let mut taa_written = None;
         if let Some(taa) = &mut self.taa {
-            let w = taa.parity;
-            let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
-            let u = TaaU {
-                inv_view_proj: (fu.proj * fu.view).inverse().to_cols_array_2d(),
-                prev_view_proj: prev.to_cols_array_2d(),
-                params: [
-                    if taa.reset || self.prev_view_proj.is_none() { 1.0 } else { 0.0 },
-                    0.1,
-                    world_size.0 as f32,
-                    world_size.1 as f32,
-                ],
-                motion: [if taa_motion_now() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-            };
-            self.queue.write_buffer(&taa.buffer, 0, bytemuck::bytes_of(&u));
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("taa"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &taa.history[w],
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&taa.pipeline);
-                pass.set_bind_group(0, &taa.bind_groups[w], &[]);
-                pass.draw(0..3, 0..1);
+            if let Some((fsr, _)) = &mut taa.fsr {
+                // FSR 3.1 instead of the TAA pass, from the same inputs
+                fsr.encode(
+                    &self.queue,
+                    &mut encoder,
+                    &crate::fsr::FrameInputs {
+                        view_proj: fu.proj * fu.view,
+                        prev_view_proj: self.prev_view_proj.unwrap_or(unjittered_vp),
+                        proj: f.proj,
+                        jitter: self.taa_jitter,
+                        reset: taa.reset || self.prev_view_proj.is_none(),
+                        motion_on: taa_motion_now(),
+                        sharpness: self.settings.fsr_sharpness,
+                    },
+                );
+                taa.reset = false;
+            } else {
+                let w = taa.parity;
+                let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
+                let u = TaaU {
+                    inv_view_proj: (fu.proj * fu.view).inverse().to_cols_array_2d(),
+                    prev_view_proj: prev.to_cols_array_2d(),
+                    params: [
+                        if taa.reset || self.prev_view_proj.is_none() { 1.0 } else { 0.0 },
+                        0.1,
+                        world_size.0 as f32,
+                        world_size.1 as f32,
+                    ],
+                    motion: [if taa_motion_now() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                };
+                self.queue.write_buffer(&taa.buffer, 0, bytemuck::bytes_of(&u));
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("taa"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &taa.history[w],
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_pipeline(&taa.pipeline);
+                    pass.set_bind_group(0, &taa.bind_groups[w], &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                let _ = &taa.layout;
+                taa.reset = false;
+                taa.parity = 1 - w;
+                taa_written = Some(w);
             }
-            let _ = &taa.layout;
-            taa.reset = false;
-            taa.parity = 1 - w;
-            post_bg = &taa.post_bgs[w];
-            post_src = &taa.history[w];
+        }
+        if let Some(taa) = &self.taa {
+            if let Some((fsr, fsr_post)) = &taa.fsr {
+                post_bg = fsr_post;
+                post_src = fsr.output();
+                if let Some(depth) = fsr.display_depth() {
+                    post_depth = depth;
+                }
+            } else if let Some(w) = taa_written {
+                post_bg = &taa.post_bgs[w];
+                post_src = &taa.history[w];
+            }
         }
         // ---- depth of field, on the resolved (and TAA-steady) image,
         // before the glow and the tone mapping (not in probe captures)
@@ -8223,9 +8452,9 @@ impl Backend {
                     &self.queue,
                     &mut encoder,
                     post_src,
-                    &self.targets.depth_ss,
+                    post_depth,
                     f.proj,
-                    world_size,
+                    post_size,
                     params,
                     HDR_FORMAT,
                     &crate::dof::PostInputs {
@@ -8287,17 +8516,17 @@ impl Backend {
         mark(&mut encoder, MARK_BLOOM_END);
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
-        if world_size != (self.config.width, self.config.height) {
+        if post_size != (self.config.width, self.config.height) {
             let smooth = self.settings.render_scale_percent < 100 && self.rlva_resolution_divisor <= 1 && snapshot.is_none();
             if self
                 .rlva_scaled
                 .as_ref()
-                .is_none_or(|scaled| scaled.size() != world_size || scaled.smooth != smooth)
+                .is_none_or(|scaled| scaled.size() != post_size || scaled.smooth != smooth)
             {
                 self.rlva_scaled = Some(crate::rlva::resolution::Scaled::new(
                     &self.device,
                     self.config.format,
-                    world_size,
+                    post_size,
                     smooth,
                 ));
             }
@@ -8308,7 +8537,7 @@ impl Backend {
         let scene_target = if !f.rlva_spheres.is_empty() {
             self.rlva_spheres
                 .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, self.config.format))
-                .prepare(&self.device, world_size, self.config.format)
+                .prepare(&self.device, post_size, self.config.format)
         } else {
             self.rlva_spheres = None;
             composed_view
@@ -8319,7 +8548,7 @@ impl Backend {
         if look.is_some() {
             self.looks
                 .get_or_insert_with(|| crate::looks::Looks::new(&self.device))
-                .prepare(&self.device, self.config.format, world_size);
+                .prepare(&self.device, self.config.format, post_size);
         } else if let Some(looks) = &mut self.looks {
             looks.idle();
         }
@@ -8367,7 +8596,7 @@ impl Backend {
             }
             if let (Some((looks, _)), Some(look)) = (looks, look) {
                 let depth = crate::looks::LookDepth {
-                    view: &self.targets.depth_ss,
+                    view: post_depth,
                     proj: f.proj,
                 };
                 let passes = looks.encode(&self.device, &self.queue, &mut encoder, look, scene_target, Some(depth));
@@ -8393,7 +8622,7 @@ impl Backend {
         if rg.select_faces.1 > 0
             && let Some(selection) = &self.selection
         {
-            let mut pass = selection.begin_mask(&mut encoder, &self.targets.depth_ss);
+            let mut pass = selection.begin_mask(&mut encoder, post_depth);
             bind_mesh(&mut pass, &self.groups.b);
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
@@ -8414,9 +8643,9 @@ impl Backend {
                 &self.device,
                 &self.queue,
                 &mut encoder,
-                &self.targets.depth_ss,
+                post_depth,
                 unjittered_vp.inverse(),
-                world_size,
+                post_size,
                 &f.rlva_spheres,
                 composed_view,
             );
@@ -8925,6 +9154,50 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The occlusion's table is read by index against the main view's
+    /// arguments: a cut-out photo leaves the ground and the water out of both,
+    /// and every other list keeps its place and its kind. Otherwise the table
+    /// is longer and shifted: draws tested with the bounds of others, a black
+    /// ground around the isolated avatar, and a panic where assertions are on.
+    #[test]
+    fn a_cut_out_leaves_the_ground_and_the_water_out_of_the_main_lists() {
+        use crate::occlusion::{KIND_NONE, KIND_PREPASS, KIND_TESTED};
+        let draws = |n| {
+            vec![
+                DrawCmd {
+                    index_count: 3,
+                    first_index: 0,
+                    base_vertex: 0,
+                    record: 0,
+                    bounds: [0.0; 4],
+                };
+                n
+            ]
+        };
+        let lists = DrawLists {
+            terrain: draws(1),
+            terrain_pbr: draws(2),
+            terrain_mask: draws(3),
+            opaque: draws(4),
+            water: draws(5),
+            water_exclusion: draws(6),
+            blend: draws(7),
+            ..Default::default()
+        };
+        let sizes = |cutout| main_view_lists(&lists, cutout).map(|(list, kind)| (list.len(), kind));
+        let (whole, cut) = (sizes(false), sizes(true));
+        assert_eq!(whole.iter().map(|(n, _)| n).sum::<usize>(), 28);
+        assert_eq!(cut.iter().map(|(n, _)| n).sum::<usize>(), 17);
+        for (i, (kept, left)) in whole.iter().zip(&cut).enumerate() {
+            let background = matches!(i, 0 | 1 | 2 | 7);
+            assert_eq!(left.0, if background { 0 } else { kept.0 }, "list {i}");
+            assert_eq!(left.1, kept.1, "list {i}");
+        }
+        assert_eq!(cut[3], (4, KIND_PREPASS));
+        assert_eq!(cut[8], (6, KIND_NONE));
+        assert_eq!(cut[9], (7, KIND_TESTED));
+    }
 
     #[test]
     fn taa_follows_the_motion_unless_switched_off_or_alternating() {
