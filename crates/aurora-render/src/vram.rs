@@ -547,7 +547,10 @@ mod tests {
 
     #[test]
     fn the_sampler_publishes_the_headroom_of_its_readings() {
-        let readings = std::sync::Arc::new(std::sync::Mutex::new(vec![(7_000 * MB, 3_000 * MB, 0, 0), (5_000 * MB, 5_500 * MB, 0, 0)]));
+        let readings = std::sync::Arc::new(std::sync::Mutex::new(vec![
+            (7_000 * MB, 3_000 * MB, 0, 0),
+            (5_000 * MB, 5_500 * MB, 0, 0),
+        ]));
         let source = readings.clone();
         let sampler = BudgetSampler::new(
             move || {
