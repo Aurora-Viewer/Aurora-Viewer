@@ -1316,7 +1316,7 @@ impl World {
 
     fn inventory_cache_path(&self) -> Option<std::path::PathBuf> {
         let dir = self.cache_dir.as_ref()?;
-        (!self.agent_id.is_nil()).then(|| dir.join("inventory").join(format!("{}.inv", self.agent_id)))
+        (!self.agent_id.is_nil()).then(|| crate::cache::path(dir, "inventory", &self.agent_id, "inv"))
     }
 
     /// Apply the inventory cache once its thread has read it (every frame
