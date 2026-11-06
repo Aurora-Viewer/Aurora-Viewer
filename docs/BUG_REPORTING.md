@@ -143,6 +143,15 @@ What each part tells the one who fixes it:
 - **Vulkan layers on offer**: the `VK_LAYER_*` names the Vulkan loader offers
   to the viewer, noted at the very start, so a crash while Vulkan starts has
   them too.
+- **GPU breadcrumbs / Driver fault report**: optional Vulkan diagnostics
+  record offered/enabled capabilities and the last observed render boundary,
+  stage and method. A marker is best-effort progress evidence, never proof that
+  a named pass caused a reset; mapped memory can lose its contents after device
+  loss. Unsupported/no-detail/pending results are normal. The driver query runs
+  separately and cannot delay the report. Public rows contain fixed words and
+  counts only. Raw addresses and vendor descriptions are saved locally in
+  `gpu-device-fault-private.txt`; do not post that private artifact without
+  reviewing it. The numeric public artifact is `gpu-breadcrumbs.txt`.
 - **GPU errors**: the errors wgpu reported, first of each in the order they
   came: `out-of-memory` or the wgpu operation that failed
   (`Queue::write_buffer`). Their messages stay in the local log.

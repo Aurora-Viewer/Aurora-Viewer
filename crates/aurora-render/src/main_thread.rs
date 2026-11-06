@@ -432,6 +432,7 @@ impl Renderer {
             timestamps,
             adapter_specific,
             max_textures,
+            diagnostics,
         } = o;
         let adapters: Vec<String> = candidates.into_iter().filter(|c| c.surface).map(|c| c.name).collect();
         // The same error every frame (a write into a buffer that could not
@@ -450,19 +451,23 @@ impl Renderer {
         // GPU: said in the log, where the crash report finds it, and nothing
         // waits on the device any more (device_lost.rs). `Destroyed` is the
         // device's own end at shutdown.
-        let lost = DeviceLost::default();
+        let lost = DeviceLost::with_diagnostics(diagnostics);
         crate::device_lost::forget_details();
         // AURORA_GPU_START_FAIL=lost: as if the driver lost the device now
         if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode == "lost") {
             log::error!("GPU device lost (Unknown): AURORA_GPU_START_FAIL");
             lost.set_by("start");
         }
-        let on_lost = lost.clone();
+        let on_lost = lost.callback_copy();
+        let diagnostic_loss = lost.diagnostics.as_ref().map(Arc::downgrade);
         device.set_device_lost_callback(move |reason, message| match reason {
             wgpu::DeviceLostReason::Destroyed => log::info!("GPU device released: {message}"),
             _ => {
                 crate::device_lost::note_reason(reason, &message);
                 on_lost.set_by("callback");
+                if let Some(recorder) = diagnostic_loss.as_ref().and_then(std::sync::Weak::upgrade) {
+                    recorder.lost(true);
+                }
                 crate::pipeline_cache::device_lost();
                 log::error!("GPU device lost ({reason:?}): {message}");
                 // hang or fault, for the crash report (device_lost.rs)
@@ -1672,6 +1677,7 @@ struct OpenedDevice {
     timestamps: bool,
     adapter_specific: bool,
     max_textures: u32,
+    diagnostics: Option<Arc<crate::gpu_diagnostics::Recorder>>,
 }
 
 /// The blocks of video memory wgpu's allocator carves resources out of
@@ -1792,16 +1798,44 @@ fn open_device(
         },
         trace: wgpu::Trace::Off,
     };
-    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    #[cfg(not(target_os = "macos"))]
+    let mut diagnostic_plan = crate::gpu_diagnostics::vulkan::Plan::query(adapter);
+    #[cfg(not(target_os = "macos"))]
+    let create = || {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if let Some(xr) = xr {
+            return xr.open(adapter, &descriptor, &diagnostic_plan).map_err(|e| e.to_string());
+        }
+        crate::gpu_diagnostics::vulkan::open(adapter, &descriptor, &diagnostic_plan)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let (device, queue) = match create() {
+        Ok(device) => device,
+        Err(error) if diagnostic_plan.active() => {
+            log::warn!("GPU diagnostics device creation failed ({error}); retrying without optional diagnostics");
+            diagnostic_plan.disable();
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            let retry = if let Some(xr) = xr {
+                xr.open(adapter, &descriptor, &diagnostic_plan).map_err(|e| e.to_string())
+            } else {
+                crate::gpu_diagnostics::vulkan::open(adapter, &descriptor, &diagnostic_plan)
+            };
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            let retry = crate::gpu_diagnostics::vulkan::open(adapter, &descriptor, &diagnostic_plan);
+            retry.map_err(RenderError::Device)?
+        }
+        Err(error) => return Err(RenderError::Device(error)),
+    };
+    #[cfg(target_os = "macos")]
     let (device, queue) = if let Some(xr) = xr {
-        let graphics = xr.open(adapter, &descriptor).map_err(|e| RenderError::Device(e.to_string()))?;
-        log::info!("OpenXR-compatible viewer graphics device: {}", adapter.get_info().name);
-        graphics
+        xr.open(adapter, &descriptor).map_err(|e| RenderError::Device(e.to_string()))?
     } else {
         pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?
     };
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?;
+    #[cfg(not(target_os = "macos"))]
+    let diagnostics = crate::gpu_diagnostics::Recorder::new(&device, &diagnostic_plan);
+    #[cfg(target_os = "macos")]
+    let diagnostics = None;
     Ok(OpenedDevice {
         device,
         queue,
@@ -1810,6 +1844,7 @@ fn open_device(
         timestamps,
         adapter_specific,
         max_textures,
+        diagnostics,
     })
 }
 
@@ -1936,6 +1971,41 @@ fn texture_page_limit(limits: &wgpu::Limits, descriptors_in_all_pools: Option<u3
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    #[ignore = "requires a Vulkan GPU offering VK_EXT_device_fault; no device loss is induced"]
+    fn breadcrumb_offered_fault_extension_is_enabled_at_device_creation() {
+        let _guard = crate::test_gpu::lock();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).expect("Vulkan GPU");
+        // SAFETY: read-only capability query on the live adapter.
+        let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }.expect("Vulkan adapter");
+        // SAFETY: physical device belongs to this still-live adapter/instance.
+        let offered = unsafe {
+            hal.shared_instance()
+                .raw_instance()
+                .enumerate_device_extension_properties(hal.raw_physical_device())
+        }
+        .expect("device extensions");
+        assert!(
+            offered
+                .iter()
+                .any(|e| e.extension_name_as_c_str().ok() == Some(ash::ext::device_fault::NAME)),
+            "this GPU must offer device_fault for this explicit hardware regression"
+        );
+        drop(hal);
+        let opened = super::open_device(&adapter, None).expect("viewer device");
+        // SAFETY: read-only enabled-extension query; the device remains live.
+        let hal = unsafe { opened.device.as_hal::<wgpu::hal::api::Vulkan>() }.expect("Vulkan device");
+        assert!(
+            hal.enabled_device_extensions().contains(&ash::ext::device_fault::NAME),
+            "offered fault reporting must be enabled before device creation"
+        );
+    }
+
     use super::*;
 
     #[test]
