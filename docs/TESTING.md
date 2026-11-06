@@ -1764,6 +1764,12 @@ keeps its plain click. `demo photo press` logs restored keyboard modifiers;
 Preferences › Camera › Behavior › “Click my avatar: keep camera” for the run:
 a plain body click must preserve position, target, lens and tracked object.
 `avatar-return` disables the option and must return to avatar follow.
+`avatar-gap-head` / `avatar-gap-legs` put a scripted panel behind our avatar
+and click beside its head / between its legs, inside the former body box.
+Both must log `demo touch_start: prim=975` and leave the camera unchanged;
+capture at 690 and 780 to inspect the gap and the panel's touch response.
+The leg fixture hides the demo's system skirt and keeps the camera above
+the ground so that the press can actually pass between the legs.
 `avatar-drag` / `avatar-tag-drag` hold a real press on our body / own plate
 at frame 700, drag horizontally at 710–760 and release at 761. Add
 `-keep-camera` to retain the off-centre focus. Capture at 690, 780 and 840:
