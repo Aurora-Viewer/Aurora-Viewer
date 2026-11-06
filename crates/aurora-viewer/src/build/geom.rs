@@ -88,7 +88,7 @@ impl Cam {
     /// LLViewerCamera::getPixelMeterRatio: pixels per meter at 1 m.
     pub fn pixel_meter_ratio(&self) -> f32 {
         if let Some(view) = self.hud {
-            return self.height * view.zoom;
+            return view.unit();
         }
         self.height / (2.0 * (self.fov_y * 0.5).tan())
     }
@@ -279,14 +279,17 @@ mod tests {
     fn hud_handles_keep_pixel_size_and_parallel_rays_after_zoom_and_resize() {
         for size in [[1280, 720], [720, 1280]] {
             for zoom in [1.0, 0.5, 0.1] {
-                let cam = Cam::for_hud(aurora_render::HudView::new(size, zoom, -3.0, 7.0), 2.0);
-                for p in [Vec3::ZERO, Vec3::new(5.0, 0.3, -0.4)] {
-                    let a = cam.project_px(p).unwrap();
-                    let b = cam.project_px(p + Vec3::Y * cam.meters_for_pixels(p, 50.0)).unwrap();
-                    assert!((a.0 - b.0 - 50.0).abs() < 1e-3);
-                    let (o, d) = cam.ray(a.0, a.1);
-                    assert_eq!(d, Vec3::X);
-                    assert!((o.y - p.y).abs() < 1e-5 && (o.z - p.z).abs() < 1e-5);
+                let full = aurora_render::HudView::new(size, zoom, -3.0, 7.0);
+                for view in [full, full.in_area([0.0, 29.0, size[0] as f32, size[1] as f32])] {
+                    let cam = Cam::for_hud(view, 2.0);
+                    for p in [Vec3::ZERO, Vec3::new(5.0, 0.3, -0.4)] {
+                        let a = cam.project_px(p).unwrap();
+                        let b = cam.project_px(p + Vec3::Y * cam.meters_for_pixels(p, 50.0)).unwrap();
+                        assert!((a.0 - b.0 - 50.0).abs() < 1e-3);
+                        let (o, d) = cam.ray(a.0, a.1);
+                        assert_eq!(d, Vec3::X);
+                        assert!((o.y - p.y).abs() < 1e-5 && (o.z - p.z).abs() < 1e-5);
+                    }
                 }
             }
         }
