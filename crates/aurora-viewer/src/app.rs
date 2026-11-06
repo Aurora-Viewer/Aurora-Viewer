@@ -95,9 +95,11 @@ mod inventory_hover;
 mod inventory_thumbnail;
 mod joystick;
 mod land_moderation;
+mod land_rights;
 mod link_health;
 mod login_favorites;
 mod marketplace_listings;
+mod media_pack;
 mod money_tracker;
 mod monitor;
 mod movement;
@@ -133,6 +135,7 @@ mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod uninstall;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
@@ -424,6 +427,10 @@ pub struct App {
     vr_restart_offer: bool,
     vr_restart: bool,
     restart_into_vr: bool,
+    /// The renderer was asked to set VR up at its start (`open_renderer`):
+    /// otherwise the restart dialog explains that VR is set up only once
+    /// used.
+    vr_set_up: bool,
     /// `--vr`: enter VR once the world has shown for a moment.
     vr_at_start: bool,
     vr_world_since: Option<Instant>,
@@ -777,6 +784,8 @@ pub struct App {
     grid_status_listed: bool,
     grid_status_was_open: bool,
     about: about::About,
+    /// Preferences › Remove Aurora from this computer (`app/uninstall.rs`).
+    uninstall: uninstall::Uninstall,
     /// The parcel radio's title and the ones before (World › Stream title).
     stream_titles: crate::stream_title::StreamTitles,
     stream_title_ui: ui::stream_title::StreamTitleUi,
@@ -1330,7 +1339,9 @@ impl App {
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let updater = crate::updater::Updater::new(net.runtime(), settings.update_channel);
-        let plugin_pack = crate::media::pack::PluginPack::new(crate::settings::media_plugins_dir());
+        let plugin_pack = crate::media::pack::PluginPack::new(crate::settings::media_plugins_dir(), settings.media.pack_consent);
+        // a pack downloaded before the consent card existed counts as a yes
+        settings.media.pack_consent = plugin_pack.consent();
         let mut media = crate::media::MediaManager::default();
         media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
@@ -1345,6 +1356,13 @@ impl App {
             aurora_net::objcache::name_with(crate::cache::key().names());
             crate::cache::remove_unsealed(crate::settings::cache_dir());
             crate::cache::rename_to_keyed_names(crate::settings::asset_cache_dir());
+        }
+        // the photos of the sessions that ended without deleting them
+        let spawned = std::thread::Builder::new()
+            .name("aurora-photo-reel-sweep".into())
+            .spawn(|| crate::snapshot::reel::sweep_leftovers(&crate::settings::cache_dir()));
+        if let Err(e) = spawned {
+            log::warn!("photo reel: cannot start its sweep: {e}");
         }
         let cache = crate::settings::asset_cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);
@@ -1449,6 +1467,7 @@ impl App {
             vr_restart_offer: false,
             vr_restart: false,
             restart_into_vr: false,
+            vr_set_up: false,
             vr_at_start: crate::cli::get().vr,
             vr_world_since: None,
             input: MoveInput::default(),
@@ -1659,6 +1678,7 @@ impl App {
             grid_status_listed: false,
             grid_status_was_open: false,
             about: Default::default(),
+            uninstall: Default::default(),
             stream_titles: Default::default(),
             stream_title_ui: Default::default(),
             buy_currency_ui: Default::default(),
@@ -5618,7 +5638,7 @@ impl App {
             // media on an item we wear (on our back, or a HUD) and made, on a
             // site the list does not know: no question unless `-ask` turns
             // filter_trust_own_worn off; `-blocked` puts the site in the list
-            // as blocked; `-gift`: an item someone else made, asked about
+            // as blocked; `-gift`: an item someone else made, trusted too
             "worn" | "worn-ask" | "worn-blocked" | "worn-gift" | "hud" | "hud-ask" | "hud-blocked" | "hud-gift" => {
                 let url = "https://media.example.com/earring/index.html";
                 self.settings.media.filter_trust_own_worn = !mode.ends_with("-ask");
@@ -8592,6 +8612,12 @@ impl App {
         self.scene.textures.set_window_state(self.focused, minimized);
         // (a demo or a timed run neither publishes nor reads, instances.rs)
         let timed = self.capture.is_some() || self.frame_profile.enabled();
+        // the busy card's switch, the same in every viewer (instances.rs)
+        let switch = self.busy_pause.follow.frame(
+            &mut self.settings.background_gpu_pause,
+            self.instances.newest_switch(),
+            crate::instances::unix_ms(),
+        );
         self.instances.tick(
             !self.demo && !timed,
             crate::instances::Own {
@@ -8599,6 +8625,7 @@ impl App {
                 active: self.focused && !minimized,
                 luid: self.scene.textures.card_luid(),
             },
+            switch,
         );
         self.scene.textures.set_card_sharing(!self.demo && !timed);
         self.scene.textures.set_peers(&self.instances.peers());
@@ -8695,10 +8722,13 @@ impl App {
             return;
         }
         // Aurora's media plugins: downloaded once, when none are found (the
-        // web pages of the profiles need them even with media disabled)
+        // web pages of the profiles need them even with media disabled), and
+        // only once the user agreed (the card of `ui::media_pack`, or a
+        // Download button of the preferences, of a page or of the media
+        // controls)
         let plugins_wanted = self.media.plugins(&self.settings.media).is_none();
-        if std::mem::take(&mut self.options_ui.media_pack_retry) {
-            self.plugin_pack.retry(self.net.runtime());
+        if std::mem::take(&mut self.options_ui.media_pack_download) | ui::web_view::take_plugins_download(&self.egui_ctx) {
+            self.media_pack_answer(true);
         }
         if self.plugin_pack.poll(plugins_wanted, self.net.runtime()) {
             self.media.set_pack_dir(self.plugin_pack.dir());
@@ -10003,9 +10033,11 @@ impl App {
                 self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer, &ids);
             }
             self.finish_describe(&gfx.renderer);
-            let texture_budget = self
-                .settings
-                .texture_budget(gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
+            let texture_budget = self.settings.texture_budget(
+                gfx.renderer.info.dedicated_mb,
+                gfx.renderer.info.shared_mb,
+                gfx.renderer.info.integrated,
+            );
             self.scene
                 .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024, frame_time);
         }
@@ -13252,6 +13284,13 @@ impl App {
             LoginAction::CopyVersion => self.copy_version(),
             LoginAction::SafeGraphics(choice) => self.safe_graphics_choice(choice),
             LoginAction::PhotoQualityOff(back_on) => self.photo_quality_off_answer(back_on),
+            LoginAction::CameraLimits(open) => {
+                self.login_form.camera_limits_restored = false;
+                if open {
+                    ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+                    self.options_ui.open_camera_limits();
+                }
+            }
             LoginAction::DismissDriverNotice => {
                 if let Some(notice) = self.login_form.driver_notice.take() {
                     log::info!("graphics driver warning dismissed for {}", notice.key);
@@ -14649,6 +14688,7 @@ impl App {
         self.options_ui.flycam_active = self.joystick.active;
         let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        self.sync_appearance_camera();
         self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before_camera);
         if res.toggle_flycam {
             self.toggle_joystick_flycam();
@@ -14791,6 +14831,10 @@ impl App {
         if res.open_dev_toolbox {
             self.panels.dev_toolbox = true;
         }
+        if res.uninstall {
+            self.uninstall_asked();
+        }
+        self.uninstall_window(ctx, p);
         if self.panels.settings && !open {
             self.settings.save();
         }
@@ -14865,6 +14909,7 @@ impl App {
             self.interface.set_hidden(&ctx, false);
         }
         self.busy_pause_notice(&ctx, &p);
+        self.media_pack_card(&ctx, &p);
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {
@@ -15765,7 +15810,11 @@ impl App {
                     ui::widgets::Modal::new(egui::Id::unique("vr-restart")).show(&ctx, |ui| {
                         ui.set_max_width(430.0);
                         ui.heading(aurora_i18n::tr!("vr-restart-title"));
-                        ui.label(aurora_i18n::tr!("vr-restart-body"));
+                        ui.label(if self.vr_set_up {
+                            aurora_i18n::tr!("vr-restart-body")
+                        } else {
+                            aurora_i18n::tr!("vr-restart-body-set-up")
+                        });
                         ui.horizontal(|ui| {
                             if ui::widgets::action_button(
                                 ui,
@@ -15791,6 +15840,9 @@ impl App {
                             {
                                 self.vr_restart_offer = false;
                                 self.vr_restart = true;
+                                // VR is wanted here: set it up at the next starts
+                                // too, so the button enters it at once (#2309)
+                                self.settings.camera.vr_at_start = true;
                             }
                         });
                     });
@@ -16484,8 +16536,7 @@ impl App {
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
                 let shape_group = self.shape_ui.group;
-                let (shape_actions, visible) =
-                    ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, self.settings.customize_animation);
+                let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, (&self.settings).into());
                 self.demo_shape_drag();
                 if shape_preferences != (self.shape_ui.hints, self.shape_ui.feet) {
                     self.settings.shape_show_hints = self.shape_ui.hints;
@@ -16493,12 +16544,12 @@ impl App {
                     self.settings.save();
                 }
                 self.shape_ui.request_hints(&self.world, &self.scene.jobs, &ctx, &visible);
+                for action in shape_actions {
+                    self.shape_action(action);
+                }
                 if self.shape_ui.open && self.shape_camera.is_some() && (self.shape_ui.group != shape_group || self.shape_ui.camera_pending)
                 {
                     self.focus_shape_category();
-                }
-                for action in shape_actions {
-                    self.shape_action(action);
                 }
                 if !self.shape_ui.open
                     && !self.wearable_ui.open
@@ -17687,9 +17738,9 @@ impl ApplicationHandler for App {
             };
             let level = crate::graphics_presets::Preset::for_machine(renderer.info.integrated, renderer.info.vram_mb, system_mb);
             log::info!(
-                "new profile: graphics level {level:?} (integrated {}, video memory {:?} MB, system memory {:?} MB)",
+                "new profile: graphics level {level:?} (integrated {}, video memory {}, system memory {:?} MB)",
                 renderer.info.integrated,
-                renderer.info.vram_mb,
+                renderer.info.memory_label(),
                 system_mb
             );
             level.apply(&mut self.settings);
@@ -17701,6 +17752,11 @@ impl ApplicationHandler for App {
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
         self.photo_quality_at_start();
+        // version 33 of the settings turned the camera's limits back on:
+        // said once on the login screen (`AURORA_DEMO_CAMERA_LIMITS=1` shows
+        // the card in demo, without changing a setting)
+        self.login_form.camera_limits_restored = std::mem::take(&mut self.settings.camera_limits_restored)
+            || (self.demo && std::env::var_os("AURORA_DEMO_CAMERA_LIMITS").is_some());
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
         self.gfx = Some(Gfx {
@@ -17798,6 +17854,9 @@ impl ApplicationHandler for App {
                     self.options_ui.restore = Some(ui::options::backup::Pending::new(backup, logged_in));
                 }
                 ui::options::demo(&mut self.options_ui, &value);
+            }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_UNINSTALL") {
+                self.uninstall_demo(&mode);
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
                 if matches!(
