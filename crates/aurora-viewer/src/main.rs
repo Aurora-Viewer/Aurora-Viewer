@@ -211,6 +211,8 @@ fn main() -> anyhow::Result<()> {
     if let Err(error) = &result {
         crash::failure(&format!("Viewer startup / event loop error: {error:#}"));
     }
+    // the log writer thread ends with the process: its queue first
+    logging::drain(logging::DRAIN_WAIT);
     crash::finished(result.is_ok());
     result
 }
