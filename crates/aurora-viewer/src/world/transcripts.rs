@@ -18,7 +18,7 @@
 //!   between the file's history and the new lines, without those the file
 //!   already has.
 
-use super::chat_log::{Entry, Loaded, format, names};
+use super::chat_log::{Entry, Loaded, format, import, names};
 use super::{ChatKind, ChatLine, MAX_CHAT, Origin, World};
 use aurora_net::{ChatType, HistoryLine};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -327,6 +327,29 @@ impl World {
         }
         for loaded in self.chat_log.take_loaded() {
             self.apply_history(loaded);
+        }
+        if let Some(report) = self.chat_log.take_imported() {
+            self.history_imported(&report.changed);
+            self.import_report = Some(report);
+        }
+    }
+
+    /// An import changed these files: a conversation that shows nothing but
+    /// its history reads it again, with what was added. One with lines of
+    /// this session keeps what it shows until it is opened again, or the
+    /// file's end would repeat those lines; so does one still reading its
+    /// history.
+    fn history_imported(&mut self, changed: &std::collections::BTreeSet<String>) {
+        for s in &mut self.social.ims {
+            let imported = s.log.stem().is_some_and(|stem| {
+                let stem = names::clean_file_name(stem.trim());
+                changed.iter().any(|file| import::undated(file) == stem)
+            });
+            if imported && s.log.history == HistoryState::Done && s.lines.iter().all(|l| l.origin == Origin::Log) {
+                s.lines.clear();
+                s.clock.renumbered();
+                s.log.history = HistoryState::NotAsked;
+            }
         }
     }
 

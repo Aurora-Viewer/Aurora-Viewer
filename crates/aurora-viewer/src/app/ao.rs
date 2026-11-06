@@ -439,7 +439,7 @@ impl App {
                     return;
                 }
                 if let Some(note) = self.world.inventory.items.get(&item).filter(|it| it.asset_type == 7) {
-                    if note.owner_mask & crate::world::inventory::actions::COPY == 0 {
+                    if crate::world::inventory::actions::held(&self.world.inventory, note) & crate::world::inventory::actions::COPY == 0 {
                         self.ao_ui.message = aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into();
                         return;
                     }
