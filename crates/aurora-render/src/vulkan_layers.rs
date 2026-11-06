@@ -132,10 +132,11 @@ pub fn to_disable(keep: Option<&str>, allow_overlays: bool, is_set: impl Fn(&str
     CRASHING.iter().chain(overlays).copied().filter(|l| !is_set(l.variable)).collect()
 }
 
-/// The names of the Vulkan layers the loader offers an instance now: the
-/// implicit ones not disabled (the drivers' own, the overlays when allowed) and the explicit ones installed, for the crash report. Only
-/// names that look like a layer's (`VK_LAYER_` and word characters) are
-/// kept, at most 16, sorted. Empty without a Vulkan loader or on macOS.
+/// The names of the installed Vulkan layers enumerated by the loader. The
+/// list can include layers disabled by our environment variables; it does
+/// not say which layers an instance enabled. Only names that look like a
+/// layer's (`VK_LAYER_` and word characters) are kept, at most 16, sorted.
+/// Empty without a Vulkan loader or on macOS.
 #[cfg(not(target_os = "macos"))]
 pub fn loaded_names() -> Vec<String> {
     // SAFETY: loading the system's Vulkan library, as the XR start does.
@@ -166,6 +167,28 @@ pub fn clean_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
     out.dedup();
     out.truncate(16);
     out
+}
+
+/// Known layers that are installed and are not excluded by Aurora's
+/// per-manifest disable variable or the loader's explicit disable filter.
+/// This is eligibility only; it does not imply an instance enabled them.
+pub fn eligible_known_names(installed: &[String], is_disabled: impl Fn(&str) -> bool, loader_filter: Option<&str>) -> Vec<String> {
+    CRASHING
+        .iter()
+        .chain(OVERLAYS)
+        .filter(|layer| installed.iter().any(|name| name == layer.name))
+        .filter(|layer| !is_disabled(layer.variable))
+        .filter(|layer| !loader_filter.is_some_and(|filter| filter.split(',').any(|item| layer_filter_matches(item.trim(), layer.name))))
+        .map(|layer| layer.name.to_owned())
+        .collect()
+}
+
+fn layer_filter_matches(filter: &str, name: &str) -> bool {
+    filter == "*"
+        || filter == name
+        || filter
+            .strip_suffix('*')
+            .is_some_and(|prefix| !prefix.is_empty() && name.starts_with(prefix))
 }
 
 /// Sets the disabling variables in the process environment and returns the
@@ -263,5 +286,15 @@ mod tests {
         assert_eq!(names(&left), ["VK_LAYER_OW_OBS_HOOK", "VK_LAYER_bandicam_helper"]);
         let left = to_disable(None, false, |v| v == "DISABLE_RTSS_LAYER");
         assert!(!names(&left).contains(&"VK_LAYER_RTSS"));
+    }
+
+    #[test]
+    fn eligibility_uses_known_disable_variables_and_loader_filters_without_claiming_activation() {
+        let installed = ["VK_LAYER_OBS_HOOK", "VK_LAYER_RTSS", "VK_LAYER_NV_present"].map(str::to_owned);
+        let eligible = eligible_known_names(&installed, |name| name == "DISABLE_RTSS_LAYER", Some("VK_LAYER_OBS_*"));
+        assert!(eligible.is_empty());
+        let eligible = eligible_known_names(&installed, |_| false, None);
+        assert_eq!(eligible, ["VK_LAYER_OBS_HOOK", "VK_LAYER_RTSS"]);
+        assert!(!eligible.iter().any(|name| name == "VK_LAYER_NV_present"));
     }
 }

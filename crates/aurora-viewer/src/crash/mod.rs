@@ -9,6 +9,7 @@ pub mod github;
 #[cfg(target_os = "linux")]
 mod linux;
 mod native;
+mod os_events;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
 // mod report;
@@ -254,15 +255,20 @@ fn start_inner() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The Vulkan layers on offer go to `vulkan-layers.txt` as soon as they are
-/// known, on a thread of their own: a crash while Vulkan starts, before any
-/// note of the state, is where the report needs them most (#2241).
+/// Loader-enumerated and known-eligible Vulkan layers are recorded on a
+/// worker. Installed enumeration is available even before instance creation.
 fn note_vulkan_layers(dir: &Path) {
     let dir = dir.to_owned();
     let spawned = std::thread::Builder::new().name("aurora-crash-facts".into()).spawn(move || {
         let names = aurora_render::vulkan_layers::loaded_names();
+        let eligible = aurora_render::vulkan_layers::eligible_known_names(
+            &names,
+            |variable| std::env::var_os(variable).is_some(),
+            std::env::var("VK_LOADER_LAYERS_DISABLE").ok().as_deref(),
+        );
         if !names.is_empty() {
             let _ = std::fs::write(dir.join("vulkan-layers.txt"), names.join(","));
+            let _ = std::fs::write(dir.join("vulkan-layers-eligible.txt"), eligible.join(","));
         }
     });
     if let Err(error) = spawned {
@@ -330,12 +336,26 @@ pub fn gpu_stalled(seconds: u64) {
     if let Some(session) = SESSION.get() {
         watchdog::save_gpu_stall(&session.dir, seconds);
     }
+    crate::overlay_hooks::loss_snapshot();
 }
 
 /// The GPU device is lost for good (app/gpu_stall.rs): the session, which
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
+    crate::overlay_hooks::loss_snapshot();
     mark_gpu_lost(b"");
+}
+
+#[cfg(windows)]
+pub(crate) fn overlay_hooks_at_loss(files: &[&str]) {
+    if let Some(session) = SESSION.get() {
+        let known: Vec<_> = files
+            .iter()
+            .filter(|file| crate::overlay_hooks::known(file).is_some())
+            .copied()
+            .collect();
+        let _ = std::fs::write(session.dir.join("overlay-hooks-loss.txt"), known.join("\n"));
+    }
 }
 
 /// A GPU device loss the viewer recovered from (app/gpu_recovery.rs), `ms`
@@ -544,6 +564,14 @@ fn recover_in(root: &Path, mut show: impl FnMut(&Path)) {
             // Its watcher died with it: nobody marked it at its end.
             note_gpu_trouble(&dir);
             note_photo_quality(&dir);
+            let stopped = read_limited(&dir.join("stopped-unix.txt"), 32)
+                .ok()
+                .and_then(|s| s.trim().parse().ok());
+            let tick = watchdog::read_alive(&dir)
+                .iter()
+                .find(|(k, _)| k == "tick")
+                .and_then(|(_, v)| v.parse().ok());
+            os_events::collect(&dir, stopped.or(tick));
             show(&dir);
         }
     }
