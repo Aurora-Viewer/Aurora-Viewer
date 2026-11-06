@@ -6458,7 +6458,16 @@ impl Backend {
         if let Some(c) = &capture {
             let mut cf = f.clone();
             cf.shadows = false;
-            cf.proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, c.near.max(0.1));
+            // what a probe sees ends at RenderReflectionProbeDrawDistance
+            // (setup3DRender): the far plane clips what lies beyond, which the
+            // probe's shadow map does not cover; the default probe, of sky
+            // and terrain, sees as far as before
+            let near = c.near.max(0.1);
+            cf.proj = if c.sky_only {
+                glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, near)
+            } else {
+                glam::camera::rh::proj::directx::perspective(std::f32::consts::FRAC_PI_2, 1.0, crate::probes::SHADOW_RANGE.max(near * 2.0), near)
+            };
             let mut u = self.frame_uniforms(&cf, crate::probes::face_view(c.origin, c.face), None, &cascades, &splits);
             probe_vp = Mat4::from_cols_array_2d(&u.view_proj);
             // reflection pass: no SSAO / SSR / mirrors, no clip plane; the

@@ -124,8 +124,8 @@ impl ProbeSets {
 /// Side of the shadow map of the probe being captured, in texels: the tile
 /// of an atlas laid out like the main view's.
 pub const SHADOW_SIZE: u32 = 1024;
-/// How far around a probe its capture is shadowed (m):
-/// RenderReflectionProbeDrawDistance. Beyond it the sun is not stopped.
+/// How far around a probe its capture sees and is shadowed (m):
+/// RenderReflectionProbeDrawDistance.
 pub const SHADOW_RANGE: f32 = 64.0;
 
 /// The sun's view of the place around a probe, for its capture
