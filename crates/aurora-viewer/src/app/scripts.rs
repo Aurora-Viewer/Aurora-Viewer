@@ -250,6 +250,8 @@ impl App {
                     it.parent = self.world.inventory.lib_root;
                     it.owner = self.world.inventory.lib_owner;
                     it.owner_mask &= !perm::MODIFY;
+                    // (what the agent holds on a Library item: rules::agent_mask)
+                    it.everyone_mask = it.owner_mask;
                     self.world.inventory.add_items(vec![it]);
                 }
                 self.panels.inventory = true;
@@ -455,7 +457,7 @@ impl App {
             let inv = &self.world.inventory;
             let it = inv.items.get(&target.item).filter(|it| it.asset_type == 10)?;
             let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, it.id, inv.lib_root);
-            let (can_read, can_edit) = permissions(it.owner_mask, library);
+            let (can_read, can_edit) = permissions(crate::world::inventory::actions::held(inv, it), library);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: self.world.main_region.unwrap_or_default(),
@@ -481,20 +483,28 @@ impl App {
             } else {
                 it.everyone_mask | if member { it.group_mask } else { 0 }
             };
+            let modify = !task_script_refused(&self.build, &self.world, target.object);
             let (can_read, can_edit) = permissions(mask, false);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: object.key.region,
                 owner: it.owner_id,
                 asset: it.asset_id,
-                can_read,
-                can_edit,
+                can_read: can_read && modify,
+                can_edit: can_edit && modify,
             })
         }
     }
 
     pub(super) fn open_script(&mut self, target: ScriptTarget) {
         if self.world.rlva.has("viewscript") {
+            return;
+        }
+        if task_script_refused(&self.build, &self.world, target.object) {
+            self.world.system_notice(
+                aurora_i18n::tr!("script-object-no-modify"),
+                crate::world::notice_topics::Topic::Items,
+            );
             return;
         }
         let Some(info) = self.script_info(target) else { return };
@@ -561,7 +571,15 @@ impl App {
                     .filter(|item| item.asset_type == 10 && item.name == name)
                     .map(|item| {
                         let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, item.id, inv.lib_root);
-                        (item.id, include_use(item.owner_mask, library, item.creator, self.world.agent_id))
+                        (
+                            item.id,
+                            include_use(
+                                crate::world::inventory::actions::held(inv, item),
+                                library,
+                                item.creator,
+                                self.world.agent_id,
+                            ),
+                        )
                     })
                     .max_by_key(|(_, use_)| *use_);
                 let target = found.filter(|(_, use_)| *use_ >= IncludeUse::Source).map(|(item, use_)| {
@@ -784,6 +802,7 @@ impl App {
                 let result = Ok(ScriptSaved {
                     asset,
                     compiled,
+                    checked: true,
                     errors: if compiled {
                         vec![]
                     } else {
@@ -802,6 +821,16 @@ impl App {
     }
 }
 
+/// LLTaskLSLBridge::openItem: a script in an object opens only when the
+/// object may be modified. Checked once per open, on the root's flags.
+fn task_script_refused(build: &crate::build::BuildTool, world: &crate::world::World, object: Uuid) -> bool {
+    !object.is_nil()
+        && world
+            .objects
+            .index_of_uuid(&object)
+            .is_some_and(|idx| !build.can_modify(world, idx))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,6 +842,24 @@ mod tests {
         assert_eq!(permissions(perm::MODIFY, false), (false, false));
         assert_eq!(permissions(perm::COPY, true), (true, false));
         assert_eq!(permissions(perm::COPY | perm::MODIFY, true), (true, false));
+    }
+
+    #[test]
+    fn a_task_script_opens_only_in_a_modifiable_object() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+            world.apply(ev);
+        }
+        let object = crate::demo::action_id(970);
+        let idx = world.objects.index_of_uuid(&object).expect("demo action object");
+        world.objects.get_mut(idx).expect("object").parent_id = 0;
+        let build = crate::build::BuildTool::default();
+        world.objects.get_mut(idx).expect("object").update_flags = crate::ui::context::flags::OBJECT_MODIFY;
+        assert!(!task_script_refused(&build, &world, object));
+        world.objects.get_mut(idx).expect("object").update_flags = 0;
+        assert!(task_script_refused(&build, &world, object));
+        // an agent inventory script has no object
+        assert!(!task_script_refused(&build, &world, Uuid::nil()));
     }
 
     #[test]

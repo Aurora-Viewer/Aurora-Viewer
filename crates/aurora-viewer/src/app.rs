@@ -322,6 +322,52 @@ struct LogoData {
     icon: Option<(Vec<u8>, u32, u32)>,
 }
 
+fn ui_copy_needs_refine(have: [usize; 2], target_w: u32, target_h: u32) -> bool {
+    have[0] < target_w as usize || have[1] < target_h as usize
+}
+
+/// (not bounded by the target: an odd-sized texture's upload copy can be
+/// larger than its halved UI size, and is still the finer one)
+fn ui_copy_can_improve(have: [usize; 2], next: [usize; 2], target_w: u32, target_h: u32) -> bool {
+    ui_copy_needs_refine(have, target_w, target_h) && (next[0] > have[0] || next[1] > have[1])
+}
+
+/// How long an interface image is followed without any of its handles
+/// getting finer (a texture that never does is given up after that).
+const UI_FOLLOWED: Duration = Duration::from_secs(300);
+
+/// An interface image followed toward its UI size: the sizes of its
+/// handles (`ui_images`, `avatar_pic_images`), and when it is given up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct UiFollow {
+    sizes: [Option<[usize; 2]>; 2],
+    until: Instant,
+}
+
+/// The follow of an image after a look at its handles: its deadline moves
+/// on when one of them grew (or appeared), None once it has passed.
+fn ui_follow_step(follow: Option<UiFollow>, sizes: [Option<[usize; 2]>; 2], now: Instant) -> Option<UiFollow> {
+    let grew = follow.is_none_or(|f| {
+        f.sizes.iter().zip(&sizes).any(|(before, after)| match (before, after) {
+            (Some(b), Some(a)) => a[0] > b[0] || a[1] > b[1],
+            (None, Some(_)) => true,
+            _ => false,
+        })
+    });
+    if grew {
+        return Some(UiFollow {
+            sizes,
+            until: now + UI_FOLLOWED,
+        });
+    }
+    let until = follow?.until;
+    (now < until).then_some(UiFollow { sizes, until })
+}
+
+fn login_portrait_is_full(width: u32, height: u32, target_w: u32, target_h: u32) -> bool {
+    width >= target_w && height >= target_h
+}
+
 pub struct App {
     settings: Settings,
     disk_cache: crate::cache::DiskCache,
@@ -874,10 +920,9 @@ pub struct App {
     avatar_pic_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// Our login portrait (texture and saved file): agent, picture shown.
     login_portrait_source: Option<(uuid::Uuid, uuid::Uuid)>,
-    /// Interface images (pictures included) first shown from the coarse
-    /// levels of a progressive download, by texture: width held, since
-    /// when. A finer copy replaces their pixels in place.
-    ui_coarse: std::collections::HashMap<uuid::Uuid, (u32, Instant)>,
+    /// Interface images (pictures included) whose individual handles still
+    /// need a finer copy from a progressive download, until given up.
+    ui_coarse: std::collections::HashMap<uuid::Uuid, UiFollow>,
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
@@ -1296,7 +1341,9 @@ impl App {
         // (not the demo's: its folder is shared by the demo runs of every
         // build, and holds nothing from the grid)
         if std::env::var_os("AURORA_DEMO").is_none() {
+            aurora_net::objcache::name_with(crate::cache::key().names());
             crate::cache::remove_unsealed(crate::settings::cache_dir());
+            crate::cache::rename_to_keyed_names(crate::settings::asset_cache_dir());
         }
         let cache = crate::settings::asset_cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);
@@ -6512,7 +6559,9 @@ impl App {
                         .get(&id)
                         .filter(|item| {
                             item.asset_type == 7
-                                && item.owner_mask & crate::world::inventory::actions::COPY != 0
+                                && crate::world::inventory::actions::held(&self.world.inventory, item)
+                                    & crate::world::inventory::actions::COPY
+                                    != 0
                                 && !self.world.inventory.in_folder_type(id, 14)
                         })
                         .cloned()
@@ -7983,7 +8032,7 @@ impl App {
                 }
                 let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
                 self.ui_images.insert(image, t);
-                self.note_ui_copy(image, w);
+                self.note_ui_copy(image);
             }
         }
         self.update_inventory_hover_images(renderer);
@@ -7999,7 +8048,7 @@ impl App {
             .egui_ctx
             .load_texture(format!("banner-{image}"), banner, egui::TextureOptions::LINEAR);
         self.profile_ui.banners.insert(image, banner);
-        self.note_ui_copy(image, w);
+        self.note_ui_copy(image);
         self.save_login_portrait(image, w, h, rgba);
     }
 
@@ -8039,7 +8088,9 @@ impl App {
         }
         // a picture shown before (ours earlier, someone else's) has no
         // pixels left for the file: decoded again
-        if self.login_portrait_source != Some((agent, image)) {
+        // (still coarse: its copies go to the refine loop, which saves it
+        // once full)
+        if self.login_portrait_source != Some((agent, image)) && !self.ui_coarse.contains_key(&image) {
             self.scene.textures.want_ui_image(renderer, image, &self.scene.jobs);
             if let Some((w, h, rgba)) = self.scene.textures.take_ui_image(&image)
                 && rgba.len() == (w * h * 4) as usize
@@ -8053,6 +8104,12 @@ impl App {
     fn save_login_portrait(&mut self, image: uuid::Uuid, w: u32, h: u32, rgba: Vec<u8>) {
         let agent = self.world.agent_id;
         if self.demo || !self.world.profiles.get(&agent).is_some_and(|p| p.sl_image == image) {
+            return;
+        }
+        let Some((target_w, target_h)) = self.scene.textures.ui_image_size(&image) else {
+            return;
+        };
+        if !login_portrait_is_full(w, h, target_w, target_h) {
             return;
         }
         self.login_portrait_source = Some((agent, image));
@@ -8072,12 +8129,28 @@ impl App {
         });
     }
 
-    /// An interface image taken `width` px wide: followed while coarser than
-    /// its texture's UI size (the first levels of a progressive download).
-    fn note_ui_copy(&mut self, image: uuid::Uuid, width: u32) {
-        if self.scene.textures.ui_image_width(&image).is_some_and(|full| width < full) {
-            let since = self.ui_coarse.get(&image).map_or_else(Instant::now, |c| c.1);
-            self.ui_coarse.insert(image, (width, since));
+    /// Track an image while either consumer's own copy remains coarse.
+    fn note_ui_copy(&mut self, image: uuid::Uuid) {
+        let Some((target_w, target_h)) = self.scene.textures.ui_image_size(&image) else {
+            return;
+        };
+        let coarse = self
+            .ui_images
+            .get(&image)
+            .is_some_and(|t| ui_copy_needs_refine(t.size(), target_w, target_h))
+            || self
+                .avatar_pic_images
+                .get(&image)
+                .is_some_and(|t| ui_copy_needs_refine(t.size(), target_w, target_h));
+        if coarse {
+            let sizes = [
+                self.ui_images.get(&image).map(egui::TextureHandle::size),
+                self.avatar_pic_images.get(&image).map(egui::TextureHandle::size),
+            ];
+            match ui_follow_step(self.ui_coarse.get(&image).copied(), sizes, Instant::now()) {
+                Some(follow) => self.ui_coarse.insert(image, follow),
+                None => self.ui_coarse.remove(&image),
+            };
         } else {
             self.ui_coarse.remove(&image);
         }
@@ -8089,37 +8162,94 @@ impl App {
     /// replaces the pixels of the egui texture in place (every clone of the
     /// handle follows: name plates, lists, profiles).
     fn refine_ui_copies(&mut self) {
-        // (a texture that never gets finer is given up after that)
-        const FOLLOWED: Duration = Duration::from_secs(300);
         // (an image dropped meanwhile, a texture refreshed: its next copy is
         // the one its loader takes)
         let (pics, images) = (&self.avatar_pic_images, &self.ui_images);
-        self.ui_coarse.retain(|id, _| pics.contains_key(id) || images.contains_key(id));
-        let coarse: Vec<(uuid::Uuid, u32)> = self.ui_coarse.iter().map(|(id, (w, _))| (*id, *w)).collect();
-        for (image, have) in coarse {
+        // (one that stops getting finer is given up: its level is no longer
+        // held for it, its copy no longer decoded again)
+        let textures = &self.scene.textures;
+        let now = Instant::now();
+        self.ui_coarse.retain(|id, follow| {
+            if !(pics.contains_key(id) || images.contains_key(id)) || textures.is_unavailable(id) {
+                return false;
+            }
+            let sizes = [
+                images.get(id).map(egui::TextureHandle::size),
+                pics.get(id).map(egui::TextureHandle::size),
+            ];
+            match ui_follow_step(Some(*follow), sizes, now) {
+                Some(next) => {
+                    *follow = next;
+                    true
+                }
+                None => false,
+            }
+        });
+        let coarse: Vec<_> = self.ui_coarse.keys().copied().collect();
+        for image in coarse {
+            let Some((target_w, target_h)) = self.scene.textures.ui_image_size(&image) else {
+                self.ui_coarse.remove(&image);
+                continue;
+            };
+            let (pics, images) = (&self.avatar_pic_images, &self.ui_images);
+            let have = images
+                .get(&image)
+                .map(egui::TextureHandle::size)
+                .filter(|size| ui_copy_needs_refine(*size, target_w, target_h))
+                .into_iter()
+                .chain(
+                    pics.get(&image)
+                        .map(egui::TextureHandle::size)
+                        .filter(|size| ui_copy_needs_refine(*size, target_w, target_h)),
+                )
+                .min_by_key(|size| size[0].saturating_mul(size[1]));
+            let Some(have) = have else {
+                self.ui_coarse.remove(&image);
+                continue;
+            };
             match self.scene.textures.take_ui_image(&image) {
-                Some((w, h, rgba)) if w > have && rgba.len() == (w * h * 4) as usize => {
+                Some((w, h, rgba))
+                    if (images
+                        .get(&image)
+                        .is_some_and(|t| ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h))
+                        || pics
+                            .get(&image)
+                            .is_some_and(|t| ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)))
+                        && rgba.len() == (w * h * 4) as usize =>
+                {
                     let ci = || egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
-                    if let Some(t) = self.ui_images.get_mut(&image) {
+                    if let Some(t) = self.ui_images.get_mut(&image)
+                        && ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)
+                    {
                         t.set(ci(), egui::TextureOptions::LINEAR);
                         if let Some(mask) = crate::world::rlva::effects::AlphaMask::from_rgba(w, h, &rgba) {
                             self.ui_image_masks.insert(image, mask);
                         }
                     }
-                    if let Some(t) = self.avatar_pic_images.get_mut(&image) {
+                    let mut picture_updated = false;
+                    if let Some(t) = self.avatar_pic_images.get_mut(&image)
+                        && ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)
+                    {
                         t.set(ci(), egui::TextureOptions::LINEAR);
+                        picture_updated = true;
+                    }
+                    if picture_updated {
                         self.picture_pixels(image, w, h, rgba);
                     } else {
-                        self.note_ui_copy(image, w);
+                        self.note_ui_copy(image);
+                        // (our picture's own handle already full: the file
+                        // from these pixels, follow_login_portrait waiting)
+                        if self.login_portrait_source != Some((self.world.agent_id, image)) {
+                            self.save_login_portrait(image, w, h, rgba);
+                        }
                     }
                 }
-                _ => self.scene.textures.refine_ui_image(image, have, &self.scene.jobs),
+                _ => self
+                    .scene
+                    .textures
+                    .refine_ui_image_size(image, (have[0] as u32, have[1] as u32), &self.scene.jobs),
             }
         }
-        let now = Instant::now();
-        let textures = &self.scene.textures;
-        self.ui_coarse
-            .retain(|id, (_, since)| now.duration_since(*since) < FOLLOWED && !textures.is_unavailable(id));
     }
 
     /// Place profiles and "Places": arrivals saved in the history, landmark
@@ -9597,7 +9727,7 @@ impl App {
             }
             // The UI pass retains drag feedback for the next world frame.
             // Merge it before sync/list construction, alongside real selection.
-            if let Some((idx, mask)) = self.library_drag.highlighted {
+            for &(idx, mask) in &self.library_drag.highlighted {
                 *selected_faces.entry(idx).or_default() |= mask;
             }
             self.scene.set_face_selection(&mut self.world, selected_faces);
@@ -10256,7 +10386,7 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: if self.library_drag.highlighted.is_some() {
+            selection_pulse: if !self.library_drag.highlighted.is_empty() {
                 self.scene.selection_pulse(Instant::now(), true)
             } else {
                 self.imports
@@ -10674,8 +10804,11 @@ impl App {
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
-                    library_drop = self.texture_library_drag_input(ui.ctx(), &gfx.renderer);
+                    library_drop = self.texture_library_drag_input(ui.ctx(), &mut gfx.renderer);
                 }
+            }
+            if library_drop.is_none() {
+                library_drop = self.no_copy_drop_prompt(ui.ctx());
             }
             // after every window: their text fields have been drawn
             self.text_menu.after(ui.ctx(), &self.palette);
@@ -20763,6 +20896,46 @@ mod tests {
     use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn coarse_interface_handles_refine_independently_and_portraits_wait_for_full_ui_size() {
+        let target = (256, 128);
+        let coarse = [128, 64];
+        let full = [256, 128];
+        assert!(super::ui_copy_needs_refine(coarse, target.0, target.1));
+        assert!(!super::ui_copy_needs_refine(full, target.0, target.1));
+        assert!(super::ui_copy_can_improve(coarse, [256, 128], target.0, target.1));
+        assert!(!super::ui_copy_can_improve(full, [256, 128], target.0, target.1));
+        assert!(!super::login_portrait_is_full(128, 64, target.0, target.1));
+        assert!(super::login_portrait_is_full(256, 128, target.0, target.1));
+        // an odd-sized texture: its 256 px upload copy beats the halved size
+        assert!(super::ui_copy_can_improve([65, 65], [256, 256], 129, 129));
+        assert!(!super::ui_copy_can_improve([129, 129], [256, 256], 129, 129));
+    }
+
+    /// A followed interface image is given up 300 s after its handles last
+    /// grew, and each growth (or a new handle) gives it another 300 s.
+    #[test]
+    fn a_followed_interface_image_is_given_up_once_it_stops_growing() {
+        use super::{UI_FOLLOWED, ui_follow_step};
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let second = Duration::from_secs(1);
+        let first = ui_follow_step(None, [Some([64, 64]), None], t0).unwrap();
+        assert_eq!(first.until, t0 + UI_FOLLOWED);
+        // no growth: kept until the deadline, then dropped
+        let still = ui_follow_step(Some(first), [Some([64, 64]), None], t0 + UI_FOLLOWED - second);
+        assert_eq!(still.map(|f| f.until), Some(t0 + UI_FOLLOWED));
+        assert!(ui_follow_step(Some(first), [Some([64, 64]), None], t0 + UI_FOLLOWED).is_none());
+        // a handle grew: the deadline starts over
+        let later = t0 + UI_FOLLOWED - second;
+        let grown = ui_follow_step(Some(first), [Some([128, 128]), None], later).unwrap();
+        assert_eq!(grown.until, later + UI_FOLLOWED);
+        assert!(ui_follow_step(Some(grown), [Some([128, 128]), None], t0 + UI_FOLLOWED).is_some());
+        // a second handle appearing counts as growth too
+        let picture = ui_follow_step(Some(grown), [Some([128, 128]), Some([32, 32])], later + second).unwrap();
+        assert_eq!(picture.until, later + second + UI_FOLLOWED);
+    }
 
     #[test]
     fn alt_enter_toggles_fullscreen_only_when_unclaimed() {
