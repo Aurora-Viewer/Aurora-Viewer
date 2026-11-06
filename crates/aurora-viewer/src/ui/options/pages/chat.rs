@@ -157,12 +157,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-payment-sent-opens-conversation-hint"),
                     &field!(payment_sent_opens_conversation),
                 );
-                // the L$ received rising into the balance
-                cx.toggle(
-                    tr!("ui-options-balance-gain-animation"),
-                    tr!("ui-options-balance-gain-animation-hint"),
-                    &field!(balance_gain_animation),
-                );
                 // the tab of a conversation with news flashes
                 // (FSFloaterIMContainer::startFlashingTab), in violet and softly
                 cx.toggle(
