@@ -831,6 +831,9 @@ fn a_library_item_shows_its_asset_uuid_by_what_it_allows_everyone() {
     lib_item.everyone_mask = FULL;
     inv.items.insert(lib_item.id, lib_item);
     assert!(asset_uuid_shown(&inv, asset), "full for everyone");
+}
+
+#[test]
 fn next_owner_rights_need_the_owners_transfer() {
     let item = |owner_mask: u32, asset_type: i32, inv_type: i32| InvItem {
         owner_mask,
