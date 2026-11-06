@@ -425,6 +425,10 @@ pub struct Settings {
     /// Stable releases only, or also the betas built every night
     /// (Preferences › Language and updates).
     pub update_channel: aurora_updater::feed::Channel,
+    /// How often a running viewer looks for a new version again, after the
+    /// check at launch (Preferences › Language and updates); a new one shows
+    /// a notice. Aurora only: the Legacy Viewer checks at launch.
+    pub update_check_interval: crate::updater::Interval,
     pub ignored_update: String,
     pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
@@ -1750,6 +1754,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             update_mode: crate::updater::Mode::Ask,
+            update_check_interval: crate::updater::Interval::default(),
             update_channel: aurora_updater::feed::Channel::Stable,
             ignored_update: String::new(),
             area_search: Default::default(),
