@@ -672,7 +672,7 @@ pub struct Settings {
     /// Preferences › Chat › Notifications: L$ received show a toast
     /// (NotifyMoneyReceived, on by default, #2675).
     pub notify_money_received: bool,
-    /// Preferences › Chat › Conversations: L$ received rise into the balance
+    /// Preferences › Layout › Bars: L$ received rise into the balance
     /// (`ui/balance_gains.rs`, Aurora's own, on by default).
     pub balance_gain_animation: bool,
     /// Preferences › Chat › Conversations: our own direct payment to a
