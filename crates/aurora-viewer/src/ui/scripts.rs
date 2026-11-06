@@ -553,10 +553,12 @@ impl Editors {
                 e.experience.baseline = pending.experience;
                 e.compile_failed = !saved.compiled;
                 e.errors.clone_from(&saved.errors);
-                e.status = if saved.compiled {
+                e.status = if !saved.compiled {
+                    aurora_i18n::tr!("script-compile-failed")
+                } else if saved.checked {
                     aurora_i18n::tr!("script-saved")
                 } else {
-                    aurora_i18n::tr!("script-compile-failed")
+                    aurora_i18n::tr!("script-saved-not-compiled")
                 }
                 .into();
                 if e.close_after_save && saved.compiled && !e.dirty() {
@@ -1566,6 +1568,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(72),
                 compiled: true,
+                checked: true,
                 errors: vec![],
             }),
         );
@@ -1655,6 +1658,7 @@ mod tests {
                 &Ok(ScriptSaved {
                     asset: Uuid::from_u128(99),
                     compiled: true,
+                    checked: true,
                     errors: vec![],
                 }),
             );
@@ -1807,6 +1811,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: true,
+                checked: true,
                 errors: vec![]
             })
         ));
@@ -1833,6 +1838,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: false,
+                checked: true,
                 errors: vec!["(1, 1) Syntax error".into()],
             }),
         );
@@ -1871,6 +1877,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(4),
                 compiled: true,
+                checked: true,
                 errors: vec![],
             }),
         );
@@ -1899,6 +1906,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: true,
+                checked: true,
                 errors: vec![]
             })
         ));

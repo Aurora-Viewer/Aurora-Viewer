@@ -106,6 +106,15 @@ pub struct FaceClip {
     pub face: aurora_prim::te::TextureFace,
     pub legacy: Option<crate::scene::legacy_mat::LegacyMaterial>,
     pub gltf: Option<(Uuid, aurora_assets::material::PbrOverride)>,
+    /// What the diffuse, the material and its four override maps may count
+    /// on when pasted (`texture_copy::availability`).
+    pub image: crate::build::texture_copy::Availability,
+    pub material: crate::build::texture_copy::Availability,
+    pub maps: [crate::build::texture_copy::Availability; 4],
+    /// The normal / specular map could not be copied: `legacy` holds none
+    /// and the paste keeps the target's own (NormMapNoCopy, SpecMapNoCopy).
+    pub normal_kept: bool,
+    pub specular_kept: bool,
 }
 
 /// Object parameters copied with "Copy" of the Object tab (LLPanelObject::onCopyParams).
@@ -121,6 +130,10 @@ pub struct FeaturesClip {
     pub flexible: Option<aurora_prim::extra::FlexibleParams>,
     pub light: Option<aurora_prim::extra::LightParams>,
     pub light_image: Option<aurora_prim::extra::LightImageParams>,
+    /// The projector map could not be copied (`texture_copy::can_copy`):
+    /// the paste leaves the target's projector as it is, like the Legacy
+    /// Viewer's clipboard without its "spot" entry.
+    pub keep_light_image: bool,
     pub probe: Option<aurora_prim::extra::ReflectionProbeParams>,
     pub material: u8,
     pub physics: Option<aurora_net::build::PhysicsParams>,
@@ -186,8 +199,9 @@ pub struct FloaterState {
     pub confirm: Option<Confirm>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
-    /// A texture or material dropped on a Texture tab slot, applied next frame.
-    pub slot_drop: Option<(PickTarget, Uuid)>,
+    /// A texture or material dropped on a Texture tab slot, applied next
+    /// frame: the slot, the asset and the inventory item it came from.
+    pub slot_drop: Option<(PickTarget, Uuid, Uuid)>,
     texture_edit: Option<texture_preview::Session>,
     /// ObjectMedia data fetched for the selection, and the objects asked.
     pub media_data: HashMap<Uuid, ObjectMediaData>,
@@ -427,9 +441,12 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
-    if let Some((target, asset)) = tool.ui.slot_drop.take() {
+    if let Some((target, asset, item)) = tool.ui.slot_drop.take() {
         let sel = texture::selected(tool, world);
-        tool.apply_texture(world, env, target, asset, &sel);
+        match tool.admit_item(world, item, &texture_preview::admit_targets(target, &sel)) {
+            Ok(()) => tool.apply_texture(world, env, target, asset, &sel),
+            Err(text) => world.system_notice(text, crate::world::notice_topics::Topic::Items),
+        }
     }
     toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {

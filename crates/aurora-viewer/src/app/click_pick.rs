@@ -112,6 +112,11 @@ pub(super) struct Picked {
 }
 
 impl Picked {
+    /// The diagnostic synchronous read has no drawn-face identity.
+    pub(super) fn depth_only(&self) -> bool {
+        pick_mode() == PickMode::Wait
+    }
+
     pub(super) fn visible_point(&self) -> Option<Vec3> {
         match self.drawn.blend.or(self.drawn.opaque) {
             Some(face) => Some(face.point),

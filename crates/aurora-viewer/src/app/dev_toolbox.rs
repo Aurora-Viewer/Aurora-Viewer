@@ -258,6 +258,7 @@ impl App {
             "R10" => d.probes,
             "R11" => d.check_light_sets,
             "R12" => d.check_probe_sets,
+            "R13" => self.busy_pause.forced,
             "O1" => d.bounds,
             "O2" => d.lod_info,
             "O3" => d.culling,
@@ -295,6 +296,8 @@ impl App {
             "R10" => d.probes = on,
             "R11" => d.check_light_sets = on,
             "R12" => d.check_probe_sets = on,
+            // the busy card's pause on demand (busy_pause.rs)
+            "R13" => self.busy_pause.forced = on,
             "O1" => d.bounds = on,
             "O2" => d.lod_info = on,
             "O3" => d.culling = on,
@@ -433,7 +436,10 @@ impl App {
             }
             // #1492: the control skeleton of each animesh the target wears
             "J9" => Some(match self.target_avatar() {
-                Some(avatar) => crate::scene::animesh_report::text(&self.scene.worn_animesh_report(&self.world, avatar, Instant::now())),
+                Some(avatar) => crate::scene::animesh_report::text(
+                    &self.scene.worn_animesh_report(&self.world, avatar, Instant::now()),
+                    &crate::world::inventory::asset_ids::AssetIds::diagnostics(&self.world),
+                ),
                 None => tr!("dev-toolbox-no-target").to_string(),
             }),
             "N2" => Some(self.region_text()),
@@ -758,7 +764,17 @@ impl App {
                     let _ = writeln!(out, "worn by '{}' ({avatar})", self.world.social.name_of(&avatar));
                 }
                 let _ = writeln!(out, "face pointed at: {}", face.map_or_else(|| "?".to_string(), |f| f.to_string()));
-                out.push_str(&self.scene.describe_prim(&self.world, renderer, idx).unwrap_or_default());
+                out.push_str(
+                    &self
+                        .scene
+                        .describe_prim(
+                            &self.world,
+                            renderer,
+                            idx,
+                            &crate::world::inventory::asset_ids::AssetIds::diagnostics(&self.world),
+                        )
+                        .unwrap_or_default(),
+                );
                 out.push('\n');
                 out
             }

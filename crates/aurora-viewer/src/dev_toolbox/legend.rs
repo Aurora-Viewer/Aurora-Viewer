@@ -1,10 +1,11 @@
 //! J1 / J2 name the same textures and materials on many faces, each time
 //! with their loading state: on a mesh body that is most of the copy. Every
 //! id met more than once is written `~n` instead, and a legend at the end
-//! gives it once with the first state that followed it. The ids of
-//! prims are kept: their line follows them, and they are what a developer
-//! looks up.
+//! gives it once with the first state that followed it, a hidden asset id
+//! (`world::inventory::asset_ids`) like the others. The ids of prims are
+//! kept: their line follows them, and they are what a developer looks up.
 
+use crate::world::inventory::asset_ids::{HIDDEN, TAG_LEN};
 use std::collections::{HashMap, HashSet};
 
 const ID_LEN: usize = 36;
@@ -37,19 +38,27 @@ fn state_after(s: &str) -> Option<&str> {
     None
 }
 
-/// The ids of `text` with their byte offsets.
+/// The length of the hidden asset id at the start of `b`, if one is.
+fn hidden_len(b: &[u8]) -> Option<usize> {
+    let len = HIDDEN.len() + TAG_LEN;
+    (b.len() >= len && b.starts_with(HIDDEN.as_bytes()) && b[HIDDEN.len()..len].iter().all(u8::is_ascii_hexdigit)).then_some(len)
+}
+
+/// The ids of `text` (UUIDs and hidden asset ids) with their byte offsets.
 fn ids(text: &str) -> Vec<(usize, &str)> {
     let b = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
-    while i + ID_LEN <= b.len() {
+    while i < b.len() {
         let starts = i == 0 || !(b[i - 1].is_ascii_hexdigit() || b[i - 1] == b'-');
-        let ends = b.get(i + ID_LEN).is_none_or(|c| !(c.is_ascii_hexdigit() || *c == b'-'));
-        if starts && ends && is_uuid(&b[i..]) {
-            out.push((i, &text[i..i + ID_LEN]));
-            i += ID_LEN;
-        } else {
-            i += 1;
+        let len = if is_uuid(&b[i..]) { Some(ID_LEN) } else { hidden_len(&b[i..]) };
+        let ends = |len: usize| b.get(i + len).is_none_or(|c| !(c.is_ascii_hexdigit() || *c == b'-'));
+        match len.filter(|len| starts && ends(*len)) {
+            Some(len) => {
+                out.push((i, &text[i..i + len]));
+                i += len;
+            }
+            None => i += 1,
         }
     }
     out
@@ -76,7 +85,7 @@ pub fn shorten(text: &str) -> String {
         // the first state given (a bake's first mention has none)
         let first = state.entry(id).or_default();
         if first.is_none() {
-            *first = state_after(&text[at + ID_LEN..]);
+            *first = state_after(&text[at + id.len()..]);
         }
     }
     let alias: HashMap<&str, usize> = order
@@ -96,7 +105,7 @@ pub fn shorten(text: &str) -> String {
         };
         out.push_str(&text[from..at]);
         out.push_str(&format!("~{n}"));
-        from = at + ID_LEN;
+        from = at + id.len();
         let after = state_after(&text[from..]);
         if after.is_some() && after == state[id] {
             from += after.map_or(0, str::len);
@@ -147,6 +156,19 @@ mod tests {
     fn single_ids_stay() {
         let text = format!("tex {T} (0 bytes) and {M}");
         assert_eq!(shorten(&text), text);
+    }
+
+    #[test]
+    fn hidden_asset_ids_get_the_legend_too() {
+        let h = "hidden-0a1b2c3d";
+        let text = format!("prim {P} (mesh): [0 tex {h} (12 bytes) legacy {M}] [1 tex {h} (12 bytes) legacy {M}]\n");
+        let short = shorten(&text);
+        assert!(
+            short.starts_with(&format!("prim {P} (mesh): [0 tex ~1 legacy ~2] [1 tex ~1 legacy ~2]\n")),
+            "{short}"
+        );
+        assert!(short.contains(&format!("~1 {h} (12 bytes)\n")), "{short}");
+        assert!(ids("ahidden-0a1b2c3d hidden-0a1b2c3d0 hidden-0a1b").is_empty());
     }
 
     #[test]
