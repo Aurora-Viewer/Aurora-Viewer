@@ -861,6 +861,10 @@ pub struct Settings {
     pub log_show_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
     pub log_dated_names: bool,
+    /// Import the Legacy Viewer's transcripts at each login. On by default
+    /// (an Aurora addition): moving between the two viewers keeps the
+    /// history, and a notice says what came in.
+    pub log_import_at_login: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
@@ -1026,6 +1030,9 @@ pub struct Settings {
     /// Preferences › Aurora › Behavior: make, wear and use the Aurora bridge
     /// (`world/bridge.rs`). On by default, as the Legacy Viewer's UseLSLBridge.
     pub use_bridge: bool,
+    /// Preferences › Aurora › Behavior: whose portals the bridge shows. Friends
+    /// by default; our own portals and returns are always shown.
+    pub portal_sources: crate::world::portals::Sources,
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
@@ -1916,6 +1923,7 @@ impl Default for Settings {
             reopen_ims: false,
             log_show_history: true,
             log_dated_names: false,
+            log_import_at_login: true,
             warn_external_links: true,
             trusted_sites: Default::default(),
             mute_all_groups: false,
@@ -1970,6 +1978,7 @@ impl Default for Settings {
             predict_own_motion: false,
             synchronize_animations: false,
             use_bridge: true,
+            portal_sources: Default::default(),
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
@@ -3086,6 +3095,17 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(disabled.render_settings().projector_shadow_limit, 0);
+    }
+
+    #[test]
+    fn legacy_chat_import_at_login_defaults_on_and_keeps_a_saved_off() {
+        use super::Settings;
+        assert!(Settings::default().log_import_at_login);
+        // preferences saved before the setting existed
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(old.log_import_at_login);
+        let off: Settings = serde_json::from_str(r#"{"log_import_at_login":false}"#).expect("preferences");
+        assert!(!off.log_import_at_login);
     }
 
     #[test]

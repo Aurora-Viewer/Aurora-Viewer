@@ -262,7 +262,7 @@ impl MeshView {
 /// Disk cache file of a mesh asset; None without a disk cache (an empty
 /// `cache_dir`).
 fn cache_path(cache_dir: &std::path::Path, id: &Uuid) -> Option<PathBuf> {
-    (!cache_dir.as_os_str().is_empty()).then(|| cache_dir.join("mesh").join(format!("{id}.mesh")))
+    (!cache_dir.as_os_str().is_empty()).then(|| crate::cache::path(cache_dir, "mesh", id, "mesh"))
 }
 
 pub struct MeshStreamer {
@@ -1168,7 +1168,7 @@ impl MaterialStreamer {
                 match e.state {
                     MatState::New => {
                         e.state = MatState::Cache;
-                        let path = self.cache_dir.join("mat").join(format!("{id}.mat"));
+                        let path = crate::cache::path(&self.cache_dir, "mat", &id, "mat");
                         jobs.spawn(move || {
                             let material = crate::cache::read_touch(path)
                                 .ok()
@@ -1218,7 +1218,7 @@ impl MaterialStreamer {
         };
         match r.data {
             Ok(d) => {
-                let path = self.cache_dir.join("mat").join(format!("{id}.mat"));
+                let path = crate::cache::path(&self.cache_dir, "mat", &id, "mat");
                 jobs.spawn(move || {
                     let material = aurora_assets::parse_material_asset(&d).ok();
                     if material.is_some() {
@@ -1498,7 +1498,11 @@ mod tests {
         assert_eq!(cache_path(std::path::Path::new(""), &id), None);
         assert_eq!(
             cache_path(std::path::Path::new("cache"), &id),
-            Some(PathBuf::from("cache").join("mesh").join(format!("{id}.mesh")))
+            Some(
+                PathBuf::from("cache")
+                    .join("mesh")
+                    .join(format!("{}.mesh", crate::cache::file_name(&id)))
+            )
         );
     }
 
