@@ -101,9 +101,13 @@ fn newest_reported_session(root: &Path) -> Option<PathBuf> {
     sessions.pop()
 }
 
-/// A session's public crash report, if it has one.
+/// A session's public crash report, built again from its own records by
+/// the same closed-vocabulary summary as the crash window: a
+/// `public-report.md` on disk is never trusted as it is.
 pub fn public_report_in(dir: &Path) -> Option<String> {
-    read_limited(&dir.join("public-report.md"), 128 * 1024).ok()
+    let record = load(dir).ok()?;
+    let summary = summary::build(&record, dir);
+    Some(format!("# {}\n\n{}", summary.title, summary.body))
 }
 
 fn root() -> PathBuf {
@@ -846,8 +850,8 @@ mod tests {
         // the restart that followed has its own files, but no report
         std::fs::write(restart.join("flight-recorder.json"), "{}").unwrap();
         assert_eq!(newest_reported_session(&root), Some(crashed.clone()));
-        assert_eq!(public_report_in(&crashed).as_deref(), Some("# Crash: GPU device lost\n"));
-        assert_eq!(public_report_in(&restart), None);
+        // the file only marks the session; its text is never taken as it is
+        assert_eq!(public_report_in(&crashed), None, "no session record to rebuild it from");
         std::fs::remove_dir_all(root).unwrap();
     }
 
