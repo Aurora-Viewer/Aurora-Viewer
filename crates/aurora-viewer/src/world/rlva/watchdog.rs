@@ -327,7 +327,7 @@ impl super::super::World {
                                 .inventory
                                 .items
                                 .get(item)
-                                .is_none_or(|it| self.rlva_folder_allowed_in(&locks, it.parent, false, Uuid::nil()));
+                                .is_none_or(|it| self.rlva_item_folders_removable_in(&locks, *item, it.parent, Uuid::nil()));
                         (!allowed).then_some(*item)
                     })
                     .collect();

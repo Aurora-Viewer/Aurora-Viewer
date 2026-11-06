@@ -16,7 +16,7 @@ impl World {
                             .inventory
                             .items
                             .get(&item)
-                            .is_some_and(|item| !self.rlva_folder_allowed_in(&locks, item.parent, false, Uuid::nil())))
+                            .is_some_and(|it| !self.rlva_item_folders_removable_in(&locks, item, it.parent, Uuid::nil())))
             })
     }
 
