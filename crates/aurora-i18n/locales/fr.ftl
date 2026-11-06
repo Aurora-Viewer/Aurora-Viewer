@@ -5695,7 +5695,7 @@ ui-options-graphics-card-automatic = Automatique
 ui-options-graphics-card-help = Automatique prend d'abord la carte dédiée. Appliqué au prochain démarrage.
 ui-options-graphics-card-in-use = En cours : { $name }.
 ui-options-vr-support = Prise en charge des casques VR
-ui-options-vr-support-help = Charge votre runtime VR (SteamVR, Meta…) au démarrage d’Aurora ; prend effet au prochain démarrage
+ui-options-vr-support-help = Charge votre runtime VR (SteamVR, Meta…) au démarrage d’Aurora ; prend effet au prochain démarrage.
 ui-options-graphics-card-choice = Carte à utiliser
 ui-options-graphics-card-no-discrete = Seule la carte graphique intégrée est visible par le viewer. Sur un PC avec une carte NVIDIA, choisissez la carte NVIDIA comme « Processeur graphique préféré » pour aurora-viewer.exe dans le panneau de configuration NVIDIA, puis redémarrez le PC si elle n'apparaît toujours pas.
 ui-options-graphics-card-cannot-present = La carte dédiée ne peut pas dessiner la fenêtre du viewer : branchez l'écran sur les sorties de la carte dédiée, pas sur celles de la carte mère.
@@ -13234,7 +13234,7 @@ import-local-stage-upload = Ajouter à l’upload ({ $count })
 import-local-stage-upload-help = Conserver les aperçus locaux et préparer l’upload des fichiers cochés, y compris les fichiers masqués. Les frais seront confirmés séparément.
 
 vr-view = Vue VR
-vr-support-disabled = La VR nécessite la prise en charge des casques VR : activez-la dans Préférences › Graphismes, puis redémarrez Aurora
+vr-support-disabled = La VR nécessite la prise en charge des casques VR : activez-la dans Préférences › Graphismes, puis redémarrez Aurora.
 vr-unavailable = La VR est indisponible. Vérifiez que le runtime OpenXR et le casque sont connectés.
 vr-restart-title = Casque connecté
 vr-restart-body = Votre casque a été connecté après le démarrage d'Aurora. Aurora prépare la VR à son démarrage : redémarrez-le pour utiliser la VR. Il passera en VR tout seul une fois de retour dans le monde.

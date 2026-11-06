@@ -5683,7 +5683,7 @@ ui-options-graphics-card-automatic = 自動
 ui-options-graphics-card-help = 自動では専用カードが優先されます。次回の起動時に適用されます。
 ui-options-graphics-card-in-use = 使用中：{ $name }
 ui-options-vr-support = VRヘッドセットのサポート
-ui-options-vr-support-help = Auroraの起動時にVRランタイム（SteamVR、Metaなど）を読み込みます。次回の起動から有効になります
+ui-options-vr-support-help = Auroraの起動時にVRランタイム（SteamVR、Metaなど）を読み込みます。次回の起動から有効になります。
 ui-options-graphics-card-choice = 使用するカード
 ui-options-graphics-card-no-discrete = ビューアから見えるのは内蔵グラフィックスのみです。NVIDIAのカードを搭載したＰＣでは、NVIDIAコントロールパネルで aurora-viewer.exe の「優先するグラフィックスプロセッサ」をNVＩＤIAのカードに設定し、それでも表示されない場合はＰＣを再起動してください。
 ui-options-graphics-card-cannot-present = 専用カードではビューアのウィンドウを描画できません：モニターをマザーボードではなく専用カードの出力端子に接続してください。
@@ -13211,7 +13211,7 @@ import-local-stage-upload = アップロードに追加（{ $count }）
 import-local-stage-upload-help = 非表示を含むチェック済みファイルのアップロードを準備し、ローカルプレビューは保持します。料金は別途確認します。
 
 vr-view = VR表示
-vr-support-disabled = VRにはVRヘッドセットのサポートが必要です。環境設定 › グラフィックスで有効にしてから、Auroraを再起動してください
+vr-support-disabled = VRにはVRヘッドセットのサポートが必要です。環境設定 › グラフィックスで有効にしてから、Auroraを再起動してください。
 vr-unavailable = VRを利用できません。OpenXRランタイムとヘッドセットの接続を確認してください。
 vr-restart-title = ヘッドセットが接続されました
 vr-restart-body = ヘッドセットはAuroraの起動後に接続されました。AuroraはVRを起動時に準備するため、VRを使うには再起動してください。ワールドに戻ると自動的にVRに入ります。
