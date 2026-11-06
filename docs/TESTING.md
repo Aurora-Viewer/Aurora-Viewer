@@ -4963,6 +4963,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
+| `AURORA_GPU_BREADCRUMBS=off/auto/transfer` | Optional GPU markers; transfer mode adds expensive diagnostic barriers |
 | `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new window and device instead of closing (work in progress) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
@@ -7026,6 +7027,27 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `GPU loss: first seen by` = `demo`), and its first table the
   `Vulkan layers on offer`: read it in the session's
   `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
+- **`AURORA_GPU_BREADCRUMBS=off|auto|transfer`** controls optional Vulkan
+  diagnostics at device creation. `auto` (default) records AMD buffer markers
+  or NVIDIA checkpoints only when the selected GPU offers them; unsupported
+  devices retain their normal creation path. `off` disables optional markers
+  and device-fault collection. `transfer` enables a portable marker buffer
+  with deliberate execution/host barriers and may slow rendering; use it only
+  for deep diagnostics. The log and crash report distinguish offered/enabled
+  capabilities. No GPU reset is needed to inspect this startup information.
+  The ring retains at most 64 render-view submissions (each stereo eye has its
+  own slot), with separate begin/end words and no reuse before completion.
+  SSR/water/blend share one named boundary without splitting their render pass.
+  For an actual device loss, inspect the public **GPU breadcrumbs** and
+  **Driver fault report** rows and the local private fault artifact. Markers
+  are best effort after loss and do not identify a crash's cause. A simulated
+  loss never makes the post-loss Vulkan fault query. Compare `off`/`auto`/
+  `transfer` in otherwise identical demos before any deliberate hardware hang.
+  The explicit ignored `breadcrumb_offered_fault_extension_is_enabled_at_device_creation`
+  test checks creation on a Vulkan GPU offering device_fault without inducing
+  a loss. Vendor-specific validation and the <0.1 ms/frame marker target remain
+  hardware acceptance checks; unsupported is a normal result.
+
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
   compute dispatch whose loop runs about 12 s on a recent card (the log says

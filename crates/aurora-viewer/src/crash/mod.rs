@@ -234,6 +234,14 @@ fn start_inner() -> anyhow::Result<()> {
         dir: dir.clone(),
         panic_file,
     });
+    aurora_render::gpu_diagnostics::set_sink(|report, private| {
+        save_gpu_diagnostics(report);
+        if !private.is_empty()
+            && let Some(session) = SESSION.get()
+        {
+            let _ = std::fs::write(session.dir.join("gpu-device-fault-private.txt"), private);
+        }
+    });
     if record.demo && std::env::var("AURORA_DEMO_CRASH").as_deref() == Ok("recovery") {
         return Ok(());
     }
@@ -335,6 +343,7 @@ pub fn gpu_stalled(seconds: u64) {
 /// The GPU device is lost for good (app/gpu_stall.rs): the session, which
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
+    snapshot_gpu_diagnostics();
     mark_gpu_lost(b"");
 }
 
@@ -343,6 +352,7 @@ pub fn gpu_lost() {
 /// line each in `gpu-recoveries.txt`, which the session's report counts if
 /// it ends badly later. The session goes on: nothing marks it failed.
 pub fn gpu_recovered(ms: u128, safe: bool) {
+    snapshot_gpu_diagnostics();
     use std::io::Write;
     let Some(session) = SESSION.get() else {
         return;
@@ -365,7 +375,29 @@ const GPU_LOST_AT_START: &str = "start";
 /// The same before the first frame (app.rs): reported under its own title,
 /// apart from the driver resets of a running session.
 pub fn gpu_lost_at_start() {
+    snapshot_gpu_diagnostics();
     mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
+}
+
+/// The worker is never joined. A stuck driver leaves the first snapshot's
+/// "not collected within budget" status; a later ready result replaces it.
+fn snapshot_gpu_diagnostics() {
+    if let Some(report) = aurora_render::gpu_diagnostics::first_loss() {
+        save_gpu_diagnostics(&report);
+    }
+}
+fn save_gpu_diagnostics(report: &aurora_render::gpu_diagnostics::Report) {
+    static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let Ok(_write) = WRITE.lock() else {
+        return;
+    };
+    // Serialize startup/worker/crash snapshots and take the latest result
+    // after the lock: an older pending snapshot cannot overwrite ready data.
+    let latest = aurora_render::gpu_diagnostics::first_loss();
+    let report = latest.as_ref().unwrap_or(report);
+    if let Some(session) = SESSION.get() {
+        let _ = std::fs::write(session.dir.join("gpu-breadcrumbs.txt"), report.encode_public());
+    }
 }
 
 fn mark_gpu_lost(when: &[u8]) {

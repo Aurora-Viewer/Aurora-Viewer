@@ -107,6 +107,10 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         let known = exit_code_name(code).map(|name| format!(" ({name})")).unwrap_or_default();
         rows.push(("Exit code", format!("0x{code:08X}{known}")));
     }
+    if let Some(report) = aurora_render::gpu_diagnostics::Report::decode_public(&text("gpu-breadcrumbs.txt")) {
+        rows.push(("GPU breadcrumbs", report.breadcrumbs()));
+        rows.push(("Driver fault report", report.fault()));
+    }
     // Without the watcher's word, the last sign of life stands for the end.
     let tick = number("tick");
     let end = stopped.or(tick);
@@ -853,6 +857,27 @@ mod tests {
             Some("Intel(R) UHD Graphics (integrated, 512 MB, cannot present to the window)")
         );
         assert_eq!(gpu_in("[t INFO  viewer] nothing about the card\n"), None);
+    }
+
+    #[test]
+    fn breadcrumb_report_publishes_closed_fields_and_never_private_fault_detail() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("gpu-breadcrumbs.txt"), "v1 5 1 1 3 100 8 1 0 6 2 1 2").unwrap();
+        std::fs::write(
+            dir.join("gpu-device-fault-private.txt"),
+            "private-user-path vendor-secret address=0x12345678",
+        )
+        .unwrap();
+        let body = build(&record, &dir).body;
+        assert!(body.contains("GPU breadcrumbs"));
+        assert!(body.contains("contact shadows begin"));
+        assert!(body.contains("write-invalid"));
+        assert!(!body.contains("vendor-secret"));
+        assert!(!body.contains("private-user-path"));
+        assert!(!body.contains("0x12345678"));
+        std::fs::write(dir.join("gpu-breadcrumbs.txt"), "v1 private-user-path").unwrap();
+        assert!(!build(&record, &dir).body.contains("GPU breadcrumbs"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

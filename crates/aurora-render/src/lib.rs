@@ -26,6 +26,7 @@ mod exposure;
 pub mod frame_priority;
 pub mod gpu_alloc;
 pub mod gpu_cull;
+pub mod gpu_diagnostics;
 mod gtao;
 mod helpers;
 mod histogram;

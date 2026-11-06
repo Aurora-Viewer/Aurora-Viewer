@@ -143,7 +143,12 @@ impl Graphics {
             physical,
         })
     }
-    pub fn open(&self, adapter: &wgpu::Adapter, descriptor: &wgpu::DeviceDescriptor<'_>) -> Result<(wgpu::Device, wgpu::Queue)> {
+    pub fn open(
+        &self,
+        adapter: &wgpu::Adapter,
+        descriptor: &wgpu::DeviceDescriptor<'_>,
+        diagnostics: &crate::gpu_diagnostics::vulkan::Plan,
+    ) -> Result<(wgpu::Device, wgpu::Queue)> {
         let Self {
             xr,
             system,
@@ -162,7 +167,8 @@ impl Graphics {
         }
         // SAFETY: Backend is Vulkan, adapter remains alive throughout bootstrap.
         let ha = unsafe { adapter.as_hal::<hal::api::Vulkan>() }.ok_or("Not Vulkan")?;
-        let device_extensions = ha.required_device_extensions(features);
+        let mut device_extensions = ha.required_device_extensions(features);
+        diagnostics.extensions(&mut device_extensions);
         let names: Vec<_> = device_extensions.iter().map(|s| s.as_ptr()).collect();
         let mut enabled_features = ha.physical_device_features(&device_extensions, features);
         // SAFETY: physical belongs to raw_instance and is valid until wgpu is dropped.
@@ -173,11 +179,18 @@ impl Graphics {
         let queues = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(family)
             .queue_priorities(&[1.0])];
-        let create = enabled_features.add_to_device_create(
-            vk::DeviceCreateInfo::default()
-                .queue_create_infos(&queues)
-                .enabled_extension_names(&names),
-        );
+        let mut fault = diagnostics.fault_feature();
+        let mut coherent = diagnostics.coherent_feature();
+        let mut create = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queues)
+            .enabled_extension_names(&names);
+        if fault.device_fault == vk::TRUE {
+            create = create.push_next(&mut fault);
+        }
+        if coherent.device_coherent_memory == vk::TRUE {
+            create = create.push_next(&mut coherent);
+        }
+        let create = enabled_features.add_to_device_create(create);
         // SAFETY: All create-info feature/extension storage lives through the synchronous call.
         let raw = unsafe {
             xr.create_vulkan_device(

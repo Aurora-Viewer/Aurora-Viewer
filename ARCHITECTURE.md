@@ -1552,6 +1552,35 @@ one-line command (`scripts/setup.ps1`, then the tools):
 └─ work\                        one git worktree per agent task
 ```
 
+### GPU execution diagnostics
+
+`aurora-render/src/gpu_diagnostics/` owns optional Vulkan diagnostics.
+`vulkan.rs` negotiates only offered extensions/features before ordinary and
+OpenXR device creation, retaining required wgpu features. It owns a dedicated
+mapped marker buffer outside wgpu's resource tracker, plus dispatch handles
+whose device lifetime is retained through submission callbacks and fault work.
+The shared model bounds the ring to 64 render-view submissions × 64 words
+(16 KiB payload; metadata below 64 KiB). Stereo eyes have independent epochs
+and completion lifetimes even when their frame number is equal. Saturation
+stops new recording; completed slots alone can be reused. Tokens never wrap.
+
+Pass markers are recorded outside wgpu render/compute passes. SSR shares the
+`scene-b (SSR/water/blend)` boundary; diagnostics do not split that pass.
+Photo tiles and probe captures use the same recorder. Default `auto` uses
+AMD markers or NVIDIA checkpoints if offered; `off` disables optional
+instrumentation. `AURORA_GPU_BREADCRUMBS=transfer` explicitly enables the
+more expensive transfer commands and execution barriers for deep diagnostics.
+
+A long-lived worker requests driver detail once for the first loss and retains
+its device while the driver runs. The report writer never joins it. wgpu can
+invalidate a device for OOM too, so a typed Vulkan `ERROR_DEVICE_LOST` check
+precedes whole-ring mapped reads and `vkGetDeviceFaultInfoEXT`. Mapped contents
+after loss are best effort; plausible tokens show an observed boundary/stage,
+not a fault's cause. Fault arrays are bounded; vendor binaries stay disabled.
+Raw addresses and driver text stay in `gpu-device-fault-private.txt`, while
+`gpu-breadcrumbs.txt` is a numeric schema reconstructed from closed vocabulary
+in `crash/summary.rs`. Recovery never replaces the first-loss snapshot.
+
 ## The crates
 
 | Crate | Role |
