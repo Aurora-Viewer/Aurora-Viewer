@@ -756,7 +756,11 @@ MSAA and SMAA). `-back` returns to the entire scene at frame 1500: with
 `AURORA_PROFILE=1`, the `memory summary` lines show that the textures of
 what the isolation leaves out are only lowered as out of view under memory
 pressure (`texture_mb` about 110 while isolated, not down to a few MB), so
-the entire scene does not reload all at once on its return (#1374).
+the entire scene does not reload all at once on its return (#1374). With
+`AURORA_CPU_CULL=1`, `own` and `pick` show the checkerboard all around the
+avatar, without a black ground; built with `--profile debugging`, a table of
+the occlusion that does not match the draws stops the viewer at the first
+frame without a background.
 
 `AURORA_DEMO_PHOTO_LOOK` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
 mode): at frame 600 the photo takes those looks, stacked in the order
@@ -3853,6 +3857,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROJECTOR=1`, `point`, `cluster`, `cluster-orbit`, `cluster-scan` or `cluster-bench` | Projectors and overlapping shadow-map transitions |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
+| `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
@@ -4059,6 +4064,16 @@ both open states and the selection count. Capture at frame 620.
   at 0.02 on the other, without adding up. `shell`: the layer also shows its
   other faces; the back one, seen from behind, must add nothing (same values
   as with `1`).
+- **`AURORA_DEMO_SKY_FLAGS=<flags>|none`**: the settings flags of the EEP
+  day `AURORA_DEMO_SKY` gives the region (0 by default): 1 no copy, 2 no
+  modify, 4 no transfer, 8 no save, added up; `none` leaves the `flags` key
+  out, which reads as 0 like the Legacy Viewer (no restriction). With the
+  shared environment shown (a local sky kept by the demo profile has its
+  own rights), "New sky…" (or "New water…") of the bar's environment menu
+  then opens on settings with these rights, and its status line says
+  which: 0 and `none` change nothing; 1 greys Save As, 2 the panels too; 4
+  keeps Save As, the new item's next owner without transfer; 8 leaves only
+  "Apply to myself only".
 - **`AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r>,<fog g>,<fog b>]`**:
   the water of the EEP day `AURORA_DEMO_SKY` gives the region, with these
   values as a region's asset carries them (the normal scale on its three
@@ -4641,8 +4656,9 @@ both open states and the selection count. Capture at frame 620.
     stream: region left`, then `demo stream: textures evicted`); read
     `s_maintain`, `sync`, `s_sync_list` and `r_submit` in `max:`.
   - With `,j2k=<folder>` after the numbers, the textures are the
-    `.j2c` files of that folder (a viewer's `cache\tex`, looped over
-    if there are fewer of them than objects) instead of drawn checkerboards:
+    `.j2c` files of that folder (looped over if there are fewer of them
+    than objects; plain files, or in a development build also a store's
+    `tex`, as for `AURORA_DEMO_ARRIVAL`) instead of drawn checkerboards:
     each file is handed to the streaming as a successful read of the disk
     cache and follows the real path from the JPEG2000 decode onwards, at
     the level its on-screen size asks for. This is the return to a
@@ -4684,9 +4700,11 @@ both open states and the selection count. Capture at frame 620.
   `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
   the folder's `mat` subfolder), whose textures are served from `tex`
   when it holds them, else one of the others in their place. `<folder>`
-  holds plain asset files, or is this installation's cache store
-  (`cache/store`, read through `crate::cache`; an earlier build cannot
-  serve it). Every asset is
+  holds plain asset files; a development build (`dev`, `ci`,
+  `debugging`) also reads files of the cache's format, such as the cache
+  store (`cache/store`, through `crate::cache`; an earlier build cannot
+  serve it), while a `--release` build leaves them out and takes plain
+  folders only (`demo_source.rs`; the log says so once). Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to
   this machine only), which answers each request after `net` milliseconds
   (200 by default; about 70 for the asset hosts on a good link); with
@@ -4965,7 +4983,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
-| `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the 3D pauses, with its notice and window title, until a click |
+| `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
@@ -6133,12 +6151,12 @@ failure. Grid validation and any paid upload are performed by the human.
   taken as behind with GPU frames of 300 ms (another program keeping the
   card busy, #2355): after two of them the world is no longer drawn, its
   3D targets shrink, what is left is blurred and darkened, the notice
-  "3D paused…" shows in amber in the middle, under the windows, and the
+  "Render paused…" shows in amber in the middle, under the windows, and the
   window title ends with "— Paused"; the textures stay. The log says
-  `3D paused behind: the GPU frames take …`. A click in the window ends
+  `render paused behind: the GPU frames take …`. A click in the window ends
   the demo's busy card: the world is drawn again at once, sharp, and the
-  log says `3D drawing resumed`. With Preferences › Graphics › "Pause the
-  3D when the card is overloaded" off, nothing pauses. A capture run
+  log says `render resumed`. With Preferences › Graphics › "Pause the
+  Render when the card is overloaded" off, nothing pauses. A capture run
   pauses too (a real one never does): `AURORA_FPS_LIMIT=60`,
   `AURORA_DEMO_BUSY_PAUSE=900` and `AURORA_CAPTURE_FRAMES=1000`.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
@@ -6901,6 +6919,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_LOGIN_WAIT=logout|sudden|refused`** (#956, `login_wait.rs`): the demo account's previous session logged out when the viewer started (`logout`: Log in waits up to 10 s), was never seen ending (`sudden`: a crash or a killed viewer, up to 60 s from its last sign of life), or the offline login server answers once as the grid does while it logs out a previous session (`refused`: the grid's message, then a 60 s countdown before trying again). The login screen shows the countdown in the connection progress (“Previous session… 7 s · Esc cancels”, “Session still open… 57 s” after a refusal); Escape cancels it and gives the form back, the end of the countdown sends the login (the demo then says it cannot connect). Use it with `AURORA_DEMO_LOGIN=cards` or `connecting`, and `AURORA_DEMO_LOGIN_SUBMIT=<frame>` for captures. The log says `login waits <n> s for the previous session (…)`. Nothing is read from or written to `last_sessions.json` in demo mode.
 - **`AURORA_DEMO_LOGIN=add-mfa`**: one saved account and the Add form open with a second synthetic identity typed in; Log in sends it to the offline server, which asks for the second factor 1.2 s later. The challenge must stay in the Add form with the new identity (never the saved card's), and the log line `demo login: request for a new account` names which identity was sent, without the name. `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` presses Log in at those frames for captures (`AURORA_DEMO_LOGIN_SUBMIT=40`, `AURORA_CAPTURE_FRAMES=170`). The demo never touches the system credential store.
 - **`AURORA_DEMO_LOGIN=mfa-refused`**: the first-account form with a synthetic code typed in. The offline server refuses a request that carries a code the way the grid refuses a wrong one, and challenges a request without one. With `AURORA_DEMO_LOGIN_SUBMIT=40,300`, the log must read `code true` for the first request and `code false` for the second, and the second answer opens an empty code field (capture frames 200 and 500).
+- **`AURORA_DEMO_LOGIN=terms`**: the first-account form with a synthetic identity typed in. The offline server asks first to accept the Terms of Service (reason "tos"), then to read a critical message (reason "critical"), then answers as the other demo forms do. The terms step shows the server's text, a "Read the Terms of Service" link (Linden Lab's page on their grids, else the address the message names) and its checkbox; the critical step shows its own title, text and checkbox. With `AURORA_DEMO_LOGIN_SUBMIT=40,300,560` (check each box by hand between the presses, or capture frames 200 and 460), the log reads `demo login: agree_to_tos false, read_critical false`, then `agree_to_tos true, read_critical false`: accepting the terms never acknowledges the message.
 
 - **`AURORA_DEMO_LOGIN=drag|drag2|drag-card|drag-card2`**: eight/two synthetic profiles with a left-button side-grip or portrait gesture injected into egui at frames 20–44. Capture frame 40 while held and frame 75 after release. With eight profiles, check continuous card motion, clipped neighbours, circular wrapping, final alignment and central selection without connecting. With two profiles, the same gesture must keep the cards fixed, without arrows or connecting. Input injection never moves the OS pointer. Manually drag in both directions from portraits, place images, names, card padding and Connect buttons; release over a card/outside the window and resize during motion. A simple click still connects, while grid/start menus and text-field drag selection remain usable. Also check Enter, dialogs and short-window vertical scrolling outside the browse row.
 
@@ -7683,9 +7702,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     two runs, the result line ends on "Nothing new to import" and the file
     left out. `import:login`: what Import at login does, no window, and
     the notice it leaves in the nearby chat (messages and conversations
-    added, where to turn it off). Outside this mode the demo never imports
-    at login, whatever the setting: it would read the PC's real Legacy
-    Viewer folders.
+    added, where to turn it off). As Save nearby chat is off by default,
+    the seeded nearby chat file stays out of this import, while `import:run`
+    takes it. Outside this mode the demo never imports at login, whatever
+    the setting: it would read the PC's real Legacy Viewer folders.
     `import:same`: the list also has the folder Aurora writes to, unticked
     and greyed. `import:none`: no folder found, the window says so
     and offers the folder dialog.
@@ -9405,8 +9425,8 @@ What the inventory must show with these scenarios:
   object worn on our back (that of `AURORA_DEMO_WORN`), `hud` on a worn HUD
   screen, both worn from an inventory item we made: no question, as "Trust
   my worn items" is on (the log has no `media filter: asking about` line).
-  `worn-gift` / `hud-gift` make that item someone else's creation, and the
-  question comes; `worn-ask` / `hud-ask` turn the option off for the run,
+  `worn-gift` / `hud-gift` make that item someone else's creation: no
+  question either, worn items are trusted whoever made them; `worn-ask` / `hud-ask` turn the option off for the run,
   and the question comes; `worn-blocked` / `hud-blocked` put the site in
   the list as blocked: refused without a question, told in the local chat.
 - **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|blacklist-ignored|avatar-menu|avatar-menu-mixed|avatar-menu-pie`** exercises Sound Explorer
@@ -9465,7 +9485,8 @@ What the inventory must show with these scenarios:
   and the window). `stop` ends the stream after the last title: "No
   stream playing", the history kept. No sound is played.
 - **`AURORA_DEMO_SOUND=1|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
-  sounds (taken from the real sound cache if it exists, otherwise a brief
+  sounds (in a development build, taken from the sound cache of grid
+  sessions if it holds them; otherwise, and in a `--release` build, a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
   The wind sound is silent too, unless this or `AURORA_DEMO_WIND` is set.
