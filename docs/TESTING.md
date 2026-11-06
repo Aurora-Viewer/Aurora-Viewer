@@ -3820,6 +3820,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROJECTOR=1`, `point`, `cluster`, `cluster-orbit`, `cluster-scan` or `cluster-bench` | Projectors and overlapping shadow-map transitions |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
+| `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
@@ -4026,6 +4027,17 @@ both open states and the selection count. Capture at frame 620.
   at 0.02 on the other, without adding up. `shell`: the layer also shows its
   other faces; the back one, seen from behind, must add nothing (same values
   as with `1`).
+- **`AURORA_DEMO_SKY_FLAGS=<flags>|none`**: the settings flags of the EEP
+  day `AURORA_DEMO_SKY` gives the region (0 by default): 1 no copy, 2 no
+  modify, 4 no transfer, 8 no save, added up; `none` leaves the `flags` key
+  out (rights nobody stated). With the shared environment shown (a local
+  sky kept by the demo profile has its own rights), "New sky…" (or "New
+  water…") of the bar's environment menu then opens on settings with these
+  rights, and its status line says which: `none` keeps editing and
+  "Apply to myself only", greys Save As and refuses the parcel and region
+  entries; 1 greys Save As, 2 the panels too; 4 keeps Save As, the new
+  item's next owner without transfer; 8 leaves only "Apply to myself
+  only".
 - **`AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r>,<fog g>,<fog b>]`**:
   the water of the EEP day `AURORA_DEMO_SKY` gives the region, with these
   values as a region's asset carries them (the normal scale on its three

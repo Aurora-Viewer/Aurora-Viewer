@@ -99,7 +99,7 @@ impl SourceRights {
         Llsd::Map(m)
     }
 
-    /// A file written before the rights were kept: Unknown.
+    /// A file without them: Unknown.
     fn from_llsd(v: &Llsd) -> SourceRights {
         if v.has("flags") {
             SourceRights::Flags(v["flags"].as_u32())
@@ -2321,7 +2321,7 @@ mod tests {
         next.restore_local(&saved);
         next.frame(&input(1.0));
         assert_eq!(next.current_rights(SettingsKind::Sky), kept);
-        // a file written before the rights were kept: not known
+        // a file without the rights: not known
         let mut old = saved.clone();
         if let Llsd::Map(m) = &mut old {
             m.remove("sky_rights");
