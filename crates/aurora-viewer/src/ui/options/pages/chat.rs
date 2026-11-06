@@ -686,7 +686,13 @@ fn notifications(cx: &mut Cx) {
             tr!("ui-options-friends-online-in-chat-hint"),
             &field!(friends_online_in_chat),
         );
-        // PaymentReceived's toast (NotifyMoneyReceived, #2675)
+        // PaymentReceived's toast (NotifyMoneyReceived, #2675): a direct
+        // payment on by default, the others off
+        cx.toggle(
+            tr!("ui-options-notify-direct-payment"),
+            tr!("ui-options-notify-direct-payment-hint"),
+            &field!(notify_direct_payment),
+        );
         cx.toggle(
             tr!("ui-options-notify-money-received"),
             tr!("ui-options-notify-money-received-hint"),

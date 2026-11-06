@@ -5274,7 +5274,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   from 12,480 L$, a sale, an object paid or a direct payment of 20 to 300 L$ at random every
   10 seconds, for as long as the viewer runs, with the saved switches, which can be turned
   meanwhile (by default a direct payment has its toast or its card, the others the highlight
-  alone: `sale` turns their toast on for its run). Capture
+  alone: `sale` turns every toast on for its run, `balance` off). Capture
   after frame 400, with `--language fr` and `--language en`.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,

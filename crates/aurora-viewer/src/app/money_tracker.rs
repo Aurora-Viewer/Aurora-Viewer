@@ -185,8 +185,9 @@ impl App {
         };
         let paid = |n, source, amount, item: &str| gift(n, source, agent, amount, item);
         if mode == "sale" {
-            self.demo_money_notices = Some((true, true));
+            self.demo_money_notices = Some((true, true, true));
             // this frame's payments, before the next frame reads it
+            self.world.payments.notify_direct = true;
             self.world.payments.notify_received = true;
             self.world.payments.rise_into_balance = true;
         }
@@ -224,7 +225,7 @@ impl App {
             return;
         }
         if mode == "balance" {
-            self.demo_money_notices = Some((false, true));
+            self.demo_money_notices = Some((false, false, true));
             self.world.apply(NetEvent::Balance(12480));
             let start = Instant::now() + std::time::Duration::from_secs(6);
             for (n, (after, source, amount)) in [(0, DEMO_NOVA, 100), (1, DEMO_TESS, 2500), (2, DEMO_FRIEND, 25)]
