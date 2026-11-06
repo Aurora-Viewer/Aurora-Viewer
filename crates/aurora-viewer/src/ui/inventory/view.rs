@@ -357,6 +357,9 @@ pub struct InventoryPreferences {
     pub double_click_add_objects: bool,
     pub double_click_add_clothes: bool,
     pub filter_defaults: Filters,
+    /// Received, Recent, Worn and Favorites keep their own finder defaults.
+    /// The existing filter_defaults setting remains the main inventory's.
+    pub tab_filter_defaults: [Filters; 4],
     pub last_logout: i64,
     /// How far back the Recent tab goes, in hours; 0: since the last logout.
     /// The Recent Items panel's own filter keeps its "Since Logoff" or its
@@ -404,6 +407,7 @@ impl Default for InventoryPreferences {
             double_click_add_objects: false,
             double_click_add_clothes: false,
             filter_defaults: Filters::default(),
+            tab_filter_defaults: Default::default(),
             last_logout: 0,
             recent_hours: 0,
             warn_task_move: true,
@@ -445,6 +449,22 @@ impl Default for ExplorerPreferences {
 }
 
 impl InventoryPreferences {
+    pub(super) fn filters_for(&self, tab: usize) -> &Filters {
+        if tab == 0 {
+            &self.filter_defaults
+        } else {
+            &self.tab_filter_defaults[tab.min(4) - 1]
+        }
+    }
+
+    pub(super) fn filters_for_mut(&mut self, tab: usize) -> &mut Filters {
+        if tab == 0 {
+            &mut self.filter_defaults
+        } else {
+            &mut self.tab_filter_defaults[tab.min(4) - 1]
+        }
+    }
+
     // LLPanelMainInventory::setSortBy saves the active panel's order
     // (indra/newview/llpanelmaininventory.cpp). Recent and Received each
     // keep their own order; other tabs share the main-inventory preference.
@@ -1966,6 +1986,32 @@ mod tests {
                 system_first: true
             }
         );
+    }
+
+    #[test]
+    fn inventory_tab_filter_defaults_migrate_and_survive_reload() {
+        let mut prefs: InventoryPreferences =
+            serde_json::from_str(r#"{"filter_defaults":{"links":"Exclude","hours":48}}"#).expect("existing preferences");
+        assert_eq!(prefs.filter_defaults.links, Links::Exclude);
+        for tab in 1..5 {
+            assert_eq!(
+                prefs.filters_for(tab),
+                &Filters::default(),
+                "old shared defaults stay in the main tab"
+            );
+            let filters = prefs.filters_for_mut(tab);
+            filters.types = 1 << tab;
+            filters.hours = tab as u32 * 24;
+            filters.age = Age::Newer;
+        }
+        let restored: InventoryPreferences = serde_json::from_str(&serde_json::to_string(&prefs).expect("save")).expect("reload");
+        assert_eq!(restored, prefs);
+        assert_eq!(restored.filter_defaults.links, Links::Exclude);
+        assert_eq!(restored.filter_defaults.hours, 48);
+        for tab in 1..5 {
+            assert_eq!(restored.filters_for(tab).types, 1 << tab);
+            assert_eq!(restored.filters_for(tab).hours, tab as u32 * 24);
+        }
     }
 
     #[test]
