@@ -23,7 +23,8 @@
 //! what replaces it is ready (`commit`, `retire`).
 //!
 //! The closest probes get the cube slots; one cube face is captured per frame,
-//! the probe needing it most first (never captured, then the oldest).
+//! the probe needing it most first (never captured by distance, then the
+//! best `update_score`).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -217,6 +218,20 @@ fn eased_edge(edge: Option<f32>, target: f32, dt: f32) -> f32 {
     edge.map_or(target, |edge| edge + (target - edge) * (1.0 - (-dt / EDGE_EASE).exp()))
 }
 
+/// Which of two probes is captured first (check_priority,
+/// indra/newview/llreflectionmapmanager.cpp): the one never captured, the
+/// closer of two such; else the higher score, its age less a tenth of its
+/// distance (update_score), so that a near probe is refreshed more often.
+fn capture_order(a: (Option<Instant>, f32), b: (Option<Instant>, f32), now: Instant) -> std::cmp::Ordering {
+    let score = |at: Instant, distance: f32| now.duration_since(at).as_secs_f32() - distance * 0.1;
+    match (a.0, b.0) {
+        (None, None) => a.1.total_cmp(&b.1),
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(x), Some(y)) => score(y, b.1).total_cmp(&score(x, a.1)),
+    }
+}
+
 /// The point of the anchor grid the cells are measured from: the nearest to
 /// the camera, kept on each axis until the camera is [`ANCHOR_STICK`] from it.
 fn next_anchor(previous: Option<Vec3>, eye: Vec3) -> Vec3 {
@@ -407,7 +422,7 @@ impl ProbeManager {
 
     /// Pick the probe face to render (LLReflectionMapManager::update /
     /// doProbeUpdate): finish the probe in progress, else the default probe
-    /// when due, else the closest probe never captured, else the oldest.
+    /// when due, else the first by `capture_order`.
     fn next_capture(&mut self, order: &[Key], eye: Vec3, now: Instant) -> Option<ProbeCapture> {
         if self.updating.is_none() {
             let default_due = !self.default_complete || self.default_last.is_none_or(|t| now.duration_since(t) >= DEFAULT_PERIOD);
@@ -416,13 +431,7 @@ impl ProbeManager {
                 .filter(|k| self.probes.get(k).is_some_and(|p| p.slot.is_some() && p.retired.is_none()))
                 .min_by(|a, b| {
                     let (pa, pb) = (&self.probes[a], &self.probes[b]);
-                    // never captured first (closest), then the oldest capture
-                    match (pa.last_update, pb.last_update) {
-                        (None, None) => pa.distance.total_cmp(&pb.distance),
-                        (None, Some(_)) => std::cmp::Ordering::Less,
-                        (Some(_), None) => std::cmp::Ordering::Greater,
-                        (Some(x), Some(y)) => x.cmp(&y),
-                    }
+                    capture_order((pa.last_update, pa.distance), (pb.last_update, pb.distance), now)
                 })
                 .copied();
             let first_pass = candidate.is_some_and(|k| self.probes.get(&k).is_some_and(|p| !p.complete));
@@ -685,6 +694,23 @@ mod tests {
             }
         }
         assert!(cells.len() < 64, "{}", cells.len());
+    }
+
+    #[test]
+    fn captures_follow_the_legacy_priority() {
+        use std::cmp::Ordering::{Greater, Less};
+        let now = Instant::now() + Duration::from_secs(100);
+        let ago = |s: u64| Some(now - Duration::from_secs(s));
+        // never captured first, the closer of two
+        assert_eq!(capture_order((None, 500.0), (ago(90), 0.0), now), Less);
+        assert_eq!(capture_order((ago(90), 0.0), (None, 500.0), now), Greater);
+        assert_eq!(capture_order((None, 5.0), (None, 50.0), now), Less);
+        // the older of two at the same distance
+        assert_eq!(capture_order((ago(20), 10.0), (ago(10), 10.0), now), Less);
+        // a near probe before an older far one: 5 - 0 against 8 - 10
+        assert_eq!(capture_order((ago(5), 0.0), (ago(8), 100.0), now), Less);
+        // until the far one has waited long enough: 5 - 0 against 16 - 10
+        assert_eq!(capture_order((ago(5), 0.0), (ago(16), 100.0), now), Greater);
     }
 
     #[test]
