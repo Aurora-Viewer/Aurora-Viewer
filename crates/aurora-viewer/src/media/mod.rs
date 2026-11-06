@@ -357,10 +357,11 @@ pub struct MediaSettings {
     /// MediaEnableFilter: media and music ask before a site not in the
     /// account's list (on by default, as there).
     pub filter: bool,
-    /// Aurora's own: media on our own worn items (attachments and HUDs)
-    /// loads without the filter's question; a site the list refuses stays
-    /// refused. On by default: wearing a media earring should not raise a
-    /// question.
+    /// Aurora's own: media on worn items (attachments and HUDs) we made
+    /// ourselves loads without the filter's question; a site the list
+    /// refuses stays refused. Items made by someone else ask, as their
+    /// scripts may change the address. On by default: wearing a media
+    /// earring of one's own should not raise a question.
     pub filter_trust_own_worn: bool,
     /// FirstMediaFilter, inverted: the filter's first question was
     /// answered, its explanation is no longer shown.
@@ -398,6 +399,9 @@ struct ObjMedia {
     /// Worn by us (an attachment or a HUD), its avatar already known: false
     /// while a parent has not arrived.
     on_own_avatar: bool,
+    /// Worn by us and made by us: the inventory item it is worn from names
+    /// us as its creator (false while that item is not known).
+    own_creation: bool,
     /// Agent of the last media change ("x-mv:<version>/<agent>").
     changed_by: Uuid,
 }

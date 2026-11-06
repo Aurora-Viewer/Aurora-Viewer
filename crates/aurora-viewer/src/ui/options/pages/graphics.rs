@@ -499,6 +499,16 @@ fn quality(cx: &mut Cx) {
             );
         });
     });
+    // the photo window's own switch, also here: a PC that crashes as soon
+    // as the window opens with it on can still turn it off
+    cx.group(tr!("photo-title"), |cx| {
+        cx.toggle(tr!("photo-quality"), tr!("photo-quality-hint"), &field!(snapshot.quality));
+        cx.toggle(
+            tr!("photo-quality-off-after-crash"),
+            tr!("photo-quality-off-after-crash-help"),
+            &field!(snapshot.quality_off_after_crash),
+        );
+    });
 }
 
 fn light(cx: &mut Cx) {
