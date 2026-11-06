@@ -5,6 +5,9 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+/// Room for 60 seconds at the deep-diagnostics rate. A session keeps 60
+/// seconds at its own rate (`Recorder::capacity`): 600 samples normally,
+/// so its dump stays the size it was; 1800 only in deep diagnostics.
 const SAMPLE_CAP: usize = 1800;
 const EVENT_CAP: usize = 128;
 const NORMAL_SAMPLE_INTERVAL_MS: u64 = 100;
@@ -12,7 +15,8 @@ const DEEP_SAMPLE_INTERVAL_MS: u64 = 33;
 const METRIC_COUNT: usize = 15;
 const WINDOW_SECONDS_MS: u64 = 60_000;
 const RECENT_SECONDS_MS: u64 = 5_000;
-const MAX_DUMP_BYTES: u64 = 512 * 1024;
+// A deep-diagnostics dump (1800 samples) is about 0.5 MB of JSON.
+const MAX_DUMP_BYTES: u64 = 1024 * 1024;
 
 static RECORDER: OnceLock<Mutex<Recorder>> = OnceLock::new();
 
@@ -178,6 +182,8 @@ struct Recorder {
     origin: Option<Instant>,
     last_sample_ms: Option<u64>,
     sample_interval_ms: u64,
+    /// The samples kept: 60 seconds at `sample_interval_ms`.
+    capacity: usize,
     samples: [Sample; SAMPLE_CAP],
     sample_head: usize,
     sample_len: usize,
@@ -206,6 +212,11 @@ impl Default for Recorder {
                 DEEP_SAMPLE_INTERVAL_MS
             } else {
                 NORMAL_SAMPLE_INTERVAL_MS
+            },
+            capacity: if crate::deep_diagnostics::active() {
+                SAMPLE_CAP
+            } else {
+                (WINDOW_SECONDS_MS / NORMAL_SAMPLE_INTERVAL_MS) as usize
             },
             samples: std::array::from_fn(|_| Sample::default()),
             sample_head: 0,
@@ -279,8 +290,8 @@ impl Recorder {
             passes,
             window: input.window,
         };
-        self.sample_head = (self.sample_head + 1) % SAMPLE_CAP;
-        self.sample_len = (self.sample_len + 1).min(SAMPLE_CAP);
+        self.sample_head = (self.sample_head + 1) % self.capacity;
+        self.sample_len = (self.sample_len + 1).min(self.capacity);
     }
 
     fn sample_if_due(&mut self, at_ms: u64, input: impl FnOnce() -> SampleInput) {
@@ -375,9 +386,9 @@ impl Recorder {
     }
 
     fn ordered_samples(&self) -> Vec<Sample> {
-        let start = (self.sample_head + SAMPLE_CAP - self.sample_len) % SAMPLE_CAP;
+        let start = (self.sample_head + self.capacity - self.sample_len) % self.capacity;
         (0..self.sample_len)
-            .map(|offset| self.samples[(start + offset) % SAMPLE_CAP])
+            .map(|offset| self.samples[(start + offset) % self.capacity])
             .collect()
     }
 
@@ -817,15 +828,32 @@ mod tests {
     }
 
     #[test]
-    fn ring_keeps_only_the_last_eighteen_hundred_samples_and_orders_them() {
+    fn ring_keeps_only_the_last_sixty_seconds_and_orders_them() {
         let mut recorder = Recorder::default();
-        for index in 0..SAMPLE_CAP + 2 {
+        let cap = recorder.capacity;
+        assert_eq!(cap, 600, "a normal session keeps 60 s at 10 Hz");
+        for index in 0..cap + 2 {
             recorder.sample_at(index as u64 * NORMAL_SAMPLE_INTERVAL_MS, input(index as f32, index as f32));
         }
-        let dump = recorder.dump(Trigger::GpuLoss, (SAMPLE_CAP + 1) as u64 * NORMAL_SAMPLE_INTERVAL_MS);
-        assert_eq!(dump.samples.len(), SAMPLE_CAP);
+        let dump = recorder.dump(Trigger::GpuLoss, (cap + 1) as u64 * NORMAL_SAMPLE_INTERVAL_MS);
+        assert_eq!(dump.samples.len(), cap);
         assert_eq!(dump.samples[0].values[1], Some(2.0));
-        assert_eq!(dump.samples[SAMPLE_CAP - 1].values[1], Some((SAMPLE_CAP + 1) as f32));
+        assert_eq!(dump.samples[cap - 1].values[1], Some((cap + 1) as f32));
+    }
+
+    #[test]
+    fn a_deep_sixty_seconds_dump_fits_the_file_limit() {
+        let mut recorder = Recorder {
+            sample_interval_ms: DEEP_SAMPLE_INTERVAL_MS,
+            capacity: SAMPLE_CAP,
+            ..Recorder::default()
+        };
+        for index in 0..SAMPLE_CAP {
+            recorder.sample_at(index as u64 * DEEP_SAMPLE_INTERVAL_MS, input(123.456, 654.321));
+        }
+        let dump = recorder.dump(Trigger::GpuLoss, SAMPLE_CAP as u64 * DEEP_SAMPLE_INTERVAL_MS);
+        let bytes = serde_json::to_vec(&dump).unwrap();
+        assert!((bytes.len() as u64) < MAX_DUMP_BYTES, "{} bytes", bytes.len());
     }
 
     #[test]
@@ -879,6 +907,7 @@ mod tests {
     fn deep_diagnostics_records_at_thirty_hz_for_about_a_minute() {
         let mut recorder = Recorder {
             sample_interval_ms: DEEP_SAMPLE_INTERVAL_MS,
+            capacity: SAMPLE_CAP,
             ..Default::default()
         };
         for index in 0..SAMPLE_CAP + 1 {
@@ -963,6 +992,6 @@ mod tests {
             "sampling took {:?}",
             started.elapsed()
         );
-        assert_eq!(recorder.sample_len, SAMPLE_CAP);
+        assert_eq!(recorder.sample_len, recorder.capacity);
     }
 }

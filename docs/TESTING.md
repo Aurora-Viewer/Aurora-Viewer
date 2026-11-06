@@ -4963,7 +4963,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
-| `AURORA_GPU_BREADCRUMBS=off/auto/transfer` | GPU markers (`auto`, opt-in) and the driver's fault report (on by default); transfer mode adds expensive diagnostic barriers |
+| `AURORA_GPU_BREADCRUMBS=off/auto/deep/transfer` | GPU markers (`auto`, opt-in) and the driver's fault report (on by default); `deep` (set by deep diagnostics) uses the driver's markers or the transfer ones; transfer mode adds expensive diagnostic barriers |
 | `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new window and device instead of closing (work in progress) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
@@ -7033,7 +7033,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   loss. `auto` also records AMD buffer markers or NVIDIA checkpoints when the
   selected GPU offers them (about 0.18 ms of render-thread time per frame on
   an RX 9070 XT with RADV, so opt-in until the markers are batched);
-  unsupported devices retain their normal creation path. `off` disables both
+  unsupported devices retain their normal creation path. `deep` (what deep
+  diagnostics sets for its one session) takes the driver's markers when
+  offered and the portable transfer markers otherwise. `off` disables both
   the markers and device-fault collection. `transfer` enables a portable marker buffer
   with deliberate execution/host barriers and may slow rendering; use it only
   for deep diagnostics. The log and crash report distinguish offered/enabled

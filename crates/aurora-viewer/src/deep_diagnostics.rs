@@ -167,7 +167,7 @@ fn startup_environment_plan(
             ("AURORA_GPU_VALIDATION", "1"),
             ("WGPU_DEBUG", "1"),
             ("WGPU_VALIDATION_INDIRECT_CALL", "1"),
-            ("AURORA_GPU_BREADCRUMBS", "transfer"),
+            ("AURORA_GPU_BREADCRUMBS", "deep"),
         ] {
             if values.contains_key(name) {
                 values.insert(name.to_owned(), Some(value.to_owned()));
@@ -203,10 +203,17 @@ pub fn confirmation_text() -> String {
 
 /// Build a bounded ZIP from allowlisted public artifacts. The full settings,
 /// private crash files and raw GPU fault artifact are intentionally excluded.
+/// Every session file comes from `session_dir` (`crash::bundle_session_dir`:
+/// the session of the newest crash report, the running one otherwise), so
+/// the report, the flight recorder, the breadcrumbs, the environment and the
+/// log all describe the same session, not the restart that followed a crash.
 pub fn build_bundle(settings_path: &Path, log_path: &Path, session_dir: Option<&Path>) -> std::io::Result<Vec<u8>> {
-    let log = read_tail(log_path, MAX_LOG_TAIL).unwrap_or_default();
+    let session_log = session_dir.map(|dir| dir.join("session.log")).filter(|path| path.exists());
+    let log = read_tail(session_log.as_deref().unwrap_or(log_path), MAX_LOG_TAIL).unwrap_or_default();
     let log_summary = crate::crash::privacy::excerpt(&String::from_utf8_lossy(&log));
-    let crash_report = crate::crash::latest_public_report().unwrap_or_else(|| "No saved public crash report is available.\n".to_owned());
+    let crash_report = session_dir
+        .and_then(crate::crash::public_report_in)
+        .unwrap_or_else(|| "No saved public crash report is available.\n".to_owned());
     let flight = session_dir
         .and_then(|dir| read_bounded(&dir.join("flight-recorder.json"), 512 * 1024).ok())
         .and_then(|bytes| String::from_utf8(bytes).ok())
@@ -554,7 +561,7 @@ mod tests {
         let marker = startup_environment_plan(&mut inherited, None, &first).unwrap();
         assert_eq!(inherited["AURORA_GPU_VALIDATION"].as_deref(), Some("1"));
         assert_eq!(inherited["WGPU_DEBUG"].as_deref(), Some("1"));
-        assert_eq!(inherited["AURORA_GPU_BREADCRUMBS"].as_deref(), Some("transfer"));
+        assert_eq!(inherited["AURORA_GPU_BREADCRUMBS"].as_deref(), Some("deep"));
 
         let child = Startup::default();
         assert!(!child.enabled);

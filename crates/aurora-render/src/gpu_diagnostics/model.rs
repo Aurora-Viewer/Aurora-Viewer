@@ -20,6 +20,9 @@ pub(crate) enum Mode {
     #[default]
     Fault,
     Auto,
+    /// Deep diagnostics: the driver's own markers when offered (AMD buffer
+    /// markers, NVIDIA checkpoints), the portable transfer markers otherwise.
+    Deep,
     Transfer,
 }
 #[cfg(any(not(target_os = "macos"), test))]
@@ -29,6 +32,7 @@ impl Mode {
         match std::env::var("AURORA_GPU_BREADCRUMBS").as_deref() {
             Ok("off") => Self::Off,
             Ok("auto") => Self::Auto,
+            Ok("deep") => Self::Deep,
             Ok("transfer") => Self::Transfer,
             _ => Self::Fault,
         }
@@ -67,9 +71,10 @@ impl Capabilities {
         match mode {
             Mode::Off | Mode::Fault => Method::Unavailable,
             Mode::Transfer => Method::Transfer,
-            Mode::Auto if self.amd => Method::Amd,
-            Mode::Auto if self.nv => Method::Nv,
+            Mode::Auto | Mode::Deep if self.amd => Method::Amd,
+            Mode::Auto | Mode::Deep if self.nv => Method::Nv,
             Mode::Auto => Method::Unavailable,
+            Mode::Deep => Method::Transfer,
         }
     }
 }
@@ -636,6 +641,12 @@ mod tests {
         assert_eq!(amd.select(Mode::Off), Method::Unavailable);
         assert_eq!(amd.select(Mode::Fault), Method::Unavailable, "the default adds no per-pass markers");
         assert_eq!(Mode::default(), Mode::Fault);
+        assert_eq!(
+            amd.select(Mode::Deep),
+            Method::Amd,
+            "deep diagnostics use the driver's markers when offered"
+        );
+        assert_eq!(Capabilities::default().select(Mode::Deep), Method::Transfer);
         assert_eq!(amd.select(Mode::Auto), Method::Amd);
         assert_eq!(
             Capabilities {

@@ -24,7 +24,7 @@ impl App {
         let bytes = crate::deep_diagnostics::build_bundle(
             &Settings::path(),
             &crate::logging::log_path(),
-            crate::crash::current_session_dir().as_deref(),
+            crate::crash::bundle_session_dir().as_deref(),
         );
         self.options_ui.repro_bundle_status = match bytes.and_then(|bytes| crate::atomic_file::write(&path, &bytes)) {
             Ok(()) => aurora_i18n::tr!("deep-diagnostics-bundle-saved").to_owned(),

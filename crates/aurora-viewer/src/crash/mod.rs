@@ -82,19 +82,28 @@ pub fn current_session_dir() -> Option<PathBuf> {
     SESSION.get().map(|session| session.dir.clone())
 }
 
-/// The newest crash summary that has already passed the public report's
-/// closed-vocabulary filtering. Raw traces and logs are never returned here.
-pub fn latest_public_report() -> Option<String> {
-    let mut sessions = std::fs::read_dir(root())
+/// The session a repro bundle describes: the newest one with a crash
+/// report (already filtered to the public report's closed vocabulary),
+/// otherwise the running one. After a crash the tester has restarted, and
+/// the running session is not the one that crashed.
+pub fn bundle_session_dir() -> Option<PathBuf> {
+    newest_reported_session(&root()).or_else(current_session_dir)
+}
+
+fn newest_reported_session(root: &Path) -> Option<PathBuf> {
+    let mut sessions = std::fs::read_dir(root)
         .ok()?
         .flatten()
         .map(|entry| entry.path())
+        .filter(|dir| dir.join("public-report.md").is_file())
         .collect::<Vec<_>>();
-    sessions.sort_by_key(|dir| std::fs::metadata(dir).and_then(|m| m.modified()).ok());
-    sessions
-        .into_iter()
-        .rev()
-        .find_map(|dir| read_limited(&dir.join("public-report.md"), 128 * 1024).ok())
+    sessions.sort_by_key(|dir| std::fs::metadata(dir.join("public-report.md")).and_then(|m| m.modified()).ok());
+    sessions.pop()
+}
+
+/// A session's public crash report, if it has one.
+pub fn public_report_in(dir: &Path) -> Option<String> {
+    read_limited(&dir.join("public-report.md"), 128 * 1024).ok()
 }
 
 fn root() -> PathBuf {
@@ -823,6 +832,23 @@ mod tests {
             "DiscordHook64.dll"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_repro_bundle_takes_the_session_of_the_newest_crash_report_not_the_restart() {
+        let root = std::env::temp_dir().join(format!("aurora-bundle-session-{}", uuid::Uuid::new_v4()));
+        let crashed = root.join("crashed");
+        let restart = root.join("restart");
+        std::fs::create_dir_all(&crashed).unwrap();
+        std::fs::create_dir_all(&restart).unwrap();
+        assert_eq!(newest_reported_session(&root), None, "no report yet");
+        std::fs::write(crashed.join("public-report.md"), "# Crash: GPU device lost\n").unwrap();
+        // the restart that followed has its own files, but no report
+        std::fs::write(restart.join("flight-recorder.json"), "{}").unwrap();
+        assert_eq!(newest_reported_session(&root), Some(crashed.clone()));
+        assert_eq!(public_report_in(&crashed).as_deref(), Some("# Crash: GPU device lost\n"));
+        assert_eq!(public_report_in(&restart), None);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
