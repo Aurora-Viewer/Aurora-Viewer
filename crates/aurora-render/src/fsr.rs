@@ -3,9 +3,12 @@
 //! NOTICE.md). The host side here follows ffx_fsr3upscaler.cpp
 //! (FfxFsr3UpscalerContext's resources, constants and dispatches).
 //!
-//! For now FSR runs at the display size, as an anti-aliasing (FSR's
-//! "native AA"), in the place of Aurora's TAA: `AURORA_FSR=1` with TAA as
-//! the anti-aliasing. It takes the same inputs: the HDR colour before the
+//! FSR is one of the anti-aliasing choices, in the place of Aurora's TAA:
+//! the world is drawn at the size of its quality mode (`FsrQuality`, the
+//! display size for "native AA") and FSR draws it at the display size, the
+//! passes after it (glow, bloom, tone mapping, the selection outline, the
+//! depth of field...) working at that size with the depth it gives
+//! (`display_depth`). It takes TAA's inputs: the HDR colour before the
 //! tone mapping, the reverse-Z depth of the prepass, the prepass's motion
 //! vectors (the camera's own motion where none was drawn, as taa.wgsl), and
 //! TAA's jitter, over FSR's eight phases. Each pass is a full-screen
@@ -51,10 +54,14 @@ pub(crate) fn device_to_view(proj: Mat4) -> [f32; 2] {
     [-proj.z_axis.z - f32::EPSILON, proj.w_axis.z]
 }
 
-/// `AURORA_FSR=1`: FSR in the place of TAA (read once).
-pub(crate) fn requested() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("AURORA_FSR").is_ok_and(|v| v.trim() == "1"))
+/// ffxFsr3UpscalerGetRenderResolutionFromQualityMode: the display size
+/// divided by the mode's ratio.
+pub(crate) fn render_size(display: (u32, u32), ratio: f32) -> (u32, u32) {
+    let ratio = ratio.max(1.0);
+    (
+        ((display.0 as f32 / ratio) as u32).max(1),
+        ((display.1 as f32 / ratio) as u32).max(1),
+    )
 }
 
 /// `AURORA_FSR_REACTIVE=0`: no generated reactive mask (read once).
@@ -63,11 +70,11 @@ fn reactive_on() -> bool {
     *ON.get_or_init(|| std::env::var("AURORA_FSR_REACTIVE").map_or(true, |v| v.trim() != "0"))
 }
 
-/// `AURORA_FSR_SHARPNESS=<0..1>|off` (default 0.8): RCAS's strength, or no
-/// RCAS (read once).
-fn sharpness() -> Option<f32> {
-    static S: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
-    *S.get_or_init(|| parse_sharpness(std::env::var("AURORA_FSR_SHARPNESS").ok().as_deref()))
+/// `AURORA_FSR_SHARPNESS=<0..1>|off`: RCAS's strength, or no RCAS, over
+/// the setting (read once).
+fn sharpness_override() -> Option<Option<f32>> {
+    static S: std::sync::OnceLock<Option<Option<f32>>> = std::sync::OnceLock::new();
+    *S.get_or_init(|| std::env::var("AURORA_FSR_SHARPNESS").ok().map(|v| parse_sharpness(Some(&v))))
 }
 
 fn parse_sharpness(v: Option<&str>) -> Option<f32> {
@@ -121,6 +128,8 @@ pub(crate) struct FrameInputs {
     /// The history starts again (first frame, camera cut).
     pub reset: bool,
     pub motion_on: bool,
+    /// RCAS's strength (0..1), none without RCAS.
+    pub sharpness: Option<f32>,
 }
 
 /// The shared inputs, made by the renderer.
@@ -144,6 +153,7 @@ struct Pipelines {
     luma_instability: wgpu::RenderPipeline,
     accumulate: wgpu::RenderPipeline,
     rcas: wgpu::RenderPipeline,
+    display_depth: wgpu::RenderPipeline,
 }
 
 /// One frame parity's bind groups (`[w]` writes the textures of parity w
@@ -165,7 +175,13 @@ pub(crate) struct Fsr {
     pipelines: Pipelines,
     buffer: wgpu::Buffer,
     reconstructed: wgpu::Buffer,
+    /// The world's size (FSR's render size).
     size: (u32, u32),
+    /// FSR's output size, the display's.
+    display: (u32, u32),
+    /// The scene's depth at the display size, when it differs from the
+    /// render size.
+    display_depth: Option<wgpu::TextureView>,
     reactive: wgpu::TextureView,
     dilated_motion: wgpu::TextureView,
     dilated_depth: wgpu::TextureView,
@@ -185,7 +201,6 @@ pub(crate) struct Fsr {
     parity: usize,
     frame_index: f32,
     prev_jitter: Vec2,
-    rcas: Option<f32>,
 }
 
 fn tex(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
@@ -255,6 +270,19 @@ fn pipeline(
     entry: &str,
     formats: &[wgpu::TextureFormat],
 ) -> wgpu::RenderPipeline {
+    pipeline_to(device, module, layout, label, entry, formats, None)
+}
+
+/// `pipeline`, also writing `depth` (fs_display_depth).
+fn pipeline_to(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::BindGroupLayout,
+    label: &str,
+    entry: &str,
+    formats: &[wgpu::TextureFormat],
+    depth: Option<wgpu::TextureFormat>,
+) -> wgpu::RenderPipeline {
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
         bind_group_layouts: &[Some(layout)],
@@ -286,7 +314,13 @@ fn pipeline(
             targets: &targets,
         }),
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
+        depth_stencil: depth.map(|format| wgpu::DepthStencilState {
+            format,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
@@ -321,9 +355,18 @@ fn entry_buf(binding: u32, b: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 }
 
 impl Fsr {
-    /// FSR's resources at `size` (render = display), reading `inputs`.
-    pub(crate) fn new(device: &wgpu::Device, size: (u32, u32), inputs: &Inputs) -> Fsr {
+    /// FSR's resources from the render `size` to the `display` size,
+    /// reading `inputs`; `depth_format` is the scene depth's, which
+    /// `display_depth` takes.
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        size: (u32, u32),
+        display: (u32, u32),
+        depth_format: wgpu::TextureFormat,
+        inputs: &Inputs,
+    ) -> Fsr {
         let size = (size.0.max(1), size.1.max(1));
+        let display = (display.0.max(size.0), display.1.max(size.1));
         let half = ((size.0 / 2).max(1), (size.1 / 2).max(1));
         let l_prepare = layout(
             device,
@@ -443,6 +486,15 @@ impl Fsr {
                 &[COLOR_FORMAT, COLOR_FORMAT],
             ),
             rcas: pipeline(device, &m_accumulate, &l_accumulate, "fsr rcas", "fs_rcas", &[COLOR_FORMAT]),
+            display_depth: pipeline_to(
+                device,
+                &m_prepare,
+                &l_prepare,
+                "fsr display depth",
+                "fs_display_depth",
+                &[],
+                Some(depth_format),
+            ),
         };
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fsr params"),
@@ -451,6 +503,7 @@ impl Fsr {
             mapped_at_creation: false,
         });
         let pixels = u64::from(size.0) * u64::from(size.1) * 4;
+        let display_pixels = u64::from(display.0) * u64::from(display.1) * 4;
         let reconstructed = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fsr reconstructed previous depth"),
             size: pixels,
@@ -460,7 +513,7 @@ impl Fsr {
         // zeroed at creation; the accumulation zeroes what it read
         let new_locks = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fsr new locks"),
-            size: pixels,
+            size: display_pixels,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -517,10 +570,11 @@ impl Fsr {
         ];
         let instability = view(device, "fsr luma instability", size, LUMA_FORMAT);
         let internal = [
-            view(device, "fsr internal colour", size, COLOR_FORMAT),
-            view(device, "fsr internal colour", size, COLOR_FORMAT),
+            view(device, "fsr internal colour", display, COLOR_FORMAT),
+            view(device, "fsr internal colour", display, COLOR_FORMAT),
         ];
-        let output = view(device, "fsr output", size, COLOR_FORMAT);
+        let output = view(device, "fsr output", display, COLOR_FORMAT);
+        let display_depth = (display != size).then(|| view(device, "fsr display depth", display, depth_format));
         let common = |l: &wgpu::BindGroupLayout, label: &str, extra: &[wgpu::BindGroupEntry]| {
             let mut entries = vec![
                 entry_buf(0, &buffer),
@@ -637,6 +691,8 @@ impl Fsr {
             buffer,
             reconstructed,
             size,
+            display,
+            display_depth,
             reactive,
             dilated_motion,
             dilated_depth,
@@ -655,8 +711,19 @@ impl Fsr {
             parity: 0,
             frame_index: 0.0,
             prev_jitter: Vec2::ZERO,
-            rcas: sharpness(),
         }
+    }
+
+    /// FSR's output size, the display's.
+    pub(crate) fn display_size(&self) -> (u32, u32) {
+        self.display
+    }
+
+    /// The scene's depth at the display size, for the passes after FSR
+    /// (the render pixel under each display pixel); none at native size,
+    /// where the scene's own depth is that.
+    pub(crate) fn display_depth(&self) -> Option<&wgpu::TextureView> {
+        self.display_depth.as_ref()
     }
 
     /// The upscaled (here anti-aliased) HDR image, the glow amount of the
@@ -673,28 +740,33 @@ impl Fsr {
             self.prev_jitter = f.jitter;
         }
         let size = [self.size.0 as i32, self.size.1 as i32];
+        let display = [self.display.0 as i32, self.display.1 as i32];
+        let sharpness = sharpness_override().unwrap_or(f.sharpness);
         let [dx, dy] = device_to_view(f.proj);
         let u = FsrU {
             inv_view_proj: f.view_proj.inverse().to_cols_array_2d(),
             prev_view_proj: f.prev_view_proj.to_cols_array_2d(),
             render_size: size,
             prev_render_size: size,
-            upscale_size: size,
-            prev_upscale_size: size,
+            upscale_size: display,
+            prev_upscale_size: display,
             max_render_size: size,
-            max_upscale_size: size,
+            max_upscale_size: display,
             device_to_view: [dx, dy, 0.0, 0.0],
             jitter: f.jitter.to_array(),
             prev_jitter: self.prev_jitter.to_array(),
-            downscale: [1.0, 1.0],
-            jitter_sequence_length: jitter_phase_count(self.size.0, self.size.0) as f32,
+            downscale: [
+                self.size.0 as f32 / self.display.0 as f32,
+                self.size.1 as f32 / self.display.1 as f32,
+            ],
+            jitter_sequence_length: jitter_phase_count(self.size.0, self.display.0) as f32,
             delta_pre_exposure: 1.0,
             frame_index: self.frame_index,
             velocity_factor: 1.0,
             accumulation_added_per_frame: 1.0 / 3.0,
             min_disocclusion_accumulation: -1.0 / 3.0,
             exposure: 1.0,
-            rcas: rcas_scale(self.rcas.unwrap_or(0.0)),
+            rcas: rcas_scale(sharpness.unwrap_or(0.0)),
             view_to_meters: 1.0,
             motion_on: if f.motion_on { 1.0 } else { 0.0 },
             reactive_on: if reactive_on() { 1.0 } else { 0.0 },
@@ -776,8 +848,28 @@ impl Fsr {
             &p.accumulate,
             &g.accumulate,
         );
-        if self.rcas.is_some() {
+        if sharpness.is_some() {
             run(encoder, "fsr rcas", &[&self.output], &p.rcas, &g.rcas);
+        }
+        if let Some(depth) = &self.display_depth {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fsr display depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&p.display_depth);
+            pass.set_bind_group(0, &g.prepare, &[]);
+            pass.draw(0..3, 0..1);
         }
         self.prev_jitter = f.jitter;
         self.frame_index += 1.0;

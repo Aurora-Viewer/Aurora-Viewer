@@ -205,7 +205,7 @@ mod tests {
         saved.apply(&mut s);
         assert!(s.draw_distance <= 512.0);
         assert!(s.shadow_quality <= 4);
-        assert!(s.antialiasing <= 6);
+        assert!(s.antialiasing <= 7);
         assert!(s.dof.f_number.is_finite());
         assert_eq!(s.graphics_saved.len(), 0);
         assert!(valid_name(" Photo / nuit 🌙 "));

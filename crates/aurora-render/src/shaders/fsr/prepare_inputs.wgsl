@@ -95,3 +95,11 @@ fn fs_prepare_inputs(in: VsOut) -> PrepareOut {
     o.luma = vec4<f32>(rgb_to_luma(rgb), 0.0, 0.0, 0.0);
     return o;
 }
+
+// The scene's depth at the display size, for the passes after FSR (the
+// selection outline, the depth of field, RLVa's spheres, the photo's
+// looks): the render pixel under each display pixel.
+@fragment
+fn fs_display_depth(in: VsOut) -> @builtin(frag_depth) f32 {
+    return load_depth(vec2<i32>(in.clip.xy * fsr.downscale));
+}

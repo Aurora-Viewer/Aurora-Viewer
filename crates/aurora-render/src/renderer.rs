@@ -707,6 +707,14 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
 /// tips) leave the motion to what is behind them.
 const FSR_BLEND_ALPHA: f64 = 0.1;
 
+/// FSR's upscale ratio under `aa`, none without FSR.
+fn fsr_ratio(aa: AntiAliasing) -> Option<f32> {
+    match aa {
+        AntiAliasing::Fsr(q) => Some(q.ratio()),
+        _ => None,
+    }
+}
+
 /// `AURORA_FSR_BLEND_MOTION=0`: the blended faces give FSR no motion of
 /// their own (read once).
 fn fsr_blend_motion() -> bool {
@@ -966,7 +974,7 @@ struct Pipelines {
     /// FSR only (`AURORA_FSR=1`): the blended faces covered from
     /// `FSR_BLEND_ALPHA`, with their motion, into the occlusion's depth
     /// once the occlusion and the contact shadows have read it.
-    fsr_blend_normal: Option<SidedPipelines>,
+    fsr_blend_normal: SidedPipelines,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): ordinary / portal-clipped, each one-sided and two-sided.
     pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
@@ -3978,17 +3986,15 @@ impl Backend {
                 blend_cull(side != 0),
             )
         });
-        let fsr_blend_normal = crate::fsr::requested().then(|| {
-            std::array::from_fn(|side| {
-                pipe(PipeDesc {
-                    cull: blend_cull(side != 0),
-                    samples: 1,
-                    format: Some(crate::gtao::NORMAL_FORMAT),
-                    write_mask: wgpu::ColorWrites::ALL,
-                    depth_compare: wgpu::CompareFunction::Greater,
-                    constants: &[("DEPTH_CONTACT_ALPHA", FSR_BLEND_ALPHA)],
-                    ..base("fsr blended faces motion", "vs_depth_mask_normal", "fs_depth_contact_normal")
-                })
+        let fsr_blend_normal = std::array::from_fn(|side| {
+            pipe(PipeDesc {
+                cull: blend_cull(side != 0),
+                samples: 1,
+                format: Some(crate::gtao::NORMAL_FORMAT),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("DEPTH_CONTACT_ALPHA", FSR_BLEND_ALPHA)],
+                ..base("fsr blended faces motion", "vs_depth_mask_normal", "fs_depth_contact_normal")
             })
         });
         let pre_msaa = (samples > 1).then(|| {
@@ -4359,7 +4365,7 @@ impl Backend {
         // FSR reads it too: the blended faces at least half covered drawn
         // there, with their motion, keep their history instead of taking
         // the motion of what lies behind them
-        let ao_depth = ((s.ssao > 0 && (legacy_ao || gtao_ao)) || crate::fsr::requested()).then(|| {
+        let ao_depth = ((s.ssao > 0 && (legacy_ao || gtao_ao)) || matches!(s.aa, AntiAliasing::Fsr(_))).then(|| {
             // copied in turn for the contact shadows
             let copies = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
             make_view(device, "occlusion depth", w, h, DEPTH_FORMAT, 1, sampled | copies)
@@ -4879,6 +4885,17 @@ impl Backend {
         (self.targets.color_tex.width(), self.targets.color_tex.height())
     }
 
+    /// With FSR, its upscale ratio: the world drawn smaller than the
+    /// window, FSR drawing it at the window's size. None for a photo drawn
+    /// at its own size (at its full size) and under RLVa's reduced
+    /// resolution, which must stay coarse.
+    fn fsr_upscale(&self) -> Option<f32> {
+        match self.settings.aa {
+            AntiAliasing::Fsr(q) if self.snapshot_window.is_none() && self.rlva_resolution_divisor <= 1 => Some(q.ratio()),
+            _ => None,
+        }
+    }
+
     fn rebuild_targets(&mut self) {
         self.occlusion.invalidate();
         self.depth_pick.scene_changed();
@@ -4887,7 +4904,11 @@ impl Backend {
         } else {
             self.settings.render_scale_percent
         };
-        let size = crate::rlva::resolution::render_size((self.config.width, self.config.height), self.rlva_resolution_divisor, scale);
+        let window = (self.config.width, self.config.height);
+        let size = match self.fsr_upscale() {
+            Some(ratio) => crate::fsr::render_size(window, ratio),
+            None => crate::rlva::resolution::render_size(window, self.rlva_resolution_divisor, scale),
+        };
         log::info!(
             "world resolution: {}x{} (output {}x{}, scale {}%)",
             size.0,
@@ -5073,6 +5094,7 @@ impl Backend {
         let pipelines_dirty = rebuilt.is_some();
         let targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
+            || fsr_ratio(s.aa) != fsr_ratio(self.settings.aa)
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
@@ -5113,8 +5135,9 @@ impl Backend {
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
         self.settings = s;
-        if s.aa == AntiAliasing::Taa {
-            if !taa_was {
+        if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
+            // FSR in the place of the TAA pass, or the TAA pass again
+            if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
                 self.remake_taa();
             }
         } else {
@@ -5187,12 +5210,15 @@ impl Backend {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let with_fsr = matches!(self.settings.aa, AntiAliasing::Fsr(_));
+        // unread under FSR, whose own history replaces it
+        let history_size = if with_fsr { (1, 1) } else { self.scene_size() };
         let mk = || {
             make_view(
                 device,
                 "taa history",
-                self.scene_size().0,
-                self.scene_size().1,
+                history_size.0,
+                history_size.1,
                 HDR_FORMAT,
                 1,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -5275,10 +5301,17 @@ impl Backend {
             })
         };
         let post_bgs = [post_bg(&history[0]), post_bg(&history[1])];
-        let fsr = crate::fsr::requested().then(|| {
+        let fsr = with_fsr.then(|| {
+            let display = if self.fsr_upscale().is_some() {
+                (self.config.width, self.config.height)
+            } else {
+                self.scene_size()
+            };
             let fsr = crate::fsr::Fsr::new(
                 device,
                 self.scene_size(),
+                display,
+                DEPTH_FORMAT,
                 &crate::fsr::Inputs {
                     color: &self.targets.color,
                     // the prepass and the blended faces at least half
@@ -5863,6 +5896,13 @@ impl Backend {
             self.depth_pick.hover(x, y);
         }
         let world_size = self.scene_size();
+        // the image after the anti-aliasing: FSR's output size, larger than
+        // the world's when it upscales
+        let post_size = self
+            .taa
+            .as_ref()
+            .and_then(|t| t.fsr.as_ref())
+            .map_or(world_size, |(fsr, _)| fsr.display_size());
 
         // egui textures first, so they are never lost on a skipped frame
         if let Some(ui) = &mut egui_frame {
@@ -6002,7 +6042,7 @@ impl Backend {
         let surface_view = self.ui_blur.as_ref().map_or_else(|| present_view.clone(), |blur| blur.view.clone());
 
         if !lists.select_faces.is_empty() {
-            let size = [world_size.0, world_size.1];
+            let size = [post_size.0, post_size.1];
             if self.selection.as_ref().is_none_or(|selection| selection.size != size) {
                 self.selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
             }
@@ -6040,7 +6080,7 @@ impl Backend {
         let fu: &FrameParams = if let Some(taa) = &self.taa {
             // FSR's own number of phases (ffxFsr3UpscalerGetJitterOffset)
             let period = match &taa.fsr {
-                Some(_) => u64::from(crate::fsr::jitter_phase_count(world_size.0, world_size.0)),
+                Some(_) => u64::from(crate::fsr::jitter_phase_count(world_size.0, post_size.0)),
                 None => 16,
             };
             let i = (self.frame_index % period) + 1;
@@ -6433,7 +6473,7 @@ impl Backend {
             let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
             let (strength, keep) = crate::bloom::Override::from_env().strength(if debug_view { 0.0 } else { f.bloom }, secs);
             if keep && !debug_view {
-                self.bloom.ensure(&self.device, world_size);
+                self.bloom.ensure(&self.device, post_size);
             } else {
                 self.bloom.release();
             }
@@ -6462,7 +6502,13 @@ impl Backend {
                 }
             },
             fxaa: if self.settings.aa == AntiAliasing::Fxaa { 1.0 } else { 0.0 },
-            sharpen: if hdr { f.sharpen.clamp(0.0, 1.0) } else { 0.0 },
+            // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
+            // faint sub-pixel pattern into a visible checkerboard
+            sharpen: if hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_)) {
+                f.sharpen.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
             glow: if glow_on { 1.0 } else { 0.0 },
             debug_glow: {
                 static DEBUG_GLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -7398,7 +7444,7 @@ impl Backend {
         // faint glass, give their own depth and motion, so their edges keep
         // their history (the occlusion and the contact shadows have read
         // that depth; GTAO those normals)
-        if let (Some(pipe), Some((_, view)), true, true) = (
+        if let (pipe, Some((_, view)), true, true) = (
             &self.pipelines.fsr_blend_normal,
             &self.targets.ao_depth,
             normals.is_some() && n_blend > 0,
@@ -8287,8 +8333,13 @@ impl Backend {
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
         let mut post_src = &self.targets.color;
+        // the scene's depth at the size of the image the passes below read
+        let mut post_depth = &self.targets.depth_ss;
+        // the history the TAA pass wrote; read below, once the passes are
+        // recorded, through a shared borrow
+        let mut taa_written = None;
         if let Some(taa) = &mut self.taa {
-            if let Some((fsr, fsr_post)) = &mut taa.fsr {
+            if let Some((fsr, _)) = &mut taa.fsr {
                 // FSR 3.1 instead of the TAA pass, from the same inputs
                 fsr.encode(
                     &self.queue,
@@ -8300,11 +8351,10 @@ impl Backend {
                         jitter: self.taa_jitter,
                         reset: taa.reset || self.prev_view_proj.is_none(),
                         motion_on: taa_motion_now(),
+                        sharpness: self.settings.fsr_sharpness,
                     },
                 );
                 taa.reset = false;
-                post_bg = fsr_post;
-                post_src = fsr.output();
             } else {
                 let w = taa.parity;
                 let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
@@ -8344,6 +8394,17 @@ impl Backend {
                 let _ = &taa.layout;
                 taa.reset = false;
                 taa.parity = 1 - w;
+                taa_written = Some(w);
+            }
+        }
+        if let Some(taa) = &self.taa {
+            if let Some((fsr, fsr_post)) = &taa.fsr {
+                post_bg = fsr_post;
+                post_src = fsr.output();
+                if let Some(depth) = fsr.display_depth() {
+                    post_depth = depth;
+                }
+            } else if let Some(w) = taa_written {
                 post_bg = &taa.post_bgs[w];
                 post_src = &taa.history[w];
             }
@@ -8358,9 +8419,9 @@ impl Backend {
                     &self.queue,
                     &mut encoder,
                     post_src,
-                    &self.targets.depth_ss,
+                    post_depth,
                     f.proj,
-                    world_size,
+                    post_size,
                     params,
                     HDR_FORMAT,
                     &crate::dof::PostInputs {
@@ -8422,17 +8483,17 @@ impl Backend {
         mark(&mut encoder, MARK_BLOOM_END);
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
-        if world_size != (self.config.width, self.config.height) {
+        if post_size != (self.config.width, self.config.height) {
             let smooth = self.settings.render_scale_percent < 100 && self.rlva_resolution_divisor <= 1 && snapshot.is_none();
             if self
                 .rlva_scaled
                 .as_ref()
-                .is_none_or(|scaled| scaled.size() != world_size || scaled.smooth != smooth)
+                .is_none_or(|scaled| scaled.size() != post_size || scaled.smooth != smooth)
             {
                 self.rlva_scaled = Some(crate::rlva::resolution::Scaled::new(
                     &self.device,
                     self.config.format,
-                    world_size,
+                    post_size,
                     smooth,
                 ));
             }
@@ -8443,7 +8504,7 @@ impl Backend {
         let scene_target = if !f.rlva_spheres.is_empty() {
             self.rlva_spheres
                 .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, self.config.format))
-                .prepare(&self.device, world_size, self.config.format)
+                .prepare(&self.device, post_size, self.config.format)
         } else {
             self.rlva_spheres = None;
             composed_view
@@ -8454,7 +8515,7 @@ impl Backend {
         if look.is_some() {
             self.looks
                 .get_or_insert_with(|| crate::looks::Looks::new(&self.device))
-                .prepare(&self.device, self.config.format, world_size);
+                .prepare(&self.device, self.config.format, post_size);
         } else if let Some(looks) = &mut self.looks {
             looks.idle();
         }
@@ -8502,7 +8563,7 @@ impl Backend {
             }
             if let (Some((looks, _)), Some(look)) = (looks, look) {
                 let depth = crate::looks::LookDepth {
-                    view: &self.targets.depth_ss,
+                    view: post_depth,
                     proj: f.proj,
                 };
                 let passes = looks.encode(&self.device, &self.queue, &mut encoder, look, scene_target, Some(depth));
@@ -8528,7 +8589,7 @@ impl Backend {
         if rg.select_faces.1 > 0
             && let Some(selection) = &self.selection
         {
-            let mut pass = selection.begin_mask(&mut encoder, &self.targets.depth_ss);
+            let mut pass = selection.begin_mask(&mut encoder, post_depth);
             bind_mesh(&mut pass, &self.groups.b);
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
@@ -8549,9 +8610,9 @@ impl Backend {
                 &self.device,
                 &self.queue,
                 &mut encoder,
-                &self.targets.depth_ss,
+                post_depth,
                 unjittered_vp.inverse(),
-                world_size,
+                post_size,
                 &f.rlva_spheres,
                 composed_view,
             );

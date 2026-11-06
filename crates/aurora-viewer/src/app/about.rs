@@ -92,7 +92,7 @@ impl App {
                 None => vec![Row::key("about-os", "about-reading")],
             },
         });
-        let aa = ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA"]
+        let aa = ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA", "FSR 3.1"]
             .get(s.antialiasing as usize)
             .copied()
             .unwrap_or("?");

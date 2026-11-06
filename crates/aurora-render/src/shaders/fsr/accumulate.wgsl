@@ -331,7 +331,7 @@ fn fs_accumulate(in: VsOut) -> AccumulateOut {
     let color = max(data.history_color / fsr.exposure, vec3<f32>(0.0));
     // the locks are new again next frame
     new_locks[p.y * fsr.upscale_size.x + p.x] = 0.0;
-    let glow = textureLoad(t4, clamp_load(p, vec2<i32>(0), fsr.render_size), 0).a;
+    let glow = textureLoad(t4, clamp_load(vec2<i32>(vec2<f32>(p) * fsr.downscale), vec2<i32>(0), fsr.render_size), 0).a;
     var o: AccumulateOut;
     o.internal = vec4<f32>(color, data.lock);
     o.color = vec4<f32>(color, glow);
@@ -388,6 +388,6 @@ fn fs_rcas(in: VsOut) -> @location(0) vec4<f32> {
     lobe *= nz;
     let rcp_l = 1.0 / (4.0 * lobe + 1.0);
     let c = (lobe * b + lobe * d + lobe * h + lobe * f + e) * rcp_l / fsr.exposure;
-    let glow = textureLoad(t4, clamp_load(p, vec2<i32>(0), fsr.render_size), 0).a;
+    let glow = textureLoad(t4, clamp_load(vec2<i32>(vec2<f32>(p) * fsr.downscale), vec2<i32>(0), fsr.render_size), 0).a;
     return vec4<f32>(c, glow);
 }
