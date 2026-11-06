@@ -67,6 +67,39 @@ fn permissions(mask: u32, library: bool) -> (bool, bool) {
     (copy && (modify || library), copy && modify && !library)
 }
 
+/// What an `#include` may take of an inventory script, from least to most.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum IncludeUse {
+    /// Its source cannot be read (copy and modify, as for opening it).
+    Unreadable,
+    /// Readable, but without transfer and made by someone else: its source
+    /// would end in a script that can be given away.
+    NoTransfer,
+    /// Its source, without its asset id.
+    Source,
+    /// Its source, and its asset id in `__ASSETID__` (full permission).
+    SourceAndAsset,
+}
+
+/// Script includes follow item rights: the source of an included script
+/// needs the rights to read it (`permissions`) and transfer, unless the
+/// agent made it, since it is copied into the saved script; its asset id
+/// only goes into `__ASSETID__` for a full permission script. The Legacy
+/// Viewer includes any script it finds by name and always writes its asset
+/// id (fslslpreproc.cpp, found_include_directive, opened_include_file).
+fn include_use(mask: u32, library: bool, creator: Uuid, agent: Uuid) -> IncludeUse {
+    let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
+    if !permissions(mask, library).0 {
+        IncludeUse::Unreadable
+    } else if mask & full == full {
+        IncludeUse::SourceAndAsset
+    } else if mask & perm::TRANSFER != 0 || !creator.is_nil() && creator == agent {
+        IncludeUse::Source
+    } else {
+        IncludeUse::NoTransfer
+    }
+}
+
 impl App {
     pub(super) fn demo_script_input(&self, raw: &mut egui::RawInput) {
         if !self.demo {
@@ -518,19 +551,36 @@ impl App {
         match action {
             Action::Debug => self.script_editors.open_debug(),
             Action::Include { request, name } => {
-                let target = self
-                    .world
-                    .inventory
+                // of the scripts of that name, the one the include may use
+                // most (FSLSLPreprocessor::findInventoryByName takes the
+                // first one); read on a user action (a save or a preview)
+                let inv = &self.world.inventory;
+                let found = inv
                     .items
                     .values()
-                    .find(|item| item.asset_type == 10 && item.name == name)
-                    .map(|item| ScriptTarget {
-                        object: Uuid::nil(),
-                        item: item.id,
-                    });
-                let info = target.and_then(|target| self.script_info(target).filter(|info| info.can_read).map(|info| (target, info)));
-                if let Some((target, info)) = info {
-                    self.script_editors.include_asset(request, info.asset);
+                    .filter(|item| item.asset_type == 10 && item.name == name)
+                    .map(|item| {
+                        let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, item.id, inv.lib_root);
+                        (item.id, include_use(item.owner_mask, library, item.creator, self.world.agent_id))
+                    })
+                    .max_by_key(|(_, use_)| *use_);
+                let target = found.filter(|(_, use_)| *use_ >= IncludeUse::Source).map(|(item, use_)| {
+                    let target = ScriptTarget { object: Uuid::nil(), item };
+                    (target, use_)
+                });
+                let info = target.and_then(|(target, use_)| {
+                    self.script_info(target)
+                        .filter(|info| info.can_read)
+                        .map(|info| (target, use_, info))
+                });
+                if let Some((target, use_, info)) = info {
+                    // __ASSETID__: the asset only of a full permission script
+                    let asset = if use_ == IncludeUse::SourceAndAsset {
+                        info.asset
+                    } else {
+                        Uuid::nil()
+                    };
+                    self.script_editors.include_asset(request, asset);
                     self.send(NetCommand::LoadScript {
                         request,
                         target,
@@ -539,13 +589,18 @@ impl App {
                         asset: info.asset,
                     });
                 } else {
+                    let reason = if found.is_some_and(|(_, use_)| use_ == IncludeUse::NoTransfer) {
+                        aurora_i18n::tr!("script-preproc-include-no-transfer", name = name)
+                    } else {
+                        aurora_i18n::tr!("script-preproc-include-missing", name = name)
+                    };
                     self.script_editors.loaded(
                         request,
                         ScriptTarget {
                             object: Uuid::nil(),
                             item: Uuid::nil(),
                         },
-                        Err(aurora_i18n::tr!("script-preproc-include-missing", name = name)),
+                        Err(reason),
                     );
                 }
             }
@@ -758,5 +813,26 @@ mod tests {
         assert_eq!(permissions(perm::MODIFY, false), (false, false));
         assert_eq!(permissions(perm::COPY, true), (true, false));
         assert_eq!(permissions(perm::COPY | perm::MODIFY, true), (true, false));
+    }
+
+    #[test]
+    fn script_includes_follow_item_rights() {
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
+        assert_eq!(include_use(full, false, other, me), IncludeUse::SourceAndAsset);
+        // without transfer: refused, unless the agent made it (no asset id)
+        let no_trans = perm::COPY | perm::MODIFY;
+        assert_eq!(include_use(no_trans, false, other, me), IncludeUse::NoTransfer);
+        assert_eq!(include_use(no_trans, false, Uuid::nil(), Uuid::nil()), IncludeUse::NoTransfer);
+        assert_eq!(include_use(no_trans, false, me, me), IncludeUse::Source);
+        // still copy and modify to read it, even for its creator
+        assert_eq!(include_use(perm::COPY | perm::TRANSFER, false, me, me), IncludeUse::Unreadable);
+        assert_eq!(include_use(perm::MODIFY | perm::TRANSFER, false, me, me), IncludeUse::Unreadable);
+        // a library script: readable with copy, its asset id only when full
+        assert_eq!(include_use(perm::COPY | perm::TRANSFER, true, other, me), IncludeUse::Source);
+        assert_eq!(include_use(perm::COPY, true, other, me), IncludeUse::NoTransfer);
+        // the most usable of several scripts of that name wins
+        assert!(IncludeUse::SourceAndAsset > IncludeUse::Source && IncludeUse::Source > IncludeUse::NoTransfer);
+        assert!(IncludeUse::NoTransfer > IncludeUse::Unreadable);
     }
 }

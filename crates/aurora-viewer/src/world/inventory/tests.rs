@@ -787,3 +787,31 @@ fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
     );
     assert!(asset_uuid_shown(&inv, asset), "a second item gives full permissions");
 }
+
+#[test]
+fn next_owner_rights_need_the_owners_transfer() {
+    let item = |owner_mask: u32, asset_type: i32, inv_type: i32| InvItem {
+        owner_mask,
+        asset_type,
+        inv_type,
+        ..Default::default()
+    };
+    let full = COPY | MODIFY | TRANSFER;
+    assert!(next_owner_editable(&item(full, 6, 6)));
+    assert!(!next_owner_editable(&item(COPY | MODIFY, 6, 6)), "no transfer for the owner");
+    // LLInventoryType::cannotRestrictPermissions
+    assert!(!next_owner_editable(&item(full, 2, 2)), "calling card");
+    assert!(!next_owner_editable(&item(full, 3, 3)), "landmark");
+}
+
+#[test]
+fn a_no_copy_object_is_not_restored_to_its_last_position_in_second_life() {
+    let object = |owner_mask: u32| InvItem {
+        owner_mask,
+        asset_type: 6,
+        ..Default::default()
+    };
+    assert!(restorable(&object(COPY | MODIFY | TRANSFER), false));
+    assert!(!restorable(&object(MODIFY | TRANSFER), false));
+    assert!(restorable(&object(MODIFY | TRANSFER), true), "OpenSim keeps it");
+}

@@ -9059,13 +9059,23 @@ fn demo_day(sky: Llsd) -> Llsd {
         .unwrap_or_else(|| llsd_map! { "type" => "water" });
     frames.insert("water".into(), water);
     let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);
+    let mut day = llsd_map! {
+        "frames" => Llsd::Map(frames),
+        "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
+    };
+    // AURORA_DEMO_SKY_FLAGS: the day's settings flags (0 as a viewer saves
+    // them by default; `none` leaves the key out, which reads as 0)
+    match std::env::var("AURORA_DEMO_SKY_FLAGS").ok().as_deref().map(str::trim) {
+        Some("none") => {}
+        flags => {
+            let flags = flags.and_then(|f| f.parse::<i32>().ok()).unwrap_or(0);
+            day.insert("flags", flags);
+        }
+    }
     llsd_map! {
         "day_length" => 14400,
         "day_offset" => 0,
-        "day_cycle" => llsd_map! {
-            "frames" => Llsd::Map(frames),
-            "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
-        },
+        "day_cycle" => day,
     }
 }
 
