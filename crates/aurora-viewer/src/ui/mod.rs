@@ -122,6 +122,7 @@ pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
 pub mod staff;
+pub mod stand_fly;
 pub mod stream_title;
 pub(crate) mod text_menu;
 pub mod texture_library;
