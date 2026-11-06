@@ -825,6 +825,8 @@ fn portal_relay_accepts_only_the_exact_ready_worn_bridge_and_never_enters_chat()
     use aurora_net::bridge::portal::{Access, LIFETIME, Message, Portal};
     let mut sim = Simulator::new();
     sim.ready();
+    // The announcing resident is no friend: shown only when everyone's are.
+    sim.world.portal_sources = super::super::portals::Sources::Everyone;
     let NetEvent::Chat(mut chat) = sim.demo.query_handshake(&sim.bridge, &sim.world).expect("query hello") else {
         panic!("chat");
     };

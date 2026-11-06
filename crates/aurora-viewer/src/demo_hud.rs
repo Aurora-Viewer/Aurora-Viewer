@@ -76,6 +76,23 @@ pub fn events() -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
+/// A whole HUD remains movable/rotatable without Modify. A second HUD at
+/// a distant depth exercises the orthographic camera's independent range.
+pub fn no_modify_events() -> Vec<NetEvent> {
+    let mut events = events();
+    for event in &mut events {
+        if let NetEvent::ObjectUpdates { objects, .. } = event {
+            for object in objects {
+                object.update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
+                if object.local_id == FIRST + 4 {
+                    object.position.x = -512.0;
+                }
+            }
+        }
+    }
+    events
+}
+
 /// AURORA_DEMO_SOUND=hud: a linked HUD prim loops at the listener,
 /// independently of camera distance, as LLAudioSourceVO::update does.
 pub fn sound_events(sound: Uuid) -> Vec<NetEvent> {
