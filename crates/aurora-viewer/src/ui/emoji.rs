@@ -643,7 +643,12 @@ mod tests {
     /// ❤️ is U+2764 and its variation selector: one picture, as 😀.
     #[test]
     fn the_field_draws_one_picture_per_emoji() {
-        for (text, expected) in [("a 😀 :b", 1), ("a \u{2764}\u{FE0F} :b", 1), ("\u{2764}\u{FE0F}\u{2764}\u{FE0F}", 2), ("\u{2764} x", 1)] {
+        for (text, expected) in [
+            ("a 😀 :b", 1),
+            ("a \u{2764}\u{FE0F} :b", 1),
+            ("\u{2764}\u{FE0F}\u{2764}\u{FE0F}", 2),
+            ("\u{2764} x", 1),
+        ] {
             let (pictures, glyphs) = field_pictures(text);
             assert_eq!(pictures, expected, "{text:?}: glyphs {glyphs:?}");
         }
