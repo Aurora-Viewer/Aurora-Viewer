@@ -425,6 +425,10 @@ mod crossing_tests {
         for &handle in &handles {
             info.handle = handle;
             world.apply(NetEvent::RegionHandshake(Arc::new(info.clone())));
+        }
+        // a new neighbour also marks the edge it shares (#2465): clear every
+        // region once all are known, so each test starts with no pending work
+        for &handle in &handles {
             world.regions.get_mut(&handle).unwrap().dirty_chunks.clear();
         }
         world.main_region = Some(handles[0]);
