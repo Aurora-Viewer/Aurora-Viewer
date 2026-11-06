@@ -134,6 +134,8 @@ pub fn heap_sizes_mb(adapter: &wgpu::Adapter) -> Option<(Option<u64>, Option<u64
     let info = adapter.get_info();
     // SAFETY: the hal adapter is borrowed only for this physical-device query.
     let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    // SAFETY: a read-only query of the physical device the hal adapter
+    // holds, valid from any thread.
     let memory = unsafe {
         hal.shared_instance()
             .raw_instance()
