@@ -34,6 +34,8 @@ impl App {
         // `-moving`: the wearer moves between the press and the GPU's
         // answer, as an animated avatar does
         let (mode, moving) = mode.strip_suffix("-moving").map_or((mode, false), |m| (m, true));
+        let (mode, seated) = mode.strip_suffix("-seated").map_or((mode, false), |m| (m, true));
+        let (mode, near) = mode.strip_suffix("-near").map_or((mode, false), |m| (m, true));
         let drag = mode.ends_with("-drag");
         if mode.starts_with("avatar") || spec.ends_with("-keep-camera") {
             // Camera comparisons need a stationary subject even when another
@@ -59,6 +61,9 @@ impl App {
             if spec.ends_with("-keep-camera") || mode == "avatar-return" || drag {
                 self.settings.camera.click_avatar_keeps_camera = spec.ends_with("-keep-camera");
             }
+            if seated && mode.starts_with("worn-") {
+                self.world_click_seat(mode);
+            }
             self.world_click_fixture(mode);
             if moving
                 && let Some(o) = self
@@ -70,6 +75,17 @@ impl App {
                 // a small clicker, which a few frames of motion take off
                 // the cursor's ray
                 o.scale = Vec3::splat(0.1);
+            }
+        }
+        if near && mode.starts_with("worn-") && self.frame_count == 679 {
+            // Move the deeply buried test clicker towards the camera, so
+            // the seated classic body exercises the legacy 10 cm override.
+            if let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(975))
+                && let Some((pos, rot, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+                && let Some(o) = self.world.objects.get_mut(idx)
+            {
+                let anchor = rot * o.rotation.inverse();
+                o.position += anchor.inverse() * (self.camera.position - pos).normalize_or_zero() * 0.18;
             }
         }
         if moving && (701..=705).contains(&self.frame_count) {
@@ -100,7 +116,11 @@ impl App {
             }
             self.world.apply(panel);
         }
-        if (680..=700).contains(&self.frame_count) && !mode.starts_with("mouselook-") {
+        // A real hover holds the pointer over a posed surface long enough
+        // for its asynchronous answer. Tracking the moving mesh at every
+        // frame continually asks a different pixel instead of testing that.
+        let aiming = if mode.starts_with("worn-") { 650..=680 } else { 680..=700 };
+        if aiming.contains(&self.frame_count) && !mode.starts_with("mouselook-") {
             let cursor = if mode.starts_with("avatar-tag") {
                 self.name_tags.iter().find(|t| t.id == self.world.agent_id).map(|t| {
                     let p = t.rect.center() * self.egui_ctx.pixels_per_point();
@@ -170,6 +190,22 @@ impl App {
             };
             if let Some(cursor) = cursor {
                 self.cursor_pos = cursor;
+            }
+        }
+        if self.frame_count == 699 && mode.starts_with("worn-") {
+            let wearer = self
+                .world
+                .objects
+                .index_of_uuid(&crate::demo::action_id(975))
+                .and_then(|idx| self.scene.gpu.get(idx))
+                .and_then(|g| g.owner_avatar)
+                .and_then(|idx| self.world.objects.get(idx));
+            if let Some(avatar) = wearer {
+                log::info!(
+                    "demo worn posture: mode={mode}, seated={}, parent={}",
+                    avatar.parent_id != 0,
+                    avatar.parent_id
+                );
             }
         }
         if self.frame_count == 700 {
@@ -246,6 +282,49 @@ impl App {
                 forward.y.atan2(forward.x)
             })
         );
+    }
+
+    /// Exercise attachment picking through avatar -> rotated seat parenting.
+    fn world_click_seat(&mut self, mode: &str) {
+        let own = mode.starts_with("worn-own");
+        let Some((idx, local, owner, size, region)) = self
+            .world
+            .objects
+            .avatars()
+            .find(|(_, a)| (a.full_id == self.world.agent_id) == own)
+            .map(|(idx, a)| (idx, a.key.local_id, a.full_id, a.scale, a.key.region))
+        else {
+            return;
+        };
+        let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0) else {
+            return;
+        };
+        let offset = self.world.region_offset(region).unwrap_or_default();
+        let mut seat = crate::demo::action_overlay(989, pos - offset - Vec3::Z * 0.65, glam::Quat::from_rotation_z(0.6));
+        if let NetEvent::ObjectUpdates { objects, .. } = &mut seat {
+            for o in objects {
+                o.scale = Vec3::new(1.2, 1.2, 0.4);
+                o.click_action = crate::interaction::code::NONE;
+                o.update_flags = 0;
+            }
+        }
+        self.world.apply(seat);
+        let mut avatar = crate::demo::action_avatar(true);
+        avatar.local_id = local;
+        avatar.full_id = owner;
+        avatar.parent_id = 989;
+        avatar.position = Vec3::new(0.15, 0.0, 0.65);
+        avatar.rotation = glam::Quat::from_rotation_z(-0.2);
+        avatar.scale = size;
+        self.world.apply(NetEvent::ObjectUpdates {
+            handle: region,
+            objects: vec![avatar],
+        });
+        self.world.apply(NetEvent::AvatarAnimations {
+            avatar: owner,
+            anims: vec![(crate::demo::SEAT_ANIM, 1)],
+            sources: vec![crate::demo::action_id(989)],
+        });
     }
 
     fn world_click_fixture(&mut self, mode: &str) {
