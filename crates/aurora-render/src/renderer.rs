@@ -6429,9 +6429,12 @@ impl Backend {
             cf.proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, c.near.max(0.1));
             let mut u = self.frame_uniforms(&cf, crate::probes::face_view(c.origin, c.face), None, &cascades, &splits);
             probe_vp = Mat4::from_cols_array_2d(&u.view_proj);
-            // reflection pass: no SSAO / SSR / mirrors / probes, no clip plane
+            // reflection pass: no SSAO / SSR / mirrors, no clip plane; the
+            // surfaces lit by the probes where the scene is
+            let (radiance_bits, irradiance_bits) = crate::probes::capture_lighting::bits(c.sky_only, irr_capture);
             u.misc = [0.0, 0.0, 0.0, 1.0];
             u.clip_plane = [0.0; 4];
+            u.light_sets.mode[2] |= radiance_bits;
             let r = crate::probes::CAPTURE_RES as f32;
             u.screen = [r, r, 1.0 / r, 1.0 / r];
             self.queue.write_buffer(&self.refl_buffers[2], 0, bytemuck::bytes_of(&u));
@@ -6440,6 +6443,7 @@ impl Backend {
             }
             if irr_capture {
                 irradiance_pass_uniforms(&mut u, c.light_scale, f.lights.len().min(MAX_LIGHTS));
+                u.light_sets.mode[2] |= irradiance_bits;
                 let r = crate::probes::IRR_CAPTURE_RES as f32;
                 u.screen = [r, r, 1.0 / r, 1.0 / r];
                 self.queue.write_buffer(&self.refl_buffers[8], 0, bytemuck::bytes_of(&u));

@@ -1010,12 +1010,12 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         );
         let g = both.a;
         if (g.w > 0.0) {
-            gloss_sky = g.rgb;
+            gloss_sky = g.rgb * probe_pass_radiance();
         }
         if (env > 0.0) {
             let e = both.b;
             if (e.w > 0.0) {
-                env_sky = e.rgb;
+                env_sky = e.rgb * probe_pass_radiance();
             }
         }
     }

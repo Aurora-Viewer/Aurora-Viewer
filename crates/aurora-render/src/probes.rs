@@ -121,6 +121,25 @@ impl ProbeSets {
     }
 }
 
+/// How the surfaces of a probe's capture are lit by the probes
+/// (LLReflectionMapManager::updateUniforms, `is_ambiance_pass`): the bits of
+/// `frame.light_mode.z`, PROBE_CAPTURE_LIT and PROBE_CAPTURE_AMBIANCE of
+/// common.wgsl. The sky-only default probe and classic skies, whose ambient
+/// does not come from the probes, keep what they had.
+pub(crate) mod capture_lighting {
+    pub const LIT: u32 = 0x20000;
+    pub const AMBIANCE: u32 = 0x40000;
+
+    /// The bits of the radiance capture and of the irradiance capture.
+    pub fn bits(sky_only: bool, probe_ambient_sky: bool) -> (u32, u32) {
+        if sky_only || !probe_ambient_sky {
+            (0, 0)
+        } else {
+            (LIT, LIT | AMBIANCE)
+        }
+    }
+}
+
 /// How a fragment walks the probes (AURORA_PROBE_WALK; the image is the
 /// same).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -768,6 +787,17 @@ mod tests {
         // what is further than the plane the extents are cut by
         assert!(src.contains("const PROBE_TILES_NEAREST: f32 = 0.01;"));
         const { assert!(light_tiles::NEAREST < 0.01) };
+    }
+
+    #[test]
+    fn captures_are_lit_by_the_probes_only_where_they_light_the_scene() {
+        use capture_lighting::{AMBIANCE, LIT, bits};
+        assert_eq!(bits(false, true), (LIT, LIT | AMBIANCE));
+        assert_eq!(bits(true, true), (0, 0));
+        assert_eq!(bits(false, false), (0, 0));
+        let src = include_str!("shaders/common.wgsl");
+        assert!(src.contains(&format!("const PROBE_CAPTURE_LIT: u32 = {LIT:#x}u;")));
+        assert!(src.contains(&format!("const PROBE_CAPTURE_AMBIANCE: u32 = {AMBIANCE:#x}u;")));
     }
 
     /// The walks as the shaders name them.
