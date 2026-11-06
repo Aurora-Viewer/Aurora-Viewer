@@ -2390,6 +2390,17 @@ mod tests {
                     path.display()
                 );
             }
+            // any other shader binding the page array (the RLVa overlay):
+            // the table with its page-count header, never a raw page index
+            if source.contains("binding_array<texture_2d_array<f32>>") {
+                assert!(
+                    !source.contains("@binding(2) var<storage, read> locations: array<u32>")
+                        && !source.contains("@binding(2) var<storage, read> tex_loc: array<u32>"),
+                    "flat texture location table in {}: the first word is the page count",
+                    path.display()
+                );
+                assert!(!source.contains("[loc >> 16u]"), "unbounded page index in {}", path.display());
+            }
         }
     }
 
