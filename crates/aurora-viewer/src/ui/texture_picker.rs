@@ -57,6 +57,13 @@ fn inventory_asset(inv: &Inventory, id: Uuid, materials: bool) -> Option<Uuid> {
     }
 }
 
+/// A drop that needs copy and transfer (`drop_target_copy_transfer`): a
+/// library texture, or one whose owner may copy and transfer it.
+fn copy_and_transfer(inv: &Inventory, item: &aurora_net::inventory::InvItem) -> bool {
+    let both = actions::COPY | actions::TRANSFER;
+    actions::library(inv, item.id) || item.owner_mask & both == both
+}
+
 fn can_preview(inv: &Inventory, id: Uuid) -> bool {
     let Some(original) = actions::original(inv, id) else { return false };
     inv.items
@@ -68,6 +75,8 @@ fn can_preview(inv: &Inventory, id: Uuid) -> bool {
 pub struct TexturePicker {
     drop_target: Option<super::resource_drop::Target>,
     drop_slot: usize,
+    /// The registered drop takes only copy and transfer textures.
+    drop_copy_transfer: bool,
     dropped_slot: Option<usize>,
     pub open: bool,
     pipette_id: Option<egui::Id>,
@@ -127,6 +136,16 @@ impl TexturePicker {
         };
         self.drop_target = Some(target);
         self.drop_slot = slot;
+        self.drop_copy_transfer = false;
+    }
+
+    /// `drop_target` for a texture that leaves this viewer in what it makes
+    /// (the particle editor's script): copy and transfer textures only.
+    pub(crate) fn drop_target_copy_transfer(&mut self, ui: &egui::Ui, rect: egui::Rect, enabled: bool) {
+        self.drop_target_slot(ui, rect, false, enabled, 0);
+        if self.drop_target.is_some() {
+            self.drop_copy_transfer = true;
+        }
     }
 
     pub(crate) fn dropped_slot(&self) -> Option<usize> {
@@ -149,7 +168,11 @@ impl TexturePicker {
 
     fn take_swatch_drop(&mut self, ctx: &egui::Context, p: &Palette, inv: &Inventory) -> Option<Uuid> {
         self.dropped_slot = None;
-        let resource = self.drop_target.take()?.receive(ctx, p, inv, |_| true)?;
+        let copy_transfer = self.drop_copy_transfer;
+        let resource = self
+            .drop_target
+            .take()?
+            .receive(ctx, p, inv, |item| !copy_transfer || copy_and_transfer(inv, item))?;
         self.dropped_slot = Some(self.drop_slot);
         self.open = false;
         self.stop_pipette(ctx);
@@ -995,6 +1018,61 @@ pub(crate) mod tests {
             choices,
             vec![asset, asset],
             "each slot gets its own commit, even when a previous slot chose the same asset"
+        );
+    }
+
+    #[test]
+    fn a_copy_and_transfer_drop_target_takes_only_such_textures() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (copy_only, open) = (Uuid::from_u128(0xd011), Uuid::from_u128(0xd012));
+        for (item, mask) in [(copy_only, actions::COPY), (open, actions::COPY | actions::TRANSFER)] {
+            world.inventory.items.insert(
+                item,
+                aurora_net::inventory::InvItem {
+                    id: item,
+                    asset_id: Uuid::from_u128(item.as_u128() + 0x100),
+                    asset_type: 0,
+                    inv_type: 0,
+                    owner_mask: mask,
+                    ..Default::default()
+                },
+            );
+        }
+        let mut picker = TexturePicker::default();
+        let mut ui = PickerUi::new();
+        let rect = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(100.0, 100.0));
+        let mut choices = Vec::new();
+        let draw = |picker: &mut TexturePicker, world: &mut World, choices: &mut Vec<Uuid>, ctx: &egui::Context, p: &Palette| {
+            egui::Area::new(egui::Id::unique("copy_transfer_drop_test"))
+                .fixed_pos(rect.min)
+                .show(ctx, |ui| {
+                    let (rect, _) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+                    picker.drop_target_copy_transfer(ui, rect, true);
+                });
+            if let Some(asset) = picker.show_live(ctx, p, world, &HashMap::new()) {
+                choices.push(asset);
+            }
+        };
+        ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut choices, ctx, p));
+        for item in [copy_only, open] {
+            egui::DragAndDrop::set_payload(&ui.ctx, super::super::inventory::InvDrag(item));
+            ui.frame(vec![egui::Event::PointerMoved(rect.center())], |ctx, p| {
+                draw(&mut picker, &mut world, &mut choices, ctx, p)
+            });
+            ui.frame(
+                vec![egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }],
+                |ctx, p| draw(&mut picker, &mut world, &mut choices, ctx, p),
+            );
+        }
+        assert_eq!(
+            choices,
+            vec![Uuid::from_u128(open.as_u128() + 0x100)],
+            "copy without transfer is refused"
         );
     }
 
