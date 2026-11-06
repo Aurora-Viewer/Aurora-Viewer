@@ -65,6 +65,13 @@ pub fn in_type(inv: &Inventory, id: Uuid, kind: i32) -> bool {
 pub fn library(inv: &Inventory, id: Uuid) -> bool {
     inv.folders.get(&id).is_some_and(|f| f.library) || parent(inv, id).and_then(|p| inv.folders.get(&p)).is_some_and(|f| f.library)
 }
+/// "Restore to last position" may rez the object back: in Second Life only
+/// a copy of it, since a no-copy object could be lost on the way
+/// (LLItemBridge::restoreToWorld, "CantRestoreToWorldNoCopy"); OpenSim
+/// keeps it in any case.
+pub fn restorable(it: &aurora_net::inventory::InvItem, opensim: bool) -> bool {
+    opensim || it.owner_mask & COPY != 0
+}
 /// The next owner's rights of an item can be changed: by an owner who may
 /// transfer it, never on a calling card or a landmark
 /// (LLSidepanelItemInfo::refreshFromItem: can_agent_sell with PERM_TRANSFER,

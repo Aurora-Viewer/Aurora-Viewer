@@ -5007,6 +5007,7 @@ ui-place-details-notes = Notes:
 ui-options-camera-restores-the-preset-s-camera-position-and-focus-point = Restores the preset's camera position and focus point
 ui-options-reset-all-settings = Reset all settings
 ui-inventory-context-return-to-last-location = Return to last location
+ui-inventory-restore-no-copy = A no-copy object is not returned to its last location: it could be lost on the way.
 ui-inventory-dialogs-replace = Replace
 ui-inventory-context-replace-current-outfit = Replace current outfit
 ui-land-media-replace-texture = Replace texture:

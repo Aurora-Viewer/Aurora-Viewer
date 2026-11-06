@@ -231,6 +231,9 @@ pub struct Facts {
     /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
     /// (LLLandmarksPanel "teleport", LLPanelPlaces' Teleport button).
     pub landmark_blocked: bool,
+    /// On an OpenSim grid (`World::home_grid`): "Restore to last position"
+    /// keeps no-copy items there.
+    pub opensim: bool,
 }
 
 impl Facts {
@@ -299,6 +302,7 @@ impl Facts {
                 }),
             rlva: world.rlva_wear_locks(),
             landmark_blocked: !world.rlva_can_teleport_landmark(),
+            opensim: world.home_grid.is_some(),
         }
     }
 

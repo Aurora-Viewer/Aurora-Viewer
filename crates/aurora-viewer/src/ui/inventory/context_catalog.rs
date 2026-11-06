@@ -551,9 +551,9 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
                     writable
                         && ids.iter().all(|id| {
-                            rules::original(inv, *id)
-                                .and_then(|id| inv.items.get(&id))
-                                .is_some_and(|item| item.asset_type == 6 && !facts.worn.contains(&item.id))
+                            rules::original(inv, *id).and_then(|id| inv.items.get(&id)).is_some_and(|item| {
+                                item.asset_type == 6 && !facts.worn.contains(&item.id) && rules::restorable(item, facts.opensim)
+                            })
                         }),
                     InvAction::Restore(target.unwrap_or(id)),
                 );

@@ -5004,6 +5004,7 @@ ui-place-details-notes = メモ：
 ui-options-camera-restores-the-preset-s-camera-position-and-focus-point = プリセットのカメラ位置と注視点を復元します
 ui-options-reset-all-settings = すべての設定をリセット
 ui-inventory-context-return-to-last-location = 最後の場所に戻す
+ui-inventory-restore-no-copy = コピー不可のオブジェクトは最後の場所に戻せません。途中で失われるおそれがあります。
 ui-inventory-dialogs-replace = 置き換え
 ui-inventory-context-replace-current-outfit = 現在のアウトフィットと置き換え
 ui-land-media-replace-texture = 差し替えるテクスチャ：

@@ -803,3 +803,15 @@ fn next_owner_rights_need_the_owners_transfer() {
     assert!(!next_owner_editable(&item(full, 2, 2)), "calling card");
     assert!(!next_owner_editable(&item(full, 3, 3)), "landmark");
 }
+
+#[test]
+fn a_no_copy_object_is_not_restored_to_its_last_position_in_second_life() {
+    let object = |owner_mask: u32| InvItem {
+        owner_mask,
+        asset_type: 6,
+        ..Default::default()
+    };
+    assert!(restorable(&object(COPY | MODIFY | TRANSFER), false));
+    assert!(!restorable(&object(MODIFY | TRANSFER), false));
+    assert!(restorable(&object(MODIFY | TRANSFER), true), "OpenSim keeps it");
+}

@@ -5012,6 +5012,7 @@ ui-place-details-notes = Remarques :
 ui-options-camera-restores-the-preset-s-camera-position-and-focus-point = Remet la position de la caméra et le point visé du préréglage
 ui-options-reset-all-settings = Remettre tous les réglages par défaut
 ui-inventory-context-return-to-last-location = Remettre à la dernière position
+ui-inventory-restore-no-copy = Un objet non copiable n’est pas remis à sa dernière position : il pourrait être perdu en route.
 ui-inventory-dialogs-replace = Remplacer
 ui-inventory-context-replace-current-outfit = Remplacer la tenue actuelle
 ui-land-media-replace-texture = Remplacer la texture :
