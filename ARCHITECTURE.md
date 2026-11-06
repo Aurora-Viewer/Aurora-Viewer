@@ -1564,7 +1564,10 @@ The shared model bounds the ring to 64 render-view submissions × 64 words
 and completion lifetimes even when their frame number is equal. Saturation
 stops new recording; completed slots alone can be reused. Tokens never wrap.
 
-Pass markers are recorded outside wgpu render/compute passes. SSR shares the
+Pass markers are recorded outside wgpu render/compute passes. wgpu 30 forbids
+raw HAL and ordinary commands on the same encoder, so raw-only marker buffers
+are interleaved with ordinary segments. The three pre/scene/post batches still
+finish in parallel and submit in their original order. SSR shares the
 `scene-b (SSR/water/blend)` boundary; diagnostics do not split that pass.
 Photo tiles and probe captures use the same recorder. Default `auto` uses
 AMD markers or NVIDIA checkpoints if offered; `off` disables optional

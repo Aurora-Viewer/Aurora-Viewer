@@ -13,6 +13,9 @@ impl Recorder {
 impl Frame {
     pub(crate) fn mark(&self, _encoder: &mut wgpu::CommandEncoder, _boundary: Boundary) {}
     pub(crate) fn finish(&self, _encoder: &mut wgpu::CommandEncoder) {}
+    pub(crate) fn take_encoders(&self, tail: wgpu::CommandEncoder) -> Vec<wgpu::CommandEncoder> {
+        vec![tail]
+    }
     pub(crate) fn submitting(&mut self) {}
     pub(crate) fn completed(self) {}
 }

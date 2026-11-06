@@ -211,8 +211,13 @@ impl Native {
         }
         Ok(native)
     }
+    pub(super) fn encoder(&self) -> wgpu::CommandEncoder {
+        self.owner.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("frame breadcrumb segment"),
+        })
+    }
     pub(super) fn record(&self, encoder: &mut wgpu::CommandEncoder, method: Method, offset: usize, token: u32, begin: bool) {
-        // SAFETY: the pass has ended, as_hal_mut supplies a live recording
+        // SAFETY: this encoder is exclusively raw; as_hal_mut supplies a live recording
         // buffer, and this closure calls no wgpu methods. Only our dedicated
         // buffer is touched. Each word is written once per completed epoch.
         unsafe {

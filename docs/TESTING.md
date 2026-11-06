@@ -7038,6 +7038,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   The ring retains at most 64 render-view submissions (each stereo eye has its
   own slot), with separate begin/end words and no reuse before completion.
   SSR/water/blend share one named boundary without splitting their render pass.
+  Raw marker buffers are interleaved with ordinary command buffers; wgpu 30
+  forbids using its raw and regular encoding APIs on the same encoder.
   For an actual device loss, inspect the public **GPU breadcrumbs** and
   **Driver fault report** rows and the local private fault artifact. Markers
   are best effort after loss and do not identify a crash's cause. A simulated

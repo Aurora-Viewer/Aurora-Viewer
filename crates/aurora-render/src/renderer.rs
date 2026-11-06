@@ -702,8 +702,8 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
 const SLOW_WRITES_MS: f32 = 4.0;
 
 /// Work of the helper threads (`Backend::finishers`).
-fn finish_encoder(encoder: wgpu::CommandEncoder) -> wgpu::CommandBuffer {
-    encoder.finish()
+fn finish_encoders(encoders: Vec<wgpu::CommandEncoder>) -> Vec<wgpu::CommandBuffer> {
+    encoders.into_iter().map(wgpu::CommandEncoder::finish).collect()
 }
 
 /// View-projection matrix for positions given relative to `eye`, a point
@@ -1687,7 +1687,7 @@ pub(crate) struct Backend {
     particle_backoff: crate::gpu_alloc::Backoff,
     timer: Option<GpuTimer>,
     /// Two threads that finish command encoders beside this one.
-    finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
+    finishers: Helpers<Vec<wgpu::CommandEncoder>, Vec<wgpu::CommandBuffer>>,
     msaa_samples: u32,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
@@ -3260,7 +3260,7 @@ impl Backend {
             particle_buffer,
             particle_backoff: crate::gpu_alloc::Backoff::default(),
             timer,
-            finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
+            finishers: Helpers::new(2, "aurora-render-finish", finish_encoders),
             msaa_samples,
             pipeline_build: None,
             vsync,
@@ -7546,7 +7546,7 @@ impl Backend {
         }
 
         prof.mark("impostors");
-        // the frame is recorded into three encoders finished in parallel
+        // The frame's three batches of command encoders finish in parallel
         // below (wgpu replays and tracks every command in finish())
         let enc_pre = std::mem::replace(
             &mut encoder,
@@ -7554,6 +7554,10 @@ impl Backend {
                 label: Some("frame scene"),
             }),
         );
+        let enc_pre = match &breadcrumbs {
+            Some(frame) => frame.take_encoders(enc_pre),
+            None => vec![enc_pre],
+        };
         mark(&mut encoder, MARK_SCENE_BEGIN);
         breadcrumb(&mut encoder, GpuBoundary::SceneBegin);
         // Keep water and exclusion depths separate from opaque objects. The
@@ -8199,6 +8203,10 @@ impl Backend {
             self.device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame post") }),
         );
+        let enc_scene = match &breadcrumbs {
+            Some(frame) => frame.take_encoders(enc_scene),
+            None => vec![enc_scene],
+        };
         breadcrumb(&mut encoder, GpuBoundary::PostBegin);
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
@@ -8712,9 +8720,13 @@ impl Backend {
         // for that helper to wake up, for the few commands of the last
         // encoder (finish 0.56 -> 0.51 ms, 1.9 -> 1.6 ms in the longest
         // frame of a second)
-        let (pre, post, scene) = self.finishers.pair(enc_pre, encoder, move || enc_scene.finish());
+        let enc_post = match &breadcrumbs {
+            Some(frame) => frame.take_encoders(encoder),
+            None => vec![encoder],
+        };
+        let (pre, post, scene) = self.finishers.pair(enc_pre, enc_post, move || finish_encoders(enc_scene));
         match (pre, post) {
-            (Some(pre), Some(post)) => extra_cmds.extend([pre, scene, post]),
+            (Some(pre), Some(post)) => extra_cmds.extend(pre.into_iter().chain(scene).chain(post)),
             _ => {
                 log::error!("render: a command encoder thread panicked");
                 let spent = Spent { writes, lists: draw_lists };

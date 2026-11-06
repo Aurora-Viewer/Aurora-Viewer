@@ -1,5 +1,6 @@
 //! Submission lifetime and first-loss worker ownership.
 use super::{model::*, vulkan};
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 static GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -36,6 +37,7 @@ pub(crate) struct Frame {
     recorder: Arc<Recorder>,
     ticket: Ticket,
     submitted: bool,
+    encoders: RefCell<Vec<wgpu::CommandEncoder>>,
 }
 impl Recorder {
     #[cfg(not(target_os = "macos"))]
@@ -92,6 +94,7 @@ impl Recorder {
             recorder: self.clone(),
             ticket,
             submitted: false,
+            encoders: RefCell::new(Vec::new()),
         })
     }
     /// First loss wins across renderer recovery. Does not enter Vulkan/wgpu,
@@ -163,15 +166,35 @@ impl Frame {
         };
         let method = self.recorder.baseline.method;
         #[cfg(not(target_os = "macos"))]
-        self.recorder.native.record(encoder, method, offset, token, boundary.begin());
+        {
+            let mut marker = self.recorder.native.encoder();
+            self.recorder.native.record(&mut marker, method, offset, token, boundary.begin());
+            self.insert(encoder, marker);
+        }
         #[cfg(target_os = "macos")]
         let _ = (encoder, method, offset, token);
     }
     pub(crate) fn finish(&self, encoder: &mut wgpu::CommandEncoder) {
         #[cfg(not(target_os = "macos"))]
-        self.recorder.native.host_barrier(encoder);
+        {
+            let mut barrier = self.recorder.native.encoder();
+            self.recorder.native.host_barrier(&mut barrier);
+            self.insert(encoder, barrier);
+        }
         #[cfg(target_os = "macos")]
         let _ = encoder;
+    }
+    // wgpu 30 prohibits regular commands and as_hal_mut on the same encoder.
+    // Keep raw marker buffers between ordinary buffers, in submission order.
+    // Defer finish() so the existing pre/scene/post helpers still run in parallel.
+    fn insert(&self, encoder: &mut wgpu::CommandEncoder, raw: wgpu::CommandEncoder) {
+        let previous = std::mem::replace(encoder, self.recorder.native.encoder());
+        self.encoders.borrow_mut().extend([previous, raw]);
+    }
+    pub(crate) fn take_encoders(&self, tail: wgpu::CommandEncoder) -> Vec<wgpu::CommandEncoder> {
+        let mut encoders = self.encoders.take();
+        encoders.push(tail);
+        encoders
     }
     /// Called before submit: the loss callback can occur inside queue.submit.
     /// After submission, move this guard into on_submitted_work_done.
@@ -260,11 +283,20 @@ mod tests {
             let recorder = Recorder::new(&device, &plan).expect("diagnostic recorder");
             let mut frame = recorder.frame(77).expect("ring slot");
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let ordinary = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ordinary commands between breadcrumbs"),
+                size: 4,
+                usage: wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
             frame.mark(&mut encoder, Boundary::ContactBegin);
+            // wgpu 30 forbids mixing the raw and regular APIs on one encoder.
+            // Real frames must retain both ordinary work and marker ordering.
+            encoder.clear_buffer(&ordinary, 0, None);
             frame.mark(&mut encoder, Boundary::ContactEnd);
             frame.finish(&mut encoder);
             frame.submitting();
-            let submission = queue.submit([encoder.finish()]);
+            let submission = queue.submit(frame.take_encoders(encoder).into_iter().map(wgpu::CommandEncoder::finish));
             queue.on_submitted_work_done(move || frame.completed());
             device
                 .poll(wgpu::PollType::Wait {
