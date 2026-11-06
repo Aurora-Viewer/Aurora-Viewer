@@ -265,7 +265,14 @@ fn shared_memory_type(memory: &vk::PhysicalDeviceMemoryProperties, bits: u32, ex
                 && Some(ty.heap_index) != exclude_heap
                 && heaps.get(ty.heap_index as usize).is_some()
         })
-        .max_by_key(|(_, ty)| ty.property_flags.contains(F::HOST_COHERENT))
+        // coherent first, and uncached among those: a cached (snooped)
+        // type is slower for the GPU to sample
+        .max_by_key(|(_, ty)| {
+            (
+                ty.property_flags.contains(F::HOST_COHERENT),
+                !ty.property_flags.contains(F::HOST_CACHED),
+            )
+        })
         .map(|(i, _)| i as u32)
 }
 
@@ -323,6 +330,27 @@ mod tests {
         assert_eq!(shared_memory_type(&p, 0b111, Some(0)), Some(2));
         assert_eq!(memory_type(&p, 0b110), Some(1));
         assert_eq!(shared_memory_type(&p, 0b110, Some(0)), Some(2));
+    }
+
+    #[test]
+    fn integrated_fallback_prefers_an_uncached_coherent_type() {
+        use vk::MemoryPropertyFlags as F;
+        let mut p = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: 2,
+            memory_type_count: 3,
+            ..Default::default()
+        };
+        p.memory_heaps[0].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+        p.memory_types[0].heap_index = 0;
+        p.memory_types[0].property_flags = F::DEVICE_LOCAL;
+        // AMD's GTT: write-combined first, then the cached (snooped) type
+        p.memory_types[1].heap_index = 1;
+        p.memory_types[1].property_flags = F::HOST_VISIBLE | F::HOST_COHERENT;
+        p.memory_types[2].heap_index = 1;
+        p.memory_types[2].property_flags = F::HOST_VISIBLE | F::HOST_COHERENT | F::HOST_CACHED;
+        assert_eq!(shared_memory_type(&p, 0b111, Some(0)), Some(1));
+        // only the cached one allowed: it is still taken
+        assert_eq!(shared_memory_type(&p, 0b101, Some(0)), Some(2));
     }
 
     #[test]

@@ -834,11 +834,11 @@ mod tests {
         let (dir, record) = session();
         std::fs::write(
             dir.join("session.log"),
-            "[t INFO  aurora_render::main_thread] GPU: AMD Radeon Graphics (Vulkan, driver AMD 1.2; memory 512 MB dedicated + 7800 MB shared)\n",
+            "[t INFO  aurora_render::main_thread] GPU: AMD Radeon Graphics (Vulkan, driver AMD 1.2, memory 512 MB dedicated + 7800 MB shared)\n",
         )
         .unwrap();
         let body = build(&record, &dir).body;
-        assert!(body.contains("| GPU | AMD Radeon Graphics (Vulkan, driver AMD 1.2 memory 512 MB dedicated + 7800 MB shared) |"));
+        assert!(body.contains("| GPU | AMD Radeon Graphics (Vulkan, driver AMD 1.2, memory 512 MB dedicated + 7800 MB shared) |"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

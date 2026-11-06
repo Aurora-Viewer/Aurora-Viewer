@@ -106,10 +106,20 @@ impl App {
                 ),
                 Row::text("about-graphics-api", gpu.backend.clone()),
                 Row::text("about-driver", gpu.driver.clone()),
-                match gpu.dedicated_mb {
-                    Some(_) => Row::text("about-vram", gpu.memory_label()),
-                    None if gpu.shared_mb.is_some() => Row::text("about-vram", gpu.memory_label()),
-                    None => Row::key("about-vram", "about-unknown"),
+                // a discrete card as before ("N MB"); an integrated GPU's two
+                // heaps in the interface's language
+                match (gpu.dedicated_mb, gpu.shared_mb) {
+                    (Some(mb), None) => Row::text("about-vram", format!("{mb} MB")),
+                    (dedicated, Some(shared)) => Row::text(
+                        "about-vram",
+                        aurora_i18n::tr!(
+                            "about-vram-shared",
+                            dedicated = aurora_i18n::number_text(&dedicated.unwrap_or(0).to_string()),
+                            shared = aurora_i18n::number_text(&shared.to_string())
+                        )
+                        .to_string(),
+                    ),
+                    (None, None) => Row::key("about-vram", "about-unknown"),
                 },
                 Row::text(
                     "about-texture-budget",

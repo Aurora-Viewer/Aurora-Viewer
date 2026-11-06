@@ -151,11 +151,14 @@ pub fn texture_target(setting: u64, pages: u64, video: Option<VideoMemory>) -> u
     let process = v.budget.saturating_sub(512 * MB).min(v.budget / 5 * 4).max(768 * MB);
     let others = v.usage.max(v.allocated).saturating_sub(pages);
     let target = setting.min(process.saturating_sub(others)).max(MIN_TEXTURE_BYTES);
-    if v.shared_budget > 0 {
-        // An integrated GPU uses system RAM for this heap. Keep texture
-        // pages to half of its driver budget, after room for the rest of
-        // this process; this cap takes precedence over the minimum target.
-        target.min((v.shared_budget / 2).saturating_sub(others))
+    if v.shared_budget > 0 && v.budget > v.shared_budget {
+        // A separate system heap was added to an integrated GPU's carve-out:
+        // keep texture pages to half of that heap's budget, after room for
+        // the rest of this process, so the system keeps its memory. A
+        // unified heap (Intel, RADV on APUs) is the one the budget always
+        // counted: its target stays as on a discrete card. Never under the
+        // minimum.
+        target.min((v.shared_budget / 2).saturating_sub(others)).max(MIN_TEXTURE_BYTES)
     } else {
         target
     }
@@ -442,7 +445,25 @@ mod tests {
             allocated: 0,
             shared_budget: 100 * MB,
         };
-        assert_eq!(texture_target(2 * GB, 0, Some(tight_shared)), 50 * MB);
+        // never under the minimum, however tight the shared heap
+        assert_eq!(texture_target(2 * GB, 0, Some(tight_shared)), MIN_TEXTURE_BYTES);
+
+        // a unified heap (Intel, RADV on APUs) is all "shared": it is the heap
+        // the budget always counted, so the target stays as on main
+        let unified = VideoMemory {
+            budget: 7800 * MB,
+            usage: 1800 * MB,
+            allocated: 1800 * MB,
+            shared_budget: 7800 * MB,
+        };
+        let as_before = VideoMemory {
+            shared_budget: 0,
+            ..unified
+        };
+        assert_eq!(
+            texture_target(12 * GB, GB, Some(unified)),
+            texture_target(12 * GB, GB, Some(as_before))
+        );
     }
 
     #[test]
