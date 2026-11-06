@@ -3335,6 +3335,8 @@ fn classic_pane(
                     let picked = emoji.picker(ui, p, icons);
                     if let Some(c) = picked.chosen {
                         draft.push(c);
+                        // the caret after the emoji, not left before it
+                        cursor_to_end(ui.ctx(), conv_input, &draft);
                         close = !ui.input(|i| i.modifiers.shift);
                     }
                     close |= picked.escape;
