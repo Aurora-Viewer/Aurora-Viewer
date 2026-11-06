@@ -500,6 +500,16 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_saved_photo_recycles_its_file_and_deletes_its_copy() {
+        let mut reel = Reel::default();
+        let (id, _) = reel.add(1, (4, 4), false, Some("copy.png".into()), true, vec![]);
+        reel.sent(id, disk("mine.png"));
+        let d = deletion(reel.get(id).expect("photo"));
+        assert_eq!(d.recycle, [PathBuf::from("mine.png")]);
+        assert_eq!(d.copy, Some("copy.png".into()));
+    }
+
+    #[test]
     fn sent_again_inside_the_destination() {
         assert_eq!(fit_inside((7680, 4320), (2048, 2048)), (2048, 1152));
         assert_eq!(fit_inside((1000, 2000), (1024, 768)), (384, 768));
