@@ -2825,7 +2825,7 @@ mod tests {
         let now = Instant::now();
         let paint = |world: &World, cam: &Cam, mode, linked| {
             let ctx = egui::Context::default();
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 720.0))),
                     ..Default::default()
@@ -2837,6 +2837,8 @@ mod tests {
                     p.flush();
                 },
             );
+            // This paint-only test has no GPU to apply texture deltas.
+            output.textures_delta.clear();
             output.shapes.iter().any(|s| !matches!(s.shape, egui::Shape::Noop))
         };
         for mode in [EditMode::Move, EditMode::Rotate] {
