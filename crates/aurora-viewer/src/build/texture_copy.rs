@@ -172,6 +172,55 @@ pub fn material_copy_allowed(tool: &BuildTool, world: &World, idx: usize, faces:
         .is_some_and(|root| root.update_flags & all == all)
 }
 
+/// Whether `item` cannot simply be painted and must sit in the target's
+/// contents first: no copy, no transfer, or a material without modify
+/// (handleDropMaterialProtections, LLSelectMgr::selectionSetGLTFMaterial).
+pub fn restricted(item: &InvItem, agent: Uuid) -> bool {
+    let mask = contents_drop::agent_mask(item, agent);
+    mask & rules::COPY == 0 || mask & rules::TRANSFER == 0 || item.asset_type == AT_MATERIAL && mask & rules::MODIFY == 0
+}
+
+/// `restricted`, outside the Library (whose items always just work).
+pub fn requires_contents(inv: &Inventory, item: &InvItem, agent: Uuid) -> bool {
+    !library(inv, item.id) && restricted(item, agent)
+}
+
+/// LLSelectMgr::selectionSetImage / selectionSetGLTFMaterial: a no-copy item
+/// cannot go on several objects. Counted by prim, not by face: it may cover
+/// several faces of one object.
+pub fn selection_copy_denied(item: &InvItem, agent: Uuid, objects: usize) -> bool {
+    objects > 1 && !contents_drop::copyable(item, agent)
+}
+
+const AT_MATERIAL: i32 = 57;
+
+impl BuildTool {
+    /// LLMaterialEditor::canModifyObjectsMaterial for the faces `faces`: the
+    /// first face with a material, on an object the agent may modify whose
+    /// contents are listed, and whose contents' own item of that material,
+    /// when there is one, allows modify. Asked each frame the PBR controls
+    /// show: one object's listing (asked for once), no inventory scan.
+    pub fn material_edit_allowed(&mut self, world: &World, faces: &[(usize, u8)]) -> bool {
+        let Some((idx, material)) = faces
+            .iter()
+            .find_map(|&(idx, face)| BuildTool::gltf_asset(world, idx, face).map(|m| (idx, m)))
+        else {
+            return true;
+        };
+        if !self.can_modify(world, idx) || !self.contents_ready(world, idx) {
+            return false;
+        }
+        let Some(o) = world.objects.get(idx) else { return false };
+        material == crate::scene::meshes::BLANK_MATERIAL
+            || self.contents.objects.get(&o.full_id).is_none_or(|inv| {
+                inv.items
+                    .iter()
+                    .find(|i| i.asset_id == material)
+                    .is_none_or(|i| i.owner_mask & rules::MODIFY != 0)
+            })
+    }
+}
+
 /// Why an item could not follow its id into a target's contents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Retain {
@@ -181,14 +230,6 @@ pub enum Retain {
     Wait,
     /// The target does not take the item: its id stays off the face.
     Refused,
-}
-
-/// Whether `item` needs to go into a target's contents before its id goes on
-/// a face: an item the agent may copy but not transfer, outside the Library
-/// (handleDropMaterialProtections: a no-copy item never comes here, the
-/// lookup only keeps copyable ones).
-pub fn needs_contents(inv: &Inventory, item: &InvItem, agent: Uuid) -> bool {
-    !library(inv, item.id) && contents_drop::agent_mask(item, agent) & rules::TRANSFER == 0
 }
 
 impl BuildTool {
@@ -205,6 +246,33 @@ impl BuildTool {
             .is_some_and(|inv| !inv.loading && inv.requested.is_some())
     }
 
+    /// The listed contents of `idx` hold `item`'s asset already.
+    fn holds(&self, world: &World, idx: usize, item: &InvItem) -> bool {
+        let Some(o) = world.objects.get(idx) else { return false };
+        self.contents.objects.get(&o.full_id).is_some_and(|inv| {
+            inv.items
+                .iter()
+                .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
+        })
+    }
+
+    /// UpdateTaskInventory of `item` into `idx`, counted at once in the local
+    /// listing so a second face of the same action does not send it again.
+    fn put_in_contents(&mut self, world: &World, idx: usize, item: &InvItem) {
+        let Some(o) = world.objects.get(idx) else { return };
+        let object = o.full_id;
+        let task = task_inventory::from_inventory(object, item);
+        self.send(BuildCmd::UpdateTaskInventory {
+            handle: o.key.region,
+            local_id: o.key.local_id,
+            item: Box::new(task.clone()),
+        });
+        if let Some(inv) = self.contents.objects.get_mut(&object) {
+            inv.items.push(task);
+        }
+        self.request_contents(world, idx, true);
+    }
+
     /// handleDropMaterialProtections for a paste: the item of a limited id
     /// goes into the target's contents once (the object then carries the
     /// item's rights), unless they hold that asset already.
@@ -212,42 +280,77 @@ impl BuildTool {
         let Some(item) = world.inventory.items.get(&item_id) else {
             return Retain::Refused;
         };
-        if !needs_contents(&world.inventory, item, world.agent_id) {
+        if !requires_contents(&world.inventory, item, world.agent_id) {
             return Retain::Done;
         }
-        let Some(o) = world.objects.get(idx) else { return Retain::Refused };
-        let object = o.full_id;
-        let Some(inv) = self
-            .contents
-            .objects
-            .get(&object)
-            .filter(|inv| !inv.loading && inv.requested.is_some())
-        else {
-            self.request_contents(world, idx, false);
+        if !self.contents_ready(world, idx) {
             return Retain::Wait;
-        };
-        if inv
-            .items
-            .iter()
-            .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
-        {
+        }
+        if self.holds(world, idx, item) {
             return Retain::Done;
         }
         if contents_drop::accepts(world, idx, item).is_err() {
             return Retain::Refused;
         }
-        let task = task_inventory::from_inventory(object, item);
-        self.send(BuildCmd::UpdateTaskInventory {
-            handle: o.key.region,
-            local_id: o.key.local_id,
-            item: Box::new(task.clone()),
-        });
-        // Counted at once: a second face of this paste does not send it again.
-        if let Some(inv) = self.contents.objects.get_mut(&object) {
-            inv.items.push(task);
-        }
-        self.request_contents(world, idx, true);
+        let item = item.clone();
+        self.put_in_contents(world, idx, &item);
         Retain::Done
+    }
+
+    /// An inventory item chosen in a build control (picker OK, a slot drop)
+    /// before its id goes on the prims `objects`: LLSelectMgr::selectionSetImage,
+    /// selectionSetGLTFMaterial and LLPanelVolume::setLightTextureID. A no-copy
+    /// item goes on one object only; a worn object takes an image with copy and
+    /// transfer (`contents_drop::worn_image_rights`) and a material with
+    /// unrestricted base rights; a restricted item goes into each object's
+    /// contents (moved when it cannot be copied). Without an item (a typed id,
+    /// a built-in button) the id is applied as it is, like the Legacy Viewer.
+    /// Runs once per action. The error is the text to show.
+    pub fn admit_item(&mut self, world: &mut World, item_id: Uuid, objects: &[usize]) -> Result<(), &'static str> {
+        let inv = &world.inventory;
+        let Some(item) = rules::original(inv, item_id).and_then(|id| inv.items.get(&id)).cloned() else {
+            return Ok(());
+        };
+        let agent = world.agent_id;
+        let mut objects = objects.to_vec();
+        objects.sort_unstable();
+        objects.dedup();
+        if selection_copy_denied(&item, agent, objects.len()) {
+            return Err(aurora_i18n::tr!("texture-library-no-copy-multiple"));
+        }
+        let free = library(inv, item.id);
+        for &idx in &objects {
+            let worn = contents_drop::linkset(world, idx).is_some_and(|(_, worn)| worn);
+            let takes = if item.asset_type == AT_MATERIAL {
+                item.base_mask & rules::FULL == rules::FULL
+            } else {
+                contents_drop::worn_image_rights(&item, agent)
+            };
+            if worn && !free && !takes {
+                return Err(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
+            }
+        }
+        if !requires_contents(inv, &item, agent) {
+            return Ok(());
+        }
+        let mut waiting = false;
+        for &idx in &objects {
+            waiting |= !self.contents_ready(world, idx);
+        }
+        if waiting {
+            return Err(aurora_i18n::tr!("build-ui-texture-paste-wait-contents"));
+        }
+        let missing: Vec<usize> = objects.into_iter().filter(|&idx| !self.holds(world, idx, &item)).collect();
+        if missing.iter().any(|&idx| contents_drop::accepts(world, idx, &item).is_err()) {
+            return Err(aurora_i18n::tr!("texture-library-locked"));
+        }
+        for &idx in &missing {
+            self.put_in_contents(world, idx, &item);
+        }
+        if !missing.is_empty() && !contents_drop::copyable(&item, agent) {
+            world.inventory.consume_item(item.id);
+        }
+        Ok(())
     }
 }
 

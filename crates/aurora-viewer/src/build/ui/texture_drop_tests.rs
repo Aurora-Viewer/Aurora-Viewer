@@ -97,6 +97,9 @@ fn a_pbr_map_takes_only_a_copy_and_transfer_texture() {
         for map in 0..4 {
             assert_eq!(allowed(&w, &sel, PickTarget::PbrMap(map), &texture), expected, "{mask:#x}");
         }
+        if !ok {
+            assert_eq!(allowed(&w, &sel, PickTarget::Sculpt, &texture), expected, "sculpt {mask:#x}");
+        }
         // the Blinn-Phong slots keep their own rule
         assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &texture), Ok(()), "{mask:#x}");
     }
@@ -202,14 +205,18 @@ fn a_worn_object_you_cannot_modify_refuses_every_texture() {
 #[test]
 fn only_a_worn_selection_narrows_the_picker() {
     let (mut w, sel) = world();
-    assert_eq!(picker_permissions(&w, &sel, PickTarget::Diffuse), 0);
-    wear(&mut w, sel[0].idx);
     let both = rules::COPY | rules::TRANSFER;
+    assert_eq!(picker_permissions(&w, &sel, PickTarget::Diffuse), 0);
+    // the map and sculpt slots list copy and transfer textures anywhere
+    for target in [PickTarget::PbrMap(0), PickTarget::Sculpt] {
+        assert_eq!(picker_permissions(&w, &sel, target), both, "{target:?}");
+    }
+    wear(&mut w, sel[0].idx);
     for target in [PickTarget::Diffuse, PickTarget::Normal, PickTarget::Specular] {
         assert_eq!(picker_permissions(&w, &sel, target), both, "{target:?}");
     }
     assert_eq!(picker_permissions(&w, &sel, PickTarget::PbrMaterial), 0);
-    assert_eq!(picker_permissions(&w, &sel, PickTarget::PbrMap(0)), 0);
+    assert_eq!(picker_permissions(&w, &sel, PickTarget::PbrMap(0)), both);
 }
 
 #[test]

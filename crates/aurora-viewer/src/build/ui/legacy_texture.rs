@@ -370,7 +370,7 @@ pub(super) fn pbr_surface(
             tool,
             world,
             env,
-            id,
+            id.filter(|_| editable),
             false,
             caption,
             PickTarget::PbrMap(channel),

@@ -55,7 +55,8 @@ fn image(target: PickTarget) -> bool {
 /// then the immediate permission filter, then each root of the selection.
 /// A worn root takes an image on `worn_image_rights` and its own modify right
 /// (see there); any other case is the Legacy Viewer's drag callback. The PBR
-/// maps have neither.
+/// maps and the sculpt map take only a copy and transfer item, the filter of
+/// their controls (`texture_copy::map_slot_takes`).
 pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &InvItem) -> Result<(), Refusal> {
     let cargo = match target {
         PickTarget::PbrMaterial => item.asset_type == AT_MATERIAL,
@@ -64,10 +65,11 @@ pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &Inv
     if !cargo {
         return Err(Refusal::Cargo);
     }
+    if matches!(target, PickTarget::PbrMap(_) | PickTarget::Sculpt) && !crate::build::texture_copy::map_slot_takes(item, world.agent_id) {
+        return Err(Refusal::Restricted);
+    }
     if matches!(target, PickTarget::PbrMap(_)) {
-        // copy and transfer only (texture_copy::map_slot_takes)
-        let takes = crate::build::texture_copy::map_slot_takes(item, world.agent_id);
-        return if takes { Ok(()) } else { Err(Refusal::Restricted) };
+        return Ok(());
     }
     let roots: BTreeSet<(usize, bool)> = sel.iter().filter_map(|s| contents_drop::linkset(world, s.idx)).collect();
     let worn_image = |worn: bool| worn && image(target);
@@ -88,8 +90,13 @@ pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &Inv
 }
 
 /// The rights an item needs in the picker of `target` for the faces `sel`:
-/// LLTextureCtrl's immediate filter, which hides what a worn object refuses.
+/// LLTextureCtrl's immediate filter, which hides what a worn object refuses,
+/// and always copy and transfer for the PBR maps and the sculpt map
+/// (FSPanelFace::postBuild, LLPanelObject::postBuild).
 pub(in crate::build::ui) fn picker_permissions(world: &World, sel: &[Sel], target: PickTarget) -> u32 {
+    if matches!(target, PickTarget::PbrMap(_) | PickTarget::Sculpt) {
+        return rules::COPY | rules::TRANSFER;
+    }
     let worn = sel
         .iter()
         .filter_map(|s| contents_drop::linkset(world, s.idx))
@@ -130,7 +137,7 @@ pub(in crate::build::ui) fn slot(
         // The direct drop is the latest choice; a previous picker cannot
         // subsequently restore the value captured before it.
         tool.dismiss_texture_picker();
-        tool.ui.slot_drop = Some((target, resource.asset));
+        tool.ui.slot_drop = Some((target, resource.asset, resource.item.id));
     }
 }
 

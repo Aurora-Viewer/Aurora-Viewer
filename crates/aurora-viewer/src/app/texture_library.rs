@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::build::contents_drop;
+use crate::build::texture_copy::{requires_contents, selection_copy_denied};
 use crate::ui::texture_library::{self as library, catalogue};
 use crate::world::inventory::actions as rules;
 use aurora_net::build::BuildCmd;
@@ -57,15 +58,6 @@ fn permissions(item: &aurora_net::inventory::InvItem, agent: Uuid) -> u32 {
         item.everyone_mask
     }
 }
-fn restricted(item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
-    let mask = permissions(item, agent);
-    mask & rules::COPY == 0 || mask & rules::TRANSFER == 0 || item.asset_type == 57 && mask & rules::MODIFY == 0
-}
-fn requires_contents(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
-    !rules::library(inv, item.id) && restricted(item, agent)
-}
-// The selection is counted by prim, not by face: a no-copy resource may
-// cover several faces of one object but cannot be moved into two objects.
 /// Ctrl+Shift over what we wear: every face of its linkset. Ctrl alone would
 /// go into a worn object's contents, which it refuses, so nothing is lost.
 /// A **wanted difference** from dropTextureAllFaces, which stops at the prim
@@ -98,6 +90,18 @@ fn worn_drop_keys(ui: &mut egui::Ui, p: &crate::theme::Palette, shift: bool, lin
         ],
     );
 }
+/// The faces of `prim` a drop on `face` covers: all of them with Shift.
+fn drop_faces(world: &World, prim: usize, face: u8, all: bool) -> Vec<u8> {
+    if !all {
+        return vec![face];
+    }
+    let count = world
+        .objects
+        .get(prim)
+        .and_then(|o| o.te.as_ref())
+        .map_or(0, |te| te.faces.len().min(256));
+    (0..count).map(|i| i as u8).collect()
+}
 /// The prims a drop on `idx` covers: its linkset with `linkset_drop`.
 fn drop_prims(world: &World, idx: usize, linkset: bool) -> Vec<usize> {
     let root = contents_drop::linkset(world, idx).filter(|_| linkset);
@@ -108,9 +112,6 @@ fn drop_prims(world: &World, idx: usize, linkset: bool) -> Vec<usize> {
 /// the library or of the object's contents costs nothing.
 fn no_copy_leaves(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, agent: Uuid, retained: bool) -> bool {
     !retained && !rules::library(inv, item.id) && permissions(item, agent) & rules::COPY == 0
-}
-fn selection_copy_denied(item: &aurora_net::inventory::InvItem, agent: Uuid, objects: usize) -> bool {
-    objects > 1 && permissions(item, agent) & rules::COPY == 0
 }
 
 impl App {
@@ -893,7 +894,19 @@ impl App {
             });
         }
         let worn_refused = !ctrl && allowed && target.is_some_and(|(idx, _)| contents_drop::worn_image_refused(&self.world, idx, item));
-        if worn_refused {
+        // dad3dApplyToObject: a texture without copy and transfer has nowhere
+        // to go when every face it covers carries a material
+        let pbr_refused = !ctrl
+            && allowed
+            && item.asset_type != 57
+            && target.is_some_and(|(idx, face)| {
+                let override_ok = crate::build::texture_copy::map_slot_takes(item, self.world.agent_id);
+                drop_prims(&self.world, idx, linkset).into_iter().all(|prim| {
+                    let faces = drop_faces(&self.world, prim, face, drag.shift);
+                    !crate::build::BuildTool::surface_takes_texture(&self.world, prim, &faces, override_ok, self.alt)
+                })
+            });
+        if worn_refused || pbr_refused {
             reason = Some(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
         } else if allowed
             && let Some((idx, _)) = target
@@ -1157,6 +1170,10 @@ impl App {
         if !contents && contents_drop::worn_image_refused(&self.world, idx, item) {
             return false;
         }
+        let override_ok = item.asset_type == 57 || crate::build::texture_copy::map_slot_takes(item, self.world.agent_id);
+        if !contents && !crate::build::BuildTool::surface_takes_texture(&self.world, idx, faces, override_ok, remove_pbr) {
+            return false;
+        }
         let retained = self.contents_retain(object_id, item);
         if contents || requires_contents(&self.world.inventory, item, self.world.agent_id) && !retained {
             if super::inventory_drag::target_allowed(&self.world, idx, item, true).is_err() {
@@ -1182,8 +1199,16 @@ impl App {
                 property_lines: &mut self.settings.world_overlays.property_lines,
                 demo: self.demo,
             };
-            self.build
-                .apply_inventory_surface(&mut self.world, &mut env, idx, faces, asset, item.asset_type == 57, remove_pbr);
+            self.build.apply_inventory_surface_with(
+                &mut self.world,
+                &mut env,
+                idx,
+                faces,
+                asset,
+                item.asset_type == 57,
+                remove_pbr,
+                override_ok,
+            );
         }
         true
     }
@@ -1202,6 +1227,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::texture_copy::restricted;
     use aurora_net::inventory::InvItem;
     #[test]
     fn only_a_no_copy_item_the_object_lacks_asks_before_it_moves() {

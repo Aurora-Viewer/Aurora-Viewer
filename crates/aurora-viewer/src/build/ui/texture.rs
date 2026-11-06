@@ -148,11 +148,24 @@ impl BuildTool {
             .collect()
     }
 
+    /// Whether a texture dropped on `faces` of `idx` lands on one of them:
+    /// a PBR face takes it into its override only when `override_ok` (copy
+    /// and transfer, dropTextureOneFace), unless Alt removes the material or
+    /// the Blinn-Phong preview paints the diffuse. One object's faces, on a
+    /// drop or while one is held over it.
+    pub fn surface_takes_texture(world: &World, idx: usize, faces: &[u8], override_ok: bool, remove_pbr: bool) -> bool {
+        override_ok
+            || remove_pbr
+            || world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview)
+            || faces.iter().any(|face| BuildTool::gltf_asset(world, idx, *face).is_none())
+    }
+
     /// Apply inventory cargo to explicitly picked faces, leaving selection and
     /// other texture-entry properties unchanged. Follow the displayed shading
     /// mode: a Blinn-Phong preview edits its diffuse while retaining PBR.
     /// Otherwise a texture on PBR replaces its base map; Alt removes PBR,
     /// as dropTextureOneFace does.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_inventory_surface(
         &mut self,
         world: &mut World,
@@ -162,6 +175,24 @@ impl BuildTool {
         asset: Uuid,
         material: bool,
         remove_pbr: bool,
+    ) {
+        self.apply_inventory_surface_with(world, env, idx, faces, asset, material, remove_pbr, true);
+    }
+
+    /// `apply_inventory_surface`, with `override_ok` false for a texture the
+    /// agent may not both copy and transfer: its PBR faces are left as they
+    /// are (`surface_takes_texture`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_inventory_surface_with(
+        &mut self,
+        world: &mut World,
+        env: &mut Env,
+        idx: usize,
+        faces: &[u8],
+        asset: Uuid,
+        material: bool,
+        remove_pbr: bool,
+        override_ok: bool,
     ) {
         if !self.can_modify(world, idx) {
             return;
@@ -198,7 +229,7 @@ impl BuildTool {
                     legacy.push(face);
                 } else if blinn_phong {
                     legacy.push(face);
-                } else {
+                } else if override_ok {
                     let mut over = BuildTool::gltf_override(world, idx, face.face);
                     over.textures[0] = asset;
                     updates.push(GltfUpdate {
@@ -703,7 +734,10 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     {
         appearance.apply_pbr(&mut mat);
     }
-    let editable = has_all;
+    // LLMaterialEditor::canModifyObjectsMaterial; not editable, the maps show no id
+    let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
+    let editable = has_all && tool.material_edit_allowed(world, &faces);
+    let shown = |id: Option<Uuid>| id.filter(|_| editable);
     tool.ui.material_previews.poll();
     let model = asset.filter(|_| loaded && !asset_mixed).and_then(|asset| {
         tool.ui.material_previews.material_model(
@@ -739,7 +773,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                         tool,
                         world,
                         env,
-                        id,
+                        shown(id),
                         false,
                         caption,
                         PickTarget::PbrMap(channel),
@@ -1499,7 +1533,7 @@ fn paste_faces(tool: &mut BuildTool, world: &mut World, env: &Env, sel: &[Sel]) 
             !a.full
                 && a.item
                     .and_then(|id| inv.items.get(&id))
-                    .is_some_and(|it| texture_copy::needs_contents(inv, it, agent))
+                    .is_some_and(|it| texture_copy::requires_contents(inv, it, agent))
         };
         let mut waiting = false;
         for (i, x) in sel.iter().enumerate() {

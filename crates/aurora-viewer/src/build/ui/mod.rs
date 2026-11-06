@@ -199,8 +199,9 @@ pub struct FloaterState {
     pub confirm: Option<Confirm>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
-    /// A texture or material dropped on a Texture tab slot, applied next frame.
-    pub slot_drop: Option<(PickTarget, Uuid)>,
+    /// A texture or material dropped on a Texture tab slot, applied next
+    /// frame: the slot, the asset and the inventory item it came from.
+    pub slot_drop: Option<(PickTarget, Uuid, Uuid)>,
     texture_edit: Option<texture_preview::Session>,
     /// ObjectMedia data fetched for the selection, and the objects asked.
     pub media_data: HashMap<Uuid, ObjectMediaData>,
@@ -440,9 +441,12 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
-    if let Some((target, asset)) = tool.ui.slot_drop.take() {
+    if let Some((target, asset, item)) = tool.ui.slot_drop.take() {
         let sel = texture::selected(tool, world);
-        tool.apply_texture(world, env, target, asset, &sel);
+        match tool.admit_item(world, item, &texture_preview::admit_targets(target, &sel)) {
+            Ok(()) => tool.apply_texture(world, env, target, asset, &sel),
+            Err(text) => world.system_notice(text, crate::world::notice_topics::Topic::Items),
+        }
     }
     toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {

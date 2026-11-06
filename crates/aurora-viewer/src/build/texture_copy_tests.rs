@@ -145,8 +145,8 @@ fn only_a_limited_item_goes_into_the_target_contents() {
     let full = give(&mut w, 1, ASSET, FULL);
     let no_transfer = give(&mut w, 2, OTHER, COPY_ONLY);
     let inv = &w.inventory;
-    assert!(!needs_contents(inv, &inv.items[&full], agent));
-    assert!(needs_contents(inv, &inv.items[&no_transfer], agent));
+    assert!(!requires_contents(inv, &inv.items[&full], agent));
+    assert!(requires_contents(inv, &inv.items[&no_transfer], agent));
     let mut tool = BuildTool::default();
     assert_eq!(tool.retain_for_paste(&w, idx, full), Retain::Done);
     assert!(tool.out.is_empty(), "nothing to send for a free item");
@@ -241,4 +241,163 @@ fn a_pbr_map_slot_takes_copy_and_transfer() {
     assert!(map_slot_takes(&item(rules::COPY | rules::TRANSFER), agent));
     assert!(!map_slot_takes(&item(COPY_ONLY), agent));
     assert!(!map_slot_takes(&item(rules::TRANSFER | rules::MODIFY), agent));
+}
+
+/// A second object of the agent next to `world()`'s, for the selections of
+/// several objects.
+fn second_object(w: &mut World) -> usize {
+    let idx = w.objects.index_of_uuid(&crate::demo::action_id(971)).expect("demo action object");
+    let agent = w.agent_id;
+    let o = w.objects.get_mut(idx).expect("demo action object");
+    o.parent_id = 0;
+    o.owner_id = agent;
+    o.update_flags = OBJECT_MODIFY | OBJECT_YOU_OWNER;
+    idx
+}
+
+fn list(tool: &mut BuildTool, w: &World, idx: usize) {
+    let object = w.objects.get(idx).expect("object").full_id;
+    tool.contents_ready(w, idx);
+    tool.on_task_inventory(w, object, Some(1), Vec::new());
+}
+
+fn sent_into_contents(tool: &BuildTool, item: Uuid) -> usize {
+    tool.out
+        .iter()
+        .filter(|c| matches!(c, aurora_net::NetCommand::Build(BuildCmd::UpdateTaskInventory { item: i, .. }) if i.item_id == item))
+        .count()
+}
+
+#[test]
+fn a_no_copy_item_goes_on_one_object_only() {
+    let (mut w, a) = world();
+    let b = second_object(&mut w);
+    let no_copy = give(&mut w, 1, ASSET, FULL & !rules::COPY);
+    let mut tool = BuildTool::default();
+    assert_eq!(
+        tool.admit_item(&mut w, no_copy, &[a, b]),
+        Err(aurora_i18n::tr!("texture-library-no-copy-multiple"))
+    );
+    // two faces of one object count once
+    list(&mut tool, &w, a);
+    assert_eq!(tool.admit_item(&mut w, no_copy, &[a, a]), Ok(()));
+    assert_eq!(sent_into_contents(&tool, no_copy), 1, "moved into the object");
+    assert!(!w.inventory.items.contains_key(&no_copy), "a no-copy item leaves the inventory");
+}
+
+#[test]
+fn a_no_transfer_item_is_copied_into_each_object() {
+    let (mut w, a) = world();
+    let b = second_object(&mut w);
+    let no_transfer = give(&mut w, 1, ASSET, COPY_ONLY);
+    let mut tool = BuildTool::default();
+    // the contents are asked for first
+    assert_eq!(
+        tool.admit_item(&mut w, no_transfer, &[a, b]),
+        Err(aurora_i18n::tr!("build-ui-texture-paste-wait-contents"))
+    );
+    assert_eq!(sent_into_contents(&tool, no_transfer), 0);
+    list(&mut tool, &w, a);
+    list(&mut tool, &w, b);
+    assert_eq!(tool.admit_item(&mut w, no_transfer, &[a, b]), Ok(()));
+    assert_eq!(sent_into_contents(&tool, no_transfer), 2);
+    assert!(w.inventory.items.contains_key(&no_transfer), "a copy stays in the inventory");
+    // an object that takes no inventory refuses the id
+    let other = give(&mut w, 2, OTHER, COPY_ONLY);
+    w.objects.get_mut(b).expect("object").update_flags = OBJECT_YOU_OWNER;
+    list(&mut tool, &w, a);
+    list(&mut tool, &w, b);
+    assert_eq!(
+        tool.admit_item(&mut w, other, &[a, b]),
+        Err(aurora_i18n::tr!("texture-library-locked"))
+    );
+}
+
+#[test]
+fn a_full_item_or_a_typed_id_needs_nothing_more() {
+    let (mut w, a) = world();
+    let b = second_object(&mut w);
+    let full = give(&mut w, 1, ASSET, FULL);
+    let mut tool = BuildTool::default();
+    assert_eq!(tool.admit_item(&mut w, full, &[a, b]), Ok(()));
+    assert_eq!(tool.admit_item(&mut w, Uuid::nil(), &[a, b]), Ok(()));
+    assert!(tool.out.is_empty());
+}
+
+#[test]
+fn a_worn_object_takes_an_image_with_copy_and_transfer() {
+    let (mut w, a) = world();
+    let avatar = w.objects.index_of_uuid(&w.agent_id).expect("the agent's avatar");
+    let avatar_id = w.objects.get(avatar).expect("the agent's avatar").key.local_id;
+    let o = w.objects.get_mut(a).expect("object");
+    o.parent_id = avatar_id;
+    o.state = 1;
+    let no_transfer = give(&mut w, 1, ASSET, COPY_ONLY);
+    let full = give(&mut w, 2, OTHER, FULL);
+    let mut tool = BuildTool::default();
+    assert_eq!(
+        tool.admit_item(&mut w, no_transfer, &[a]),
+        Err(aurora_i18n::tr!("build-ui-texture-drop-restricted"))
+    );
+    assert_eq!(tool.admit_item(&mut w, full, &[a]), Ok(()));
+}
+
+#[test]
+fn pbr_controls_edit_with_modify_on_the_object_and_its_material_item() {
+    let (mut w, idx) = world();
+    let mut tool = BuildTool::default();
+    assert!(tool.material_edit_allowed(&w, &[(idx, 0)]), "no material on the face");
+    w.objects.get_mut(idx).expect("object").extra.render_materials = vec![(0, ASSET)];
+    assert!(!tool.material_edit_allowed(&w, &[(idx, 0)]), "contents not listed yet");
+    list(&mut tool, &w, idx);
+    assert!(tool.material_edit_allowed(&w, &[(idx, 0)]), "no item of that material");
+    let object = w.objects.get(idx).expect("object").full_id;
+    let mut held = InvItem {
+        id: Uuid::from_u128(5),
+        asset_id: ASSET,
+        asset_type: AT_MATERIAL,
+        owner_mask: rules::COPY | rules::TRANSFER,
+        ..Default::default()
+    };
+    tool.on_task_inventory(&w, object, Some(2), vec![task_inventory::from_inventory(object, &held)]);
+    assert!(!tool.material_edit_allowed(&w, &[(idx, 0)]), "its item cannot be modified");
+    held.owner_mask = FULL;
+    tool.on_task_inventory(&w, object, Some(3), vec![task_inventory::from_inventory(object, &held)]);
+    assert!(tool.material_edit_allowed(&w, &[(idx, 0)]));
+    w.objects.get_mut(idx).expect("object").update_flags = OBJECT_YOU_OWNER;
+    assert!(!tool.material_edit_allowed(&w, &[(idx, 0)]), "the object cannot be modified");
+}
+
+#[test]
+fn a_restricted_texture_leaves_a_pbr_face_alone() {
+    let (mut w, idx) = world();
+    assert!(BuildTool::surface_takes_texture(&w, idx, &[0], false, false), "a plain face");
+    w.objects.get_mut(idx).expect("object").extra.render_materials = vec![(0, ASSET)];
+    assert!(!BuildTool::surface_takes_texture(&w, idx, &[0], false, false));
+    assert!(BuildTool::surface_takes_texture(&w, idx, &[0], true, false), "copy and transfer");
+    assert!(
+        BuildTool::surface_takes_texture(&w, idx, &[0], false, true),
+        "the material is removed"
+    );
+    assert!(BuildTool::surface_takes_texture(&w, idx, &[0, 1], false, false), "one plain face");
+}
+
+#[test]
+fn a_no_copy_item_is_refused_on_several_objects() {
+    let agent = Uuid::from_u128(1);
+    let item = |owner_mask| InvItem {
+        owner: agent,
+        owner_mask,
+        ..Default::default()
+    };
+    assert!(selection_copy_denied(&item(FULL & !rules::COPY), agent, 2));
+    assert!(!selection_copy_denied(&item(FULL & !rules::COPY), agent, 1));
+    assert!(!selection_copy_denied(&item(COPY_ONLY), agent, 2));
+    assert!(restricted(&item(COPY_ONLY), agent));
+    assert!(!restricted(&item(FULL), agent));
+    let material = InvItem {
+        asset_type: AT_MATERIAL,
+        ..item(rules::COPY | rules::TRANSFER)
+    };
+    assert!(restricted(&material, agent), "a material needs modify too");
 }
