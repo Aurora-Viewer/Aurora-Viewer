@@ -1923,7 +1923,7 @@ mod tests {
         .unwrap();
         let body = build_at(&record, &dir, None).body;
         assert!(
-            body.contains("| Overlay hooks at GPU loss | collected: Discord (in-game overlay or Go Live capture), DiscordHook64.dll |"),
+            body.contains("| Overlay hooks at GPU loss | collected: Discord legacy game hook, DiscordHook64.dll |"),
             "{body}"
         );
         assert!(!body.contains("Private") && !body.contains("evil"), "{body}");
