@@ -120,7 +120,7 @@ function New-AuroraRelease($Repo) {
         $items += @{ Key = [string]($items.Count + 1); Label = $t; Hint = $hint; Tag = $t }
     }
     $items += @{ Key = 'n'; Label = 'Other number…'; Hint = 'for example v0.3.0-beta.1 (pre-release)'; Tag = $null }
-    $pick = Show-Menu 'Step 1/3 · Which number?' $items {
+    $pick = Show-Menu 'Step 1/4 · Which number?' $items {
         Show-Logo 'New release'
         Write-Color "  Last release: $(if ($ctx.Last) { $ctx.Last.Tag } else { 'none' })" muted
         Write-Color "  PRs merged since: $($ctx.Prs.Count) ($summary)" muted
@@ -147,6 +147,7 @@ function New-AuroraRelease($Repo) {
     if (-not $policy) { return }
     Show-Logo 'Confirmation of the release'
     Write-Color "  $tag, on the latest main$(if ($pre) { ', as a pre-release' }): the Release workflow builds the viewer and publishes the Windows zip with the notes, then adds the Linux archive." ink
+    Write-Color "  Update: $(if ($policy.minimum_supported_version) { 'required for versions before ' + $policy.minimum_supported_version + ' (login blocked until they update)' } else { 'optional for every version' })." ink
     Write-Color "  Cache: $(if ($policy.cache_invalidation_before) { 'cleared for versions before ' + $policy.cache_invalidation_before } else { 'kept' })." ink
     Write-Color "  Settings: $(if ($policy.settings_reset_before) { 'reset for versions before ' + $policy.settings_reset_before } else { 'kept and migrated automatically if needed' })." ink
     if (-not (Read-YesNo "Create the release ${tag}?")) { return }
