@@ -89,7 +89,10 @@ impl SwitchFollow {
             && n.changed_ms > self.changed.unwrap_or(0)
         {
             if *on != n.on {
-                log::info!("busy pause: the switch follows another viewer ({})", if n.on { "on" } else { "off" });
+                log::info!(
+                    "busy pause: the switch follows another viewer ({})",
+                    if n.on { "on" } else { "off" }
+                );
             }
             *on = n.on;
             self.changed = Some(n.changed_ms);
@@ -296,9 +299,7 @@ fn unix_secs() -> u64 {
 
 /// Unix milliseconds, the time of a [`Switch`] change.
 pub fn unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
 /// `"<unix seconds> <bytes> <1 if in front> <card, hexadecimal> <1 if the
@@ -515,10 +516,7 @@ mod tests {
         };
         let t0 = unix_secs();
         pass(&root, &file(1), own(2000, true), None, t0);
-        let off = Switch {
-            on: false,
-            changed_ms: 5,
-        };
+        let off = Switch { on: false, changed_ms: 5 };
         let (seen_by_b, newest_for_b) = pass(&root, &file(2), own(3000, false), Some(off), t0);
         // a published before b existed: it sees b on its next pass
         let (seen_by_a, newest_for_a) = pass(&root, &file(1), own(2000, true), None, t0 + 2);
@@ -556,10 +554,7 @@ mod tests {
         // turned off in a (in front)
         a_on = false;
         let from_a = a.frame(&mut a_on, None, 20);
-        let off = Switch {
-            on: false,
-            changed_ms: 20,
-        };
+        let off = Switch { on: false, changed_ms: 20 };
         assert_eq!(from_a, Some(off));
         // b (behind) follows, and publishes it in turn
         assert_eq!(b.frame(&mut b_on, from_a, 22), from_a);
