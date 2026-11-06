@@ -13227,6 +13227,10 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
             }
             BarAction::EditParticles => self.open_particle_editor(),
+            BarAction::ToggleNameTags => {
+                self.settings.show_name_tags = !self.settings.show_name_tags;
+                self.settings.save();
+            }
             BarAction::ShowHuds(visible) => self.set_show_huds(visible),
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
             BarAction::None => {}
@@ -14906,7 +14910,11 @@ impl App {
                         projector,
                         self.camera.position,
                         !self.camera.mouselook(),
-                        !self.interface.immersive || self.settings.immersive_name_tags,
+                        if self.interface.immersive {
+                            self.settings.immersive_name_tags
+                        } else {
+                            self.settings.show_name_tags
+                        },
                         &self.settings,
                         &mut self.name_tag_visibility,
                         &voice_levels,
@@ -15010,6 +15018,7 @@ impl App {
                     self.settings.chat_thumbnails_flash,
                     self.settings.reduce_motion,
                 );
+                self.toolbar_ui.show_name_tags = self.settings.show_name_tags;
                 let status = ui::bars::StatusInfo {
                     location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
@@ -15061,6 +15070,7 @@ impl App {
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
                     friends_only: self.world.friends_only(),
+                    show_name_tags: self.settings.show_name_tags,
                     fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,

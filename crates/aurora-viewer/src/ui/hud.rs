@@ -397,7 +397,7 @@ pub fn draw(
             continue;
         }
         if o.is_avatar() {
-            // immersive mode without name tags: no plate, no bubble under it
+            // Hiding avatar tags also hides their attached chat bubbles.
             if !avatar_tags {
                 continue;
             }

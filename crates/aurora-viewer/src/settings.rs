@@ -981,6 +981,8 @@ pub struct Settings {
     /// Firestorm's ConfirmHideUI ("Confirm before hiding UI"): with
     /// Firestorm's bars, hiding the interface asks first.
     pub confirm_hide_interface: bool,
+    /// Normal-mode visibility, applied before the individual avatar tag preferences.
+    pub show_name_tags: bool,
     /// The avatars' name tags in immersive mode (#859): off by default, its
     /// button beside the one that leaves it.
     pub immersive_name_tags: bool,
@@ -1961,6 +1963,7 @@ impl Default for Settings {
             favorites_row_folded: false,
             system_island: SystemIsland::default(),
             confirm_hide_interface: true,
+            show_name_tags: true,
             immersive_name_tags: false,
             immersive_huds: true,
             show_net_stats: false,
