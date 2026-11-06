@@ -33,11 +33,22 @@ const SCREEN_EASE: f32 = 0.1;
 const FADE_BAND: f32 = 2.0;
 /// Camera distance from which a marker lands on its plate: where a plate
 /// becomes complete (`ui::nameplate::FULL_DISTANCE`). It leaves it a little
-/// farther, so that a resident at that distance does not make it hesitate.
+/// farther, so that a resident at that distance does not make it hesitate,
+/// but before the plate shrinks: it leaves from the badge it landed on.
 pub const MERGE_DISTANCE: f32 = crate::ui::nameplate::FULL_DISTANCE;
-const MERGE_MARGIN: f32 = crate::ui::nameplate::LEVEL_MARGIN;
+const MERGE_MARGIN: f32 = crate::ui::nameplate::LEVEL_MARGIN - 0.5;
 /// Seconds a marker takes to land on its plate.
 const MERGE_EASE: f32 = 0.3;
+/// How far through its landing a marker starts to go: the rest of the way
+/// it hands over to the plate, which is the only thing left once landed.
+const MERGE_HANDOVER: f32 = 0.7;
+
+/// What a marker keeps of its opacity at `merge` (eased, 0..1): it hands
+/// over to the plate as it lands, so nothing of it clips through the world
+/// where the plate itself would be hidden.
+pub fn landing_alpha(merge: f32) -> f32 {
+    ((1.0 - merge) / (1.0 - MERGE_HANDOVER)).clamp(0.0, 1.0)
+}
 
 /// A resident seen this frame, in render space.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -99,6 +110,10 @@ pub struct Entry {
     pub direction: Option<Vec2>,
     /// 0 above the plate, 1 landed on it, linear.
     merge: f32,
+    /// Where it lands, from the bottom centre of the plate, and how wide,
+    /// set by the painter while landing. Kept as it leaves: the plate then
+    /// changes size and offers another place, on the far side.
+    pub badge: Option<(Vec2, f32)>,
     altitude: Option<f32>,
     exact: bool,
     /// What remains between the coarse position and the exact one.
@@ -107,16 +122,22 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// The marker moves toward its plate when one offers it a place and
-    /// the camera is near enough; returns how far it is, eased.
-    pub fn ease_merge(&mut self, slot: bool, camera_distance: f32, dt: f32) -> f32 {
+    /// Whether a plate offers the marker a place and the camera is near
+    /// enough for it to go there.
+    pub fn landing(&self, slot: bool, camera_distance: f32) -> bool {
         let reach = if self.merge > 0.0 {
             MERGE_DISTANCE + MERGE_MARGIN
         } else {
             MERGE_DISTANCE
         };
+        slot && camera_distance <= reach
+    }
+
+    /// The marker moves toward its plate while `landing`; returns how far
+    /// it is, eased.
+    pub fn ease_merge(&mut self, slot: bool, camera_distance: f32, dt: f32) -> f32 {
         let step = dt / MERGE_EASE;
-        let landing = slot && camera_distance <= reach;
+        let landing = self.landing(slot, camera_distance);
         self.merge = (self.merge + if landing { step } else { -step }).clamp(0.0, 1.0);
         self.merge * self.merge * (3.0 - 2.0 * self.merge)
     }
@@ -124,6 +145,7 @@ impl Entry {
     /// No plate left to land on: back above the avatar at once.
     pub fn drop_merge(&mut self) {
         self.merge = 0.0;
+        self.badge = None;
     }
 
     /// `lift` eased toward `target` over `dt` seconds.
@@ -167,6 +189,7 @@ impl Tracker {
                     lift: 0.0,
                     direction: None,
                     merge: 0.0,
+                    badge: None,
                     altitude: None,
                     exact: s.exact,
                     blend: Vec3::ZERO,
@@ -369,6 +392,14 @@ mod tests {
         let now = run(&mut t, 1.0, 1.0, &[seen(p, true, Some(true))]);
         run(&mut t, now, GRACE * 2.0, &[seen(p, true, None)]);
         assert_eq!(t.iter_mut().count(), 1);
+    }
+
+    #[test]
+    fn a_landed_marker_leaves_only_the_plate() {
+        assert_eq!(landing_alpha(0.0), 1.0);
+        assert_eq!(landing_alpha(MERGE_HANDOVER), 1.0);
+        assert!(landing_alpha(0.85) > 0.0 && landing_alpha(0.85) < 1.0);
+        assert_eq!(landing_alpha(1.0), 0.0);
     }
 
     #[test]

@@ -1,9 +1,8 @@
 //! Markers over contact-set members (`world/contact_markers.rs` says who
 //! and where): a glass disc or diamond with a border and a symbol in the
 //! set's colour, seen through everything in the world. Near a resident it
-//! lands on their name plate and becomes a badge, and stays painted there: a
-//! plate behind a wall is hidden, the badge of the marker is not. Off screen
-//! or behind the camera it stops at the edge of the room the bars leave and
+//! lands on their name plate and goes, leaving the plate alone: nothing
+//! shows through what stands in front of a plate. Off screen or behind the camera it stops at the edge of the room the bars leave and
 //! gains a chevron toward the resident, like the destination beacon
 //! (`ui/minimap.rs`).
 
@@ -12,7 +11,7 @@ use crate::scene::Scene;
 use crate::settings::MarkerAnchor;
 use crate::theme::Palette;
 use crate::world::World;
-use crate::world::contact_markers::{Entry, Sighting, Tracker, ease_direction, in_scope, proximity_alpha};
+use crate::world::contact_markers::{Entry, Sighting, Tracker, ease_direction, in_scope, landing_alpha, proximity_alpha};
 use crate::world::contact_sets::appearance::ICONS;
 use crate::world::contact_sets::{Marker, MarkerShape};
 use egui::{Color32, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
@@ -179,6 +178,7 @@ pub fn draw(
                 distance,
                 dt,
             )?;
+            let alpha = alpha * landing_alpha(placed.merge);
             (alpha > 0.0).then_some((distance, placed, entry.marker, alpha))
         })
         .collect();
@@ -280,8 +280,13 @@ fn place(
         if inner.contains(at) {
             entry.direction = Some(glam::Vec2::new(way.x, way.y));
             let slot = tag.and_then(|tag| tag.marker_slot);
+            if let (true, Some(tag), Some(slot)) = (entry.landing(slot.is_some(), distance), tag, slot) {
+                let offset = slot.center() - tag.rect.center_bottom();
+                entry.badge = Some((glam::Vec2::new(offset.x, offset.y), slot.width()));
+            }
             let merge = entry.ease_merge(slot.is_some(), distance, dt);
-            let Some(slot) = slot else {
+            let landed = tag.zip(entry.badge).filter(|_| merge > 0.0);
+            let Some((tag, (offset, width))) = landed else {
                 entry.drop_merge();
                 return Some(Placed {
                     at,
@@ -290,9 +295,10 @@ fn place(
                     edge: None,
                 });
             };
+            let badge = tag.rect.center_bottom() + vec2(offset.x, offset.y);
             return Some(Placed {
-                at: at + (slot.center() - at) * merge,
-                radius: full + (slot.width() * 0.5 - full) * merge,
+                at: at + (badge - at) * merge,
+                radius: full + (width * 0.5 - full) * merge,
                 merge,
                 edge: None,
             });

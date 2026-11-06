@@ -9181,7 +9181,7 @@ What the inventory must show with these scenarios:
   camera (pinned, with its chevron), one far to the side, and one of unknown
   altitude (at our own height). With `AURORA_DEMO_TAGS=voice`, Nova, Orion
   and Vega join the sets: the marker sits above their plate, shows through
-  the wall, and under 15 m from the camera lands on the plate as a badge.
+  the wall, and under 15 m from the camera lands on the plate and goes.
   `parcel`: members only on our parcel (the demo's region is cut into four);
   `fade`: markers gone within 12 m of our avatar;
   `body`: markers on the avatars' chest, for this run.
