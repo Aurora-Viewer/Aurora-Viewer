@@ -268,10 +268,10 @@ pub fn top_controls(
                 toggle_master_mute(audio);
                 action = AudioAction::Changed;
             }
-            let music = toggle(
-                ui,
-                "radio",
-                &format!(
+            let tip = if !media.music_available {
+                aurora_i18n::tr!("ui-audio-no-music-on-this-parcel").to_owned()
+            } else {
+                format!(
                     "{}\n{}",
                     if media.music_playing {
                         aurora_i18n::tr!("ui-audio-stop-parcel-music")
@@ -279,10 +279,9 @@ pub fn top_controls(
                         aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
                     },
                     media.music_status.text()
-                ),
-                media.music_playing,
-                media.music_available,
-            );
+                )
+            };
+            let music = toggle(ui, "radio", &tip, media.music_playing, media.music_available);
             if music.clicked() && media.music_available {
                 action = AudioAction::ToggleMusic;
             }
