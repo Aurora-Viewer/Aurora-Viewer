@@ -1900,7 +1900,10 @@ mod tests {
         let (dir, record) = session();
         std::fs::write(dir.join("alive.txt"), "tick=1098\nscreen=world\n").unwrap();
         let body = build_at(&record, &dir, Some(10)).body;
-        assert!(body.contains("| GPU errors | collected: none in the retained session log"), "{body}");
+        assert!(
+            body.contains("| GPU errors | collected: none in the retained session log"),
+            "{body}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

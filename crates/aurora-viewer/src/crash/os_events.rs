@@ -436,11 +436,7 @@ fn windows_graphics_settings(deadline: Instant) -> Vec<String> {
             && output.status.success()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let value = stdout
-                .lines()
-                .find(|line| line.contains(name))
-                .unwrap_or("")
-                .trim();
+            let value = stdout.lines().find(|line| line.contains(name)).unwrap_or("").trim();
             if !value.is_empty() {
                 values.push(format!("{name}: {value}"));
             }
