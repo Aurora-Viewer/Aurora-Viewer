@@ -357,6 +357,8 @@ pub struct World {
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
     pub chat_log: chat_log::ChatLog,
+    /// The last import's result, for the app.
+    pub import_report: Option<chat_log::import::Report>,
     /// History of the nearby chat (asked once per login).
     nearby_history: transcripts::HistoryState,
     pub script_debug: script_debug::Messages,
@@ -735,6 +737,7 @@ impl World {
             fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
+            import_report: None,
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
             sun: None,
@@ -2303,6 +2306,15 @@ impl World {
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
                 self.chat_log.login(l.agent_id);
+                if self.chat_log.cfg.import_at_login
+                    && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
+                {
+                    self.chat_log.import_found(chat_log::import::Account {
+                        first: l.first_name.clone(),
+                        last: l.last_name.clone(),
+                        grid,
+                    });
+                }
                 // LLVOAvatar::getFullname, sent when an offline friendship
                 // offer is accepted
                 self.notifications.own_name = format!("{} {}", l.first_name, l.last_name);
