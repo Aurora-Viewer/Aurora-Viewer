@@ -311,7 +311,8 @@ impl Renderer {
             desc
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-        let xr_graphics = match crate::xr_device::Graphics::new(desc().flags) {
+        #[allow(unused_mut)] // reassigned only by the Windows AMD-layer fallback below
+        let mut xr_graphics = match crate::xr_device::Graphics::new(desc().flags) {
             Ok(graphics) => Some(graphics),
             Err(e) => {
                 log::info!("OpenXR initialization unavailable: {e}");
@@ -322,20 +323,92 @@ impl Renderer {
             }
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        #[allow(unused_mut)] // reassigned only by the Windows enumeration retries below
         let mut instance = xr_graphics
             .as_ref()
             .map_or_else(|| wgpu::Instance::new(desc()), |g| g.instance.clone());
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        #[allow(unused_mut)] // reassigned only by the Windows enumeration retries below
         let mut instance = wgpu::Instance::new(desc());
         // ---- the GPU: every adapter listed, then tried in our order
         // (adapter_choice.rs), the next one if one fails to open
         let mut adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
-        // Dozen, kept out at start (vulkan_drivers.rs), may be the only
-        // Vulkan driver of this PC: let it back in rather than draw nothing
-        if adapters.is_empty() && crate::vulkan_drivers::allow_again() {
-            log::warn!("GPU: no Vulkan adapter without Dozen (Vulkan on Direct3D 12): trying again with it");
-            instance = wgpu::Instance::new(desc());
-            adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
+        // Some AMD switchable-graphics layer versions return VK_INCOMPLETE
+        // from physical-device enumeration on hybrid laptops. Preserve the
+        // normal path, but try a fresh plain instance without the layer before
+        // allowing Dozen back in. These lines do not start with "GPU: ":
+        // the crash report takes the first such line for the card of the
+        // session and its notice (crash/summary.rs, gpu_in, gpu_notice_in).
+        #[cfg(windows)]
+        if adapters.is_empty() {
+            let keep = std::env::var("AURORA_VULKAN_LAYERS").ok();
+            let amd_allowed = crate::vulkan_layers::amd_retry_allowed(
+                keep.as_deref(),
+                std::env::var_os(crate::vulkan_layers::AMD_SWITCHABLE_DISABLE_VARIABLE).is_some(),
+            );
+            let retries = crate::vulkan_layers::retry_plan(true, amd_allowed, crate::vulkan_drivers::was_disabled());
+            for retry in retries {
+                if !adapters.is_empty() {
+                    break;
+                }
+                log::warn!(
+                    "Vulkan raw physical-device count before {retry:?}: {}",
+                    crate::vulkan_layers::physical_device_count_probe()
+                );
+                match retry {
+                    crate::vulkan_layers::EnumerationRetry::AmdSwitchableOff => {
+                        if !crate::vulkan_layers::disable_amd_switchable_for_retry(true) {
+                            continue;
+                        }
+                        log::info!(
+                            "Vulkan loader environment after AMD-layer override: {}",
+                            crate::vulkan_layers::loader_environment().join(", ")
+                        );
+                        log::warn!(
+                            "Vulkan listed no graphics card; trying again without {}",
+                            crate::vulkan_layers::AMD_SWITCHABLE_LAYER
+                        );
+                    }
+                    crate::vulkan_layers::EnumerationRetry::DozenIn => {
+                        if !crate::vulkan_drivers::allow_again() {
+                            continue;
+                        }
+                        log::info!(
+                            "Vulkan loader environment after Dozen override: {}",
+                            crate::vulkan_layers::loader_environment().join(", ")
+                        );
+                        log::warn!("GPU: no Vulkan adapter without Dozen (Vulkan on Direct3D 12): trying again with it");
+                    }
+                }
+                // Every retry uses a plain instance. OpenXR owns an instance
+                // and cannot later open an adapter from a different one.
+                drop(instance);
+                xr_graphics = None;
+                instance = wgpu::Instance::new(desc());
+                adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
+                if adapters.is_empty() {
+                    log::warn!(
+                        "Vulkan raw physical-device count after {retry:?}: {}",
+                        crate::vulkan_layers::physical_device_count_probe()
+                    );
+                } else if retry == crate::vulkan_layers::EnumerationRetry::AmdSwitchableOff {
+                    log::warn!(
+                        "Vulkan adapter enumeration recovered without AMD's switchable graphics layer; updating the AMD driver from amd.com may prevent this issue"
+                    );
+                } else {
+                    log::info!("Vulkan adapter enumeration recovered after allowing Dozen");
+                }
+            }
+        }
+        if adapters.is_empty() {
+            #[cfg(windows)]
+            log::error!(
+                "Vulkan lists no graphics card after all retries; AMD switchable layer disabled={}; raw physical-device count: {}",
+                std::env::var_os(crate::vulkan_layers::AMD_SWITCHABLE_DISABLE_VARIABLE).is_some(),
+                crate::vulkan_layers::physical_device_count_probe()
+            );
+            // The raw count above says whether the call failed or found none
+            return Err(RenderError::NoAdapter(no_adapter_listed().into()));
         }
         // SAFETY: `window` goes to the host with the backend that owns the
         // surface and drops after it (`Host`'s field order and join), or
@@ -1803,6 +1876,17 @@ fn open_device(
         adapter_specific,
         max_textures,
     })
+}
+
+/// The start error when the graphics API lists no adapter at all: Metal on
+/// macOS, Vulkan elsewhere. It does not say the call failed: an empty list
+/// may also be a success with no driver installed.
+fn no_adapter_listed() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Metal lists no graphics card"
+    } else {
+        "Vulkan lists no graphics card"
+    }
 }
 
 /// Size of the largest device-local memory heap (the GPU's own VRAM on a
