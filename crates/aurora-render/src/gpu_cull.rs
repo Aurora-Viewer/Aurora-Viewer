@@ -113,9 +113,9 @@ pub const COUNT_PRE2: usize = COUNT_PRE1 + MAIN_BINS;
 /// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
 /// casters, then its rigged casters, then their triangles.
 const COUNT_SHADOW: usize = COUNT_PRE2 + MAIN_BINS;
-#[cfg(test)]
 const SHADOW_STATS: usize = 9;
-const COUNTS: usize = 52;
+const COUNT_MAX_INDEX_COUNT: usize = COUNT_SHADOW + SHADOW_STATS;
+const COUNTS: usize = COUNT_MAX_INDEX_COUNT + 2;
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -796,6 +796,8 @@ pub struct CullCounts {
     pub shadow_triangles: [u32; 3],
     pub shadow_rigged: [u32; 3],
     pub shadow_rigged_triangles: [u32; 3],
+    /// Largest index count written to a GPU indirect draw argument.
+    pub max_indirect_index_count: u32,
 }
 
 impl CullCounts {
@@ -1297,6 +1299,7 @@ impl GpuCull {
                     c.shadow_triangles = stat(0);
                     c.shadow_rigged = stat(1);
                     c.shadow_rigged_triangles = stat(2);
+                    c.max_indirect_index_count = n[COUNT_MAX_INDEX_COUNT];
                     self.last = c;
                 }
                 buf.unmap();
@@ -1551,6 +1554,10 @@ mod tests {
         for (name, v) in pairs {
             assert_eq!(value(name), v, "{name}");
         }
+        assert!(
+            src.lines()
+                .any(|line| line.trim() == "const COUNT_MAX_INDEX_COUNT: u32 = COUNT_SHADOW + SHADOW_STATS;")
+        );
         for (name, v) in [
             ("F_SHADOWS", frame_flags::SHADOWS),
             ("F_REFLECTIONS", frame_flags::REFLECTIONS),
@@ -2284,10 +2291,13 @@ mod tests {
         let counts = counts_read.get_mapped_range(..).expect("counts mapped");
         let counts: &[u32] = bytemuck::cast_slice(&counts[..COUNTS * 4]);
         let mut expect: Vec<Vec<u32>> = vec![Vec::new(); BINS];
-        let (mut visible, mut tris) = (0, 0);
+        let (mut visible, mut tris, mut max_index_count) = (0, 0, 0);
         for i in 0..n_faces {
             let (m, v) = face_bins(&f, &faces, &objects, &spheres, i);
             visible += v as u32;
+            if m != 0 {
+                max_index_count = max_index_count.max(faces[i].index_count);
+            }
             for (b, e) in expect.iter_mut().enumerate() {
                 if (m >> b) & 1 != 0 {
                     e.push(i as u32);
@@ -2330,6 +2340,7 @@ mod tests {
         }
         assert_eq!(counts[COUNT_VISIBLE], visible);
         assert_eq!(counts[COUNT_TRIANGLES], tris);
+        assert_eq!(counts[COUNT_MAX_INDEX_COUNT], max_index_count);
         let cap = cull.cap() as usize;
         for (b, e) in expect.iter().enumerate() {
             assert_eq!(counts[b] as usize, e.len(), "bin {b} size");

@@ -1562,6 +1562,42 @@ one-line command (`scripts/setup.ps1`, then the tools):
 └─ work\                        one git worktree per agent task
 ```
 
+### GPU execution diagnostics
+
+`aurora-render/src/gpu_diagnostics/` owns optional Vulkan diagnostics.
+`vulkan.rs` negotiates only offered extensions/features before ordinary and
+OpenXR device creation, retaining required wgpu features. It owns a dedicated
+mapped marker buffer outside wgpu's resource tracker, plus dispatch handles
+whose device lifetime is retained through submission callbacks and fault work.
+The shared model bounds the ring to 64 render-view submissions × 64 words
+(16 KiB payload; metadata below 64 KiB). Stereo eyes have independent epochs
+and completion lifetimes even when their frame number is equal. Saturation
+stops new recording; completed slots alone can be reused. Tokens never wrap.
+
+Pass markers are recorded outside wgpu render/compute passes. wgpu 30 forbids
+raw HAL and ordinary commands on the same encoder, so raw-only marker buffers
+are interleaved with ordinary segments. The three pre/scene/post batches still
+finish in parallel and submit in their original order. SSR shares the
+`scene-b (SSR/water/blend)` boundary; diagnostics do not split that pass.
+Photo tiles and probe captures use the same recorder. The default (`fault`)
+enables only the driver's device-fault report, which costs nothing until a
+loss; `auto` adds AMD markers or NVIDIA checkpoints if offered (about 0.18 ms
+of render-thread time per frame on an RX 9070 XT, so opt-in until they are
+batched); `deep`, set by deep diagnostics, takes those markers or the
+transfer ones; `off` disables all optional instrumentation.
+`AURORA_GPU_BREADCRUMBS=transfer` explicitly enables the more expensive
+transfer commands and execution barriers.
+
+A long-lived worker requests driver detail once for the first loss and retains
+its device while the driver runs. The report writer never joins it. wgpu can
+invalidate a device for OOM too, so a typed Vulkan `ERROR_DEVICE_LOST` check
+precedes whole-ring mapped reads and `vkGetDeviceFaultInfoEXT`. Mapped contents
+after loss are best effort; plausible tokens show an observed boundary/stage,
+not a fault's cause. Fault arrays are bounded; vendor binaries stay disabled.
+Raw addresses and driver text stay in `gpu-device-fault-private.txt`, while
+`gpu-breadcrumbs.txt` is a numeric schema reconstructed from closed vocabulary
+in `crash/summary.rs`. Recovery never replaces the first-loss snapshot.
+
 ## The crates
 
 | Crate | Role |
@@ -2773,7 +2809,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-render/src/adapter_choice.rs` | Which GPU the renderer opens (#894): every Vulkan adapter listed with its type, memory and whether it can present, then tried in order (the one asked for by `AURORA_GPU` or Preferences › Graphics, then discrete before integrated, the most video memory first), the next one if one fails to open; the log hint when only an integrated GPU is visible. The hybrid-GPU exports `NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance` are in aurora-viewer's `main.rs` (export table: `build.rs`) |
 | `aurora-render/src/vulkan_drivers.rs` | Vulkan drivers kept out of the process: Dozen (Vulkan on Direct3D 12, Microsoft's compatibility pack), which crashed an old AMD Direct3D 12 driver inside `vkCreateInstance`, through `VK_LOADER_DRIVERS_DISABLE=*dzn*` set at the start of `main` unless the user chose the drivers; let back in by the renderer when no adapter is left without it; `AURORA_VULKAN_DRIVERS=keep` to load it |
 | `aurora-render/src/vulkan_layers.rs` | Third-party implicit Vulkan layers kept out of the process: those that crash (Overwolf's, in `vkCreateInstance`, #901) always, the other overlays' (OBS Studio's game capture, Steam overlay, RivaTuner, Epic…) unless Preferences › Graphics › Overlays allows them (`Settings::allow_overlays_at_start`, read before any thread); their manifests' disable variables set at the start of `main`; ReShade and the drivers' layers kept; `AURORA_VULKAN_LAYERS=keep` to load them all |
-| `overlay_hooks.rs` | Overlay and capture hooks other programs inject into the running viewer (Discord's `DiscordHook64.dll`, the Steam overlay, RivaTuner, OBS game capture), which the viewer cannot refuse: a background thread lists the process's modules every 10 s and writes one warning per hook that appears, with what to turn off if the image is lost, and notes it for the crash report (`overlay-hooks.txt`) |
+| `overlay_hooks.rs` | Overlay and capture hooks other programs inject into the running viewer (Discord's legacy `DiscordHook64.dll`, Steam, RivaTuner, OBS, Medal, NVIDIA Share, FPS Monitor and Bandicam; the revamped Discord overlay is not a game hook), which the viewer cannot refuse: a background thread lists the process's modules every 10 s and writes one warning per hook that appears, with what to turn off if the image is lost, and notes it for the crash report (`overlay-hooks.txt`) |
 
 `scene/sounds.rs` keeps attached HUD sounds at the audio listener, including
 linked HUD prims, following `LLAudioSourceVO::update`. They share the Sfx
@@ -3802,6 +3838,19 @@ process (`overlay_hooks.rs`) is added to `overlay-hooks.txt`, which the report
 names as "Overlay hooks" (checked again against the fixed list). A session ended with one of these files, or a
 GPU device loss in its log, leaves a `gpu-trouble` mark in the crash root, consumed by
 the next start (`crash::take_gpu_trouble`) to offer the safe graphics.
+
+`environment.rs` records bounded process facts at session start and again
+when a confirmed GPU device loss is handled. Linux module basenames and power
+profile come from `/proc/self/maps` and sysfs; Windows uses ToolHelp, GDI,
+DisplayConfig and the system power APIs. Windows module metadata includes
+numeric file versions and cached signature categories. Windows display modes
+and HDR state are queried by the collector; other platforms use the numeric
+winit display snapshot. Active VRR state is unavailable through these APIs
+and remains explicitly unknown. The private session JSON has module basenames and fixed
+classification words, never module paths or process command lines. The public
+report filters those facts again and shows third-party module names, known
+overlay process labels, display classes and refresh rates, HDR/VRR when known,
+and a fixed power-plan category.
 
 `summary.rs` builds the public text of a crash report (`public-report.md` in
 the session folder, written before the window opens): only values of a known

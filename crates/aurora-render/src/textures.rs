@@ -1192,6 +1192,7 @@ pub struct TextureTable {
     partial: bool,
     /// Page elements in the current bind group.
     bound: u32,
+    bind_group_rebuilds: u64,
     /// The bind group must be rebuilt before the next draw, whatever the
     /// throttle (new page, sampler change).
     rebuild_now: bool,
@@ -1310,6 +1311,7 @@ impl TextureTable {
             store,
             partial,
             bound,
+            bind_group_rebuilds: 0,
             rebuild_now: false,
             dirty: false,
             last_rebuild: Instant::now(),
@@ -1391,6 +1393,10 @@ impl TextureTable {
     /// Live pages and their allocated memory (free layers included).
     pub fn pages(&self) -> u32 {
         self.store.pages.iter().filter(|p| p.is_some()).count() as u32
+    }
+
+    pub fn bind_group_rebuilds(&self) -> u64 {
+        self.bind_group_rebuilds
     }
 
     pub fn page_bytes(&self) -> u64 {
@@ -1672,6 +1678,7 @@ impl TextureTable {
         if self.dirty && (force || self.rebuild_now || self.last_rebuild.elapsed() >= REBUILD_THROTTLE) {
             self.bound = bound_len(&self.store, self.partial);
             self.bind_group = Self::build(device, &self.layout, &self.sampler, &self.loc_buffer, &self.store, self.bound);
+            self.bind_group_rebuilds = self.bind_group_rebuilds.saturating_add(1);
             self.dirty = false;
             self.rebuild_now = false;
             self.last_rebuild = Instant::now();

@@ -1520,6 +1520,14 @@ pub struct RenderStats {
     /// Texture pages (textures.rs) and their allocated memory.
     pub texture_pages: u32,
     pub texture_page_bytes: u64,
+    /// Number of texture-table bind-group rebuilds since device creation.
+    pub bind_group_rebuilds: u64,
+    /// Last GPU cull readback's largest indirect index count; a few frames
+    /// old, like the other cull counters.
+    pub max_indirect_index_count: Option<u32>,
+    /// A replacement pipeline set is being compiled for the requested
+    /// antialiasing / SSR settings.
+    pub pipelines_compiling: bool,
     pub geometry_bytes: u64,
     pub vertex_used: u64,
     pub index_used: u64,

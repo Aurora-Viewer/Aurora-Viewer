@@ -3814,6 +3814,7 @@ impl App {
                 self.restore_local_environment();
             }
             NetEvent::TeleportFinished { .. } => {
+                crate::crash::flight_recorder::teleport_ended();
                 self.stop_local_typing();
                 if self.world.tp_show_progress && matches!(self.screen, Screen::World) && !self.was_teleporting {
                     // Finish and arrival can be drained in the same frame.
@@ -7196,6 +7197,7 @@ impl App {
     }
 
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
+        crate::crash::flight_recorder::teleport_started();
         self.portal_journey = None;
         self.drop_clicks();
         self.stop_autopilot(true);
@@ -11849,7 +11851,7 @@ impl App {
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         // before the deep profile, which takes the frame's upload bytes
-        self.crash_frame();
+        self.crash_frame(&gfx.renderer, &gfx.window);
         self.end_deep_profile(&gfx.renderer);
         self.monitor_frame(&gfx.renderer);
         self.crash_state(&gfx.renderer, &gfx.window);
@@ -17587,6 +17589,10 @@ impl ApplicationHandler for App {
         if self.gfx.is_some() {
             return;
         }
+        crate::crash::note_display_snapshot(event_loop.available_monitors().map(|monitor| {
+            let size = monitor.size();
+            (size.width, size.height, monitor.refresh_rate_millihertz().map(|rate| rate / 1000))
+        }));
         // captures keep a fixed, predictable window
         let capture = self.capture.is_some();
         let (mut w, mut h) = (self.settings.window_width.max(800), self.settings.window_height.max(600));

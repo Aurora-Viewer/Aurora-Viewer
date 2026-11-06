@@ -701,9 +701,26 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
 /// The replay of a frame's write journal is logged over this (ms).
 const SLOW_WRITES_MS: f32 = 4.0;
 
+/// Keep the ordinary three-encoder path allocation-free when markers are off.
+enum FrameCommands<T> {
+    One(T),
+    Segments(Vec<T>),
+}
+impl<T> FrameCommands<T> {
+    fn append_to(self, commands: &mut Vec<T>) {
+        match self {
+            Self::One(command) => commands.push(command),
+            Self::Segments(segments) => commands.extend(segments),
+        }
+    }
+}
+
 /// Work of the helper threads (`Backend::finishers`).
-fn finish_encoder(encoder: wgpu::CommandEncoder) -> wgpu::CommandBuffer {
-    encoder.finish()
+fn finish_encoders(encoders: FrameCommands<wgpu::CommandEncoder>) -> FrameCommands<wgpu::CommandBuffer> {
+    match encoders {
+        FrameCommands::One(encoder) => FrameCommands::One(encoder.finish()),
+        FrameCommands::Segments(encoders) => FrameCommands::Segments(encoders.into_iter().map(wgpu::CommandEncoder::finish).collect()),
+    }
 }
 
 /// View-projection matrix for positions given relative to `eye`, a point
@@ -1687,7 +1704,7 @@ pub(crate) struct Backend {
     particle_backoff: crate::gpu_alloc::Backoff,
     timer: Option<GpuTimer>,
     /// Two threads that finish command encoders beside this one.
-    finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
+    finishers: Helpers<FrameCommands<wgpu::CommandEncoder>, FrameCommands<wgpu::CommandBuffer>>,
     msaa_samples: u32,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
@@ -3260,7 +3277,7 @@ impl Backend {
             particle_buffer,
             particle_backoff: crate::gpu_alloc::Backoff::default(),
             timer,
-            finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
+            finishers: Helpers::new(2, "aurora-render-finish", finish_encoders),
             msaa_samples,
             pipeline_build: None,
             vsync,
@@ -6780,6 +6797,7 @@ impl Backend {
             stats.triangles += c.triangles as u64;
             stats.occluded = occl.then_some(self.occlusion.last_hidden + c.hidden);
             stats.visible_objects = Some(c.visible_objects);
+            stats.max_indirect_index_count = Some(c.max_indirect_index_count);
             stats.gpu_cull = true;
         }
 
@@ -6799,9 +6817,24 @@ impl Backend {
         }
         stats.particles += self.water_effects.particles;
         prof.mark("lists");
+        let mut breadcrumbs = self.lost.diagnostics.as_ref().and_then(|r| r.frame(index));
+        let breadcrumb = |encoder: &mut wgpu::CommandEncoder, boundary| {
+            if let Some(frame) = &breadcrumbs {
+                frame.mark(encoder, boundary);
+            }
+        };
+        use crate::gpu_diagnostics::Boundary as GpuBoundary;
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        breadcrumb(
+            &mut encoder,
+            if snapshot.is_some() {
+                GpuBoundary::PhotoBegin
+            } else {
+                GpuBoundary::FrameBegin
+            },
+        );
         if self.motion_cut && self.motion_now {
             self.motion_history.encode(&self.device, &mut encoder, &scene);
         }
@@ -6936,6 +6969,7 @@ impl Backend {
             }
         };
         // ---- shadows
+        breadcrumb(&mut encoder, GpuBoundary::ShadowsBegin);
         mark(&mut encoder, MARK_SHADOW_BEGIN);
         if !f.shadows {
             mark(&mut encoder, MARK_SHADOW_C0_END);
@@ -7065,6 +7099,8 @@ impl Backend {
 
         prof.mark("shadows");
         mark(&mut encoder, MARK_SHADOWS_END);
+        breadcrumb(&mut encoder, GpuBoundary::ShadowsEnd);
+        breadcrumb(&mut encoder, GpuBoundary::DepthBegin);
         let (pre_opaque, pre_opaque_2s) = if draw_lists.portal_clipping {
             (&self.pipelines.pre_portal, &self.pipelines.pre_portal_2s)
         } else {
@@ -7185,6 +7221,8 @@ impl Backend {
 
         prof.mark("prepass");
         mark(&mut encoder, MARK_DEPTH_END);
+        breadcrumb(&mut encoder, GpuBoundary::DepthEnd);
+        breadcrumb(&mut encoder, GpuBoundary::GtaoBegin);
         // ---- occlusion depth: the prepass and the blended faces at least
         // half covered (fs_depth_contact). The many heads, bodies and hair
         // whose faces are blended though they look opaque then take the
@@ -7261,6 +7299,8 @@ impl Backend {
 
         prof.mark("ssao");
         mark(&mut encoder, MARK_SSAO_END);
+        breadcrumb(&mut encoder, GpuBoundary::GtaoEnd);
+        breadcrumb(&mut encoder, GpuBoundary::ContactBegin);
         // ---- contact shadows: what casts them beyond the prepass (the
         // blended faces opaque enough, the impostor cards) is drawn into a
         // copy of its depth, which the pass then reads; the occlusion's
@@ -7307,6 +7347,8 @@ impl Backend {
             self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
+        breadcrumb(&mut encoder, GpuBoundary::ContactEnd);
+        breadcrumb(&mut encoder, GpuBoundary::ReflectionsBegin);
         self.water_effects.encode(&mut encoder);
         // ---- planar reflections
         let refl_passes = [
@@ -7402,6 +7444,8 @@ impl Backend {
         }
         mark(&mut encoder, MARK_WATER_AIR_END);
 
+        breadcrumb(&mut encoder, GpuBoundary::ReflectionsEnd);
+        breadcrumb(&mut encoder, GpuBoundary::ProbesBegin);
         // ---- reflection probe: one cube face (LLReflectionMap::update ->
         // cubeSnapshot), then the radiance filtering after the sixth
         if let Some(c) = &capture {
@@ -7462,6 +7506,7 @@ impl Backend {
 
         prof.mark("reflections");
         mark(&mut encoder, MARK_REFL_END);
+        breadcrumb(&mut encoder, GpuBoundary::ProbesEnd);
         // ---- impostor pictures, copied into their atlas tile
         for (i, (c, (opaque, blend))) in imp_caps.iter().zip(&imp_ranges).enumerate() {
             {
@@ -7519,7 +7564,7 @@ impl Backend {
         }
 
         prof.mark("impostors");
-        // the frame is recorded into three encoders finished in parallel
+        // The frame's three batches of command encoders finish in parallel
         // below (wgpu replays and tracks every command in finish())
         let enc_pre = std::mem::replace(
             &mut encoder,
@@ -7527,7 +7572,12 @@ impl Backend {
                 label: Some("frame scene"),
             }),
         );
+        let enc_pre = match &breadcrumbs {
+            Some(frame) => FrameCommands::Segments(frame.take_encoders(enc_pre)),
+            None => FrameCommands::One(enc_pre),
+        };
         mark(&mut encoder, MARK_SCENE_BEGIN);
+        breadcrumb(&mut encoder, GpuBoundary::SceneBegin);
         // Keep water and exclusion depths separate from opaque objects. The
         // same mask removes surface shading and above-water haze through a face.
         {
@@ -7936,6 +7986,7 @@ impl Backend {
                 pass.draw(0..6, 0..n_particles);
             }
         };
+        breadcrumb(&mut encoder, GpuBoundary::SsrWaterBlendBegin);
         {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split, false);
             bind_mesh(&mut pass, &self.groups.b);
@@ -8081,6 +8132,8 @@ impl Backend {
 
         prof.mark("scene_b");
         mark(&mut encoder, MARK_SCENE_END);
+        breadcrumb(&mut encoder, GpuBoundary::SsrWaterBlendEnd);
+        breadcrumb(&mut encoder, GpuBoundary::SceneEnd);
         // ---- faces drawn under a clicked pixel: opaque and masked, then
         // blended ones in front of them (only in the frame of a click)
         if drawn_px.is_some() {
@@ -8168,6 +8221,11 @@ impl Backend {
             self.device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame post") }),
         );
+        let enc_scene = match &breadcrumbs {
+            Some(frame) => FrameCommands::Segments(frame.take_encoders(enc_scene)),
+            None => FrameCommands::One(enc_scene),
+        };
+        breadcrumb(&mut encoder, GpuBoundary::PostBegin);
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
         let mut post_src = &self.targets.color;
@@ -8660,6 +8718,18 @@ impl Backend {
         } else if snapshot.is_some() {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), true);
         }
+        breadcrumb(&mut encoder, GpuBoundary::PostEnd);
+        breadcrumb(
+            &mut encoder,
+            if snapshot.is_some() {
+                GpuBoundary::PhotoEnd
+            } else {
+                GpuBoundary::FrameEnd
+            },
+        );
+        if let Some(frame) = &breadcrumbs {
+            frame.finish(&mut encoder);
+        }
         // finish() validates, tracks and encodes every command of its
         // encoder: the three run at once (wgpu-core only takes a shared
         // lock there), two on the helper threads and one here, then are
@@ -8668,9 +8738,17 @@ impl Backend {
         // for that helper to wake up, for the few commands of the last
         // encoder (finish 0.56 -> 0.51 ms, 1.9 -> 1.6 ms in the longest
         // frame of a second)
-        let (pre, post, scene) = self.finishers.pair(enc_pre, encoder, move || enc_scene.finish());
+        let enc_post = match &breadcrumbs {
+            Some(frame) => FrameCommands::Segments(frame.take_encoders(encoder)),
+            None => FrameCommands::One(encoder),
+        };
+        let (pre, post, scene) = self.finishers.pair(enc_pre, enc_post, move || finish_encoders(enc_scene));
         match (pre, post) {
-            (Some(pre), Some(post)) => extra_cmds.extend([pre, scene, post]),
+            (Some(pre), Some(post)) => {
+                pre.append_to(&mut extra_cmds);
+                scene.append_to(&mut extra_cmds);
+                post.append_to(&mut extra_cmds);
+            }
             _ => {
                 log::error!("render: a command encoder thread panicked");
                 let spent = Spent { writes, lists: draw_lists };
@@ -8692,6 +8770,10 @@ impl Backend {
             );
             encoder.finish()
         });
+        // Register before submit: the device-lost callback may run inside it.
+        if let Some(frame) = &mut breadcrumbs {
+            frame.submitting();
+        }
         // (noted for the line of a device loss, device_lost.rs)
         let submission = crate::device_lost::submit_tracked(
             &self.lost,
@@ -8699,6 +8781,9 @@ impl Backend {
             index,
             upload_cmds.into_iter().chain(extra_cmds).chain(output_transition),
         );
+        if let Some(frame) = breadcrumbs {
+            self.queue.on_submitted_work_done(move || frame.completed());
+        }
         self.gpu_frames.submitted(index, submission);
         if self.gpu_frames.enabled {
             // the news as soon as a poll sees the frame done (the start of
@@ -8790,6 +8875,7 @@ impl Backend {
         }
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
+        stats.pipelines_compiling = self.pipeline_build.is_some();
         stats.gpu_pixels = self.timer.as_ref().map_or(0, |t| t.last_pixels);
         stats.target_bytes_per_pixel = self
             .target_bytes

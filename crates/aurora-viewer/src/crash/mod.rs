@@ -5,10 +5,15 @@
 //! (`github.rs`), with the text they can read first (`summary.rs`), and
 //! asked for by default; the full diagnostics stay in the session folder.
 
+mod environment;
+#[cfg(windows)]
+mod environment_windows;
+pub(crate) mod flight_recorder;
 pub mod github;
 #[cfg(target_os = "linux")]
 mod linux;
 mod native;
+mod os_events;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
 // mod report;
@@ -234,6 +239,16 @@ fn start_inner() -> anyhow::Result<()> {
         dir: dir.clone(),
         panic_file,
     });
+    environment::start(&dir);
+    flight_recorder::start();
+    aurora_render::gpu_diagnostics::set_sink(|report, private| {
+        save_gpu_diagnostics(report);
+        if !private.is_empty()
+            && let Some(session) = SESSION.get()
+        {
+            let _ = std::fs::write(session.dir.join("gpu-device-fault-private.txt"), private);
+        }
+    });
     if record.demo && std::env::var("AURORA_DEMO_CRASH").as_deref() == Ok("recovery") {
         return Ok(());
     }
@@ -254,15 +269,20 @@ fn start_inner() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The Vulkan layers on offer go to `vulkan-layers.txt` as soon as they are
-/// known, on a thread of their own: a crash while Vulkan starts, before any
-/// note of the state, is where the report needs them most (#2241).
+/// Loader-enumerated and known-eligible Vulkan layers are recorded on a
+/// worker. Installed enumeration is available even before instance creation.
 fn note_vulkan_layers(dir: &Path) {
     let dir = dir.to_owned();
     let spawned = std::thread::Builder::new().name("aurora-crash-facts".into()).spawn(move || {
         let names = aurora_render::vulkan_layers::loaded_names();
+        let eligible = aurora_render::vulkan_layers::eligible_known_names(
+            &names,
+            |variable| std::env::var_os(variable).is_some(),
+            std::env::var("VK_LOADER_LAYERS_DISABLE").ok().as_deref(),
+        );
         if !names.is_empty() {
             let _ = std::fs::write(dir.join("vulkan-layers.txt"), names.join(","));
+            let _ = std::fs::write(dir.join("vulkan-layers-eligible.txt"), eligible.join(","));
         }
     });
     if let Err(error) = spawned {
@@ -287,6 +307,7 @@ pub fn update(theme: &crate::theme::Theme, settings: &crate::settings::Settings)
 
 pub fn panic(info: &std::panic::PanicHookInfo<'_>, trace: &std::backtrace::Backtrace) {
     if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::Panic);
         let mut file = &session.panic_file;
         let _ = writeln!(file, "Rust panic: {info}\n{trace}");
         // A release build has no debug info for the trace above to resolve.
@@ -318,6 +339,7 @@ pub fn finished(success: bool) {
 
 pub fn failure(message: &str) {
     if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::SessionEnd);
         let _ = std::fs::write(session.dir.join("failure.txt"), message);
         let _ = std::fs::write(session.dir.join("failed"), []);
     }
@@ -328,6 +350,8 @@ pub fn failure(message: &str) {
 /// session ended now is reported as such. [`gpu_answered`] takes it back.
 pub fn gpu_stalled(seconds: u64) {
     if let Some(session) = SESSION.get() {
+        flight_recorder::gpu_stall();
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuStall);
         watchdog::save_gpu_stall(&session.dir, seconds);
     }
 }
@@ -335,7 +359,47 @@ pub fn gpu_stalled(seconds: u64) {
 /// The GPU device is lost for good (app/gpu_stall.rs): the session, which
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
+    gpu_loss_snapshot();
     mark_gpu_lost(b"");
+}
+
+/// The renderer reported a confirmed device loss, including one the viewer
+/// may recover from. Keep only the first loss snapshot for this session.
+pub fn gpu_loss_snapshot() {
+    snapshot_gpu_diagnostics();
+    crate::overlay_hooks::loss_snapshot();
+    environment::at_gpu_loss();
+    if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuLoss);
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn overlay_hooks_at_loss(files: &[&str]) {
+    if let Some(session) = SESSION.get() {
+        write_first_overlay_loss_snapshot(&session.dir, files);
+    }
+}
+
+#[cfg(any(windows, test))]
+fn write_first_overlay_loss_snapshot(dir: &Path, files: &[&str]) {
+    let known: Vec<_> = files
+        .iter()
+        .filter(|file| crate::overlay_hooks::known(file).is_some())
+        .copied()
+        .collect();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join("overlay-hooks-loss.txt"))
+    {
+        let _ = file.write_all(known.join("\n").as_bytes());
+    }
+}
+
+/// A confirmed device loss, including one that the app will try to recover.
+pub fn gpu_loss_detected() {
+    gpu_loss_snapshot();
 }
 
 /// A GPU device loss the viewer recovered from (app/gpu_recovery.rs), `ms`
@@ -343,6 +407,12 @@ pub fn gpu_lost() {
 /// line each in `gpu-recoveries.txt`, which the session's report counts if
 /// it ends badly later. The session goes on: nothing marks it failed.
 pub fn gpu_recovered(ms: u128, safe: bool) {
+    environment::at_gpu_loss();
+    if let Some(session) = SESSION.get() {
+        flight_recorder::gpu_recovered();
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuRecovery);
+    }
+    snapshot_gpu_diagnostics();
     use std::io::Write;
     let Some(session) = SESSION.get() else {
         return;
@@ -365,15 +435,49 @@ const GPU_LOST_AT_START: &str = "start";
 /// The same before the first frame (app.rs): reported under its own title,
 /// apart from the driver resets of a running session.
 pub fn gpu_lost_at_start() {
+    gpu_loss_snapshot();
     mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
 }
 
+/// The worker is never joined. A stuck driver leaves the first snapshot's
+/// "not collected within budget" status; a later ready result replaces it.
+fn snapshot_gpu_diagnostics() {
+    if let Some(report) = aurora_render::gpu_diagnostics::first_loss() {
+        save_gpu_diagnostics(&report);
+    }
+}
+fn save_gpu_diagnostics(report: &aurora_render::gpu_diagnostics::Report) {
+    static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let Ok(_write) = WRITE.lock() else {
+        return;
+    };
+    // Serialize startup/worker/crash snapshots and take the latest result
+    // after the lock: an older pending snapshot cannot overwrite ready data.
+    let latest = aurora_render::gpu_diagnostics::first_loss();
+    let report = latest.as_ref().unwrap_or(report);
+    if let Some(session) = SESSION.get() {
+        let _ = std::fs::write(session.dir.join("gpu-breadcrumbs.txt"), report.encode_public());
+    }
+}
+
 fn mark_gpu_lost(when: &[u8]) {
+    environment::at_gpu_loss();
     if let Some(session) = SESSION.get() {
         let _ = std::fs::write(session.dir.join("gpu-lost.txt"), when);
         let _ = std::fs::write(session.dir.join("failed"), []);
         ending_in_gpu_trouble(&session.dir);
     }
+}
+
+/// Records the numeric display facts winit exposes, without monitor names.
+pub fn note_display_snapshot(displays: impl IntoIterator<Item = (u32, u32, Option<u32>)>) {
+    environment::note_winit_displays(displays.into_iter().map(|(width, height, refresh_hz)| environment::Display {
+        width,
+        height,
+        refresh_hz,
+        hdr: None,
+        vrr: None,
+    }));
 }
 
 /// In the session folder while the photo window's "Photo quality" holds
@@ -416,6 +520,7 @@ pub fn take_photo_quality_crash() -> bool {
 /// ago it came (the log's tail may no longer hold its line).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn overlay_hook(file: &str) {
+    flight_recorder::overlay_hook_seen();
     if let Some(session) = SESSION.get()
         && let Ok(mut out) = std::fs::OpenOptions::new()
             .create(true)
@@ -430,12 +535,14 @@ pub fn overlay_hook(file: &str) {
 /// the session is reported even though it ends through the usual way out.
 pub fn gpu_closed() {
     if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuStall);
         let _ = std::fs::write(session.dir.join("failed"), []);
         ending_in_gpu_trouble(&session.dir);
     }
 }
 
 pub fn gpu_answered() {
+    flight_recorder::gpu_stall_recovered();
     // first, so that a stall's stacks still being read do not bring the
     // file back once it is removed
     #[cfg(target_os = "linux")]
@@ -565,6 +672,7 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     let record = load(dir)?;
+    collect_os_events_once(dir);
     // What a crash report would publish, kept beside the private files.
     let summary = summary::build(&record, dir);
     if let Err(error) = std::fs::write(dir.join("public-report.md"), format!("# {}\n\n{}", summary.title, summary.body)) {
@@ -577,6 +685,24 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
     }
     std::fs::write(dir.join("acknowledged"), [])?;
     Ok(())
+}
+
+/// The OS's own GPU reset records around the crash, read once per crash by
+/// the process that shows the report (the watcher right after the exit, or
+/// the helper a later start spawns), never by the viewer's own start: the
+/// queries may take up to their two-second budget.
+fn collect_os_events_once(dir: &Path) {
+    if dir.join("os-gpu-events.status").exists() {
+        return;
+    }
+    let stopped = read_limited(&dir.join("stopped-unix.txt"), 32)
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
+    let tick = watchdog::read_alive(dir)
+        .iter()
+        .find(|(k, _)| k == "tick")
+        .and_then(|(_, v)| v.parse().ok());
+    os_events::collect(dir, stopped.or(tick));
 }
 
 fn trace(dir: &Path) -> String {
@@ -656,6 +782,18 @@ pub fn demo_freeze() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_hook_loss_snapshot_is_private_to_known_names_and_keeps_the_first_loss() {
+        let dir = scratch_root();
+        write_first_overlay_loss_snapshot(&dir, &["DiscordHook64.dll", "C:\\Users\\Private\\evil.dll"]);
+        write_first_overlay_loss_snapshot(&dir, &["RTSSHooks64.dll"]);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("overlay-hooks-loss.txt")).unwrap(),
+            "DiscordHook64.dll"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn session_snapshot_survives_language_theme_changes_and_rejects_unknown_formats() {
