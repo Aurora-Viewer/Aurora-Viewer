@@ -427,6 +427,9 @@ impl OpenSimExtras {
 
 #[derive(Debug, Clone)]
 pub enum NetEvent {
+    /// GrantGodlikePowers: the god level the region gives us (0: none,
+    /// 200 and more: an administrator of the grid or of the region).
+    GodLevel(u8),
     /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
     MuteList(crate::social::MuteListSource),
     /// Groups the agent belongs to (AgentGroupDataUpdate; added or updated).
@@ -1972,6 +1975,13 @@ pub enum NetCommand {
     Land(crate::land::LandCommand),
     /// Region / Estate window (estate.rs).
     Estate(crate::estate::EstateCommand),
+    /// Request / Leave Admin Status (RequestGodlikePowers): `godlike` asks
+    /// the region for its god level, false gives it back.
+    RequestGodlikePowers {
+        godlike: bool,
+    },
+    /// Advanced › Admin (god.rs), with the god level the region granted.
+    God(crate::god::GodCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
     GrantUserRights {
         friend: Uuid,

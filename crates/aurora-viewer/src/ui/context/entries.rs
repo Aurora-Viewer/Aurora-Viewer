@@ -752,6 +752,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         });
     }
     avatar_moderation(ui, f, id);
+    avatar_admin(ui, f, id);
     let display = f
         .complexity
         .map(|(c, silhouette)| {
@@ -853,10 +854,33 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
     });
 }
 
+/// Admin, while the region keeps our god level: GodKickUser anywhere on the
+/// grid (the Legacy Viewer's Kick, and Freeze / Unfreeze at a distance of
+/// menu_inspect_avatar_gear.xml and the profile).
+fn avatar_admin(ui: &mut Builder, f: &Facts, id: Uuid) {
+    use aurora_net::god::{KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE};
+    if !f.god || id == f.me {
+        return;
+    }
+    ui.submenu("crown-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+        ui.item("logout", aurora_i18n::tr!("admin-kick-menu"), CtxAction::GodKick(id, KICK_DEFAULT));
+        ui.item(
+            "snowflake",
+            aurora_i18n::tr!("admin-freeze-menu"),
+            CtxAction::GodKick(id, KICK_FREEZE),
+        );
+        ui.item(
+            "sun-filled",
+            aurora_i18n::tr!("admin-unfreeze-menu"),
+            CtxAction::GodKick(id, KICK_UNFREEZE),
+        );
+    });
+}
+
 /// Visible only with the corresponding land/nearby-voice moderation rights.
 fn avatar_moderation(ui: &mut Builder, f: &Facts, id: Uuid) {
     let voice = f.voice_volume.and_then(|v| v.moderated);
-    if !f.moderation.allowed && voice.is_none() {
+    if !f.moderation.allowed && !f.moderation.estate && voice.is_none() {
         return;
     }
     ui.submenu("shield-filled", aurora_i18n::tr!("ui-context-moderation-options"), true, |ui| {
@@ -883,11 +907,27 @@ fn avatar_moderation(ui: &mut Builder, f: &Facts, id: Uuid) {
     });
 }
 
-/// Avatar.Freeze / Avatar.Eject, visible only with rights on the avatar's land.
+/// Avatar.Freeze / Avatar.Eject, visible only with rights on the avatar's
+/// land, then the estate's Avatar.TeleportHome / Avatar.Kick /
+/// Avatar.EstateBan, visible to its owner and managers
+/// (menu_fs_radar.xml's entries, the estate's from the mildest to the
+/// strongest: sent home, out of the estate, kept out).
 fn moderation_items(ui: &mut Builder, f: &Facts, id: Uuid) {
     if f.moderation.allowed {
         ui.item("snowflake", aurora_i18n::tr!("ui-context-freeze"), CtxAction::Freeze(id));
         ui.item("player-eject-filled", aurora_i18n::tr!("ui-context-eject"), CtxAction::Eject(id));
+    }
+    if f.moderation.estate {
+        if f.moderation.allowed {
+            ui.separator();
+        }
+        ui.item(
+            "home-filled",
+            aurora_i18n::tr!("ui-context-estate-teleport-home"),
+            CtxAction::EstateTeleportHome(id),
+        );
+        ui.item("door-exit", aurora_i18n::tr!("ui-context-estate-kick"), CtxAction::EstateKick(id));
+        ui.item("ban", aurora_i18n::tr!("ui-context-estate-ban"), CtxAction::EstateBan(id));
     }
 }
 
@@ -1288,6 +1328,61 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_estate_entries_follow_the_estate_right_alone() {
+        let id = Uuid::from_u128(7);
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        for (land, estate) in [(false, true), (true, true), (true, false)] {
+            let mut facts = Facts::default();
+            facts.moderation.allowed = land;
+            facts.moderation.estate = estate;
+            let group = world_menu(&target, &facts, Vec3::ZERO)
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("ui-context-moderation-options"));
+            let actions = rows(group.into_iter().collect());
+            let has = |want: fn(&CtxAction) -> bool| actions.iter().any(|e| matches!(&e.kind, Kind::Action(a) if want(a)));
+            assert_eq!(has(|a| matches!(a, CtxAction::Freeze(_))), land);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateKick(_))), estate);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateTeleportHome(_))), estate);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateBan(_))), estate);
+        }
+    }
+
+    #[test]
+    fn a_god_kicks_freezes_and_unfreezes_others_from_the_admin_group() {
+        use aurora_net::god::{KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE};
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(7));
+        let admin = |id: Uuid, god: bool| {
+            let facts = Facts {
+                me,
+                god,
+                ..Facts::default()
+            };
+            let target = Target::Avatar {
+                id,
+                own: id == me,
+                attachment: None,
+            };
+            world_menu(&target, &facts, Vec3::ZERO)
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("admin-menu"))
+        };
+        assert!(admin(other, false).is_none());
+        assert!(admin(me, true).is_none(), "not on ourselves");
+        let flags: Vec<u32> = rows(admin(other, true).into_iter().collect())
+            .iter()
+            .filter_map(|e| match e.kind {
+                Kind::Action(CtxAction::GodKick(who, flags)) if who == other => Some(flags),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, [KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE]);
     }
 
     #[test]

@@ -414,7 +414,10 @@ impl App {
                     if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
                         return;
                     }
-                    if matches!(it.asset_type, 7 | 10) && rules::held(&self.world.inventory, &it) & rules::COPY == 0 {
+                    // a god reads any (LLPreviewNotecard::loadAsset)
+                    if matches!(it.asset_type, 7 | 10)
+                        && rules::held_for(&self.world.inventory, &it, self.world.god_level > 0) & rules::COPY == 0
+                    {
                         self.inventory_preview(
                             id,
                             it.asset_id,
