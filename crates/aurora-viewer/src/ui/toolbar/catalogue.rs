@@ -86,7 +86,7 @@ pub const COMMANDS: &[Command] = commands![
     "experiences", "flask-filled", "ui-experiences-title", true;
     "stand_up", "man-filled", "common-stand-up", true;
     "fly_override", "plane-departure-filled", "ui-bars-fly-override", true;
-    "movelock_options", "settings-filled", "movelock-options", true;
+    "movelock_options", "lock-filled", "movelock-options", true;
     "quickjump", "arrow-big-up-lines-filled", "ui-bars-quickjump", true;
     "movement_enhancer", "swimming", "movement-title", true;
     // Firestorm's, not in Aurora yet

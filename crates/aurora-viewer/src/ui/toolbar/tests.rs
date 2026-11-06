@@ -877,7 +877,7 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
 /// once, with an embedded icon and localized labels;
 /// what Aurora runs does something, what it cannot run yet does nothing.
 #[test]
-fn toolbar_catalogue_holds_legacy_commands_and_runs_the_ready_ones() {
+fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
     assert_eq!(all.len(), 90);

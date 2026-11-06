@@ -73,7 +73,7 @@ pub fn show_command_context(ctx: &egui::Context, p: &Palette) {
         } else {
             aurora_i18n::tr!("toolbar-add-from-menu")
         };
-        if menu::item_if(ui, p, if remove { "minus" } else { "plus" }, label, !state.locked) {
+        if menu::item_if(ui, p, if remove { "trash-filled" } else { "plus" }, label, !state.locked) {
             ui.ctx().data_mut(|d| {
                 d.get_temp_mut_or_default::<Vec<MenuEdit>>(egui::Id::unique("menu_toolbar_edits"))
                     .push(MenuEdit {
