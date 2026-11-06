@@ -207,8 +207,8 @@ fn main() -> anyhow::Result<()> {
 fn process_elevation() -> &'static str {
     use windows_sys::Win32::{
         Foundation::CloseHandle,
-        Security::{GetTokenInformation, OpenProcessToken, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
-        System::Threading::GetCurrentProcess,
+        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
     };
 
     let mut token = std::ptr::null_mut();
