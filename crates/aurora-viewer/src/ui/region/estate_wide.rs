@@ -1034,7 +1034,7 @@ fn apply_settings(world: &mut World, track: Option<i32>, asset: Uuid, name: Stri
         .items
         .values()
         .find(|i| i.asset_id == asset)
-        .map_or(u32::MAX, |i| i.owner_mask);
+        .map_or(u32::MAX, |i| crate::world::inventory::actions::held(&world.inventory, i));
     let (day_length, day_offset) = world
         .estate
         .environment

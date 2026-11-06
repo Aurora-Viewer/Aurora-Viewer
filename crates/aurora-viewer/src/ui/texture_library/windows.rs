@@ -37,7 +37,7 @@ impl LibraryUi {
                     .inventory
                     .items
                     .get(id)
-                    .is_some_and(|item| matches!(item.asset_type, 0 | 15) && item.owner_mask & full == full)
+                    .is_some_and(|item| matches!(item.asset_type, 0 | 15) && rules::held(&world.inventory, item) & full == full)
             })
             .collect();
         if items.len() == 1 {
@@ -79,7 +79,7 @@ impl LibraryUi {
                 .inventory
                 .items
                 .get(&job.item)
-                .is_none_or(|item| item.asset_id != job.asset || item.owner_mask & full != full)
+                .is_none_or(|item| item.asset_id != job.asset || rules::held(&world.inventory, item) & full != full)
             {
                 return false;
             }
@@ -101,7 +101,12 @@ impl LibraryUi {
             let Some((id, folder, png)) = self.export_queue.pop_front() else {
                 break;
             };
-            let Some(item) = world.inventory.items.get(&id).filter(|item| item.owner_mask & full == full) else {
+            let Some(item) = world
+                .inventory
+                .items
+                .get(&id)
+                .filter(|item| rules::held(&world.inventory, item) & full == full)
+            else {
                 continue;
             };
             let name: String = item
@@ -353,7 +358,9 @@ impl LibraryUi {
                 }
             } else {
                 self.wanted_images.insert(asset);
-                if item.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) != rules::COPY | rules::MODIFY | rules::TRANSFER {
+                if rules::held(&world.inventory, &item) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
+                    != rules::COPY | rules::MODIFY | rules::TRANSFER
+                {
                     window.texture.export = None;
                     window.texture.export_path = None;
                 }
@@ -361,7 +368,15 @@ impl LibraryUi {
                 let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
                 let before = window.texture.display;
-                texture_view::toolbar(ui, p, &item, dimensions, &mut window.texture.display, actions);
+                texture_view::toolbar(
+                    ui,
+                    p,
+                    &item,
+                    rules::held(&world.inventory, &item),
+                    dimensions,
+                    &mut window.texture.display,
+                    actions,
+                );
                 // the picture in exactly the room the description, the
                 // buttons and the notes leave
                 let (mut view, foot) = widgets::above_footer(ui);
@@ -439,7 +454,7 @@ impl LibraryUi {
                         }
                     });
                     ui.label(
-                        RichText::new(if item.owner_mask & rules::COPY != 0 {
+                        RichText::new(if rules::held(&world.inventory, &item) & rules::COPY != 0 {
                             aurora_i18n::tr!("texture-library-copy")
                         } else {
                             aurora_i18n::tr!("texture-library-no-copy")

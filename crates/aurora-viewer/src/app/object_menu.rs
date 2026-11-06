@@ -205,11 +205,7 @@ impl App {
             f.take_copy = each.iter().all(|e| e.take_copy);
             f.delete = each.iter().any(|e| e.delete);
         }
-        f.link = !edit_linked
-            && roots.len() >= 2
-            && roots
-                .iter()
-                .any(|&r| flags_of(r) & flags::OBJECT_MODIFY != 0 && flags_of(r) & flags::AFFECTS_NAVMESH == 0);
+        f.link = !edit_linked && crate::build::link_allowed(w, &roots);
         // EditableSelected: a prim we may modify among those selected
         let prims: Vec<usize> = if kept {
             self.build.highlighted(w).into_iter().map(|(i, _)| i).collect()

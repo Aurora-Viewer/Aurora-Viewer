@@ -34,6 +34,13 @@ pub(super) struct BusyPause {
     /// AURORA_DEMO_BUSY_PAUSE: a click in the window while paused, the
     /// demo's busy card is over (its window often has the focus already).
     pub(super) demo_released: bool,
+    /// Dev Toolbox R13: the same pause on demand, in front or behind, with
+    /// or without the setting, until R13 is pressed again (a click in the
+    /// window does not end it: the button itself is one).
+    pub(super) forced: bool,
+    /// The setting follows the newest change made in any Aurora window
+    /// (instances.rs): the one that pauses is the window behind.
+    pub(super) follow: crate::instances::SwitchFollow,
 }
 
 impl BusyPause {
@@ -62,7 +69,7 @@ impl BusyPause {
     }
 
     pub(super) fn paused(&self) -> bool {
-        self.paused
+        self.paused || self.forced
     }
 }
 
@@ -94,11 +101,11 @@ impl App {
         if self.busy_pause.update(behind, allowed, gpu_ms) {
             if self.busy_pause.paused() {
                 log::warn!(
-                    "3D paused behind: the GPU frames take {:.0} ms, the card is busy with another program",
+                    "render paused behind: the GPU frames take {:.0} ms, the card is busy with another program",
                     gpu_ms.unwrap_or_default()
                 );
             } else {
-                log::info!("3D drawing resumed");
+                log::info!("render resumed");
             }
         }
     }
@@ -127,7 +134,12 @@ impl App {
             .interactable(false)
             .show(ctx, |ui| {
                 crate::ui::widgets::overlay(ui, p, egui::Margin::symmetric(16, 10), |ui| {
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("busy-pause-notice")).color(p.amber));
+                    let text = if self.busy_pause.forced {
+                        aurora_i18n::tr!("busy-pause-forced-notice")
+                    } else {
+                        aurora_i18n::tr!("busy-pause-notice")
+                    };
+                    ui.label(egui::RichText::new(text).color(p.amber));
                 });
             });
     }
