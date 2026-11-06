@@ -795,6 +795,8 @@ mod tests {
             timestamps: true,
             max_textures: 4096,
             vram_mb: Some(8192),
+            dedicated_mb: Some(8192),
+            shared_mb: None,
             integrated: false,
             vendor_id: 0,
             max_texture_size: 0,

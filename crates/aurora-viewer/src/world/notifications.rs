@@ -304,6 +304,13 @@ pub enum Data {
     /// RegionRestartSeconds, show_toast="false"): pinned at the top of "To
     /// do" with the live count while the alert counts (`region_restart.rs`).
     RegionRestart,
+    /// A new version of Aurora, found by a periodic check (`updater.rs`):
+    /// its button opens the update window, `ready` once downloaded. Aurora
+    /// only (the Legacy Viewer checks at launch); its card wears the
+    /// aurora's colours in Aurora's notification center.
+    Update {
+        ready: bool,
+    },
 }
 
 /// What the question of an experience shows besides the permissions.
