@@ -82,6 +82,7 @@ fn guarded<T>(wait: impl FnOnce() -> T) -> Option<T> {
 pub struct DeviceLost {
     lost: Arc<AtomicBool>,
     work: Arc<Mutex<Work>>,
+    pub(crate) diagnostics: Option<Arc<crate::gpu_diagnostics::Recorder>>,
 }
 
 /// The GPU work the render thread last gave the device and the last it saw
@@ -165,12 +166,31 @@ pub fn loss_details() -> Option<(&'static str, &'static str, &'static str)> {
 }
 
 impl DeviceLost {
+    pub(crate) fn with_diagnostics(diagnostics: Option<Arc<crate::gpu_diagnostics::Recorder>>) -> Self {
+        Self {
+            diagnostics,
+            ..Self::default()
+        }
+    }
+    /// The device owns its loss callback: retaining the recorder there would
+    /// form a device -> callback -> recorder -> device ownership cycle.
+    pub(crate) fn callback_copy(&self) -> Self {
+        Self {
+            lost: self.lost.clone(),
+            work: self.work.clone(),
+            diagnostics: None,
+        }
+    }
+
     /// The loss, first seen by `by` (a word of [`SEEN_BY`]); the first
     /// sighting stays.
     pub fn set_by(&self, by: &str) {
         let index = SEEN_BY.iter().position(|w| *w == by).unwrap_or(SEEN_BY.len() - 1) as u8 + 1;
         let _ = FIRST_SEEN.compare_exchange(0, index, Ordering::Relaxed, Ordering::Relaxed);
         self.lost.store(true, Ordering::Release);
+        if let Some(recorder) = &self.diagnostics {
+            recorder.lost(!matches!(by, "demo" | "start"));
+        }
     }
 
     pub fn get(&self) -> bool {
@@ -231,7 +251,7 @@ pub fn submit_tracked(
 ) -> wgpu::SubmissionIndex {
     let submission = lost.submitting(frame);
     let index = queue.submit(commands);
-    let lost = lost.clone();
+    let lost = lost.callback_copy();
     queue.on_submitted_work_done(move || lost.finished(submission));
     index
 }

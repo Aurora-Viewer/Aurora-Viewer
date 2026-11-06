@@ -85,6 +85,14 @@ impl Graphics {
             &[],
             &(),
         )?;
+        // Only for the log: a runtime that cannot say its name still works.
+        match xr.properties() {
+            Ok(properties) => log::info!("OpenXR runtime loaded: {}", runtime_class(&properties.runtime_name)),
+            Err(e) => {
+                log::info!("OpenXR runtime name unavailable: {e}");
+                log::info!("OpenXR runtime loaded: other OpenXR runtime");
+            }
+        }
         let system = xr.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)?;
         let requirements = xr.graphics_requirements::<xr::Vulkan>(system)?;
         let api = vk::API_VERSION_1_3;
@@ -143,7 +151,12 @@ impl Graphics {
             physical,
         })
     }
-    pub fn open(&self, adapter: &wgpu::Adapter, descriptor: &wgpu::DeviceDescriptor<'_>) -> Result<(wgpu::Device, wgpu::Queue)> {
+    pub fn open(
+        &self,
+        adapter: &wgpu::Adapter,
+        descriptor: &wgpu::DeviceDescriptor<'_>,
+        diagnostics: &crate::gpu_diagnostics::vulkan::Plan,
+    ) -> Result<(wgpu::Device, wgpu::Queue)> {
         let Self {
             xr,
             system,
@@ -162,7 +175,8 @@ impl Graphics {
         }
         // SAFETY: Backend is Vulkan, adapter remains alive throughout bootstrap.
         let ha = unsafe { adapter.as_hal::<hal::api::Vulkan>() }.ok_or("Not Vulkan")?;
-        let device_extensions = ha.required_device_extensions(features);
+        let mut device_extensions = ha.required_device_extensions(features);
+        diagnostics.extensions(&mut device_extensions);
         let names: Vec<_> = device_extensions.iter().map(|s| s.as_ptr()).collect();
         let mut enabled_features = ha.physical_device_features(&device_extensions, features);
         // SAFETY: physical belongs to raw_instance and is valid until wgpu is dropped.
@@ -173,11 +187,18 @@ impl Graphics {
         let queues = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(family)
             .queue_priorities(&[1.0])];
-        let create = enabled_features.add_to_device_create(
-            vk::DeviceCreateInfo::default()
-                .queue_create_infos(&queues)
-                .enabled_extension_names(&names),
-        );
+        let mut fault = diagnostics.fault_feature();
+        let mut coherent = diagnostics.coherent_feature();
+        let mut create = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queues)
+            .enabled_extension_names(&names);
+        if fault.device_fault == vk::TRUE {
+            create = create.push_next(&mut fault);
+        }
+        if coherent.device_coherent_memory == vk::TRUE {
+            create = create.push_next(&mut coherent);
+        }
+        let create = enabled_features.add_to_device_create(create);
         // SAFETY: All create-info feature/extension storage lives through the synchronous call.
         let raw = unsafe {
             xr.create_vulkan_device(
@@ -190,6 +211,7 @@ impl Graphics {
             )
         }?
         .map_err(vk::Result::from_raw)?;
+        log::info!("OpenXR runtime created Vulkan device");
         // SAFETY: Runtime-created device belongs to the selected adapter and includes HAL features.
         let raw_device = unsafe { ash::Device::load(raw_instance.fp_v1_0(), vk::Device::from_raw(raw as _)) };
         let hd = unsafe {
@@ -206,5 +228,38 @@ impl Graphics {
         };
         let result = unsafe { adapter.create_device_from_hal::<hal::api::Vulkan>(hd, descriptor)? };
         Ok(result)
+    }
+}
+
+fn runtime_class(name: &str) -> &'static str {
+    let name = name.to_ascii_lowercase();
+    if name.contains("steamvr") || name.contains("steam vr") {
+        "SteamVR"
+    } else if name.contains("oculus") || name.contains("meta") {
+        "Meta"
+    } else if name.contains("virtual desktop") || name.contains("vdxr") {
+        "Virtual Desktop"
+    } else if name.contains("monado") {
+        "Monado"
+    } else if name.contains("windows mixed reality") || name.contains("microsoft") {
+        "Windows Mixed Reality"
+    } else {
+        "other OpenXR runtime"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn runtime_names_are_reduced_to_a_closed_public_vocabulary() {
+        for (name, expected) in [
+            ("SteamVR/OpenXR", "SteamVR"),
+            ("Oculus runtime", "Meta"),
+            ("Virtual Desktop VDXR", "Virtual Desktop"),
+            ("Monado", "Monado"),
+            ("Vendor private runtime", "other OpenXR runtime"),
+        ] {
+            assert_eq!(super::runtime_class(name), expected);
+        }
     }
 }

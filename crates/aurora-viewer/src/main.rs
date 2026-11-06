@@ -30,6 +30,7 @@ mod crash;
 mod creation_permissions;
 mod credentials;
 mod cursors;
+mod deep_diagnostics;
 mod deep_profile;
 mod demo;
 mod dev_toolbox;
@@ -154,6 +155,13 @@ fn main() -> anyhow::Result<()> {
     {
         return Ok(());
     }
+    // A settings file that cannot be rewritten must not stop the viewer from
+    // starting (every launch would fail): start without deep diagnostics.
+    let deep_diagnostics = deep_diagnostics::consume_next_session(&settings::Settings::path()).unwrap_or_else(|error| {
+        eprintln!("deep diagnostics: the one-session switch could not be cleared ({error}); starting without it");
+        deep_diagnostics::Startup::default()
+    });
+    deep_diagnostics::apply_environment(&deep_diagnostics);
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();

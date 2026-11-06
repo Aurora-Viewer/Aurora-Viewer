@@ -115,6 +115,7 @@ mod region_restart;
 mod region_window;
 mod relogin;
 mod report_abuse;
+mod repro_bundle;
 mod reset_skeleton;
 mod rlva;
 mod safe_graphics;
@@ -3814,6 +3815,7 @@ impl App {
                 self.restore_local_environment();
             }
             NetEvent::TeleportFinished { .. } => {
+                crate::crash::flight_recorder::teleport_ended();
                 self.stop_local_typing();
                 if self.world.tp_show_progress && matches!(self.screen, Screen::World) && !self.was_teleporting {
                     // Finish and arrival can be drained in the same frame.
@@ -7196,6 +7198,7 @@ impl App {
     }
 
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
+        crate::crash::flight_recorder::teleport_started();
         self.portal_journey = None;
         self.drop_clicks();
         self.stop_autopilot(true);
@@ -10788,6 +10791,23 @@ impl App {
             // the second, or a click that changed a row's size is lost.
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
+            if crate::deep_diagnostics::active() {
+                // just under the top bar (the work area is the screen
+                // without the bars), so it hides none of the bar's fields
+                let work = ui::layout::work_area(ui.ctx());
+                egui::Area::new(egui::Id::unique("deep-diagnostics-session-banner"))
+                    .pivot(egui::Align2::CENTER_TOP)
+                    .fixed_pos(egui::pos2(work.center().x, work.top() + 8.0))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .show(ui.ctx(), |ui| {
+                        // the theme's panel over the world (AGENTS §7), the
+                        // warning colour for the text
+                        ui::widgets::overlay(ui, &self.palette, egui::Margin::symmetric(12, 6), |ui| {
+                            ui.label(egui::RichText::new(aurora_i18n::tr!("deep-diagnostics-active")).color(self.palette.warn));
+                        });
+                    });
+            }
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
@@ -11849,7 +11869,7 @@ impl App {
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         // before the deep profile, which takes the frame's upload bytes
-        self.crash_frame();
+        self.crash_frame(&gfx.renderer, &gfx.window);
         self.end_deep_profile(&gfx.renderer);
         self.monitor_frame(&gfx.renderer);
         self.crash_state(&gfx.renderer, &gfx.window);
@@ -13374,6 +13394,10 @@ impl App {
             BarAction::ExportStreamList => self.export_stream_list(),
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
+            BarAction::Diagnostics => {
+                self.panels.settings = true;
+                self.options_ui.open(ui::options::Page::System, 0);
+            }
             BarAction::CopyVersion => self.copy_version(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
             BarAction::ToggleReportAbuse => {
@@ -14752,6 +14776,9 @@ impl App {
         }
         if res.back_up {
             self.back_up_settings(ctx);
+        }
+        if res.save_repro_bundle {
+            self.save_repro_bundle();
         }
         if res.pick_backup {
             self.pick_settings_backup();
@@ -17587,6 +17614,10 @@ impl ApplicationHandler for App {
         if self.gfx.is_some() {
             return;
         }
+        crate::crash::note_display_snapshot(event_loop.available_monitors().map(|monitor| {
+            let size = monitor.size();
+            (size.width, size.height, monitor.refresh_rate_millihertz().map(|rate| rate / 1000))
+        }));
         // captures keep a fixed, predictable window
         let capture = self.capture.is_some();
         let (mut w, mut h) = (self.settings.window_width.max(800), self.settings.window_height.max(600));

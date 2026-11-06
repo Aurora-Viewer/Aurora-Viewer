@@ -284,13 +284,22 @@ pub fn init() {
     // Client disconnected` each time cpal closes a stream (every output or
     // capture device switch). Real stream failures reach aurora-audio through
     // cpal's error callback, which reopens the device.
-    env_logger::Builder::from_env(
+    let mut builder = env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn,pulseaudio=off,zbus=warn"),
-    )
-    .format_timestamp_millis()
-    .target(env_logger::Target::Pipe(Box::new(Tee { file, session_file })))
-    .init();
+    );
+    if crate::deep_diagnostics::active() {
+        builder
+            .filter_module("aurora_render", log::LevelFilter::Debug)
+            .filter_module("aurora_viewer::gpu_driver", log::LevelFilter::Debug)
+            .filter_module("aurora_viewer::gpu_load", log::LevelFilter::Debug)
+            .filter_module("wgpu_core", log::LevelFilter::Info)
+            .filter_module("wgpu_hal", log::LevelFilter::Info);
+    }
+    builder
+        .format_timestamp_millis()
+        .target(env_logger::Target::Pipe(Box::new(Tee { file, session_file })))
+        .init();
     std::panic::set_hook(Box::new(|info| {
         // wgpu's panic for a device lost during a wait, caught by the
         // renderer and taken as the loss (aurora-render device_lost.rs);

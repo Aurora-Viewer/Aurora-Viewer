@@ -476,6 +476,7 @@ pub struct OptionsUi {
     pub restore: Option<backup::Pending>,
     pub backup_status: String,
     pub restore_status: String,
+    pub repro_bundle_status: String,
 }
 
 impl OptionsUi {
@@ -639,6 +640,8 @@ pub struct OptionsResult {
     pub back_up: bool,
     /// Choose a backup to restore (then `restore_modal` confirms it).
     pub pick_backup: bool,
+    /// Choose where to save the public-safe diagnostic ZIP.
+    pub save_repro_bundle: bool,
     /// A restore confirmed: the app puts back what is not the settings.
     pub restored: Option<backup::Restored>,
 }

@@ -1562,6 +1562,44 @@ one-line command (`scripts/setup.ps1`, then the tools):
 └─ work\                        one git worktree per agent task
 ```
 
+### GPU execution diagnostics
+
+`aurora-render/src/gpu_diagnostics/` owns optional Vulkan diagnostics.
+`vulkan.rs` negotiates only offered extensions/features before ordinary and
+OpenXR device creation, retaining required wgpu features. It owns a dedicated
+mapped marker buffer outside wgpu's resource tracker, plus dispatch handles
+whose device lifetime is retained through submission callbacks and fault work.
+The shared model bounds the ring to 64 render-view submissions × 64 words
+(16 KiB payload; metadata below 64 KiB). Stereo eyes have independent epochs
+and completion lifetimes even when their frame number is equal. Saturation
+stops new recording; completed slots alone can be reused. Tokens never wrap.
+
+Pass markers are recorded outside wgpu render/compute passes. wgpu 30 forbids
+raw HAL and ordinary commands on the same encoder, so raw-only marker buffers
+are interleaved with ordinary segments. The three pre/scene/post batches still
+finish in parallel and submit in their original order. SSR shares the
+`scene-b (SSR/water/blend)` boundary; diagnostics do not split that pass.
+Photo tiles and probe captures use the same recorder. The default (`fault`)
+enables only the driver's device-fault report, which costs nothing until a
+loss; `auto` adds AMD markers or NVIDIA checkpoints if offered (about 0.18 ms
+of render-thread time per frame on an RX 9070 XT, so opt-in until they are
+batched); `deep`, set by deep diagnostics, takes those markers or the
+transfer ones; `off` disables all optional instrumentation.
+`AURORA_GPU_BREADCRUMBS=transfer` explicitly enables the more expensive
+transfer commands and execution barriers.
+
+A long-lived worker requests driver detail once for the first loss and retains
+its device while the driver runs. The report writer never joins it. wgpu can
+invalidate a device for OOM too, so a typed Vulkan `ERROR_DEVICE_LOST` check
+precedes whole-ring mapped reads and `vkGetDeviceFaultInfoEXT`. Mapped contents
+after loss are best effort; plausible tokens show an observed boundary/stage,
+not a fault's cause. Fault arrays are bounded; vendor binaries stay disabled.
+Raw addresses and driver text stay in `gpu-device-fault-private.txt`, while
+`gpu-breadcrumbs.txt` is a numeric schema reconstructed from closed vocabulary
+in `crash/summary.rs`. Recovery never replaces the first-loss snapshot. The app
+publishes the pending first loss before rebuilding its window/device, so a stuck
+fault query or reconstruction cannot leave only startup metadata on disk.
+
 ## The crates
 
 | Crate | Role |
@@ -2661,6 +2699,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `world/object_im_filter.rs`, `ui/options/pages/privacy.rs`, `demo_object_im.rs` | Objects' messages from elsewhere (issue #623): the location of an IM_FROM_TASK binary bucket ("Region/x/y/z") read and compared with our region and parcel (`landmarks::in_parcel`); llInstantMessage from another region or parcel and llRegionSayTo from outside the parcel dropped when Preferences › Privacy asks for it, our own objects and (by choice) friends' objects let through. |
 | `ui/options/pages/rlva.rs` | Preferences › RLVa: the global switch of the scripted restrictions, their options, the RLVa tools button and the session's active restrictions, on a page of their own (out of Protections). RLVa is very experimental: `Page::experimental` puts the amber experimental mark on its sidebar entry, and the page opens on `Cx::experimental_notice`, a framed notice with the same mark |
 | `ui/options/pages/aurora.rs` | Preferences › Aurora: what Aurora does differently from the Legacy Viewer, each redrawn element with its way back to the Legacy look (windows, the world and the interface, gaze, movement, animation timing); `set_all` sets every look at once (and Aurora's water); the entry of the sidebar carries the aurora gradient |
+| `ui/options/pages/system.rs` | Help › Diagnostics opens Preferences › Language and updates, which exposes the one-session GPU diagnostics switch, startup environment overrides and repro-bundle action; options are off by default and apply at the next start |
 | `ui/bidi.rs` | Right-to-left text (Arabic, Hebrew) in reading order on top of egui, which lays rows out from left to right: the Unicode Bidirectional Algorithm (`unicode-bidi`) on the rows of a text, each right-to-left word given to egui as its own section (its shaper reverses and joins it). `layout` returns a `Visual`: the galley and the box of each character of the original text (`range_rects`, `cursor_rect`, `cursor_at`) for links and selection. Texts without right-to-left characters are laid out as they are |
 | `ui/fonts.rs`, `ui/fonts/fallback.rs`, `ui/fonts/preview.rs` | Interface fonts: main font, embedded (Inter by default, Noto Sans, Roboto, OpenDyslexic, each with its semi-bold or bold face) or chosen, those of egui, then system text fallback fonts before egui's icon font for characters the main faces do not have (display names, titles, chat: Georgian, CJK, Arabic, mathematical letters…). `fallback.rs`: list per script, first installed font that draws the probe character, files memory-mapped and checked on the `aurora-fonts` thread, alignment of their baseline with the main font; installed on the next frame if the search was not finished. `AURORA_FONT_FALLBACK=0` removes them. `preview.rs`: the system font list's visible rows (and a margin), each name drawn in its own face into a picture by a thread of its own, uploaded as it is ready and dropped once the list closes; the faces never enter egui |
 | `ui/emoji.rs`, `ui/emoji/codes.rs` | Colour emoji: the built-in font's pictures, the text fields that draw them, and the picker (its search takes the keyboard, Escape is its own). `codes.rs`: the `:code:` shortcodes of the chat fields, converted when the closing `:` is typed, a list of suggestions from `:` and two letters (arrows, Tab / Enter, Escape), and the same rules for what is sent (not inside a word, a time or a link). |
@@ -2733,6 +2772,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `disk_io.rs` | Bytes the viewer reads from and writes to its own files, by origin (texture, mesh and object caches, inventory, logs, the rest), counted where the files are touched: the resource monitor's disk rates |
 | `ui/monitor/`, `app/monitor.rs` | The resource monitor, the Performance window's full view (`ui/perf.rs` keeps the compact one and the switch between them): `mod.rs` the rail of eight sections, the status bar, the CSV report; `model.rs` what each part of the viewer costs in processor, frame time, GPU, memory, video memory, network and disk, attributed from the thread loads, the frame's steps, the GPU timers, the probes and the disk counters (nothing measured stays unknown); `snapshot.rs` the half-second snapshot and a minute of history; `draw.rs` its cards, graphs, segmented bars and tables; one file per section (`overview.rs`, `subsystems.rs`, `threads.rs`, `memory.rs`, `network.rs`, `disk.rs`, `scene.rs`, `region.rs`); `app/monitor.rs` turns the measures on while the view shows (frame profile and probes without a log line, the sampler), gathers the snapshot, lists the scene's costliest avatars and objects and answers the monitor's actions |
 | `app/crash_state.rs` | What a crash report says the viewer was doing: every 2 seconds the screen, frame rate, window size, graphics preset, video memory, texture pressure, counts and the swapchain recreations of the last 10 seconds (frozen when the GPU is lost), plus the effects on, the GPU frame times and heaviest pass, the uploads, the time since the login and the last region change, and how a GPU loss was seen, handed to `crash/watchdog.rs` (numbers and fixed names only). |
+| `deep_diagnostics.rs`, `app/repro_bundle.rs` | The one-session deep-diagnostics switch is consumed atomically before startup threads; optional diagnostic environment settings apply only when explicitly enabled, preserving inherited environment variables otherwise. The ZIP uses an allowlist of bounded public artifacts and numeric display facts, excludes the full log, private traces, full settings and raw GPU-fault file, and lists its contents before the save dialog. |
 | `app/gpu_stall.rs` | The graphics card stopped finishing frames (`Renderer::stalled_for`): after 6 s a native message box (own thread) says so and asks to keep waiting or close; the render thread's stack to the crash session; the box goes away when frames come again, and when the viewer ends (`withdraw_all`: on macOS a CFUserNotification cancelled, on Linux the zenity process ended, both drawn by another process that would keep the box). Also closes at once when exit is asked during a stall (the exit prompt cannot be drawn). A device lost for good (`Renderer::device_lost`) shows its own box at once (OK alone), then closes the same way; the session is marked `gpu-lost.txt`. |
 | `app/busy_pause.rs` | A window behind whose GPU frames crawl (two of 150 ms or more in a row: another program in front keeps the card busy, #2355) stops drawing its 3D until it has the focus again, with the pause of `texture_budget::Background` (empty lists, `PAUSED_RESOLUTION_DIVISOR`) but its textures kept; the world blurred and darkened, an amber notice under the windows and "— Paused" in the window title. Not during a photo, a headset or a timed run; Preferences › Graphics switch, on by default (AURORA_DEMO_BUSY_PAUSE). |
 | `app/gpu_recovery.rs` | The window, the renderer and egui's input state made the same way at start (`resumed`) and after a GPU device loss; the recovery itself (`AURORA_GPU_RECOVERY=1`, work in progress): a new window and device, the old window kept until the new one has presented, the session and the world kept, the scene released on the lost renderer (`Scene::forget_gpu`) and reloaded on the new one (`Scene::adopt_gpu`, `TextureStreamer::gpu_reset`), particles, media and terrain paint brought back, the lost renderer's tickets dropped; the rule for repeated losses (`loss_step`: of the last five minutes, recover, recover with the safe graphics level, close). |
@@ -2773,7 +2813,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-render/src/adapter_choice.rs` | Which GPU the renderer opens (#894): every Vulkan adapter listed with its type, memory and whether it can present, then tried in order (the one asked for by `AURORA_GPU` or Preferences › Graphics, then discrete before integrated, the most video memory first), the next one if one fails to open; the log hint when only an integrated GPU is visible. The hybrid-GPU exports `NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance` are in aurora-viewer's `main.rs` (export table: `build.rs`) |
 | `aurora-render/src/vulkan_drivers.rs` | Vulkan drivers kept out of the process: Dozen (Vulkan on Direct3D 12, Microsoft's compatibility pack), which crashed an old AMD Direct3D 12 driver inside `vkCreateInstance`, through `VK_LOADER_DRIVERS_DISABLE=*dzn*` set at the start of `main` unless the user chose the drivers; let back in by the renderer when no adapter is left without it; `AURORA_VULKAN_DRIVERS=keep` to load it |
 | `aurora-render/src/vulkan_layers.rs` | Third-party implicit Vulkan layers kept out of the process: those that crash (Overwolf's, in `vkCreateInstance`, #901) always, the other overlays' (OBS Studio's game capture, Steam overlay, RivaTuner, Epic…) unless Preferences › Graphics › Overlays allows them (`Settings::allow_overlays_at_start`, read before any thread); their manifests' disable variables set at the start of `main`; ReShade and the drivers' layers kept; `AURORA_VULKAN_LAYERS=keep` to load them all |
-| `overlay_hooks.rs` | Overlay and capture hooks other programs inject into the running viewer (Discord's `DiscordHook64.dll`, the Steam overlay, RivaTuner, OBS game capture), which the viewer cannot refuse: a background thread lists the process's modules every 10 s and writes one warning per hook that appears, with what to turn off if the image is lost, and notes it for the crash report (`overlay-hooks.txt`) |
+| `overlay_hooks.rs` | Overlay and capture hooks other programs inject into the running viewer (Discord's legacy `DiscordHook64.dll`, Steam, RivaTuner, OBS, Medal, NVIDIA Share, FPS Monitor and Bandicam; the revamped Discord overlay is not a game hook), which the viewer cannot refuse: a background thread lists the process's modules every 10 s and writes one warning per hook that appears, with what to turn off if the image is lost, and notes it for the crash report (`overlay-hooks.txt`) |
 
 `scene/sounds.rs` keeps attached HUD sounds at the audio listener, including
 linked HUD prims, following `LLAudioSourceVO::update`. They share the Sfx
@@ -3802,6 +3842,19 @@ process (`overlay_hooks.rs`) is added to `overlay-hooks.txt`, which the report
 names as "Overlay hooks" (checked again against the fixed list). A session ended with one of these files, or a
 GPU device loss in its log, leaves a `gpu-trouble` mark in the crash root, consumed by
 the next start (`crash::take_gpu_trouble`) to offer the safe graphics.
+
+`environment.rs` records bounded process facts at session start and again
+when a confirmed GPU device loss is handled. Linux module basenames and power
+profile come from `/proc/self/maps` and sysfs; Windows uses ToolHelp, GDI,
+DisplayConfig and the system power APIs. Windows module metadata includes
+numeric file versions and cached signature categories. Windows display modes
+and HDR state are queried by the collector; other platforms use the numeric
+winit display snapshot. Active VRR state is unavailable through these APIs
+and remains explicitly unknown. The private session JSON has module basenames and fixed
+classification words, never module paths or process command lines. The public
+report filters those facts again and shows third-party module names, known
+overlay process labels, display classes and refresh rates, HDR/VRR when known,
+and a fixed power-plan category.
 
 `summary.rs` builds the public text of a crash report (`public-report.md` in
 the session folder, written before the window opens): only values of a known

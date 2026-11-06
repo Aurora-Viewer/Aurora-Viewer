@@ -313,6 +313,7 @@ fn run(dir: &Path, main: Option<&super::native::Thread>) {
         if written.is_none_or(|at| at.elapsed() >= ALIVE_EVERY) {
             written = Some(Instant::now());
             write_alive(dir, responsive);
+            super::flight_recorder::publish_periodic(dir);
         }
     }
 }
