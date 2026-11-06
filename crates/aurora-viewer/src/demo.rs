@@ -9060,7 +9060,7 @@ fn demo_day(sky: Llsd) -> Llsd {
         "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
     };
     // AURORA_DEMO_SKY_FLAGS: the day's settings flags (0 as a viewer saves
-    // them by default; `none` leaves them out, rights nobody stated)
+    // them by default; `none` leaves the key out, which reads as 0)
     match std::env::var("AURORA_DEMO_SKY_FLAGS").ok().as_deref().map(str::trim) {
         Some("none") => {}
         flags => {

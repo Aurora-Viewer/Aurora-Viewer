@@ -78,8 +78,8 @@ pub enum SourceRights {
     /// A settings asset applied from the inventory: the permissions of the
     /// items holding it.
     Asset(Uuid),
-    /// Nobody stated them (settings without flags, an experience's
-    /// environment, an editor's unsaved settings).
+    /// No settings to read them from (an experience's environment, a day
+    /// an editor applied to oneself).
     Unknown,
 }
 
@@ -94,19 +94,25 @@ impl SourceRights {
             SourceRights::Asset(id) => {
                 m.insert("asset".into(), Llsd::from(id));
             }
-            SourceRights::Unknown => {}
+            SourceRights::Unknown => {
+                m.insert("unknown".into(), Llsd::from(true));
+            }
         }
         Llsd::Map(m)
     }
 
-    /// A file without them: Unknown.
+    /// A file without them (a sky the user kept from a library preset, an
+    /// own item or the shared environment): no restriction, as the
+    /// settings' own flags would read.
     fn from_llsd(v: &Llsd) -> SourceRights {
         if v.has("flags") {
             SourceRights::Flags(v["flags"].as_u32())
         } else if v.has("asset") && !v["asset"].as_uuid().is_nil() {
             SourceRights::Asset(v["asset"].as_uuid())
-        } else {
+        } else if v["unknown"].as_bool() {
             SourceRights::Unknown
+        } else {
+            SourceRights::Flags(0)
         }
     }
 }
@@ -473,8 +479,9 @@ impl EnvSelector {
             return SourceRights::Flags(0);
         };
         let slot = |slot: Option<&Slot>| match slot {
-            // the parcel's or region's day: its flags and its frames'
-            Some(Slot { settings: Some(map), .. }) => super::env_edit::source_flags(map).map_or(SourceRights::Unknown, SourceRights::Flags),
+            // the parcel's or region's day: its flags and its frames' (none
+            // without a flags key)
+            Some(Slot { settings: Some(map), .. }) => SourceRights::Flags(super::env_edit::source_flags(map)),
             // the default day asset of the Legacy Viewer's library
             Some(Slot { settings: None, .. }) => SourceRights::Flags(0),
             None => SourceRights::Unknown,
@@ -2268,10 +2275,10 @@ mod tests {
         let mut sel = EnvSelector::default();
         sel.frame(&input(0.0));
         assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Flags(0));
-        // a region day without flags: nobody stated its rights
+        // a region day without flags: no restriction, as the Legacy Viewer reads it
         let sel = region_selector();
-        assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Unknown);
-        assert_eq!(sel.current_rights(SettingsKind::Water), SourceRights::Unknown);
+        assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Flags(0));
+        assert_eq!(sel.current_rights(SettingsKind::Water), SourceRights::Flags(0));
         // with flags: the day's with its frames'
         let mut sel = EnvSelector::default();
         sel.on_answer(REGION, -1, flagged_answer(FLAG_NOTRANS, FLAG_NOCOPY), ctx(None));
@@ -2321,7 +2328,7 @@ mod tests {
         next.restore_local(&saved);
         next.frame(&input(1.0));
         assert_eq!(next.current_rights(SettingsKind::Sky), kept);
-        // a file without the rights: not known
+        // a file saved without the rights: free, so a user keeps saving their own sky
         let mut old = saved.clone();
         if let Llsd::Map(m) = &mut old {
             m.remove("sky_rights");
@@ -2329,7 +2336,11 @@ mod tests {
         let mut next = region_selector();
         next.restore_local(&old);
         next.frame(&input(1.0));
-        assert_eq!(next.current_rights(SettingsKind::Sky), SourceRights::Unknown);
+        assert_eq!(next.current_rights(SettingsKind::Sky), SourceRights::Flags(0));
+        // each kind of rights reads back as written
+        for r in [SourceRights::Flags(FLAG_NOCOPY), SourceRights::Asset(SKY), SourceRights::Unknown] {
+            assert_eq!(SourceRights::from_llsd(&r.to_llsd()), r);
+        }
         // an editor's settings applied to oneself keep the editor's rights
         sel.set_edit_sky(SkyFrame::default());
         sel.frame(&input(2.0));

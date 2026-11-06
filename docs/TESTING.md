@@ -4030,14 +4030,13 @@ both open states and the selection count. Capture at frame 620.
 - **`AURORA_DEMO_SKY_FLAGS=<flags>|none`**: the settings flags of the EEP
   day `AURORA_DEMO_SKY` gives the region (0 by default): 1 no copy, 2 no
   modify, 4 no transfer, 8 no save, added up; `none` leaves the `flags` key
-  out (rights nobody stated). With the shared environment shown (a local
-  sky kept by the demo profile has its own rights), "New sky…" (or "New
-  water…") of the bar's environment menu then opens on settings with these
-  rights, and its status line says which: `none` keeps editing and
-  "Apply to myself only", greys Save As and refuses the parcel and region
-  entries; 1 greys Save As, 2 the panels too; 4 keeps Save As, the new
-  item's next owner without transfer; 8 leaves only "Apply to myself
-  only".
+  out, which reads as 0 like the Legacy Viewer (no restriction). With the
+  shared environment shown (a local sky kept by the demo profile has its
+  own rights), "New sky…" (or "New water…") of the bar's environment menu
+  then opens on settings with these rights, and its status line says
+  which: 0 and `none` change nothing; 1 greys Save As, 2 the panels too; 4
+  keeps Save As, the new item's next owner without transfer; 8 leaves only
+  "Apply to myself only".
 - **`AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r>,<fog g>,<fog b>]`**:
   the water of the EEP day `AURORA_DEMO_SKY` gives the region, with these
   values as a region's asset carries them (the normal scale on its three

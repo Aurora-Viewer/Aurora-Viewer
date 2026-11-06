@@ -25,16 +25,12 @@ pub const FLAG_NOSAVE: u32 = 1 << 3;
 const PERM_TRANSFER: u32 = 0x2000;
 
 /// The permission flags of a settings map and of the frames it holds (a
-/// day's frames may be stricter than the day), None when the map has no
-/// `flags` key: settings every viewer saves with their flags
-/// (LLSettingsBase::saveValuesToLLSD), so a map without them has rights
-/// nobody stated.
-pub fn source_flags(map: &Llsd) -> Option<u32> {
-    if !map.has("flags") {
-        return None;
-    }
+/// day's frames may be stricter than the day). A map without a `flags` key
+/// has none (LLSettingsBase's mSettingFlags stays 0): the simulator adds
+/// them to a restricted setting it applies.
+pub fn source_flags(map: &Llsd) -> u32 {
     let frames = map["frames"].as_map().into_iter().flat_map(|m| m.values());
-    Some(frames.fold(map["flags"].as_u32(), |f, frame| f | frame["flags"].as_u32()))
+    frames.fold(map["flags"].as_u32(), |f, frame| f | frame["flags"].as_u32())
 }
 
 /// Haze keys that live in `legacy_haze` once edited.
@@ -844,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn source_flags_join_the_frames_and_need_a_flags_key() {
+    fn source_flags_join_the_frames_and_default_to_none() {
         let day = llsd_map! {
             "flags" => FLAG_NOTRANS as i32,
             "frames" => llsd_map! {
@@ -852,8 +848,11 @@ mod tests {
                 "b" => llsd_map! {},
             },
         };
-        assert_eq!(source_flags(&day), Some(FLAG_NOTRANS | FLAG_NOCOPY));
-        assert_eq!(source_flags(&llsd_map! { "flags" => 0 }), Some(0));
-        assert_eq!(source_flags(&llsd_map! { "frames" => llsd_map! {} }), None);
+        assert_eq!(source_flags(&day), FLAG_NOTRANS | FLAG_NOCOPY);
+        assert_eq!(source_flags(&llsd_map! { "flags" => 0 }), 0);
+        // no flags key: no restriction, as the Legacy Viewer reads it
+        assert_eq!(source_flags(&llsd_map! { "frames" => llsd_map! {} }), 0);
+        let frame_only = llsd_map! { "frames" => llsd_map! { "a" => llsd_map! { "flags" => FLAG_NOMOD as i32 } } };
+        assert_eq!(source_flags(&frame_only), FLAG_NOMOD);
     }
 }

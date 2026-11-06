@@ -124,14 +124,11 @@ impl DayDoc {
         self.map["flags"].as_u32()
     }
 
-    /// The day's flags with its frames' (`env_edit::source_flags`), None
-    /// when the day has no `flags` key.
-    pub fn source_flags(&self) -> Option<u32> {
-        if !self.map.has("flags") {
-            return None;
-        }
+    /// The day's flags with its frames' (`env_edit::source_flags`; none
+    /// without a `flags` key).
+    pub fn source_flags(&self) -> u32 {
         let frames = self.tracks.iter().flatten().map(|(_, frame)| frame["flags"].as_u32());
-        Some(frames.fold(self.flags(), |f, frame| f | frame))
+        frames.fold(self.flags(), |f, frame| f | frame)
     }
 
     pub fn set_flags(&mut self, flags: u32) {
@@ -483,11 +480,11 @@ mod tests {
     fn a_days_source_flags_join_its_frames() {
         use crate::world::env_edit::{FLAG_NOCOPY, FLAG_NOTRANS};
         let mut d = day();
-        assert_eq!(d.source_flags(), None, "no flags key: not known");
+        assert_eq!(d.source_flags(), 0, "no flags key: no restriction");
         d.set_flags(FLAG_NOTRANS);
-        assert_eq!(d.source_flags(), Some(FLAG_NOTRANS));
+        assert_eq!(d.source_flags(), FLAG_NOTRANS);
         d.tracks[TRACK_GROUND][0].1.insert("flags", FLAG_NOCOPY as i32);
-        assert_eq!(d.source_flags(), Some(FLAG_NOTRANS | FLAG_NOCOPY));
+        assert_eq!(d.source_flags(), FLAG_NOTRANS | FLAG_NOCOPY);
     }
 
     #[test]
