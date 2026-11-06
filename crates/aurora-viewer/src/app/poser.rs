@@ -160,6 +160,14 @@ impl App {
                 }
                 // The Movelock window's Repair: recompile and restart both scripts.
                 crate::ik_edit::poser::Request::RepairBridge => self.bridge_runtime.retry(Instant::now()),
+                crate::ik_edit::poser::Request::ObjectName(object) => {
+                    if let Some(object) = self.world.objects.index_of_uuid(&object).and_then(|i| self.world.objects.get(i)) {
+                        self.net.send(aurora_net::NetCommand::RequestObjectProperties {
+                            handle: object.key.region,
+                            object: object.full_id,
+                        });
+                    }
+                }
             }
         }
         if let Some(request) = consent.incoming.front().copied() {
