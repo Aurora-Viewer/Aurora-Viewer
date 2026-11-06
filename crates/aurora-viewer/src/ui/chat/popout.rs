@@ -1186,6 +1186,83 @@ mod tests {
         }
     }
 
+    /// An emoji picked for a conversation's field goes after its text and the
+    /// caret after the emoji (it was left before it: "hi|😼"), in both
+    /// conversation layouts.
+    #[test]
+    fn a_picked_emoji_leaves_the_caret_after_it() {
+        const BOB: Uuid = Uuid::from_u128(0xB);
+        let p = crate::theme::Theme::default().palette();
+        for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+            let mut kit = Kit::new(style);
+            kit.world.conversation_line(
+                BOB,
+                crate::world::ChatLine {
+                    time: std::time::SystemTime::now(),
+                    from: "Bob".into(),
+                    text: "hello from Bob".into(),
+                    kind: crate::world::ChatKind::Im,
+                    source: BOB,
+                    origin: crate::world::Origin::Live,
+                },
+            );
+            kit.main_open = true;
+            kit.st.selected = Some(BOB);
+            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+            crate::ui::widgets::place_floater(&frames.ctx, "conversations", egui::pos2(500.0, 40.0), egui::vec2(700.0, 500.0));
+            let field = egui::Id::unique(("conv_input", Some(BOB)));
+            for _ in 0..3 {
+                frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            frames.ctx.memory_mut(|m| m.request_focus(field));
+            frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            frames.run(vec![egui::Event::Text("hi".into())], |ui| kit.show(ui.ctx(), &p));
+            assert_eq!(kit.st.draft_mut(Some(BOB)), "hi", "{style:?}: typed");
+            // the picker opened, its search narrowed to the one cat face
+            kit.st.emoji_open = true;
+            for _ in 0..3 {
+                frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            frames.run(vec![egui::Event::Text("smirk_cat".into())], |ui| kit.show(ui.ctx(), &p));
+            for _ in 0..3 {
+                frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            // the cat face's picture in the grid, wherever the picker sits
+            let cat = kit
+                .emoji
+                .texture(&frames.ctx, '\u{1F63C}')
+                .expect("the cat face has a picture")
+                .id();
+            let cell = frames
+                .shapes(Vec::new(), |ui| kit.show(ui.ctx(), &p))
+                .iter()
+                .find_map(|s| match s {
+                    egui::Shape::Mesh(m) if m.texture_id == cat => Some(m.calc_bounds().center()),
+                    _ => None,
+                })
+                .expect("the picker shows the cat face");
+            let press = |pressed| egui::Event::PointerButton {
+                pos: cell,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            frames.run(vec![egui::Event::PointerMoved(cell)], |ui| kit.show(ui.ctx(), &p));
+            frames.run(vec![press(true)], |ui| kit.show(ui.ctx(), &p));
+            frames.run(vec![press(false)], |ui| kit.show(ui.ctx(), &p));
+            for _ in 0..3 {
+                frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            assert_eq!(kit.st.draft_mut(Some(BOB)), "hi\u{1F63C}", "{style:?}: the cat face picked");
+            let caret = egui::TextEdit::load_state(&frames.ctx, field).and_then(|s| s.cursor.char_range());
+            assert_eq!(
+                caret.map(|r| (r.primary.index.0, r.secondary.index.0)),
+                Some((3, 3)),
+                "{style:?}: the caret after the emoji"
+            );
+        }
+    }
+
     /// "Detach" waits a frame and gives the field the keyboard; "Attach to
     /// Conversations" shows the conversation there, the window opened.
     #[test]

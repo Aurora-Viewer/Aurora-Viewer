@@ -422,6 +422,9 @@ fn emoji_picker(
                 let picked = emoji.picker(ui, p, icons);
                 if let Some(c) = picked.chosen {
                     chat.input.push(c);
+                    // the caret after the emoji, also while Shift keeps the
+                    // picker open
+                    crate::ui::chat::cursor_to_end(ui.ctx(), crate::ui::chat::bar_input_id(), &chat.input);
                     close = !ui.input(|i| i.modifiers.shift);
                 }
                 escape = picked.escape;
