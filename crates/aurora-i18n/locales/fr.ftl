@@ -1688,6 +1688,7 @@ app-graphics-start-failed =
     À essayer :
     • mettre à jour le pilote de la carte graphique ;
     • sur un PC à deux cartes graphiques, vérifier qu'elles sont toutes deux activées dans le Gestionnaire de périphériques, et que l'écran est branché sur la carte qui doit dessiner ;
+    • sur un ordinateur portable avec des cartes graphiques AMD et NVIDIA, mettre aussi à jour le pilote AMD depuis le site d'AMD ;
     • redémarrer le PC.
 
     Détails : { $e }

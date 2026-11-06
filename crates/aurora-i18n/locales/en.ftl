@@ -1685,6 +1685,7 @@ app-graphics-start-failed =
     What to try:
     • update the graphics card driver;
     • on a PC with two graphics cards, check that both are enabled in Device Manager, and that the monitor is plugged into the card that should draw;
+    • on a laptop with AMD and NVIDIA graphics, update the AMD driver from AMD's website as well as the NVIDIA driver;
     • restart the PC.
 
     Details: { $e }
