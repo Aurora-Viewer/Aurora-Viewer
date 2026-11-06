@@ -6,13 +6,13 @@
 //! originally LGPL 2.1): same rule for what counts and for the payer's
 //! message, which the simulator gives as "Payment" when there is none.
 //!
-//! The card is for direct payments. Every other L$ received (a sale, an
-//! object paid, a parcel, a group's money) and a direct payment that shows
-//! no card get a toast and a line in the notification list, with its
-//! "Notify me when I receive L$" switch: the Legacy Viewer's PaymentReceived,
-//! persistent and logged to the payer's transcript (log_to_im, #2675). The
-//! switch is off by default (`Settings::notify_money_received`) and the
-//! rules differ in three places, on purpose. A toast names the object paid
+//! The card is for direct payments. One that shows no card gets a toast and
+//! a line in the notification list: the Legacy Viewer's PaymentReceived,
+//! persistent and logged to the payer's transcript (log_to_im, #2675). So
+//! does every other L$ received (a sale, an object paid, a parcel, a group's
+//! money) with the "Notify me of sales" switch. It is off by default
+//! (`Settings::notify_money_received`), and the rules differ in three
+//! places, on purpose. A toast names the object paid
 //! when the simulator gives its name, where reason_from_transaction_type
 //! leaves TRANS_PAY_OBJECT without one: a seller wants to know what sold.
 //! It is stricter too: only for L$ to us that succeeded and that come from
@@ -210,8 +210,10 @@ impl World {
         if self.payments.rise_into_balance {
             self.payments.gains.push(*amount);
         }
+        // someone chose to send us these: only the sales have a switch
+        let direct = *kind == GIFT && !*source_group;
         // process_money_balance_reply: nothing to display without a description
-        if self.payments.notify_received && !card && !description.is_empty() {
+        if (direct || self.payments.notify_received) && !card && !description.is_empty() {
             self.received_notice(other, *source_group, *kind, *amount, item);
         }
     }
@@ -614,10 +616,33 @@ mod tests {
     }
 
     #[test]
-    fn by_default_a_payment_is_highlighted_without_a_toast() {
+    fn by_default_a_sale_is_highlighted_without_a_toast() {
         let settings = crate::settings::Settings::default();
         assert!(!settings.notify_money_received);
         assert!(settings.balance_gain_animation);
+    }
+
+    #[test]
+    fn a_direct_payment_notifies_with_the_sales_switch_off() {
+        let mut w = world();
+        w.social.names.insert(JANE, "Jane Doe".into());
+        w.payment(&received(130, GIFT, JANE, 100, "Payment"));
+        assert_eq!(notices(&w), [from_jane(" paid you L$100")]);
+        w.payment(&received(131, trans::OBJECT_SALE, JANE, 50, "Hat"));
+        w.payment(&received(132, trans::PAY_OBJECT, JANE, 50, "Tip jar"));
+        w.payment(&received(133, trans::LAND_SALE, JANE, 50, ""));
+        assert_eq!(notices(&w).len(), 1, "a sale has no toast by default");
+        // a group's money is not someone's gift
+        let mut group = received(134, GIFT, Uuid::from_u128(3), 40, "Dividend");
+        if let NetEvent::MoneyTransaction { source_group, .. } = &mut group {
+            *source_group = true;
+        }
+        w.payment(&group);
+        assert_eq!(notices(&w).len(), 1);
+        // its card says it
+        w.social.session_mut(JANE);
+        w.payment(&received(135, GIFT, JANE, 30, "Payment"));
+        assert_eq!(notices(&w).len(), 1);
     }
 
     #[test]
