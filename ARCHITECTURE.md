@@ -1594,8 +1594,11 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 `stereo_view.rs` holds runtime-independent camera anchoring and asymmetric
 infinite reverse-Z eye projection math. `xr_device.rs` is the Linux/Windows experimental
 Vulkan-enable2 bootstrap for the viewer's full graphics feature set. Linux and
-Windows try it at startup and fall back to ordinary desktop device creation when
-loader/runtime discovery is unavailable. The OpenXR crate dynamically loads the
+Windows try it at startup, only when VR is wanted from the start (`--vr`, or
+Preferences › Camera › VR › "Set up VR at startup", off until the first "Restart
+in VR": some runtimes crash the start on PCs that never use VR, #2309), and fall
+back to ordinary desktop device creation when loader/runtime discovery is
+unavailable. The OpenXR crate dynamically loads the
 platform loader (`libopenxr_loader.so.1` or `openxr_loader.dll`); no runtime is
 bundled. Explicit offline demo scenarios fail on unavailable initialization so
 that a successful desktop fallback cannot be mistaken for an XR test.

@@ -423,6 +423,10 @@ pub struct App {
     vr_restart_offer: bool,
     vr_restart: bool,
     restart_into_vr: bool,
+    /// The renderer was asked to set VR up at its start (`open_renderer`):
+    /// otherwise the restart dialog explains that VR is set up only once
+    /// used.
+    vr_set_up: bool,
     /// `--vr`: enter VR once the world has shown for a moment.
     vr_at_start: bool,
     vr_world_since: Option<Instant>,
@@ -1447,6 +1451,7 @@ impl App {
             vr_restart_offer: false,
             vr_restart: false,
             restart_into_vr: false,
+            vr_set_up: false,
             vr_at_start: crate::cli::get().vr,
             vr_world_since: None,
             input: MoveInput::default(),
@@ -5560,7 +5565,7 @@ impl App {
             // media on an item we wear (on our back, or a HUD) and made, on a
             // site the list does not know: no question unless `-ask` turns
             // filter_trust_own_worn off; `-blocked` puts the site in the list
-            // as blocked; `-gift`: an item someone else made, asked about
+            // as blocked; `-gift`: an item someone else made, trusted too
             "worn" | "worn-ask" | "worn-blocked" | "worn-gift" | "hud" | "hud-ask" | "hud-blocked" | "hud-gift" => {
                 let url = "https://media.example.com/earring/index.html";
                 self.settings.media.filter_trust_own_worn = !mode.ends_with("-ask");
@@ -15709,7 +15714,11 @@ impl App {
                     ui::widgets::Modal::new(egui::Id::unique("vr-restart")).show(&ctx, |ui| {
                         ui.set_max_width(430.0);
                         ui.heading(aurora_i18n::tr!("vr-restart-title"));
-                        ui.label(aurora_i18n::tr!("vr-restart-body"));
+                        ui.label(if self.vr_set_up {
+                            aurora_i18n::tr!("vr-restart-body")
+                        } else {
+                            aurora_i18n::tr!("vr-restart-body-set-up")
+                        });
                         ui.horizontal(|ui| {
                             if ui::widgets::action_button(
                                 ui,
@@ -15735,6 +15744,9 @@ impl App {
                             {
                                 self.vr_restart_offer = false;
                                 self.vr_restart = true;
+                                // VR is wanted here: set it up at the next starts
+                                // too, so the button enters it at once (#2309)
+                                self.settings.camera.vr_at_start = true;
                             }
                         });
                     });

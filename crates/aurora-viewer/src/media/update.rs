@@ -245,11 +245,9 @@ impl MediaManager {
         self.recently_shown
             .retain(|_, at| now.saturating_duration_since(*at) < RECENTLY_SHOWN);
         let shown = showing || self.recently_shown.contains_key(&o.full_id);
-        let worn = attachment_avatar(world, idx);
-        let avatar = worn.map(|(avatar, _)| avatar);
+        let avatar = attachment_avatar(world, idx);
         let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
         let on_own_avatar = !world.agent_id.is_nil() && avatar == Some(world.agent_id);
-        let own_creation = on_own_avatar && worn.is_some_and(|(_, root)| made_by_us(world, root));
         let e = self.objects.entry(o.full_id).or_default();
         if e.idx != idx {
             forget_slot(&mut self.slot_ids, e.idx, &o.full_id);
@@ -259,7 +257,6 @@ impl MediaManager {
         e.hud = hud(idx);
         e.on_other_avatar = on_other_avatar;
         e.on_own_avatar = on_own_avatar;
-        e.own_creation = own_creation;
         e.changed_by = entry::media_version_agent(&o.media_url);
         if has_media {
             e.flags_lost_since = None;
@@ -973,16 +970,18 @@ fn forget_slot(slot_ids: &mut HashMap<usize, Uuid>, idx: usize, id: &Uuid) {
 }
 
 /// Whether the media filter loads a media without asking: on items we wear
-/// (attachments and HUDs) and made ourselves, when the option is on. A worn
-/// item someone else made can hold a script of theirs that changes the
-/// address, so it asks, as do a worn item whose creator is not known yet
-/// (its inventory item not fetched, a temporary attachment), another
-/// avatar's attachments, objects in the world, the parcel media, and an
-/// item whose avatar has not arrived yet.
+/// (attachments and HUDs), whoever made them, when the option is on.
+/// Another avatar's attachments, objects in the world, the parcel media,
+/// and an item whose avatar has not arrived yet are asked about. The Legacy
+/// Viewer filters only the parcel media and music (filterMediaUrl,
+/// indra/newview/llviewerparcelmedia.cpp), never prim media: asking about
+/// the world's objects is already stricter, and asking about the HUDs one
+/// bought too would question every worn item, with nothing playing until
+/// answered.
 fn trusted_by_filter(objects: &HashMap<Uuid, ObjMedia>, key: MediaKey, settings: &MediaSettings) -> bool {
     settings.filter_trust_own_worn
         && match key {
-            MediaKey::Prim { object, .. } => objects.get(&object).is_some_and(|om| om.on_own_avatar && om.own_creation),
+            MediaKey::Prim { object, .. } => objects.get(&object).is_some_and(|om| om.on_own_avatar),
             MediaKey::Parcel => false,
         }
 }
@@ -1009,28 +1008,13 @@ fn request_priority(e: &ObjMedia, shown: bool) -> u8 {
     }
 }
 
-/// Whether the attachment whose root is `root` comes from an inventory
-/// item we created: its AttachItemID, read in our inventory. False while
-/// the item is unknown.
-fn made_by_us(world: &World, root: usize) -> bool {
-    world
-        .objects
-        .get(root)
-        .and_then(|o| o.attachment_item_id())
-        .and_then(|item| world.inventory.items.get(&item))
-        .is_some_and(|item| !item.creator.is_nil() && item.creator == world.agent_id)
-}
-
-/// Root avatar of an attachment, and the attachment's root prim (the one
-/// seated on the avatar).
-fn attachment_avatar(world: &World, mut idx: usize) -> Option<(Uuid, usize)> {
-    let mut root = idx;
+/// Root avatar of an attachment.
+fn attachment_avatar(world: &World, mut idx: usize) -> Option<Uuid> {
     for _ in 0..16 {
         let o = world.objects.get(idx)?;
         if o.is_avatar() {
-            return Some((o.full_id, root));
+            return Some(o.full_id);
         }
-        root = idx;
         idx = world.objects.parent_of(o)?;
     }
     None
@@ -1506,7 +1490,7 @@ mod tests {
     }
 
     #[test]
-    fn only_media_on_worn_items_we_made_skips_the_filter_question() {
+    fn only_media_on_our_own_worn_items_skips_the_filter_question() {
         let (mut w, screen) = world();
         w.agent_id = crate::demo::DEMO_AGENT;
         let own = w
@@ -1532,7 +1516,7 @@ mod tests {
         track(&mut m, &mut w);
         assert!(!trusted_by_filter(&m.objects, key, &on));
         // worn by us, its item not known yet (or a temporary attachment,
-        // worn from no item): asked
+        // worn from no item): trusted
         parent_to(&mut w, own);
         let item = Uuid::from_u128(0x17e3);
         if let Some(o) = w.objects.get_mut(idx) {
@@ -1540,9 +1524,9 @@ mod tests {
         }
         track(&mut m, &mut w);
         assert!(m.objects.get(&screen).is_some_and(|e| e.on_own_avatar));
-        assert!(!trusted_by_filter(&m.objects, key, &on), "creator unknown");
-        // an item someone else made (a gift whose script can change the
-        // address): asked
+        assert!(trusted_by_filter(&m.objects, key, &on), "creator unknown");
+        // whoever made the item: a HUD bought from someone else is trusted
+        // as one we made
         let made_by = |w: &mut World, creator: Uuid| {
             w.inventory.add_items(vec![aurora_net::inventory::InvItem {
                 id: item,
@@ -1559,7 +1543,8 @@ mod tests {
         };
         made_by(&mut w, Uuid::from_u128(0x5747));
         refresh(&mut m, &mut w);
-        assert!(!trusted_by_filter(&m.objects, key, &on), "made by someone else");
+        assert!(trusted_by_filter(&m.objects, key, &on), "made by someone else");
+        assert!(!trusted_by_filter(&m.objects, key, &off), "the option off asks");
         // made by us, as an attachment or a HUD
         made_by(&mut w, crate::demo::DEMO_AGENT);
         refresh(&mut m, &mut w);
