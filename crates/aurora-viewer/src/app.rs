@@ -2845,6 +2845,7 @@ impl App {
             mac,
             id0,
             last_exec: self.last_exec(),
+            platform: crate::system_info::login_platform(),
         };
         self.login_form.busy = true;
         self.login_form.error = None;
