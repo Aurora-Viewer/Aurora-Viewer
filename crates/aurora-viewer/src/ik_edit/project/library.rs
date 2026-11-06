@@ -101,8 +101,9 @@ pub(super) struct Library {
     pub(super) open_bindings: Option<Uuid>,
 }
 impl Library {
-    pub(super) fn import(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+    pub(super) fn import(&mut self, bytes: Vec<u8>, inv: &crate::world::inventory::Inventory) -> Result<(), String> {
         let mut document = Document::decode(&bytes)?;
+        document.name_assets(|id| animations::shared_asset(inv, id));
         if let Some(identity) = &mut document.project {
             identity.id = Uuid::new_v4();
         }
@@ -322,7 +323,7 @@ impl Editor {
             }
         });
     }
-    pub(super) fn library_tick(&mut self, jobs: &Jobs, ctx: &egui::Context, root: &Path) -> bool {
+    pub(super) fn library_tick(&mut self, jobs: &Jobs, ctx: &egui::Context, root: &Path, inv: &crate::world::inventory::Inventory) -> bool {
         if !self.project.library.ready {
             self.project.busy = true;
             let root = root.to_owned();
@@ -335,10 +336,13 @@ impl Editor {
             });
             return true;
         }
-        let Some(command) = self.project.library.command.take() else {
+        let Some(mut command) = self.project.library.command.take() else {
             return false;
         };
-        let document = self.project_document();
+        if let Command::Manage(_, Management::File(shared) | Management::Notecard(shared)) = &mut command {
+            *shared = animations::SharedAssets::new(inv);
+        }
+        let document = self.stored_document(inv);
         if document.encode().is_err() {
             self.project.message = Some(invalid());
             return true;
