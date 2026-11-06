@@ -633,6 +633,8 @@ pub struct App {
     balance_gains: ui::balance_gains::BalanceGains,
     /// `AURORA_DEMO_PAYMENT=balance`: the payments still to come.
     demo_gains: std::collections::VecDeque<(Instant, NetEvent)>,
+    /// `AURORA_DEMO_PAYMENT=earning`: when the next payment comes.
+    demo_earning: Option<Instant>,
     look_focus: Option<Vec3>,
     look_cursor: (f32, f32),
     look_root_at: Vec3,
@@ -1620,6 +1622,7 @@ impl App {
             demo_look_at_targets: false,
             balance_gains: Default::default(),
             demo_gains: Default::default(),
+            demo_earning: None,
             look_focus: None,
             look_cursor: (0.0, 0.0),
             look_root_at: Vec3::X,

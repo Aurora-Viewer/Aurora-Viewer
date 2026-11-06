@@ -14,6 +14,14 @@ const OBJECT_SALE: i32 = 5000;
 const GROUP_JOIN: i32 = 1004;
 const UPLOAD_CHARGE: i32 = 1101;
 
+/// `AURORA_DEMO_PAYMENT=earning`: a payment this often.
+const EARNING_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// L$ of an `earning` payment, 20 to 300, from a random number.
+fn earning_amount(random: u128) -> i32 {
+    20 + (random % 281) as i32
+}
+
 impl App {
     /// Whether transactions are recorded: the window is open (minimized
     /// included) or tracks when closed.
@@ -105,8 +113,34 @@ impl App {
         }
     }
 
-    /// The payments of `AURORA_DEMO_PAYMENT=balance` as their times come.
+    /// The payments of `AURORA_DEMO_PAYMENT=balance` as their times come,
+    /// and those of `earning`, for as long as the viewer runs.
     pub(super) fn demo_gains_tick(&mut self, now: Instant) {
+        if self.demo_earning.is_some_and(|next| now >= next) {
+            self.demo_earning = Some(now + EARNING_EVERY);
+            // the source of the demo's chance: no crate only for this
+            let random = uuid::Uuid::new_v4();
+            let number = random.as_u128();
+            let (kind, item) = if number & 1 == 0 {
+                (OBJECT_SALE, "Steel helmet")
+            } else {
+                (PAY_OBJECT, "Tip jar")
+            };
+            let payers = [crate::demo::DEMO_NOVA, crate::demo::DEMO_TESS, crate::demo::DEMO_FRIEND];
+            let ev = NetEvent::MoneyTransaction {
+                id: random,
+                success: true,
+                kind,
+                source: payers[(number >> 1) as usize % payers.len()],
+                source_group: false,
+                dest: self.world.agent_id,
+                dest_group: false,
+                amount: earning_amount(number >> 8),
+                item: item.into(),
+                description: "Transaction".into(),
+            };
+            self.demo_gains.push_back((now, ev));
+        }
         while self.demo_gains.front().is_some_and(|(at, _)| *at <= now) {
             let Some((_, ev)) = self.demo_gains.pop_front() else {
                 return;
@@ -119,7 +153,7 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_PAYMENT=card|legacy|sent|sent-open|friend|off|sale|balance
+    /// AURORA_DEMO_PAYMENT=card|legacy|sent|sent-open|friend|off|sale|balance|earning
     /// (docs/TESTING.md): a resident's conversation open on their message,
     /// then their two payments as cards, in the bubbles or the legacy lines;
     /// `sent`: then ours to them (the demo keeps no transcript: what comes
@@ -128,7 +162,8 @@ impl App {
     /// conversation when you pay a resident" on; `friend`: a friend's payment opens their conversation, a stranger's
     /// (no conversation) shows nowhere; `off`: the same with the option off,
     /// no conversation opens; `sale`: the toasts of L$ received without a
-    /// card; `balance`: payments rising into the balance, no toast.
+    /// card; `balance`: payments rising into the balance, no toast;
+    /// `earning`: 20 to 300 L$ every 10 seconds, with the saved switches.
     pub(super) fn demo_payment(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_PAYMENT") else {
             return;
@@ -197,6 +232,12 @@ impl App {
             }
             return;
         }
+        if mode == "earning" {
+            // the saved switches stay: they can be turned while it runs
+            self.world.apply(NetEvent::Balance(12480));
+            self.demo_earning = Some(Instant::now() + EARNING_EVERY);
+            return;
+        }
         self.panels.perf = false;
         self.panels.chat = true;
         ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 300.0), egui::vec2(600.0, 440.0));
@@ -242,5 +283,18 @@ impl App {
         if mode == "legacy" {
             self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::earning_amount;
+
+    #[test]
+    fn an_earning_stays_between_20_and_300() {
+        assert_eq!(earning_amount(0), 20);
+        assert_eq!(earning_amount(280), 300);
+        assert_eq!(earning_amount(281), 20);
+        assert!((0..2000).all(|n| (20..=300).contains(&earning_amount(n * u128::from(u64::MAX)))));
     }
 }
