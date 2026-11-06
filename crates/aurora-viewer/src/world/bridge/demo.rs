@@ -287,6 +287,7 @@ impl Demo {
                     result: Ok(aurora_net::scripts::ScriptSaved {
                         asset: Uuid::new_v4(),
                         compiled: !failed,
+                        checked: true,
                         errors: if failed {
                             vec!["Synthetic compilation error".into()]
                         } else {
