@@ -95,8 +95,8 @@ if ($ConsoleFixture) {
         $KeySource = {
             $screen = @(Get-TestScreen) -join "`n"
             Assert-ToolsTest ($screen.Contains('v0.5.0')) 'Each release step must show the chosen version.'
-            if ($script:keyIndex -eq 2) { Assert-ToolsTest ($screen.Contains('3/3') -and $screen.Contains('0.5.0.')) 'The settings step must show the prior cache choice.' }
-            $key = if ($script:keyIndex++ -eq 0) { 'DownArrow' } else { 'Enter' }
+            if ($script:keyIndex -eq 3) { Assert-ToolsTest ($screen.Contains('4/4') -and $screen.Contains('0.5.0.')) 'The settings step must show the prior cache choice.' }
+            $key = if ($script:keyIndex++ -eq 1) { 'DownArrow' } else { 'Enter' }
             [pscustomobject]@{ Key = $key; KeyChar = [char]0 }
         }
         $policy = Read-ReleaseMaintenance ([ordered]@{ schema = 1; version = '0.5.0'; cache_invalidation_before = $null; settings_reset_before = $null })
@@ -114,14 +114,14 @@ if ($ConsoleFixture) {
         $script:keyIndex = 0
         $KeySource = {
             $screen = @(Get-TestScreen) -join "`n"
-            $stage = switch ($script:keyIndex) { 0 { '1/3' }; 1 { '2/3' }; 2 { '3/3' }; default { 'Confirmation' } }
+            $stage = switch ($script:keyIndex) { 0 { '1/4' }; 1 { '2/4' }; 2 { '3/4' }; 3 { '4/4' }; default { 'Confirmation' } }
             Assert-ToolsTest ($screen.Contains($stage)) 'Release options and confirmation must have separate screens.'
             Assert-ToolsTest ($screen.Contains('v0.6.0')) 'The chosen version must reach the confirmation.'
             $script:keyIndex++
             [pscustomobject]@{ Key = 'Enter'; KeyChar = [char]0 }
         }
         New-AuroraRelease @{ Slug = 'fixture only' }
-        Assert-ToolsTest ($script:keyIndex -eq 5) 'The dry run must reach confirmation and return without publishing.'
+        Assert-ToolsTest ($script:keyIndex -eq 6) 'The dry run must reach confirmation and return without publishing.'
         # The footer may receive more status text than a narrow window fits.
         Set-TestSize 30 6
         $FooterStatus = { @(('x' * 200), 'success') }
