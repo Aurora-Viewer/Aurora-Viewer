@@ -132,6 +132,7 @@ mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod uninstall;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
@@ -776,6 +777,8 @@ pub struct App {
     grid_status_listed: bool,
     grid_status_was_open: bool,
     about: about::About,
+    /// Preferences › Remove Aurora from this computer (`app/uninstall.rs`).
+    uninstall: uninstall::Uninstall,
     /// The parcel radio's title and the ones before (World › Stream title).
     stream_titles: crate::stream_title::StreamTitles,
     stream_title_ui: ui::stream_title::StreamTitleUi,
@@ -1656,6 +1659,7 @@ impl App {
             grid_status_listed: false,
             grid_status_was_open: false,
             about: Default::default(),
+            uninstall: Default::default(),
             stream_titles: Default::default(),
             stream_title_ui: Default::default(),
             buy_currency_ui: Default::default(),
@@ -14778,6 +14782,10 @@ impl App {
         if res.open_dev_toolbox {
             self.panels.dev_toolbox = true;
         }
+        if res.uninstall {
+            self.uninstall_asked();
+        }
+        self.uninstall_window(ctx, p);
         if self.panels.settings && !open {
             self.settings.save();
         }
@@ -17785,6 +17793,9 @@ impl ApplicationHandler for App {
                     self.options_ui.restore = Some(ui::options::backup::Pending::new(backup, logged_in));
                 }
                 ui::options::demo(&mut self.options_ui, &value);
+            }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_UNINSTALL") {
+                self.uninstall_demo(&mode);
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
                 if matches!(

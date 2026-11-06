@@ -2601,6 +2601,39 @@ ui-options-backup-account-kept = Le compte connecté garde ses propres fichiers 
 ui-options-backup-restore-confirm = Restaurer
 ui-options-backup-restored = Réglages restaurés depuis la sauvegarde.
 ui-options-backup-restore-failed = Certains fichiers de la sauvegarde n'ont pas pu être écrits.
+ui-options-remove-aurora = Retirer Aurora de cet ordinateur
+ui-options-remove-aurora-help = Retire ce qu'Aurora a enregistré sur cet ordinateur hors de ses propres dossiers : le gestionnaire de liens, les clés et mots de passe enregistrés dans le coffre d'identifiants du système, le module Blender. Puis liste les dossiers qui restent, à supprimer vous-même avec le viewer.
+ui-options-remove-aurora-button = Retirer…
+uninstall-title = Retirer Aurora de cet ordinateur ?
+uninstall-text = Aurora retire les éléments suivants, qu'il a enregistrés hors de ses propres dossiers. Il fonctionne jusqu'à ce que vous le quittiez, mais les mots de passe enregistrés sont oubliés et le cache est retéléchargé. Un gestionnaire de liens qui ouvre un autre programme reste tel quel.
+uninstall-confirm = Retirer
+uninstall-links = Gestionnaire des liens secondlife://, hop:// et x-grid-location-info://
+uninstall-notification-id = Identité des notifications Windows
+uninstall-cache-key = Clé du cache, dans le coffre d'identifiants
+uninstall-password = Mot de passe enregistré de { $user } ({ $grid }), dans le coffre d'identifiants
+uninstall-second-factor = Autorisation du second facteur de { $user } ({ $grid }), dans le coffre d'identifiants
+uninstall-crash-reports = Autorisation GitHub des rapports de plantage, dans le coffre d'identifiants
+uninstall-blender = Le module d'Aurora, dans chaque Blender trouvé qui l'a
+uninstall-window = Retirer Aurora de cet ordinateur
+uninstall-running = Retrait en cours… Chaque Blender trouvé est vérifié, ce qui peut prendre une minute.
+uninstall-dry-run = Mode démo : rien n'a été retiré. Voici ce que ferait un vrai retrait.
+uninstall-done = Ce qui a été retiré
+uninstall-removed = Retiré
+uninstall-absent = Rien à retirer
+uninstall-failed = Non retiré : { $error }
+uninstall-left = Encore sur cet ordinateur
+uninstall-left-text = Quittez Aurora, puis supprimez ces dossiers et le viewer lui-même. Ils contiennent vos réglages, l'historique des conversations, le cache et les journaux.
+uninstall-kind-settings = Réglages
+uninstall-kind-cache = Cache
+uninstall-kind-chosen-cache = Cache (dossier choisi)
+uninstall-kind-logs = Journaux
+uninstall-kind-media-plugins = Plugins média
+uninstall-kind-transcripts = Historique des conversations (dossier choisi)
+uninstall-kind-blender-backups = Sauvegardes des préférences de Blender faites par l'installeur du module
+uninstall-kind-menu-entry = Entrée du menu du bureau
+uninstall-kind-viewer = Le viewer
+uninstall-open-folder = Ouvrir le dossier
+uninstall-quit = Quitter Aurora
 common-distance = Distance
 common-draw-distance = Distance d'affichage
 app-chat-commands-draw-distance-set-to-m = { "Distance d'affichage réglée à " }{ $value0 }{ " m." }
@@ -7712,7 +7745,7 @@ hud-move-locked = Verrouiller le déplacement rapide
 hud-local-scale-reset = Revenir à 100 %
 hud-local-scale-forget = Oublier le réglage mémorisé
 hud-local-scale-help = Maintenez la touche des HUDs : clic gauche pour déplacer, molette pour changer la taille, Maj pour affiner. La taille est mémorisée sur ce PC par nom et créateur, pour ce compte. En édition d’un HUD, la molette sans cette touche zoome la vue de tous les HUDs.
-cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <nom>]\u000A                      [--login <prénom> <nom> <mot de passe>] [--version] [<slurl>]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  --grid <nom>    Démarre sur agni, aditi, une grille enregistrée ou une adresse de connexion (aussi --loginuri <uri>)\u000A  --login <prénom> <nom> <mot de passe>  Se connecte tout de suite avec ce compte\u000A  <slurl>, --url <slurl>  Démarre à ce lieu ; rien n'est lu après. Un viewer déjà\u000A                  ouvert le reçoit à la place\u000A  --vr             Passer en VR dès que le monde s'affiche (casque connecté)\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
+cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <nom>]\u000A                      [--login <prénom> <nom> <mot de passe>] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  --grid <nom>    Démarre sur agni, aditi, une grille enregistrée ou une adresse de connexion (aussi --loginuri <uri>)\u000A  --login <prénom> <nom> <mot de passe>  Se connecte tout de suite avec ce compte\u000A  <slurl>, --url <slurl>  Démarre à ce lieu ; rien n'est lu après. Un viewer déjà\u000A                  ouvert le reçoit à la place\u000A  --vr             Passer en VR dès que le monde s'affiche (casque connecté)\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  --uninstall     Retire ce qu'Aurora a enregistré hors de ses dossiers (liens,\u000A                  coffre d'identifiants, module Blender), l'affiche avec les dossiers restants, puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Cliqu%C3%A9 !'\" style='font-size:48px;padding:10px 40px'>Cliquer</button><br><input placeholder='Taper ici' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 
 # Secondary labels and status messages

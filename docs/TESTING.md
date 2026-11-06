@@ -4732,6 +4732,20 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
+| `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
+
+`AURORA_DEMO_UNINSTALL` opens Preferences › Language and updates on the
+action. `confirm` shows the confirmation and its list (the demo's made-up
+link classes, notification identity, two saved logins and one Blender);
+`running` the result window while the removal works; `result` the window
+once the dry run finished, with the folders that remain, read from the
+viewer's path helpers (shown from `%APPDATA%`, `%LOCALAPPDATA%` or `~`);
+`left` the same window scrolled down to those folders and their "Open
+folder" buttons.
+In demo mode, and with `AURORA_DEMO=1 aurora-viewer --uninstall`, nothing is
+read from or removed in the registry, the desktop files, the credential
+store or Blender: the log says what a real removal would do. Capture after
+frame 700 in English, French and Japanese.
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
 the agent's parcel, `sale` shows sale entries, `filters` opens Filters (required/excluded properties, permissions, click action and scope), and
