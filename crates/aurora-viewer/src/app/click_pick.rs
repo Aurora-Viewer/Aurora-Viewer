@@ -411,6 +411,7 @@ impl App {
             (false, true) => aurora_render::DrawnMode::LeftVisible,
             (false, false) => aurora_render::DrawnMode::Left,
         };
+        self.hover_drawn.cancel(&mut g.renderer);
         let drawn = Some(g.renderer.request_drawn(x, y, mode));
         let tags = self.name_tag_candidates(ray);
         let check = check.map(|(depth, waited)| Check {

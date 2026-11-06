@@ -107,6 +107,25 @@ pub struct DrawnObject {
 }
 
 impl Scene {
+    /// Cursor feedback follows the same surface and designation as a left
+    /// press, including the bounded search under a wearer's body. The
+    /// caller caches this asynchronous answer; HUD picking stays separate.
+    pub fn drawn_hover(
+        &self,
+        world: &World,
+        drawn: &Drawn,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        far: f32,
+    ) -> (Option<Vec3>, Option<usize>) {
+        let adjusted = self.touch_depth(world, drawn, Some(ray), depth, far);
+        let point = self.action_point(world, Some(ray), adjusted, false, far);
+        if let Some(shown) = self.designated(world, Gesture::Touch, drawn, Some(ray), point, depth, false) {
+            return (Some(shown.hit.point), Some(shown.idx));
+        }
+        (point, point.and_then(|p| self.interaction_at_ray(world, p, ray, true)))
+    }
+
     /// The object and the face a draw record belongs to. A scan of the
     /// objects' faces: at a click, never per frame.
     pub fn record_object(&self, record: u32) -> Option<(usize, Option<usize>)> {
@@ -502,6 +521,7 @@ mod tests {
         );
         let hit = scene.action_point(&world, Some(ray), depth, false, 100.0).expect("a point");
         assert_eq!(scene.interaction_at_ray(&world, hit, ray, true), Some(clicker));
+        assert_eq!(scene.drawn_hover(&world, &drawn, ray, Some(on_body), 100.0).1, Some(clicker));
         let designated = scene.designated(&world, Gesture::Touch, &drawn, Some(ray), Some(hit), Some(on_body), false);
         assert_eq!(designated, None, "the body without a script lets the touch through");
 
@@ -550,6 +570,10 @@ mod tests {
                 .map(|d| d.idx)
         };
         assert_eq!(designated(&scene, &world, &drawn), Some(prim));
+        assert_eq!(
+            scene.drawn_hover(&world, &drawn, ray, Some(on_prim), 100.0),
+            (Some(on_prim), Some(prim))
+        );
 
         // a worn Blend prim without an action in front stops the press
         let o = world.objects.get_mut(front).unwrap();
@@ -706,6 +730,10 @@ mod tests {
             assert!(depth.abs_diff_eq(expected, 1e-5), "gap={gap}, worn={worn}, hud={hud}: {depth:?}");
             if accepted {
                 assert_eq!(scene.interaction_at_ray(&world, depth, ray, true), Some(clicker));
+            }
+            if worn || hud {
+                let hover = scene.drawn_hover(&world, &drawn, ray, Some(on_body), 100.0);
+                assert_eq!(hover.1, accepted.then_some(clicker), "hover: gap={gap}, worn={worn}, hud={hud}");
             }
         }
     }

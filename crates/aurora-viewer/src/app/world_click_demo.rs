@@ -116,7 +116,11 @@ impl App {
             }
             self.world.apply(panel);
         }
-        if (680..=700).contains(&self.frame_count) && !mode.starts_with("mouselook-") {
+        // A real hover holds the pointer over a posed surface long enough
+        // for its asynchronous answer. Tracking the moving mesh at every
+        // frame continually asks a different pixel instead of testing that.
+        let aiming = if mode.starts_with("worn-") { 650..=680 } else { 680..=700 };
+        if aiming.contains(&self.frame_count) && !mode.starts_with("mouselook-") {
             let cursor = if mode.starts_with("avatar-tag") {
                 self.name_tags.iter().find(|t| t.id == self.world.agent_id).map(|t| {
                     let p = t.rect.center() * self.egui_ctx.pixels_per_point();

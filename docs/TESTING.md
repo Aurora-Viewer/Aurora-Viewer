@@ -2291,10 +2291,18 @@ No real L$ and no connection to a grid.
   response. Capture after frame 620.
 - Add `-ready` to the Blend / Mask modes above to test hover without
   an automatic click. At frame 650, `demo cursor hover` must report
-  `prim=Some(976), action=None` before Blend at every opacity, and
-  `prim=Some(971), action=Some(Buy)` through the Mask hole. Enable
+  `prim=Some(971), action=Some(Buy)` through zero/faint Blend and the
+  Mask hole; half/solid Blend must report `prim=Some(976), action=None`.
+  The cursor and left click share the alpha > 32/255 threshold. Enable
   `AURORA_HOVER_CHECK=1` to compare the cache and index with the full search;
-  media hover behind Blend must respect the same depth limit.
+  media hover behind Blend must respect the same depth limit. Near posed
+  objects, cursor feedback also reads the left-click GPU query at most once
+  per 100 ms, without a GPU wait. Attachment fixtures log `demo cursor hover`
+  at frame 699, after holding the pointer still from frame 680: expect Touch
+  on the same prim as the ensuing press, including
+  linked children and clickers under a standing or seated wearer. Own rigged
+  body meshes and clickers buried beyond the body clearance must not show Touch.
+  HUD hover retains its existing alpha and ownership rules.
 
 Transaction windows, with the same variable:
 
