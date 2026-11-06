@@ -135,6 +135,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | R10 | Reflection probes | toggle | Probe influence |
 | R11 | Sort of the local lights | toggle | Magenta where the tile sort missed a light |
 | R12 | Sort of the reflection probes | toggle | Magenta where the sort missed a probe |
+| R13 | Pause the Render | toggle | The pause of a window behind on a busy card, on demand: the world stops drawing, blurred and darkened under its notice, "— Paused" in the window title; in front or behind, with or without Preferences › Graphics › "Pause the Render when the card is overloaded"; a click in the window does not end it, R13 again does |
 | O1 | Bounding boxes | toggle | Within 96 m |
 | O2 | Detail levels (LOD) | toggle | The level of the objects near the pointer, with distance and radius |
 | O3 | Culling | toggle | Tested spheres, green drawn, red culled |

@@ -1685,6 +1685,7 @@ app-graphics-start-failed =
     What to try:
     • update the graphics card driver;
     • on a PC with two graphics cards, check that both are enabled in Device Manager, and that the monitor is plugged into the card that should draw;
+    • on a laptop with AMD and NVIDIA graphics, update the AMD driver from AMD's website as well as the NVIDIA driver;
     • restart the PC.
 
     Details: { $e }
@@ -2860,6 +2861,7 @@ dev-toolbox-r9 = Lights
 dev-toolbox-r10 = Reflection probes
 dev-toolbox-r11 = Sort of the local lights
 dev-toolbox-r12 = Sort of the reflection probes
+dev-toolbox-r13 = Pause the Render
 dev-toolbox-o1 = Bounding boxes
 dev-toolbox-o2 = Detail levels (LOD)
 dev-toolbox-o3 = Culling
@@ -3931,10 +3933,11 @@ ui-options-avatar-physics-help = The breasts, belly and butt of avatars wearing 
 ui-options-avatar-physics-detail = Avatar physics detail
 ui-options-avatar-physics-detail-help = At 1 every avatar moves; lower, avatars small on screen keep their shape; 0 stops the physics (RenderAvatarPhysicsLODFactor)
 ui-options-limit-when-unfocused = Limit when unfocused
-ui-options-pause-when-card-busy = Pause the 3D when the card is overloaded
-ui-options-pause-when-card-busy-tip = When another program keeps the graphics card busy while Aurora is behind, Aurora stops drawing the world until you click on it, so the card is not reset. Turned off, Aurora can close with "the graphics card was lost". Enabled by default
-busy-pause-notice = 3D paused: the graphics card is busy with another program. Click to resume.
+ui-options-pause-when-card-busy = Pause the Render when the card is overloaded
+ui-options-pause-when-card-busy-tip = When another program keeps the graphics card busy while Aurora is behind, Aurora stops drawing the world until you click on it, so the card is not reset. Turned off, Aurora can close with "the graphics card was lost". Applies to every Aurora window open. Enabled by default
+busy-pause-notice = Render paused: the graphics card is busy with another program. Click to resume.
 busy-pause-window-title = { $title } — Paused
+busy-pause-forced-notice = Render paused from the Dev Toolbox (R13). Press R13 again to resume.
 ui-land-sound-restrict-voice-chat-to-this-parcel = Restrict voice chat to this parcel
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = Restrict gesture and object sounds to this parcel
 common-limits = Limits
