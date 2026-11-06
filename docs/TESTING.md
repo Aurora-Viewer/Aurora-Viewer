@@ -2788,9 +2788,20 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
+| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
 | `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
+
+`AURORA_DEMO_FLOATING_TEXT=hud` displays three separate yellow, blue and cyan
+llSetText prims above a black HUD toolbar (#1938). The last row must clear
+the toolbar. `guides` adds green ticks at the reference baselines, computed
+from the attachment projection and the Legacy Viewer's padding/draw offset
+independently of font layout. Check that the bottoms of non-descending
+letters sit on the ticks; test different UI text sizes and fonts.
+`world` instead adds a purple cube with three centered text rows near the
+default demo start. Last-baseline placement is shared, and interline spacing
+follows the selected font's ascent plus descent minus one, without line gap.
 
 Eight textured HUDs on points 31–38, with floating text and a translucent
 child button; another avatar's HUD is hidden. No access to a
@@ -4220,6 +4231,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
+| `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 | `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
@@ -4907,6 +4919,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new window and device instead of closing (work in progress) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
+| `AURORA_DEMO_PHOTO_QUALITY_CRASH=1` | The "Photo quality turned off" card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
@@ -7006,6 +7019,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   "Keep the safe graphics" drops them). Without the variable the real state
   is shown: the crash root's `gpu-trouble` mark, consumed at start, or the
   file kept aside.
+- **`AURORA_DEMO_PHOTO_QUALITY_CRASH=1`**, with `AURORA_DEMO=1` and
+  `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's card after a
+  session that crashed (or was stopped) with the photo window's "Photo
+  quality" on. The switch is turned off at start, as after a real crash;
+  "Turn it back on" puts it back, "OK" hides the card. Without the variable
+  the real state is shown: the crash root's `photo-quality-crash` mark,
+  left by a failed session whose folder held `photo-quality` (written while
+  the boost is on) and consumed at start, when Preferences › Graphics ›
+  "Turn photo quality off after a crash" is on (default).
 - **Isolated real installation**: `scripts/test-update.ps1` prepares packages
   0.2.100 and 0.2.101 in `.scratch`, serves the second on loopback and
   launches the first.
@@ -7607,13 +7629,33 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|import[:run|again|login|same|none]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
   the folder of a real account, and the scenario rewrites them at each launch
   (without this variable, the demo writes and reads back no history). The
   windows are placed at a known size.
+  - `import`: the import of a Legacy Viewer's chat history over a synthetic
+    folder, `chat_logs\demo-legacy-viewer\<demo account>\`, rewritten at each
+    launch. It holds Nova's conversation (a month older, with one message
+    Aurora's file has too), a group whose history was written again at a
+    login (two lines that must stay out), a dated nearby chat file, a
+    `search_history.txt` that must stay out and an `Old Friend.txt` without
+    timestamps, which the result line counts as left out. `import`:
+    Preferences › Chat, History, with the import window listing that folder,
+    its file count and size. `import:run`: the import runs, then the History
+    window shows Nova's merged file by time, without the shared message
+    twice, and the open conversation shows the added lines. `import:again`:
+    two runs, the result line ends on "Nothing new to import" and the file
+    left out. `import:login`: what Import at login does, no window, and
+    the notice it leaves in the nearby chat (messages and conversations
+    added, where to turn it off). Outside this mode the demo never imports
+    at login, whatever the setting: it would read the PC's real Legacy
+    Viewer folders.
+    `import:same`: the list also has the folder Aurora writes to, unticked
+    and greyed. `import:none`: no folder found, the window says so
+    and offers the folder dialog.
   - `restore` (#1683): write and read back the demo account's `open_ims.xml`
     with a resident, a typed group and an older untyped group entry. Both
     quiet groups must show their names and group controls without receiving
