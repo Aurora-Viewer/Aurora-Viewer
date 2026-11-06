@@ -112,7 +112,8 @@ fn poser_cooldown_receiver_timeout_waits_two_minutes_without_sending_a_refusal()
     state.sync(&world, now + TIMEOUT);
     assert!(state.incoming.is_empty());
     assert!(state.out.iter().all(|(_, kind, _)| *kind != PoseKind::Refuse));
-    let ready = now + TIMEOUT + Duration::from_secs(120);
+    // a few seconds under the requester's 2:00, the relay's slack
+    let ready = now + TIMEOUT + Duration::from_secs(120) - RELAY_SLACK;
     state.sync(&world, ready - Duration::from_millis(1));
     state.receive(
         &world,
