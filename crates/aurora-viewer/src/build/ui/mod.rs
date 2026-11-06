@@ -130,6 +130,10 @@ pub struct FeaturesClip {
     pub flexible: Option<aurora_prim::extra::FlexibleParams>,
     pub light: Option<aurora_prim::extra::LightParams>,
     pub light_image: Option<aurora_prim::extra::LightImageParams>,
+    /// The projector map could not be copied (`texture_copy::can_copy`):
+    /// the paste leaves the target's projector as it is, like the Legacy
+    /// Viewer's clipboard without its "spot" entry.
+    pub keep_light_image: bool,
     pub probe: Option<aurora_prim::extra::ReflectionProbeParams>,
     pub material: u8,
     pub physics: Option<aurora_net::build::PhysicsParams>,

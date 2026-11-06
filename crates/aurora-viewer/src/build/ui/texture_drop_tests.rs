@@ -79,6 +79,37 @@ fn a_slot_takes_a_texture_and_the_material_slot_a_material() {
     assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &item(&w, NO_COPY_TEXTURE)), Ok(()));
 }
 
+/// The PBR map slots take a texture the agent may copy and transfer, its
+/// modify right aside (setFilterPermissionMasks(PERM_COPY | PERM_TRANSFER)).
+#[test]
+fn a_pbr_map_takes_only_a_copy_and_transfer_texture() {
+    let (mut w, sel) = world();
+    let all = contents_drop::UNRESTRICTED;
+    let mut texture = item(&w, TEXTURE);
+    for (mask, ok) in [
+        (all, true),
+        (all & !rules::MODIFY, true),
+        (all & !rules::COPY, false),
+        (all & !rules::TRANSFER, false),
+    ] {
+        texture.owner_mask = mask;
+        let expected = if ok { Ok(()) } else { Err(Refusal::Restricted) };
+        for map in 0..4 {
+            assert_eq!(allowed(&w, &sel, PickTarget::PbrMap(map), &texture), expected, "{mask:#x}");
+        }
+        // the Blinn-Phong slots keep their own rule
+        assert_eq!(allowed(&w, &sel, PickTarget::Diffuse, &texture), Ok(()), "{mask:#x}");
+    }
+    // someone else's item counts with its everyone rights
+    texture.owner = Uuid::from_u128(1);
+    texture.everyone_mask = rules::COPY | rules::TRANSFER;
+    assert_eq!(allowed(&w, &sel, PickTarget::PbrMap(2), &texture), Ok(()));
+    texture.everyone_mask = rules::COPY;
+    assert_eq!(allowed(&w, &sel, PickTarget::PbrMap(2), &texture), Err(Refusal::Restricted));
+    w.objects.get_mut(sel[0].idx).expect("selected prim").update_flags = OBJECT_YOU_OWNER;
+    assert_eq!(allowed(&w, &sel, PickTarget::PbrMap(2), &item(&w, TEXTURE)), Ok(()));
+}
+
 #[test]
 fn an_object_that_refuses_the_item_refuses_the_drop_except_on_a_pbr_map() {
     let (mut w, sel) = world();
@@ -117,7 +148,7 @@ fn a_worn_object_takes_only_a_copy_and_transfer_texture() {
         assert_eq!(allowed(&w, &sel, target, &item(&w, TEXTURE)), Ok(()), "{target:?}");
         assert_eq!(allowed(&w, &sel, target, &no_copy), Err(Refusal::Restricted), "{target:?}");
     }
-    assert_eq!(allowed(&w, &sel, PickTarget::PbrMap(0), &no_copy), Ok(()));
+    assert_eq!(allowed(&w, &sel, PickTarget::PbrMap(0), &no_copy), Err(Refusal::Restricted));
 }
 
 fn wear(w: &mut World, idx: usize) {

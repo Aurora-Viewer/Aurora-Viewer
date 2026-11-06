@@ -65,7 +65,9 @@ pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &Inv
         return Err(Refusal::Cargo);
     }
     if matches!(target, PickTarget::PbrMap(_)) {
-        return Ok(());
+        // copy and transfer only (texture_copy::map_slot_takes)
+        let takes = crate::build::texture_copy::map_slot_takes(item, world.agent_id);
+        return if takes { Ok(()) } else { Err(Refusal::Restricted) };
     }
     let roots: BTreeSet<(usize, bool)> = sel.iter().filter_map(|s| contents_drop::linkset(world, s.idx)).collect();
     let worn_image = |worn: bool| worn && image(target);
