@@ -222,6 +222,13 @@ until decoded. Classic avatar picks retain the legacy 10 cm attachment
 priority behind the displayed body surface, including seated poses; worn
 mesh bodies keep their existing 25 cm bounded search. Unrelated world
 geometry and HUDs cannot claim this avatar override.
+A left click and the hover cursor also follow LLToolPie::handleMouseDown's two
+picks (`Scene::visible_action_point`, `interaction_at_ray_mode`): the
+transparent pick (alpha ignored, invisible faces included) wins when it is an
+attachment or has a touch script or click action of its own, and a prim whose
+click action is None does not count; otherwise a visible actionable object
+behind it, such as a scripted piece behind an invisible or clear prim, takes
+the click and the cursor.
 CPU interactions (touch, hover, menus, media, selection and placement), including
 the large-mesh hover hierarchy, also reject back-facing triangles,
 matching the GPU; explicitly double-sided PBR materials and their overrides

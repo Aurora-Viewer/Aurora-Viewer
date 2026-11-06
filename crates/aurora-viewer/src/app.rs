@@ -4780,7 +4780,7 @@ impl App {
             log::info!(
                 "demo action pick: hit={hit:?}, avatar={on_avatar}, picked={:?}",
                 hit.zip(ray)
-                    .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                    .and_then(|(p, r)| self.scene.left_interaction_at_ray(&self.world, p, r, true))
                     .and_then(|i| self.world.objects.get(i))
                     .map(|o| (o.key.local_id, o.click_action))
             );
@@ -4815,7 +4815,7 @@ impl App {
             && !self.camera.mouselook()
             && let Some(point) = hit
             && let Some(pick_ray) = ray
-            && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, pick_ray, true)
+            && let Some(idx) = self.scene.left_interaction_at_ray(&self.world, point, pick_ray, true)
             && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
