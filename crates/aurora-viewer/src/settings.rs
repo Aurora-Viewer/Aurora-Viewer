@@ -2610,6 +2610,14 @@ impl Settings {
             // any other keeps 2048
             crate::graphics_presets::upgrade_max_texture_resolution(&mut self);
         }
+        if self.settings_version < 32 {
+            // the head turns toward the cursor's side by default, like the
+            // Legacy Viewer, instead of looking at the point under it, which
+            // everyone nearby saw. Every earlier file wrote the former
+            // default, Point: once to Direction, Preferences › Aurora keeps
+            // Point as a choice
+            self.lookat.aim = crate::world::lookat::Aim::Direction;
+        }
         if self.settings_version < 33 {
             // the camera's limits are on again, as DisableCameraConstraints
             // and FSIgnoreSimulatorCameraConstraints in the Legacy Viewer:
@@ -3706,6 +3714,26 @@ mod tests {
             ..Settings::default()
         };
         assert!(chosen.sanitized().show_perf);
+    }
+
+    /// The head turns toward the cursor's side by default; earlier files all
+    /// held the former default, the point under the cursor, and move once;
+    /// a later choice of the point stays.
+    #[test]
+    fn gaze_follows_the_cursor_side_by_default_and_once_for_earlier_files() {
+        use crate::world::lookat::Aim;
+        assert_eq!(Settings::default().sanitized().lookat.aim, Aim::Direction);
+        let mut old = Settings {
+            settings_version: 31,
+            ..Settings::default()
+        };
+        old.lookat.aim = Aim::Point;
+        assert_eq!(old.sanitized().lookat.aim, Aim::Direction);
+        let mut chosen = Settings::default();
+        chosen.lookat.aim = Aim::Point;
+        let chosen = chosen.sanitized();
+        assert_eq!(chosen.lookat.aim, Aim::Point);
+        assert_eq!(chosen.sanitized().lookat.aim, Aim::Point, "migrated only once");
     }
 
     /// The rez effect is the default; earlier files all held the former

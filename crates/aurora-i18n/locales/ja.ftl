@@ -13226,12 +13226,15 @@ vr-view = VR表示
 vr-unavailable = VRを利用できません。OpenXRランタイムとヘッドセットの接続を確認してください。
 vr-restart-title = ヘッドセットが接続されました
 vr-restart-body = ヘッドセットはAuroraの起動後に接続されました。AuroraはVRを起動時に準備するため、VRを使うには再起動してください。ワールドに戻ると自動的にVRに入ります。
+vr-restart-body-set-up = AuroraはVRを一度使ったあとにだけ、起動時にVRを準備します。VRを使うには再起動してください。ワールドに戻ると自動的にVRに入り、今後は起動のたびにVRの準備が整います。
 vr-restart-confirm = VRで再起動
 ui-options-camera-vr = VR
 ui-options-camera-vr-view = ヘッドセットの視点
 ui-options-camera-vr-view-help = VRに入ったときの視点の位置です。アバターの目の位置か、カメラがあった位置から始まります。
 ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
+ui-options-camera-vr-at-start = 起動時にVRを準備
+ui-options-camera-vr-at-start-help = オンにすると、VRボタンですぐにVRに入れます。オフにすると、Auroraは起動時にVRソフトウェアを読み込まず、VRボタンで再起動を案内します。次回の起動から反映されます。
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
 

@@ -132,6 +132,11 @@ pub struct CameraSettings {
     pub show_interface_in_mouselook: bool,
     /// Where the headset view starts when VR is entered (Aurora-specific).
     pub vr_view: VrView,
+    /// Set up VR at each start (Preferences › Camera › VR), so the VR
+    /// button enters it at once. Off by default: loading a VR runtime at
+    /// every start crashed PCs that never use VR (#2309); the first
+    /// "Restart in VR" turns it on.
+    pub vr_at_start: bool,
 }
 
 /// Where the headset view starts on VR entry (Preferences › Camera › VR).
@@ -181,6 +186,7 @@ impl Default for CameraSettings {
             show_mouselook_instructions: true,
             show_interface_in_mouselook: false,
             vr_view: VrView::FirstPerson,
+            vr_at_start: false,
         }
     }
 }
