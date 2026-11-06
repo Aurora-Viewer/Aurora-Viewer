@@ -1257,13 +1257,8 @@ fn apply_test_overrides(settings: &mut Settings) {
     {
         level.apply(settings);
     }
-    if let Some(v) = std::env::var("AURORA_FPS_LIMIT")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .filter(|&v| v > 0)
-    {
-        settings.fps_cap = true;
-        settings.fps_limit = v.clamp(10, 500);
+    if let Ok(value) = std::env::var("AURORA_FPS_LIMIT") {
+        apply_test_fps_limit(settings, &value);
     }
     if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
         settings.antialiasing = v;
@@ -4780,7 +4775,7 @@ impl App {
             log::info!(
                 "demo action pick: hit={hit:?}, avatar={on_avatar}, picked={:?}",
                 hit.zip(ray)
-                    .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                    .and_then(|(p, r)| self.scene.left_interaction_at_ray(&self.world, p, r, true))
                     .and_then(|i| self.world.objects.get(i))
                     .map(|o| (o.key.local_id, o.click_action))
             );
@@ -4815,7 +4810,7 @@ impl App {
             && !self.camera.mouselook()
             && let Some(point) = hit
             && let Some(pick_ray) = ray
-            && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, pick_ray, true)
+            && let Some(idx) = self.scene.left_interaction_at_ray(&self.world, point, pick_ray, true)
             && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
@@ -20857,6 +20852,17 @@ fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed
     if cap.is_finite() { cap } else { 0.0 }
 }
 
+/// Zero explicitly disables the user cap for reproducible uncapped tests;
+/// malformed values leave the user's controls intact.
+fn apply_test_fps_limit(settings: &mut Settings, value: &str) {
+    if let Ok(limit) = value.parse::<u32>() {
+        settings.fps_cap = limit > 0;
+        if limit > 0 {
+            settings.fps_limit = limit.clamp(10, 500);
+        }
+    }
+}
+
 /// agent_jump (indra/newview/llviewerinput.cpp): AutomaticFly. Turning the
 /// option off clears the hold, so enabling it cannot reuse an old press.
 fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now: Instant) -> bool {
@@ -21189,6 +21195,22 @@ mod tests {
             let mut gesture = RightGesture::default();
             assert!(!gesture.motion(6.0 * scale, 6.0 * scale, scale));
             assert!(gesture.motion(0.0, 2.0 * scale, scale));
+        }
+    }
+
+    #[test]
+    fn test_fps_override_disables_caps_and_keeps_positive_limits_bounded() {
+        for (value, enabled, limit) in [("0", false, 120), ("1", true, 10), ("999", true, 500), ("invalid", true, 120)] {
+            let mut settings = Settings {
+                fps_cap: true,
+                fps_limit: 120,
+                ..Settings::default()
+            };
+            super::apply_test_fps_limit(&mut settings, value);
+            assert_eq!((settings.fps_cap, settings.fps_limit), (enabled, limit), "{value}");
+            if !enabled {
+                assert_eq!(frame_cap(&settings, false, true, 144.0, true, None), 0.0);
+            }
         }
     }
 
