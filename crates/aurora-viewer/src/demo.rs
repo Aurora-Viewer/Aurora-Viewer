@@ -3710,8 +3710,8 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
     }
 }
 
-/// A non-actionable face placed before Buy. Zero-alpha texture pixels let
-/// left clicks through; every nonzero Blend texel still blocks them.
+/// A non-actionable face placed before Buy. Blend texture pixels with
+/// alpha <= 32/255 let left clicks through, following the Legacy Viewer.
 pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
     let texture = match mode.trim_end_matches("-ready") {
         "blend-faint" => TEX_PICK_FAINT,
