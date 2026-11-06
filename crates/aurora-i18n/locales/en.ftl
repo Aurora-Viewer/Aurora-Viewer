@@ -2091,6 +2091,7 @@ world-groups-the-server-closed-this-session-the-message-may-not = The server clo
 ui-inventory-dialogs-this-deletion-is-permanent = This deletion is permanent.
 world-appearance-this-outfit-contains-a-link-that-cannot-be-worn = This outfit contains a link that cannot be worn.
 app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer = This texture must allow copying and transfer.
+app-inventory-thumbnail-this-texture-is-not-in-your-inventory = Use a texture from your inventory that allows copying and transfer.
 ui-options-camera-vertical-field-of-view-60-by-default-as-with = Vertical field of view (60° by default), as with Ctrl+0 / Ctrl+8 in the Legacy Viewer
 ui-context-change-outfit = Change outfit
 ui-profile-change-image = Change image

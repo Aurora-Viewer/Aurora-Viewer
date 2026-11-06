@@ -2088,6 +2088,7 @@ world-groups-the-server-closed-this-session-the-message-may-not = サーバー�
 ui-inventory-dialogs-this-deletion-is-permanent = この削除は取り消せません。
 world-appearance-this-outfit-contains-a-link-that-cannot-be-worn = このアウトフィットには着用できないリンクが含まれています。
 app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer = このテクスチャはコピーと譲渡を許可している必要があります。
+app-inventory-thumbnail-this-texture-is-not-in-your-inventory = コピーと譲渡を許可しているインベントリ内のテクスチャを使用してください。
 ui-options-camera-vertical-field-of-view-60-by-default-as-with = 垂直方向の視野角（デフォルトは60度）。レガシービューアのCtrl＋0／Ctrl＋8と同じです
 ui-context-change-outfit = アウトフィットを変更
 ui-profile-change-image = 画像を変更

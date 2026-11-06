@@ -2094,6 +2094,7 @@ world-groups-the-server-closed-this-session-the-message-may-not = Cette session 
 ui-inventory-dialogs-this-deletion-is-permanent = Cette suppression est définitive.
 world-appearance-this-outfit-contains-a-link-that-cannot-be-worn = Cette tenue contient un lien qui ne peut pas être porté.
 app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer = Cette texture doit autoriser la copie et le transfert.
+app-inventory-thumbnail-this-texture-is-not-in-your-inventory = Utilisez une texture de votre inventaire qui autorise la copie et le transfert.
 ui-options-camera-vertical-field-of-view-60-by-default-as-with = Champ de vision vertical (60° par défaut), comme Ctrl+0 / Ctrl+8 dans le Legacy Viewer
 ui-context-change-outfit = Changer de tenue
 ui-profile-change-image = Changer l'image

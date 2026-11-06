@@ -166,12 +166,15 @@ impl App {
         } else {
             asset
         };
-        let matching: Vec<_> = inv.items.values().filter(|it| it.asset_type == 0 && it.asset_id == asset).collect();
-        if asset.is_nil() || (!matching.is_empty() && !matching.iter().any(|it| crate::ui::inventory::thumbnail::usable(inv, it))) {
-            self.finish_inventory_image(
-                request,
-                Some(aurora_i18n::tr!("app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer").into()),
-            );
+        let local = self.world.local_assets.contains_key(&asset);
+        if !crate::ui::inventory::thumbnail::image_source_allowed(inv, &asset, local, self.demo) {
+            let in_inventory = inv.items.values().any(|it| it.asset_type == 0 && it.asset_id == asset);
+            let notice = if asset.is_nil() || in_inventory {
+                aurora_i18n::tr!("app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer")
+            } else {
+                aurora_i18n::tr!("app-inventory-thumbnail-this-texture-is-not-in-your-inventory")
+            };
+            self.finish_inventory_image(request, Some(notice.into()));
             return;
         }
         if self.demo {
