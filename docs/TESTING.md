@@ -3834,6 +3834,7 @@ both open states and the selection count. Capture at frame 620.
 
 | Variable | Effect |
 |---|---|
+| `AURORA_DEMO_TERRAIN_CROSSING=1` | Two render-origin crossings preserving the transition position (#2335) |
 | `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, a leash chain, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
@@ -3860,6 +3861,17 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
 
 ### Details
+
+- **`AURORA_DEMO_TERRAIN_CROSSING=1`** seeds a neighbouring region's terrain
+  at frame 60, then changes the main region at frames 600 and 900 while
+  preserving the global position at each transition. Capture frames `590,601,605,610`:
+  ground already drawn must remain present on the first frame of the
+  crossing, without waiting for the chunk upload budget. The offline floor
+  simulation uses region-local coordinates, so it may lower the avatar
+  after the first transition; the later return is not a fixed-height visual
+  comparison. This tests render
+  origin changes offline; actual vehicle crossings and teleports still
+  require human validation. Water retains its normal rebuild path.
 
 - **`AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,<frame>:<mode>…]`**: the
   anti-aliasing changes at each frame given (modes of `AURORA_AA`). A change

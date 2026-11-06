@@ -473,7 +473,10 @@ material tangent transforms run before interpolation. The terrain shader keeps
 the reference ORM roughness without additional normal-variance widening.
 Height/noise transitions sample the reference 256-square two-dimensional alpha
 ramp, retained in a reserved bindless texture slot with its linear mip chain.
-Surface edits update records without rebuilding the heightmap meshes.
+Surface edits update records without rebuilding the heightmap meshes. Region
+origin shifts also retain these meshes: chunk bounds stay region-local, with
+the current region offset applied to visibility, shadows and reflections.
+New geometry prioritizes the agent region and then the camera’s nearest chunks.
 `world/terrain.rs::SurfaceState` keeps local previews, applied cover awaiting
 the next handshake, and the region's ModifyRegion transforms separate.
 The network requests those transforms on arrival, even with Region / Estate

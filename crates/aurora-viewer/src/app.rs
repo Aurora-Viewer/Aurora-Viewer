@@ -8670,6 +8670,9 @@ impl App {
         }
         self.net_profile.corrections(corrections);
         self.net_profile.lead(self.world.agent.prediction.take_lead_max());
+        if self.demo {
+            crate::demo::terrain_crossing_step(&mut self.world, self.frame_count);
+        }
         // a border crossing changed what positions are relative to: the
         // camera moves with the agent, in the same frame
         let shift = self.world.take_origin_shift();
