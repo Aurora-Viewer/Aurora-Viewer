@@ -14937,6 +14937,9 @@ impl App {
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
+                if self.demo && crate::demo::floating_text::scenario() {
+                    crate::demo::floating_text::guides(&ctx, &self.world, &self.scene);
+                }
                 t = self.ui_parts.lap(Part::UiTags, t);
                 let parcel_landmark = self.parcel_landmark();
                 self.follow_favorites_access();
@@ -19804,6 +19807,11 @@ impl ApplicationHandler for App {
             }
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.
+            if crate::demo::floating_text::scenario() {
+                for ev in crate::demo::floating_text::events() {
+                    self.world.apply(ev);
+                }
+            }
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
                 let faces = matches!(mode.as_str(), "faces" | "faces-turned" | "faces-alpha");
                 if mode == "blend-opacity" {

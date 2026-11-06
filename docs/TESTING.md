@@ -2806,9 +2806,20 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
+| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
 | `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
+
+`AURORA_DEMO_FLOATING_TEXT=hud` displays three separate yellow, blue and cyan
+llSetText prims above a black HUD toolbar (#1938). The last row must clear
+the toolbar. `guides` adds green ticks at the reference baselines, computed
+from the attachment projection and the Legacy Viewer's padding/draw offset
+independently of font layout. Check that the bottoms of non-descending
+letters sit on the ticks; test different UI text sizes and fonts.
+`world` instead adds a purple cube with three centered text rows near the
+default demo start. Last-baseline placement is shared, and interline spacing
+follows the selected font's ascent plus descent minus one, without line gap.
 
 Eight textured HUDs on points 31–38, with floating text and a translucent
 child button; another avatar's HUD is hidden. No access to a
@@ -8648,6 +8659,14 @@ folder, subfolder, outfits, objects, documents, texture, sound, gesture,
 sky, material, link and varied permissions; library in the tree,
 root open and labels aligned left. Creations and mutations simulated
 offline; the files and snapshots uploaded in demo stay offline.
+
+In both layouts, give Inventory and Recent different type, permission and date
+filters, then switch back and forth with the finder open: its controls and
+results must follow the selected tab. Repeat with Worn, Favorites and Received.
+Reset and Keep by default affect only that tab; reopen a second inventory window
+or restart the demo to check saved defaults. Advanced searches and temporary
+Find links / Find similar filters must also stay with their tab. Repeat with
+separate searches enabled and disabled; that preference controls only the text.
 
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
