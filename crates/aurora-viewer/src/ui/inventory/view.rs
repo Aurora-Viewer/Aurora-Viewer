@@ -780,6 +780,9 @@ impl ViewCache {
         // A favorite folder shows its whole content, favorite or not
         // (LLInventoryFavoritesItemsPanel::findAndInitRootContent builds the
         // full tree under each favorite folder, llinventorypanel.cpp).
+        // Outside those folders, membership uses the record's own flag.
+        // Link stars/actions follow the original; Favorites must not also
+        // collect every outfit link to that original (#2289).
         let favorites: Vec<Uuid> = if tab == 4 {
             inv.folders.values().filter(|f| f.info.favorite).map(|f| f.info.id).collect()
         } else {
@@ -866,7 +869,7 @@ impl ViewCache {
                     if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
                         return false;
                     }
-                    if tab == 4 && !favored.contains(&e.parent) && !rules::is_favorite(inv, e.id) {
+                    if tab == 4 && !favored.contains(&e.parent) && !it.favorite {
                         return false;
                     }
                     return matcher.matches(&Subject {
@@ -916,7 +919,7 @@ impl ViewCache {
                 if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
                     return false;
                 }
-                if tab == 4 && !favored.contains(&e.parent) && !rules::is_favorite(inv, e.id) {
+                if tab == 4 && !favored.contains(&e.parent) && !it.favorite {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
@@ -1397,25 +1400,57 @@ mod tests {
     }
 
     #[test]
-    fn inventory_favorites_filter_links_by_the_original_state() {
-        let (mut inv, facts) = fixture();
-        inv.items.get_mut(&id(10)).expect("original").favorite = true;
-        let mut link = item(13, id(2), "Link", 100);
-        link.asset_type = 24;
-        link.asset_id = id(10);
-        inv.add_items(vec![link]);
-        let prefs = InventoryPreferences::default();
-        let filters = Filters::default();
-        let results = search(&inv, &facts, &prefs, &filters, 4);
-        assert!(results.contains(&id(10)));
-        assert!(results.contains(&id(13)));
-        assert!(!results.contains(&id(11)));
-        inv.items.get_mut(&id(10)).expect("original").favorite = false;
-        inv.items.get_mut(&id(13)).expect("link").favorite = true;
-        inv.generation += 1;
-        let results = search(&inv, &facts, &prefs, &filters, 4);
-        assert!(!results.contains(&id(10)));
-        assert!(!results.contains(&id(13)), "ignore a stale favorite on the link itself");
+    fn inventory_favorites_do_not_collect_links_to_favorite_originals() {
+        for filters in [Filters::default(), smart(Vec::new(), false)] {
+            let (mut inv, facts) = fixture();
+            let root = inv.root;
+            folder(&mut inv, 20, root, -1, "Favorite folder");
+            folder(&mut inv, 21, root, 48, "My Outfits");
+            folder(&mut inv, 22, id(21), -1, "Outfit");
+            inv.folders.get_mut(&id(20)).expect("favorite folder").info.favorite = true;
+            inv.items.get_mut(&id(10)).expect("original").favorite = true;
+            let mut link = item(13, id(2), "Link", 100);
+            link.asset_type = 24;
+            link.asset_id = id(10);
+            let mut folder_link = item(14, id(2), "Folder link", 100);
+            folder_link.asset_type = 25;
+            folder_link.asset_id = id(20);
+            inv.add_items(vec![link.clone(), folder_link]);
+            // Several outfits can refer to one favorite; none is another
+            // favorite root merely because its target has a star.
+            inv.add_items(
+                (100..200)
+                    .map(|n| {
+                        let mut alias = link.clone();
+                        alias.id = id(n);
+                        alias.parent = id(22);
+                        alias
+                    })
+                    .collect(),
+            );
+            let prefs = InventoryPreferences {
+                search_outfits: true,
+                ..Default::default()
+            };
+            let results = search(&inv, &facts, &prefs, &filters, 4);
+            assert!(results.contains(&id(10)) && results.contains(&id(20)));
+            assert!(results.iter().all(|i| !matches!(i.as_u128(), 13 | 14 | 100..=199)));
+            assert!(!results.contains(&id(11)));
+            assert!(rules::is_favorite(&inv, id(13)), "the link still shows its original's star");
+            assert!(rules::is_favorite(&inv, id(14)), "folder-link actions still address the original");
+
+            // Do not simply hide all links: the Legacy Favorites panel reads
+            // an explicitly stored flag, even on a link with a stale target.
+            inv.items.get_mut(&id(10)).expect("original").favorite = false;
+            inv.items.get_mut(&id(13)).expect("link").favorite = true;
+            inv.generation += 1;
+            let results = search(&inv, &facts, &prefs, &filters, 4);
+            assert!(!results.contains(&id(10)));
+            assert!(results.contains(&id(13)), "retain an entry's own favorite flag");
+            inv.items.get_mut(&id(13)).expect("link").asset_id = id(9999);
+            inv.generation += 1;
+            assert!(search(&inv, &facts, &prefs, &filters, 4).contains(&id(13)));
+        }
     }
 
     #[test]
@@ -1424,11 +1459,15 @@ mod tests {
         folder(&mut inv, 20, id(2), -1, "Sub");
         folder(&mut inv, 21, id(20), -1, "Empty");
         inv.add_items(vec![item(22, id(20), "Deep", 100)]);
+        let mut link = item(23, id(20), "Link inside favorite folder", 100);
+        link.asset_type = 24;
+        link.asset_id = id(10);
+        inv.add_items(vec![link]);
         inv.folders.get_mut(&id(2)).expect("folder").info.favorite = true;
         let prefs = InventoryPreferences::default();
         let filters = Filters::default();
         let results = search(&inv, &facts, &prefs, &filters, 4);
-        for n in [2, 10, 11, 12, 20, 21, 22] {
+        for n in [2, 10, 11, 12, 20, 21, 22, 23] {
             assert!(results.contains(&id(n)), "{n} sits in a favorite folder");
         }
         assert!(!results.contains(&id(4)), "a folder outside stays hidden");
@@ -1437,7 +1476,14 @@ mod tests {
         inv.generation += 1;
         let results = search(&inv, &facts, &prefs, &filters, 4);
         assert!(results.contains(&id(22)) && results.contains(&id(21)));
+        assert!(
+            results.contains(&id(23)),
+            "links inside a favorite folder remain part of its content"
+        );
         assert!(!results.contains(&id(10)), "the parent of a favorite folder shows only its path");
+        let advanced = search(&inv, &facts, &prefs, &smart(Vec::new(), false), 4);
+        assert!(advanced.contains(&id(23)), "advanced Favorites search retains folder content too");
+        assert!(!advanced.contains(&id(10)));
     }
 
     #[test]

@@ -37,6 +37,16 @@ rigid worn linksets as well as meshes skinned to that point (#1694).
 CPU transforms and GPU anchors share this frame; missing poses use the
 existing bone/rest fallback, and HUD points stay in screen space.
 
+
+Inventory Favorites membership in `ui/inventory/view.rs` and its shortcut
+count in `ui/inventory/aurora.rs` read each record's own favorite flag,
+following `LLInventoryFavoritesItemsPanel::findAndInitRootContent`
+(`indra/newview/llinventorypanel.cpp`). Outfit links do not become separate
+Favorites entries just because their original is a favorite (#2289).
+Explicitly favorited folders still expose their whole subtree, including
+links. Link stars and menu actions retain the original-resolving
+`world/inventory/actions.rs::is_favorite` / `set_favorites` behavior.
+
 `aurora-prim::params::VolumeParams::constrain` preserves the path-ratio
 limits of `LLVolumeParams::setRatio` (indra/llmath/llvolume.cpp): spheres
 and alternate paths accept 0..2; ordinary circular non-sphere paths use
