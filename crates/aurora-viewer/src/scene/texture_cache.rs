@@ -29,7 +29,8 @@ const MAGIC: &[u8; 4] = b"AUTX";
 /// colour of the mips is the plain average of the texels (`build_mips`). 3:
 /// the ends of alpha stay exact (`aurora_render::bc7::encode_chain`).
 /// 4: retain the legacy pick mask and an exact alpha > 0 plane together.
-const VERSION: u8 = 4;
+/// 5: the exact plane uses the Legacy Viewer's alpha > 32 threshold.
+const VERSION: u8 = 5;
 const KIND_KEEP_RGBA: u8 = 0;
 const KIND_BC7: u8 = 1;
 /// Fixed part of the header, then 8 bytes per level.
@@ -274,7 +275,7 @@ enum Parsed {
 /// The header checked against the length of the file, and where to read
 /// the levels from `want` on.
 fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
-    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3 | VERSION) {
+    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3 | 4 | VERSION) {
         return None;
     }
     let kind = head[5];
@@ -302,8 +303,8 @@ fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
         return None;
     }
     let (mw, mh, mlen) = (u32_at(head, 20)?, u32_at(head, 24)?, u32_at(head, 28)? as usize);
-    // Opaque version-3 chains remain usable. Alpha masks need a fresh decode
-    // once to supply the exact bit plane rather than guessing transparency.
+    // Old chains without masks remain usable. Alpha masks need a fresh
+    // decode: v3 lacks the exact plane and v4 uses the old alpha > 0 rule.
     if mlen > MAX_MASK_BYTES || (mlen > 0 && (head[4] != VERSION || pick_mask_bytes(mw, mh) != Some(mlen))) {
         return None;
     }
@@ -465,11 +466,13 @@ mod tests {
             ..meta(0)
         };
         let mut opaque = encode(&opaque_meta, None, &chain()).unwrap();
-        opaque[4] = 3;
-        assert!(matches!(read(&file("old-opaque.bc7", &opaque), 0), Some(Transcoded::Bc7(_))));
         let mut masked = encode(&meta(0), Some((8, 4, &[0; 5])), &chain()).unwrap();
-        masked[4] = 3;
-        assert_eq!(read(&file("old-mask.bc7", &masked), 0), None);
+        for version in [3, 4] {
+            opaque[4] = version;
+            masked[4] = version;
+            assert!(matches!(read(&file("old-opaque.bc7", &opaque), 0), Some(Transcoded::Bc7(_))));
+            assert_eq!(read(&file("old-mask.bc7", &masked), 0), None, "version {version}");
+        }
         assert_eq!(pick_mask_bytes(u32::MAX, u32::MAX), None);
     }
 

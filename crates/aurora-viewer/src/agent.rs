@@ -86,6 +86,10 @@ pub struct AgentState {
     has_server: bool,
     last_jump_input: Option<Instant>,
     corrections: Corrections,
+    /// Metres of the reports more than `CORRECTION_MIN` from the
+    /// extrapolated position, since the start (the viewer statistics'
+    /// AgentPositionSnaps).
+    position_snaps: f64,
     /// Aurora's movement prediction (own_motion.rs): on while
     /// `set_predicting` says so.
     pub prediction: Prediction,
@@ -147,6 +151,7 @@ impl Default for AgentState {
             has_server: false,
             last_jump_input: None,
             corrections: Corrections::default(),
+            position_snaps: 0.0,
             prediction: Prediction::default(),
             predicting: false,
             lead: Vec3::ZERO,
@@ -318,6 +323,11 @@ impl AgentState {
             self.glide = Vec3::ZERO;
         } else {
             let gap = pos.distance(self.predicted_pos);
+            // LLViewerObject::processUpdateMessage records every snap of
+            // our avatar over half a metre (AGENT_POSITION_SNAP)
+            if gap > CORRECTION_MIN {
+                self.position_snaps += f64::from(gap);
+            }
             if gap <= CORRECTION_MAX {
                 self.corrections.count += u32::from(gap > CORRECTION_MIN);
                 self.corrections.largest = self.corrections.largest.max(gap);
@@ -385,6 +395,12 @@ impl AgentState {
 
     pub fn predicted_position(&self) -> Vec3 {
         self.predicted_pos
+    }
+
+    /// Metres of the simulator's corrections over half a metre since the
+    /// start, for the viewer statistics.
+    pub fn position_snaps(&self) -> f64 {
+        self.position_snaps
     }
 
     /// Corrections since the previous call.
@@ -1033,6 +1049,8 @@ mod tests {
         let c = agent.take_corrections();
         assert_eq!(c.count, 1);
         assert!((c.largest - 2.0).abs() < 1e-3, "{c:?}");
+        // the viewer statistics' snaps: that one only, in metres
+        assert!((agent.position_snaps() - 2.0).abs() < 1e-3, "{}", agent.position_snaps());
         // a move across the region is not one, and taking empties the count
         agent.on_server_update_at(Vec3::X * 100.0, Vec3::ZERO, Vec3::ZERO, false, true, at(now, 1.3));
         assert_eq!(agent.take_corrections(), Corrections::default());

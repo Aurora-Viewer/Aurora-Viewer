@@ -14,10 +14,10 @@
 //! nearest hit), a few dozen triangles tested instead of all. It is built
 //! by a background job the first time the hover search tests a large face
 //! of a mesh or a sculpt ([`PickAccel::get_or_ask`]): until it is there,
-//! every triangle is tested as before. Clicks and the full search of
-//! AURORA_HOVER_CHECK keep testing every triangle.
+//! every triangle is tested as before. Indexed left-click queries reuse
+//! ready hierarchies; AURORA_HOVER_CHECK independently tests every triangle.
 
-use crate::media::pick::ray_triangle;
+use crate::media::pick::{TriangleHit, ray_triangle};
 use glam::Vec3;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -144,7 +144,23 @@ impl Accel {
     /// The distance of the nearest triangle the ray `o + t d` (object
     /// space) meets nearer than `best`, or `best`: what testing every
     /// triangle of `indices` in turn gives, with the same back-face policy.
-    pub fn nearest(&self, positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, two_sided: bool, mut best: f32) -> f32 {
+    pub fn nearest(&self, positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, two_sided: bool, best: f32) -> f32 {
+        self.nearest_filtered(positions, indices, o, d, two_sided, best, |_, _| true)
+    }
+
+    /// Reject texture holes without pruning the triangles behind them,
+    /// including folds of the same face. Used by the left-click hover.
+    #[allow(clippy::too_many_arguments)]
+    pub fn nearest_filtered(
+        &self,
+        positions: &[[f32; 3]],
+        indices: &[u16],
+        o: Vec3,
+        d: Vec3,
+        two_sided: bool,
+        mut best: f32,
+        accepts: impl Fn([u16; 3], &TriangleHit) -> bool,
+    ) -> f32 {
         // The triangle test accepts a ray that passes a hair outside a
         // triangle, by rounding: up to about 1e-6 of the distances it
         // handles. The boxes are widened by a hundred times that, so that a
@@ -195,6 +211,7 @@ impl Accel {
                 if let Some(hit) = ray_triangle(o, d, p0, p1, p2, two_sided)
                     && hit.t > 0.0
                     && hit.t < best
+                    && accepts([t[0], t[1], t[2]], &hit)
                 {
                     best = hit.t;
                 }
@@ -350,6 +367,30 @@ mod tests {
             }
         }
         hits
+    }
+
+    #[test]
+    fn rejected_front_triangles_do_not_prune_a_folded_faces_rear_surface() {
+        let positions = [
+            [-1.0, -1.0, 1.0],
+            [1.0, -1.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [-1.0, -1.0, 2.0],
+            [1.0, -1.0, 2.0],
+            [0.0, 1.0, 2.0],
+        ];
+        // Enough duplicate triangles to put the layers in different leaves.
+        let indices: Vec<u16> = (0..20).flat_map(|_| [0, 1, 2, 3, 4, 5]).collect();
+        let accel = Accel::build(&positions, &indices);
+        let t = accel.nearest_filtered(&positions, &indices, Vec3::ZERO, Vec3::Z, true, f32::INFINITY, |tri, hit| {
+            assert!(hit.u >= 0.0 && hit.v >= 0.0);
+            tri[0] >= 3
+        });
+        assert_eq!(t, 2.0);
+        assert_eq!(
+            accel.nearest_filtered(&positions, &indices, Vec3::ZERO, Vec3::Z, true, 1.5, |tri, _| tri[0] >= 3),
+            1.5
+        );
     }
 
     #[test]

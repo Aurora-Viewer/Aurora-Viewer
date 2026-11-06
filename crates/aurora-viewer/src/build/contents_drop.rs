@@ -68,15 +68,24 @@ pub fn reason_text(reason: &str) -> &'static str {
 
 /// allowCopyBy(agent), without an active-group override, like the Legacy Viewer.
 pub fn copyable(item: &InvItem, agent: Uuid) -> bool {
-    agent_mask(item, agent) & rules::COPY != 0
+    rules::agent_mask(item, agent) & rules::COPY != 0
 }
 
-pub(crate) fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
-    if item.owner == agent && !item.group_owned {
-        item.owner_mask
-    } else {
-        item.everyone_mask
-    }
+/// Whether the agent may put the image `item` on a worn object's face: both
+/// copy and transfer, so nothing has to go into the object's contents, which
+/// a worn object cannot take (it is in the world and in inventory at once).
+/// **Wanted difference from the Legacy Viewer**, which also asks for the base
+/// modify right through willObjectAcceptInventory: painting a face does not
+/// change the image, so a no-modify texture is accepted here.
+pub(crate) fn worn_image_rights(item: &InvItem, agent: Uuid) -> bool {
+    let both = rules::COPY | rules::TRANSFER;
+    rules::agent_mask(item, agent) & both == both
+}
+
+/// Whether the prim `idx` is worn and its faces must refuse the texture
+/// `item`, even one its contents already hold.
+pub(crate) fn worn_image_refused(world: &World, idx: usize, item: &InvItem) -> bool {
+    item.asset_type == AT_TEXTURE && linkset(world, idx).is_some_and(|(_, worn)| worn) && !worn_image_rights(item, world.agent_id)
 }
 
 /// The root of the prim `idx`'s linkset, and whether it is worn (its root
@@ -145,7 +154,7 @@ pub fn accepts(world: &World, idx: usize, item: &InvItem) -> Result<(), &'static
         return Err("rez-contents-denied");
     }
     let owned = root.update_flags & OBJECT_YOU_OWNER != 0;
-    if !(owned && item.owner == world.agent_id) && agent_mask(item, world.agent_id) & rules::TRANSFER == 0 {
+    if !(owned && item.owner == world.agent_id) && rules::agent_mask(item, world.agent_id) & rules::TRANSFER == 0 {
         return Err("rez-transfer-denied");
     }
     Ok(())
@@ -217,7 +226,7 @@ fn carried<'a>(world: &'a World, ids: &[Uuid], owned: bool, worn: &Worn) -> Resu
                 for item in f.items.iter().filter_map(|id| inv.items.get(id)) {
                     let giveable = !matches!(item.asset_type, AT_CALLINGCARD | AT_LINK | AT_LINK_FOLDER)
                         && !worn.has(item)
-                        && (owned || agent_mask(item, world.agent_id) & rules::TRANSFER != 0);
+                        && (owned || rules::agent_mask(item, world.agent_id) & rules::TRANSFER != 0);
                     if giveable && seen.insert(item.id) {
                         out.push(Carried { item, from_folder: true });
                     }
