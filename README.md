@@ -1018,6 +1018,18 @@ Conversation history (plain text, one file per conversation) is in
 Preferences › Chat shows the folder, turns logging off and erases it. These
 files never leave the machine and are never attached to a bug report.
 
+### Removing Aurora
+
+Preferences › Language and updates › "Remove Aurora from this computer"
+(or `aurora-viewer --uninstall`, see [Command line](#command-line)) removes
+what Aurora registered outside its own folders: the `secondlife://`,
+`hop://` and `x-grid-location-info://` link handler when it opens this
+Aurora (another viewer's stays), the Windows notification identity, the
+cache key and saved logins of the system's credential store, and Aurora's
+Blender add-on. It then lists the folders that remain (settings, cache,
+logs, media plugins, and the cache or history folders you chose), each with
+an "Open folder" button: quit Aurora, then delete them and the viewer.
+
 ## Under the hood
 
 **What it is**
@@ -1142,6 +1154,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 | `<slurl>`, `--url <slurl>` | Starts at this place, or hands it to the viewer already running; must come last |
 | `-h`, `--help` | Shows the help |
 | `-V`, `--version` | Prints the built version then exits, with no window, log or network |
+| `--uninstall` | Removes what Aurora registered on this computer, prints it and the folders left, then exits, with no window |
 
 - `--title`: the build profile ends the title (Dev, Release, Debug); the log
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).
@@ -1164,6 +1177,13 @@ exe before publishing; the local build also writes it to `version.txt`.
   Windows, a desktop entry and `mimeapps.list` on Linux, see
   [docs/LINUX.md](docs/LINUX.md#second-life-links)). Manage saved grids from
   the login grid menu or Preferences › Network and cache › Manage grids.
+- `--uninstall`: what Preferences › Language and updates › "Remove Aurora
+  from this computer" does, without its confirmation (see
+  [Removing Aurora](#removing-aurora)); it prints each part with its result,
+  then the folders to delete, and exits with code 1 when a part could not be
+  removed. On Windows, run it as `aurora-viewer.exe --uninstall | more` so
+  the terminal waits for its text. With `AURORA_DEMO=1` it is a dry run that
+  removes nothing.
 - `--login`: the account follows the usual "remember" choices; a single
   user name is written `<name> Resident`. `--grid` alone selects the grid of
   a new account's form.

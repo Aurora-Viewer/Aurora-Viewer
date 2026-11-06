@@ -94,6 +94,7 @@ mod inventory_hover;
 mod inventory_thumbnail;
 mod joystick;
 mod land_moderation;
+mod land_rights;
 mod link_health;
 mod login_favorites;
 mod marketplace_listings;
@@ -132,6 +133,7 @@ mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod uninstall;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
@@ -423,6 +425,10 @@ pub struct App {
     vr_restart_offer: bool,
     vr_restart: bool,
     restart_into_vr: bool,
+    /// The renderer was asked to set VR up at its start (`open_renderer`):
+    /// otherwise the restart dialog explains that VR is set up only once
+    /// used.
+    vr_set_up: bool,
     /// `--vr`: enter VR once the world has shown for a moment.
     vr_at_start: bool,
     vr_world_since: Option<Instant>,
@@ -776,6 +782,8 @@ pub struct App {
     grid_status_listed: bool,
     grid_status_was_open: bool,
     about: about::About,
+    /// Preferences › Remove Aurora from this computer (`app/uninstall.rs`).
+    uninstall: uninstall::Uninstall,
     /// The parcel radio's title and the ones before (World › Stream title).
     stream_titles: crate::stream_title::StreamTitles,
     stream_title_ui: ui::stream_title::StreamTitleUi,
@@ -1447,6 +1455,7 @@ impl App {
             vr_restart_offer: false,
             vr_restart: false,
             restart_into_vr: false,
+            vr_set_up: false,
             vr_at_start: crate::cli::get().vr,
             vr_world_since: None,
             input: MoveInput::default(),
@@ -1656,6 +1665,7 @@ impl App {
             grid_status_listed: false,
             grid_status_was_open: false,
             about: Default::default(),
+            uninstall: Default::default(),
             stream_titles: Default::default(),
             stream_title_ui: Default::default(),
             buy_currency_ui: Default::default(),
@@ -5622,7 +5632,7 @@ impl App {
             // media on an item we wear (on our back, or a HUD) and made, on a
             // site the list does not know: no question unless `-ask` turns
             // filter_trust_own_worn off; `-blocked` puts the site in the list
-            // as blocked; `-gift`: an item someone else made, asked about
+            // as blocked; `-gift`: an item someone else made, trusted too
             "worn" | "worn-ask" | "worn-blocked" | "worn-gift" | "hud" | "hud-ask" | "hud-blocked" | "hud-gift" => {
                 let url = "https://media.example.com/earring/index.html";
                 self.settings.media.filter_trust_own_worn = !mode.ends_with("-ask");
@@ -8596,6 +8606,12 @@ impl App {
         self.scene.textures.set_window_state(self.focused, minimized);
         // (a demo or a timed run neither publishes nor reads, instances.rs)
         let timed = self.capture.is_some() || self.frame_profile.enabled();
+        // the busy card's switch, the same in every viewer (instances.rs)
+        let switch = self.busy_pause.follow.frame(
+            &mut self.settings.background_gpu_pause,
+            self.instances.newest_switch(),
+            crate::instances::unix_ms(),
+        );
         self.instances.tick(
             !self.demo && !timed,
             crate::instances::Own {
@@ -8603,6 +8619,7 @@ impl App {
                 active: self.focused && !minimized,
                 luid: self.scene.textures.card_luid(),
             },
+            switch,
         );
         self.scene.textures.set_card_sharing(!self.demo && !timed);
         self.scene.textures.set_peers(&self.instances.peers());
@@ -14655,6 +14672,7 @@ impl App {
         self.options_ui.flycam_active = self.joystick.active;
         let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        self.sync_appearance_camera();
         self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before_camera);
         if res.toggle_flycam {
             self.toggle_joystick_flycam();
@@ -14791,6 +14809,10 @@ impl App {
         if res.open_dev_toolbox {
             self.panels.dev_toolbox = true;
         }
+        if res.uninstall {
+            self.uninstall_asked();
+        }
+        self.uninstall_window(ctx, p);
         if self.panels.settings && !open {
             self.settings.save();
         }
@@ -15765,7 +15787,11 @@ impl App {
                     ui::widgets::Modal::new(egui::Id::unique("vr-restart")).show(&ctx, |ui| {
                         ui.set_max_width(430.0);
                         ui.heading(aurora_i18n::tr!("vr-restart-title"));
-                        ui.label(aurora_i18n::tr!("vr-restart-body"));
+                        ui.label(if self.vr_set_up {
+                            aurora_i18n::tr!("vr-restart-body")
+                        } else {
+                            aurora_i18n::tr!("vr-restart-body-set-up")
+                        });
                         ui.horizontal(|ui| {
                             if ui::widgets::action_button(
                                 ui,
@@ -15791,6 +15817,9 @@ impl App {
                             {
                                 self.vr_restart_offer = false;
                                 self.vr_restart = true;
+                                // VR is wanted here: set it up at the next starts
+                                // too, so the button enters it at once (#2309)
+                                self.settings.camera.vr_at_start = true;
                             }
                         });
                     });
@@ -16485,8 +16514,7 @@ impl App {
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
                 let shape_group = self.shape_ui.group;
-                let (shape_actions, visible) =
-                    ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, self.settings.customize_animation);
+                let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, (&self.settings).into());
                 self.demo_shape_drag();
                 if shape_preferences != (self.shape_ui.hints, self.shape_ui.feet) {
                     self.settings.shape_show_hints = self.shape_ui.hints;
@@ -16494,12 +16522,12 @@ impl App {
                     self.settings.save();
                 }
                 self.shape_ui.request_hints(&self.world, &self.scene.jobs, &ctx, &visible);
+                for action in shape_actions {
+                    self.shape_action(action);
+                }
                 if self.shape_ui.open && self.shape_camera.is_some() && (self.shape_ui.group != shape_group || self.shape_ui.camera_pending)
                 {
                     self.focus_shape_category();
-                }
-                for action in shape_actions {
-                    self.shape_action(action);
                 }
                 if !self.shape_ui.open
                     && !self.wearable_ui.open
@@ -17799,6 +17827,9 @@ impl ApplicationHandler for App {
                     self.options_ui.restore = Some(ui::options::backup::Pending::new(backup, logged_in));
                 }
                 ui::options::demo(&mut self.options_ui, &value);
+            }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_UNINSTALL") {
+                self.uninstall_demo(&mode);
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
                 if matches!(
