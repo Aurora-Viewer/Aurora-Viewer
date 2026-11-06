@@ -438,6 +438,7 @@ fn next_editable(inv: &Inventory, it: &aurora_net::inventory::InvItem, bit: u32,
     rules::mutable(inv, it.id)
         && !matches!(it.asset_type, 2 | 24 | 25)
         && st.pending.is_none()
+        && rules::next_owner_editable(it)
         && it.base_mask & bit != 0
         && !(bit == rules::COPY && it.asset_type == 56)
         && (bit != rules::TRANSFER || it.next_owner_mask & rules::COPY != 0)
@@ -715,5 +716,28 @@ mod tests {
         // settings always copy
         let settings = item(56);
         assert_ne!(next_mask(&settings, rules::COPY, false) & rules::COPY, 0);
+    }
+
+    #[test]
+    fn the_next_owner_switches_need_transfer_and_skip_cards_and_landmarks() {
+        let mut inv = Inventory::default();
+        let st = InventoryUi::default();
+        let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
+        let mut object = item(6);
+        object.owner_mask = full;
+        let mut no_transfer = item(7);
+        no_transfer.owner_mask = rules::COPY | rules::MODIFY;
+        let mut landmark = item(3);
+        landmark.owner_mask = full;
+        landmark.inv_type = 3;
+        for it in [&object, &no_transfer, &landmark] {
+            inv.items.insert(it.id, it.clone());
+        }
+        assert!(next_editable(&inv, &object, rules::MODIFY, &st));
+        assert!(
+            !next_editable(&inv, &no_transfer, rules::MODIFY, &st),
+            "the owner cannot transfer it"
+        );
+        assert!(!next_editable(&inv, &landmark, rules::MODIFY, &st));
     }
 }

@@ -155,7 +155,7 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
         }
         if ui
             .add_enabled(
-                !tool.attachment_selected(world) && !s.edit_linked && tool.roots(world).len() >= 2,
+                !s.edit_linked && tool.can_link(world),
                 egui::Button::new(aurora_i18n::tr!("build-legacy-link")).min_size(vec2(50.0 * canvas.width() / 295.0, 20.0)),
             )
             .on_hover_text(aurora_i18n::tr!("build-compact-link"))
@@ -165,7 +165,7 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
         }
         if ui
             .add_enabled(
-                !tool.attachment_selected(world) && !tool.selection.is_empty(),
+                !tool.selection.is_empty() && tool.can_unlink(world),
                 egui::Button::new(aurora_i18n::tr!("build-legacy-unlink")).min_size(vec2(90.0 * canvas.width() / 295.0, 20.0)),
             )
             .on_hover_text(aurora_i18n::tr!("build-compact-unlink"))
