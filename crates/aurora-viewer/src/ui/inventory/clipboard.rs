@@ -65,7 +65,7 @@ pub(super) fn copy_allowed(inv: &Inventory, ids: &[Uuid]) -> bool {
                 || inv
                     .items
                     .get(id)
-                    .is_some_and(|it| it.owner_mask & rules::COPY != 0 || !matches!(it.asset_type, 2 | 49))
+                    .is_some_and(|it| rules::held(inv, it) & rules::COPY != 0 || !matches!(it.asset_type, 2 | 49))
         })
 }
 

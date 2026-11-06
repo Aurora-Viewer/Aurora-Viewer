@@ -48,10 +48,7 @@ pub(super) fn allowed(world: &World, sel: &[Sel], target: PickTarget, item: &Inv
     // attachments are in world and in inventory: the server does not
     // support changing permissions in such a case
     let both = rules::COPY | rules::TRANSFER;
-    if target != PickTarget::PbrMaterial
-        && roots.iter().any(|&(_, worn)| worn)
-        && contents_drop::agent_mask(item, world.agent_id) & both != both
-    {
+    if target != PickTarget::PbrMaterial && roots.iter().any(|&(_, worn)| worn) && rules::agent_mask(item, world.agent_id) & both != both {
         return Err(Refusal::Restricted);
     }
     if roots.is_empty() || roots.iter().any(|&(root, _)| contents_drop::accepts(world, root, item).is_err()) {

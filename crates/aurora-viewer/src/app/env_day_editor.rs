@@ -58,7 +58,7 @@ impl App {
                 self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = name), true));
                 return true;
             };
-            let rights = Rights::from_item(it.owner_mask, doc.flags());
+            let rights = Rights::from_item(crate::world::inventory::actions::held(&self.world.inventory, &it), doc.flags());
             if rights.save {
                 doc.set_name(&it.name);
                 doc.set_flags(rights.flags(doc.flags()));
@@ -77,14 +77,12 @@ impl App {
         let mut out = Vec::new();
         // onAssetLoadedForInsertion: settings that cannot be transferred or
         // copied make the edited day no-transfer, after SettingsMakeNoTrans
-        let restricted = self
-            .world
-            .inventory
-            .items
-            .get(&item)
-            .is_some_and(|it| it.owner_mask & 0x2000 == 0 || it.owner_mask & 0x8000 == 0);
+        let restricted = self.world.inventory.items.get(&item).is_some_and(|it| {
+            let mask = crate::world::inventory::actions::held(&self.world.inventory, it);
+            mask & 0x2000 == 0 || mask & 0x8000 == 0
+        });
         let edited_no_trans = match self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id)) {
-            Some(it) => it.owner_mask & 0x2000 == 0,
+            Some(it) => crate::world::inventory::actions::held(&self.world.inventory, it) & 0x2000 == 0,
             None => self.day_editor.doc.as_ref().is_some_and(|d| d.flags() & FLAG_NOTRANS != 0),
         };
         let make_no_trans = restricted && !edited_no_trans;
@@ -266,7 +264,11 @@ impl App {
         match result {
             Ok(it) => {
                 self.world.inventory.add_items(vec![it.clone()]);
-                self.day_editor.saved(it.id, &it.name, Rights::from_item(it.owner_mask, 0));
+                self.day_editor.saved(
+                    it.id,
+                    &it.name,
+                    Rights::from_item(crate::world::inventory::actions::agent_mask(&it, self.world.agent_id), 0),
+                );
                 log::info!("day cycle saved: {} ({})", it.name, it.asset_id);
             }
             Err(e) => {

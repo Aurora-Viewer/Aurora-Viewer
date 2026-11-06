@@ -293,7 +293,8 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
         let permitted = complete_selection
             && selected.iter().all(|item| {
                 !item.asset_id.is_nil()
-                    && item.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
+                    && rules::held(inv, item) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
+                        == rules::COPY | rules::MODIFY | rules::TRANSFER
             });
         let formats = c.group(
             "save-textures",

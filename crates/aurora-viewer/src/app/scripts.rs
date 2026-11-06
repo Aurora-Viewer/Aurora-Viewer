@@ -217,6 +217,8 @@ impl App {
                     it.parent = self.world.inventory.lib_root;
                     it.owner = self.world.inventory.lib_owner;
                     it.owner_mask &= !perm::MODIFY;
+                    // (what the agent holds on a Library item: rules::agent_mask)
+                    it.everyone_mask = it.owner_mask;
                     self.world.inventory.add_items(vec![it]);
                 }
                 self.panels.inventory = true;
@@ -422,7 +424,7 @@ impl App {
             let inv = &self.world.inventory;
             let it = inv.items.get(&target.item).filter(|it| it.asset_type == 10)?;
             let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, it.id, inv.lib_root);
-            let (can_read, can_edit) = permissions(it.owner_mask, library);
+            let (can_read, can_edit) = permissions(crate::world::inventory::actions::held(inv, it), library);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: self.world.main_region.unwrap_or_default(),

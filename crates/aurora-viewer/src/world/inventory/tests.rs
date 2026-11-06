@@ -787,3 +787,48 @@ fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
     );
     assert!(asset_uuid_shown(&inv, asset), "a second item gives full permissions");
 }
+
+#[test]
+fn the_agent_holds_the_owner_mask_of_its_items_and_the_everyone_mask_of_others() {
+    let (agent, library) = (id(9901), id(9902));
+    let item = |owner, group_owned| InvItem {
+        owner,
+        group_owned,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(agent_mask(&item(agent, false), agent), FULL, "its own item");
+    assert_eq!(agent_mask(&item(library, false), agent), COPY, "a Library item");
+    assert_eq!(agent_mask(&item(agent, true), agent), COPY, "group owned");
+    assert_eq!(agent_mask(&item(Uuid::nil(), false), agent), FULL, "built here, no owner yet");
+    assert_eq!(agent_mask(&item(library, false), Uuid::nil()), FULL, "before the login");
+    let inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    assert_eq!(held(&inv, &item(agent, false)), FULL);
+    assert_eq!(held(&inv, &item(library, false)), COPY);
+}
+
+#[test]
+fn a_library_item_shows_its_asset_uuid_by_what_it_allows_everyone() {
+    let (agent, library, asset) = (id(9911), id(9912), id(9913));
+    let mut inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    let mut lib_item = InvItem {
+        id: id(9914),
+        owner: library,
+        asset_id: asset,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    inv.items.insert(lib_item.id, lib_item.clone());
+    assert!(!asset_uuid_shown(&inv, asset), "full for the Library's account only");
+    lib_item.everyone_mask = FULL;
+    inv.items.insert(lib_item.id, lib_item);
+    assert!(asset_uuid_shown(&inv, asset), "full for everyone");
+}

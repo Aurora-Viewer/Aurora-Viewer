@@ -857,7 +857,7 @@ impl ViewCache {
                         parent_name: folder_names.get(&e.parent).copied().unwrap_or(""),
                         creator: original.creator,
                         kind: if original.inv_type == 17 { 6 } else { original.inv_type },
-                        owner_mask: original.owner_mask,
+                        owner_mask: rules::held(inv, original),
                         worn: query.worn.contains(&original_id),
                         linked,
                         coalesced: original.asset_type == 6 && original.flags & super::OBJECT_HAS_MULTIPLE_ITEMS != 0,
@@ -879,7 +879,7 @@ impl ViewCache {
                 if filters.types != u32::MAX && filters.types & (1_u32 << kind) == 0 {
                     return false;
                 }
-                if original.owner_mask & filters.permissions != filters.permissions {
+                if rules::held(inv, original) & filters.permissions != filters.permissions {
                     return false;
                 }
                 if filters.coalesced && (original.asset_type != 6 || original.flags & super::OBJECT_HAS_MULTIPLE_ITEMS == 0) {

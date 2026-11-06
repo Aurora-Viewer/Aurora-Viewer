@@ -6487,7 +6487,9 @@ impl App {
                         .get(&id)
                         .filter(|item| {
                             item.asset_type == 7
-                                && item.owner_mask & crate::world::inventory::actions::COPY != 0
+                                && crate::world::inventory::actions::held(&self.world.inventory, item)
+                                    & crate::world::inventory::actions::COPY
+                                    != 0
                                 && !self.world.inventory.in_folder_type(id, 14)
                         })
                         .cloned()
