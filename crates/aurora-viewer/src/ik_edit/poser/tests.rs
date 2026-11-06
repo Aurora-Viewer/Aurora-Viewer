@@ -465,10 +465,9 @@ fn poser_subjects_require_ownership_or_consent_and_losing_ownership_drops_only_t
         .unwrap();
     assert!(!subjects::allowed(&world, id));
     world.objects.get_mut(index).unwrap().owner_id = world.agent_id;
-    assert_eq!(subjects::eligibility_reason(&world, id), Some("no-pose-data"));
     assert!(
-        !subjects::allowed(&world, id),
-        "missing control-avatar poses keep the subject out of the menu"
+        !world.avatar_poses.contains_key(&id) && subjects::allowed(&world, id),
+        "a still owned animesh, never posed by an animation yet, is offered"
     );
     world.avatar_poses.insert(id, world.avatar_poses[&world.agent_id].clone());
     assert!(subjects::allowed(&world, id));

@@ -44,13 +44,8 @@ pub(super) fn eligibility_reason(world: &World, id: Uuid) -> Option<&'static str
     if !Scene::skeleton_owner(world, index).is_some_and(|(owner, root)| owner == id && root == index) {
         return Some("not-root");
     }
-    if world
-        .avatar_poses
-        .get(&id)
-        .is_none_or(|poses| poses.len() < world.avatar_lib.rig.len())
-    {
-        return Some("no-pose-data");
-    }
+    // no pose of its own yet is fine: a still animesh is posed only once
+    // it animates, and the poser does not need that pose to start
     None
 }
 pub(super) fn allowed(world: &World, id: Uuid) -> bool {
