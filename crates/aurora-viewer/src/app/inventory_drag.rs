@@ -130,7 +130,7 @@ fn remove_on_rez(inv: &Inventory, item: &InvItem, agent: Uuid, on_object: bool) 
 
 /// The avatar an object is, or is worn by: an attachment counts as its
 /// wearer (LLVOAvatar::findAvatarFromAttachment).
-fn wearer(world: &World, idx: usize) -> Option<usize> {
+pub(super) fn wearer(world: &World, idx: usize) -> Option<usize> {
     let mut current = idx;
     for _ in 0..64 {
         let o = world.objects.get(current)?;
@@ -482,7 +482,10 @@ impl App {
             self.inventory_drag.candidates.len()
         );
         match result {
-            Ok(drop) => Some(drop),
+            Ok(drop) => {
+                self.inventory_ui.release_world_drag_focus(ctx);
+                Some(drop)
+            }
             Err(reason) => {
                 self.inventory_ui.message = reason_text(reason).into();
                 self.world
@@ -550,8 +553,7 @@ impl App {
 
     pub(super) fn apply_inventory_drop(&mut self, drop: InventoryDrop) {
         if drop.selected {
-            self.build.deselect_all(&self.world);
-            self.build.expect_created(&self.world);
+            self.build.edit_inventory_rez(&self.world);
         }
         let rez = matches!(drop.command, BuildCmd::RezInventory(_));
         if let BuildCmd::RezInventory(item) = &drop.command {

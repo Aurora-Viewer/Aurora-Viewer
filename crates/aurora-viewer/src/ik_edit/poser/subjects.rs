@@ -122,9 +122,8 @@ impl Editor {
                 if rotation != before.rotations[changed]
                     && let Some(other) = self.mirrors.counterpart(changed)
                 {
-                    let relative = rig.local_rot[changed].inverse() * rotation;
-                    edited.rotations[other] =
-                        (rig.local_rot[other] * Quat::from_xyzw(-relative.x, relative.y, -relative.z, relative.w)).normalize();
+                    edited.rotations[other] = data::mirrored(rig, rotation, changed, other);
+                    edited.origin[other] = data::mirrored(rig, edited.origin[changed], changed, other);
                     edited.locks.remove(&other);
                 }
             }

@@ -83,7 +83,7 @@ fn asset_choice(ui: &mut egui::Ui, inv: &Inventory, assets: &Assets, kind: i32, 
         && let Some(original) = rules::original(inv, cargo.0)
         && let Some(it) = inv.items.get(&original)
         && it.asset_type == kind
-        && it.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
+        && rules::held(inv, it) & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
         && ui.rect_contains_pointer(ui.min_rect())
         && ui.input(|i| i.pointer.any_released())
     {
@@ -114,7 +114,10 @@ fn parameters(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, assets: &Assets, 
                 flag(ui, p, flags, WAIT_TIME, aurora_i18n::tr!("gesture-wait-time"));
                 ui.add_enabled(
                     *flags & WAIT_TIME != 0,
-                    egui::DragValue::new(seconds).range(0.0..=3600.0).speed(0.1),
+                    widgets::restricted_number(
+                        egui::DragValue::new(seconds).range(0.0..=3600.0).speed(0.1),
+                        widgets::TextPolicy::Decimal,
+                    ),
                 );
             });
         }
@@ -137,7 +140,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
         let mut open = editor.open;
         let title = aurora_i18n::tr!("gesture-editor-title", name = it.name.as_str());
         let editable = !rules::library(inv, *id);
-        let modifiable = editable && it.owner_mask & rules::MODIFY != 0;
+        let modifiable = editable && rules::held(inv, it) & rules::MODIFY != 0;
         let window_id = format!("gesture_{id}");
         let floater = Floater::new(&window_id, &title, egui::pos2(570.0, 130.0), Vec2::new(400.0, 590.0))
             .cascade(crate::ui::widgets::CascadeGroup::Gesture);
@@ -155,9 +158,13 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
             body.add_enabled_ui(editor.saving.is_none(), |ui| {
                 egui::Grid::new("gesture_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                     ui.label(aurora_i18n::tr!("common-description"));
-                    crate::ui::widgets::text_field(ui, modifiable, &mut editor.description, |b, ui| {
-                        egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width())
-                    });
+                    crate::ui::widgets::restricted_text_field(
+                        ui,
+                        modifiable,
+                        &mut editor.description,
+                        crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                        |b, ui| egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width()),
+                    );
                     ui.end_row();
                     ui.label(aurora_i18n::tr!("gesture-trigger"));
                     crate::ui::widgets::text_field(ui, editable, &mut g.trigger, |b, _| egui::TextEdit::singleline(b).char_limit(255));
@@ -412,7 +419,8 @@ impl Assets {
             .filter(|it| {
                 matches!(it.asset_type, 1 | 20)
                     && !it.asset_id.is_nil()
-                    && it.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
+                    && rules::held(inv, it) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
+                        == rules::COPY | rules::MODIFY | rules::TRANSFER
                     && !rules::in_type(inv, it.id, 14)
             })
             .map(|it| (it.asset_type, it.asset_id, it.name.clone()))

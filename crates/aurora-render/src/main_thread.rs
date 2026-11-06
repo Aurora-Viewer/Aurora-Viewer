@@ -71,6 +71,32 @@ pub struct GpuInfo {
     /// Why the dedicated GPU may not be the one drawing (shown under that
     /// choice too).
     pub notice: Option<crate::adapter_choice::Notice>,
+    /// The Vulkan driver's version and limits (Linden Lab's viewer
+    /// statistics); None on another backend.
+    pub vulkan: Option<VulkanLimits>,
+}
+
+/// What Linden Lab's viewer statistics report of the Vulkan driver, in
+/// place of the Legacy Viewer's OpenGL limits (LLGLManager::asLLSD) and
+/// with its Vulkan probe (llviewerstats.cpp): read once, when the device
+/// opens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VulkanLimits {
+    /// The loader's instance version (vkEnumerateInstanceVersion; 1.0 for
+    /// a loader without it), as wgpu read it.
+    pub instance_version: u32,
+    /// The most samples both a colour and a depth framebuffer take
+    /// (GL_MAX_SAMPLES).
+    pub max_samples: u32,
+    /// maxPerStageDescriptorSampledImages (GL_MAX_TEXTURE_IMAGE_UNITS).
+    pub texture_units: u32,
+    /// maxSampleMaskWords (GL_MAX_SAMPLE_MASK_WORDS).
+    pub sample_mask_words: u32,
+    /// The most samples of a sampled colour, depth and integer image
+    /// (GL_MAX_COLOR_TEXTURE_SAMPLES, _DEPTH_, GL_MAX_INTEGER_SAMPLES).
+    pub color_samples: u32,
+    pub depth_samples: u32,
+    pub integer_samples: u32,
 }
 
 /// The part of a range of skin bindings to send that is in a list of `len`.
@@ -273,7 +299,13 @@ impl Renderer {
     /// the old window open behind a new one. The renderer's host keeps
     /// `window` instead, dropped after the backend, or kept by a render
     /// thread left behind in the driver (`render_thread::KeepAlive`).
-    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str) -> Result<Renderer, RenderError>
+    ///
+    /// `xr`: open the GPU device through the VR runtime (OpenXR), which VR
+    /// needs from the start. Off, the runtime is never loaded: some load a
+    /// driver of their own that crashes the start on PCs that never use VR
+    /// (#2309: SteamVR's `vrclient` into AMD's `amdlvr64`). VR then asks
+    /// for a restart (`VrState::Unavailable`).
+    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str, xr: bool) -> Result<Renderer, RenderError>
     where
         W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
     {
@@ -289,31 +321,114 @@ impl Renderer {
             desc
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-        let xr_graphics = match crate::xr_device::Graphics::new(desc().flags) {
-            Ok(graphics) => Some(graphics),
-            Err(e) => {
-                log::info!("OpenXR initialization unavailable: {e}");
-                if std::env::var_os("AURORA_DEMO_XR_DEVICE").is_some() || std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
-                    return Err(RenderError::Device(e.to_string()));
-                }
+        #[allow(unused_mut)] // reassigned only by the Windows AMD-layer fallback below
+        let mut xr_graphics = {
+            let demo_xr = std::env::var_os("AURORA_DEMO_XR_DEVICE").is_some() || std::env::var_os("AURORA_DEMO_XR_WORLD").is_some();
+            if !xr && !demo_xr {
+                log::info!("OpenXR not opened at start: VR is not set up at startup");
                 None
+            } else {
+                match crate::xr_device::Graphics::new(desc().flags) {
+                    Ok(graphics) => Some(graphics),
+                    Err(e) => {
+                        log::info!("OpenXR initialization unavailable: {e}");
+                        if demo_xr {
+                            return Err(RenderError::Device(e.to_string()));
+                        }
+                        None
+                    }
+                }
             }
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        #[allow(unused_mut)] // reassigned only by the Windows enumeration retries below
         let mut instance = xr_graphics
             .as_ref()
             .map_or_else(|| wgpu::Instance::new(desc()), |g| g.instance.clone());
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        let _ = xr; // no VR on the other systems
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        #[allow(unused_mut)] // reassigned only by the Windows enumeration retries below
         let mut instance = wgpu::Instance::new(desc());
         // ---- the GPU: every adapter listed, then tried in our order
         // (adapter_choice.rs), the next one if one fails to open
         let mut adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
-        // Dozen, kept out at start (vulkan_drivers.rs), may be the only
-        // Vulkan driver of this PC: let it back in rather than draw nothing
-        if adapters.is_empty() && crate::vulkan_drivers::allow_again() {
-            log::warn!("GPU: no Vulkan adapter without Dozen (Vulkan on Direct3D 12): trying again with it");
-            instance = wgpu::Instance::new(desc());
-            adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
+        // Some AMD switchable-graphics layer versions return VK_INCOMPLETE
+        // from physical-device enumeration on hybrid laptops. Preserve the
+        // normal path, but try a fresh plain instance without the layer before
+        // allowing Dozen back in. These lines do not start with "GPU: ":
+        // the crash report takes the first such line for the card of the
+        // session and its notice (crash/summary.rs, gpu_in, gpu_notice_in).
+        #[cfg(windows)]
+        if adapters.is_empty() {
+            let keep = std::env::var("AURORA_VULKAN_LAYERS").ok();
+            let amd_allowed = crate::vulkan_layers::amd_retry_allowed(
+                keep.as_deref(),
+                std::env::var_os(crate::vulkan_layers::AMD_SWITCHABLE_DISABLE_VARIABLE).is_some(),
+            );
+            let retries = crate::vulkan_layers::retry_plan(true, amd_allowed, crate::vulkan_drivers::was_disabled());
+            for retry in retries {
+                if !adapters.is_empty() {
+                    break;
+                }
+                log::warn!(
+                    "Vulkan raw physical-device count before {retry:?}: {}",
+                    crate::vulkan_layers::physical_device_count_probe()
+                );
+                match retry {
+                    crate::vulkan_layers::EnumerationRetry::AmdSwitchableOff => {
+                        if !crate::vulkan_layers::disable_amd_switchable_for_retry(true) {
+                            continue;
+                        }
+                        log::info!(
+                            "Vulkan loader environment after AMD-layer override: {}",
+                            crate::vulkan_layers::loader_environment().join(", ")
+                        );
+                        log::warn!(
+                            "Vulkan listed no graphics card; trying again without {}",
+                            crate::vulkan_layers::AMD_SWITCHABLE_LAYER
+                        );
+                    }
+                    crate::vulkan_layers::EnumerationRetry::DozenIn => {
+                        if !crate::vulkan_drivers::allow_again() {
+                            continue;
+                        }
+                        log::info!(
+                            "Vulkan loader environment after Dozen override: {}",
+                            crate::vulkan_layers::loader_environment().join(", ")
+                        );
+                        log::warn!("GPU: no Vulkan adapter without Dozen (Vulkan on Direct3D 12): trying again with it");
+                    }
+                }
+                // Every retry uses a plain instance. OpenXR owns an instance
+                // and cannot later open an adapter from a different one.
+                drop(instance);
+                xr_graphics = None;
+                instance = wgpu::Instance::new(desc());
+                adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
+                if adapters.is_empty() {
+                    log::warn!(
+                        "Vulkan raw physical-device count after {retry:?}: {}",
+                        crate::vulkan_layers::physical_device_count_probe()
+                    );
+                } else if retry == crate::vulkan_layers::EnumerationRetry::AmdSwitchableOff {
+                    log::warn!(
+                        "Vulkan adapter enumeration recovered without AMD's switchable graphics layer; updating the AMD driver from amd.com may prevent this issue"
+                    );
+                } else {
+                    log::info!("Vulkan adapter enumeration recovered after allowing Dozen");
+                }
+            }
+        }
+        if adapters.is_empty() {
+            #[cfg(windows)]
+            log::error!(
+                "Vulkan lists no graphics card after all retries; AMD switchable layer disabled={}; raw physical-device count: {}",
+                std::env::var_os(crate::vulkan_layers::AMD_SWITCHABLE_DISABLE_VARIABLE).is_some(),
+                crate::vulkan_layers::physical_device_count_probe()
+            );
+            // The raw count above says whether the call failed or found none
+            return Err(RenderError::NoAdapter(no_adapter_listed().into()));
         }
         // SAFETY: `window` goes to the host with the backend that owns the
         // surface and drops after it (`Host`'s field order and join), or
@@ -425,18 +540,22 @@ impl Renderer {
         // waits on the device any more (device_lost.rs). `Destroyed` is the
         // device's own end at shutdown.
         let lost = DeviceLost::default();
+        crate::device_lost::forget_details();
         // AURORA_GPU_START_FAIL=lost: as if the driver lost the device now
         if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode == "lost") {
             log::error!("GPU device lost (Unknown): AURORA_GPU_START_FAIL");
-            lost.set();
+            lost.set_by("start");
         }
         let on_lost = lost.clone();
         device.set_device_lost_callback(move |reason, message| match reason {
             wgpu::DeviceLostReason::Destroyed => log::info!("GPU device released: {message}"),
             _ => {
-                on_lost.set();
+                crate::device_lost::note_reason(reason, &message);
+                on_lost.set_by("callback");
                 crate::pipeline_cache::device_lost();
                 log::error!("GPU device lost ({reason:?}): {message}");
+                // hang or fault, for the crash report (device_lost.rs)
+                log::error!("GPU work at the loss: {}", on_lost.work_at_loss());
             }
         });
         let info = GpuInfo {
@@ -452,6 +571,7 @@ impl Renderer {
             max_texture_size: alim.max_texture_dimension_2d,
             adapters,
             notice,
+            vulkan: vulkan_limits(&adapter),
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -1183,8 +1303,9 @@ impl Renderer {
             crate::device_lost::demo_hang(&self.device, queue);
         }
         if self.demo_lost == Some(self.frames) && !self.lost.get() {
-            self.lost.set();
+            self.lost.set_by("demo");
             log::error!("GPU device lost (Unknown): AURORA_DEMO_GPU_LOST at frame {}", self.frames);
+            log::error!("GPU work at the loss: {}", self.lost.work_at_loss());
         }
         if self.lost.get() {
             // nothing reaches a lost device: no frame is built, the photo
@@ -1777,6 +1898,17 @@ fn open_device(
     })
 }
 
+/// The start error when the graphics API lists no adapter at all: Metal on
+/// macOS, Vulkan elsewhere. It does not say the call failed: an empty list
+/// may also be a success with no driver installed.
+fn no_adapter_listed() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Metal lists no graphics card"
+    } else {
+        "Vulkan lists no graphics card"
+    }
+}
+
 /// Size of the largest device-local memory heap (the GPU's own VRAM on a
 /// discrete card), read from Vulkan.
 #[cfg(not(target_os = "macos"))]
@@ -1793,6 +1925,35 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
         .filter(|h| h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
         .map(|h| h.size / (1024 * 1024))
         .max()
+}
+
+/// The Vulkan driver's version and limits the viewer statistics report.
+#[cfg(not(target_os = "macos"))]
+fn vulkan_limits(adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
+    use ash::vk;
+    // SAFETY: the hal adapter is only borrowed for this call; the physical
+    // device query does not change any state.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    let shared = hal.shared_instance();
+    // SAFETY: as above.
+    let limits = unsafe { shared.raw_instance().get_physical_device_properties(hal.raw_physical_device()) }.limits;
+    // the highest sample count of a set (each flag is its own count)
+    let most = |counts: vk::SampleCountFlags| 1u32 << (31 - counts.as_raw().max(1).leading_zeros());
+    Some(VulkanLimits {
+        instance_version: shared.instance_api_version(),
+        max_samples: most(limits.framebuffer_color_sample_counts & limits.framebuffer_depth_sample_counts),
+        texture_units: limits.max_per_stage_descriptor_sampled_images,
+        sample_mask_words: limits.max_sample_mask_words,
+        color_samples: most(limits.sampled_image_color_sample_counts),
+        depth_samples: most(limits.sampled_image_depth_sample_counts),
+        integer_samples: most(limits.sampled_image_integer_sample_counts),
+    })
+}
+
+/// Metal: no Vulkan driver.
+#[cfg(target_os = "macos")]
+fn vulkan_limits(_adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
+    None
 }
 
 /// Memory the GPU can use well, read from Metal: the recommended working

@@ -371,7 +371,7 @@ fn share(
                     (Fate::NoCopy, aurora_i18n::tr!("ui-inventory-dialogs-no-copy"), String::new())
                 }
                 Ok(_) => (Fate::Given, "", String::new()),
-                Err(why) if item.is_some_and(|it| it.owner_mask & rules::TRANSFER == 0) => {
+                Err(why) if item.is_some_and(|it| rules::held(inv, it) & rules::TRANSFER == 0) => {
                     (Fate::Excluded, aurora_i18n::tr!("ui-inventory-dialogs-no-transfer"), why)
                 }
                 Err(why) => (Fate::Excluded, aurora_i18n::tr!("ui-inventory-dialogs-left-out"), why),
@@ -870,15 +870,21 @@ fn notecard_description(
         description.original.clone_from(&it.desc);
         description.text.clone_from(&it.desc);
     }
-    let can_edit = rules::mutable(inv, it.id) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none() && !st.save_pending;
+    let can_edit = rules::mutable(inv, it.id) && rules::held(inv, it) & rules::MODIFY != 0 && st.pending.is_none() && !st.save_pending;
     ui.horizontal(|ui| {
         ui.label(aurora_i18n::tr!("common-description"));
-        let response = crate::ui::widgets::text_field(ui, can_edit, &mut description.text, |b, ui| {
-            egui::TextEdit::singleline(b)
-                .id(egui::Id::unique(("notecard_description", st.ui_id, it.id)))
-                .char_limit(127)
-                .desired_width(ui.available_width())
-        });
+        let response = crate::ui::widgets::restricted_text_field(
+            ui,
+            can_edit,
+            &mut description.text,
+            crate::ui::widgets::TextPolicy::PrintableNoPipe,
+            |b, ui| {
+                egui::TextEdit::singleline(b)
+                    .id(egui::Id::unique(("notecard_description", st.ui_id, it.id)))
+                    .char_limit(127)
+                    .desired_width(ui.available_width())
+            },
+        );
         if can_edit
             && response.lost_focus()
             && description.text != it.desc
@@ -914,10 +920,14 @@ fn animation(
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("common-description"));
             if let Some((_, description)) = &mut st.animation_description {
-                let can_edit = rules::mutable(inv, it.id) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none();
-                let response = crate::ui::widgets::text_field(ui, can_edit, description, |b, ui| {
-                    egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width())
-                });
+                let can_edit = rules::mutable(inv, it.id) && rules::held(inv, it) & rules::MODIFY != 0 && st.pending.is_none();
+                let response = crate::ui::widgets::restricted_text_field(
+                    ui,
+                    can_edit,
+                    description,
+                    crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                    |b, ui| egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width()),
+                );
                 if can_edit
                     && description != &it.desc
                     && response.lost_focus()

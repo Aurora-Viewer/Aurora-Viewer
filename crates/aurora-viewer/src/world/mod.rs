@@ -10,6 +10,7 @@ pub mod body;
 pub mod bubble_chat;
 pub mod calling_cards;
 
+mod arrival_wait;
 pub mod beacons;
 pub mod bridge;
 pub mod calls;
@@ -17,6 +18,7 @@ pub mod chat_log;
 pub mod collisions;
 pub mod contact_sets;
 pub mod derender;
+pub mod dialog_names;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
@@ -110,6 +112,10 @@ pub mod worldmap;
 #[cfg(test)]
 mod automated_chat_tests;
 #[cfg(test)]
+mod dialog_name_tests;
+#[cfg(test)]
+mod fee_permission_tests;
+#[cfg(test)]
 mod flash_tests;
 #[cfg(test)]
 mod group_notice_tests;
@@ -165,6 +171,42 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+}
+
+fn dirty_east_edge(region: &mut Region, y0: u32, y1: u32) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x == 0 || chunks_y == 0 || y0 >= y1 {
+        return;
+    }
+    // a chunk owns its 33 vertices, so a sample on a chunk boundary is also
+    // the last vertex of the chunk below (as Heightmap::apply_patch)
+    let first = (y0.saturating_sub(1) / terrain::CHUNK_CELLS).min(chunks_y - 1);
+    let last = ((y1 - 1) / terrain::CHUNK_CELLS).min(chunks_y - 1);
+    for cy in first..=last {
+        region.dirty_chunks.insert(cy * chunks_x + chunks_x - 1);
+    }
+}
+
+fn dirty_north_edge(region: &mut Region, x0: u32, x1: u32) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x == 0 || chunks_y == 0 || x0 >= x1 {
+        return;
+    }
+    let first = (x0.saturating_sub(1) / terrain::CHUNK_CELLS).min(chunks_x - 1);
+    let last = ((x1 - 1) / terrain::CHUNK_CELLS).min(chunks_x - 1);
+    for cx in first..=last {
+        region.dirty_chunks.insert((chunks_y - 1) * chunks_x + cx);
+    }
+}
+
+fn dirty_northeast_corner(region: &mut Region) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x > 0 && chunks_y > 0 {
+        region.dirty_chunks.insert(chunks_y * chunks_x - 1);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -354,6 +396,8 @@ pub struct World {
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
     pub chat_log: chat_log::ChatLog,
+    /// The last import's result, for the app.
+    pub import_report: Option<chat_log::import::Report>,
     /// History of the nearby chat (asked once per login).
     nearby_history: transcripts::HistoryState,
     pub script_debug: script_debug::Messages,
@@ -618,11 +662,15 @@ pub struct World {
     /// The parcels and accounts of the group whose "Land and L$" tab shows.
     pub group_money: group_money::GroupMoney,
     arrived_once: bool,
+    /// Since when a teleport or crossing awaits its arrival (`arrival_wait.rs`).
+    arrival_wait_since: Option<Instant>,
     /// The instant messages kept while offline were asked for (once per
     /// login).
     offline_im_requested: bool,
     /// Which group titles the name tags show (from the settings).
     pub group_titles: names::GroupTitles,
+    /// Whose shared portals are shown (from the settings, `portals::Sources`).
+    pub portal_sources: portals::Sources,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
     /// Bumps, pushes and hits (collisions.rs).
@@ -726,6 +774,7 @@ impl World {
             fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
+            import_report: None,
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
             sun: None,
@@ -856,8 +905,10 @@ impl World {
             experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
+            arrival_wait_since: None,
             offline_im_requested: false,
             group_titles: Default::default(),
+            portal_sources: Default::default(),
             region_alerts: Default::default(),
             collisions: Default::default(),
             fly_after_teleport: false,
@@ -1119,6 +1170,7 @@ impl World {
         self.cancel_friend_join();
         self.map.cancel_avatar_teleport();
         self.teleporting = true;
+        self.arrival_wait_since = None;
         self.tp_show_progress = show_progress;
         self.tp_failed = false;
         self.tp_progress = 0.05;
@@ -1300,7 +1352,7 @@ impl World {
 
     fn inventory_cache_path(&self) -> Option<std::path::PathBuf> {
         let dir = self.cache_dir.as_ref()?;
-        (!self.agent_id.is_nil()).then(|| dir.join("inventory").join(format!("{}.inv", self.agent_id)))
+        (!self.agent_id.is_nil()).then(|| crate::cache::path(dir, "inventory", &self.agent_id, "inv"))
     }
 
     /// Apply the inventory cache once its thread has read it (every frame
@@ -1909,7 +1961,7 @@ impl World {
             "ui-experiences-log-notice",
             what = what,
             experience = experience,
-            object = entry.object_name.clone(),
+            object = dialog_names::shown(&entry.object_name).into_owned(),
             parcel = entry.parcel_name.clone()
         );
         self.system_message(text.to_string());
@@ -1956,13 +2008,17 @@ impl World {
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {
         // the network layer already holds the sizes; this keeps every caller safe
         let size = (size.0.clamp(256, MAX_REGION_SIZE), size.1.clamp(256, MAX_REGION_SIZE));
-        if let Some(region) = self.regions.get_mut(&h)
+        let inserted = !self.regions.contains_key(&h);
+        let grew = if let Some(region) = self.regions.get_mut(&h)
             && region.heightmap.grow(size.0, size.1)
         {
             region.dirty_chunks.extend(0..region.heightmap.chunk_count());
             region.terrain_revision += 1;
             region.terrain_surface.applied = None;
-        }
+            true
+        } else {
+            false
+        };
         self.regions.entry(h).or_insert_with(|| Region {
             handle: h,
             name: String::new(),
@@ -1983,7 +2039,142 @@ impl World {
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
-        })
+        });
+        if inserted || grew {
+            self.dirty_terrain_dependents(h);
+        }
+        self.regions.get_mut(&h).expect("region exists")
+    }
+
+    pub(crate) fn terrain_edge_heights(&self, handle: RegionHandle) -> terrain::EdgeHeights {
+        let Some(region) = self.regions.get(&handle) else {
+            return Default::default();
+        };
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        let mut edges = terrain::EdgeHeights {
+            east: vec![None; region.heightmap.size_y as usize + 1],
+            north: vec![None; region.heightmap.size_x as usize + 1],
+        };
+        // only the regions touching each line are sampled (one pass over all
+        // regions, then a few candidates per vertex)
+        let east_x = ox + region.heightmap.size_x;
+        let north_y = oy + region.heightmap.size_y;
+        let touching = |line: u32, along_x: bool| -> Vec<&Region> {
+            self.regions
+                .values()
+                .filter(|n| {
+                    let (nx, ny) = aurora_net::handle_to_origin(n.handle);
+                    if along_x {
+                        ny <= line && line < ny + n.heightmap.size_y
+                    } else {
+                        nx <= line && line < nx + n.heightmap.size_x
+                    }
+                })
+                .collect()
+        };
+        let east_regions = touching(east_x, false);
+        let north_regions = touching(north_y, true);
+        for (y, sample) in edges.east.iter_mut().enumerate() {
+            let (gx, gy) = (east_x, oy + y as u32);
+            *sample = east_regions.iter().find_map(|neighbor| {
+                let (nx, ny) = aurora_net::handle_to_origin(neighbor.handle);
+                let (x, y) = (gx.checked_sub(nx)?, gy.checked_sub(ny)?);
+                if x < neighbor.heightmap.size_x && y < neighbor.heightmap.size_y {
+                    neighbor.heightmap.received_height(x, y)
+                } else {
+                    None
+                }
+            });
+        }
+        for (x, sample) in edges.north.iter_mut().enumerate() {
+            let (gx, gy) = (ox + x as u32, north_y);
+            *sample = north_regions.iter().find_map(|neighbor| {
+                let (nx, ny) = aurora_net::handle_to_origin(neighbor.handle);
+                let (x, y) = (gx.checked_sub(nx)?, gy.checked_sub(ny)?);
+                if x < neighbor.heightmap.size_x && y < neighbor.heightmap.size_y {
+                    neighbor.heightmap.received_height(x, y)
+                } else {
+                    None
+                }
+            });
+        }
+        edges
+    }
+
+    fn dirty_terrain_dependents(&mut self, handle: RegionHandle) {
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        let Some(changed) = self.regions.get(&handle) else { return };
+        let (ex, ey) = (ox + changed.heightmap.size_x, oy + changed.heightmap.size_y);
+        let handles: Vec<_> = self.regions.keys().copied().filter(|h| *h != handle).collect();
+        for candidate in handles {
+            let Some(region) = self.regions.get_mut(&candidate) else { continue };
+            let (cx, cy) = aurora_net::handle_to_origin(candidate);
+            let (cex, cey) = (cx + region.heightmap.size_x, cy + region.heightmap.size_y);
+            // an edge has size + 1 vertices: its last one is at cey / cex
+            if cex == ox {
+                let (lo, hi) = (oy.max(cy), ey.min(cey + 1));
+                if lo < hi {
+                    dirty_east_edge(region, lo - cy, hi - cy);
+                }
+            }
+            if cey == oy {
+                let (lo, hi) = (ox.max(cx), ex.min(cex + 1));
+                if lo < hi {
+                    dirty_north_edge(region, lo - cx, hi - cx);
+                }
+            }
+            if cex == ox && cey == oy {
+                dirty_northeast_corner(region);
+            }
+        }
+    }
+
+    fn dirty_terrain_patch_dependents(&mut self, handle: RegionHandle, patches: &[(u32, u32, u32)]) {
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        if !self.regions.contains_key(&handle) {
+            return;
+        }
+        let west_edges: Vec<_> = patches
+            .iter()
+            .filter(|(x, _, _)| *x == 0)
+            .map(|(_, y, size)| (oy + y, oy + y + size))
+            .collect();
+        let south_edges: Vec<_> = patches
+            .iter()
+            .filter(|(_, y, _)| *y == 0)
+            .map(|(x, _, size)| (ox + x, ox + x + size))
+            .collect();
+        let has_southwest_corner = patches.iter().any(|(x, y, _)| *x == 0 && *y == 0);
+        if west_edges.is_empty() && south_edges.is_empty() {
+            return;
+        }
+        let handles: Vec<_> = self.regions.keys().copied().filter(|h| *h != handle).collect();
+        for candidate in handles {
+            let Some(region) = self.regions.get_mut(&candidate) else { continue };
+            let (cx, cy) = aurora_net::handle_to_origin(candidate);
+            let (cex, cey) = (cx + region.heightmap.size_x, cy + region.heightmap.size_y);
+            if cex == ox {
+                for &(lo, hi) in &west_edges {
+                    let lo = lo.max(cy);
+                    let hi = hi.min(cey + 1);
+                    if lo < hi {
+                        dirty_east_edge(region, lo - cy, hi - cy);
+                    }
+                }
+            }
+            if cey == oy {
+                for &(lo, hi) in &south_edges {
+                    let lo = lo.max(cx);
+                    let hi = hi.min(cex + 1);
+                    if lo < hi {
+                        dirty_north_edge(region, lo - cx, hi - cx);
+                    }
+                }
+            }
+            if has_southwest_corner && cex == ox && cey == oy {
+                dirty_northeast_corner(region);
+            }
+        }
     }
 
     /// Visual parameter values (shape) of an avatar's last appearance.
@@ -2290,6 +2481,15 @@ impl World {
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
                 self.chat_log.login(l.agent_id);
+                if self.chat_log.cfg.import_at_login
+                    && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
+                {
+                    self.chat_log.import_found(chat_log::import::Account {
+                        first: l.first_name.clone(),
+                        last: l.last_name.clone(),
+                        grid,
+                    });
+                }
                 // LLVOAvatar::getFullname, sent when an offline friendship
                 // offer is accepted
                 self.notifications.own_name = format!("{} {}", l.first_name, l.last_name);
@@ -2687,6 +2887,7 @@ impl World {
                 None
             }
             NetEvent::Terrain { handle, patches } => {
+                let edge_patches: Vec<_> = patches.iter().map(|p| (p.x * p.size, p.y * p.size, p.size)).collect();
                 // land can come before the handshake: its own place says
                 // the region reaches at least that far
                 let reach = |axis: fn(&aurora_net::terrain::TerrainPatch) -> u32| {
@@ -2694,12 +2895,15 @@ impl World {
                     end.min(MAX_REGION_SIZE).next_multiple_of(256).max(256)
                 };
                 let size = (reach(|p| p.x), reach(|p| p.y));
-                let r = self.ensure_region(handle, size);
-                for p in patches {
-                    let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
-                    r.dirty_chunks.extend(dirty);
+                {
+                    let r = self.ensure_region(handle, size);
+                    for p in patches {
+                        let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
+                        r.dirty_chunks.extend(dirty);
+                    }
+                    r.terrain_revision += 1;
                 }
-                r.terrain_revision += 1;
+                self.dirty_terrain_patch_dependents(handle, &edge_patches);
                 None
             }
             NetEvent::Wind { handle, grid } => {
@@ -2865,6 +3069,7 @@ impl World {
             NetEvent::RegionRemoved { handle } => {
                 self.parked.remove(&handle);
                 self.remove_region_objects(handle);
+                self.dirty_terrain_dependents(handle);
                 self.regions.remove(&handle);
                 self.coarse.remove(&handle);
                 None
@@ -2980,8 +3185,11 @@ impl World {
                 None
             }
             NetEvent::ScriptDialog {
-                object_id, object_name, ..
-            } if self.object_blocked(&object_id, &object_name) => None,
+                object_id,
+                object_name,
+                owner_id,
+                ..
+            } if self.script_dialog_blocked(&object_id, &object_name, &owner_id) => None,
             // RLVa @sendchat (LLScriptHandler::processNotification,
             // llnotificationscripthandler.cpp): a dialog or text box whose
             // answer would be said on public chat is not shown at all.
@@ -3002,6 +3210,7 @@ impl World {
                 object_id,
                 object_name,
                 owner_name,
+                owner_id: _,
                 message,
                 channel,
                 buttons,
@@ -3028,6 +3237,8 @@ impl World {
                         buttons,
                     }
                 };
+                // the menu keeps the name for blocking; the card shows it on one line
+                let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
                 let title = format!("{object_name} ({owner_name})");
                 let id = self.notifications.push(notifications::Kind::Script, title, message, data);
                 self.link_object_notification(id, object_id, &object_name, &owner_name);
@@ -3076,16 +3287,33 @@ impl World {
                     }
                 } else {
                     self.ui_sounds.push(UiSound::ScriptFloaterOpen);
-                    let lines = notifications::permission_lines(questions);
-                    let body = aurora_i18n::tr!(
-                        "extra-object-owned-by-requests-permission-to",
-                        object_name = object_name.to_string(),
-                        owner_name = owner_name.to_string(),
-                        value0 = lines.join("\n• ").to_string()
-                    );
+                    let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
+                    // ScriptQuestionCaution (PermissionsCautionEnabled, on by
+                    // default): taking L$ or privileged land access warns first
+                    let caution = experiences::caution(questions).then(|| notifications::CautionPrompt {
+                        object_name: object_name.clone(),
+                        owner_name: owner_name.clone(),
+                    });
+                    let (title, body) = if caution.is_some() {
+                        (
+                            aurora_i18n::tr!("world-notifications-caution-title").to_owned(),
+                            notifications::caution_body(questions, &object_name, &owner_name),
+                        )
+                    } else {
+                        let lines = notifications::permission_lines(questions);
+                        (
+                            aurora_i18n::tr!("world-mod-requested-permissions").to_owned(),
+                            aurora_i18n::tr!(
+                                "extra-object-owned-by-requests-permission-to",
+                                object_name = object_name.to_string(),
+                                owner_name = owner_name.to_string(),
+                                value0 = lines.join("\n• ").to_string()
+                            ),
+                        )
+                    };
                     let id = self.notifications.push(
                         notifications::Kind::Permissions,
-                        aurora_i18n::tr!("world-mod-requested-permissions"),
+                        title,
                         body,
                         notifications::Data::Permissions {
                             task: task_id,
@@ -3093,6 +3321,7 @@ impl World {
                             questions,
                             region,
                             experience: None,
+                            caution,
                         },
                     );
                     self.link_object_notification(id, task_id, &object_name, &owner_name);
@@ -3147,6 +3376,7 @@ impl World {
                 url,
             } => {
                 let body = format!("{message}\n{url}");
+                let object_name = dialog_names::shown(&object_name).into_owned();
                 let id = self.notifications.push(
                     notifications::Kind::Url,
                     aurora_i18n::tr!("extra-offers-a-link", object_name = object_name.to_string()),
@@ -4279,15 +4509,30 @@ impl World {
                 log::info!("group invitation to a group we are already in: not shown");
             }
             d::GROUP_INVITATION => {
+                // invite_bucket_t: the membership fee, shown with the
+                // invitation and confirmed on Accept (send_join_group_response).
+                // A bucket of another size is dropped there; kept here with
+                // no fee, as before.
+                let fee = notifications::group_invite_fee(&im.binary_bucket).unwrap_or_else(|| {
+                    log::info!("group invitation without its fee ({}-byte bucket)", im.binary_bucket.len());
+                    0
+                });
+                let body = if fee > 0 {
+                    format!("{}\n{}", im.message.trim_end(), notifications::group_fee_line(fee))
+                } else {
+                    im.message.clone()
+                };
                 self.ui_sounds.push(UiSound::GroupInvitation);
                 n.push(
                     Kind::Group,
                     aurora_i18n::tr!("world-mod-invitation-to-join-a-group"),
-                    im.message.clone(),
+                    body,
                     Data::Group {
                         group: im.from_agent_id,
                         tx: im.session_id,
                         offline: im.offline,
+                        fee,
+                        confirming: false,
                     },
                 );
             }
@@ -4445,6 +4690,42 @@ impl World {
         self.group_data.save_attachment(group, folder);
     }
 
+    /// Where the object of a caution question is, for its nearby chat line
+    /// (notify_cautioned_script_question): its region and its position
+    /// there, hidden under RLVa @showloc, None when it is not in the scene.
+    fn caution_place(&self, task: &Uuid) -> Option<(String, String)> {
+        if self.rlva.has("showloc") {
+            return Some((
+                aurora_i18n::tr!("rlva-hidden-region").to_owned(),
+                aurora_i18n::tr!("rlva-hidden-generic").to_owned(),
+            ));
+        }
+        let mut object = self.objects.get(self.objects.index_of_uuid(task)?)?;
+        let region = self.regions.get(&object.key.region)?.name.clone();
+        let mut position = object.position;
+        for _ in 0..64 {
+            let Some(parent) = self.objects.parent_of(object).and_then(|i| self.objects.get(i)) else {
+                break;
+            };
+            position = parent.position + parent.rotation * position;
+            object = parent;
+        }
+        Some((region, format!("{:.1}, {:.1}, {:.1}", position.x, position.y, position.z)))
+    }
+
+    /// An owner's name as the dialogs of objects show it: without
+    /// " Resident" when legacy names are trimmed (LLCacheName::cleanFullName
+    /// in process_script_question, buildFullName in process_script_dialog),
+    /// on one line ([`dialog_names::shown`]).
+    fn dialog_owner(&self, name: &str) -> String {
+        let name = if self.social.avatar_names.options.trim_resident {
+            name.strip_suffix(" Resident").unwrap_or(name)
+        } else {
+            name
+        };
+        dialog_names::shown(name).into_owned()
+    }
+
     fn link_object_notification(&mut self, id: u64, object: Uuid, name: &str, owner_name: &str) {
         use notifications::NameTarget;
         self.notifications.link_name(id, name, NameTarget::Object(object));
@@ -4494,12 +4775,12 @@ impl World {
             aurora_i18n::tr!("world-experiences-land-scope")
         };
         let lines = notifications::permission_lines(q.questions);
-        // LLCacheName::cleanFullName: the owner without " Resident"
-        let owner = q.owner_name.strip_suffix(" Resident").unwrap_or(&q.owner_name);
+        let object = dialog_names::shown(&q.object_name).into_owned();
+        let owner = self.dialog_owner(&q.owner_name);
         let body = aurora_i18n::tr!(
             "world-experiences-question",
-            object_name = q.object_name.clone(),
-            owner_name = owner.to_owned(),
+            object_name = object.clone(),
+            owner_name = owner.clone(),
             scope = scope.to_owned(),
             experience = name.clone(),
             questions = lines.join("\n• ")
@@ -4518,11 +4799,12 @@ impl World {
                     name: name.clone(),
                     object_name: q.object_name.clone(),
                 }),
+                caution: None,
             },
         );
         self.notifications
             .link_name(id, name, notifications::NameTarget::Experience(q.experience));
-        self.link_object_notification(id, q.task, &q.object_name, owner);
+        self.link_object_notification(id, q.task, &object, &owner);
         // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
         self.ui_sounds.push(UiSound::ScriptFloaterOpen);
     }
@@ -4539,6 +4821,48 @@ impl World {
         if let notifications::Response::OpenExperience(experience) = r {
             self.experiences.open_profile(experience);
             return (Vec::new(), None);
+        }
+        // send_join_group_response: joining for a fee is confirmed first,
+        // naming the cost (JoinGroupCanAfford); short of L$, the invitation
+        // stays and says so (JoinGroupCannotAfford, LLGroupActions::join)
+        if matches!(r, notifications::Response::Accept)
+            && let Some(notifications::Data::Group {
+                fee, confirming: false, ..
+            }) = &data
+            && *fee > 0
+        {
+            let fee = *fee;
+            if self.balance.is_some_and(|balance| balance < fee) {
+                self.notifications.push(
+                    notifications::Kind::Alert,
+                    aurora_i18n::tr!("ui-group-profile-join-title"),
+                    aurora_i18n::tr!("ui-group-profile-join-cannot-afford", cost = aurora_i18n::integer(i64::from(fee))),
+                    notifications::Data::None,
+                );
+            } else {
+                self.notifications.ask_group_fee(id);
+            }
+            return (Vec::new(), None);
+        }
+        // notify_cautioned_script_question: the answer to a caution
+        // question is told in the nearby chat
+        if let Some(notifications::Data::Permissions {
+            task,
+            questions,
+            caution: Some(prompt),
+            ..
+        }) = &data
+        {
+            let place = self.caution_place(task);
+            let granted = matches!(r, notifications::Response::Accept);
+            self.system_notice(
+                notifications::caution_chat_line(*questions, prompt, place, granted),
+                if granted {
+                    notice_topics::Topic::Info
+                } else {
+                    notice_topics::Topic::Warning
+                },
+            );
         }
         // script_question_cb: "Block object" (Mute) and "Block experience"
         // refuse the question first, then block
@@ -5643,6 +5967,7 @@ mod appearance_tests {
 mod motion_tests {
     use super::*;
     use aurora_net::objects::TerseUpdate;
+    use std::time::Duration;
 
     #[test]
     fn animation_signals_keep_continuous_time_until_an_observed_stop() {
@@ -5714,6 +6039,51 @@ mod motion_tests {
         world.main_region = Some(handle);
         world.ensure_region(handle, (256, 256));
         (world, update, handle)
+    }
+
+    /// A teleport the region never confirms: the wait ends after the Legacy
+    /// Viewer's delay, with a notice and a usable world, and a late confirmation
+    /// is still taken. A crossing ends the same way, without "teleport failed".
+    #[test]
+    fn an_arrival_never_confirmed_stops_waiting_after_its_delay() {
+        let (mut world, handle) = teleport_fixture();
+        let start = Instant::now();
+        assert!(!world.arrival_overdue(start, 1), "nothing awaited");
+
+        world.begin_teleport(true);
+        world.movement_complete = false;
+        assert!(!world.arrival_overdue(start, 1));
+        assert!(!world.arrival_overdue(start + Duration::from_secs(18), 1));
+        assert!(world.arrival_overdue(start + Duration::from_secs(19), 1));
+        world.give_up_arrival();
+        assert!(!world.teleporting && world.tp_failed && world.movement_complete);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(20), 1), "the wait is over");
+
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(220.0, 230.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert_eq!(
+            world.agent.position,
+            Vec3::new(220.0, 230.0, 30.0),
+            "a late confirmation is still taken"
+        );
+
+        world.tp_failed = false;
+        world.movement_complete = false;
+        world.crossing = true;
+        assert!(!world.arrival_overdue(start, 0));
+        assert!(world.arrival_overdue(start + Duration::from_secs(16), 0));
+        world.give_up_arrival();
+        assert!(!world.crossing && world.movement_complete);
+        assert!(!world.teleporting && !world.tp_failed, "a crossing is no failed teleport");
+
+        // A new teleport starts its own wait, whatever was running.
+        world.begin_teleport(true);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(100), 0));
+        world.begin_teleport(true);
+        assert!(!world.arrival_overdue(start + Duration::from_secs(200), 0));
     }
 
     fn teleport_fixture() -> (World, RegionHandle) {
@@ -7028,6 +7398,7 @@ mod motion_tests {
                     object_id,
                     object_name: "HUD".into(),
                     owner_name: "Example Resident".into(),
+                    owner_id: Uuid::nil(),
                     message: "Choose".into(),
                     channel,
                     buttons: labels.clone(),
@@ -7048,6 +7419,7 @@ mod motion_tests {
             object_id,
             object_name: "HUD".into(),
             owner_name: "Example Resident".into(),
+            owner_id: Uuid::nil(),
             message: "Enter text".into(),
             channel: -42,
             buttons: vec!["!!llTextBox!!".into()],
@@ -7070,6 +7442,7 @@ mod motion_tests {
             object_id,
             object_name: aurora_i18n::tr!("world-mod-test-menu").into(),
             owner_name: aurora_i18n::tr!("world-mod-test-seller").into(),
+            owner_id: Uuid::nil(),
             message: aurora_i18n::tr!("world-mod-choose").into(),
             channel: -42,
             buttons: vec![aurora_i18n::tr!("common-yes").into(), aurora_i18n::tr!("common-no").into()],
@@ -8403,5 +8776,99 @@ mod region_size_order_tests {
         });
         let map = &world.regions[&1].heightmap;
         assert_eq!((map.size_x, map.size_y), (MAX_REGION_SIZE, MAX_REGION_SIZE));
+    }
+
+    #[test]
+    fn east_neighbour_edge_uses_received_samples_and_falls_back_when_missing() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(east, (256, 256));
+        let edges = world.terrain_edge_heights(west);
+        assert!(edges.east.iter().all(Option::is_none));
+        // inserting the regions already dirtied edges: only the patch counts below
+        world.regions.get_mut(&west).expect("west").dirty_chunks.clear();
+
+        let heights: Vec<_> = (0..256).map(|i| 40.0 + (i / 16) as f32).collect();
+        world.apply(NetEvent::Terrain {
+            handle: east,
+            patches: vec![TerrainPatch {
+                x: 0,
+                y: 0,
+                size: 16,
+                heights,
+            }],
+        });
+        let edges = world.terrain_edge_heights(west);
+        assert_eq!(edges.east[0], Some(40.0));
+        assert_eq!(edges.east[15], Some(55.0));
+        assert_eq!(edges.east[16], None);
+        assert!(world.regions[&west].dirty_chunks.contains(&7));
+    }
+
+    #[test]
+    fn a_patch_on_a_chunk_boundary_dirties_both_chunks_that_share_the_vertex() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(east, (256, 256));
+        world.regions.get_mut(&west).expect("west").dirty_chunks.clear();
+        // east patch (0, 2): y 32..48, whose first row is the top vertex of
+        // west chunk 7 and the bottom one of chunk 15
+        world.apply(NetEvent::Terrain {
+            handle: east,
+            patches: vec![TerrainPatch {
+                x: 0,
+                y: 2,
+                size: 16,
+                heights: vec![9.0; 256],
+            }],
+        });
+        let dirty = &world.regions[&west].dirty_chunks;
+        assert!(dirty.contains(&7) && dirty.contains(&15), "{dirty:?}");
+    }
+
+    #[test]
+    fn terrain_edge_sampling_supports_a_512_metre_neighbour() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let large_east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(large_east, (512, 256));
+        world.apply(NetEvent::Terrain {
+            handle: large_east,
+            patches: vec![patch(0, 0), patch(0, 1)],
+        });
+        let edges = world.terrain_edge_heights(west);
+        assert_eq!(edges.east[0], Some(5.0));
+        assert_eq!(edges.east[31], Some(5.0));
+        assert_eq!(edges.east[32], None);
+    }
+
+    #[test]
+    fn north_and_diagonal_neighbours_supply_their_shared_edges() {
+        let mut world = world();
+        let here = aurora_net::origin_to_handle(0, 0);
+        let north = aurora_net::origin_to_handle(0, 256);
+        let northeast = aurora_net::origin_to_handle(256, 256);
+        world.ensure_region(here, (256, 256));
+        world.ensure_region(north, (256, 256));
+        world.ensure_region(northeast, (256, 256));
+        world.regions.get_mut(&here).expect("here").dirty_chunks.clear();
+        world.apply(NetEvent::Terrain {
+            handle: north,
+            patches: vec![patch(0, 0)],
+        });
+        world.apply(NetEvent::Terrain {
+            handle: northeast,
+            patches: vec![patch(0, 0)],
+        });
+        let edges = world.terrain_edge_heights(here);
+        assert_eq!(edges.north[0], Some(5.0));
+        assert_eq!(edges.east[256], Some(5.0));
+        assert!(world.regions[&here].dirty_chunks.contains(&56));
+        assert!(world.regions[&here].dirty_chunks.contains(&63));
     }
 }

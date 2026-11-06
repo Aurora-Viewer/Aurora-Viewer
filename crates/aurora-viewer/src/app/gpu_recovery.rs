@@ -54,7 +54,10 @@ impl App {
         if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
             return Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()));
         }
-        let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)?;
+        // the VR runtime only when VR is wanted from the start: `--vr` (the
+        // restart the VR button offers) or Preferences › Camera › VR (#2309)
+        self.vr_set_up = crate::cli::get().vr || self.settings.camera.vr_at_start;
+        let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu, self.vr_set_up)?;
         log::info!(
             "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
             renderer.info.name,
@@ -221,6 +224,7 @@ impl App {
         // again, and a report that comes later counts this recovery
         self.crash_kept = Default::default();
         self.crash_swapchain = Default::default();
+        self.crash_recent = Default::default();
         crate::crash::gpu_recovered(started.elapsed().as_millis(), safe);
         // the new egui renderer has none of egui's textures
         self.egui_replay = true;

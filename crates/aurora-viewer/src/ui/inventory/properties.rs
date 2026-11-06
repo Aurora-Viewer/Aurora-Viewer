@@ -43,8 +43,8 @@ pub(super) fn show(
             item: it,
             edit,
             can_edit,
-            can_next_owner: can_edit,
-            can_describe: can_edit && it.owner_mask & rules::MODIFY != 0,
+            can_next_owner: can_edit && rules::next_owner_editable(it),
+            can_describe: can_edit && rules::held(inv, it) & rules::MODIFY != 0,
             can_thumbnail: can_edit,
             names: &facts.names,
             images,
@@ -58,7 +58,12 @@ pub(super) fn show(
         actions.push(InvAction::Profile(resident));
     }
     if let Some(edit) = response.edit {
-        let body = llsd_map! { "name" => rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone()), "desc" => edit.desc.clone(),
+        let name = if edit.name == it.name {
+            it.name.clone()
+        } else {
+            rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone())
+        };
+        let body = llsd_map! { "name" => name, "desc" => edit.desc.clone(),
         "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
         "sale_info" => llsd_map! { "sale_type" => i32::from(edit.sale_type), "sale_price" => edit.price } };
         match rules::patch(inv, id, body) {
@@ -140,6 +145,8 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         images,
         wanted_images,
     } = data;
+    // what the agent may do with the item (object contents: the caller's mask)
+    let mine = inventory.map_or(it.owner_mask, |inv| rules::held(inv, it));
     // Follow simulator readback (including refused edits) without replacing a
     // text field's unfinished draft. Agent inventory disables edits in flight.
     if can_edit {
@@ -173,9 +180,13 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             } else {
                 ui.add_space(16.0);
             }
-            let name = crate::ui::widgets::text_field(ui, can_describe, &mut edit.name, |b, ui| {
-                egui::TextEdit::singleline(b).char_limit(63).desired_width(ui.available_width())
-            });
+            let name = crate::ui::widgets::restricted_text_field(
+                ui,
+                can_describe,
+                &mut edit.name,
+                crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                |b, ui| egui::TextEdit::singleline(b).char_limit(63).desired_width(ui.available_width()),
+            );
             // LLFloaterProperties::onCommitName / onCommitDescription
             // (indra/newview/llfloaterproperties.cpp): text commits on focus
             // loss; permission and sale controls commit on each change.
@@ -235,17 +246,22 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             });
         });
         ui.label(aurora_i18n::tr!("common-description"));
-        let description = crate::ui::widgets::text_field(ui, can_describe, &mut edit.desc, |b, ui| {
-            egui::TextEdit::multiline(b)
-                .char_limit(127)
-                .desired_rows(2)
-                .desired_width(ui.available_width())
-        });
+        let description = crate::ui::widgets::restricted_text_field(
+            ui,
+            can_describe,
+            &mut edit.desc,
+            crate::ui::widgets::TextPolicy::MultilineNoPipe,
+            |b, ui| {
+                egui::TextEdit::multiline(b)
+                    .char_limit(127)
+                    .desired_rows(2)
+                    .desired_width(ui.available_width())
+            },
+        );
         edit.commit_desc |= description.lost_focus();
         if can_describe && edit.commit_desc && !ui.input(|input| input.pointer.any_down()) {
             edit.commit_desc = false;
             if edit.desc != it.desc {
-                edit.desc = edit.desc.chars().filter(|c| *c != '|').take(127).collect();
                 response.edit.get_or_insert_with(|| PropertyEdit::from(it)).desc = edit.desc.clone();
             }
         }
@@ -255,11 +271,11 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         ui.label(aurora_i18n::tr!("ui-inventory-properties-you-can"));
         ui.horizontal(|ui| {
             for (mask, label) in rights() {
-                let mut on = it.owner_mask & mask != 0;
+                let mut on = mine & mask != 0;
                 ui.add_enabled_ui(false, |ui| crate::ui::widgets::checkbox(ui, p, &mut on, label));
             }
         });
-        let may_share = can_edit && it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER;
+        let may_share = can_edit && mine & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER;
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("ui-inventory-properties-anyone"));
             if check_mask(ui, p, may_share, &mut edit.everyone, rules::COPY, aurora_i18n::tr!("common-copy-2")) {
@@ -304,18 +320,14 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         let mut sale_changed = false;
         ui.horizontal(|ui| {
             if ui
-                .add_enabled_ui(can_edit && it.owner_mask & rules::TRANSFER != 0, |ui| {
+                .add_enabled_ui(can_edit && mine & rules::TRANSFER != 0, |ui| {
                     crate::ui::widgets::checkbox(ui, p, &mut for_sale, aurora_i18n::tr!("ui-inventory-properties-for-sale"))
                 })
                 .inner
                 .changed()
             {
                 sale_changed = true;
-                edit.sale_type = if for_sale {
-                    if it.owner_mask & rules::COPY != 0 { 2 } else { 1 }
-                } else {
-                    0
-                };
+                edit.sale_type = if for_sale { if mine & rules::COPY != 0 { 2 } else { 1 } } else { 0 };
             }
             ui.add_enabled_ui(for_sale && can_edit, |ui| {
                 egui::ComboBox::from_id_salt("sale_type")
@@ -324,7 +336,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
                         for value in 1..=3 {
                             if ui
                                 .add_enabled(
-                                    value != 2 || it.owner_mask & rules::COPY != 0,
+                                    value != 2 || mine & rules::COPY != 0,
                                     egui::Button::selectable(edit.sale_type == value, sale_name(value)),
                                 )
                                 .clicked()
@@ -569,6 +581,7 @@ mod tests {
         let mut inv = Inventory::default();
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         let id = Uuid::from_u128(8102);
+        inv.items.get_mut(&id).expect("demo object").name = "Objet de démonstration".into();
         let mut st = InventoryUi::default();
         for _ in 0..3 {
             frame(&ctx, &inv, &mut st, vec![]);

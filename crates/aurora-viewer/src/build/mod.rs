@@ -27,7 +27,9 @@ pub mod layout;
 pub mod manip;
 mod material_preview;
 pub mod materials;
+mod object_snap;
 pub mod particle_editor;
+pub mod place;
 mod property_query;
 pub mod replace;
 pub mod script_queue;
@@ -38,6 +40,7 @@ pub mod silhouette;
 #[cfg(test)]
 mod take_tests;
 pub mod task_inventory;
+pub mod texture_copy;
 pub mod ui;
 
 use crate::scene::Scene;
@@ -132,6 +135,22 @@ pub struct BuildSettings {
     pub grid_mode: u8,
     /// SnapEnabled.
     pub snap: bool,
+    /// Aurora: the move handles snap the selection against nearby prims, and
+    /// stop it at their faces (`object_snap`). Never
+    /// with `snap` (`snap_mode`); off by default, so moving behaves as the
+    /// Legacy Viewer's until it is chosen.
+    pub object_snap: bool,
+    /// "Place on surface" (`place.rs`; Aurora's own): whether it turns the
+    /// selection ("Auto rotate") or keeps its rotation, and the side it then
+    /// puts against the surface.
+    pub place_rotate: bool,
+    pub place_side: place::Side,
+    /// Its distance off the surface (metres, into it when negative).
+    pub place_offset: f32,
+    /// Aurora: a hologram while the move handles drag the selection (the
+    /// selection itself, or where it began); Preferences › Aurora. Off by
+    /// default: a move looks as the Legacy Viewer's.
+    pub move_hologram: MoveHologram,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
     /// EditLinkedParts.
@@ -209,7 +228,43 @@ pub struct BuildSettings {
     pub gizmo_scale: f32,
 }
 
+/// The hologram of a move (`BuildSettings::move_hologram`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MoveHologram {
+    #[default]
+    Off,
+    /// The prims moved are drawn as a hologram until released.
+    Moving,
+    /// A hologram of them stays where the move began.
+    Start,
+}
+
+/// What the move handles snap to: one at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapMode {
+    Off,
+    /// The Legacy Viewer's grid (SnapEnabled).
+    Grid,
+    /// Nearby prims (`object_snap`).
+    Objects,
+}
+
 impl BuildSettings {
+    /// The snap in use; the grid when a settings file has both on.
+    pub fn snap_mode(&self) -> SnapMode {
+        if self.snap {
+            SnapMode::Grid
+        } else if self.object_snap {
+            SnapMode::Objects
+        } else {
+            SnapMode::Off
+        }
+    }
+    pub fn set_snap_mode(&mut self, mode: SnapMode) {
+        self.snap = mode == SnapMode::Grid;
+        self.object_snap = mode == SnapMode::Objects;
+    }
     /// `gizmo_scale` within the slider's range; an edited settings file
     /// falls back to the Legacy Viewer's size.
     pub fn gizmo_scale(&self) -> f32 {
@@ -263,6 +318,30 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
         return false;
     };
     root.update_flags & OBJECT_MOVE != 0 && (!(linked || mode == EditMode::Stretch) || root.update_flags & OBJECT_MODIFY != 0)
+}
+
+/// A copy of this object can be rezzed: its root has Copy and it is not
+/// worn (getFirstCopyableObject: permCopy and not an attachment).
+pub fn copyable_object(world: &World, idx: usize) -> bool {
+    use crate::ui::context::flags::OBJECT_COPY;
+    select_type(world, idx) == SelectType::World
+        && world
+            .objects
+            .get(root_of(world, idx))
+            .is_some_and(|root| root.update_flags & OBJECT_COPY != 0)
+}
+
+/// LLSelectMgr::enableLinkObjects: two roots or more, one of them
+/// modifiable and not a permanent (pathfinding) object.
+pub fn link_allowed(world: &World, roots: &[usize]) -> bool {
+    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_MODIFY};
+    roots.len() >= 2
+        && roots.iter().any(|&r| {
+            world
+                .objects
+                .get(r)
+                .is_some_and(|o| o.update_flags & OBJECT_MODIFY != 0 && o.update_flags & AFFECTS_NAVMESH == 0)
+        })
 }
 
 /// SelectOwnedOnly / SelectMovableOnly in LLSelectMgr::canSelectObject
@@ -524,6 +603,11 @@ impl Default for BuildSettings {
             grid_opacity: 0.7,
             grid_mode: 0,
             snap: true,
+            object_snap: false,
+            place_rotate: false,
+            place_side: place::Side::Bottom,
+            place_offset: 0.0,
+            move_hologram: MoveHologram::Off,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,
@@ -696,6 +780,8 @@ pub struct BuildTool {
     pub replacement: replace::Replacement,
     pub grab: grab::Grab,
     pub align: align::Align,
+    /// The "Place on surface" button and its preview.
+    pub place: place::Place,
     /// Everything the floater keeps between frames (tabs, clipboards,
     /// fields being typed, secondary floaters).
     pub ui: ui::FloaterState,
@@ -762,6 +848,7 @@ impl Default for BuildTool {
             replacement: replace::Replacement::default(),
             grab: grab::Grab::default(),
             align: align::Align::default(),
+            place: place::Place::default(),
             ui: ui::FloaterState::default(),
             caps: HashMap::new(),
             next_tag: 1,
@@ -1041,6 +1128,7 @@ impl BuildTool {
         self.cancel_color_picker(world);
         self.commit_color_edit();
         self.open = false;
+        self.place.stop();
         self.manip.cancel();
         self.land.cancel();
         self.grab_up();
@@ -1307,6 +1395,25 @@ impl BuildTool {
         self.select_type(world) != SelectType::World
     }
 
+    /// The selected roots a copy can be made of (LLSelectMgr::canDuplicate).
+    pub fn copyable_roots(&self, world: &World) -> Vec<usize> {
+        if self.attachment_selected(world) {
+            return Vec::new();
+        }
+        self.roots(world).into_iter().filter(|&r| copyable_object(world, r)).collect()
+    }
+
+    /// The toolbar's Link: the context menu's rule, outside attachments.
+    pub fn can_link(&self, world: &World) -> bool {
+        !self.attachment_selected(world) && link_allowed(world, &self.roots(world))
+    }
+
+    /// LLSelectMgr::enableUnlinkObjects: a selected prim we may modify,
+    /// outside attachments.
+    pub fn can_unlink(&self, world: &World) -> bool {
+        !self.attachment_selected(world) && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+    }
+
     fn advance_link(&mut self, world: &mut World, now: Instant) {
         if let Some((members, started)) = &self.pending_link {
             if let Some(root) = members.first()
@@ -1543,11 +1650,12 @@ impl BuildTool {
     /// Ctrl+D: copies 0.5 m away, selected (LLSelectMgr::duplicate).
     /// Group selection follows packDuplicateHeader (indra/newview/llselectmgr.cpp).
     pub fn duplicate(&mut self, world: &mut World, s: &BuildSettings, offset: Vec3, select_copy: bool) {
-        if self.attachment_selected(world) {
+        if self.attachment_selected(world) || self.roots(world).is_empty() {
             return;
         }
-        let roots = self.roots(world);
+        let roots = self.copyable_roots(world);
         if roots.is_empty() {
+            self.status = aurora_i18n::tr!("build-mod-no-copyable-object").into();
             return;
         }
         if select_copy {
@@ -1574,6 +1682,9 @@ impl BuildTool {
         let roots = self.roots(world);
         if roots.len() < 2 {
             self.status = aurora_i18n::tr!("build-mod-select-at-least-two-objects-to-link").into();
+            return;
+        }
+        if !link_allowed(world, &roots) {
             return;
         }
         let first = world.objects.get(roots[0]).map(|o| (o.key.region, o.owner_id));
@@ -1612,7 +1723,12 @@ impl BuildTool {
         if self.attachment_selected(world) {
             return;
         }
-        let prims: Vec<usize> = self.highlighted(world).into_iter().map(|(i, _)| i).collect();
+        let prims: Vec<usize> = self
+            .highlighted(world)
+            .into_iter()
+            .map(|(i, _)| i)
+            .filter(|&i| self.can_modify(world, i))
+            .collect();
         if prims.is_empty() {
             return;
         }
@@ -1656,6 +1772,15 @@ impl BuildTool {
                 BuildCmd::Undo { handle, ids, group_id }
             });
         }
+    }
+
+    /// Inventory drops replace the selection (LLToolDragAndDrop::dropObject).
+    /// Leave Create immediately so its preview cannot cover the rezzed object;
+    /// keep-tool applies only to primitives placed with the Create tool.
+    pub fn edit_inventory_rez(&mut self, world: &World) {
+        self.set_tool(Tool::Edit);
+        self.deselect_all(world);
+        self.expect_created(world);
     }
 
     /// Remember the objects already flagged "create selected" so that only
@@ -1808,6 +1933,10 @@ impl BuildTool {
         self.advance_bulk_permissions(world, now);
         self.advance_link(world, now);
         self.update_material_preview(world, s);
+        // "Place on surface" lives in the Edit tool of the open tools
+        if !self.open || self.replacement_active() || self.tool != Tool::Edit {
+            self.place.stop();
+        }
         if !self.open || self.replacement_active() {
             self.sync_hud_zoom(world);
             return;
@@ -1826,6 +1955,9 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
+                if self.place.active {
+                    self.place_hover(world, s, scene, cursor, over_ui);
+                }
                 if mode == EditMode::Align {
                     self.align_hover(world, cursor, mods.shift);
                 }
@@ -1843,6 +1975,7 @@ impl BuildTool {
                         mods,
                         now,
                         &mut cmds,
+                        scene,
                     );
                     for c in cmds {
                         self.send(c);
@@ -1913,6 +2046,10 @@ impl BuildTool {
                 } else if !mods.shift {
                     self.deselect_all(world);
                 }
+                true
+            }
+            Tool::Edit if self.place.active => {
+                self.place_click(world);
                 true
             }
             Tool::Edit => {
@@ -2203,9 +2340,13 @@ impl BuildTool {
     /// where the ray hits (LLToolPlacer::addDuplicate).
     fn place_copy(&mut self, world: &mut World, s: &BuildSettings, hit: Option<Vec3>, target: Option<usize>, cursor: (f32, f32)) {
         let Some(point) = hit else { return };
-        let roots = self.roots(world);
-        if roots.is_empty() {
+        if self.roots(world).is_empty() {
             self.status = aurora_i18n::tr!("build-mod-select-the-objects-to-copy-first").into();
+            return;
+        }
+        let roots = self.copyable_roots(world);
+        if roots.is_empty() {
+            self.status = aurora_i18n::tr!("build-mod-no-copyable-object").into();
             return;
         }
         // raycastForNewObjPos refuses the duplicate's surface too
@@ -2287,6 +2428,15 @@ impl BuildTool {
             && !(mods.shift || mods.ctrl || mods.alt)
     }
 
+    /// The move under way and its hologram's kind, when the preference asks
+    /// for one: in the world only (a HUD has its own space).
+    pub fn move_hologram(&self, world: &World, s: &BuildSettings) -> Option<(MoveHologram, manip::MoveGhost)> {
+        if s.move_hologram == MoveHologram::Off || self.select_type(world) != SelectType::World {
+            return None;
+        }
+        Some((s.move_hologram, self.manip.move_ghost()?))
+    }
+
     fn face_mode(&self) -> bool {
         self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
     }
@@ -2339,6 +2489,9 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
+                if self.place.active {
+                    self.place_draw(&mut p);
+                }
                 if mode == EditMode::Align {
                     self.align_draw(&mut p, world);
                 } else if mode != EditMode::Face {

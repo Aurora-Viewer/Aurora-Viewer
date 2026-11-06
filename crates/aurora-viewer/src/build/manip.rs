@@ -11,6 +11,7 @@
 
 use super::draw::{Painter3d, axis_color, fade};
 use super::geom::{Cam, nearest_on_line, ray_plane, round_to, seg_distance, subdivision_level};
+use super::object_snap::{self, Constraint};
 use super::{Bounds, BuildSettings, EditMode, Grid, Mods, PrimLimits, bounds_of, highlighted_of};
 use crate::scene::Scene;
 use crate::world::World;
@@ -19,8 +20,8 @@ use aurora_net::RegionHandle;
 use aurora_net::build::{BuildCmd, TransformUpdate};
 use egui::{Pos2, Stroke};
 use glam::{EulerRot, Quat, Vec3};
-use std::collections::HashMap;
-use std::time::Instant;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 /// LLManipTranslate constants.
 const ARROW_PX: f32 = 50.0;
@@ -157,6 +158,15 @@ pub struct Drag {
     snap_offset: f32,
     pub in_snap: bool,
     pub delta: Vec3,
+    /// Prims the drag moves: never snap targets.
+    moving: HashSet<usize>,
+    /// Snap targets and when they were collected (`object_snap`).
+    snap_targets: Option<(object_snap::Targets, Instant)>,
+    /// Guides of the object snap applied this frame.
+    snap_guides: Vec<object_snap::Guide>,
+    /// The selection's box for the object snap, from what it shows, where
+    /// the drag began (`object_snap::shown_bounds`; `bounds` without a scene).
+    snap_box: Option<Bounds>,
     // rotate
     radius: f32,
     down_vec: Vec3,
@@ -257,9 +267,32 @@ pub(super) fn frame(
     })
 }
 
+/// A move of the handles under way, for its hologram
+/// (`BuildSettings::move_hologram`).
+#[derive(Debug, Clone)]
+pub struct MoveGhost {
+    /// The prims moved, in a steady order (the hologram's faces are drawn in it).
+    pub prims: Vec<usize>,
+    /// The selection's box where the move began, and how far it went.
+    pub start: Bounds,
+    pub delta: Vec3,
+}
+
 impl Manip {
     pub fn dragging(&self) -> bool {
         self.drag.as_ref().is_some_and(|d| d.started)
+    }
+
+    /// The move the handles are dragging, once it has started.
+    pub fn move_ghost(&self) -> Option<MoveGhost> {
+        let d = self.drag.as_ref().filter(|d| d.started && d.mode == EditMode::Move)?;
+        let mut prims: Vec<usize> = d.moving.iter().copied().collect();
+        prims.sort_unstable();
+        Some(MoveGhost {
+            prims,
+            start: d.bounds,
+            delta: d.delta,
+        })
     }
 
     pub fn camera_pan(&mut self, s: &BuildSettings, cam: &Cam, cursor: (f32, f32), dt: f32) -> Vec3 {
@@ -353,6 +386,7 @@ impl Manip {
         mods: Mods,
         now: Instant,
         out: &mut Vec<BuildCmd>,
+        scene: Option<&Scene>,
     ) {
         if let Some(mut d) = self.drag.take() {
             if !d.movers.iter().all(|m| super::can_transform(world, m.idx, d.linked, d.mode)) {
@@ -366,7 +400,7 @@ impl Manip {
             } else {
                 *cam
             };
-            drag_update(&mut d, world, s, &drag_cam, cursor, mods, now, out);
+            drag_update(&mut d, world, scene, s, &drag_cam, cursor, mods, now, out);
             self.animate(Some(d.part));
             self.drag = Some(d);
             return;
@@ -433,6 +467,10 @@ impl Manip {
             snap_offset: 0.0,
             in_snap: false,
             delta: Vec3::ZERO,
+            moving: super::highlighted_of(world, sel, linked).into_iter().map(|(i, _)| i).collect(),
+            snap_targets: None,
+            snap_guides: Vec::new(),
+            snap_box: None,
             radius: 1.0,
             down_vec: Vec3::X,
             edge_on: false,
@@ -550,7 +588,10 @@ impl Manip {
             return;
         };
         let cam = p.cam;
-        if s.select_limit().is_some_and(|max| f.pivot.distance(cam.eye) > max + 64.0) {
+        // HUD depth bounds place the orthographic eye independently of the
+        // avatar. World selection distance must not hide HUD handles (as in
+        // LLManipTranslate::render, indra/newview/llmaniptranslate.cpp).
+        if cam.hud.is_none() && s.select_limit().is_some_and(|max| f.pivot.distance(cam.eye) > max + 64.0) {
             return;
         }
         let drag = self.drag.as_ref().filter(|d| d.started);
@@ -618,6 +659,7 @@ impl Manip {
                 Part::Plane(i) => draw_plane_grid(p, s, f, d, i),
                 _ => {}
             }
+            draw_object_snap(p, &d.snap_guides);
         }
         // plane handles
         let at_g = g.inverse() * cam.at;
@@ -1439,6 +1481,7 @@ fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
 fn drag_update(
     d: &mut Drag,
     world: &mut World,
+    scene: Option<&Scene>,
     s: &BuildSettings,
     cam: &Cam,
     cursor: (f32, f32),
@@ -1458,7 +1501,7 @@ fn drag_update(
                 // Firestorm refuses to copy individual parts
             } else {
                 let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
-                for m in &d.movers {
+                for m in d.movers.iter().filter(|m| super::copyable_object(world, m.idx)) {
                     by_region.entry(m.key.region).or_default().push(m.key.local_id);
                 }
                 for (handle, ids) in by_region {
@@ -1499,7 +1542,10 @@ fn drag_update(
             d.edge_pan_blocked = false;
             let mut mag = rel.dot(d.axis);
             d.in_snap = false;
-            if s.snap {
+            let prev = d.delta;
+            if let Some(delta) = snap_to_objects(d, world, scene, s, cam, Constraint::Axis(d.axis), prev, d.axis * mag, now) {
+                mag = delta.dot(d.axis);
+            } else if s.snap {
                 let plane_n = d.snap_axis.cross(d.axis);
                 if let Some(p) = ray_plane(o, dir, d.pivot, plane_n) {
                     let off = (p - d.pivot).dot(d.snap_axis).abs();
@@ -1522,7 +1568,10 @@ fn drag_update(
             }
             d.edge_pan_blocked = false;
             d.in_snap = false;
-            if s.snap {
+            let prev = d.delta;
+            if let Some(delta) = snap_to_objects(d, world, scene, s, cam, Constraint::Plane(d.normal), prev, rel, now) {
+                rel = delta;
+            } else if s.snap {
                 let gi = d.grid.rotation.inverse();
                 let mut local = gi * (d.pivot + rel - d.grid.origin);
                 for k in 0..3 {
@@ -1624,6 +1673,104 @@ fn drag_update(
         send_updates(world, d, d.linked, out);
         // the textures follow locally (adjustTexturesByScale(false) in
         // handleHover); the simulator gets them once, on release
+    }
+}
+
+/// Snap to objects (`SnapMode::Objects`, an Aurora addition): where the
+/// selection goes for the move `want` within `c`, from `prev`, last frame's.
+/// It snaps against a nearby prim (its box, or its visible surface) within
+/// `object_snap::SNAP_PX`, and stops at the first face it would enter. None when it does neither, in
+/// another snap mode or in the HUD: the move is the Legacy Viewer's.
+#[allow(clippy::too_many_arguments)]
+fn snap_to_objects(
+    d: &mut Drag,
+    world: &World,
+    scene: Option<&Scene>,
+    s: &BuildSettings,
+    cam: &Cam,
+    c: Constraint,
+    prev: Vec3,
+    want: Vec3,
+    now: Instant,
+) -> Option<Vec3> {
+    d.snap_guides.clear();
+    if s.snap_mode() != super::SnapMode::Objects || cam.hud.is_some() {
+        return None;
+    }
+    // what the selection shows, taken once; the world has it moved by `prev`
+    let base = *d.snap_box.get_or_insert_with(|| {
+        scene
+            .and_then(|scene| object_snap::shown_bounds(world, scene, &d.moving, &d.bounds, now))
+            .map_or(d.bounds, |b| object_snap::moved(&b, -prev))
+    });
+    let sel = object_snap::moved(&base, want);
+    // collected again as the selection travels, and now and then for the
+    // prims rezzed meanwhile (a Shift-drag's copy)
+    let stale = d.snap_targets.as_ref().is_none_or(|(t, at)| {
+        t.around.distance(sel.center) > object_snap::RADIUS * 0.5 || now.duration_since(*at) > Duration::from_millis(500)
+    });
+    if stale {
+        // (the prims that have not moved keep what was read of them)
+        let previous = d.snap_targets.take().map(|(t, _)| t);
+        d.snap_targets = Some((object_snap::collect(world, scene, &d.moving, &sel, now, previous), now));
+    }
+    let targets = &d.snap_targets.as_ref()?.0;
+    let px = |from: Vec3, by: Vec3| {
+        cam.project(from)
+            .zip(cam.project(from + by))
+            .map_or(f32::INFINITY, |(a, b)| a.distance(b))
+    };
+    let snap = object_snap::find(&sel, &targets.boxes, &targets.surfaces, c, &px);
+    let goal = want + snap.as_ref().map_or(Vec3::ZERO, |snap| snap.offset);
+    let (allowed, blocked) = object_snap::stop(&object_snap::moved(&base, prev), goal - prev, &targets.boxes, &targets.surfaces, c);
+    if snap.is_none() && blocked.is_none() {
+        return None;
+    }
+    let delta = prev + allowed;
+    let at = object_snap::moved(&base, delta);
+    d.snap_guides = match (blocked, snap) {
+        (Some(hit), _) => object_snap::guides(
+            &at,
+            &targets.boxes,
+            &object_snap::Snap {
+                offset: Vec3::ZERO,
+                hits: vec![hit],
+            },
+        ),
+        (None, Some(snap)) => object_snap::guides(&at, &targets.boxes, &snap),
+        (None, None) => Vec::new(),
+    };
+    Some(delta)
+}
+
+/// Guides of the object snap: the target's face and the selection's
+/// matching face (or corner), joined by a line, in the accent; solid for a
+/// contact, amber for centres.
+fn draw_object_snap(p: &mut Painter3d, guides: &[object_snap::Guide]) {
+    let pal = p.pal;
+    for g in guides {
+        let (color, opacity) = match g.kind {
+            object_snap::Kind::Center => (pal.amber, 0.9),
+            _ if g.contact => (pal.violet_light, 1.0),
+            _ => (pal.violet_light, 0.7),
+        };
+        let outline = |p: &Painter3d, pts: &[Vec3], width: f32| {
+            for k in 0..pts.len() {
+                p.line_cased(pts[k], pts[(k + 1) % pts.len()], fade(color, opacity), width);
+            }
+        };
+        if g.target_face.len() > 1 {
+            outline(p, &g.target_face, 2.0);
+        }
+        if g.sel_face.len() > 1 {
+            outline(p, &g.sel_face, 1.5);
+        } else if let Some(corner) = g.sel_face.first() {
+            p.square(*corner, 7.0, fade(color, opacity), Stroke::new(1.0, fade(pal.navy, 0.5)));
+        }
+        p.guide_line(g.link.0, g.link.1, color, opacity);
+        for end in [g.link.0, g.link.1] {
+            p.square(end, 5.0, fade(color, opacity), Stroke::new(1.0, fade(pal.navy, 0.5)));
+        }
     }
 }
 
@@ -1877,6 +2024,10 @@ fn draw_scale_ruler(p: &mut Painter3d, s: &BuildSettings, start: Vec3, dir: Vec3
 }
 
 #[cfg(test)]
+#[path = "object_snap_tests.rs"]
+mod object_snap_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1963,6 +2114,7 @@ mod tests {
                     shift,
                     now,
                     &mut out,
+                    None,
                 );
                 assert!(out.is_empty(), "a press within the drag slop must not copy");
                 manip.update(
@@ -1977,6 +2129,7 @@ mod tests {
                     shift,
                     now,
                     &mut out,
+                    None,
                 );
                 assert!(
                     matches!(&out[..], [BuildCmd::Duplicate { handle, local_ids, offset, flags, group_id }]
@@ -1997,6 +2150,7 @@ mod tests {
                     shift,
                     now,
                     &mut out,
+                    None,
                 );
                 manip.release(&mut world, &settings, false, &mut out);
                 assert_eq!(out.iter().filter(|cmd| matches!(cmd, BuildCmd::Duplicate { .. })).count(), 1);
@@ -2169,6 +2323,7 @@ mod tests {
                 Mods::default(),
                 now,
                 &mut out,
+                None,
             );
             assert!(manip.hover.is_none());
             assert!(!manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Move, start, now));
@@ -2193,6 +2348,7 @@ mod tests {
             Mods::default(),
             now,
             &mut out,
+            None,
         );
         manip.release(&mut world, &settings, false, &mut out);
         assert!(manip.drag.is_none());
@@ -2438,6 +2594,7 @@ mod tests {
                 Mods::default(),
                 at,
                 out,
+                None,
             );
         };
         step(&mut world, &mut manip, &cam, now, &mut out);
@@ -2531,6 +2688,7 @@ mod tests {
                         },
                         now,
                         &mut out,
+                        None,
                     );
                     let expected = before - Vec3::Y * (40.0 / (size[1] as f32 * zoom));
                     let moved = world.objects.get(idx).unwrap();
@@ -2585,6 +2743,7 @@ mod tests {
             },
             now,
             &mut out,
+            None,
         );
         // No jump, and a relog (no session offset) shows it at the same place.
         assert_eq!(world.hud_scales.offset(id), Vec3::ZERO);
@@ -2627,6 +2786,7 @@ mod tests {
             Mods::default(),
             now,
             &mut out,
+            None,
         );
         let after = Scene::object_transform(&world, child, now, 0).unwrap().0;
         assert!((after - before).abs_diff_eq(-Vec3::Y * (30.0 / 360.0), 1e-5));
@@ -2646,6 +2806,125 @@ mod tests {
         assert!(save_movers(&world, &[key], false, EditMode::Stretch, Instant::now()).is_empty());
         world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MOVE;
         assert!(save_movers(&world, &[key], false, EditMode::Move, Instant::now()).is_empty());
+    }
+
+    #[test]
+    fn hud_no_modify_gizmos_draw_beyond_world_selection_distance_and_keep_edit_restrictions() {
+        let mut world = hud_world();
+        for event in crate::demo::hud::no_modify_events() {
+            world.apply(event);
+        }
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let key = world.objects.get(root).unwrap().key;
+        let settings = BuildSettings {
+            limit_select_distance: true,
+            max_select_distance: 128.0,
+            ..Default::default()
+        };
+        let cam = Cam::for_hud(aurora_render::HudView::new([1280, 720], 1.0, -513.0, 1.0), 1.0);
+        let now = Instant::now();
+        let paint = |world: &World, cam: &Cam, mode, linked| {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 720.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let painter = ui.ctx().layer_painter(egui::LayerId::background());
+                    let mut p = Painter3d::new(painter, cam, crate::theme::Theme::default().palette());
+                    Manip::default().draw(&mut p, world, &settings, &[key], linked, mode, now);
+                    p.flush();
+                },
+            );
+            // This paint-only test has no GPU to apply texture deltas.
+            output.textures_delta.clear();
+            output.shapes.iter().any(|s| !matches!(s.shape, egui::Shape::Noop))
+        };
+        for mode in [EditMode::Move, EditMode::Rotate] {
+            assert!(paint(&world, &cam, mode, false), "No-modify HUD {mode:?} handles must be visible");
+            assert!(!paint(&world, &cam, mode, true), "No linked-part edits without Modify");
+            let world_cam = Cam { hud: None, ..cam };
+            assert!(!paint(&world, &world_cam, mode, false), "Keep the world distance limit");
+        }
+        assert!(!paint(&world, &cam, EditMode::Stretch, false));
+        world.objects.get_mut(root).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MOVE;
+        for mode in [EditMode::Move, EditMode::Rotate] {
+            assert!(!paint(&world, &cam, mode, false), "The simulator's Move flag still applies");
+        }
+    }
+
+    #[test]
+    fn hud_no_modify_move_and_rotation_handles_update_only_the_whole_linkset() {
+        for mode in [EditMode::Move, EditMode::Rotate] {
+            let mut world = hud_world();
+            for event in crate::demo::hud::no_modify_events() {
+                world.apply(event);
+            }
+            let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+            let o = world.objects.get(root).unwrap();
+            let (key, position, rotation, scale, state) = (o.key, o.position, o.rotation, o.scale, o.state);
+            let children: Vec<_> = super::super::family(&world, root)
+                .into_iter()
+                .skip(1)
+                .map(|i| {
+                    let o = world.objects.get(i).unwrap();
+                    (i, o.position, o.rotation, o.scale)
+                })
+                .collect();
+            let settings = BuildSettings {
+                snap: false,
+                ..Default::default()
+            };
+            let now = Instant::now();
+            let cam = Cam::for_hud(
+                aurora_render::HudView::new([1280, 720], 1.0, -513.0, 1.0).in_area([0.0, 19.0, 1280.0, 720.0]),
+                1.0,
+            );
+            let f = frame(&world, &settings, &[key], false, now, None).unwrap();
+            let (start, end, part) = if mode == EditMode::Move {
+                let start = cam.project_px(f.pivot + Vec3::Y * arrow_length(&cam, &f, f.pivot) * 0.9).unwrap();
+                (start, (start.0 + 40.0, start.1), Part::Arrow(1))
+            } else {
+                let radius = ring_radius(&cam, &f, f.pivot);
+                let start = cam.project_px(f.pivot + Vec3::new(0.0, 0.6, 0.8) * radius).unwrap();
+                let end = cam.project_px(f.pivot + Vec3::new(0.0, 0.8, 0.6) * radius).unwrap();
+                (start, end, Part::Ring(0))
+            };
+            let mut manip = Manip::default();
+            assert!(manip.try_grab(&mut world, &settings, &cam, &[key], false, mode, start, now));
+            assert_eq!(manip.drag.as_ref().unwrap().part, part);
+            let mut out = Vec::new();
+            manip.update(
+                &mut world,
+                &settings,
+                &cam,
+                &[key],
+                false,
+                mode,
+                end,
+                false,
+                Mods::default(),
+                now,
+                &mut out,
+                None,
+            );
+            manip.release(&mut world, &settings, false, &mut out);
+            let o = world.objects.get(root).unwrap();
+            if mode == EditMode::Move {
+                assert!(o.position.abs_diff_eq(position - Vec3::Y * (40.0 / 701.0), 1e-5));
+                assert_eq!(o.rotation, rotation);
+            } else {
+                assert!(!o.rotation.abs_diff_eq(rotation, 1e-3));
+            }
+            assert_eq!((o.scale, o.state), (scale, state));
+            for (idx, pos, rot, scale) in children {
+                let child = world.objects.get(idx).unwrap();
+                assert_eq!((child.position, child.rotation, child.scale), (pos, rot, scale));
+            }
+            assert!(matches!(&out[..], [BuildCmd::Transform { updates, .. }]
+                if updates.len() == 1 && updates[0].local_id == key.local_id && updates[0].linked && updates[0].scale.is_none()));
+        }
     }
 
     #[test]
@@ -2681,6 +2960,7 @@ mod tests {
             Mods::default(),
             now,
             &mut out,
+            None,
         );
         assert!(
             Scene::object_transform(&world, child, now, 0)

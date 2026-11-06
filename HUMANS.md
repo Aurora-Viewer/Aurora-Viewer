@@ -262,8 +262,10 @@ even from a prompt with delayed expansion.
 The active choice carries a **›** mark on a violet background; the text
 cursor stays hidden while navigating. Long lists scroll with the selection
 and the menus adapt when the console is resized. Creating a release splits
-the number, the cache and the settings into three screens, with the chosen
-version and a summary before confirmation.
+the number, the minimum version, the cache and the settings into four
+screens, with the chosen version and a summary before confirmation. The
+minimum version makes the update required for the versions below it: they
+cannot log in before updating.
 
 When it opens, the tool checks the environment: tools, repository behind
 GitHub, outdated Legacy Viewer sources, Rust not up to date, font, GitHub

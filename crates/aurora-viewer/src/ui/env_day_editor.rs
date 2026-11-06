@@ -223,7 +223,7 @@ impl DayEditorUi {
 
     /// "Save As" confirmed by the app: the name prompt.
     pub fn ask_save_as(&mut self) {
-        self.save_as = Some(self.name.clone());
+        self.save_as = Some(crate::text_validation::generated_name(&self.name, 63));
     }
 
     /// Import over the current day (loadSettingFromFile: no item, the
@@ -453,9 +453,10 @@ impl DayEditorUi {
             ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-name")).size(12.0).color(p.ink));
             // refresh: renaming needs modify rights and an item
             let enabled = self.rights.modify && self.rights.save && self.item.is_some();
-            let r = crate::ui::widgets::text_field(ui, enabled, &mut self.name, |b, _| {
-                egui::TextEdit::singleline(b).desired_width(320.0).char_limit(63)
-            });
+            let r =
+                crate::ui::widgets::restricted_text_field(ui, enabled, &mut self.name, crate::ui::widgets::TextPolicy::Ascii, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(320.0).char_limit(63)
+                });
             if r.changed()
                 && let Some(doc) = &mut self.doc
             {
@@ -992,7 +993,9 @@ impl DayEditorUi {
                 ui.add_space(6.0);
                 ui.label(aurora_i18n::tr!("ui-env-editor-save-as-prompt"));
                 ui.add_space(8.0);
-                ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY).char_limit(63));
+                crate::ui::widgets::restricted_text_field(ui, true, &mut name, crate::ui::widgets::TextPolicy::Ascii, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(f32::INFINITY).char_limit(63)
+                });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let size = Vec2::new(0.0, 26.0);
