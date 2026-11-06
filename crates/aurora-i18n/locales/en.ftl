@@ -9138,7 +9138,7 @@ ui-options-chat-logs-erased = { $count ->
 ui-options-chat-logs-erase-failed = Some files could not be erased.
 ui-options-chat-logs-busy = The history is busy with an import, a move or an erasing: try again in a moment.
 ui-options-chat-logs-import-login = Import at login
-ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import. Its files are only read. On by default.
+ui-options-chat-logs-import-login-help = At each login, adds what the Legacy Viewer wrote for this account since the last import, for the conversations saved above. Its files are only read. On by default.
 ui-options-chat-logs-import-login-off = Import at login is now off, so that this history does not come back.
 ui-options-chat-logs-imported-at-login = Chat history from the Legacy Viewer: { $count ->
     [one] { $count } message added
@@ -13242,12 +13242,15 @@ vr-view = VR view
 vr-unavailable = VR is unavailable. Check that an OpenXR runtime and headset are connected.
 vr-restart-title = Headset connected
 vr-restart-body = Your headset was connected after Aurora started. Aurora sets up VR when it starts: restart it to use VR. It will enter VR on its own once you are back in the world.
+vr-restart-body-set-up = Aurora sets up VR when it starts, and only once you have used VR: restart it to use VR. It will enter VR on its own once you are back in the world, and will be ready for VR at every start from now on.
 vr-restart-confirm = Restart in VR
 ui-options-camera-vr = VR
 ui-options-camera-vr-view = Headset view
 ui-options-camera-vr-view-help = Where the view starts when you enter VR: at your avatar's eyes, or where the camera was.
 ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
+ui-options-camera-vr-at-start = Set up VR at startup
+ui-options-camera-vr-at-start-help = The VR button then enters VR at once. Off, Aurora does not load your VR software at startup, and the VR button offers a restart. Applies at the next start.
 
 app-vr-leave = Press { $key } to return to desktop mode
 
