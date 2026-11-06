@@ -7644,7 +7644,8 @@ impl App {
             && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
-            self.world.agent.flying,
+            // A swimmer descends with the key, as in flight (crouch_toggle.rs).
+            self.world.agent.flying || self.movement_runtime.state.swimming(),
             self.world.agent.is_sitting(),
             i.down,
             i.up || joystick_up,

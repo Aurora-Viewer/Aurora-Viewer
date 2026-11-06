@@ -2,8 +2,12 @@
 //! in llviewerinput.cpp and the latch of LLAppViewer::idle, originally LGPL
 //! 2.1): a press of the Down key crouches until the next press; jumping or
 //! flying lets go. In flight the key descends as usual, and seated it does
-//! nothing more than before. Unlike the Legacy Viewer's per-account
-//! FSCrouchToggleStatus, the latch does not outlive the session.
+//! nothing more than before. Swimming counts as flight: the Legacy Viewer
+//! moves underwater by flying, so its latch never holds a swimmer's dive,
+//! while Aurora's swim motor is not flight and a tap used to keep diving
+//! (and the Swimming Down pose) until the next press. Unlike the Legacy
+//! Viewer's per-account FSCrouchToggleStatus, the latch does not outlive the
+//! session.
 
 #[derive(Debug, Default)]
 pub struct CrouchToggle {
@@ -18,6 +22,7 @@ impl CrouchToggle {
     }
 
     /// The Down input to use this frame, from the keys' `down` and `up`.
+    /// `flying` is true in flight and while swimming: there the key descends.
     pub fn apply(&mut self, on: bool, flying: bool, sitting: bool, down: bool, up: bool) -> bool {
         let pressed = down && !self.was_down;
         self.was_down = down;
@@ -105,6 +110,18 @@ mod tests {
         assert!(!c.apply(true, true, false, false, false), "flying");
         assert!(c.apply(true, true, false, true, false), "held in flight");
         assert!(!c.apply(true, true, false, false, false));
+    }
+
+    #[test]
+    fn a_tap_while_swimming_dives_only_while_held_and_entering_water_lets_go() {
+        let mut c = CrouchToggle::default();
+        assert!(c.apply(true, true, false, true, false), "a tap in water dives");
+        assert!(!c.apply(true, true, false, false, false), "released: no latched dive");
+        // Crouched on the shore, then swimming: the latch does not follow.
+        c.apply(true, false, false, true, false);
+        assert!(c.apply(true, false, false, false, false));
+        assert!(!c.apply(true, true, false, false, false));
+        assert!(!c.apply(true, false, false, false, false), "back on land, still let go");
     }
 
     #[test]
