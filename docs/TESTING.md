@@ -1732,7 +1732,20 @@ disabled. Cancel instead restores its texture and projector settings. Use
 `AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-own-animesh|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-clear[-mesh]|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
-or later. `worn-other-moving` makes the scripted prim a 10 cm clicker and
+or later. Add `-seated` to a `worn-*` mode (before any `-moving` / `-held`
+suffix) to seat the wearer on a rotated prim with the synthetic sitting
+animation before installing the attachment.
+Ordinary attachments must retain their attachment/script target while seated;
+the buried fixtures below also exercise the body occlusion boundary.
+`demo worn posture` confirms the seat parent. This covers our own and other
+residents' attachments, linked children, invisible clickers and meshes.
+`worn-other-hidden-inside-near-seated` moves the tiny invisible clicker
+18 cm toward the camera: it must receive the touch within the classic
+avatar's 10 cm attachment priority. `demo attachment clearance` logs the
+distance behind the displayed body. The unshifted seated fixture buries
+it more than 20 cm into the classic body and must remain occluded.
+
+`worn-other-moving` makes the scripted prim a 10 cm clicker and
 moves its wearer 8 cm a frame from 701 to 705, while the GPU answer of the
 press is on its way, as an animated avatar does: the press must still touch
 it (`demo touch_start: prim=975`). `worn-other-clear` and
@@ -1766,8 +1779,8 @@ both keep the camera, while only the scripted attachment receives a touch.
 capture frames 690 and 780 to compare. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
 `camera-te` uses an invisible scripted TE face. Alt-focus must reach the cube
 behind both; `camera-glass` instead reaches the translucent solid pane.
-`camera-faint` uses texture alpha 1/255: it must still take the focus, since
-only alpha-zero texels pass through world Blend objects (#1574).
+`camera-faint` uses texture alpha 1/255: it must focus the cube behind,
+following the Legacy Viewer's alpha > 32/255 texture threshold.
 `camera-mask` uses a fully transparent Mask texel and also reaches the cube.
 Add `-ctrl` to any `camera-*` mode to press Ctrl + Alt together. Repeat with
 `AURORA_DEMO_DEBUG=alpha`: all four modes must focus the highlighted panel
@@ -2258,9 +2271,10 @@ No real L$ and no connection to a grid.
   click, for manual testing (near x=138, y=126).
 - `blend-zero`, `blend-faint`, `blend-half`, `blend-solid`: non-actionable
   panel before a Buy object, with texture alpha 0, 1/255, 128/255 or 255/255.
-  `blend-zero` must pass the left click to Buy (971), with `dialog=true`;
-  the other three must reach panel 976 and leave `dialog=false`. The GPU
-  response must omit the zero-alpha panel but retain the faint/half panels.
+  `blend-zero` and `blend-faint` must pass the left click to Buy (971),
+  with `dialog=true`; half and solid must reach panel 976 and leave
+  `dialog=false`. The GPU response must omit zero/faint panels and retain
+  half/solid panels: the legacy texture threshold is alpha > 32/255.
   `blend-zero-menu` must still target panel 976 with the right click.
   `blend-backface` replaces it with a cube whose transparent entry face
   reveals Buy while the opaque exit face is invisible from this camera.
@@ -2277,10 +2291,18 @@ No real L$ and no connection to a grid.
   response. Capture after frame 620.
 - Add `-ready` to the Blend / Mask modes above to test hover without
   an automatic click. At frame 650, `demo cursor hover` must report
-  `prim=Some(976), action=None` before Blend at every opacity, and
-  `prim=Some(971), action=Some(Buy)` through the Mask hole. Enable
+  `prim=Some(971), action=Some(Buy)` through zero/faint Blend and the
+  Mask hole; half/solid Blend must report `prim=Some(976), action=None`.
+  The cursor and left click share the alpha > 32/255 threshold. Enable
   `AURORA_HOVER_CHECK=1` to compare the cache and index with the full search;
-  media hover behind Blend must respect the same depth limit.
+  media hover behind Blend must respect the same depth limit. Near posed
+  objects, cursor feedback also reads the left-click GPU query at most once
+  per 100 ms, without a GPU wait. Attachment fixtures log `demo cursor hover`
+  at frame 699, after holding the pointer still from frame 680: expect Touch
+  on the same prim as the ensuing press, including
+  linked children and clickers under a standing or seated wearer. Own rigged
+  body meshes and clickers buried beyond the body clearance must not show Touch.
+  HUD hover retains its existing alpha and ownership rules.
 
 Transaction windows, with the same variable:
 
