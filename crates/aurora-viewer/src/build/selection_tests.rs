@@ -1397,3 +1397,68 @@ fn duplicate_copies_only_roots_with_copy_and_link_needs_modify() {
     world.objects.get_mut(b).unwrap().update_flags |= OBJECT_MODIFY;
     assert!(tool.can_link(&world) && tool.can_unlink(&world));
 }
+
+#[test]
+fn right_click_extends_with_shift_or_ctrl_alone() {
+    // pick.mKeyMask == MASK_SHIFT || pick.mKeyMask == MASK_CONTROL
+    for (shift, ctrl, alt, extends) in [
+        (false, false, false, false),
+        (true, false, false, true),
+        (false, true, false, true),
+        (true, true, false, false),
+        (true, false, true, false),
+        (false, true, true, false),
+        (false, false, true, false),
+        (true, true, true, false),
+    ] {
+        assert_eq!(
+            BuildTool::menu_extends(shift, ctrl, alt),
+            extends,
+            "shift {shift} ctrl {ctrl} alt {alt}"
+        );
+    }
+}
+
+#[test]
+fn right_click_in_edit_adds_and_removes_linksets() {
+    let (mut world, mut tool, settings) = fixture();
+    let (a, a2, b, c) = (
+        object(&world, 99610),
+        object(&world, 99611),
+        object(&world, 99612),
+        object(&world, 99614),
+    );
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    assert!(tool.select_for_menu_with(&mut world, &settings, b, true));
+    assert!(tool.select_for_menu_with(&mut world, &settings, c, true));
+    assert_eq!(selected(&tool), [99614, 99612, 99610]);
+    // a plain right click on a selected object keeps the selection, and
+    // the menu's entries take every selected linkset (derenderObject)
+    assert!(tool.select_for_menu_with(&mut world, &settings, b, false));
+    assert_eq!(selected(&tool), [99612, 99614, 99610]);
+    assert_eq!(tool.menu_roots(&world, b), [b, c, a]);
+    // a child prim stands for its linkset
+    assert_eq!(tool.menu_roots(&world, a2), [b, c, a]);
+    // extending on a selected linkset takes it out
+    assert!(tool.select_for_menu_with(&mut world, &settings, a2, true));
+    assert_eq!(selected(&tool), [99612, 99614]);
+    assert_eq!(tool.menu_roots(&world, a), [a]);
+    // a plain right click elsewhere starts again from that object
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    assert_eq!(selected(&tool), [99610]);
+}
+
+#[test]
+fn right_click_outside_build_selects_one_object_at_a_time() {
+    // LLSelectMgr::deselectUnused drops a menu's selection once the menu
+    // closes, so Shift has nothing to add to outside the build window
+    let (mut world, mut tool, settings) = fixture();
+    tool.open = false;
+    let (a, b) = (object(&world, 99610), object(&world, 99612));
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    tool.release_menu_selection(&world);
+    assert!(tool.selection.is_empty());
+    assert!(tool.select_for_menu_with(&mut world, &settings, b, true));
+    assert_eq!(selected(&tool), [99612]);
+    assert_eq!(tool.menu_roots(&world, b), [b]);
+}

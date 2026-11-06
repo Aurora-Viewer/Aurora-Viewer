@@ -950,6 +950,35 @@ pub enum AntiAliasing {
     Taa,
     /// SMAA 1x, preset high (Firestorm RenderFSAAType 2).
     Smaa,
+    /// AMD FidelityFX Super Resolution 3.1 (fsr.rs) in the place of TAA,
+    /// the world drawn at the size of its quality mode.
+    Fsr(FsrQuality),
+}
+
+/// FSR's quality modes (FfxFsr3UpscalerQualityMode): how much smaller than
+/// the display the world is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsrQuality {
+    /// At the display size: FSR as an anti-aliasing only.
+    NativeAa,
+    Quality,
+    Balanced,
+    Performance,
+    UltraPerformance,
+}
+
+impl FsrQuality {
+    /// The display size over the render size
+    /// (ffxFsr3UpscalerGetUpscaleRatioFromQualityMode).
+    pub fn ratio(self) -> f32 {
+        match self {
+            FsrQuality::NativeAa => 1.0,
+            FsrQuality::Quality => 1.5,
+            FsrQuality::Balanced => 1.7,
+            FsrQuality::Performance => 2.0,
+            FsrQuality::UltraPerformance => 3.0,
+        }
+    }
 }
 
 /// A photo drawn at its own size (snapshot window): the frame that carries
@@ -995,6 +1024,8 @@ pub struct RenderSettings {
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
     pub aa: AntiAliasing,
+    /// With FSR: RCAS's strength (0..1), none without RCAS.
+    pub fsr_sharpness: Option<f32>,
     pub tonemapper: Tonemapper,
     /// "HDR and Emissive" (RenderDisableVintageMode, which drives
     /// RenderHDREnabled and RenderEnableEmissiveBuffer). Off, the Legacy
@@ -1045,6 +1076,7 @@ impl Default for RenderSettings {
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),
+            fsr_sharpness: Some(0.8),
             tonemapper: Tonemapper::KhronosNeutral,
             hdr: true,
             shadow_resolution: 2048,
