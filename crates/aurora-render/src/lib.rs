@@ -112,7 +112,7 @@ pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{world_label_at, world_line_at};
-pub use main_thread::{GpuInfo, Renderer};
+pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
