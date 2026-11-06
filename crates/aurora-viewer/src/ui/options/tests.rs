@@ -755,7 +755,7 @@ fn browser_behavior_radio_writes_the_selected_setting() {
 
     let mut frames = Frames::new();
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
-    assert_eq!(s.browser_behavior, BrowserBehavior::AuroraDefault);
+    assert_eq!(s.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
     let choices = [
         (BrowserBehavior::SystemForAll, aurora_i18n::tr!("ui-options-browser-system-all")),
         (

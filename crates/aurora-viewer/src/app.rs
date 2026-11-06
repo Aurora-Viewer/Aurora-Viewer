@@ -3072,7 +3072,7 @@ impl App {
         if let NetEvent::ServerReleaseNotes(page) = ev {
             // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
             match page {
-                Ok(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Ok(url) => self.open_web_link(url, None),
                 Err(_) => {
                     self.world.notifications.push(
                         crate::world::notifications::Kind::Alert,
@@ -16652,7 +16652,7 @@ impl App {
                     }
                     // only web links (llLoadURL / goto URL), opened after the user's click
                     if let Some(u) = url.filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
-                        ctx.open_url(egui::OpenUrl::new_tab(u));
+                        self.open_web_link(u, None);
                     }
                 }
                 self.world.record_notification_history();

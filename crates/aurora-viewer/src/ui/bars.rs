@@ -3302,7 +3302,7 @@ mod tests {
                             false,
                             None,
                             &favorites::View::default(),
-                            crate::settings::BrowserBehavior::AuroraDefault,
+                            crate::settings::BrowserBehavior::BuiltInForSecondLife,
                             crate::ui::web_browser::DEFAULT_HOME,
                         );
                         reserved = height;

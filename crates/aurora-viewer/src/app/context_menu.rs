@@ -9,7 +9,10 @@ use uuid::Uuid;
 impl App {
     pub(super) fn route_web_link(&mut self, url: String, entry: crate::link_trust::BrowserEntryPoint) {
         let marketplace = self.marketplace_home();
-        let marketplace_url = marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home));
+        let marketplace_url = matches!(
+            entry,
+            crate::link_trust::BrowserEntryPoint::MarketplaceLink | crate::link_trust::BrowserEntryPoint::MarketplaceWindow
+        ) || marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home));
         let system = crate::link_trust::should_use_system_browser(&url, self.settings.browser_behavior, entry);
         if system {
             self.egui_ctx.open_url(egui::OpenUrl::new_tab(url));
@@ -21,7 +24,7 @@ impl App {
         }
     }
 
-    fn open_web_link(&mut self, url: String, requested_entry: Option<crate::link_trust::BrowserEntryPoint>) {
+    pub(super) fn open_web_link(&mut self, url: String, requested_entry: Option<crate::link_trust::BrowserEntryPoint>) {
         use crate::link_trust::Trust;
 
         if let Some(scheme) = crate::link_trust::refused_scheme(&url) {

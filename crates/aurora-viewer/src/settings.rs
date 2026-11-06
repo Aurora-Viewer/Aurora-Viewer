@@ -55,18 +55,14 @@ pub enum ChatThumbnails {
 }
 
 /// Where web pages open, like `PreferredBrowserBehavior` and
-/// `LLWeb::useExternalBrowser` in the Legacy Viewer. The stored default
-/// preserves Aurora's former routing; explicit choices follow its three modes.
+/// `LLWeb::useExternalBrowser` in the Legacy Viewer.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BrowserBehavior {
     SystemForAll,
+    #[default]
+    #[serde(alias = "AuroraDefault")]
     BuiltInForSecondLife,
     BuiltInForAll,
-    /// Persisted default for settings created before this preference. It
-    /// retains Aurora's former per-entry-point routing until the resident
-    /// picks one of the three explicit choices.
-    #[default]
-    AuroraDefault,
 }
 
 /// Where the islands show the favourites (Preferences › Interface,
@@ -3325,10 +3321,23 @@ mod tests {
     #[test]
     fn browser_behavior_round_trips_and_old_settings_keep_aurora_routing() {
         let old: Settings = serde_json::from_str(r#"{"browser_home_page":"https://example.net/"}"#).expect("old settings");
-        assert_eq!(old.browser_behavior, BrowserBehavior::AuroraDefault);
+        assert_eq!(old.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+        let previous_default: Settings =
+            serde_json::from_str(r#"{"browser_behavior":"AuroraDefault"}"#).expect("settings saved by the previous browser preference");
+        assert_eq!(previous_default.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+        assert!(crate::link_trust::should_use_system_browser(
+            "https://example.org/chat",
+            old.browser_behavior,
+            crate::link_trust::BrowserEntryPoint::Link
+        ));
+        assert!(!crate::link_trust::should_use_system_browser(
+            &old.browser_home_page,
+            old.browser_behavior,
+            crate::link_trust::BrowserEntryPoint::Toolbar
+        ));
         let old_saved = serde_json::to_string(&old).expect("save old settings");
         let old_reloaded: Settings = serde_json::from_str(&old_saved).expect("reload old settings");
-        assert_eq!(old_reloaded.browser_behavior, BrowserBehavior::AuroraDefault);
+        assert_eq!(old_reloaded.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
 
         for behavior in [
             BrowserBehavior::SystemForAll,

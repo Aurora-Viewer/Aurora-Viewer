@@ -314,7 +314,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                 !classic,
                 Some(&mut emoji),
                 &bars::favorites::View::default(),
-                crate::settings::BrowserBehavior::AuroraDefault,
+                crate::settings::BrowserBehavior::BuiltInForSecondLife,
                 crate::ui::web_browser::DEFAULT_HOME,
             );
             // the room the bars leave, as App reports it

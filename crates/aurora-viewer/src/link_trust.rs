@@ -17,21 +17,33 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 pub enum BrowserEntryPoint {
     Link,
     MarketplaceLink,
+    MarketplaceWindow,
     ExplicitExternal,
     Toolbar,
     SearchExternal,
 }
 
 /// Apply the saved browser choice to a particular link entry point. The
-/// sentinel keeps Aurora's former routing for settings without a choice.
+/// Second Life mode preserves Aurora's former entry-point routing where it
+/// differs from the Legacy Viewer's host-based preference.
 pub fn should_use_system_browser(url: &str, behavior: crate::settings::BrowserBehavior, entry: BrowserEntryPoint) -> bool {
-    if behavior != crate::settings::BrowserBehavior::AuroraDefault {
-        return use_system_browser(url, behavior);
+    use crate::settings::BrowserBehavior;
+    // The explicit “Open in system browser” controls must honour their label,
+    // regardless of the saved preference, as loadURLExternal does in the Legacy Viewer.
+    if matches!(entry, BrowserEntryPoint::ExplicitExternal | BrowserEntryPoint::SearchExternal) {
+        return true;
     }
-    match entry {
-        BrowserEntryPoint::Link | BrowserEntryPoint::SearchExternal => true,
-        BrowserEntryPoint::MarketplaceLink | BrowserEntryPoint::Toolbar => false,
-        BrowserEntryPoint::ExplicitExternal => true,
+    if entry == BrowserEntryPoint::MarketplaceWindow {
+        return false;
+    }
+    match behavior {
+        BrowserBehavior::SystemForAll => true,
+        BrowserBehavior::BuiltInForAll => false,
+        BrowserBehavior::BuiltInForSecondLife => match entry {
+            BrowserEntryPoint::MarketplaceLink | BrowserEntryPoint::MarketplaceWindow | BrowserEntryPoint::Toolbar => false,
+            BrowserEntryPoint::Link => use_system_browser(url, behavior),
+            BrowserEntryPoint::ExplicitExternal | BrowserEntryPoint::SearchExternal => true,
+        },
     }
 }
 
@@ -48,10 +60,6 @@ pub fn use_system_browser(url: &str, behavior: crate::settings::BrowserBehavior)
         _ => return false,
     };
     match behavior {
-        // Missing settings keep the former Aurora routing. Non-Marketplace
-        // links already used the system browser through CtxAction::OpenUrl;
-        // its Marketplace special case remains in the app bridge.
-        BrowserBehavior::AuroraDefault => true,
         BrowserBehavior::SystemForAll => true,
         BrowserBehavior::BuiltInForAll => false,
         BrowserBehavior::BuiltInForSecondLife => {
@@ -514,8 +522,8 @@ mod tests {
     }
 
     #[test]
-    fn old_settings_keep_auroras_entry_point_routing() {
-        use crate::settings::BrowserBehavior::AuroraDefault;
+    fn default_settings_keep_auroras_entry_point_routing() {
+        use crate::settings::BrowserBehavior::BuiltInForSecondLife;
         use BrowserEntryPoint::*;
 
         let routes = [
@@ -526,7 +534,43 @@ mod tests {
             ("https://marketplace.secondlife.com/p/item", ExplicitExternal, true),
         ];
         for (url, entry, expected) in routes {
-            assert_eq!(should_use_system_browser(url, AuroraDefault, entry), expected, "{entry:?}: {url}");
+            assert_eq!(
+                should_use_system_browser(url, BuiltInForSecondLife, entry),
+                expected,
+                "{entry:?}: {url}"
+            );
+        }
+        assert!(!should_use_system_browser(
+            "https://secondlife.com/destinations",
+            BuiltInForSecondLife,
+            Link
+        ));
+        assert!(should_use_system_browser(
+            "https://secondlife.com/destinations",
+            crate::settings::BrowserBehavior::SystemForAll,
+            Link
+        ));
+    }
+
+    #[test]
+    fn explicit_external_actions_always_leave_viewer() {
+        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
+        for behavior in [SystemForAll, BuiltInForSecondLife, BuiltInForAll] {
+            for entry in [BrowserEntryPoint::ExplicitExternal, BrowserEntryPoint::SearchExternal] {
+                assert!(should_use_system_browser("https://example.org", behavior, entry));
+            }
+        }
+    }
+
+    #[test]
+    fn marketplace_listing_open_action_stays_in_marketplace_in_every_mode() {
+        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
+        for behavior in [SystemForAll, BuiltInForSecondLife, BuiltInForAll] {
+            assert!(!should_use_system_browser(
+                "https://not-the-marketplace.example/",
+                behavior,
+                BrowserEntryPoint::MarketplaceWindow
+            ));
         }
     }
 
