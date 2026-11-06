@@ -492,7 +492,7 @@ impl App {
     }
 
     /// Every frame, after the render: what the report counts over time.
-    pub(super) fn crash_frame(&mut self) {
+    pub(super) fn crash_frame(&mut self, renderer: &aurora_render::Renderer, window: &winit::window::Window) {
         let now = Instant::now();
         let tex = &self.scene.textures.stats;
         self.crash_recent
@@ -500,7 +500,109 @@ impl App {
         self.crash_recent.photo(now, self.snapshots.drawing());
         self.crash_timeline
             .frame(now, &self.screen, self.login_form.busy, self.world.main_region);
+        let window_state = if window.is_minimized().unwrap_or(false) {
+            crate::crash::flight_recorder::WindowState::Minimized
+        } else if self.occluded {
+            crate::crash::flight_recorder::WindowState::Occluded
+        } else if !self.focused {
+            crate::crash::flight_recorder::WindowState::Background
+        } else {
+            crate::crash::flight_recorder::WindowState::Focused
+        };
+        let screen = match &self.screen {
+            Screen::Login => crate::crash::flight_recorder::Stage::Login,
+            Screen::Loading { .. } => crate::crash::flight_recorder::Stage::Loading,
+            Screen::World => crate::crash::flight_recorder::Stage::World,
+        };
+        crate::crash::flight_recorder::sample_if_due(|| {
+            let video = renderer.video_memory.read(&renderer.device);
+            let (vram_used_mb, vram_budget_mb) = video
+                .map(|video| (Some(video.usage >> 20), Some(video.budget >> 20)))
+                .unwrap_or((None, None));
+            let mut input = crate::crash::flight_recorder::SampleInput {
+                cpu_frame_ms: Some(self.perf.frames.avg),
+                gpu_frame_ms: self.last_render.gpu_ms,
+                gpu_passes: top_gpu_passes(self.last_render.gpu_elements),
+                vram_used_mb,
+                vram_budget_mb,
+                texture_pages: Some(self.last_render.texture_pages),
+                texture_pressure: Some(u32::from(tex.pressure)),
+                texture_pressure_max: Some(u32::from(crate::scene::texture_budget::MAX_PRESSURE)),
+                bind_group_rebuilds: Some(self.last_render.bind_group_rebuilds),
+                descriptor_sets_in_use: None,
+                max_indirect_index_count: self.last_render.max_indirect_index_count,
+                pipelines_compiling: Some(u32::from(self.last_render.pipelines_compiling)),
+                uploads_in_flight: Some(
+                    tex.pending_upload
+                        .saturating_add(self.scene.stats.geom_pending)
+                        .min(u32::MAX as usize) as u32,
+                ),
+                swapchain_recreations: Some(aurora_render::present::recreations()),
+                rss_mb: crate::crash::flight_recorder::current_rss_mb(),
+                screen,
+                region_token: self.world.main_region,
+                graphics_preset: preset_code(&self.settings),
+                effects_mask: effects_mask(&self.settings, renderer.vr_engaged()),
+                photo_open: self.snapshots.drawing(),
+                poser_open: self.ik_editor.open && self.ik_editor.posing(),
+                window: window_state,
+            };
+            // The login screen's connection request is its opening stage; keep
+            // the screen label fixed and avoid publishing progress text.
+            if self.login_form.busy {
+                input.screen = crate::crash::flight_recorder::Stage::Login;
+            }
+            input
+        });
     }
+}
+
+fn top_gpu_passes(elements: Option<[f32; aurora_render::GpuElement::ALL.len()]>) -> [Option<(&'static str, f32)>; 3] {
+    let mut top = [None; 3];
+    let Some(elements) = elements else { return top };
+    for (element, ms) in aurora_render::GpuElement::ALL.into_iter().zip(elements) {
+        if !ms.is_finite() || ms <= 0.0 {
+            continue;
+        }
+        for index in 0..top.len() {
+            if top[index].is_none_or(|(_, current)| ms > current) {
+                for shift in (index + 1..top.len()).rev() {
+                    top[shift] = top[shift - 1];
+                }
+                top[index] = Some((element.key(), ms));
+                break;
+            }
+        }
+    }
+    top
+}
+
+fn preset_code(settings: &crate::settings::Settings) -> u8 {
+    match crate::graphics_presets::Preset::matching(settings) {
+        Some(crate::graphics_presets::Preset::Potato) => 1,
+        Some(crate::graphics_presets::Preset::Low) => 2,
+        Some(crate::graphics_presets::Preset::Medium) => 3,
+        Some(crate::graphics_presets::Preset::High) => 4,
+        Some(crate::graphics_presets::Preset::Deluxe) => 5,
+        None => 0,
+    }
+}
+
+fn effects_mask(settings: &crate::settings::Settings, vr: bool) -> u32 {
+    let shadows = settings.shadow_quality > 0;
+    let ambient_occlusion = settings.ssao > 0;
+    u32::from(shadows)
+        | (u32::from(shadows && settings.contact_shadows) << 1)
+        | (u32::from(ambient_occlusion) << 2)
+        | (u32::from(settings.ssr) << 3)
+        | (u32::from(settings.bloom) << 4)
+        | (u32::from(settings.glow) << 5)
+        | (u32::from(ambient_occlusion && settings.ao_method == 1 && settings.screen_indirect_light) << 6)
+        | (u32::from(settings.reflection_probes > 0) << 7)
+        | (u32::from(settings.water_reflections > 0) << 8)
+        | (u32::from(settings.mirrors > 0) << 9)
+        | (u32::from(settings.hdr_emissive) << 10)
+        | (u32::from(vr) << 11)
 }
 
 #[cfg(test)]

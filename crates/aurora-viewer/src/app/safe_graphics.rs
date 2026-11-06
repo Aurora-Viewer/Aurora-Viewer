@@ -67,6 +67,7 @@ impl App {
         if backup_path().exists() || Preset::matching(&self.settings) == Some(Preset::Potato) {
             Preset::Potato.apply(&mut self.settings);
             self.settings.save();
+            crate::crash::flight_recorder::safe_graphics_applied();
             log::info!("safe graphics on after GPU losses (settings kept aside already)");
             return;
         }
@@ -84,6 +85,7 @@ impl App {
                 {
                     Ok(()) => {
                         Preset::Potato.apply(&mut self.settings);
+                        crate::crash::flight_recorder::safe_graphics_applied();
                         log::info!("safe graphics on: Potato level, the settings before kept in {FILE}");
                         self.login_form.safe_graphics = Some(SafeGraphics::Active);
                     }

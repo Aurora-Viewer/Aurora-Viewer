@@ -1271,6 +1271,7 @@ impl Renderer {
             texture_bytes: self.textures.bytes(),
             texture_pages: self.textures.pages(),
             texture_page_bytes: self.textures.page_bytes(),
+            bind_group_rebuilds: self.textures.bind_group_rebuilds(),
             geometry_bytes: self.geometry.bytes(),
             records: self.records.live(),
             render_thread: self.host.threaded(),
@@ -1397,6 +1398,8 @@ impl Renderer {
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
+                max_indirect_index_count: self.last_stats.max_indirect_index_count,
+                pipelines_compiling: self.last_stats.pipelines_compiling,
                 present_mode: self.last_stats.present_mode,
                 water_reflection: self.last_stats.water_reflection,
                 mirror: self.last_stats.mirror,
@@ -1412,6 +1415,7 @@ impl Renderer {
         stats.texture_bytes = main.texture_bytes;
         stats.texture_pages = main.texture_pages;
         stats.texture_page_bytes = main.texture_page_bytes;
+        stats.bind_group_rebuilds = main.bind_group_rebuilds;
         stats.geometry_bytes = main.geometry_bytes;
         stats.vertex_used = main.vertex_used;
         stats.index_used = main.index_used;

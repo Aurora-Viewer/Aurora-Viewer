@@ -8,6 +8,7 @@
 mod environment;
 #[cfg(windows)]
 mod environment_windows;
+pub(crate) mod flight_recorder;
 pub mod github;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -239,6 +240,7 @@ fn start_inner() -> anyhow::Result<()> {
         panic_file,
     });
     environment::start(&dir);
+    flight_recorder::start();
     if record.demo && std::env::var("AURORA_DEMO_CRASH").as_deref() == Ok("recovery") {
         return Ok(());
     }
@@ -297,6 +299,7 @@ pub fn update(theme: &crate::theme::Theme, settings: &crate::settings::Settings)
 
 pub fn panic(info: &std::panic::PanicHookInfo<'_>, trace: &std::backtrace::Backtrace) {
     if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::Panic);
         let mut file = &session.panic_file;
         let _ = writeln!(file, "Rust panic: {info}\n{trace}");
         // A release build has no debug info for the trace above to resolve.
@@ -328,6 +331,7 @@ pub fn finished(success: bool) {
 
 pub fn failure(message: &str) {
     if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::SessionEnd);
         let _ = std::fs::write(session.dir.join("failure.txt"), message);
         let _ = std::fs::write(session.dir.join("failed"), []);
     }
@@ -338,6 +342,8 @@ pub fn failure(message: &str) {
 /// session ended now is reported as such. [`gpu_answered`] takes it back.
 pub fn gpu_stalled(seconds: u64) {
     if let Some(session) = SESSION.get() {
+        flight_recorder::gpu_stall();
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuStall);
         watchdog::save_gpu_stall(&session.dir, seconds);
     }
 }
@@ -346,6 +352,9 @@ pub fn gpu_stalled(seconds: u64) {
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
     gpu_loss_snapshot();
+    if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuLoss);
+    }
     mark_gpu_lost(b"");
 }
 
@@ -390,6 +399,10 @@ pub fn gpu_loss_detected() {
 /// it ends badly later. The session goes on: nothing marks it failed.
 pub fn gpu_recovered(ms: u128, safe: bool) {
     environment::at_gpu_loss();
+    if let Some(session) = SESSION.get() {
+        flight_recorder::gpu_recovered();
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuRecovery);
+    }
     use std::io::Write;
     let Some(session) = SESSION.get() else {
         return;
@@ -476,6 +489,7 @@ pub fn take_photo_quality_crash() -> bool {
 /// ago it came (the log's tail may no longer hold its line).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn overlay_hook(file: &str) {
+    flight_recorder::overlay_hook_seen();
     if let Some(session) = SESSION.get()
         && let Ok(mut out) = std::fs::OpenOptions::new()
             .create(true)
@@ -490,12 +504,14 @@ pub fn overlay_hook(file: &str) {
 /// the session is reported even though it ends through the usual way out.
 pub fn gpu_closed() {
     if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuStall);
         let _ = std::fs::write(session.dir.join("failed"), []);
         ending_in_gpu_trouble(&session.dir);
     }
 }
 
 pub fn gpu_answered() {
+    flight_recorder::gpu_stall_recovered();
     // first, so that a stall's stacks still being read do not bring the
     // file back once it is removed
     #[cfg(target_os = "linux")]
