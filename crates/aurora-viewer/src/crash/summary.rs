@@ -154,6 +154,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             rows.push(("GPU work at the loss", work));
         }
     }
+    if let Some(errors) = gpu_errors_in(&head, &tail) {
+        rows.push(("GPU errors (first of each, in order)", errors));
+    }
     if let Some(seconds) = text("gpu-stall.txt").lines().next().and_then(|line| {
         line.strip_prefix("GPU stall: no frame for ")?
             .strip_suffix(" s")?
@@ -170,6 +173,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     }
     if let Some(hooks) = overlay_hooks(&text("overlay-hooks.txt")) {
         rows.push(("Overlay hooks", hooks));
+    }
+    if let Some(layers) = vulkan_layers(&text("vulkan-layers.txt")) {
+        rows.push(("Vulkan layers on offer", layers));
     }
     if record.demo {
         rows.push(("Demo session", "yes".into()));
@@ -285,14 +291,150 @@ const STATE_ROWS: &[(&str, &str)] = &[
     ("avatars", "Avatars"),
     ("regions", "Regions"),
     ("swapchain_10s", "Swapchain recreations in 10 s (up to a GPU loss)"),
+    ("window_state", "Window state"),
+    ("effects", "Effects on (graphics switches)"),
+    ("gpu_ms", "Last GPU frame time (ms)"),
+    ("gpu_peak_ms", "Longest GPU frame in 10 s (ms, up to a GPU loss)"),
+    ("gpu_peak_pass", "Heaviest pass of that frame"),
+    ("gpu_peak_ao_contact", "Ambient occlusion / contact shadows of that frame (ms)"),
+    ("gpu_last_pass", "Heaviest pass of the last frame"),
+    ("uploads", "Texture uploads since the previous note (count / MB)"),
+    ("upload_peak_mb", "Largest upload of one frame (MB)"),
+    ("session_s", "Seconds since the login began"),
+    ("world_s", "Seconds in the world (absent while loading)"),
+    ("region_s", "Seconds since the region changed"),
+    ("loss_reason", "GPU loss: reason given by wgpu"),
+    ("loss_cause", "GPU loss: what the message is about"),
+    ("loss_seen_by", "GPU loss: first seen by"),
+    ("stall_ms", "GPU held the render thread past 2 s, longest (ms)"),
+    ("other_viewers", "Other Aurora viewers on this card (count / in front)"),
+    ("card_used_mb", "Card memory in use by all programs (MB)"),
+    ("card_others_mb", "Card memory in use by other programs (MB)"),
+    ("loading", "Still loading (textures in flight / awaiting upload / geometry)"),
 ];
 
-/// A state value as the watchdog writes it: a number, `n/m`, `WxH` or one
-/// of the fixed names; anything else is not published.
-fn state_value(value: &str) -> Option<String> {
-    let names = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
+/// The layers of `vulkan-layers.txt` (crash/mod.rs), all of a layer name's
+/// shape or none: the file is local data, and the result is published.
+fn vulkan_layers(text: &str) -> Option<String> {
+    let text = text.trim();
+    let layer =
+        |token: &str| token.len() <= 48 && token.starts_with("VK_LAYER_") && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    (text.len() <= 900 && text.split(',').all(layer)).then(|| text.to_owned())
+}
+
+/// The GPU errors wgpu handed to the viewer (`wgpu error: …`, logged by
+/// aurora-render main_thread.rs), first of each in the order they came:
+/// `out-of-memory` or the wgpu operation that failed, never the rest of the
+/// message, whose labels are free text. A session stuck on these errors
+/// (#2311, x155) otherwise says nothing of what failed. A line of any other
+/// module or level is left out, as in [`gpu_work_in`].
+fn gpu_errors_in(head: &str, tail: &str) -> Option<String> {
+    const SHOWN: usize = 6;
+    let mut found: Vec<&str> = Vec::new();
+    let mut note = |what| {
+        if !found.contains(&what) {
+            found.push(what);
+        }
+    };
+    for text in [head, tail] {
+        // An error whose operation is still to come: the message goes on
+        // over the lines below its record.
+        let mut open = false;
+        for line in text.lines() {
+            if line.starts_with('[') {
+                if std::mem::take(&mut open) {
+                    note("other");
+                }
+                let Some((record, message)) = line.split_once("] wgpu error: ") else {
+                    continue;
+                };
+                if !record.ends_with(" ERROR aurora_render::main_thread") {
+                    continue;
+                }
+                if message.starts_with("Out of Memory") {
+                    note("out-of-memory");
+                } else {
+                    open = true;
+                }
+            } else if open && let Some(rest) = line.trim_start().strip_prefix("In ") {
+                open = false;
+                note(gpu_operation(rest).unwrap_or("other"));
+            }
+        }
+        if open {
+            note("other");
+        }
+    }
+    if found.is_empty() {
+        return None;
+    }
+    let more = if found.len() > SHOWN { ", …" } else { "" };
+    found.truncate(SHOWN);
+    Some(format!("{}{more}", found.join(", ")))
+}
+
+/// `Queue::write_buffer` from wgpu's `Queue::write_buffer, label = '…'`
+/// (wgpu-core error.rs, `ContextError`): an object wgpu names and a method's
+/// name, nothing else.
+fn gpu_operation(text: &str) -> Option<&str> {
+    const OBJECTS: [&str; 13] = [
+        "Blas",
+        "Buffer",
+        "CommandEncoder",
+        "ComputePass",
+        "ComputePipeline",
+        "Device",
+        "Instance",
+        "Queue",
+        "RenderBundleEncoder",
+        "RenderPass",
+        "RenderPipeline",
+        "Surface",
+        "Texture",
+    ];
+    let operation = text.split(',').next()?.trim_end();
+    let (object, method) = operation.split_once("::")?;
+    (operation.len() <= 64
+        && OBJECTS.contains(&object)
+        && !method.is_empty()
+        && method.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'))
+    .then_some(operation)
+}
+
+/// A state value as the watchdog writes it: a number, numbers joined by
+/// `/` or `x`, a list of the effect words, or one of the fixed names;
+/// anything else is not published.
+pub(crate) fn state_value(value: &str) -> Option<String> {
+    use super::watchdog::{EFFECT_WORDS, WINDOW_STATES};
+    let names = [
+        "yes",
+        "no",
+        "unknown",
+        "other",
+        "none",
+        "device-lost",
+        "out-of-memory",
+        "timeout",
+        "callback",
+        "wait",
+        "start",
+        "demo",
+    ];
+    let screens = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
+    // the passes of `GpuElement::key`
+    let passes = ["shadows_depth", "effects", "terrain_sky", "objects", "water", "transparent", "post"];
     let numeric = |v: &str| !v.is_empty() && v.len() <= 12 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.');
-    let ok = names.contains(&value) || numeric(value) || value.split_once(['/', 'x']).is_some_and(|(a, b)| numeric(a) && numeric(b));
+    let effect = |token: &str| {
+        let word = token.trim_end_matches(|c: char| c.is_ascii_digit());
+        EFFECT_WORDS.contains(&word) && token.len() <= 24
+    };
+    let ok = names.contains(&value)
+        || screens.contains(&value)
+        || passes.contains(&value)
+        || WINDOW_STATES.contains(&value)
+        || numeric(value)
+        || (value.contains(['/', 'x']) && value.split(['/', 'x']).count() <= 3 && value.split(['/', 'x']).all(numeric))
+        || (value.len() <= 400 && value.split(',').all(effect));
     ok.then(|| value.to_owned())
 }
 
@@ -963,14 +1105,29 @@ mod tests {
     }
 
     #[test]
+    fn state_values_outside_the_fixed_words_are_not_published() {
+        for private in [
+            "Private Place",
+            "/home/someone",
+            "shadows3,secret",
+            "VK_LAYER_OBS_HOOK",
+            "",
+            "ao-gtao2,",
+        ] {
+            assert_eq!(state_value(private), None, "{private:?}");
+        }
+    }
+
+    #[test]
     fn a_session_ended_frozen_publishes_both_threads_and_its_last_state() {
         let (dir, record) = session();
         std::fs::write(dir.join("freeze.txt"), FREEZE).unwrap();
         std::fs::write(dir.join("exit-code.txt"), "0x00000001").unwrap();
         std::fs::write(dir.join("stopped-unix.txt"), "1100").unwrap();
+        std::fs::write(dir.join("vulkan-layers.txt"), "VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus\n").unwrap();
         std::fs::write(
             dir.join("alive.txt"),
-            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\n",
+            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\neffects=shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100,draw192\nwindow_state=background\ngpu_ms=12.5\ngpu_peak_ms=2400.0\ngpu_peak_pass=effects\nuploads=12/34.5\nsession_s=45\nregion_s=20\nloading=12/3/40\ngpu_peak_ao_contact=20.5/2100.0\nlayers=VK_LAYER_OLD_NOTE\nloss_reason=unknown\nloss_cause=device-lost\nloss_seen_by=callback\nstall_ms=2300\nother_viewers=2/1\ncard_used_mb=6100\ncard_others_mb=3200\nlayers_note=/home/someone\n",
         )
         .unwrap();
         let summary = build_at(&record, &dir, Some(10));
@@ -988,13 +1145,26 @@ mod tests {
             "| Window size | 1920x1080 |",
             "| Screen | world |",
             "| Swapchain recreations in 10 s (up to a GPU loss) | 37 |",
+            "| Effects on (graphics switches) | shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100,draw192 |",
+            "| Window state | background |",
+            "| Longest GPU frame in 10 s (ms, up to a GPU loss) | 2400.0 |",
+            "| Heaviest pass of that frame | effects |",
+            "| Seconds since the login began | 45 |",
+            "| Still loading (textures in flight / awaiting upload / geometry) | 12/3/40 |",
+            "| Vulkan layers on offer | VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus |",
+            "| GPU loss: first seen by | callback |",
+            "| GPU held the render thread past 2 s, longest (ms) | 2300 |",
+            "| Ambient occlusion / contact shadows of that frame (ms) | 20.5/2100.0 |",
+            "| Other Aurora viewers on this card (count / in front) | 2/1 |",
+            "| Card memory in use by all programs (MB) | 6100 |",
+            "| Card memory in use by other programs (MB) | 3200 |",
         ] {
             assert!(body.contains(expected), "missing {expected:?} in\n{body}");
         }
         // One module list, each module once.
         assert_eq!(body.matches("aurora_viewer id=").count(), 1, "{body}");
         assert!(!body.contains("End of session"), "{body}");
-        for private in ["Private", "secret", "region_name"] {
+        for private in ["Private", "secret", "region_name", "someone", "layers_note", "OLD_NOTE"] {
             assert!(!body.contains(private), "leaked {private}:\n{body}");
         }
         std::fs::remove_dir_all(dir).unwrap();
@@ -1104,6 +1274,96 @@ mod tests {
         assert!(body.contains("| Thread | aurora-net (the session was ended) |"), "{body}");
         std::fs::write(dir.join("thread.txt"), "Private Name").unwrap();
         assert!(!build_at(&record, &dir, None).body.contains("| Thread |"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_crash_before_any_note_of_the_state_still_names_the_vulkan_layers() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("vulkan-layers.txt"), "VK_LAYER_OBS_HOOK,VK_LAYER_RTSS\n").unwrap();
+        let body = build_at(&record, &dir, None).body;
+        assert!(
+            body.contains("| Vulkan layers on offer | VK_LAYER_OBS_HOOK,VK_LAYER_RTSS |"),
+            "{body}"
+        );
+        assert!(!body.contains("### Last state"), "{body}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_layers_file_that_is_not_all_layer_names_is_not_published() {
+        assert_eq!(vulkan_layers(""), None);
+        assert_eq!(vulkan_layers("VK_LAYER_OBS_HOOK,C:\\Users\\someone\\layer"), None);
+        assert_eq!(vulkan_layers("VK_LAYER_OBS_HOOK,Alice Resident"), None);
+        assert_eq!(vulkan_layers(&["VK_LAYER_OBS_HOOK"; 60].join(",")), None);
+        assert_eq!(vulkan_layers(" VK_LAYER_NV_present\n").as_deref(), Some("VK_LAYER_NV_present"));
+    }
+
+    /// How a wgpu error begins in the log (aurora-render main_thread.rs).
+    const WGPU_ERROR: &str = "[2026-11-04T10:00:00.000Z ERROR aurora_render::main_thread] wgpu error: ";
+
+    #[test]
+    fn gpu_errors_name_the_kind_and_operation_and_never_a_label() {
+        let e = WGPU_ERROR;
+        let log = format!(
+            "[2026-11-04T09:59:00.000Z INFO  aurora_viewer] start\n\
+             {e}Out of Memory\n\
+             {e}Validation Error\n\nCaused by:\n  In Queue::write_buffer, label = 'Private Place'\n    In Device::nested\n      Buffer with 'Private Place' label is invalid\n\n\
+             {e}Validation Error\n\nCaused by:\n  In Queue::write_buffer, label = 'Private Place'\n    Buffer is invalid\n (repeated 154 times in the last 10 s)\n\
+             {e}Validation Error\n\nCaused by:\n  In CommandEncoder::finish\n    Encoder is invalid\n\n\
+             [2026-11-04T10:00:01.000Z INFO  aurora_viewer] still here\n"
+        );
+        let expected = Some("out-of-memory, Queue::write_buffer, CommandEncoder::finish");
+        assert_eq!(gpu_errors_in(&log, "").as_deref(), expected);
+        // the head and the tail of a short log are the same text
+        assert_eq!(gpu_errors_in(&log, &log).as_deref(), expected);
+    }
+
+    #[test]
+    fn a_gpu_error_of_another_shape_is_other_and_other_modules_are_left_out() {
+        let e = WGPU_ERROR;
+        for (log, expected) in [
+            // no operation before the next record, or before the end
+            (
+                format!("{e}Validation Error\n\nCaused by:\n  Something else\n[t INFO  a] b\n"),
+                Some("other"),
+            ),
+            (format!("{e}Validation Error\n"), Some("other")),
+            // not an operation of wgpu's
+            (format!("{e}Validation Error\n\nCaused by:\n  In Alice::resident\n"), Some("other")),
+            (format!("{e}Validation Error\n\nCaused by:\n  In a render pass\n"), Some("other")),
+            (
+                format!("{e}Validation Error\n\nCaused by:\n  In Queue::Write Place\n"),
+                Some("other"),
+            ),
+            // anything logged elsewhere could carry the marker
+            (
+                "[t INFO  aurora_viewer::chat] wgpu error: Out of Memory\n  In Queue::submit\n".to_owned(),
+                None,
+            ),
+            ("  In Queue::submit\n".to_owned(), None),
+        ] {
+            assert_eq!(gpu_errors_in(&log, "").as_deref(), expected, "{log:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_few_gpu_errors_are_listed() {
+        let log: String = ["a", "b", "c", "d", "e", "f", "g", "h"]
+            .iter()
+            .map(|m| format!("{WGPU_ERROR}Validation Error\n\nCaused by:\n  In Device::create_{m}\n"))
+            .collect();
+        let row = gpu_errors_in(&log, "").unwrap();
+        assert_eq!(row.matches("Device::").count(), 6, "{row}");
+        assert!(row.ends_with("Device::create_f, …"), "{row}");
+    }
+
+    #[test]
+    fn a_session_with_no_gpu_error_has_no_row_for_them() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("alive.txt"), "tick=1098\nscreen=world\n").unwrap();
+        let body = build_at(&record, &dir, Some(10)).body;
+        assert!(!body.contains("GPU errors") && !body.contains("GPU held"), "{body}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

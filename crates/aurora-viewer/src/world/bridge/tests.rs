@@ -383,6 +383,7 @@ fn failed_compilation_does_not_request_a_save_of_unchanged_scripts() {
         result: Ok(aurora_net::scripts::ScriptSaved {
             asset: Uuid::nil(),
             compiled: false,
+            checked: true,
             errors: vec!["Synthetic compilation error".into()],
         }),
     });
@@ -825,6 +826,8 @@ fn portal_relay_accepts_only_the_exact_ready_worn_bridge_and_never_enters_chat()
     use aurora_net::bridge::portal::{Access, LIFETIME, Message, Portal};
     let mut sim = Simulator::new();
     sim.ready();
+    // The announcing resident is no friend: shown only when everyone's are.
+    sim.world.portal_sources = super::super::portals::Sources::Everyone;
     let NetEvent::Chat(mut chat) = sim.demo.query_handshake(&sim.bridge, &sim.world).expect("query hello") else {
         panic!("chat");
     };
@@ -1181,6 +1184,7 @@ fn an_early_hello_survives_the_upload_reply_and_boot_status_requires_the_exact_w
         result: Ok(aurora_net::scripts::ScriptSaved {
             asset: Uuid::new_v4(),
             compiled: true,
+            checked: true,
             errors: Vec::new(),
         }),
     });
