@@ -546,10 +546,12 @@ fn material_asset(
             [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
             egui::Label::new(RichText::new(caption).size(super::common::SMALL).color(p.muted)).truncate(),
         );
-        if response
-            .on_hover_text(asset.map_or_else(|| caption.to_string(), |id| id.to_string()))
-            .clicked()
-        {
+        // the material's id when the asset id rule allows it, as the picker
+        let tip = match asset {
+            Some(id) if response.hovered() && crate::world::inventory::asset_ids::AssetIds::per_frame(world).shown(&id) => id.to_string(),
+            _ => caption.to_string(),
+        };
+        if response.on_hover_text(tip).clicked() {
             tool.ui
                 .picker
                 .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), asset.unwrap_or_default());

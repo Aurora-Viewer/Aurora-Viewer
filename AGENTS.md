@@ -188,9 +188,11 @@ cargo run -p aurora-viewer -- --title "Test avatar-gaze"
   table nor in the README.
 - The asset files of the disk cache (`cache/store`) are only read and
   written through `crate::cache` (`read`, `read_touch`, `reader`,
-  `write`): never with an outside tool or `std::fs`. A scenario that serves
+  `write`): never with an outside tool or `std::fs`. A scenario that takes
   assets from a folder (`AURORA_DEMO_ARRIVAL`, `AURORA_DEMO_STREAM`'s
-  `j2k=`) takes plain files or this installation's store.
+  `j2k=`) reads it through `demo::source`: plain asset files in every
+  build, files of the cache's format (a store) in development builds only
+  (`dev`, `ci`, `debugging`); a `--release` build takes plain folders.
 - For a new feature, add a demo scenario (`AURORA_DEMO_<NAME>`) when possible:
   it shows the feature and makes it testable without a grid.
 - Some things can only be tested on the grid (real network, voice,

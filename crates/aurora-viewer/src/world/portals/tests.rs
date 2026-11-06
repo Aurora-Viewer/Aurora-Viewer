@@ -34,6 +34,9 @@ pub(super) fn fixture() -> (World, State) {
     world.agent_id = Uuid::from_u128(1);
     world.main_region = Some(256);
     world.agent.position = point(4.0);
+    // The exchange and crossing rules, with every resident's portals shown;
+    // `source_tests` covers the setting itself.
+    world.portal_sources = Sources::Everyone;
     let mut state = State::default();
     state.sync(&world, None, 1000);
     (world, state)
