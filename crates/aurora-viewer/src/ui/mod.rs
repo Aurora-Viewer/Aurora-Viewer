@@ -43,6 +43,7 @@ pub mod exit;
 pub mod experience_profile;
 pub mod experiences;
 pub mod find_shortcut;
+mod floating_text;
 pub mod fly_override;
 pub mod follow;
 pub mod fonts;
