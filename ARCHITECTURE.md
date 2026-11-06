@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+`ui/inventory.rs::TabFilters` keeps each window's finder state per tab, including
+advanced searches and the temporary filters of Find links / Find similar.
+Both layouts use `set_tab` to swap that state. `InventoryPreferences` retains
+the existing `filter_defaults` for the main tab and independent defaults for
+Received, Recent, Worn and Favorites; the finder saves only its active tab.
+
 World texture/material drops use `Scene::resource_drop_face_at_ray` for one
 consistent object/face hit, including zero-alpha and transparent texel surfaces,
 with HUD ownership, sidedness, distance and terrain occlusion retained. The
