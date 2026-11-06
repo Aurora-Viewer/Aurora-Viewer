@@ -265,9 +265,10 @@ mod tests {
             confirm: Some(plan),
             ..Default::default()
         };
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             assert!(show(ui.ctx(), &p, &mut st).is_empty(), "nothing runs before the click");
         });
+        output.textures_delta.clear();
         assert!(st.confirm.is_some(), "the confirmation stays open");
     }
 }
