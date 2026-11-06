@@ -605,6 +605,12 @@ impl ChatUi {
         }
     }
 
+    /// `AURORA_DEMO_BARS=window…`: the nearby chat back in the
+    /// Conversations window, whatever the profile saved.
+    pub fn demo_dock_nearby(&mut self) {
+        self.popped.remove(None);
+    }
+
     /// `AURORA_DEMO_CONV_POPOUT`: `conversation` in its own window, at `pos`.
     pub fn demo_pop_out(&mut self, ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
         self.popped.pop_out(conversation, self.members_open, self.stage_mini, false);

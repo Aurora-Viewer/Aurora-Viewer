@@ -7517,16 +7517,21 @@ impl App {
     }
 
     /// `AURORA_DEMO_BARS=windowenter|windowmin|windowreopen` (#2696): the
-    /// Conversations window opened on Contacts at frame 100 (placed at a
-    /// spot of its own for `windowreopen`), minimized or closed at 200,
+    /// nearby chat docked back in the Conversations window at frame 100,
+    /// that window closed (`windowenter`) or opened on Contacts (placed at
+    /// a spot of its own for `windowreopen`), minimized or closed at 200,
     /// Enter pressed at 300.
     fn demo_chat_bar_window(&mut self, mode: ui::bars::demo::WindowEnter, frame: u64) {
         use ui::bars::demo::WindowEnter;
         let ctx = self.egui_ctx.clone();
         match (mode, frame) {
             (_, 300) => self.start_chat(),
-            (WindowEnter::Closed, _) => {}
+            (WindowEnter::Closed, _) => {
+                self.chat_ui.demo_dock_nearby();
+                self.panels.chat = false;
+            }
             (_, 100) => {
+                self.chat_ui.demo_dock_nearby();
                 self.chat_ui.contacts = true;
                 ui::notifications::open_conversations(&ctx, &mut self.panels.chat);
                 if mode == WindowEnter::Reopened {

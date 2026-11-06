@@ -7695,8 +7695,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `window` (Preferences › Chat › Chat bar on "Conversations window only":
   no chat island nor Legacy chat field, the dock keeps its Conversations
   button, Enter opens the Conversations window on Nearby chat),
-  `windowenter` (the same, Enter pressed at frame 300 with the window never
-  opened: from frame 300 it shows Nearby chat with the keyboard in its
+  `windowenter` (the same, the nearby chat docked back in the window
+  whatever the profile saved, as for the next two, Enter pressed at
+  frame 300 with the window closed: from frame 300 it shows Nearby chat with the keyboard in its
   field), `windowmin` (opened at frame 100 on Contacts, minimized at 200:
   at 300 it expands on Nearby chat), `windowreopen` (opened at frame 100
   on Contacts at 380, 140, 520 × 360, closed at 200: at 300 it comes back
