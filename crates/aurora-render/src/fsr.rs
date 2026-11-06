@@ -11,7 +11,7 @@
 //! (`display_depth`). It takes TAA's inputs: the HDR colour before the
 //! tone mapping, the reverse-Z depth of the prepass, the prepass's motion
 //! vectors (the camera's own motion where none was drawn, as taa.wgsl), and
-//! TAA's jitter, over FSR's eight phases. Each pass is a full-screen
+//! TAA's jitter, over FSR's 8 x (display / render)^2 phases. Each pass is a full-screen
 //! fragment pass (see `shaders/fsr/common.wgsl` for the differences from
 //! the SDK). The reactive mask is generated from the scene before and after
 //! the blended faces, the particles and the water (FSR's autogen reactive
