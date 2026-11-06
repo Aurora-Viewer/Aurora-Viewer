@@ -357,7 +357,11 @@ pub(super) fn card(
     let mut out = None;
     // a new version: the updates' icon (the menu's "Check for updates")
     let update = matches!(n.data, Data::Update { .. });
-    let (icon, accent) = if update { ("download-filled", p.violet) } else { kind_style(p, n.kind) };
+    let (icon, accent) = if update {
+        ("download-filled", p.violet)
+    } else {
+        kind_style(p, n.kind)
+    };
     let insignia = match &n.data {
         Data::GroupNotice { group, .. } => super::chat::group_insignia(world, group),
         _ => None,

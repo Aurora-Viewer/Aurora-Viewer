@@ -94,13 +94,7 @@ pub fn outline(rect: Rect, radius: f32) -> (Vec<(Pos2, Vec2, f32)>, f32) {
 
 /// A band along the outline, from `inner` to `outer` (offsets along the
 /// normal), each edge of it coloured by `color(fraction of the outline)`.
-fn band(
-    outline: &[(Pos2, Vec2, f32)],
-    length: f32,
-    inner: f32,
-    outer: f32,
-    color: impl Fn(f32) -> (Color32, Color32),
-) -> Mesh {
+fn band(outline: &[(Pos2, Vec2, f32)], length: f32, inner: f32, outer: f32, color: impl Fn(f32) -> (Color32, Color32)) -> Mesh {
     let mut mesh = Mesh::default();
     for (i, (at, n, along)) in outline.iter().enumerate() {
         let (a, b) = color(*along / length.max(1.0));
@@ -124,13 +118,19 @@ pub fn paint_edge(ui: &egui::Ui, p: &Palette, rect: Rect) {
     let (outline, length) = outline(rect, radius);
     let halo = band(&outline, length, 0.0, HALO, |x| {
         let c = color_at(p, x - phase);
-        (c.gamma_multiply(0.35 * breath), Color32::TRANSPARENT)
+        (c.gamma_multiply(0.6 * breath), Color32::TRANSPARENT)
     });
     let edge = band(&outline, length, -EDGE / 2.0, EDGE / 2.0, |x| {
         let c = color_at(p, x - phase);
         (c, c)
     });
-    ui.painter().add(Shape::mesh(halo));
+    // the halo reaches over the panel's margin, never further than the card's
+    // own reach past what is in view (a list scrolled)
+    let painter = ui
+        .ctx()
+        .layer_painter(ui.layer_id())
+        .with_clip_rect(ui.clip_rect().expand(HALO + 1.0).intersect(rect.expand(HALO)));
+    painter.add(Shape::mesh(halo));
     ui.painter().add(Shape::mesh(edge));
 }
 

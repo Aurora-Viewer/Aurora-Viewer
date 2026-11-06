@@ -369,7 +369,13 @@ impl Updater {
     /// The answer of a periodic check: a version not announced yet becomes
     /// a notice (downloaded first in the Automatic mode); a failure is only
     /// logged, the next check tries again.
-    fn quiet_result(&mut self, result: Result<Option<Release>, Failure>, settings: &Settings, info: &mut LoginInfo, runtime: &tokio::runtime::Handle) {
+    fn quiet_result(
+        &mut self,
+        result: Result<Option<Release>, Failure>,
+        settings: &Settings,
+        info: &mut LoginInfo,
+        runtime: &tokio::runtime::Handle,
+    ) {
         // the user opened the window or started something meanwhile: theirs wins
         if self.open || !matches!(self.state, State::Idle | State::Current | State::Error(_) | State::Offer) {
             return;
@@ -596,7 +602,12 @@ mod tests {
         updater.open = true;
         assert!(!updater.periodic_due(&settings, later));
         updater.open = false;
-        for state in [State::Checking, State::Downloading(Progress::default()), State::Ready, State::Rollback] {
+        for state in [
+            State::Checking,
+            State::Downloading(Progress::default()),
+            State::Ready,
+            State::Rollback,
+        ] {
             updater.state = state;
             assert!(!updater.periodic_due(&settings, later));
         }
