@@ -202,6 +202,31 @@ pub(super) fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.label(egui::RichText::new(text.to_uppercase()).size(10.5).color(p.muted));
 }
 
+/// The switch has its own hit target: toggling does not select another joint.
+fn joint_switch(ui: &mut egui::Ui, p: &Palette, id: egui::Id, rect: egui::Rect, enabled: bool, name: &str) -> bool {
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(id.with("poser-joint-switch"))
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    let mut on = enabled;
+    let response = widgets::switch(&mut child, p, &mut on);
+    let label = format!("{} · {name}", aurora_i18n::tr!("poser-joint-pose"));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), on, &label));
+    let mut tip = format!("{label}\n{}", aurora_i18n::tr!("poser-joint-pose-tip"));
+    if !on {
+        tip.push_str(&format!("\n{}", aurora_i18n::tr!("poser-joint-off")));
+    }
+    response.on_hover_text(tip).changed()
+}
+fn switch_rect(rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_center_size(
+        egui::pos2(rect.right() - widgets::SWITCH_SIZE.x / 2.0 - 4.0, rect.center().y),
+        widgets::SWITCH_SIZE,
+    )
+}
+
 impl Editor {
     /// The side words of the window: "left", "right" or "both".
     pub(super) fn side_word(&self) -> &'static str {
@@ -273,7 +298,7 @@ impl Editor {
             let label = aurora_i18n::text("poser-avatar-position");
             if filter.is_empty() || label.to_lowercase().contains(&filter) {
                 let edited = self.subject_edited(rig.pelvis) && self.poser.transform == 1;
-                if self.joint_row(
+                let (selected, toggled) = self.joint_row(
                     ui,
                     p,
                     label,
@@ -284,7 +309,11 @@ impl Editor {
                         .get(&self.poser.subject)
                         .is_none_or(|s| s.pose.enabled[rig.pelvis]),
                     "mPelvis",
-                ) {
+                );
+                if toggled {
+                    self.toggle_pose_joint(rig.pelvis);
+                }
+                if selected {
                     self.select_pose_bone(rig.pelvis, rig, frame);
                     self.poser.transform = 1;
                     self.tool = Tool::Move;
@@ -346,14 +375,30 @@ impl Editor {
                 .collect::<Vec<_>>()
                 .join(" · ");
             let enabled = self.poser.sessions.get(&self.poser.subject).is_none_or(|s| s.pose.enabled[bone]);
-            if self.joint_row(ui, p, &label(&base), selected, edited, enabled, &names) {
+            let (selected, toggled) = self.joint_row(ui, p, &label(&base), selected, edited, enabled, &names);
+            if toggled {
+                self.toggle_pose_joint(bone);
+            }
+            if selected {
                 self.select_pose_bone(bone, rig, frame);
             }
         }
     }
-    /// A selectable joint row; true when clicked.
-    fn joint_row(&self, ui: &mut egui::Ui, p: &Palette, label: &str, selected: bool, edited: bool, enabled: bool, tip: &str) -> bool {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::click());
+    /// Independent selection and pose-toggle responses from one joint row.
+    fn joint_row(
+        &self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        label: &str,
+        selected: bool,
+        edited: bool,
+        enabled: bool,
+        tip: &str,
+    ) -> (bool, bool) {
+        let (rect, allocation) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
+        let switch = switch_rect(rect);
+        let selection = egui::Rect::from_min_max(rect.min, egui::pos2(switch.left() - 4.0, rect.bottom()));
+        let response = ui.interact(selection, allocation.id.with("select"), Sense::click());
         let hovered = response.hovered();
         if selected || hovered {
             let face = if selected { p.violet } else { p.raised.gamma_multiply(0.5) };
@@ -364,7 +409,7 @@ impl Editor {
             ui,
             label,
             egui::pos2(rect.left() + 10.0, rect.center().y),
-            rect.width() - 30.0,
+            switch.left() - rect.left() - 28.0,
             egui::FontId::proportional(13.0),
             ink,
         );
@@ -372,17 +417,19 @@ impl Editor {
             let dot = if selected { p.on_accent } else { p.violet_light };
             if enabled {
                 ui.painter()
-                    .circle_filled(egui::pos2(rect.right() - 10.0, rect.center().y), DOT, dot);
+                    .circle_filled(egui::pos2(switch.left() - 12.0, rect.center().y), DOT, dot);
             } else {
                 ui.painter().circle_stroke(
-                    egui::pos2(rect.right() - 10.0, rect.center().y),
+                    egui::pos2(switch.left() - 12.0, rect.center().y),
                     DOT,
                     egui::Stroke::new(1.0, p.muted_dim),
                 );
             }
         }
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
-        response.on_hover_text(tip).clicked()
+        let selected = response.on_hover_text(tip).clicked();
+        let toggled = joint_switch(ui, p, allocation.id, switch, enabled, tip);
+        (selected, toggled)
     }
     /// The Hands tab: the five presets, applied to the chosen side (both in
     /// Mirror), and the finger grid (finger × base, middle, tip).
@@ -425,7 +472,7 @@ impl Editor {
         ui.add_space(6.0);
         caption(ui, p, &aurora_i18n::tr!("poser-fingers-for", side = side));
         let label_w = 80.0;
-        let cell_w = ((ui.available_width() - label_w - 3.0 * 4.0) / 3.0).max(20.0);
+        let cell_w = ((ui.available_width() - label_w - 3.0 * 4.0) / 3.0).max(48.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.add_space(label_w);
@@ -464,7 +511,10 @@ impl Editor {
                     let edited =
                         self.subject_edited(bone) || self.poser.side == Side::Mirror && other.is_some_and(|o| self.subject_edited(o));
                     let enabled = self.poser.sessions.get(&self.poser.subject).is_none_or(|s| s.pose.enabled[bone]);
-                    let (rect, response) = ui.allocate_exact_size(egui::vec2(cell_w, CELL_H), Sense::click());
+                    let (rect, allocation) = ui.allocate_exact_size(egui::vec2(cell_w, CELL_H), Sense::hover());
+                    let switch = switch_rect(rect);
+                    let selection = egui::Rect::from_min_max(rect.min, egui::pos2(switch.left() - 4.0, rect.bottom()));
+                    let response = ui.interact(selection, allocation.id.with("select"), Sense::click());
                     let face = if selected {
                         p.violet
                     } else if response.hovered() {
@@ -479,14 +529,18 @@ impl Editor {
                         (false, false) => p.raised,
                     };
                     if enabled {
-                        ui.painter().circle_filled(rect.center(), DOT, dot);
+                        ui.painter().circle_filled(selection.center(), DOT, dot);
                     } else {
-                        ui.painter().circle_stroke(rect.center(), DOT, egui::Stroke::new(1.0, p.muted_dim));
+                        ui.painter()
+                            .circle_stroke(selection.center(), DOT, egui::Stroke::new(1.0, p.muted_dim));
                     }
                     let label = aurora_i18n::tr!("poser-numbered-bone", name = name, number = joint).to_string();
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &label));
                     if response.on_hover_text(&rig.canonical_names[bone]).clicked() {
                         self.select_pose_bone(bone, rig, frame);
+                    }
+                    if joint_switch(ui, p, allocation.id, switch, enabled, &rig.canonical_names[bone]) {
+                        self.toggle_pose_joint(bone);
                     }
                 }
             });

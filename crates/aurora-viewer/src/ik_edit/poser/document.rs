@@ -106,7 +106,7 @@ impl Document {
         let mut lock = Vec::new();
         for joint in &self.joints {
             let Some(&bone) = rig.names.get(&joint.name) else { continue };
-            if selective && session.edited(bone) {
+            if selective && session.edited(bone) && session.pose.enabled[bone] {
                 continue;
             }
             let rotation = Quat::from_array(joint.rotation).normalize();

@@ -13,7 +13,7 @@ pub(crate) struct Pose {
     /// undo restores it with the rotations. Port of FSJointState::mBaseRotation
     /// (indra/newview/fsjointpose.h).
     pub origin: Vec<Quat>,
-    /// Joints left to their live animation instead of this local pose.
+    /// True for posed joints; false leaves rotation and position to live animation.
     pub enabled: Vec<bool>,
 }
 impl Pose {
@@ -78,6 +78,9 @@ impl Pose {
         positions: &[Vec3],
         pelvis_offset: Vec3,
     ) -> Vec<Mat4> {
+        // Live channels take priority over pins. A pinned child can drift below
+        // an animated ancestor: solving again could pose that off ancestor or
+        // detach the shaped parent offsets. See docs/POSER.md.
         let mut pose = self.resolved(rig, model);
         for bone in 0..rig.len() {
             if !self.enabled[bone] && bone < rotations.len() && bone < positions.len() {

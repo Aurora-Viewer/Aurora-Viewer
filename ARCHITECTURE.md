@@ -1162,6 +1162,10 @@ the same solver; only an unparented root may translate freely.
 Per-subject immutable pose snapshots
 override the final animation palette with local rotations, positions, scales
 and optional world locks; owned animesh use their actual skeleton model.
+Per-joint enabled flags choose pose or final animated/IK-corrected rotation
+and position. Animation takes priority after pin resolution, so a pinned
+child can drift below an ancestor following animation; solving that pin
+again must not overwrite the off ancestor or detach shaped parent offsets.
 Posed subjects bypass automatic grounding/body physics and remain fully
 updated when ordinary avatars would use impostors. Eligibility is checked
 every frame. Closing releases poses by default, with an explicit keep option.

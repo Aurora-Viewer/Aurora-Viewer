@@ -13222,3 +13222,6 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 poser-joint-pose = Poser cette articulation
+poser-joint-pose-tip = Désactivez pour laisser l’animation actuelle déplacer cette articulation.
+poser-joint-off = Suit l’animation
+poser-world-lock-animation-tip = Une articulation épinglée sous une articulation animée peut se déplacer avec l’animation.

@@ -49,7 +49,7 @@ pub(super) fn encode(rig: &Rig, pose: &SubjectPose, unlock_pelvis: bool) -> Resu
     for frame in 0..3 {
         for &bone in &order {
             if bone == rig.pelvis {
-                let p = if unlock_pelvis && frame > 0 {
+                let p = if unlock_pelvis && pose.enabled[bone] && frame > 0 {
                     basis.inverse() * (pose.positions[bone] - rig.local_pos[bone]) / 0.0254
                 } else {
                     Vec3::ZERO
