@@ -403,7 +403,8 @@ impl Default for InventoryPreferences {
             show_recent: true,
             show_worn: true,
             show_favorites: true,
-            show_hover_tooltips: true,
+            // off until a better hover card replaces it
+            show_hover_tooltips: false,
             thumbnail_tooltips: true,
             separate_searches: false,
             double_click_add_objects: false,
