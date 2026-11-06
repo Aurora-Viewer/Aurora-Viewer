@@ -100,10 +100,37 @@ pub(crate) fn worn_image_rights(item: &InvItem, agent: Uuid) -> bool {
     worn_image_filter(item, agent) && item.base_mask & UNRESTRICTED == UNRESTRICTED
 }
 
-/// Whether the prim `idx` is worn and its faces must refuse the texture
-/// `item`, even one its contents already hold.
-pub(crate) fn worn_image_refused(world: &World, idx: usize, item: &InvItem) -> bool {
-    item.asset_type == AT_TEXTURE && linkset(world, idx).is_some_and(|(_, worn)| worn) && !worn_image_rights(item, world.agent_id)
+/// Whether the agent may put `item` on a worn object's face: an image on
+/// `worn_image_rights`, a material on unrestricted base rights and the
+/// transfer check of willObjectAcceptInventory (an item of the agent, or one
+/// the agent may transfer), which dad3dApplyToObject asks before
+/// dropMaterial.
+pub(crate) fn worn_rights(item: &InvItem, agent: Uuid) -> bool {
+    if item.asset_type != AT_MATERIAL {
+        return worn_image_rights(item, agent);
+    }
+    let own = item.owner == agent && !item.group_owned;
+    item.base_mask & UNRESTRICTED == UNRESTRICTED && (own || agent_mask(item, agent) & rules::TRANSFER != 0)
+}
+
+/// Whether the prim `idx` is worn and its faces must refuse the texture or
+/// material `item`, even one its contents already hold: the Legacy Viewer
+/// asks willObjectAcceptInventory before it looks at the contents
+/// (dad3dApplyToObject, then handleDropMaterialProtections). Every path that
+/// applies an inventory item to a face asks it: the Texture tab's drop, the
+/// world drop, the picker's apply and the library's selection.
+pub(crate) fn worn_refused(world: &World, idx: usize, item: &InvItem) -> bool {
+    linkset(world, idx).is_some_and(|(_, worn)| worn) && !worn_rights(item, world.agent_id)
+}
+
+/// What a refusal of `worn_refused` says: the immediate filter's reason for
+/// an image it stops (TooltipTextureRestrictedDrop), the surface's otherwise.
+pub(crate) fn worn_refusal_text(item: &InvItem, agent: Uuid) -> &'static str {
+    if item.asset_type != AT_MATERIAL && !worn_image_filter(item, agent) {
+        aurora_i18n::tr!("build-ui-texture-drop-restricted")
+    } else {
+        aurora_i18n::tr!("texture-library-locked")
+    }
 }
 
 /// The root of the prim `idx`'s linkset, and whether it is worn (its root

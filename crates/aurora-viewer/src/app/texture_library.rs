@@ -893,7 +893,7 @@ impl App {
                 aurora_i18n::tr!("texture-library-locked")
             });
         }
-        let worn_refused = !ctrl && allowed && target.is_some_and(|(idx, _)| contents_drop::worn_image_refused(&self.world, idx, item));
+        let worn_refused = !ctrl && allowed && target.is_some_and(|(idx, _)| contents_drop::worn_refused(&self.world, idx, item));
         // dad3dApplyToObject: a texture without copy and transfer has nowhere
         // to go when every face it covers carries a material
         let pbr_refused = !ctrl
@@ -906,9 +906,9 @@ impl App {
                     !crate::build::BuildTool::surface_takes_texture(&self.world, prim, &faces, override_ok, self.alt)
                 })
             });
-        if worn_refused && contents_drop::worn_image_filter(item, self.world.agent_id) {
-            reason = Some(aurora_i18n::tr!("texture-library-locked"));
-        } else if worn_refused || pbr_refused {
+        if worn_refused {
+            reason = Some(contents_drop::worn_refusal_text(item, self.world.agent_id));
+        } else if pbr_refused {
             reason = Some(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
         } else if allowed
             && let Some((idx, _)) = target
@@ -1112,6 +1112,14 @@ impl App {
             );
             return;
         }
+        // Before the contents: what an attachment holds does not change its rule.
+        if targets.iter().any(|(idx, _)| contents_drop::worn_refused(&self.world, *idx, &item)) {
+            self.world.system_notice(
+                contents_drop::worn_refusal_text(&item, self.world.agent_id),
+                crate::world::notice_topics::Topic::Items,
+            );
+            return;
+        }
         let mut waiting = false;
         if requires_contents(&self.world.inventory, &item, self.world.agent_id) {
             for (idx, _) in &targets {
@@ -1126,7 +1134,6 @@ impl App {
                         .iter()
                         .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
                 }) && super::inventory_drag::target_allowed(&self.world, *idx, &item, true).is_err()
-                    || contents_drop::worn_image_refused(&self.world, *idx, &item)
                 {
                     self.world.system_notice(
                         aurora_i18n::tr!("texture-library-locked"),
@@ -1169,7 +1176,7 @@ impl App {
         if asset.is_nil() || !contents && !self.build.can_modify(&self.world, idx) {
             return false;
         }
-        if !contents && contents_drop::worn_image_refused(&self.world, idx, item) {
+        if !contents && contents_drop::worn_refused(&self.world, idx, item) {
             return false;
         }
         let override_ok = item.asset_type == 57 || crate::build::texture_copy::map_slot_takes(item, self.world.agent_id);

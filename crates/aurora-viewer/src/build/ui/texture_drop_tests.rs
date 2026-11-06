@@ -184,15 +184,15 @@ fn a_worn_object_refuses_a_texture_without_unrestricted_base_rights() {
         }
     }
     let idx = sel[0].idx;
-    assert!(!contents_drop::worn_image_refused(&w, idx, &item(&w, TEXTURE)));
+    assert!(!contents_drop::worn_refused(&w, idx, &item(&w, TEXTURE)));
     for refused in [NO_MODIFY_TEXTURE, NO_COPY_TEXTURE, NO_TRANSFER_TEXTURE] {
-        assert!(contents_drop::worn_image_refused(&w, idx, &item(&w, refused)), "{refused}");
+        assert!(contents_drop::worn_refused(&w, idx, &item(&w, refused)), "{refused}");
     }
     // the base rights count even when the agent's own rights are complete
     let mut base_limited = item(&w, TEXTURE);
     base_limited.base_mask &= !rules::MODIFY;
     assert!(contents_drop::worn_image_filter(&base_limited, w.agent_id));
-    assert!(contents_drop::worn_image_refused(&w, idx, &base_limited));
+    assert!(contents_drop::worn_refused(&w, idx, &base_limited));
     assert_eq!(contents_drop::accepts(&w, idx, &no_modify), Err("rez-contents-denied"));
 }
 
@@ -207,7 +207,27 @@ fn a_worn_object_you_cannot_modify_refuses_every_texture() {
         allowed(&w, &sel, PickTarget::Diffuse, &item(&w, NO_MODIFY_TEXTURE)),
         Err(Refusal::Object)
     );
-    assert!(!contents_drop::worn_image_refused(&w, sel[0].idx, &item(&w, TEXTURE)));
+    assert!(!contents_drop::worn_refused(&w, sel[0].idx, &item(&w, TEXTURE)));
+}
+
+/// The material slot on a worn object: unrestricted base rights, like an
+/// image, whatever the object's contents hold.
+#[test]
+fn a_worn_object_takes_only_a_material_with_unrestricted_base_rights() {
+    let (mut w, sel) = world();
+    wear(&mut w, sel[0].idx);
+    let mut material = item(&w, MATERIAL);
+    assert_eq!(allowed(&w, &sel, PickTarget::PbrMaterial, &material), Ok(()));
+    assert!(!contents_drop::worn_refused(&w, sel[0].idx, &material));
+    for missing in [rules::MODIFY, rules::COPY, rules::TRANSFER] {
+        material.base_mask = contents_drop::UNRESTRICTED & !missing;
+        assert_eq!(
+            allowed(&w, &sel, PickTarget::PbrMaterial, &material),
+            Err(Refusal::Object),
+            "{missing:#x}"
+        );
+        assert!(contents_drop::worn_refused(&w, sel[0].idx, &material), "{missing:#x}");
+    }
 }
 
 #[test]

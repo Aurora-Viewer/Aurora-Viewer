@@ -352,6 +352,37 @@ fn a_worn_object_takes_an_image_with_copy_transfer_and_unrestricted_base_rights(
     assert!(tool.out.is_empty(), "nothing goes into a worn object's contents");
 }
 
+/// dad3dApplyToObject asks willObjectAcceptInventory before
+/// handleDropMaterialProtections looks at the contents: a material without
+/// unrestricted base rights stays off a worn object even when its contents
+/// already hold it.
+#[test]
+fn a_restricted_material_already_in_a_worn_objects_contents_is_refused() {
+    let (mut w, a) = world();
+    let avatar = w.objects.index_of_uuid(&w.agent_id).expect("the agent's avatar");
+    let avatar_id = w.objects.get(avatar).expect("the agent's avatar").key.local_id;
+    let o = w.objects.get_mut(a).expect("object");
+    o.parent_id = avatar_id;
+    o.state = 1;
+    let object = o.full_id;
+    let id = give(&mut w, 1, ASSET, rules::COPY | rules::TRANSFER);
+    let item = w.inventory.items.get_mut(&id).expect("item");
+    item.asset_type = AT_MATERIAL;
+    item.inv_type = AT_MATERIAL;
+    item.base_mask = rules::COPY | rules::TRANSFER;
+    let material = item.clone();
+    let mut tool = BuildTool::default();
+    tool.contents_ready(&w, a);
+    tool.on_task_inventory(&w, object, Some(1), vec![task_inventory::from_inventory(object, &material)]);
+    assert!(tool.holds(&w, a, &material), "the contents hold it");
+    assert!(contents_drop::worn_refused(&w, a, &material));
+    assert_eq!(tool.admit_item(&mut w, id, &[a]), Err(aurora_i18n::tr!("texture-library-locked")));
+    // the same material with every base right goes on
+    w.inventory.items.get_mut(&id).expect("item").base_mask = FULL;
+    assert!(!contents_drop::worn_refused(&w, a, &w.inventory.items[&id]));
+    assert_eq!(tool.admit_item(&mut w, id, &[a]), Ok(()));
+}
+
 #[test]
 fn pbr_controls_edit_with_modify_on_the_object_and_its_material_item() {
     let (mut w, idx) = world();
