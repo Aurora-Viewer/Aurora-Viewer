@@ -2763,7 +2763,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-render/src/adapter_choice.rs` | Which GPU the renderer opens (#894): every Vulkan adapter listed with its type, memory and whether it can present, then tried in order (the one asked for by `AURORA_GPU` or Preferences › Graphics, then discrete before integrated, the most video memory first), the next one if one fails to open; the log hint when only an integrated GPU is visible. The hybrid-GPU exports `NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance` are in aurora-viewer's `main.rs` (export table: `build.rs`) |
 | `aurora-render/src/vulkan_drivers.rs` | Vulkan drivers kept out of the process: Dozen (Vulkan on Direct3D 12, Microsoft's compatibility pack), which crashed an old AMD Direct3D 12 driver inside `vkCreateInstance`, through `VK_LOADER_DRIVERS_DISABLE=*dzn*` set at the start of `main` unless the user chose the drivers; let back in by the renderer when no adapter is left without it; `AURORA_VULKAN_DRIVERS=keep` to load it |
 | `aurora-render/src/vulkan_layers.rs` | Third-party implicit Vulkan layers kept out of the process: those that crash (Overwolf's, in `vkCreateInstance`, #901) always, the other overlays' (OBS Studio's game capture, Steam overlay, RivaTuner, Epic…) unless Preferences › Graphics › Overlays allows them (`Settings::allow_overlays_at_start`, read before any thread); their manifests' disable variables set at the start of `main`; ReShade and the drivers' layers kept; `AURORA_VULKAN_LAYERS=keep` to load them all |
-| `overlay_hooks.rs` | Overlay and capture hooks other programs inject into the running viewer (Discord's `DiscordHook64.dll`, the Steam overlay, RivaTuner, OBS game capture), which the viewer cannot refuse: a background thread lists the process's modules every 10 s and writes one warning per hook that appears, with what to turn off if the image is lost, and notes it for the crash report (`overlay-hooks.txt`) |
+| `overlay_hooks.rs` | Overlay and capture hooks other programs inject into the running viewer (Discord's legacy `DiscordHook64.dll`, Steam, RivaTuner, OBS, Medal, NVIDIA Share, FPS Monitor and Bandicam; the revamped Discord overlay is not a game hook), which the viewer cannot refuse: a background thread lists the process's modules every 10 s and writes one warning per hook that appears, with what to turn off if the image is lost, and notes it for the crash report (`overlay-hooks.txt`) |
 
 `scene/sounds.rs` keeps attached HUD sounds at the audio listener, including
 linked HUD prims, following `LLAudioSourceVO::update`. They share the Sfx
@@ -3792,6 +3792,19 @@ process (`overlay_hooks.rs`) is added to `overlay-hooks.txt`, which the report
 names as "Overlay hooks" (checked again against the fixed list). A session ended with one of these files, or a
 GPU device loss in its log, leaves a `gpu-trouble` mark in the crash root, consumed by
 the next start (`crash::take_gpu_trouble`) to offer the safe graphics.
+
+`environment.rs` records bounded process facts at session start and again
+when a confirmed GPU device loss is handled. Linux module basenames and power
+profile come from `/proc/self/maps` and sysfs; Windows uses ToolHelp, GDI,
+DisplayConfig and the system power APIs. Windows module metadata includes
+numeric file versions and cached signature categories. Windows display modes
+and HDR state are queried by the collector; other platforms use the numeric
+winit display snapshot. Active VRR state is unavailable through these APIs
+and remains explicitly unknown. The private session JSON has module basenames and fixed
+classification words, never module paths or process command lines. The public
+report filters those facts again and shows third-party module names, known
+overlay process labels, display classes and refresh rates, HDR/VRR when known,
+and a fixed power-plan category.
 
 `summary.rs` builds the public text of a crash report (`public-report.md` in
 the session folder, written before the window opens): only values of a known
