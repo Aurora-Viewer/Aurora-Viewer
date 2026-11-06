@@ -13,6 +13,7 @@ use super::actions::FULL;
 use std::collections::HashSet;
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// How a hidden id starts in a text (`dev_toolbox::legend` reads it back).
@@ -20,33 +21,59 @@ pub const HIDDEN: &str = "hidden-";
 /// Hex digits of the tag after [`HIDDEN`].
 pub const TAG_LEN: usize = 8;
 
+/// How long the windows that redraw every frame keep a set built for an
+/// older inventory (`Inventory::recent_full_permission_assets`).
+const RECENT: Duration = Duration::from_millis(500);
+
 /// The full-permission assets of the inventory, built again when the
 /// inventory changes.
 #[derive(Default)]
 pub(crate) struct Cache {
-    snapshot: Mutex<Option<((u64, usize), Arc<HashSet<Uuid>>)>>,
+    snapshot: Mutex<Option<Snapshot>>,
+}
+
+struct Snapshot {
+    key: (u64, usize),
+    set: Arc<HashSet<Uuid>>,
+    built: Instant,
 }
 
 impl Inventory {
     /// The assets an item of the inventory holds with full permissions:
     /// one scan per inventory change, then a lookup per id.
     pub fn full_permission_assets(&self) -> Arc<HashSet<Uuid>> {
+        self.full_permission_assets_within(Duration::ZERO)
+    }
+
+    /// As [`Self::full_permission_assets`], for a window drawn every frame:
+    /// while the inventory keeps changing (the load at login changes it
+    /// almost every frame), the set is built again at most every
+    /// [`RECENT`], so one such frame scans the inventory, not each.
+    pub fn recent_full_permission_assets(&self) -> Arc<HashSet<Uuid>> {
+        self.full_permission_assets_within(RECENT)
+    }
+
+    fn full_permission_assets_within(&self, age: Duration) -> Arc<HashSet<Uuid>> {
         let key = (self.generation, self.items.len());
         let mut cached = self.full_assets.snapshot.lock().unwrap_or_else(PoisonError::into_inner);
-        match cached.as_ref() {
-            Some((k, set)) if *k == key => set.clone(),
-            _ => {
-                let set: Arc<HashSet<Uuid>> = Arc::new(
-                    self.items
-                        .values()
-                        .filter(|it| it.owner_mask & FULL == FULL && !it.asset_id.is_nil())
-                        .map(|it| it.asset_id)
-                        .collect(),
-                );
-                *cached = Some((key, set.clone()));
-                set
-            }
+        if let Some(snapshot) = cached.as_ref()
+            && (snapshot.key == key || snapshot.built.elapsed() < age)
+        {
+            return snapshot.set.clone();
         }
+        let set: Arc<HashSet<Uuid>> = Arc::new(
+            self.items
+                .values()
+                .filter(|it| it.owner_mask & FULL == FULL && !it.asset_id.is_nil())
+                .map(|it| it.asset_id)
+                .collect(),
+        );
+        *cached = Some(Snapshot {
+            key,
+            set: set.clone(),
+            built: Instant::now(),
+        });
+        set
     }
 }
 
@@ -132,6 +159,18 @@ impl AssetIds {
         Self::new(&world.inventory, world.local_assets.keys().copied(), demo_mode())
     }
 
+    /// [`Self::of`] for a window that takes it every frame (the explorers,
+    /// the blacklist, a tooltip): an inventory change shows within
+    /// [`RECENT`] (`Inventory::recent_full_permission_assets`).
+    pub fn per_frame(world: &crate::world::World) -> Self {
+        Self {
+            full: world.inventory.recent_full_permission_assets(),
+            local: world.local_assets.keys().copied().collect(),
+            every: demo_mode(),
+            restricted: false,
+        }
+    }
+
     /// The rule for the Dev Toolbox's texts, which are mostly textures: as
     /// [`Self::of`], and built-in ids only while RLVa @viewtexture holds.
     pub fn diagnostics(world: &crate::world::World) -> Self {
@@ -208,6 +247,28 @@ mod tests {
     }
 
     #[test]
+    fn a_window_drawn_every_frame_keeps_a_recent_set_while_the_inventory_changes() {
+        let mut inv = Inventory::default();
+        let asset = Uuid::from_u128(0x65);
+        item(&mut inv, 1, asset, FULL);
+        assert!(
+            inv.recent_full_permission_assets().contains(&asset),
+            "the first set is built at once"
+        );
+        inv.items.remove(&Uuid::from_u128(1));
+        inv.generation += 1;
+        assert!(
+            inv.recent_full_permission_assets().contains(&asset),
+            "built again after RECENT only"
+        );
+        assert!(
+            !inv.full_permission_assets().contains(&asset),
+            "a text takes the inventory as it is"
+        );
+        assert!(!inv.recent_full_permission_assets().contains(&asset), "and the windows follow it");
+    }
+
+    #[test]
     fn a_hidden_id_keeps_its_tag_and_leaves_nothing_of_the_id() {
         let inv = Inventory::default();
         let ids = AssetIds::new(&inv, [], false);
@@ -233,5 +294,102 @@ mod tests {
         };
         assert!(!ids.shown(&asset) && !ids.shown(&Uuid::from_u128(0x82)));
         assert!(ids.shown(&aurora_prim::te::TRANSPARENT_TEXTURE));
+    }
+
+    /// Timings of the rule on a 50,000-item inventory, for the release
+    /// build: `cargo test --release --workspace asset_id_rule_timings --
+    /// --ignored --nocapture`.
+    #[test]
+    #[ignore = "timing, run by hand in release"]
+    fn asset_id_rule_timings() {
+        use std::hint::black_box;
+        let mut inv = Inventory::default();
+        for n in 0..50_000u128 {
+            let mask = if n % 3 == 0 { FULL } else { COPY | TRANSFER };
+            inv.items.insert(
+                Uuid::from_u128(n + 1),
+                InvItem {
+                    id: Uuid::from_u128(n + 1),
+                    asset_id: Uuid::from_u128(0x1_0000_0000 + n),
+                    owner_mask: mask,
+                    ..Default::default()
+                },
+            );
+        }
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let mut rebuilds: Vec<_> = (0..50)
+            .map(|_| {
+                inv.generation += 1;
+                let start = Instant::now();
+                black_box(inv.full_permission_assets());
+                start.elapsed()
+            })
+            .collect();
+        rebuilds.sort();
+        println!(
+            "full_permission_assets rebuild, 50k items: median {:.3} ms, max {:.3} ms",
+            ms(rebuilds[25]),
+            ms(rebuilds[49])
+        );
+        // the load at login: the inventory changes every frame, a frame
+        // every 1/120 s, for two seconds
+        for (name, recent) in [("every frame", false), ("per_frame (RECENT)", true)] {
+            let (mut total, mut max, mut over) = (Duration::ZERO, Duration::ZERO, 0);
+            let frames = 240;
+            for _ in 0..frames {
+                inv.generation += 1;
+                let start = Instant::now();
+                black_box(if recent {
+                    inv.recent_full_permission_assets()
+                } else {
+                    inv.full_permission_assets()
+                });
+                let took = start.elapsed();
+                total += took;
+                max = max.max(took);
+                over += usize::from(took > Duration::from_micros(100));
+                std::thread::sleep(Duration::from_micros(8333));
+            }
+            println!(
+                "inventory changing each frame, {name}: mean {:.4} ms a frame, max {:.3} ms, {over} of {frames} frames over 0.1 ms",
+                ms(total) / frames as f64,
+                ms(max)
+            );
+        }
+        let local: Vec<_> = (0..10u128).map(|n| Uuid::from_u128(0x2_0000_0000 + n)).collect();
+        for (name, local) in [("no local texture", &local[..0]), ("10 local textures", &local[..])] {
+            let calls = 10_000;
+            let start = Instant::now();
+            for _ in 0..calls {
+                black_box(AssetIds::new(&inv, local.iter().copied(), false).shown(&Uuid::from_u128(0x1_0000_0003)));
+            }
+            println!(
+                "AssetIds unchanged inventory, {name}: {:.4} ms a call",
+                ms(start.elapsed()) / calls as f64
+            );
+        }
+        let ids = AssetIds::new(&inv, [], false);
+        let calls = 100_000u128;
+        let start = Instant::now();
+        for n in 0..calls {
+            black_box(ids.shown(&Uuid::from_u128(0x4_0000_0000 + n)));
+        }
+        println!(
+            "shown, an id that is not built in: {:.5} ms a call",
+            ms(start.elapsed()) / calls as f64
+        );
+        let start = Instant::now();
+        for _ in 0..20 {
+            black_box(crate::ui::inventory::thumbnail::image_source_allowed(
+                &inv,
+                &Uuid::from_u128(0x3_0000_0000),
+                false,
+                false,
+            ));
+        }
+        println!(
+            "item image source check, 50k items, id not found: {:.3} ms a call",
+            ms(start.elapsed()) / 20.0
+        );
     }
 }

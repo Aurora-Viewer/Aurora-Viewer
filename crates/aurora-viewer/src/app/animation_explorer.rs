@@ -190,7 +190,7 @@ impl App {
     fn animation_rows(&mut self) -> Vec<Row> {
         let entries: Vec<_> = self.world.animation_log.entries().rev().copied().collect();
         let mut rows = Vec::with_capacity(entries.len());
-        let ids = crate::world::inventory::asset_ids::AssetIds::of(&self.world);
+        let ids = crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world);
         for entry in entries {
             let own = entry.source == self.world.agent_id;
             let object = self

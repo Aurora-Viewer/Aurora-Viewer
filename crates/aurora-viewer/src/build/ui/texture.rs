@@ -548,7 +548,7 @@ fn material_asset(
         );
         // the material's id when the asset id rule allows it, as the picker
         let tip = match asset {
-            Some(id) if response.hovered() && crate::world::inventory::asset_ids::AssetIds::of(world).shown(&id) => id.to_string(),
+            Some(id) if response.hovered() && crate::world::inventory::asset_ids::AssetIds::per_frame(world).shown(&id) => id.to_string(),
             _ => caption.to_string(),
         };
         if response.on_hover_text(tip).clicked() {
