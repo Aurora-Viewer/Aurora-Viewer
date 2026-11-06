@@ -1059,7 +1059,7 @@ fn friend_menu(
     if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport")) {
         st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
-    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+    if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), world.rlva_can_pay()) {
         context::request(ui.ctx(), CtxAction::PayResident(id));
     }
     menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
@@ -1231,7 +1231,7 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
         p,
         aurora_i18n::tr!("common-profile"),
         aurora_i18n::tr!("ui-contacts-show-their-picture-groups-and-other-useful-information"),
-        n == 1,
+        n == 1 && world.rlva_can_pay(),
     ) {
         actions.push(ContactsAction::Profile(sel[0]));
     }
