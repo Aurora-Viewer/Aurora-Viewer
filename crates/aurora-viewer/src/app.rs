@@ -4587,11 +4587,12 @@ impl App {
             .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
             .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
-        // on our avatar (scene/self_click.rs), unless an attachment of
+        // on our avatar: its body or what it wears under the cursor, with
+        // nothing in front (scene/self_click.rs), unless an attachment of
         // another resident with an action is where the click landed
         let avatar_hit = ray
             .filter(|_| shown.is_none_or(|d| !d.blend))
-            .and_then(|ray| self.scene.own_avatar_click(&self.world, ray, hit, alt));
+            .and_then(|ray| self.scene.own_avatar_click(&self.world, ray, hit, &picked.drawn, alt));
         // or on our name tag
         let avatar_hit = avatar_hit.or_else(|| {
             let (idx, p) = self.pick_name_tag(hit, ray)?;
