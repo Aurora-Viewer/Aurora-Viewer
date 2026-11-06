@@ -231,6 +231,11 @@ fn frames_per_second(cx: &mut Cx) {
             tr!("ui-options-pause-when-card-busy-tip"),
             &field!(background_gpu_pause),
         );
+        cx.unfolded().toggle(
+            tr!("ui-options-gpu-recovery"),
+            tr!("ui-options-gpu-recovery-tip"),
+            &field!(gpu_recovery),
+        );
     });
 }
 

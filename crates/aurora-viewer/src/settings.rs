@@ -1244,6 +1244,10 @@ pub struct Settings {
     /// again, before Windows resets the card (app/busy_pause.rs). On by
     /// default; not in the Legacy Viewer.
     pub background_gpu_pause: bool,
+    /// After a GPU device loss (a driver reset of the card, often caused
+    /// by another program), a new window and device instead of closing
+    /// (app/gpu_recovery.rs). On by default; the Legacy Viewer closes.
+    pub gpu_recovery: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
@@ -2060,6 +2064,7 @@ impl Default for Settings {
             background_fps_cap: true,
             background_fps_limit: 15,
             background_gpu_pause: true,
+            gpu_recovery: true,
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
