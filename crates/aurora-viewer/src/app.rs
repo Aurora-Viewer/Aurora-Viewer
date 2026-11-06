@@ -98,6 +98,7 @@ mod land_rights;
 mod link_health;
 mod login_favorites;
 mod marketplace_listings;
+mod media_pack;
 mod money_tracker;
 mod monitor;
 mod movement;
@@ -1267,6 +1268,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
         settings.antialiasing = v;
     }
+    if let Some(v) = std::env::var("AURORA_FSR_QUALITY").ok().and_then(|v| v.parse::<u8>().ok()) {
+        settings.fsr_quality = v.min(4);
+    }
     if let Some(v) = std::env::var("AURORA_RENDER_SCALE").ok().and_then(|v| v.parse::<u32>().ok()) {
         settings.render_scale_percent = v.clamp(50, 100);
     }
@@ -1336,7 +1340,9 @@ impl App {
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let updater = crate::updater::Updater::new(net.runtime(), settings.update_channel);
-        let plugin_pack = crate::media::pack::PluginPack::new(crate::settings::media_plugins_dir());
+        let plugin_pack = crate::media::pack::PluginPack::new(crate::settings::media_plugins_dir(), settings.media.pack_consent);
+        // a pack downloaded before the consent card existed counts as a yes
+        settings.media.pack_consent = plugin_pack.consent();
         let mut media = crate::media::MediaManager::default();
         media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
@@ -1351,6 +1357,13 @@ impl App {
             aurora_net::objcache::name_with(crate::cache::key().names());
             crate::cache::remove_unsealed(crate::settings::cache_dir());
             crate::cache::rename_to_keyed_names(crate::settings::asset_cache_dir());
+        }
+        // the photos of the sessions that ended without deleting them
+        let spawned = std::thread::Builder::new()
+            .name("aurora-photo-reel-sweep".into())
+            .spawn(|| crate::snapshot::reel::sweep_leftovers(&crate::settings::cache_dir()));
+        if let Err(e) = spawned {
+            log::warn!("photo reel: cannot start its sweep: {e}");
         }
         let cache = crate::settings::asset_cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);
@@ -4772,7 +4785,7 @@ impl App {
             log::info!(
                 "demo action pick: hit={hit:?}, avatar={on_avatar}, picked={:?}",
                 hit.zip(ray)
-                    .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                    .and_then(|(p, r)| self.scene.left_interaction_at_ray(&self.world, p, r, true))
                     .and_then(|i| self.world.objects.get(i))
                     .map(|o| (o.key.local_id, o.click_action))
             );
@@ -4807,7 +4820,7 @@ impl App {
             && !self.camera.mouselook()
             && let Some(point) = hit
             && let Some(pick_ray) = ray
-            && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, pick_ray, true)
+            && let Some(idx) = self.scene.left_interaction_at_ray(&self.world, point, pick_ray, true)
             && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
@@ -8711,10 +8724,13 @@ impl App {
             return;
         }
         // Aurora's media plugins: downloaded once, when none are found (the
-        // web pages of the profiles need them even with media disabled)
+        // web pages of the profiles need them even with media disabled), and
+        // only once the user agreed (the card of `ui::media_pack`, or a
+        // Download button of the preferences, of a page or of the media
+        // controls)
         let plugins_wanted = self.media.plugins(&self.settings.media).is_none();
-        if std::mem::take(&mut self.options_ui.media_pack_retry) {
-            self.plugin_pack.retry(self.net.runtime());
+        if std::mem::take(&mut self.options_ui.media_pack_download) | ui::web_view::take_plugins_download(&self.egui_ctx) {
+            self.media_pack_answer(true);
         }
         if self.plugin_pack.poll(plugins_wanted, self.net.runtime()) {
             self.media.set_pack_dir(self.plugin_pack.dir());
@@ -10018,9 +10034,11 @@ impl App {
                 self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer, &ids);
             }
             self.finish_describe(&gfx.renderer);
-            let texture_budget = self
-                .settings
-                .texture_budget(gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
+            let texture_budget = self.settings.texture_budget(
+                gfx.renderer.info.dedicated_mb,
+                gfx.renderer.info.shared_mb,
+                gfx.renderer.info.integrated,
+            );
             self.scene
                 .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024, frame_time);
         }
@@ -11033,7 +11051,7 @@ impl App {
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
         let mut textures = std::mem::take(&mut full.textures_delta);
-        if gpu_recovery::enabled() {
+        if gpu_recovery::shadow_kept() {
             self.egui_shadow.note(&textures);
         }
         if std::mem::take(&mut self.egui_replay) {
@@ -12603,7 +12621,7 @@ impl App {
                             && let Some(inv) = self.build.contents.objects.get(&object)
                         {
                             let mut items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).collect();
-                            items.sort_by_key(|it| it.name.to_lowercase());
+                            items.sort_by_key(|it| crate::natural_order::key(&it.name));
                             let ids: Vec<_> = items.iter().take(if rename { 1 } else { 2 }).map(|it| it.item_id).collect();
                             self.build.ui.contents_selection.items = ids.iter().copied().collect();
                             if rename && let Some(id) = ids.first() {
@@ -12737,7 +12755,7 @@ impl App {
                             && let Some(inv) = self.build.contents.objects.get(&object)
                         {
                             let mut items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).cloned().collect();
-                            items.sort_by_key(|it| it.name.to_lowercase());
+                            items.sort_by_key(|it| crate::natural_order::key(&it.name));
                             self.build.ui.contents_selection.items = items.iter().map(|it| it.item_id).collect();
                             // what a drop of the selection on the folder sends (task_drop::target)
                             for item in items {
@@ -13269,6 +13287,13 @@ impl App {
             LoginAction::CopyVersion => self.copy_version(),
             LoginAction::SafeGraphics(choice) => self.safe_graphics_choice(choice),
             LoginAction::PhotoQualityOff(back_on) => self.photo_quality_off_answer(back_on),
+            LoginAction::CameraLimits(open) => {
+                self.login_form.camera_limits_restored = false;
+                if open {
+                    ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+                    self.options_ui.open_camera_limits();
+                }
+            }
             LoginAction::DismissDriverNotice => {
                 if let Some(notice) = self.login_form.driver_notice.take() {
                     log::info!("graphics driver warning dismissed for {}", notice.key);
@@ -14882,6 +14907,7 @@ impl App {
             self.interface.set_hidden(&ctx, false);
         }
         self.busy_pause_notice(&ctx, &p);
+        self.media_pack_card(&ctx, &p);
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {
@@ -17711,9 +17737,9 @@ impl ApplicationHandler for App {
             };
             let level = crate::graphics_presets::Preset::for_machine(renderer.info.integrated, renderer.info.vram_mb, system_mb);
             log::info!(
-                "new profile: graphics level {level:?} (integrated {}, video memory {:?} MB, system memory {:?} MB)",
+                "new profile: graphics level {level:?} (integrated {}, video memory {}, system memory {:?} MB)",
                 renderer.info.integrated,
-                renderer.info.vram_mb,
+                renderer.info.memory_label(),
                 system_mb
             );
             level.apply(&mut self.settings);
@@ -17725,6 +17751,11 @@ impl ApplicationHandler for App {
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
         self.photo_quality_at_start();
+        // version 33 of the settings turned the camera's limits back on:
+        // said once on the login screen (`AURORA_DEMO_CAMERA_LIMITS=1` shows
+        // the card in demo, without changing a setting)
+        self.login_form.camera_limits_restored = std::mem::take(&mut self.settings.camera_limits_restored)
+            || (self.demo && std::env::var_os("AURORA_DEMO_CAMERA_LIMITS").is_some());
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
         self.gfx = Some(Gfx {

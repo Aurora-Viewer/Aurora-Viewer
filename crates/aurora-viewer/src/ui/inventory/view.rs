@@ -6,6 +6,7 @@
 
 use super::smart::{Field as SmartField, Matcher, Subject};
 use super::{Facts, Inventory, folder_name, rules};
+use crate::natural_order::cmp_folded;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -253,7 +254,7 @@ pub fn picker_order(ctx: &egui::Context, inv: &Inventory) -> std::sync::Arc<Pick
 }
 
 pub fn picker_name_cmp(a: &str, b: &str) -> Ordering {
-    natural_cmp(&a.to_lowercase(), &b.to_lowercase())
+    cmp_folded(&a.to_lowercase(), &b.to_lowercase())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -352,6 +353,7 @@ pub struct InventoryPreferences {
     pub show_recent: bool,
     pub show_worn: bool,
     pub show_favorites: bool,
+    pub show_hover_tooltips: bool,
     pub thumbnail_tooltips: bool,
     pub separate_searches: bool,
     pub double_click_add_objects: bool,
@@ -402,6 +404,8 @@ impl Default for InventoryPreferences {
             show_recent: true,
             show_worn: true,
             show_favorites: true,
+            // off until a better hover card replaces it
+            show_hover_tooltips: false,
             thumbnail_tooltips: true,
             separate_searches: false,
             double_click_add_objects: false,
@@ -1190,47 +1194,12 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
     groups
         .then_with(|| {
             if by_name {
-                natural_cmp(&a.name, &b.name).then_with(|| b.date.cmp(&a.date))
+                cmp_folded(&a.name, &b.name).then_with(|| b.date.cmp(&a.date))
             } else {
-                b.date.cmp(&a.date).then_with(|| natural_cmp(&a.name, &b.name))
+                b.date.cmp(&a.date).then_with(|| cmp_folded(&a.name, &b.name))
             }
         })
         .then_with(|| a.id.cmp(&b.id))
-}
-
-/// Dictionary order: numeric runs compare numerically ("2" before "10").
-fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let (mut a, mut b) = (a.as_bytes(), b.as_bytes());
-    while let (Some(&x), Some(&y)) = (a.first(), b.first()) {
-        if x.is_ascii_digit() && y.is_ascii_digit() {
-            let (an, bn) = (
-                a.iter().take_while(|c| c.is_ascii_digit()).count(),
-                b.iter().take_while(|c| c.is_ascii_digit()).count(),
-            );
-            let (av, bv) = (&a[..an], &b[..bn]);
-            let (az, bz) = (
-                av.iter().take_while(|c| **c == b'0').count(),
-                bv.iter().take_while(|c| **c == b'0').count(),
-            );
-            let order = (an - az)
-                .cmp(&(bn - bz))
-                .then_with(|| av[az..].cmp(&bv[bz..]))
-                .then_with(|| an.cmp(&bn));
-            if order != Ordering::Equal {
-                return order;
-            }
-            a = &a[an..];
-            b = &b[bn..];
-        } else {
-            let order = x.cmp(&y);
-            if order != Ordering::Equal {
-                return order;
-            }
-            a = &a[1..];
-            b = &b[1..];
-        }
-    }
-    a.len().cmp(&b.len())
 }
 
 fn matches_text(value: &str, query: &str) -> bool {
@@ -1611,7 +1580,7 @@ mod tests {
         cache.prepare(&inv, prefs.sort);
         let root = cache.children(inv.root, &prefs, inv.lib_root);
         assert!(root.iter().position(|n| *n == id(6)) < root.iter().position(|n| *n == id(2)));
-        assert!(natural_cmp("folder 2", "folder 10").is_lt());
+        assert!(cmp_folded("folder 2", "folder 10").is_lt());
     }
 
     #[test]
