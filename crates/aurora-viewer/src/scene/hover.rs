@@ -74,6 +74,9 @@ pub struct PickEntry {
     /// the scene's side to tell whether the search for the object at a
     /// point leaves it out (`class::OFF_POINT`).
     aside: bool,
+    /// A rigged mesh (not an avatar): no search of a click tests it on the
+    /// CPU (`point_candidates`).
+    skinned: bool,
 }
 
 /// The ray and the depth point of a search.
@@ -89,6 +92,7 @@ impl PickEntry {
         radius: -1.0,
         always: false,
         aside: false,
+        skinned: false,
     };
 
     /// The entry of an object as its last sync left it.
@@ -104,6 +108,7 @@ impl PickEntry {
                 radius: 2.5,
                 always: true,
                 aside: true,
+                skinned: false,
             }
         } else {
             PickEntry {
@@ -111,6 +116,7 @@ impl PickEntry {
                 radius: g.radius.max(0.0),
                 always: g.rigged || g.radius <= 0.0,
                 aside: g.owner_avatar.is_some(),
+                skinned: g.rigged,
             }
         }
     }
@@ -155,6 +161,7 @@ impl PickEntry {
             && o.pickable()
             && self.always == o.always
             && self.aside == o.aside
+            && self.skinned == o.skinned
             && self.center.distance_squared(o.center) <= STILL * STILL
             && (self.radius - o.radius).abs() <= STILL
     }
@@ -260,6 +267,26 @@ impl PickIndex {
     /// A separate query for inventory placement; do not disturb hover's watch.
     pub fn ray_candidates(&self, ray: (Vec3, Vec3), out: &mut Vec<usize>) {
         self.candidates(&Probe { ray, depth: None }, out);
+    }
+
+    /// The objects near the ray or around `point` on it: those a click's
+    /// search can meet (`Scene::action_point`, `interaction_at_ray`).
+    /// The rigged meshes are left out: their CPU triangles are in the bind
+    /// pose, and every search of a click passes over them (`face_hit`,
+    /// `face_distance`, the worn meshes of `interaction_at_ray`; HUDs are
+    /// not indexed). What the GPU drew of them takes the click instead
+    /// (drawn.rs). In a crowd they are most of the objects tested whatever
+    /// the ray: 1 to 1.5 ms a click with thousands of them.
+    pub fn point_candidates(&self, ray: (Vec3, Vec3), point: Option<Vec3>, out: &mut Vec<usize>) {
+        let probe = Probe { ray, depth: point };
+        out.clear();
+        out.extend(
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| !e.skinned && e.candidate(&probe))
+                .map(|(i, _)| i),
+        );
     }
 
     /// The objects whose bounds reach the box `min`..`max`, those without
@@ -704,8 +731,9 @@ impl HoverCache {
     }
 }
 
-/// AURORA_HOVER_CHECK=1: every answer is compared with the full search.
-fn check_enabled() -> bool {
+/// AURORA_HOVER_CHECK=1: every answer is compared with the full search
+/// (the clicks' too, picking.rs).
+pub(super) fn check_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_HOVER_CHECK").is_some())
 }
@@ -844,7 +872,10 @@ impl super::Scene {
         if let Some((t, idx)) = self.blend_hit(world, ray, point, far, None) {
             return (Some(ray.0 + ray.1 * t), Some(idx));
         }
-        (point, point.and_then(|point| self.interaction_at_ray(world, point, ray, false)))
+        (
+            point,
+            point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, None)),
+        )
     }
 
     /// The class of an object for the hover search ([`class`]), from what
@@ -1051,6 +1082,7 @@ mod tests {
             radius: r,
             always: false,
             aside: false,
+            skinned: false,
         }
     }
 
@@ -1060,6 +1092,7 @@ mod tests {
             radius: 2.5,
             always: true,
             aside: true,
+            skinned: false,
         }
     }
 
@@ -1168,6 +1201,29 @@ mod tests {
     }
 
     #[test]
+    fn a_click_leaves_the_rigged_meshes_out() {
+        let mut index = PickIndex::default();
+        index.set(0, always(0.0, 50.0));
+        // a rigged mesh on the ray, and one without bounds
+        let rigged = |radius| ObjGpu {
+            center: Vec3::new(5.0, 0.0, 0.0),
+            radius,
+            rigged: true,
+            faces: vec![face()],
+            ..Default::default()
+        };
+        index.set(1, PickEntry::of(&rigged(1.0)));
+        index.set(2, PickEntry::of(&rigged(0.0)));
+        index.set(3, sphere(5.0, 0.2, 0.5));
+        let mut out = Vec::new();
+        index.point_candidates(RAY, None, &mut out);
+        assert_eq!(out, [0, 3]);
+        // the other searches still see them
+        index.ray_candidates(RAY, &mut out);
+        assert_eq!(out, [0, 1, 2, 3]);
+    }
+
+    #[test]
     fn candidates_come_in_index_order() {
         let mut index = PickIndex::default();
         index.set(7, sphere(5.0, 0.2, 0.5));
@@ -1251,6 +1307,7 @@ mod tests {
                 radius: 0.0,
                 always: true,
                 aside: false,
+                skinned: false,
             },
         );
         assert!(index.disturbed);
@@ -1330,6 +1387,7 @@ mod tests {
                     radius: if rnd(1.0) < 0.1 { 0.0 } else { 2.0 },
                     always: true,
                     aside: false,
+                    skinned: false,
                 },
                 _ => sphere(rnd(40.0), rnd(8.0) - 4.0, 0.1 + rnd(1.0)),
             };
