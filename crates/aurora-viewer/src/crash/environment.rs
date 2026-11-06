@@ -194,7 +194,12 @@ fn parse_linux_modules(maps: &str) -> Vec<Module> {
 
 #[cfg(target_os = "linux")]
 fn is_shared_object(path: &str) -> bool {
-    path.contains(".so")
+    // `libc.so.6`, `plugin.so`: not `ld.so.cache` nor other mapped files.
+    let name = path.trim_end_matches(" (deleted)").rsplit('/').next().unwrap_or(path);
+    name.ends_with(".so")
+        || name
+            .split_once(".so.")
+            .is_some_and(|(_, version)| !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.'))
 }
 
 fn safe_module_name(name: &str) -> Option<&str> {
@@ -734,7 +739,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_maps_keep_only_unique_shared_object_basenames() {
-        let maps = "7f0 rw-p 0 00:00 0 /usr/lib/libc.so.6\n7f1 rw-p 0 00:00 0 /opt/custom/plugin.so (deleted)\n7f2 rw-p 0 00:00 0 /home/PRIVATE_USER/extra.so\n";
+        let maps = "7f0 rw-p 0 00:00 0 /usr/lib/libc.so.6\n7f1 rw-p 0 00:00 0 /opt/custom/plugin.so (deleted)\n7f2 rw-p 0 00:00 0 /home/PRIVATE_USER/extra.so\n7f3 r--p 0 00:00 0 /etc/ld.so.cache\n7f4 r--p 0 00:00 0 /usr/share/fonts/noto.so.ttf\n";
         let modules = parse_linux_modules(maps);
         assert_eq!(modules.len(), 3);
         assert!(
