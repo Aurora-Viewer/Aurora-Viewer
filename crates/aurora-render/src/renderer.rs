@@ -6690,6 +6690,9 @@ impl Backend {
                 spot_vp,
                 flags,
             );
+            if let Some(c) = &capture {
+                frame.probe_eye = c.origin.extend(c.reach).to_array();
+            }
             if do_water_air {
                 frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
                 frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
@@ -6715,8 +6718,14 @@ impl Backend {
         rg.select_faces = push(cpu, &lists.select_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
-        if capture.is_some() {
-            rg.probe = push(cpu, &cull_to_view(probe_vp, &lists.probe));
+        if let Some(c) = &capture {
+            let reached: Vec<ShadowCaster> = lists
+                .probe
+                .iter()
+                .filter(|o| o.center.distance(c.origin) - o.radius < c.reach)
+                .copied()
+                .collect();
+            rg.probe = push(cpu, &cull_to_view(probe_vp, &reached));
         }
         if do_water_refl {
             rg.refl_water = push(cpu, &cull_to_view(water_vp, &lists.reflection));

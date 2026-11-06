@@ -67,6 +67,10 @@ const MAX_AUTO_NEAR: f32 = 8.0;
 const EDGE_FADE: f32 = 0.3;
 /// The narrowest of that fade (m), when the slots end close to the camera.
 const EDGE_FADE_MIN: f32 = 8.0;
+/// How far a capture draws objects (m): RenderReflectionProbeDrawDistance.
+/// An automatic probe whose cell is wider sees its whole cell, what its
+/// light is for (the Legacy Viewer's cells are all 16 m).
+const CAPTURE_REACH: f32 = 64.0;
 /// How fast the edge of the field follows its target (time constant, s).
 const EDGE_EASE: f32 = 0.5;
 const DEFAULT_PERIOD: Duration = Duration::from_secs(2);
@@ -453,6 +457,7 @@ impl ProbeManager {
                     slot: 0,
                     origin: eye + Vec3::Z * 64.0,
                     near: 1.0,
+                    reach: 0.0,
                     face: u.face,
                     sky_only: true,
                     finish,
@@ -470,6 +475,11 @@ impl ProbeManager {
                         slot,
                         origin: p.origin,
                         near: p.near,
+                        reach: if p.kind == 0.0 {
+                            p.radius.max(CAPTURE_REACH)
+                        } else {
+                            CAPTURE_REACH
+                        },
                         face: u.face,
                         sky_only: false,
                         finish,
