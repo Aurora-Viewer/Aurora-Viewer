@@ -2597,6 +2597,39 @@ ui-options-backup-account-kept = ログイン中のアカウントのファイ�
 ui-options-backup-restore-confirm = 復元
 ui-options-backup-restored = バックアップから設定を復元しました。
 ui-options-backup-restore-failed = バックアップ内の一部のファイルを書き込めませんでした。
+ui-options-remove-aurora = このコンピュータからAuroraを削除
+ui-options-remove-aurora-help = Auroraが自身のフォルダの外でこのコンピュータに登録したもの（リンクハンドラ、システムの資格情報ストアのキーと保存したパスワード、Blenderアドオン）を削除します。その後、残っているフォルダを一覧表示します。ビューアと一緒にご自身で削除してください。
+ui-options-remove-aurora-button = 削除…
+uninstall-title = このコンピュータからAuroraを削除しますか？
+uninstall-text = Auroraが自身のフォルダの外に登録した次のものを削除します。終了するまでは動作しますが、保存したパスワードは消去され、キャッシュは再ダウンロードされます。別のプログラムを開くリンクハンドラはそのまま残ります。
+uninstall-confirm = 削除
+uninstall-links = secondlife://、hop://、x-grid-location-info:// のリンクハンドラ
+uninstall-notification-id = Windows通知のID
+uninstall-cache-key = キャッシュのキー（資格情報ストア内）
+uninstall-password = { $user }（{ $grid }）の保存したパスワード（資格情報ストア内）
+uninstall-second-factor = { $user }（{ $grid }）の二要素認証の許可（資格情報ストア内）
+uninstall-crash-reports = クラッシュレポートのGitHub認証（資格情報ストア内）
+uninstall-blender = Auroraのアドオン（見つかった各Blender内）
+uninstall-window = このコンピュータからAuroraを削除
+uninstall-running = 削除中…見つかった各Blenderを確認するため、１分ほどかかることがあります。
+uninstall-dry-run = デモモード：何も削除されていません。実際の削除で行われる内容です。
+uninstall-done = 削除したもの
+uninstall-removed = 削除しました
+uninstall-absent = 削除するものはありません
+uninstall-failed = 削除できませんでした：{ $error }
+uninstall-left = このコンピュータに残っているもの
+uninstall-left-text = Auroraを終了してから、これらのフォルダとビューア本体を削除してください。設定、会話履歴、キャッシュ、ログが含まれています。
+uninstall-kind-settings = 設定
+uninstall-kind-cache = キャッシュ
+uninstall-kind-chosen-cache = キャッシュ（選択したフォルダ）
+uninstall-kind-logs = ログ
+uninstall-kind-media-plugins = メディアプラグイン
+uninstall-kind-transcripts = 会話履歴（選択したフォルダ）
+uninstall-kind-blender-backups = アドオンのインストーラが作成したBlender設定のバックアップ
+uninstall-kind-menu-entry = デスクトップメニューの項目
+uninstall-kind-viewer = ビューア本体
+uninstall-open-folder = フォルダを開く
+uninstall-quit = Auroraを終了
 common-distance = 距離
 common-draw-distance = 描画距離
 app-chat-commands-draw-distance-set-to-m = { "描画距離を" }{ $value0 }{ "ｍに設定しました。" }
@@ -7705,7 +7738,7 @@ hud-move-locked = クイック移動をロック
 hud-local-scale-reset = １００％にリセット
 hud-local-scale-forget = 保存したサイズを消去
 hud-local-scale-help = ＨＵＤでキーを押したまま、左ドラッグで移動、ホイールでサイズ変更、Shiftでより細かく調整します。サイズは名前と制作者ごとに、このアカウント用としてこのＰＣに保存されます。ＨＵＤの編集中は、このキーを押さずにホイールを回すとすべてのＨＵＤの表示がズームします。
-cli-help = { "Auroraビューア\u000A\u000A使い方：aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [<slurl>]\u000A\u000A  --title <text>   このウィンドウ（\"Auroraビューア <version> - <text>\"）とログファイル\u000A                   （aurora-<text>.log、デモモードでは aurora-demo-<text>.log）に名前を付ける\u000A  --fps-limit <fps>  初期設定を保存せずに、このプロセスを1～500 ＦＰＳに制限する\u000A  --language <code>  このプロセスのＵＩ言語を上書きする（" }{ $languages }{ "）\u000A  --grid <name>    agni、aditi、保存されたグリッド名、またはログインＵＲＩで起動する（--loginuri <uri> も可）\u000A  --login <first> <last> <password>  このアカウントですぐにログインする\u000A  <slurl>, --url <slurl>  この場所から開始する。以降の引数は読み込まれない。すでに\u000A                   起動しているビューアがあれば、そちらが受け取る\u000A  --vr             ワールドが表示されたらVRに入ります（ヘッドセット接続時）\u000A  -V, --version   起動せずにコンパイルされたビューアのバージョンを表示する\u000A  -h, --help       このヘルプを表示する\u000A\u000Aテスト用のスイッチは環境変数です（AURORA_DEMO=1、AURORA_CAPTURE=...）：\u000AREADME.md を参照してください。" }
+cli-help = { "Auroraビューア\u000A\u000A使い方：aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <text>   このウィンドウ（\"Auroraビューア <version> - <text>\"）とログファイル\u000A                   （aurora-<text>.log、デモモードでは aurora-demo-<text>.log）に名前を付ける\u000A  --fps-limit <fps>  初期設定を保存せずに、このプロセスを1～500 ＦＰＳに制限する\u000A  --language <code>  このプロセスのＵＩ言語を上書きする（" }{ $languages }{ "）\u000A  --grid <name>    agni、aditi、保存されたグリッド名、またはログインＵＲＩで起動する（--loginuri <uri> も可）\u000A  --login <first> <last> <password>  このアカウントですぐにログインする\u000A  <slurl>, --url <slurl>  この場所から開始する。以降の引数は読み込まれない。すでに\u000A                   起動しているビューアがあれば、そちらが受け取る\u000A  --vr             ワールドが表示されたらVRに入ります（ヘッドセット接続時）\u000A  -V, --version   起動せずにコンパイルされたビューアのバージョンを表示する\u000A  --uninstall      Auroraがフォルダの外に登録したもの（リンクハンドラ、資格情報ストア、\u000A                   Blenderアドオン）を削除し、その内容と残りのフォルダを表示して終了する\u000A  -h, --help       このヘルプを表示する\u000A\u000Aテスト用のスイッチは環境変数です（AURORA_DEMO=1、AURORA_CAPTURE=...）：\u000AREADME.md を参照してください。" }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Auroraメディア</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='クリックされました！'\" style='font-size:48px;padding:10px 40px'>クリック</button><br><input placeholder='ここに記入' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 
 # Secondary labels and status messages

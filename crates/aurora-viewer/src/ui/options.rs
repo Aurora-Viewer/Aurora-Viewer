@@ -283,6 +283,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "recent" | "recent-period" => row(Page::Inventory, 0, tr!("ui-inventory-recent-period")),
         "auto-accept" => row(Page::Inventory, 0, tr!("received-auto-accept")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
+        "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
         _ => None,
     };
     let audio = match what {
@@ -635,6 +636,9 @@ pub struct OptionsResult {
     pub friends_only_keep: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
     pub open_dev_toolbox: bool,
+    /// "Remove Aurora from this computer" (Language and updates): the app
+    /// asks for the confirmation.
+    pub uninstall: bool,
     /// Back up the settings to a file the user chooses.
     pub back_up: bool,
     /// Choose a backup to restore (then `restore_modal` confirms it).

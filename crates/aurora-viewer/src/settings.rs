@@ -2166,11 +2166,14 @@ pub fn config_dir() -> PathBuf {
     if let Some(test) = aurora_updater::test_environment() {
         return test.root.join("profile");
     }
-    for_mode(
-        directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
-            .map(|d| d.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from(".")),
-    )
+    for_mode(default_config_root())
+}
+
+/// The settings folder before the demo's subfolder.
+pub(crate) fn default_config_root() -> PathBuf {
+    directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
+        .map(|d| d.config_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Files of one account (LL_PATH_PER_SL_ACCOUNT): contact sets, pinned
@@ -2293,6 +2296,16 @@ impl Settings {
     /// when the file or the field is missing or unreadable.
     pub fn allow_overlays_at_start() -> bool {
         allow_overlays_in(std::fs::read(Self::path()).ok().as_deref())
+    }
+
+    /// One text field of the settings file as saved, read alone (no repair
+    /// of the file, no log): empty when the file or the field is missing.
+    pub fn saved_text(field: &str) -> String {
+        std::fs::read(Self::path())
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| v.get(field).and_then(|c| c.as_str()).map(str::to_owned))
+            .unwrap_or_default()
     }
 
     fn load_from(path: &Path) -> Settings {

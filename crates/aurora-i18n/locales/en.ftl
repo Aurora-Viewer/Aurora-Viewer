@@ -2601,6 +2601,39 @@ ui-options-backup-account-kept = The account logged in keeps its own files: rest
 ui-options-backup-restore-confirm = Restore
 ui-options-backup-restored = Settings restored from the backup.
 ui-options-backup-restore-failed = Some files of the backup could not be written.
+ui-options-remove-aurora = Remove Aurora from this computer
+ui-options-remove-aurora-help = Removes what Aurora registered on this computer outside its own folders: the link handler, the keys and saved passwords of the system's credential store, the Blender add-on. Then lists the folders that remain, for you to delete with the viewer.
+ui-options-remove-aurora-button = Remove…
+uninstall-title = Remove Aurora from this computer?
+uninstall-text = Aurora removes the following, which it registered outside its own folders. It works until you quit it, but saved passwords are forgotten and the cache is downloaded again. A link handler that opens another program is left as it is.
+uninstall-confirm = Remove
+uninstall-links = Link handler of secondlife://, hop:// and x-grid-location-info://
+uninstall-notification-id = Windows notification identity
+uninstall-cache-key = Cache key, in the credential store
+uninstall-password = Saved password of { $user } ({ $grid }), in the credential store
+uninstall-second-factor = Second-factor authorization of { $user } ({ $grid }), in the credential store
+uninstall-crash-reports = GitHub authorization of crash reports, in the credential store
+uninstall-blender = Aurora's add-on, in each Blender found that has it
+uninstall-window = Remove Aurora from this computer
+uninstall-running = Removing… Each Blender found is checked, which can take a minute.
+uninstall-dry-run = Demo mode: nothing was removed. This is what a real removal would do.
+uninstall-done = What was removed
+uninstall-removed = Removed
+uninstall-absent = Nothing to remove
+uninstall-failed = Not removed: { $error }
+uninstall-left = Still on this computer
+uninstall-left-text = Quit Aurora, then delete these folders and the viewer itself. They hold your settings, conversation history, cache and logs.
+uninstall-kind-settings = Settings
+uninstall-kind-cache = Cache
+uninstall-kind-chosen-cache = Cache (folder you chose)
+uninstall-kind-logs = Logs
+uninstall-kind-media-plugins = Media plugins
+uninstall-kind-transcripts = Conversation history (folder you chose)
+uninstall-kind-blender-backups = Blender preference backups made by the add-on's installer
+uninstall-kind-menu-entry = Desktop menu entry
+uninstall-kind-viewer = The viewer
+uninstall-open-folder = Open folder
+uninstall-quit = Quit Aurora
 common-distance = Distance
 common-draw-distance = Draw distance
 app-chat-commands-draw-distance-set-to-m = { "Draw distance set to " }{ $value0 }{ " m." }
@@ -7715,7 +7748,7 @@ hud-move-locked = Lock quick movement
 hud-local-scale-reset = Reset to 100%
 hud-local-scale-forget = Forget saved size
 hud-local-scale-help = Hold the HUD key: left drag to move, wheel to resize, Shift for finer steps. Size is saved on this PC by name and creator, for this account. While editing a HUD, the wheel without this key zooms the view of all HUDs.
-cli-help = { "Aurora Viewer\u000A\u000AUsage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [<slurl>]\u000A\u000A  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log\u000A                   file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)\u000A  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences\u000A  --language <code>  Override this process's UI language (" }{ $languages }{ ")\u000A  --grid <name>    Start on agni, aditi, a saved grid name or a login URI (also --loginuri <uri>)\u000A  --login <first> <last> <password>  Log in with this account at once\u000A  <slurl>, --url <slurl>  Start at this place; nothing after it is read. A viewer\u000A                   already running receives it instead\u000A  --vr             Enter VR once the world shows (headset connected)\u000A  -V, --version   Show the compiled viewer version without starting it\u000A  -h, --help       Show this help\u000A\u000ATest switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):\u000Asee README.md." }
+cli-help = { "Aurora Viewer\u000A\u000AUsage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log\u000A                   file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)\u000A  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences\u000A  --language <code>  Override this process's UI language (" }{ $languages }{ ")\u000A  --grid <name>    Start on agni, aditi, a saved grid name or a login URI (also --loginuri <uri>)\u000A  --login <first> <last> <password>  Log in with this account at once\u000A  <slurl>, --url <slurl>  Start at this place; nothing after it is read. A viewer\u000A                   already running receives it instead\u000A  --vr             Enter VR once the world shows (headset connected)\u000A  -V, --version   Show the compiled viewer version without starting it\u000A  --uninstall      Remove what Aurora registered outside its folders (link handler,\u000A                   credential store, Blender add-on), print it and the folders left, then exit\u000A  -h, --help       Show this help\u000A\u000ATest switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):\u000Asee README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Clicked!'\" style='font-size:48px;padding:10px 40px'>Click</button><br><input placeholder='Type here' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 
 # Secondary labels and status messages
