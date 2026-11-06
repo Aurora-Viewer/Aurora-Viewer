@@ -46,6 +46,89 @@ pub struct LoginRequest {
     pub id0: String,
     /// How the previous session of this account ended.
     pub last_exec: LastExec,
+    /// The system the viewer runs on, read by the viewer.
+    pub platform: Platform,
+}
+
+/// The system a login names (LLAppViewer::init's setPlatformInfo with
+/// LLOSInfo, indra/llcommon/llsys.cpp): `platform_version`, the dotted
+/// "major.minor.build" of getOSVersionString, and `platform_string`, the
+/// short name of getOSStringSimple. Read by the viewer, which has the
+/// system probe; an unknown version is left out of the request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Platform {
+    pub version: String,
+    pub name: String,
+}
+
+impl Platform {
+    /// Windows from its build number (the registry's CurrentBuildNumber):
+    /// every build from 10240 (Windows 10) on is NT 10.0, and LLOSInfo
+    /// names builds from 22000 on Windows 11; "64-bit" on x86-64, as it
+    /// adds for PROCESSOR_ARCHITECTURE_AMD64. Rust programs need Windows 10.
+    pub fn windows(build: &str, x86_64: bool) -> Platform {
+        let bits = if x86_64 { " 64-bit" } else { "" };
+        match build.trim().parse::<u32>() {
+            Ok(build) if build >= 10240 => Platform {
+                version: format!("10.0.{build}"),
+                name: format!("Microsoft Windows {}{bits}", if build >= 22000 { 11 } else { 10 }),
+            },
+            _ => Platform {
+                version: String::new(),
+                name: format!("Microsoft Windows{bits}"),
+            },
+        }
+    }
+
+    /// macOS from its product version ("14.5"): "14.5.0" and "macOS
+    /// 14.5.0", as LLGetDarwinOSInfo's major, minor and bugfix numbers.
+    pub fn macos(product: &str) -> Platform {
+        match dotted(product) {
+            Some(version) => Platform {
+                name: format!("macOS {version}"),
+                version,
+            },
+            None => Platform {
+                version: String::new(),
+                name: "macOS".into(),
+            },
+        }
+    }
+
+    /// Linux from its kernel release (uname's, "6.8.0-45-generic"): the
+    /// version "6.8.0", and "Linux 6.8", LLOSInfo's name cut at the second
+    /// dot. Deliberate difference: the Legacy Viewer's version on Linux is
+    /// glibc's; the kernel's is the system's own.
+    pub fn linux(release: &str) -> Platform {
+        match dotted(release) {
+            Some(version) => Platform {
+                name: format!("Linux {}", version.rsplit_once('.').map_or(version.as_str(), |(head, _)| head)),
+                version,
+            },
+            None => Platform {
+                version: String::new(),
+                name: "Linux".into(),
+            },
+        }
+    }
+}
+
+/// The first one to three numbers of `s` ("14.5", "6.8.0-45-generic"),
+/// as "major.minor.build" with zeros for the missing ones.
+fn dotted(s: &str) -> Option<String> {
+    let numbers: Vec<u32> = s
+        .trim()
+        .split(|c: char| !c.is_ascii_digit())
+        .take_while(|part| !part.is_empty())
+        .take(3)
+        .map_while(|part| part.parse().ok())
+        .collect();
+    let major = *numbers.first()?;
+    Some(format!(
+        "{major}.{}.{}",
+        numbers.get(1).copied().unwrap_or(0),
+        numbers.get(2).copied().unwrap_or(0)
+    ))
 }
 
 /// What the login server is told of the previous run (lllogininstance.cpp
@@ -262,15 +345,6 @@ pub fn adapter_for(login_uri: &str, node: Option<[u8; 6]>) -> Option<[u8; 6]> {
     Some(out)
 }
 
-fn platform_version() -> String {
-    // Kept generic: the exact build number is not needed by the grid.
-    if cfg!(windows) {
-        "10.0".into()
-    } else {
-        std::env::consts::OS.into()
-    }
-}
-
 fn build_params(req: &LoginRequest) -> Llsd {
     let (first, last) = split_username(&req.username);
     let mut p = Map::new();
@@ -291,8 +365,16 @@ fn build_params(req: &LoginRequest) -> Llsd {
         }
         .into(),
     );
-    p.insert("platform_version".into(), platform_version().into());
-    p.insert("platform_string".into(), std::env::consts::OS.into());
+    // the real system (LLOSInfo), or no version at all when it is unknown
+    if !req.platform.version.is_empty() {
+        p.insert("platform_version".into(), req.platform.version.clone().into());
+    }
+    let name = if req.platform.name.is_empty() {
+        std::env::consts::OS
+    } else {
+        req.platform.name.as_str()
+    };
+    p.insert("platform_string".into(), name.into());
     p.insert("address_size".into(), 64.into());
     // the real hashes on Linden Lab's grids only (device_id_for)
     p.insert("mac".into(), device_id_for(&req.login_uri, &req.mac).into());
@@ -480,6 +562,7 @@ mod tests {
                 duration: 42,
                 session_id: session,
             },
+            platform: Platform::default(),
         };
         let p = build_params(&req);
         assert_eq!(p["last_exec_event"].as_i32(), LastExec::UNKNOWN);
@@ -556,6 +639,7 @@ mod tests {
             mac: real_mac.clone(),
             id0: real_id0.clone(),
             last_exec: LastExec::default(),
+            platform: Platform::windows("26200", true),
         };
         let linden = build_params(&req(SL_MAIN_GRID));
         assert_eq!(linden["mac"].as_str(), real_mac);
@@ -565,6 +649,58 @@ mod tests {
         assert_eq!(other["id0"].as_str(), device_id_for("https://grid.example:8002/", &real_id0));
         assert_ne!(other["mac"].as_str(), real_mac);
         assert_ne!(other["id0"].as_str(), real_id0);
+    }
+
+    /// The login names the real system, as LLOSInfo writes it, and leaves
+    /// out a version it does not know.
+    #[test]
+    fn the_login_names_the_real_system() {
+        assert_eq!(
+            Platform::windows("26200", true),
+            Platform {
+                version: "10.0.26200".into(),
+                name: "Microsoft Windows 11 64-bit".into()
+            }
+        );
+        assert_eq!(Platform::windows("19045", false).name, "Microsoft Windows 10");
+        assert_eq!(Platform::windows("", true).version, "");
+        assert_eq!(
+            Platform::macos("14.5"),
+            Platform {
+                version: "14.5.0".into(),
+                name: "macOS 14.5.0".into()
+            }
+        );
+        assert_eq!(Platform::macos("15.1.1").version, "15.1.1");
+        assert_eq!(
+            Platform::linux("6.8.0-45-generic"),
+            Platform {
+                version: "6.8.0".into(),
+                name: "Linux 6.8".into()
+            }
+        );
+        assert_eq!(Platform::linux("6.17-rc1").name, "Linux 6.17");
+        assert_eq!(Platform::linux("unknown").version, "");
+        let req = |platform: Platform| LoginRequest {
+            login_uri: SL_MAIN_GRID.into(),
+            username: "synthetic".into(),
+            password: "x".into(),
+            start: StartLocation::Last,
+            agree_to_tos: false,
+            read_critical: false,
+            mfa_token: String::new(),
+            mfa_hash: String::new(),
+            mac: String::new(),
+            id0: String::new(),
+            last_exec: LastExec::default(),
+            platform,
+        };
+        let p = build_params(&req(Platform::windows("26200", true)));
+        assert_eq!(p["platform_version"].as_str(), "10.0.26200");
+        assert_eq!(p["platform_string"].as_str(), "Microsoft Windows 11 64-bit");
+        let unknown = build_params(&req(Platform::default()));
+        assert!(!unknown.has("platform_version"));
+        assert_eq!(unknown["platform_string"].as_str(), std::env::consts::OS);
     }
 
     #[test]
