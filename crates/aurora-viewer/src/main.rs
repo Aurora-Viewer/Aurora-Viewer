@@ -73,6 +73,7 @@ mod mac_quit;
 mod machine_id;
 mod media;
 mod movement;
+mod natural_order;
 mod net_adapters;
 mod net_profile;
 mod open_path;
