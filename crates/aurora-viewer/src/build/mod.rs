@@ -1279,10 +1279,26 @@ impl BuildTool {
     /// open (LLToolPie::handleRightClickPick -> LLToolSelect::handleObjectSelection
     /// with temp_select). Returns whether something got selected.
     pub fn select_for_menu(&mut self, world: &mut World, s: &BuildSettings, idx: usize) -> bool {
+        self.select_for_menu_with(world, s, idx, false)
+    }
+
+    /// Whether a right click extends the selection: Shift alone or Ctrl
+    /// alone, nothing else held (`pick.mKeyMask == MASK_SHIFT ||
+    /// pick.mKeyMask == MASK_CONTROL` in
+    /// LLToolSelect::handleObjectSelection).
+    pub fn menu_extends(shift: bool, ctrl: bool, alt: bool) -> bool {
+        shift != ctrl && !alt
+    }
+
+    /// As [`Self::select_for_menu`], with the click's modifiers: Shift or
+    /// Ctrl alone adds the object to the selection or takes it out
+    /// (`extend_select` in LLToolSelect::handleObjectSelection, which
+    /// LLToolPie::handleRightClickPick calls with the click's mask).
+    pub fn select_for_menu_with(&mut self, world: &mut World, s: &BuildSettings, idx: usize, extend: bool) -> bool {
         if Self::unit_of(world, idx, s.edit_linked).is_none() {
             return false;
         }
-        self.click_select(world, s, Some(idx), false);
+        self.click_select(world, s, Some(idx), extend);
         if !self.open {
             self.menu_selection = true;
         }
@@ -1340,6 +1356,16 @@ impl BuildTool {
                 self.add(world, unit);
             }
         }
+    }
+
+    /// What a menu entry that works on the selection acts on, for a menu
+    /// opened on object `idx`: every selected linkset when `idx` is one of
+    /// them (derenderObject takes each root of the selection), else only
+    /// `idx`'s own linkset.
+    pub fn menu_roots(&self, world: &World, idx: usize) -> Vec<usize> {
+        let roots = self.roots(world);
+        let own = root_of(world, idx);
+        if roots.contains(&own) { roots } else { vec![own] }
     }
 
     /// Selected roots (whole linksets), latest first.
