@@ -614,6 +614,13 @@ mod tests {
     }
 
     #[test]
+    fn by_default_a_payment_is_highlighted_without_a_toast() {
+        let settings = crate::settings::Settings::default();
+        assert!(!settings.notify_money_received);
+        assert!(settings.balance_gain_animation);
+    }
+
+    #[test]
     fn each_switch_works_alone() {
         for (toast, rise) in [(true, true), (true, false), (false, true), (false, false)] {
             let mut w = world();
