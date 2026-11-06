@@ -71,6 +71,23 @@ pub fn copyable(item: &InvItem, agent: Uuid) -> bool {
     rules::agent_mask(item, agent) & rules::COPY != 0
 }
 
+/// Whether the agent may put the image `item` on a worn object's face: both
+/// copy and transfer, so nothing has to go into the object's contents, which
+/// a worn object cannot take (it is in the world and in inventory at once).
+/// **Wanted difference from the Legacy Viewer**, which also asks for the base
+/// modify right through willObjectAcceptInventory: painting a face does not
+/// change the image, so a no-modify texture is accepted here.
+pub(crate) fn worn_image_rights(item: &InvItem, agent: Uuid) -> bool {
+    let both = rules::COPY | rules::TRANSFER;
+    rules::agent_mask(item, agent) & both == both
+}
+
+/// Whether the prim `idx` is worn and its faces must refuse the texture
+/// `item`, even one its contents already hold.
+pub(crate) fn worn_image_refused(world: &World, idx: usize, item: &InvItem) -> bool {
+    item.asset_type == AT_TEXTURE && linkset(world, idx).is_some_and(|(_, worn)| worn) && !worn_image_rights(item, world.agent_id)
+}
+
 /// The root of the prim `idx`'s linkset, and whether it is worn (its root
 /// sits on an avatar). `None` for an avatar or a broken parent chain.
 pub(crate) fn linkset(world: &World, idx: usize) -> Option<(usize, bool)> {

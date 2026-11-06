@@ -4,6 +4,7 @@
 //! Ctrl contents, restricted assets retained in the object's inventory.
 
 use super::*;
+use crate::build::contents_drop;
 use crate::ui::texture_library::{self as library, catalogue};
 use crate::world::inventory::actions as rules;
 use aurora_net::build::BuildCmd;
@@ -774,9 +775,21 @@ impl App {
         let protected_asset = requires_contents(&self.world.inventory, item, self.world.agent_id);
         let mut reason = None;
         if !allowed || drag.ctrl && self.world.inventory.items.get(&drag.item).is_some_and(|i| i.asset_type == 24) {
-            reason = Some(aurora_i18n::tr!("texture-library-locked"));
+            let locked = !drag.ctrl
+                && target
+                    .and_then(|(idx, _)| self.world.objects.get(idx).map(|o| (idx, o)))
+                    .is_some_and(|(idx, o)| !o.is_avatar() && !o.is_tree() && !self.build.can_modify(&self.world, idx));
+            reason = Some(if locked {
+                aurora_i18n::tr!("build-ui-texture-drop-object")
+            } else {
+                aurora_i18n::tr!("texture-library-locked")
+            });
         }
-        if allowed
+        let worn_refused =
+            !drag.ctrl && allowed && target.is_some_and(|(idx, _)| contents_drop::worn_image_refused(&self.world, idx, item));
+        if worn_refused {
+            reason = Some(aurora_i18n::tr!("build-ui-texture-drop-restricted"));
+        } else if allowed
             && let Some((idx, _)) = target
             && (protected_asset || drag.ctrl)
         {
@@ -832,24 +845,34 @@ impl App {
             };
             self.library_drag.highlighted = Some((idx, mask));
         }
-        if drag.released {
-            egui::DragAndDrop::clear_payload(ctx);
+        if !drag.released {
             if let Some(reason) = reason {
-                self.world.system_message(reason);
+                egui::Tooltip::always_open(
+                    ctx.clone(),
+                    egui::LayerId::background(),
+                    egui::Id::unique("texture-world-drop-refused"),
+                    egui::PopupAnchor::Pointer,
+                )
+                .show(|ui| {
+                    ui.label(reason);
+                });
+            }
+        } else {
+            egui::DragAndDrop::clear_payload(ctx);
+            if reason.is_some() {
                 return None;
             }
             let (object, face) = target?;
-            Some(Drop {
+            return Some(Drop {
                 item: drag.item,
                 object,
                 face,
                 all: drag.shift,
                 contents: drag.ctrl,
                 remove_pbr: self.alt,
-            })
-        } else {
-            None
+            });
         }
+        None
     }
     pub(super) fn apply_texture_library_drop(&mut self, drop: Drop) {
         let Some(item) = catalogue::resource(&self.world.inventory, drop.item).cloned() else {
@@ -919,6 +942,7 @@ impl App {
                         .iter()
                         .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
                 }) && super::inventory_drag::target_allowed(&self.world, *idx, &item, true).is_err()
+                    || contents_drop::worn_image_refused(&self.world, *idx, &item)
                 {
                     self.world.system_notice(
                         aurora_i18n::tr!("texture-library-locked"),
@@ -959,6 +983,9 @@ impl App {
         let object_id = object.full_id;
         let asset = catalogue::asset(item);
         if asset.is_nil() || !contents && !self.build.can_modify(&self.world, idx) {
+            return false;
+        }
+        if !contents && contents_drop::worn_image_refused(&self.world, idx, item) {
             return false;
         }
         let retained = self.build.contents.objects.get(&object_id).is_some_and(|inv| {
