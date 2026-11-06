@@ -103,13 +103,14 @@ impl App {
             // scene space: the agent avatar's drawn center; the objects
             // around only when the press has no target (a copy with a
             // target stays short enough to paste)
+            let ids = crate::world::inventory::asset_ids::AssetIds::diagnostics(&self.world);
             let me = self.scene.agent_idx.and_then(|i| self.scene.gpu.get(i)).map(|g| g.center);
             if let Some(me) = me.filter(|_| pending.scope.is_empty()) {
-                self.scene.log_nearby(&self.world, me, 12.0);
+                self.scene.log_nearby(&self.world, me, 12.0, &ids);
             }
             // what the avatars around wear: a missing part shows there
             let names = |id: &Uuid| self.known_object_name(id);
-            self.scene.describe_worn(&self.world, renderer, &pending.scope, &names);
+            self.scene.describe_worn(&self.world, renderer, &pending.scope, &names, &ids);
         });
         log::info!("describe: {} lines for {}", text.lines().count(), pending.tool);
         self.toolbox.set_result(pending.tool, text);
