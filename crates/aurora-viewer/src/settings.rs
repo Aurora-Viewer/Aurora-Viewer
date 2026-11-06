@@ -1374,6 +1374,10 @@ pub struct Settings {
     /// graphics card once it is known (`graphics_presets::for_machine`).
     #[serde(skip)]
     pub new_profile: bool,
+    /// Version 33 turned the camera's limits back on in this file: the login
+    /// screen says so once (`ui/login/camera_limits_notice.rs`).
+    #[serde(skip)]
+    pub camera_limits_restored: bool,
 }
 
 /// The default strength of GTAO's indirect light: at 1 (one physical
@@ -1427,7 +1431,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 31;
+const SETTINGS_VERSION: u32 = 33;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -2102,6 +2106,7 @@ impl Default for Settings {
             settings_version: SETTINGS_VERSION,
             newer_file: None,
             new_profile: false,
+            camera_limits_restored: false,
         }
     }
 }
@@ -2502,7 +2507,8 @@ impl Settings {
         }
         if self.settings_version < 14 {
             // new defaults: unrestricted camera, no camera collisions (every
-            // file wrote the old "off" defaults)
+            // file wrote the old "off" defaults; version 33 turns them off
+            // again)
             self.camera.disable_constraints = true;
             self.camera.ignore_sim_constraints = true;
         }
@@ -2603,6 +2609,16 @@ impl Settings {
             // still exactly on Potato or Low takes theirs (512 and 1024),
             // any other keeps 2048
             crate::graphics_presets::upgrade_max_texture_resolution(&mut self);
+        }
+        if self.settings_version < 33 {
+            // the camera's limits are on again, as DisableCameraConstraints
+            // and FSIgnoreSimulatorCameraConstraints in the Legacy Viewer:
+            // version 14 had turned both off in every file, so they go back
+            // on once, and the login screen says where to turn them off
+            let camera = &mut self.camera;
+            self.camera_limits_restored = camera.disable_constraints || camera.ignore_sim_constraints;
+            camera.disable_constraints = false;
+            camera.ignore_sim_constraints = false;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -4033,26 +4049,51 @@ mod tests {
         }
     }
 
-    /// The unrestricted camera and the camera collisions turned off reach the
-    /// earlier files once (they all wrote the old "off"); turned off again
-    /// afterwards, they stay off.
+    /// The camera's limits are on by default, as in the Legacy Viewer, and
+    /// go back on once in every earlier file (version 14 had turned them
+    /// off everywhere), with the login notice when something changed;
+    /// turned off again afterwards, they stay off and nothing is said.
     #[test]
-    fn camera_constraints_are_off_by_default_and_once_for_earlier_files() {
-        let c = Settings::default().sanitized().camera;
-        assert!(c.disable_constraints && c.ignore_sim_constraints);
-        let mut old = Settings {
-            settings_version: 13,
+    fn camera_limits_are_on_by_default_and_once_for_earlier_files() {
+        let fresh = Settings::default().sanitized();
+        assert!(!fresh.camera.disable_constraints && !fresh.camera.ignore_sim_constraints);
+        assert!(!fresh.camera_limits_restored, "a new profile has nothing to be told");
+        for version in [13, 14, 31, 32] {
+            let mut old = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            old.camera.disable_constraints = true;
+            old.camera.ignore_sim_constraints = true;
+            let s = old.sanitized();
+            assert!(
+                !s.camera.disable_constraints && !s.camera.ignore_sim_constraints,
+                "version {version}"
+            );
+            assert!(s.camera_limits_restored, "version {version}");
+            assert_eq!(s.settings_version, SETTINGS_VERSION);
+        }
+        // only one of the two was still off: both on, and the notice
+        let mut one = Settings {
+            settings_version: 32,
             ..Settings::default()
         };
-        old.camera.disable_constraints = false;
-        old.camera.ignore_sim_constraints = false;
-        let c = old.sanitized().camera;
-        assert!(c.disable_constraints && c.ignore_sim_constraints);
+        one.camera.ignore_sim_constraints = true;
+        let s = one.sanitized();
+        assert!(!s.camera.ignore_sim_constraints && s.camera_limits_restored);
+        // a file of version 32 already on the limits: no notice
+        let kept = Settings {
+            settings_version: 32,
+            ..Settings::default()
+        };
+        assert!(!kept.sanitized().camera_limits_restored);
+        // turned off again after the migration: kept, no notice
         let mut chosen = Settings::default();
-        chosen.camera.disable_constraints = false;
-        chosen.camera.ignore_sim_constraints = false;
-        let c = chosen.sanitized().camera;
-        assert!(!c.disable_constraints && !c.ignore_sim_constraints);
+        chosen.camera.disable_constraints = true;
+        chosen.camera.ignore_sim_constraints = true;
+        let s = chosen.sanitized();
+        assert!(s.camera.disable_constraints && s.camera.ignore_sim_constraints);
+        assert!(!s.camera_limits_restored);
     }
 
     /// Inter reaches the earlier files once (they all wrote Noto Sans, and

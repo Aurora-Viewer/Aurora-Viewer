@@ -157,10 +157,13 @@ impl Default for CameraSettings {
             zoom_time: 0.4,
             smoothing: 1.0,
             dynamic_strength: 2.0,
-            // both on, unlike the Legacy Viewer (human choice of 2026-10-16):
-            // the camera goes where it is put, walls and objects included
-            disable_constraints: true,
-            ignore_sim_constraints: true,
+            // both off, as DisableCameraConstraints and
+            // FSIgnoreSimulatorCameraConstraints in the Legacy Viewer: the
+            // camera keeps within the draw distance and in front of walls.
+            // They were on from 2026-10-16; version 33 of the settings turns
+            // them off once (`Settings::sanitized`)
+            disable_constraints: false,
+            ignore_sim_constraints: false,
             disable_wheel_zoom: false,
             click_avatar_keeps_camera: false,
             reset_on_movement: true,

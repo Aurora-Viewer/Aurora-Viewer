@@ -13251,6 +13251,13 @@ impl App {
             LoginAction::CopyVersion => self.copy_version(),
             LoginAction::SafeGraphics(choice) => self.safe_graphics_choice(choice),
             LoginAction::PhotoQualityOff(back_on) => self.photo_quality_off_answer(back_on),
+            LoginAction::CameraLimits(open) => {
+                self.login_form.camera_limits_restored = false;
+                if open {
+                    ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+                    self.options_ui.open_camera_limits();
+                }
+            }
             LoginAction::DismissDriverNotice => {
                 if let Some(notice) = self.login_form.driver_notice.take() {
                     log::info!("graphics driver warning dismissed for {}", notice.key);
@@ -17695,6 +17702,11 @@ impl ApplicationHandler for App {
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
         self.photo_quality_at_start();
+        // version 33 of the settings turned the camera's limits back on:
+        // said once on the login screen (`AURORA_DEMO_CAMERA_LIMITS=1` shows
+        // the card in demo, without changing a setting)
+        self.login_form.camera_limits_restored = std::mem::take(&mut self.settings.camera_limits_restored)
+            || (self.demo && std::env::var_os("AURORA_DEMO_CAMERA_LIMITS").is_some());
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
         self.gfx = Some(Gfx {

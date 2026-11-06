@@ -544,6 +544,13 @@ impl OptionsUi {
         self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-video-volume")));
     }
 
+    /// Opens Preferences › Camera › Behavior on the camera's limits (the
+    /// login card of `camera_limits_notice.rs`).
+    pub fn open_camera_limits(&mut self) {
+        self.open(Page::Camera, 1);
+        self.reveal = Some((Page::Camera, 1, aurora_i18n::tr!("ui-options-camera-unrestricted-camera")));
+    }
+
     /// Opens Preferences › Chat on the GIF picker's settings (#932).
     pub fn open_gifs(&mut self) {
         self.open(Page::Chat, 0);
