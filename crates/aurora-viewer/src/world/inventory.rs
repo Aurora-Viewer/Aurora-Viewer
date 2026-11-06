@@ -8,6 +8,7 @@ use uuid::Uuid;
 #[path = "inventory/tests.rs"]
 mod action_tests;
 pub mod actions;
+pub mod asset_ids;
 pub mod background;
 pub mod demo;
 pub mod items;
@@ -38,6 +39,8 @@ pub struct Folder {
 pub struct Inventory {
     /// Root/system lookups retained until the inventory changes.
     pub(crate) system_folders: system::Cache,
+    /// Full-permission assets retained until the inventory changes.
+    pub(crate) full_assets: asset_ids::Cache,
     /// Session-only RLVa preview restrictions, shared by every inventory floater.
     pub rlva_preview_mask: u8,
     pub owner: Uuid,

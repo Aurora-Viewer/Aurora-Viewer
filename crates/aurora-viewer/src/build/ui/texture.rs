@@ -9,13 +9,16 @@
 
 #[path = "legacy_texture.rs"]
 mod legacy_texture;
+#[cfg(test)]
+#[path = "texture_paste_tests.rs"]
+mod paste_tests;
 #[path = "texture_drop.rs"]
 pub(super) mod texture_drop;
 
 use super::common::{Edit, check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
-use crate::build::{BuildSettings, BuildTool, Tool};
+use crate::build::{BuildSettings, BuildTool, Tool, texture_copy};
 use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
 use crate::ui::widgets::tabs;
@@ -145,11 +148,22 @@ impl BuildTool {
             .collect()
     }
 
-    /// Apply inventory cargo to explicitly picked faces, leaving selection and
-    /// other texture-entry properties unchanged. Follow the displayed shading
-    /// mode: a Blinn-Phong preview edits its diffuse while retaining PBR.
-    /// Otherwise a texture on PBR replaces its base map; Alt removes PBR,
-    /// as dropTextureOneFace does.
+    /// Whether a texture dropped on `faces` of `idx` lands on one of them:
+    /// a PBR face takes it into its override only when `override_ok` (copy
+    /// and transfer, dropTextureOneFace), unless Alt removes the material or
+    /// the Blinn-Phong preview paints the diffuse. One object's faces, on a
+    /// drop or while one is held over it.
+    pub fn surface_takes_texture(world: &World, idx: usize, faces: &[u8], override_ok: bool, remove_pbr: bool) -> bool {
+        override_ok
+            || remove_pbr
+            || world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview)
+            || faces.iter().any(|face| BuildTool::gltf_asset(world, idx, *face).is_none())
+    }
+
+    /// `apply_inventory_surface_with` for an item that may go on PBR faces
+    /// (the tests' shorthand).
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_inventory_surface(
         &mut self,
         world: &mut World,
@@ -159,6 +173,28 @@ impl BuildTool {
         asset: Uuid,
         material: bool,
         remove_pbr: bool,
+    ) {
+        self.apply_inventory_surface_with(world, env, idx, faces, asset, material, remove_pbr, true);
+    }
+
+    /// Apply inventory cargo to explicitly picked faces, leaving selection and
+    /// other texture-entry properties unchanged. Follow the displayed shading
+    /// mode: a Blinn-Phong preview edits its diffuse while retaining PBR.
+    /// Otherwise a texture on PBR replaces its base map; Alt removes PBR,
+    /// as dropTextureOneFace does. `override_ok` is false for a texture the
+    /// agent may not both copy and transfer: its PBR faces are left as they
+    /// are (`surface_takes_texture`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_inventory_surface_with(
+        &mut self,
+        world: &mut World,
+        env: &mut Env,
+        idx: usize,
+        faces: &[u8],
+        asset: Uuid,
+        material: bool,
+        remove_pbr: bool,
+        override_ok: bool,
     ) {
         if !self.can_modify(world, idx) {
             return;
@@ -195,7 +231,7 @@ impl BuildTool {
                     legacy.push(face);
                 } else if blinn_phong {
                     legacy.push(face);
-                } else {
+                } else if override_ok {
                     let mut over = BuildTool::gltf_override(world, idx, face.face);
                     over.textures[0] = asset;
                     updates.push(GltfUpdate {
@@ -400,25 +436,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
                 !sel.is_empty() && tool.ui.face_clipboard.is_some(),
             ) {
-                paste_faces(tool, world, &sel);
+                paste_faces(tool, world, env, &sel);
             }
-            let one_object = !sel.is_empty() && sel.iter().all(|x| x.idx == sel[0].idx);
             if super::common::icon_button(
                 ui,
                 p,
                 "copy-filled",
                 aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
-                one_object,
+                copy_allowed(tool, world, &sel),
             ) {
-                let clip = sel
-                    .iter()
-                    .map(|x| FaceClip {
-                        face: x.te,
-                        legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
-                        gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
-                    })
-                    .collect();
-                tool.ui.face_clipboard = Some(clip);
+                tool.ui.face_clipboard = Some(copy_faces(tool, env, world, &sel));
             }
         });
     });
@@ -546,10 +573,12 @@ fn material_asset(
             [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
             egui::Label::new(RichText::new(caption).size(super::common::SMALL).color(p.muted)).truncate(),
         );
-        if response
-            .on_hover_text(asset.map_or_else(|| caption.to_string(), |id| id.to_string()))
-            .clicked()
-        {
+        // the material's id when the asset id rule allows it, as the picker
+        let tip = match asset {
+            Some(id) if response.hovered() && crate::world::inventory::asset_ids::AssetIds::per_frame(world).shown(&id) => id.to_string(),
+            _ => caption.to_string(),
+        };
+        if response.on_hover_text(tip).clicked() {
             tool.ui
                 .picker
                 .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), asset.unwrap_or_default());
@@ -709,7 +738,10 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     {
         appearance.apply_pbr(&mut mat);
     }
-    let editable = has_all;
+    // LLMaterialEditor::canModifyObjectsMaterial; not editable, the maps show no id
+    let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
+    let editable = has_all && tool.material_edit_allowed(world, &faces);
+    let shown = |id: Option<Uuid>| id.filter(|_| editable);
     tool.ui.material_previews.poll();
     let model = asset.filter(|_| loaded && !asset_mixed).and_then(|asset| {
         tool.ui.material_previews.material_model(
@@ -745,7 +777,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                         tool,
                         world,
                         env,
-                        id,
+                        shown(id),
                         false,
                         caption,
                         PickTarget::PbrMap(channel),
@@ -1423,37 +1455,160 @@ fn face_options(
     });
 }
 
+/// Whether "Copy" may run (FSPanelFace::updateCopyTexButton): the faces of
+/// one object, whose material, if any, may be copied
+/// (`texture_copy::material_copy_allowed`).
+pub(super) fn copy_allowed(tool: &BuildTool, world: &World, sel: &[Sel]) -> bool {
+    let Some(first) = sel.first() else { return false };
+    let faces: Vec<u8> = sel.iter().map(|x| x.face).collect();
+    sel.iter().all(|x| x.idx == first.idx) && texture_copy::material_copy_allowed(tool, world, first.idx, &faces)
+}
+
+/// "Copy" (FSPanelFace::onCopyTexture, LLPanelFace::onCopyTexture): each
+/// id with what a paste may count on, and the normal and specular maps the
+/// agent may not copy left out, for the target to keep its own.
+pub(super) fn copy_faces(tool: &mut BuildTool, env: &Env, world: &World, sel: &[Sel]) -> Vec<FaceClip> {
+    let (inv, agent) = (&world.inventory, world.agent_id);
+    let Some(source) = sel.first().map(|x| x.idx) else {
+        return Vec::new();
+    };
+    let creator = texture_copy::creator_owned(tool, world, source);
+    let avail = |tool: &BuildTool, asset: Uuid| {
+        texture_copy::availability(inv, agent, asset, creator, texture_copy::held(tool, world, source, asset))
+    };
+    sel.iter()
+        .map(|x| {
+            let mut legacy = tool.face_legacy(env, world, x.idx, x.face, &x.te);
+            let (mut normal_kept, mut specular_kept) = (false, false);
+            if let Some(m) = legacy.as_mut() {
+                if !texture_copy::can_copy(inv, agent, m.normal_map) {
+                    m.normal_map = Uuid::nil();
+                    normal_kept = true;
+                }
+                if !texture_copy::can_copy(inv, agent, m.specular_map) {
+                    m.specular_map = Uuid::nil();
+                    specular_kept = true;
+                }
+            }
+            let gltf = BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face)));
+            let (material, maps) = match &gltf {
+                Some((asset, over)) => (avail(tool, *asset), over.textures.map(|t| avail(tool, t))),
+                None => Default::default(),
+            };
+            FaceClip {
+                face: x.te,
+                legacy,
+                gltf,
+                image: avail(tool, x.te.texture),
+                material,
+                maps,
+                normal_kept,
+                specular_kept,
+            }
+        })
+        .collect()
+}
+
 /// "Paste" (FSPanelFace::onPasteFaces): the copied faces in order onto
-/// the selected ones; a single copied face goes on all of them.
-fn paste_faces(tool: &mut BuildTool, world: &mut World, sel: &[Sel]) {
+/// the selected ones; a single copied face goes on all of them. The ids
+/// follow LLPanelFace::onPasteTexture: a limited one needs its inventory
+/// item (else nothing is pasted), which goes into the target's contents
+/// when it cannot be transferred; a material whose override maps are not
+/// all free stays off the face, the target keeps its own.
+fn paste_faces(tool: &mut BuildTool, world: &mut World, env: &Env, sel: &[Sel]) {
+    use crate::world::notice_topics::Topic;
     let Some(clip) = tool.ui.face_clipboard.clone() else { return };
     if clip.is_empty() {
         return;
     }
     let pick = |i: usize| if clip.len() == 1 { &clip[0] } else { &clip[i.min(clip.len() - 1)] };
+    let ids = |c: &FaceClip| {
+        let material = c.gltf.is_some().then(|| std::iter::once(c.material).chain(c.maps));
+        std::iter::once(c.image).chain(material.into_iter().flatten()).collect::<Vec<_>>()
+    };
+    if clip.iter().any(|c| ids(c).iter().any(|a| !a.usable(&world.inventory))) {
+        world.system_notice(aurora_i18n::tr!("build-ui-texture-paste-not-in-inventory"), Topic::Items);
+        return;
+    }
+    // handleDropMaterialProtections asks for a target's contents first
+    let waiting = {
+        let (inv, agent) = (&world.inventory, world.agent_id);
+        let moves = |a: &texture_copy::Availability| {
+            !a.full
+                && a.item
+                    .and_then(|id| inv.items.get(&id))
+                    .is_some_and(|it| texture_copy::requires_contents(inv, it, agent))
+        };
+        let mut waiting = false;
+        for (i, x) in sel.iter().enumerate() {
+            let c = pick(i);
+            if (moves(&c.image) || c.gltf.is_some() && moves(&c.material)) && !tool.contents_ready(world, x.idx) {
+                waiting = true;
+            }
+        }
+        waiting
+    };
+    if waiting {
+        world.system_notice(aurora_i18n::tr!("build-ui-texture-paste-wait-contents"), Topic::Items);
+        return;
+    }
+    if clip.iter().any(|c| ids(c).iter().any(|a| !a.full)) {
+        world.system_notice(aurora_i18n::tr!("build-ui-texture-paste-limited"), Topic::Items);
+    }
+    let through = |tool: &mut BuildTool, world: &World, idx: usize, a: texture_copy::Availability| {
+        a.item
+            .is_none_or(|id| tool.retain_for_paste(world, idx, id) == texture_copy::Retain::Done)
+    };
+    let mut image_ok = Vec::with_capacity(sel.len());
+    let mut gltf_ok = Vec::with_capacity(sel.len());
+    for (i, x) in sel.iter().enumerate() {
+        let c = pick(i);
+        image_ok.push(through(tool, world, x.idx, c.image));
+        gltf_ok.push(c.gltf.is_none() || c.maps.iter().all(|m| m.full) && through(tool, world, x.idx, c.material));
+    }
     let order: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     tool.edit_faces(world, |f, idx, face| {
         let i = order.iter().position(|o| *o == (idx, face)).unwrap_or(0);
         let c = pick(i).face;
         // the material id is the simulator's: the legacy material is put below
-        let mat = f.material_id;
+        let (mat, texture) = (f.material_id, f.texture);
         *f = c;
         f.material_id = mat;
+        if !image_ok.get(i).copied().unwrap_or(false) {
+            f.texture = texture;
+        }
     });
     let mut puts = Vec::new();
     let mut gltf = Vec::new();
     for (i, x) in sel.iter().enumerate() {
         let c = pick(i);
-        puts.push((x.idx, x.face, c.legacy.clone()));
-        gltf.push(GltfUpdate {
-            object: x.idx,
-            face: x.face,
-            asset: Some(c.gltf.as_ref().map(|g| g.0).unwrap_or_default()),
-            over: c.gltf.as_ref().map(|g| g.1.clone()),
-        });
+        let mut legacy = c.legacy.clone();
+        if let Some(m) = legacy.as_mut()
+            && (c.normal_kept || c.specular_kept)
+        {
+            let own = tool.face_legacy(env, world, x.idx, x.face, &x.te);
+            let own = own.as_ref();
+            if c.normal_kept {
+                m.normal_map = own.map_or(Uuid::nil(), |o| o.normal_map);
+            }
+            if c.specular_kept {
+                m.specular_map = own.map_or(Uuid::nil(), |o| o.specular_map);
+            }
+        }
+        puts.push((x.idx, x.face, legacy));
+        if gltf_ok[i] {
+            gltf.push(GltfUpdate {
+                object: x.idx,
+                face: x.face,
+                asset: Some(c.gltf.as_ref().map(|g| g.0).unwrap_or_default()),
+                over: c.gltf.as_ref().map(|g| g.1.clone()),
+            });
+        }
     }
     tool.legacy_put(world, puts);
-    tool.gltf_update(world, gltf);
+    if !gltf.is_empty() {
+        tool.gltf_update(world, gltf);
+    }
 }
 
 // --------------------------------------------------------------- media

@@ -200,7 +200,13 @@ pub enum InvAction {
     },
     Marketplace(Uuid, crate::ui::marketplace_listings::Command),
     Profile(Uuid),
-    ThumbnailCopied(Uuid),
+    /// The item image was copied; `clipboard`: its id is on the system
+    /// clipboard too (the asset id rule allows it), else the copy stays in
+    /// the viewer (LLFloaterChangeItemThumbnail::onCopyToClipboard).
+    ThumbnailCopied {
+        asset: Uuid,
+        clipboard: bool,
+    },
     Thumbnail {
         request: Uuid,
         item: Uuid,
@@ -231,6 +237,9 @@ pub struct Facts {
     /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
     /// (LLLandmarksPanel "teleport", LLPanelPlaces' Teleport button).
     pub landmark_blocked: bool,
+    /// On an OpenSim grid (`World::home_grid`): "Restore to last position"
+    /// keeps no-copy items there.
+    pub opensim: bool,
 }
 
 impl Facts {
@@ -299,6 +308,7 @@ impl Facts {
                 }),
             rlva: world.rlva_wear_locks(),
             landmark_blocked: !world.rlva_can_teleport_landmark(),
+            opensim: world.home_grid.is_some(),
         }
     }
 
