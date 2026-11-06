@@ -133,7 +133,7 @@ fn poser_cooldown_timeout_cancel_before_sync_preserves_the_receiver_wait() {
     state.receive(&world, &wire(id, PoseKind::Request, peer), now);
     state.receive(&world, &wire(id, PoseKind::Cancel, peer), now + TIMEOUT);
     assert!(state.incoming.is_empty());
-    let ready = now + TIMEOUT + Duration::from_secs(120);
+    let ready = now + TIMEOUT + Duration::from_secs(120) - RELAY_SLACK;
     state.sync(&world, ready - Duration::from_millis(1));
     state.receive(
         &world,
@@ -143,6 +143,47 @@ fn poser_cooldown_timeout_cancel_before_sync_preserves_the_receiver_wait() {
     assert!(state.incoming.is_empty());
     state.sync(&world, ready);
     state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), ready);
+    assert_eq!(state.incoming.len(), 1);
+}
+#[test]
+fn poser_cooldown_timeout_cancel_relayed_just_under_a_minute_still_waits() {
+    let (world, peer, mut state) = fixture();
+    state.preferences.policy = Policy::Everyone;
+    let now = Instant::now();
+    let id = Uuid::new_v4();
+    state.receive(&world, &wire(id, PoseKind::Request, peer), now);
+    // the requester's own 60 s ran out; its Cancel reached us 2 s "early"
+    let cancel = now + TIMEOUT - Duration::from_secs(2);
+    state.receive(&world, &wire(id, PoseKind::Cancel, peer), cancel);
+    assert!(state.incoming.is_empty());
+    state.sync(&world, cancel + Duration::from_secs(60));
+    state.receive(
+        &world,
+        &wire(Uuid::new_v4(), PoseKind::Request, peer),
+        cancel + Duration::from_secs(60),
+    );
+    assert!(state.incoming.is_empty(), "the no-answer wait applies");
+    // and ends no later than the requester's 2:00 countdown
+    let ready = cancel + Duration::from_secs(120);
+    state.sync(&world, ready);
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), ready);
+    assert_eq!(state.incoming.len(), 1);
+}
+#[test]
+fn poser_cooldown_early_cancel_by_the_requester_leaves_no_wait() {
+    let (world, peer, mut state) = fixture();
+    state.preferences.policy = Policy::Everyone;
+    let now = Instant::now();
+    let id = Uuid::new_v4();
+    state.receive(&world, &wire(id, PoseKind::Request, peer), now);
+    let cancel = now + Duration::from_secs(10);
+    state.receive(&world, &wire(id, PoseKind::Cancel, peer), cancel);
+    state.sync(&world, cancel + Duration::from_secs(1));
+    state.receive(
+        &world,
+        &wire(Uuid::new_v4(), PoseKind::Request, peer),
+        cancel + Duration::from_secs(1),
+    );
     assert_eq!(state.incoming.len(), 1);
 }
 #[test]

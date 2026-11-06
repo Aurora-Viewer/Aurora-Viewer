@@ -23,6 +23,10 @@ const ENDED_RETENTION: Duration = Duration::from_secs(600);
 fn cooldown(no_answer: bool) -> Duration {
     if no_answer { NO_ANSWER_COOLDOWN } else { REFUSAL_COOLDOWN }
 }
+// The requester's timeout Cancel crosses the region relay, so it reaches
+// us a little before our own copy of the request is 60 s old, and our wait
+// must not outlast the countdown the requester shows.
+const RELAY_SLACK: Duration = Duration::from_secs(5);
 const LIMIT: usize = 64;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Policy {
@@ -247,7 +251,9 @@ impl State {
     }
     fn expire_incoming(&mut self, request: Request, now: Instant) {
         self.incoming.retain(|r| r.id != request.id || r.peer != request.peer);
-        self.inbound_cooldown.insert(request.peer, (now.min(request.at + TIMEOUT), true));
+        let start = now.min(request.at + TIMEOUT);
+        self.inbound_cooldown
+            .insert(request.peer, (start.checked_sub(RELAY_SLACK).unwrap_or(start), true));
         // Silence is not a refusal. The requester expires its own pending
         // request, so never turn this timeout into an explicit Refuse reply.
         if self.ended.len() < LIMIT * 2 {
@@ -305,7 +311,7 @@ impl State {
                 // The requester's timeout can arrive before our next sync.
                 // Preserve the same receiver cooldown whichever event wins.
                 if let Some(r) = self.incoming.iter().find(|r| r.peer == peer && r.id == id).copied()
-                    && now.duration_since(r.at) >= TIMEOUT
+                    && now.duration_since(r.at) + RELAY_SLACK >= TIMEOUT
                 {
                     self.expire_incoming(r, now);
                 }
