@@ -500,21 +500,23 @@ impl App {
         self.crash_recent.photo(now, self.snapshots.drawing());
         self.crash_timeline
             .frame(now, &self.screen, self.login_form.busy, self.world.main_region);
-        let window_state = if window.is_minimized().unwrap_or(false) {
-            crate::crash::flight_recorder::WindowState::Minimized
-        } else if self.occluded {
-            crate::crash::flight_recorder::WindowState::Occluded
-        } else if !self.focused {
-            crate::crash::flight_recorder::WindowState::Background
-        } else {
-            crate::crash::flight_recorder::WindowState::Focused
-        };
         let screen = match &self.screen {
             Screen::Login => crate::crash::flight_recorder::Stage::Login,
             Screen::Loading { .. } => crate::crash::flight_recorder::Stage::Loading,
             Screen::World => crate::crash::flight_recorder::Stage::World,
         };
         crate::crash::flight_recorder::sample_if_due(|| {
+            // At the 10 Hz sample only: on X11 the minimized query is a
+            // blocking round trip to the server.
+            let window_state = if window.is_minimized().unwrap_or(false) {
+                crate::crash::flight_recorder::WindowState::Minimized
+            } else if self.occluded {
+                crate::crash::flight_recorder::WindowState::Occluded
+            } else if !self.focused {
+                crate::crash::flight_recorder::WindowState::Background
+            } else {
+                crate::crash::flight_recorder::WindowState::Focused
+            };
             let video = renderer.video_memory.read(&renderer.device);
             let (vram_used_mb, vram_budget_mb) = video
                 .map(|video| (Some(video.usage >> 20), Some(video.budget >> 20)))

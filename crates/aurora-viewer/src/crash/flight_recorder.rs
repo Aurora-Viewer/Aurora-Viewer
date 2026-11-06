@@ -188,6 +188,11 @@ struct Recorder {
     last_effects: Option<u32>,
     last_ui: Option<u8>,
     last_swapchain_total: Option<u64>,
+    /// The seconds before the first GPU loss were written: nothing replaces
+    /// them in this session, and nothing is recorded until a recovery (the
+    /// seconds after a loss are the notice box's, not the incident's).
+    loss_dumped: bool,
+    frozen: bool,
 }
 
 impl Default for Recorder {
@@ -207,6 +212,8 @@ impl Default for Recorder {
             last_effects: None,
             last_ui: None,
             last_swapchain_total: None,
+            loss_dumped: false,
+            frozen: false,
         }
     }
 }
@@ -334,6 +341,20 @@ impl Recorder {
         self.push_event(at_ms, kind, 0, 1);
     }
 
+    /// The dump for `trigger`, or none when the first GPU loss's dump was
+    /// already written; a GPU loss freezes the recording until a recovery.
+    fn take_dump(&mut self, trigger: Trigger, end_ms: u64) -> Option<Dump> {
+        if self.loss_dumped {
+            return None;
+        }
+        let dump = self.dump(trigger, end_ms);
+        if trigger == Trigger::GpuLoss {
+            self.loss_dumped = true;
+            self.frozen = true;
+        }
+        Some(dump)
+    }
+
     fn dump(&self, trigger: Trigger, end_ms: u64) -> Dump {
         let samples = self.ordered_samples();
         let events = self.ordered_events();
@@ -385,13 +406,18 @@ pub fn start() {
 /// other nine frames in each interval.
 pub fn sample_if_due(input: impl FnOnce() -> SampleInput) {
     let mut recorder = recorder().lock().unwrap_or_else(|e| e.into_inner());
+    if recorder.frozen {
+        return;
+    }
     let now = Instant::now();
     let at_ms = recorder.elapsed_ms(now);
     recorder.sample_if_due(at_ms, input);
 }
 
 fn note_event(kind: EventKind) {
-    if let Ok(mut recorder) = recorder().try_lock() {
+    if let Ok(mut recorder) = recorder().try_lock()
+        && !recorder.frozen
+    {
         recorder.event(kind);
     }
 }
@@ -420,14 +446,19 @@ pub fn gpu_stall_recovered() {
     note_event(EventKind::GpuRecovered);
 }
 
+/// The renderer came back after a loss: recording resumes (the loss's own
+/// dump stays as it was).
 pub fn gpu_recovered() {
+    recorder().lock().unwrap_or_else(|e| e.into_inner()).frozen = false;
     note_event(EventKind::GpuRecovered);
 }
 
 pub fn capture(dir: &Path, trigger: Trigger) {
     let Ok(mut recorder) = recorder().try_lock() else { return };
+    // The first GPU loss's seconds are the incident: a stall, a failure or a
+    // panic at the shutdown that follows must not replace them.
     let end_ms = recorder.elapsed_ms(Instant::now());
-    let dump = recorder.dump(trigger, end_ms);
+    let Some(dump) = recorder.take_dump(trigger, end_ms) else { return };
     drop(recorder);
     if let Ok(bytes) = serde_json::to_vec(&dump)
         && bytes.len() as u64 <= MAX_DUMP_BYTES
@@ -435,6 +466,14 @@ pub fn capture(dir: &Path, trigger: Trigger) {
     {
         log::warn!("flight recorder snapshot was not published: {error}");
     }
+}
+
+/// The ring written every few seconds by the watchdog thread (no disk
+/// flush), so a native crash, an out-of-memory abort or a process the
+/// driver kills still leaves the seconds before it. A dump written for an
+/// incident is never replaced by this one.
+pub fn publish_periodic(dir: &Path) {
+    capture(dir, Trigger::SessionEnd);
 }
 
 pub fn report_from_json(json: &str) -> Option<String> {
@@ -766,6 +805,25 @@ mod tests {
         assert_eq!(dump.samples.len(), SAMPLE_CAP);
         assert_eq!(dump.samples[0].values[1], Some(2.0));
         assert_eq!(dump.samples[SAMPLE_CAP - 1].values[1], Some(601.0));
+    }
+
+    #[test]
+    fn the_first_gpu_loss_dump_is_never_replaced_and_freezes_the_recording() {
+        let mut recorder = Recorder::default();
+        recorder.sample_at(0, input(1.0, 1.0));
+        assert!(recorder.take_dump(Trigger::SessionEnd, 50).is_some(), "periodic before any loss");
+        let loss = recorder.take_dump(Trigger::GpuLoss, 100).expect("the loss dump");
+        assert_eq!(loss.trigger, Trigger::GpuLoss);
+        assert!(recorder.frozen);
+        for later in [
+            Trigger::GpuStall,
+            Trigger::Panic,
+            Trigger::SessionEnd,
+            Trigger::GpuRecovery,
+            Trigger::GpuLoss,
+        ] {
+            assert!(recorder.take_dump(later, 900).is_none(), "{later:?} after the loss");
+        }
     }
 
     #[test]

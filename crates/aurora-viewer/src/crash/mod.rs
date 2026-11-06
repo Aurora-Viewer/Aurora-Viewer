@@ -352,9 +352,6 @@ pub fn gpu_stalled(seconds: u64) {
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
     gpu_loss_snapshot();
-    if let Some(session) = SESSION.get() {
-        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuLoss);
-    }
     mark_gpu_lost(b"");
 }
 
@@ -363,6 +360,9 @@ pub fn gpu_lost() {
 pub fn gpu_loss_snapshot() {
     crate::overlay_hooks::loss_snapshot();
     environment::at_gpu_loss();
+    if let Some(session) = SESSION.get() {
+        flight_recorder::capture(&session.dir, flight_recorder::Trigger::GpuLoss);
+    }
 }
 
 #[cfg(windows)]
