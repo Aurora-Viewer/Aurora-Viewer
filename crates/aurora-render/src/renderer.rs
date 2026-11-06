@@ -8328,10 +8328,18 @@ impl Backend {
                 _ => crate::oit_stochastic::SceneHistory::None,
             };
             ready
-                && self
-                    .st
-                    .as_mut()
-                    .is_some_and(|s| s.prepare(device, queue, size.width, size.height, samples, reproj, !st_glow.is_empty(), history))
+                && self.st.as_mut().is_some_and(|s| {
+                    s.prepare(
+                        device,
+                        queue,
+                        size.width,
+                        size.height,
+                        samples,
+                        reproj,
+                        !st_glow.is_empty(),
+                        history,
+                    )
+                })
         };
         // off, its targets are freed (as `Bloom::release`)
         if method != crate::oit_stochastic::Method::Stochastic
