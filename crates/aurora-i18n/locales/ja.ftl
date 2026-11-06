@@ -989,6 +989,7 @@ script-load-failed = スクリプトを読み込めませんでした。更新�
 script-save-unavailable = このリージョンはスクリプトの保存に対応していません。
 script-saving = 保存してコンパイルしています…
 script-saved = スクリプトを保存してコンパイルしました。
+script-saved-not-compiled = スクリプトを保存しました。このグリッドでは、スクリプトはオブジェクトに入れたときにコンパイルされます。
 script-compile-failed = ソースは保存されましたが、コンパイルに失敗しました。下のエラーを修正してください。
 script-save-hint = スクリプトを保存してコンパイル（Ctrl＋S）。
 script-mono-hint = Monoでコンパイルします。オフにすると従来のＬＳＬコンパイラを使用します。

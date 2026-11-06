@@ -992,6 +992,7 @@ script-load-failed = Could not load the script. Refresh to try again.
 script-save-unavailable = This region does not support saving scripts.
 script-saving = Saving and compiling…
 script-saved = Script saved and compiled.
+script-saved-not-compiled = Script saved. This grid compiles scripts when they are placed in an object.
 script-compile-failed = Source saved, but compilation failed. Correct the errors below.
 script-save-hint = Save and compile the script (Ctrl+S).
 script-mono-hint = Compile with Mono. Uncheck to use the classic LSL compiler.
