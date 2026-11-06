@@ -10129,7 +10129,8 @@ What the inventory must show with these scenarios:
   [2, 4, 8]`), the route (`oit stochastic: the sample mask route` or `the
   sample index route`) and the targets (`oit stochastic: targets <w>x<h>,
   the scene at <n> samples, the passes at <p>: <i> iterations for <S>
-  samples`); with `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=…
+  samples, <m> MB`, the video memory of those targets: about 187 MB at
+  1600 x 900 and 478 MB at 2560 x 1440 with MSAA 4x); with `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=…
   depth1=… accum1=… more_iterations=… resolve_composite=… total=…` every
   120 frames (the first run of the stochastic depth and of the
   accumulation, then the other runs together). `AURORA_OIT_SAMPLES` sets

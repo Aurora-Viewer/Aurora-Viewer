@@ -333,6 +333,36 @@ pub fn trans_samples(scene: u32, pass: u32) -> u32 {
     if scene > 1 { scene } else { pass }
 }
 
+/// Which of the resolve's optional full-size targets a configuration needs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Plan {
+    /// the last frame's resolved colour (the temporal blend)
+    pub history: bool,
+    /// the filtered colour (the cross-bilateral filter)
+    pub filtered: bool,
+}
+
+pub fn plan(c: &Config) -> Plan {
+    Plan {
+        history: c.temporal > 0.0,
+        filtered: c.filter > 0,
+    }
+}
+
+/// The bytes of the targets `make_targets` allocates, from their formats
+/// (Rgba16Float colour, Depth32Float depth): the total alpha, the
+/// accumulation, the glow and the stochastic depth multisampled, the
+/// resolved colour (two with the history), the total alpha and glow, the
+/// filtered colour with the filter, and the six 1 x 1 placeholders.
+pub fn target_bytes(width: u32, height: u32, samples: u32, pass: u32, plan: Plan) -> u64 {
+    let px = u64::from(width.max(1)) * u64::from(height.max(1));
+    let trans = 2 * u64::from(trans_samples(samples, pass));
+    let per_pass = (8 + 2 + 4) * u64::from(pass);
+    let resolved = 8 * (1 + u64::from(plan.history));
+    let filtered = 8 * u64::from(plan.filtered);
+    px * (trans + per_pass + resolved + 8 + filtered) + 6 * 8
+}
+
 /// object.wgsl `StParams`.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -778,27 +808,40 @@ impl Stochastic {
             U::RENDER_ATTACHMENT | U::COPY_DST | U::TEXTURE_BINDING,
         );
         let single = U::STORAGE_BINDING | U::TEXTURE_BINDING;
-        let resolved = [
-            make("oit stochastic resolved 0", wgpu::TextureFormat::Rgba16Float, 1, single).1,
-            make("oit stochastic resolved 1", wgpu::TextureFormat::Rgba16Float, 1, single).1,
-        ];
-        // the total alpha (red) and the corrected glow (green)
-        let (_, total) = make("oit stochastic total alpha", wgpu::TextureFormat::Rg32Float, 1, single);
-        let (_, filtered) = make("oit stochastic filtered", wgpu::TextureFormat::Rgba16Float, 1, single);
         // A texture written as storage and read as sampled in one group
-        // conflicts: each step's group binds dummies where it does not
-        // write (two of each format, one read, one written)
-        let dummy = |label, format| make(label, format, 1, single).1;
+        // conflicts: each step's group binds placeholders where it does not
+        // write (two of each format, one read, one written). No entry point
+        // touches them: 1 x 1 (`plan`)
+        let small = |label, format| crate::renderer::make_view(device, label, 1, 1, format, 1, single).1;
         let (dr_r, dr_w) = (
-            dummy("oit stochastic dummy rgba r", wgpu::TextureFormat::Rgba16Float),
-            dummy("oit stochastic dummy rgba w", wgpu::TextureFormat::Rgba16Float),
+            small("oit stochastic dummy rgba r", wgpu::TextureFormat::Rgba16Float),
+            small("oit stochastic dummy rgba w", wgpu::TextureFormat::Rgba16Float),
         );
         let (df_r, df_w) = (
-            dummy("oit stochastic dummy rg32 r", wgpu::TextureFormat::Rg32Float),
-            dummy("oit stochastic dummy rg32 w", wgpu::TextureFormat::Rg32Float),
+            small("oit stochastic dummy rg32 r", wgpu::TextureFormat::Rg32Float),
+            small("oit stochastic dummy rg32 w", wgpu::TextureFormat::Rg32Float),
         );
+        let plan = plan(&self.config);
+        // the resolved colour: the last frame's is read by the temporal
+        // blend alone (otherwise one, the placeholder as its history)
+        let resolved0 = make("oit stochastic resolved 0", wgpu::TextureFormat::Rgba16Float, 1, single).1;
+        let resolved1 = plan
+            .history
+            .then(|| make("oit stochastic resolved 1", wgpu::TextureFormat::Rgba16Float, 1, single).1);
+        // the total alpha (red) and the corrected glow (green)
+        let (_, total) = make("oit stochastic total alpha", wgpu::TextureFormat::Rg32Float, 1, single);
+        // the filtered colour: written and read with the filter alone
+        let filtered = if plan.filtered {
+            make("oit stochastic filtered", wgpu::TextureFormat::Rgba16Float, 1, single).1
+        } else {
+            small("oit stochastic filtered (off)", wgpu::TextureFormat::Rgba16Float)
+        };
         let groups = std::array::from_fn(|parity| {
-            let (cur, old) = (&resolved[parity], &resolved[1 - parity]);
+            let (cur, old) = match &resolved1 {
+                Some(r1) if parity == 1 => (r1, &resolved0),
+                Some(r1) => (&resolved0, r1),
+                None => (&resolved0, &dr_r),
+            };
             let group = |label, entries: [(u32, &wgpu::TextureView); 7]| {
                 let mut all = vec![
                     bind(0, self.resolve_params.as_entire_binding()),
@@ -848,9 +891,10 @@ impl Stochastic {
             (resolve, filter, composite)
         });
         log::info!(
-            "oit stochastic: targets {width}x{height}, the scene at {samples} samples, the passes at {pass}: {} iterations for {} samples",
+            "oit stochastic: targets {width}x{height}, the scene at {samples} samples, the passes at {pass}: {} iterations for {} samples, {:.0} MB",
             self.iterations_for(pass),
-            self.config.samples
+            self.config.samples,
+            target_bytes(width, height, samples, pass, plan) as f64 / (1024.0 * 1024.0)
         );
         Targets {
             width,
@@ -1413,6 +1457,32 @@ mod tests {
                 assert!(m.contains(&k), "{n}: scene sample {k} unused");
             }
         }
+    }
+
+    #[test]
+    fn the_targets_hold_only_what_the_configuration_reads() {
+        let mib = |w, h, s, plan| target_bytes(w, h, s, 8, plan) as f64 / (1024.0 * 1024.0);
+        let default = plan(&Config::default());
+        assert_eq!(
+            default,
+            Plan {
+                history: false,
+                filtered: false
+            }
+        );
+        // the default at MSAA 4x: 136 bytes a pixel (the earlier layout, with
+        // the second resolved colour, the filtered one and the full-size
+        // placeholders, took 184: 253 and 647 MB)
+        assert_eq!((mib(1600, 900, 4, default) + 0.5) as u32, 187);
+        assert_eq!((mib(2560, 1440, 4, default) + 0.5) as u32, 478);
+        // without MSAA the total alpha is at the passes' samples
+        assert_eq!((mib(1600, 900, 1, default) + 0.5) as u32, 198);
+        let all = Plan {
+            history: true,
+            filtered: true,
+        };
+        assert_eq!(plan(&parse_config(None, Some("temporal,filter"))), all);
+        assert_eq!((mib(2560, 1440, 4, all) + 0.5) as u32, 534);
     }
 
     #[test]
