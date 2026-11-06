@@ -18,7 +18,11 @@ pub(super) fn eligibility_reason(world: &World, id: Uuid) -> Option<&'static str
     if object.is_avatar() {
         return (!world.poser_consent.can_pose(world, id)).then_some("no-consent");
     }
-    if object.owner_id != world.agent_id {
+    // the simulator leaves OwnerID empty in most object updates and fills
+    // it only with ObjectProperties (a selection): the update flags say
+    // "you own this" for every prim, as permYouOwner (llviewerobject.cpp)
+    let you_own = object.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0;
+    if object.owner_id != world.agent_id && !(you_own && object.owner_id.is_nil()) {
         return Some("not-owned");
     }
     let Some(own) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) else {

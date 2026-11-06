@@ -450,12 +450,50 @@ fn poser_closing_and_ik_switch_release_every_subject_unless_keep_pose_is_explici
     assert!(!editor.poser.active);
     assert!(editor.pose_layers(&world).is_empty());
 }
+/// The demo animesh without DemoSim's "you own this" update flag, so only
+/// its OwnerID decides whose it is.
+fn animesh_not_flagged_ours() -> Vec<aurora_net::objects::ObjectUpdate> {
+    demo::animesh_objects(demo::ANIMESH_MESH)
+        .into_iter()
+        .map(|mut o| {
+            o.update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
+            o
+        })
+        .collect()
+}
+#[test]
+fn an_animesh_whose_owner_id_is_not_sent_is_ours_by_its_update_flags() {
+    // the simulator sends OwnerID only with ObjectProperties: a rezzed
+    // animesh not selected yet is known as ours by OBJECT_YOU_OWNER alone
+    let (mut world, _) = fixture();
+    world.apply(NetEvent::ObjectUpdates {
+        handle: 1,
+        objects: demo::animesh_objects(demo::ANIMESH_MESH),
+    });
+    let (index, id) = world
+        .objects
+        .iter()
+        .find(|(_, o)| o.key.local_id == 9200)
+        .map(|(i, o)| (i, o.full_id))
+        .unwrap();
+    assert!(world.objects.get(index).unwrap().owner_id.is_nil());
+    assert_eq!(subjects::eligibility_reason(&world, id), None);
+    world.objects.get_mut(index).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
+    assert_eq!(subjects::eligibility_reason(&world, id), Some("not-owned"));
+    world.objects.get_mut(index).unwrap().owner_id = Uuid::from_u128(77);
+    world.objects.get_mut(index).unwrap().update_flags |= crate::ui::context::flags::OBJECT_YOU_OWNER;
+    assert_eq!(
+        subjects::eligibility_reason(&world, id),
+        Some("not-owned"),
+        "a known other owner wins"
+    );
+}
 #[test]
 fn poser_subjects_require_ownership_or_consent_and_losing_ownership_drops_only_that_layer() {
     let (mut world, mut editor) = fixture();
     world.apply(NetEvent::ObjectUpdates {
         handle: 1,
-        objects: demo::animesh_objects(demo::ANIMESH_MESH),
+        objects: animesh_not_flagged_ours(),
     });
     let (index, id) = world
         .objects
@@ -497,7 +535,7 @@ fn poser_animesh_menu_has_a_name_instead_of_a_local_id_when_properties_are_missi
     let (mut world, mut editor) = fixture();
     world.apply(NetEvent::ObjectUpdates {
         handle: 1,
-        objects: demo::animesh_objects(demo::ANIMESH_MESH),
+        objects: animesh_not_flagged_ours(),
     });
     let (index, id) = world
         .objects
@@ -530,7 +568,7 @@ fn poser_animesh_subject_uses_object_name_in_menu_and_requests_missing_propertie
     let (mut world, mut editor) = fixture();
     world.apply(NetEvent::ObjectUpdates {
         handle: 1,
-        objects: demo::animesh_objects(demo::ANIMESH_MESH),
+        objects: animesh_not_flagged_ours(),
     });
     let (index, id) = world
         .objects
