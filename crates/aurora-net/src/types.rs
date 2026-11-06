@@ -844,6 +844,9 @@ pub enum NetEvent {
         object_id: Uuid,
         object_name: String,
         owner_name: String,
+        /// The owner's id (the OwnerData block; nil from simulators that
+        /// do not send it).
+        owner_id: Uuid,
         message: String,
         channel: i32,
         buttons: Vec<String>,
