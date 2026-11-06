@@ -241,11 +241,27 @@ impl App {
                 });
             }
             (name, it) => {
+                let rights = self.day_editor.rights;
+                if !(rights.save && rights.copy) {
+                    // the menu entry is off: a direct call stops here
+                    return;
+                }
                 let inv = &self.world.inventory;
                 let settings_folder = crate::world::inventory::actions::system(inv, 56).unwrap_or(inv.root);
                 let own = it.as_ref().filter(|it| !crate::world::inventory::actions::library(inv, it.id));
                 let parent = own.map_or(settings_folder, |it| it.parent);
-                let next_owner_mask = own.map(|it| it.next_owner_mask);
+                // without transfer at the source, the new item's next owner
+                // gets none either (the defaults otherwise)
+                let next_owner_mask = match own {
+                    Some(it) => Some(rights.next_owner_mask(it.next_owner_mask)),
+                    None if !rights.transfer => self
+                        .settings
+                        .inventory
+                        .creation_permissions
+                        .for_item(aurora_net::inventory::operations::NewItem::Settings(2))
+                        .map(|p| rights.next_owner_mask(p.next_owner)),
+                    None => None,
+                };
                 let name = name.unwrap_or_else(|| doc.name().to_owned());
                 doc.set_name(&name);
                 self.day_editor.saving = Some(request);
