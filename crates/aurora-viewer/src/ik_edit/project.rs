@@ -533,7 +533,7 @@ impl Editor {
                         it.asset_type == 7 && it.name.to_lowercase().contains(&filter) && !world.inventory.in_folder_type(it.id, 14)
                     })
                     .collect();
-                candidates.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+                candidates.sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then(a.id.cmp(&b.id)));
                 self.project.candidates = candidates.iter().map(|it| it.id).collect();
                 self.project.candidates_at = Some(signature);
             }

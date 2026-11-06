@@ -766,7 +766,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
     // sortFriendList: by username or display name, then online first
     rows.sort_by_cached_key(|r| {
         let key = if settings.sort_by_display_name { &r.display } else { &r.user };
-        (!r.online, key.to_lowercase())
+        (!r.online, crate::natural_order::key(key))
     });
     rows
 }
@@ -1591,9 +1591,9 @@ fn sets_tab(
     members.retain(|id| super::people::matches_name(world, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&choice) {
-        members.sort_by_cached_key(|id| (!online(id), name_of(id).to_lowercase()));
+        members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));
     } else {
-        members.sort_by_cached_key(|id| name_of(id).to_lowercase());
+        members.sort_by_cached_key(|id| crate::natural_order::key(&name_of(id)));
     }
     let rows: Vec<(Uuid, String, bool, Option<Color32>)> = members
         .iter()
