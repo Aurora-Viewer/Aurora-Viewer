@@ -633,8 +633,9 @@ pub struct App {
     demo_gains: std::collections::VecDeque<(Instant, NetEvent)>,
     /// `AURORA_DEMO_PAYMENT=earning`: when the next payment comes.
     demo_earning: Option<Instant>,
-    /// `AURORA_DEMO_PAYMENT=balance`: L$ received at the balance, no toast.
-    demo_balance_only: bool,
+    /// `AURORA_DEMO_PAYMENT`: the toast and the highlight for this run,
+    /// whatever is saved (the demo's settings are saved like the user's).
+    demo_money_notices: Option<(bool, bool)>,
     look_focus: Option<Vec3>,
     look_cursor: (f32, f32),
     look_root_at: Vec3,
@@ -1609,7 +1610,7 @@ impl App {
             balance_gains: Default::default(),
             demo_gains: Default::default(),
             demo_earning: None,
-            demo_balance_only: false,
+            demo_money_notices: None,
             look_focus: None,
             look_cursor: (0.0, 0.0),
             look_root_at: Vec3::X,
@@ -8879,8 +8880,11 @@ impl App {
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
         self.world.payments.open_when_paying = self.settings.payment_sent_opens_conversation;
-        self.world.payments.notify_received = self.settings.notify_money_received && !self.demo_balance_only;
-        self.world.payments.rise_into_balance = self.settings.balance_gain_animation || self.demo_balance_only;
+        let (toast, highlight) = self
+            .demo_money_notices
+            .unwrap_or((self.settings.notify_money_received, self.settings.balance_gain_animation));
+        self.world.payments.notify_received = toast;
+        self.world.payments.rise_into_balance = highlight;
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700

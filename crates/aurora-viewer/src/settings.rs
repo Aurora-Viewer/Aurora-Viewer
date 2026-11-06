@@ -659,7 +659,9 @@ pub struct Settings {
     /// shows there only when it is open. On by default.
     pub payment_opens_conversation: bool,
     /// Preferences › Chat › Notifications: L$ received show a toast
-    /// (NotifyMoneyReceived, on by default, #2675).
+    /// (NotifyMoneyReceived, #2675). Off by default, where the Legacy
+    /// Viewer's is on: the highlight at the balance says it without covering
+    /// the world, and a busy seller would get one toast per sale.
     pub notify_money_received: bool,
     /// Preferences › Layout › Bars: L$ received rise into the balance
     /// (`ui/balance_gains.rs`, Aurora's own, on by default).
@@ -1867,7 +1869,7 @@ impl Default for Settings {
             payment_confirm_threshold: 200,
             always_track_payments: false,
             payment_opens_conversation: true,
-            notify_money_received: true,
+            notify_money_received: false,
             balance_gain_animation: true,
             payment_sent_opens_conversation: false,
             maps: MapSettings::default(),
