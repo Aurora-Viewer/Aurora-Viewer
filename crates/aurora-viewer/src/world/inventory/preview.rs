@@ -5,7 +5,8 @@ pub fn can_edit(inv: &super::Inventory, item: uuid::Uuid) -> bool {
     !super::actions::library(inv, item)
         && inv.items.get(&item).is_some_and(|it| {
             matches!(it.asset_type, 7 | 10)
-                && it.owner_mask & (super::actions::COPY | super::actions::MODIFY) == super::actions::COPY | super::actions::MODIFY
+                && super::actions::held(inv, it) & (super::actions::COPY | super::actions::MODIFY)
+                    == super::actions::COPY | super::actions::MODIFY
         })
 }
 
