@@ -4500,9 +4500,8 @@ impl App {
         }
     }
 
-    /// Is a world point on (or very near) our own avatar?
-    /// Where a ray enters and leaves our avatar's box (the size the
-    /// simulator gives the avatar object, a little wider for the arms), and
+    /// Diagnostic depth-only picking: where a ray enters and leaves our
+    /// avatar's box (the simulator's object size, widened for the arms), and
     /// where along it the ray passes within 0.2 m of the body's vertical axis
     /// (the click finds the avatar before its body and clothes are drawn).
     fn own_avatar_ray(&self, origin: Vec3, dir: Vec3) -> Option<(f32, f32, Option<f32>)> {
@@ -4644,10 +4643,16 @@ impl App {
             .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
             .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
-        // on our avatar: a surface inside its box under the cursor (nothing
-        // in front of it); or, when the ray goes through the box without
-        // touching anything (body not drawn yet), close to the body's axis
+        // Only our displayed body takes the press, not empty space inside
+        // its bounding box. Keep the old approximation solely for the
+        // diagnostic synchronous read, which has no drawn-face identity.
         let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|(o, d)| {
+            if !picked.depth_only() {
+                // The depth is older than the posed surface. Only a surface
+                // actually found by the CPU can occlude that newer answer.
+                let found = hit.filter(|p| Some(*p) != picked.depth);
+                return self.scene.own_avatar_surface(&self.world, &picked.drawn, (o, d), found);
+            }
             let (t0, t1, axis) = self.own_avatar_ray(o, d)?;
             match hit.map(|p| (p - o).dot(d)) {
                 Some(t) if t < t0 - 0.05 => None,
