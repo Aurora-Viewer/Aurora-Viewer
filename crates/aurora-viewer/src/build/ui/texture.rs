@@ -160,11 +160,9 @@ impl BuildTool {
             || faces.iter().any(|face| BuildTool::gltf_asset(world, idx, *face).is_none())
     }
 
-    /// Apply inventory cargo to explicitly picked faces, leaving selection and
-    /// other texture-entry properties unchanged. Follow the displayed shading
-    /// mode: a Blinn-Phong preview edits its diffuse while retaining PBR.
-    /// Otherwise a texture on PBR replaces its base map; Alt removes PBR,
-    /// as dropTextureOneFace does.
+    /// `apply_inventory_surface_with` for an item that may go on PBR faces
+    /// (the tests' shorthand).
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn apply_inventory_surface(
         &mut self,
@@ -179,7 +177,11 @@ impl BuildTool {
         self.apply_inventory_surface_with(world, env, idx, faces, asset, material, remove_pbr, true);
     }
 
-    /// `apply_inventory_surface`, with `override_ok` false for a texture the
+    /// Apply inventory cargo to explicitly picked faces, leaving selection and
+    /// other texture-entry properties unchanged. Follow the displayed shading
+    /// mode: a Blinn-Phong preview edits its diffuse while retaining PBR.
+    /// Otherwise a texture on PBR replaces its base map; Alt removes PBR,
+    /// as dropTextureOneFace does. `override_ok` is false for a texture the
     /// agent may not both copy and transfer: its PBR faces are left as they
     /// are (`surface_takes_texture`).
     #[allow(clippy::too_many_arguments)]
