@@ -470,7 +470,14 @@ impl App {
             self.scene.water_impact(impact);
         }
         self.scene.movement_preview = None;
-        self.bridge_runtime.motion = self.movement_runtime.water_jump.observer(height).unwrap_or(step.motion);
+        let mut motion = self.movement_runtime.water_jump.observer(height).unwrap_or(step.motion);
+        // The script's water motors read llWater/llGround: inside a prim
+        // volume they use its surface and floor instead (region z, like
+        // the agent's: regions are side by side).
+        if motion.mode != 0 {
+            motion.water = volume.map(|v| [v.surface, v.floor]);
+        }
+        self.bridge_runtime.motion = motion;
         if cannonball {
             self.world.agent.flying = false;
         } else if let Some(flying) = step.flying {

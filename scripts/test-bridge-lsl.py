@@ -99,6 +99,12 @@ class Simulator:
             "llResetScript": self.reset_request,
             "llSetLinkPrimitiveParamsFast": lambda link, rules: self.prim_updates.append((link, rules)),
             "llMoveToTarget": lambda target, tau: self.targets.append((target, tau)),
+            # Region water and terrain far below the pool tests' avatar (25 m).
+            "llWater": lambda offset: 20.0,
+            "llGround": lambda offset: 10.0,
+            "llCastRay": lambda *args: [0],
+            "llGetCameraRot": lambda: lummao.Quaternion((0.0, 0.0, 0.0, 1.0)),
+            "llGetRot": lambda: lummao.Quaternion((0.0, 0.0, 0.0, 1.0)),
         }
         for name in (
             "llReleaseURL", "llTakeControls", "llReleaseControls",
@@ -237,7 +243,7 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sim.messages, [])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1)
-                self.assertIn("1.41|", sim.messages[0])
+                self.assertIn("1.42|", sim.messages[0])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1, "duplicate probes must be throttled")
 
@@ -395,7 +401,7 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         await sim.start()
         await sim.grant()
         await sim.probe()
-        await sim.event("http_request", OTHER, "POST", f"lock|{sim.script.gToken}|1|1|1|0|0|0|0|0")
+        await sim.event("http_request", OTHER, "POST", f"lock|{sim.script.gToken}|1|1|1|0|0|0|0|0||")
         self.assertEqual(sim.responses[-1][1], 200)
         self.assertEqual(sim.script.gEnabled, 1)
         self.assertEqual(sim.script.gLocked, 1)
@@ -433,6 +439,41 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         # A crossing draws a new session, and with it a new command channel.
         await sim.event("changed", REGION)
         self.assertNotEqual(private_channel(sim.script.session), control)
+
+    async def test_prim_water_fields_replace_the_region_water_for_one_command(self):
+        # 1.42 (#2008): fields 10 and 11 carry a prim volume's surface and
+        # floor; empty fields mean the region's water again.
+        sim = Simulator("bridge.lsl")
+        await sim.start()
+        await sim.grant()
+        await sim.probe()
+        token = sim.script.gToken
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|1|0|1|0|0|0|0|0|1002.40|1000.00")
+        self.assertEqual(sim.responses[-1][1], 200)
+        water = sim.script.gWater
+        self.assertAlmostEqual(water[0], 1002.4, places=3)
+        self.assertAlmostEqual(water[1], 1000.0, places=3)
+        self.assertEqual(water[2], 1.0)
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|2|0|1|0|0|0|0|0||")
+        self.assertEqual(sim.responses[-1][1], 200)
+        self.assertEqual(tuple(sim.script.gWater), (0.0, 0.0, 0.0))
+        # The surface motor floats at the pool's top, not toward the region
+        # water 5 m below (the grid report): 25.4 - 0.45 flotation depth.
+        sim.targets.clear()
+        sim.now = 1.0  # past the motor's 0.09 s tick
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|3|0|1|3|5.00|1.70|0.00|0|25.40|23.00")
+        self.assertEqual(sim.responses[-1][1], 200)
+        self.assertTrue(sim.targets)
+        self.assertAlmostEqual(sim.targets[-1][0][2], 24.95, places=3)
+        # the same command over region water still heads down to it
+        sim.targets.clear()
+        sim.now = 2.0
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|4|0|1|3|5.00|1.70|0.00|0||")
+        self.assertTrue(sim.targets)
+        self.assertLess(sim.targets[-1][0][2], 24.0)
+        # a 1.41 viewer's ten fields are refused rather than misread
+        await sim.event("http_request", OTHER, "POST", f"lock|{token}|5|0|1|0|0|0|0|0")
+        self.assertEqual(sim.responses[-1][1], 403)
 
     async def test_unpaired_region_services_never_forward_peer_traffic(self):
         sim = Simulator("query.lsl")
