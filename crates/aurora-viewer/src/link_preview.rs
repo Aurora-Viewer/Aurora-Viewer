@@ -746,7 +746,7 @@ fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
         }
     });
     reqwest::Client::builder()
-        .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION"), " (link preview)"))
+        .user_agent(format!("{} (link preview)", aurora_version::user_agent()))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(20))
         .retry(reqwest::retry::never())
