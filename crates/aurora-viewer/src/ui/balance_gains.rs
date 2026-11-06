@@ -221,16 +221,10 @@ pub fn paint(ctx: &egui::Context, p: &Palette, rows: &[GainRow], anchor: &Anchor
         } else {
             anchor.top + -row.slot * (anchor.text_top - anchor.top)
         };
-        // the skin's accent, its light shade for small text on the world,
-        // outlined: the world behind can be as bright or as violet as it
-        let color = p.violet_light.gamma_multiply(row.alpha);
-        let galley = painter.layout_no_wrap(text, font.clone(), color);
+        // the colour of the balance it joins
+        let galley = painter.layout_no_wrap(text, font.clone(), p.ink.gamma_multiply(row.alpha));
         let pos = egui::pos2(anchor.right - galley.size().x, y);
-        let outline = painter.layout_no_wrap(galley.job.text.clone(), font.clone(), p.navy.gamma_multiply(row.alpha));
-        for (x, y) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (1.0, 1.0)] {
-            painter.galley(pos + egui::vec2(x, y), outline.clone(), color);
-        }
-        painter.galley(pos, galley, color);
+        painter.galley(pos, galley, p.ink);
     }
     ctx.request_repaint();
 }
