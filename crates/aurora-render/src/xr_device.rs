@@ -85,8 +85,14 @@ impl Graphics {
             &[],
             &(),
         )?;
-        let runtime = xr.properties()?.runtime_name;
-        log::info!("OpenXR runtime loaded: {}", runtime_class(&runtime));
+        // Only for the log: a runtime that cannot say its name still works.
+        match xr.properties() {
+            Ok(properties) => log::info!("OpenXR runtime loaded: {}", runtime_class(&properties.runtime_name)),
+            Err(e) => {
+                log::info!("OpenXR runtime name unavailable: {e}");
+                log::info!("OpenXR runtime loaded: other OpenXR runtime");
+            }
+        }
         let system = xr.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)?;
         let requirements = xr.graphics_requirements::<xr::Vulkan>(system)?;
         let api = vk::API_VERSION_1_3;

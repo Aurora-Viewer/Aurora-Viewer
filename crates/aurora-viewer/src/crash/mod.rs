@@ -581,14 +581,6 @@ fn recover_in(root: &Path, mut show: impl FnMut(&Path)) {
             // Its watcher died with it: nobody marked it at its end.
             note_gpu_trouble(&dir);
             note_photo_quality(&dir);
-            let stopped = read_limited(&dir.join("stopped-unix.txt"), 32)
-                .ok()
-                .and_then(|s| s.trim().parse().ok());
-            let tick = watchdog::read_alive(&dir)
-                .iter()
-                .find(|(k, _)| k == "tick")
-                .and_then(|(_, v)| v.parse().ok());
-            os_events::collect(&dir, stopped.or(tick));
             show(&dir);
         }
     }
@@ -610,6 +602,7 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     let record = load(dir)?;
+    collect_os_events_once(dir);
     // What a crash report would publish, kept beside the private files.
     let summary = summary::build(&record, dir);
     if let Err(error) = std::fs::write(dir.join("public-report.md"), format!("# {}\n\n{}", summary.title, summary.body)) {
@@ -622,6 +615,24 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
     }
     std::fs::write(dir.join("acknowledged"), [])?;
     Ok(())
+}
+
+/// The OS's own GPU reset records around the crash, read once per crash by
+/// the process that shows the report (the watcher right after the exit, or
+/// the helper a later start spawns), never by the viewer's own start: the
+/// queries may take up to their two-second budget.
+fn collect_os_events_once(dir: &Path) {
+    if dir.join("os-gpu-events.status").exists() {
+        return;
+    }
+    let stopped = read_limited(&dir.join("stopped-unix.txt"), 32)
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
+    let tick = watchdog::read_alive(dir)
+        .iter()
+        .find(|(k, _)| k == "tick")
+        .and_then(|(_, v)| v.parse().ok());
+    os_events::collect(dir, stopped.or(tick));
 }
 
 fn trace(dir: &Path) -> String {
