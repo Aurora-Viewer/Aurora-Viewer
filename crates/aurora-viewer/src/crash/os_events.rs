@@ -110,7 +110,9 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
     let deadline = Instant::now() + COLLECTION_BUDGET;
     let result = output_before(
         std::process::Command::new("journalctl").args([
-            "-k",
+            // The kernel's messages of every boot in the window: `-k` would
+            // keep the current boot only, and a GPU hang often needed a reboot.
+            "_TRANSPORT=kernel",
             "--lines=1000",
             "--since",
             &since_arg,
@@ -203,6 +205,9 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
                 "/q:*[System[(EventID=4101 or EventID=1001)]]",
                 "/rd:true",
                 "/f:xml",
+                // One root element around the events: without it, two or
+                // more events are not one XML document and none parse.
+                "/e:Events",
                 // Keep enough recent records to cover the recovery window
                 // even on busy systems; the parser filters to the time span.
                 "/c:1000",
@@ -298,11 +303,18 @@ fn parse_windows_events(xml: &str, since: u64, until: u64) -> (Vec<String>, bool
                     return Some(format!("Display 4101 at {}", time.to_rfc3339()));
                 }
                 if id == 1001 && provider.to_ascii_lowercase().contains("error reporting") {
-                    let code = event
-                        .descendants()
-                        .filter(|node| node.tag_name().name() == "Data")
-                        .filter_map(|node| node.text())
-                        .find_map(live_kernel_code)?;
+                    let data = || {
+                        event
+                            .descendants()
+                            .filter(|node| node.tag_name().name() == "Data")
+                            .filter_map(|node| node.text())
+                    };
+                    // Windows Error Reporting files every kind of problem as
+                    // 1001: only its LiveKernelEvent reports are GPU resets.
+                    if !data().any(|text| text.trim().eq_ignore_ascii_case("LiveKernelEvent")) {
+                        return None;
+                    }
+                    let code = data().find_map(live_kernel_code)?;
                     return Some(format!("LiveKernelEvent {code} at {}", time.to_rfc3339()));
                 }
                 None
@@ -423,11 +435,8 @@ fn windows_graphics_settings(deadline: Instant) -> Vec<String> {
         if let Ok(output) = output
             && output.status.success()
         {
-            let value = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .find(|line| line.contains(name))
-                .unwrap_or("")
-                .trim();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let value = stdout.lines().find(|line| line.contains(name)).unwrap_or("").trim();
             if !value.is_empty() {
                 values.push(format!("{name}: {value}"));
             }
@@ -486,16 +495,23 @@ fn parse_dmesg(text: &str, boot: u64, since: u64, until: u64) -> (Vec<String>, b
 
 #[cfg(target_os = "linux")]
 fn gpu_kernel_line(line: &str) -> bool {
-    const TERMS: [&str; 12] = [
-        "amdgpu", "radeon", "nouveau", "nvidia", "i915", "xe", "drm", "gpu", "ring", "timeout", "reset", "fault",
-    ];
+    const TERMS: [&str; 8] = ["amdgpu", "radeon", "nouveau", "nvidia", "i915", "timeout", "reset", "fault"];
+    // Short terms only as whole words: "xe" is in "exec", "ring" in "string".
+    const WORDS: [&str; 4] = ["xe", "drm", "gpu", "ring"];
     let lower = line.to_ascii_lowercase();
-    TERMS.iter().any(|term| lower.contains(term))
+    TERMS.iter().any(|term| lower.contains(term)) || lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|word| WORDS.contains(&word))
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kernel_filter_takes_short_terms_as_whole_words_only() {
+        assert!(gpu_kernel_line("xe 0000:03:00.0: [drm] GT0: hang"));
+        assert!(gpu_kernel_line("[drm:amdgpu_job_timedout] ring gfx_0.0.0 timeout"));
+        assert!(!gpu_kernel_line("audit: exec of /usr/bin/string during boot"));
+    }
 
     #[test]
     fn journal_parser_filters_gpu_lines_and_caps_count_and_length() {

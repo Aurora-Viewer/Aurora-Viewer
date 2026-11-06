@@ -161,7 +161,7 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     if let Some(errors) = gpu_errors_in("", &tail) {
         rows.push(("GPU errors", format!("collected: {errors}")));
     } else {
-        rows.push(("GPU errors", "not collected: no wgpu errors in the retained session log".into()));
+        rows.push(("GPU errors", "collected: none in the retained session log".into()));
     }
     let headroom = value("vram_mb").and_then(vram_headroom);
     let has_gpu_trouble = dir.join("gpu-lost.txt").exists()
@@ -2115,7 +2115,10 @@ mod tests {
         let (dir, record) = session();
         std::fs::write(dir.join("alive.txt"), "tick=1098\nscreen=world\n").unwrap();
         let body = build_at(&record, &dir, Some(10)).body;
-        assert!(body.contains("| GPU errors | not collected: no wgpu errors"), "{body}");
+        assert!(
+            body.contains("| GPU errors | collected: none in the retained session log"),
+            "{body}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
