@@ -336,25 +336,41 @@ pub fn gpu_stalled(seconds: u64) {
     if let Some(session) = SESSION.get() {
         watchdog::save_gpu_stall(&session.dir, seconds);
     }
-    crate::overlay_hooks::loss_snapshot();
 }
 
 /// The GPU device is lost for good (app/gpu_stall.rs): the session, which
 /// ends now, is reported as such, with the safe graphics offered next.
 pub fn gpu_lost() {
-    crate::overlay_hooks::loss_snapshot();
+    gpu_loss_snapshot();
     mark_gpu_lost(b"");
+}
+
+/// The renderer reported a confirmed device loss, including one the viewer
+/// may recover from. Keep only the first loss snapshot for this session.
+pub fn gpu_loss_snapshot() {
+    crate::overlay_hooks::loss_snapshot();
 }
 
 #[cfg(windows)]
 pub(crate) fn overlay_hooks_at_loss(files: &[&str]) {
     if let Some(session) = SESSION.get() {
-        let known: Vec<_> = files
-            .iter()
-            .filter(|file| crate::overlay_hooks::known(file).is_some())
-            .copied()
-            .collect();
-        let _ = std::fs::write(session.dir.join("overlay-hooks-loss.txt"), known.join("\n"));
+        write_first_overlay_loss_snapshot(&session.dir, files);
+    }
+}
+
+#[cfg(any(windows, test))]
+fn write_first_overlay_loss_snapshot(dir: &Path, files: &[&str]) {
+    let known: Vec<_> = files
+        .iter()
+        .filter(|file| crate::overlay_hooks::known(file).is_some())
+        .copied()
+        .collect();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join("overlay-hooks-loss.txt"))
+    {
+        let _ = file.write_all(known.join("\n").as_bytes());
     }
 }
 
@@ -684,6 +700,18 @@ pub fn demo_freeze() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_hook_loss_snapshot_is_private_to_known_names_and_keeps_the_first_loss() {
+        let dir = scratch_root();
+        write_first_overlay_loss_snapshot(&dir, &["DiscordHook64.dll", "C:\\Users\\Private\\evil.dll"]);
+        write_first_overlay_loss_snapshot(&dir, &["RTSSHooks64.dll"]);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("overlay-hooks-loss.txt")).unwrap(),
+            "DiscordHook64.dll"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn session_snapshot_survives_language_theme_changes_and_rejects_unknown_formats() {

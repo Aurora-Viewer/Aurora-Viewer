@@ -2,7 +2,67 @@
 //! Raw kernel lines remain in the private crash folder; public reports use
 //! only a fixed status and a count.
 
+#[cfg(any(target_os = "linux", windows, test))]
+use std::io::Read;
 use std::path::Path;
+#[cfg(any(target_os = "linux", windows, test))]
+use std::process::{Child, Command, Output, Stdio};
+#[cfg(any(target_os = "linux", windows, test))]
+use std::time::{Duration, Instant};
+
+#[cfg(any(target_os = "linux", windows))]
+const COLLECTION_BUDGET: Duration = Duration::from_secs(2);
+#[cfg(any(target_os = "linux", windows, test))]
+const MAX_COMMAND_OUTPUT: u64 = 4 * 1024 * 1024;
+
+#[cfg(any(target_os = "linux", windows, test))]
+fn output_before(command: &mut Command, deadline: Instant) -> std::io::Result<Output> {
+    if Instant::now() >= deadline {
+        return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "OS diagnostics budget expired"));
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = command.spawn()?;
+    let stdout = child.stdout.take();
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(stdout) = stdout {
+            let mut stdout = stdout.take(MAX_COMMAND_OUTPUT);
+            let _ = stdout.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let status = match wait_until(&mut child, deadline) {
+        Ok(status) => status,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err(error);
+        }
+    };
+    let stdout = reader.join().unwrap_or_default();
+    Ok(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
+#[cfg(any(target_os = "linux", windows, test))]
+fn wait_until(child: &mut Child, deadline: Instant) -> std::io::Result<std::process::ExitStatus> {
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "OS diagnostics command timed out",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 
 #[cfg(target_os = "linux")]
 pub fn collect(dir: &Path, unix: Option<u64>) {
@@ -14,8 +74,9 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
     let until = unix.saturating_add(300);
     let since_arg = format!("@{since}");
     let until_arg = format!("@{until}");
-    let result = std::process::Command::new("journalctl")
-        .args([
+    let deadline = Instant::now() + COLLECTION_BUDGET;
+    let result = output_before(
+        std::process::Command::new("journalctl").args([
             "-k",
             "--lines=1000",
             "--since",
@@ -24,16 +85,19 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
             &until_arg,
             "--output=short-unix",
             "--no-pager",
-        ])
-        .output();
+        ]),
+        deadline,
+    );
     let Ok(output) = result else {
         let _ = std::fs::write(dir.join("os-gpu-events.status"), public_status(None));
         return;
     };
+    let mut capped =
+        output.stdout.len() >= MAX_COMMAND_OUTPUT as usize || output.stdout.iter().filter(|&&byte| byte == b'\n').count() >= 1000;
     let lines = if output.status.success() {
         parse_journal(&String::from_utf8_lossy(&output.stdout))
     } else {
-        let fallback = std::process::Command::new("dmesg").args(["--time-format=raw"]).output();
+        let fallback = output_before(std::process::Command::new("dmesg").args(["--time-format=raw"]), deadline);
         let Ok(fallback) = fallback else {
             let _ = std::fs::write(dir.join("os-gpu-events.status"), public_status(None));
             return;
@@ -42,6 +106,7 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
             let _ = std::fs::write(dir.join("os-gpu-events.status"), public_status(None));
             return;
         }
+        capped |= fallback.stdout.len() >= MAX_COMMAND_OUTPUT as usize;
         parse_dmesg(
             &String::from_utf8_lossy(&fallback.stdout),
             sysinfo::System::boot_time(),
@@ -49,13 +114,14 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
             until,
         )
     };
+    let status = kernel_status(&lines, capped);
     if lines.is_empty() {
-        let _ = std::fs::write(dir.join("os-gpu-events.status"), public_status(Some(&lines)));
+        let _ = std::fs::write(dir.join("os-gpu-events.status"), status);
     } else {
         let _ = std::fs::write(dir.join("os-gpu-events.txt"), lines.join("\n"));
         let _ = std::fs::write(
             dir.join("os-gpu-events.status"),
-            format!("{} near the last heartbeat (approximate)", public_status(Some(&lines))),
+            format!("{status} near the last heartbeat (approximate)"),
         );
     }
 }
@@ -66,6 +132,18 @@ fn public_status(records: Option<&[String]>) -> String {
         None => "not collected: kernel journal access denied or unavailable".into(),
         Some([]) => "collected: no matching kernel GPU records".into(),
         Some(lines) => format!("collected: {} matching kernel records", lines.len()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn kernel_status(records: &[String], capped: bool) -> String {
+    if capped {
+        format!(
+            "collected (incomplete): {} matching kernel records; query reached its output cap",
+            records.len()
+        )
+    } else {
+        public_status(Some(records))
     }
 }
 
@@ -80,11 +158,13 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
     };
     let since = unix.saturating_sub(120);
     let until = unix.saturating_add(300);
+    let deadline = Instant::now() + COLLECTION_BUDGET;
     let mut events = Vec::new();
     let mut queried = 0u8;
+    let mut capped = false;
     for channel in ["System", "Application"] {
-        let result = std::process::Command::new("wevtutil.exe")
-            .args([
+        let result = output_before(
+            std::process::Command::new("wevtutil.exe").args([
                 "qe",
                 channel,
                 "/q:*[System[(EventID=4101 or EventID=1001)]]",
@@ -93,19 +173,22 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
                 // Keep enough recent records to cover the recovery window
                 // even on busy systems; the parser filters to the time span.
                 "/c:1000",
-            ])
-            .output();
+            ]),
+            deadline,
+        );
         if let Ok(output) = result
             && output.status.success()
         {
             queried += 1;
-            events.extend(parse_windows_events(&String::from_utf8_lossy(&output.stdout), since, until));
+            let xml = String::from_utf8_lossy(&output.stdout);
+            capped |= output.stdout.len() >= MAX_COMMAND_OUTPUT as usize || windows_event_count(&xml) >= 1000;
+            events.extend(parse_windows_events(&xml, since, until));
         }
     }
     if !events.is_empty() {
         let _ = std::fs::write(dir.join("os-gpu-events.txt"), events.join("\n"));
     }
-    let settings = windows_graphics_settings();
+    let settings = windows_graphics_settings(deadline);
     if !settings.is_empty() {
         let _ = std::fs::write(dir.join("os-gpu-settings.txt"), settings.join("\n"));
     }
@@ -113,20 +196,35 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
     if !dumps.is_empty() {
         let _ = std::fs::write(dir.join("os-gpu-dumps.txt"), dumps.join("\n"));
     }
-    let status = if queried == 0 {
-        "not collected: Windows event log query unavailable or denied".to_owned()
-    } else if queried == 1 {
-        format!(
-            "collected (partial): {} Windows GPU reset events; one event channel unavailable",
-            events.len()
-        )
-    } else {
-        format!(
-            "collected: {} Windows GPU reset events in the time window; registry and dump metadata sampled",
-            events.len()
-        )
-    };
+    let status = windows_status(queried, events.len(), capped);
     let _ = std::fs::write(dir.join("os-gpu-events.status"), status);
+}
+
+#[cfg(any(windows, test))]
+fn windows_status(queried: u8, events: usize, capped: bool) -> String {
+    if queried == 0 {
+        "not collected: Windows event log query unavailable or denied".to_owned()
+    } else if capped {
+        format!(
+            "collected (incomplete): {events} Windows GPU reset events; at least one event channel reached the 1,000-record cap{}",
+            if queried == 1 {
+                " and the other channel was unavailable"
+            } else {
+                ""
+            }
+        )
+    } else if queried == 1 {
+        format!("collected (partial): {events} Windows GPU reset events; one event channel unavailable")
+    } else {
+        format!("collected: {events} Windows GPU reset events in the time window; registry and dump metadata sampled")
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_event_count(xml: &str) -> usize {
+    roxmltree::Document::parse(xml).map_or(0, |document| {
+        document.descendants().filter(|node| node.tag_name().name() == "Event").count()
+    })
 }
 
 #[cfg(any(windows, test))]
@@ -207,10 +305,36 @@ mod windows_parser_tests {
     fn malformed_windows_event_xml_is_not_collected_as_a_record() {
         assert!(super::parse_windows_events("<Event><System>", 0, u64::MAX).is_empty());
     }
+
+    #[test]
+    fn capped_windows_query_is_inconclusive() {
+        let events = (0..1000).map(|_| "<Event/>").collect::<String>();
+        let xml = format!("<Events>{events}</Events>");
+        assert_eq!(super::windows_event_count(&xml), 1000);
+        assert!(super::windows_event_count("<Events><Event/></Events>") < 1000);
+        assert!(super::windows_status(2, 0, true).starts_with("collected (incomplete):"));
+        assert!(super::windows_status(1, 2, false).starts_with("collected (partial):"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod timeout_tests {
+    use super::*;
+
+    #[test]
+    fn os_command_is_killed_at_its_deadline() {
+        let started = Instant::now();
+        let result = output_before(
+            std::process::Command::new("sh").args(["-c", "exec sleep 5"]),
+            started + Duration::from_millis(50),
+        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
 }
 
 #[cfg(windows)]
-fn windows_graphics_settings() -> Vec<String> {
+fn windows_graphics_settings(deadline: Instant) -> Vec<String> {
     let mut values = Vec::new();
     for (key, name) in [
         (r"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers", "TdrDelay"),
@@ -219,7 +343,7 @@ fn windows_graphics_settings() -> Vec<String> {
         (r"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers", "HwSchMode"),
         (r"HKLM\SOFTWARE\Microsoft\Windows\Dwm", "OverlayTestMode"),
     ] {
-        let output = std::process::Command::new("reg.exe").args(["query", key, "/v", name]).output();
+        let output = output_before(std::process::Command::new("reg.exe").args(["query", key, "/v", name]), deadline);
         if let Ok(output) = output
             && output.status.success()
         {
@@ -314,6 +438,7 @@ mod tests {
     fn unavailable_kernel_access_is_reported_separately_from_no_events() {
         assert!(public_status(None).starts_with("not collected:"));
         assert!(public_status(Some(&[])).starts_with("collected:"));
+        assert!(kernel_status(&[], true).starts_with("collected (incomplete):"));
     }
 
     #[test]

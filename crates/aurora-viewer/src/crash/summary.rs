@@ -242,7 +242,7 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     rows.push((
         "OS GPU reset records",
         os_status
-            .filter(|s| s.starts_with("collected:") || s.starts_with("not collected:"))
+            .filter(|s| os_gpu_status_known(s))
             .map(|status| os_gpu_event_summary(&status, &os_events))
             .unwrap_or_else(|| "not collected: operating system collection unavailable".into()),
     ));
@@ -385,6 +385,13 @@ fn os_gpu_event_summary(status: &str, events: &str) -> String {
     } else {
         format!("{status}; observed: {}", labels.join(", "))
     }
+}
+
+fn os_gpu_status_known(status: &str) -> bool {
+    status.starts_with("collected:")
+        || status.starts_with("collected (partial):")
+        || status.starts_with("collected (incomplete):")
+        || status.starts_with("not collected:")
 }
 
 fn risk_factors(
@@ -1188,6 +1195,35 @@ mod tests {
         assert!(windows.contains("Display 4101 at 2026-11-04T10:00:00+00:00"));
         assert!(windows.contains("LiveKernelEvent 141 at 2026-11-04T10:00:01+00:00"));
         assert!(!windows.contains("PRIVATE"));
+    }
+
+    #[test]
+    fn os_status_accepts_only_known_collected_and_unavailable_forms() {
+        for status in [
+            "collected: no matching records",
+            "collected (partial): one channel failed",
+            "collected (incomplete): query reached cap",
+            "not collected: query unavailable",
+        ] {
+            assert!(os_gpu_status_known(status), "{status}");
+        }
+        assert!(!os_gpu_status_known("collected arbitrary private text"));
+    }
+
+    #[test]
+    fn partial_and_incomplete_os_event_statuses_keep_collected_records() {
+        for status in [
+            "collected (partial): 1 Windows GPU reset event; one event channel unavailable",
+            "collected (incomplete): 60 Windows GPU reset events; query reached the record cap",
+        ] {
+            let (dir, record) = session();
+            std::fs::write(dir.join("os-gpu-events.status"), status).unwrap();
+            std::fs::write(dir.join("os-gpu-events.txt"), "Display 4101 at 2026-11-04T10:00:00.000Z").unwrap();
+            let body = build_at(&record, &dir, None).body;
+            assert!(body.contains(status), "{body}");
+            assert!(body.contains("Display 4101 at 2026-11-04T10:00:00+00:00"), "{body}");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     fn session() -> (std::path::PathBuf, super::super::Record) {

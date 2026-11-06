@@ -104,7 +104,8 @@ What each part tells the one who fixes it:
 - **Overlay hooks**: the overlay or capture programs that injected their
   hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
   game capture), named from the viewer's fixed list only; a separate
-  snapshot records the known hooks present when a GPU loss was handled.
+  snapshot records known hooks at the first confirmed GPU loss in the
+  session, including a loss followed by renderer recovery.
 - **Vulkan layers installed**: names enumerated by the loader. Enumeration
   does not prove a layer was enabled or running in the instance.
 - **GPU errors**: sanitized operation names and counts from the retained
@@ -113,9 +114,11 @@ What each part tells the one who fixes it:
 - **OS GPU reset records**: matching Linux kernel lines or Windows reset
   event names and times from two minutes before through five minutes after
   the recorded session end, saved locally. The public report shows collection
-  status and fixed GPU/reset labels; Windows event labels also show their
-  recorded times. Linux kernel messages, Windows event text, registry values
-  and WATCHDOG dump names stay local. Linux uses the last heartbeat when the
+  status and fixed GPU/reset labels; partial queries and queries that hit a
+  cap are marked as partial or incomplete, and Windows event labels also show
+  their recorded times. Linux kernel messages, Windows event text, registry
+  values and WATCHDOG dump names
+  stay local. Linux uses the last heartbeat when the
   process end time is unavailable, so that window is approximate. Windows
   also samples current TDR / HAGS / MPO values and WATCHDOG dump names and
   times; they may have changed since the crash.
