@@ -343,8 +343,8 @@ fn quality(cx: &mut Cx) {
         );
         cx.subs(false, |cx| {
             if cx.s.texture_budget_auto {
-                let (vram, integrated) = cx.st.vram;
-                let budget = crate::settings::auto_texture_budget(vram, integrated);
+                let (vram, shared, integrated) = cx.st.vram;
+                let budget = crate::settings::auto_texture_budget(vram, shared, integrated);
                 let gpu = match vram {
                     Some(v) if !integrated => tr!("ui-options-mb-of-video-memory-detected", value0 = format!("{}", v)),
                     _ if integrated => tr!("ui-options-integrated-graphics").to_owned(),

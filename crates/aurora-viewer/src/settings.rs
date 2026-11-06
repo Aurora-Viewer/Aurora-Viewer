@@ -2116,9 +2116,17 @@ fn legacy_keybindings() -> crate::keybinds::KeyBindings {
 
 /// Automatic texture memory (MB) from the detected video memory: 70 % of
 /// it, at least 1.5 GB left to the rest, never under 768 MB. Integrated
-/// GPUs share the system memory: 2 GB; unknown: 1.5 GB.
-pub fn auto_texture_budget(vram_mb: Option<u64>, integrated: bool) -> u64 {
-    match vram_mb {
+/// GPUs may use a bounded share of a separate shared heap; unknown: 1.5 GB.
+pub fn auto_texture_budget(dedicated_mb: Option<u64>, shared_mb: Option<u64>, integrated: bool) -> u64 {
+    if integrated && let Some(shared) = shared_mb.filter(|&mb| mb > 0) {
+        let total = dedicated_mb.unwrap_or(0).saturating_add(shared);
+        let legacy_target = (total.saturating_mul(7) / 10).min(total.saturating_sub(1536)).max(768);
+        // Keep the auto setting conservative before the live per-heap
+        // budget arrives. The runtime target applies the same cap to its
+        // changing VK_EXT_memory_budget value.
+        return legacy_target.min(shared / 2);
+    }
+    match dedicated_mb {
         Some(v) if !integrated && v >= 1024 => (v * 7 / 10).min(v.saturating_sub(1536)).max(768),
         _ if integrated => 2048,
         _ => 1536,
@@ -2847,11 +2855,11 @@ impl Settings {
     /// Texture memory budget (MB): the manual value, or in automatic mode a
     /// share of the detected video memory (as Firestorm's unlimited VRAM
     /// mode: leave room for render targets, geometry and other programs).
-    pub fn texture_budget(&self, vram_mb: Option<u64>, integrated: bool) -> u64 {
+    pub fn texture_budget(&self, dedicated_mb: Option<u64>, shared_mb: Option<u64>, integrated: bool) -> u64 {
         if !self.texture_budget_auto {
             return self.texture_budget_mb as u64;
         }
-        auto_texture_budget(vram_mb, integrated)
+        auto_texture_budget(dedicated_mb, shared_mb, integrated)
     }
 
     /// (resolution, distance) for the shadow quality step.
@@ -3069,6 +3077,17 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_texture_budget_uses_shared_heap_only_for_integrated_gpus() {
+        use super::auto_texture_budget;
+        assert_eq!(auto_texture_budget(Some(512), Some(7800), true), 3900);
+        // Discrete automatic sizing keeps the old 70% / 1.5 GB reserve rule.
+        assert_eq!(auto_texture_budget(Some(8192), Some(7800), false), 5734);
+        // When the system heap cannot be identified, the existing safe
+        // integrated default remains in force.
+        assert_eq!(auto_texture_budget(Some(512), None, true), 2048);
+    }
+
     #[test]
     fn projector_shadow_budget_survives_restart_and_clamps_untrusted_values() {
         use super::Settings;

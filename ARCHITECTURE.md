@@ -78,6 +78,10 @@ when absent and the existing attachment limits and RLVa command guards.
 `aurora-vram` worker every 250 ms. Frame, photo and diagnostic paths only
 copy the last complete reading; neither reads nor shutdown wait for a stuck
 driver query. The one-minute budget floor remains on the sampling worker.
+On integrated Vulkan GPUs, distinct device-local and host-visible shared
+heaps are counted once each; texture pages may retry in a shared heap after
+local allocation runs out, and texture pressure keeps the pages under half
+of the shared heap budget. Discrete adapters keep their device-local budget.
 GPU-culling growth validates all replacement buffers before installing them,
 respects the complete storage binding and dispatch limits, and retains its
 working allocation with backoff after failure. Scenes beyond those limits

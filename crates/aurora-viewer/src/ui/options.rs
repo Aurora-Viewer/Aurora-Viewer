@@ -408,8 +408,8 @@ pub struct OptionsUi {
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
     pub cache_usage: u64,
     pub cache_clearing: bool,
-    /// Detected video memory (MB) and integrated GPU; set by the app.
-    pub vram: (Option<u64>, bool),
+    /// Detected dedicated/shared heaps (MB) and integrated GPU; set by the app.
+    pub vram: (Option<u64>, Option<u64>, bool),
     /// The GPUs that can draw the viewer, the one in use, and why the
     /// dedicated one may not be drawing; set by the app as soon as the
     /// renderer is created, so the login screen has them too (#894). The
