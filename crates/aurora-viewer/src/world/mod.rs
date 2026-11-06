@@ -18,6 +18,7 @@ pub mod chat_log;
 pub mod collisions;
 pub mod contact_sets;
 pub mod derender;
+pub mod dialog_names;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
@@ -111,6 +112,8 @@ pub mod worldmap;
 #[cfg(test)]
 mod automated_chat_tests;
 #[cfg(test)]
+mod dialog_name_tests;
+#[cfg(test)]
 mod fee_permission_tests;
 #[cfg(test)]
 mod flash_tests;
@@ -168,6 +171,42 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+}
+
+fn dirty_east_edge(region: &mut Region, y0: u32, y1: u32) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x == 0 || chunks_y == 0 || y0 >= y1 {
+        return;
+    }
+    // a chunk owns its 33 vertices, so a sample on a chunk boundary is also
+    // the last vertex of the chunk below (as Heightmap::apply_patch)
+    let first = (y0.saturating_sub(1) / terrain::CHUNK_CELLS).min(chunks_y - 1);
+    let last = ((y1 - 1) / terrain::CHUNK_CELLS).min(chunks_y - 1);
+    for cy in first..=last {
+        region.dirty_chunks.insert(cy * chunks_x + chunks_x - 1);
+    }
+}
+
+fn dirty_north_edge(region: &mut Region, x0: u32, x1: u32) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x == 0 || chunks_y == 0 || x0 >= x1 {
+        return;
+    }
+    let first = (x0.saturating_sub(1) / terrain::CHUNK_CELLS).min(chunks_x - 1);
+    let last = ((x1 - 1) / terrain::CHUNK_CELLS).min(chunks_x - 1);
+    for cx in first..=last {
+        region.dirty_chunks.insert((chunks_y - 1) * chunks_x + cx);
+    }
+}
+
+fn dirty_northeast_corner(region: &mut Region) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x > 0 && chunks_y > 0 {
+        region.dirty_chunks.insert(chunks_y * chunks_x - 1);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1313,7 +1352,7 @@ impl World {
 
     fn inventory_cache_path(&self) -> Option<std::path::PathBuf> {
         let dir = self.cache_dir.as_ref()?;
-        (!self.agent_id.is_nil()).then(|| dir.join("inventory").join(format!("{}.inv", self.agent_id)))
+        (!self.agent_id.is_nil()).then(|| crate::cache::path(dir, "inventory", &self.agent_id, "inv"))
     }
 
     /// Apply the inventory cache once its thread has read it (every frame
@@ -1922,7 +1961,7 @@ impl World {
             "ui-experiences-log-notice",
             what = what,
             experience = experience,
-            object = entry.object_name.clone(),
+            object = dialog_names::shown(&entry.object_name).into_owned(),
             parcel = entry.parcel_name.clone()
         );
         self.system_message(text.to_string());
@@ -1969,13 +2008,17 @@ impl World {
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {
         // the network layer already holds the sizes; this keeps every caller safe
         let size = (size.0.clamp(256, MAX_REGION_SIZE), size.1.clamp(256, MAX_REGION_SIZE));
-        if let Some(region) = self.regions.get_mut(&h)
+        let inserted = !self.regions.contains_key(&h);
+        let grew = if let Some(region) = self.regions.get_mut(&h)
             && region.heightmap.grow(size.0, size.1)
         {
             region.dirty_chunks.extend(0..region.heightmap.chunk_count());
             region.terrain_revision += 1;
             region.terrain_surface.applied = None;
-        }
+            true
+        } else {
+            false
+        };
         self.regions.entry(h).or_insert_with(|| Region {
             handle: h,
             name: String::new(),
@@ -1996,7 +2039,142 @@ impl World {
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
-        })
+        });
+        if inserted || grew {
+            self.dirty_terrain_dependents(h);
+        }
+        self.regions.get_mut(&h).expect("region exists")
+    }
+
+    pub(crate) fn terrain_edge_heights(&self, handle: RegionHandle) -> terrain::EdgeHeights {
+        let Some(region) = self.regions.get(&handle) else {
+            return Default::default();
+        };
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        let mut edges = terrain::EdgeHeights {
+            east: vec![None; region.heightmap.size_y as usize + 1],
+            north: vec![None; region.heightmap.size_x as usize + 1],
+        };
+        // only the regions touching each line are sampled (one pass over all
+        // regions, then a few candidates per vertex)
+        let east_x = ox + region.heightmap.size_x;
+        let north_y = oy + region.heightmap.size_y;
+        let touching = |line: u32, along_x: bool| -> Vec<&Region> {
+            self.regions
+                .values()
+                .filter(|n| {
+                    let (nx, ny) = aurora_net::handle_to_origin(n.handle);
+                    if along_x {
+                        ny <= line && line < ny + n.heightmap.size_y
+                    } else {
+                        nx <= line && line < nx + n.heightmap.size_x
+                    }
+                })
+                .collect()
+        };
+        let east_regions = touching(east_x, false);
+        let north_regions = touching(north_y, true);
+        for (y, sample) in edges.east.iter_mut().enumerate() {
+            let (gx, gy) = (east_x, oy + y as u32);
+            *sample = east_regions.iter().find_map(|neighbor| {
+                let (nx, ny) = aurora_net::handle_to_origin(neighbor.handle);
+                let (x, y) = (gx.checked_sub(nx)?, gy.checked_sub(ny)?);
+                if x < neighbor.heightmap.size_x && y < neighbor.heightmap.size_y {
+                    neighbor.heightmap.received_height(x, y)
+                } else {
+                    None
+                }
+            });
+        }
+        for (x, sample) in edges.north.iter_mut().enumerate() {
+            let (gx, gy) = (ox + x as u32, north_y);
+            *sample = north_regions.iter().find_map(|neighbor| {
+                let (nx, ny) = aurora_net::handle_to_origin(neighbor.handle);
+                let (x, y) = (gx.checked_sub(nx)?, gy.checked_sub(ny)?);
+                if x < neighbor.heightmap.size_x && y < neighbor.heightmap.size_y {
+                    neighbor.heightmap.received_height(x, y)
+                } else {
+                    None
+                }
+            });
+        }
+        edges
+    }
+
+    fn dirty_terrain_dependents(&mut self, handle: RegionHandle) {
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        let Some(changed) = self.regions.get(&handle) else { return };
+        let (ex, ey) = (ox + changed.heightmap.size_x, oy + changed.heightmap.size_y);
+        let handles: Vec<_> = self.regions.keys().copied().filter(|h| *h != handle).collect();
+        for candidate in handles {
+            let Some(region) = self.regions.get_mut(&candidate) else { continue };
+            let (cx, cy) = aurora_net::handle_to_origin(candidate);
+            let (cex, cey) = (cx + region.heightmap.size_x, cy + region.heightmap.size_y);
+            // an edge has size + 1 vertices: its last one is at cey / cex
+            if cex == ox {
+                let (lo, hi) = (oy.max(cy), ey.min(cey + 1));
+                if lo < hi {
+                    dirty_east_edge(region, lo - cy, hi - cy);
+                }
+            }
+            if cey == oy {
+                let (lo, hi) = (ox.max(cx), ex.min(cex + 1));
+                if lo < hi {
+                    dirty_north_edge(region, lo - cx, hi - cx);
+                }
+            }
+            if cex == ox && cey == oy {
+                dirty_northeast_corner(region);
+            }
+        }
+    }
+
+    fn dirty_terrain_patch_dependents(&mut self, handle: RegionHandle, patches: &[(u32, u32, u32)]) {
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        if !self.regions.contains_key(&handle) {
+            return;
+        }
+        let west_edges: Vec<_> = patches
+            .iter()
+            .filter(|(x, _, _)| *x == 0)
+            .map(|(_, y, size)| (oy + y, oy + y + size))
+            .collect();
+        let south_edges: Vec<_> = patches
+            .iter()
+            .filter(|(_, y, _)| *y == 0)
+            .map(|(x, _, size)| (ox + x, ox + x + size))
+            .collect();
+        let has_southwest_corner = patches.iter().any(|(x, y, _)| *x == 0 && *y == 0);
+        if west_edges.is_empty() && south_edges.is_empty() {
+            return;
+        }
+        let handles: Vec<_> = self.regions.keys().copied().filter(|h| *h != handle).collect();
+        for candidate in handles {
+            let Some(region) = self.regions.get_mut(&candidate) else { continue };
+            let (cx, cy) = aurora_net::handle_to_origin(candidate);
+            let (cex, cey) = (cx + region.heightmap.size_x, cy + region.heightmap.size_y);
+            if cex == ox {
+                for &(lo, hi) in &west_edges {
+                    let lo = lo.max(cy);
+                    let hi = hi.min(cey + 1);
+                    if lo < hi {
+                        dirty_east_edge(region, lo - cy, hi - cy);
+                    }
+                }
+            }
+            if cey == oy {
+                for &(lo, hi) in &south_edges {
+                    let lo = lo.max(cx);
+                    let hi = hi.min(cex + 1);
+                    if lo < hi {
+                        dirty_north_edge(region, lo - cx, hi - cx);
+                    }
+                }
+            }
+            if has_southwest_corner && cex == ox && cey == oy {
+                dirty_northeast_corner(region);
+            }
+        }
     }
 
     /// Visual parameter values (shape) of an avatar's last appearance.
@@ -2709,6 +2887,7 @@ impl World {
                 None
             }
             NetEvent::Terrain { handle, patches } => {
+                let edge_patches: Vec<_> = patches.iter().map(|p| (p.x * p.size, p.y * p.size, p.size)).collect();
                 // land can come before the handshake: its own place says
                 // the region reaches at least that far
                 let reach = |axis: fn(&aurora_net::terrain::TerrainPatch) -> u32| {
@@ -2716,12 +2895,15 @@ impl World {
                     end.min(MAX_REGION_SIZE).next_multiple_of(256).max(256)
                 };
                 let size = (reach(|p| p.x), reach(|p| p.y));
-                let r = self.ensure_region(handle, size);
-                for p in patches {
-                    let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
-                    r.dirty_chunks.extend(dirty);
+                {
+                    let r = self.ensure_region(handle, size);
+                    for p in patches {
+                        let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
+                        r.dirty_chunks.extend(dirty);
+                    }
+                    r.terrain_revision += 1;
                 }
-                r.terrain_revision += 1;
+                self.dirty_terrain_patch_dependents(handle, &edge_patches);
                 None
             }
             NetEvent::Wind { handle, grid } => {
@@ -2887,6 +3069,7 @@ impl World {
             NetEvent::RegionRemoved { handle } => {
                 self.parked.remove(&handle);
                 self.remove_region_objects(handle);
+                self.dirty_terrain_dependents(handle);
                 self.regions.remove(&handle);
                 self.coarse.remove(&handle);
                 None
@@ -3054,6 +3237,8 @@ impl World {
                         buttons,
                     }
                 };
+                // the menu keeps the name for blocking; the card shows it on one line
+                let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
                 let title = format!("{object_name} ({owner_name})");
                 let id = self.notifications.push(notifications::Kind::Script, title, message, data);
                 self.link_object_notification(id, object_id, &object_name, &owner_name);
@@ -3102,6 +3287,7 @@ impl World {
                     }
                 } else {
                     self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+                    let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
                     // ScriptQuestionCaution (PermissionsCautionEnabled, on by
                     // default): taking L$ or privileged land access warns first
                     let caution = experiences::caution(questions).then(|| notifications::CautionPrompt {
@@ -3190,6 +3376,7 @@ impl World {
                 url,
             } => {
                 let body = format!("{message}\n{url}");
+                let object_name = dialog_names::shown(&object_name).into_owned();
                 let id = self.notifications.push(
                     notifications::Kind::Url,
                     aurora_i18n::tr!("extra-offers-a-link", object_name = object_name.to_string()),
@@ -4526,6 +4713,19 @@ impl World {
         Some((region, format!("{:.1}, {:.1}, {:.1}", position.x, position.y, position.z)))
     }
 
+    /// An owner's name as the dialogs of objects show it: without
+    /// " Resident" when legacy names are trimmed (LLCacheName::cleanFullName
+    /// in process_script_question, buildFullName in process_script_dialog),
+    /// on one line ([`dialog_names::shown`]).
+    fn dialog_owner(&self, name: &str) -> String {
+        let name = if self.social.avatar_names.options.trim_resident {
+            name.strip_suffix(" Resident").unwrap_or(name)
+        } else {
+            name
+        };
+        dialog_names::shown(name).into_owned()
+    }
+
     fn link_object_notification(&mut self, id: u64, object: Uuid, name: &str, owner_name: &str) {
         use notifications::NameTarget;
         self.notifications.link_name(id, name, NameTarget::Object(object));
@@ -4575,12 +4775,12 @@ impl World {
             aurora_i18n::tr!("world-experiences-land-scope")
         };
         let lines = notifications::permission_lines(q.questions);
-        // LLCacheName::cleanFullName: the owner without " Resident"
-        let owner = q.owner_name.strip_suffix(" Resident").unwrap_or(&q.owner_name);
+        let object = dialog_names::shown(&q.object_name).into_owned();
+        let owner = self.dialog_owner(&q.owner_name);
         let body = aurora_i18n::tr!(
             "world-experiences-question",
-            object_name = q.object_name.clone(),
-            owner_name = owner.to_owned(),
+            object_name = object.clone(),
+            owner_name = owner.clone(),
             scope = scope.to_owned(),
             experience = name.clone(),
             questions = lines.join("\n• ")
@@ -4604,7 +4804,7 @@ impl World {
         );
         self.notifications
             .link_name(id, name, notifications::NameTarget::Experience(q.experience));
-        self.link_object_notification(id, q.task, &q.object_name, owner);
+        self.link_object_notification(id, q.task, &object, &owner);
         // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
         self.ui_sounds.push(UiSound::ScriptFloaterOpen);
     }
@@ -8576,5 +8776,99 @@ mod region_size_order_tests {
         });
         let map = &world.regions[&1].heightmap;
         assert_eq!((map.size_x, map.size_y), (MAX_REGION_SIZE, MAX_REGION_SIZE));
+    }
+
+    #[test]
+    fn east_neighbour_edge_uses_received_samples_and_falls_back_when_missing() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(east, (256, 256));
+        let edges = world.terrain_edge_heights(west);
+        assert!(edges.east.iter().all(Option::is_none));
+        // inserting the regions already dirtied edges: only the patch counts below
+        world.regions.get_mut(&west).expect("west").dirty_chunks.clear();
+
+        let heights: Vec<_> = (0..256).map(|i| 40.0 + (i / 16) as f32).collect();
+        world.apply(NetEvent::Terrain {
+            handle: east,
+            patches: vec![TerrainPatch {
+                x: 0,
+                y: 0,
+                size: 16,
+                heights,
+            }],
+        });
+        let edges = world.terrain_edge_heights(west);
+        assert_eq!(edges.east[0], Some(40.0));
+        assert_eq!(edges.east[15], Some(55.0));
+        assert_eq!(edges.east[16], None);
+        assert!(world.regions[&west].dirty_chunks.contains(&7));
+    }
+
+    #[test]
+    fn a_patch_on_a_chunk_boundary_dirties_both_chunks_that_share_the_vertex() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(east, (256, 256));
+        world.regions.get_mut(&west).expect("west").dirty_chunks.clear();
+        // east patch (0, 2): y 32..48, whose first row is the top vertex of
+        // west chunk 7 and the bottom one of chunk 15
+        world.apply(NetEvent::Terrain {
+            handle: east,
+            patches: vec![TerrainPatch {
+                x: 0,
+                y: 2,
+                size: 16,
+                heights: vec![9.0; 256],
+            }],
+        });
+        let dirty = &world.regions[&west].dirty_chunks;
+        assert!(dirty.contains(&7) && dirty.contains(&15), "{dirty:?}");
+    }
+
+    #[test]
+    fn terrain_edge_sampling_supports_a_512_metre_neighbour() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let large_east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(large_east, (512, 256));
+        world.apply(NetEvent::Terrain {
+            handle: large_east,
+            patches: vec![patch(0, 0), patch(0, 1)],
+        });
+        let edges = world.terrain_edge_heights(west);
+        assert_eq!(edges.east[0], Some(5.0));
+        assert_eq!(edges.east[31], Some(5.0));
+        assert_eq!(edges.east[32], None);
+    }
+
+    #[test]
+    fn north_and_diagonal_neighbours_supply_their_shared_edges() {
+        let mut world = world();
+        let here = aurora_net::origin_to_handle(0, 0);
+        let north = aurora_net::origin_to_handle(0, 256);
+        let northeast = aurora_net::origin_to_handle(256, 256);
+        world.ensure_region(here, (256, 256));
+        world.ensure_region(north, (256, 256));
+        world.ensure_region(northeast, (256, 256));
+        world.regions.get_mut(&here).expect("here").dirty_chunks.clear();
+        world.apply(NetEvent::Terrain {
+            handle: north,
+            patches: vec![patch(0, 0)],
+        });
+        world.apply(NetEvent::Terrain {
+            handle: northeast,
+            patches: vec![patch(0, 0)],
+        });
+        let edges = world.terrain_edge_heights(here);
+        assert_eq!(edges.north[0], Some(5.0));
+        assert_eq!(edges.east[256], Some(5.0));
+        assert!(world.regions[&here].dirty_chunks.contains(&56));
+        assert!(world.regions[&here].dirty_chunks.contains(&63));
     }
 }
