@@ -516,6 +516,8 @@ pub struct Settings {
     /// Requested position lock and options, independent for each avatar.
     pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
     pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
+    /// Swimming in prims named as water (#2008), for every account.
+    pub water_volumes: crate::movement::water_volume::Settings,
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
@@ -2069,6 +2071,7 @@ impl Default for Settings {
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
+            water_volumes: Default::default(),
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),

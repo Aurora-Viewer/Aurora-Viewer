@@ -207,6 +207,9 @@ pub mod plants;
 /// (AURORA_DEMO_PRESENCE).
 #[path = "demo_presence.rs"]
 pub mod presence;
+/// A raised pool whose water is a phantom prim (AURORA_DEMO_PRIM_WATER).
+#[path = "demo_prim_water.rs"]
+pub mod prim_water;
 /// Region / Estate answers (AURORA_DEMO_REGION).
 #[path = "demo_region.rs"]
 pub mod region;
@@ -3522,6 +3525,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 description: aurora_i18n::tr!("demo-offline-demo-no-real-l-is-spent").into(),
                 ..Default::default()
             }])]
+        }
+        aurora_net::NetCommand::RequestObjectProperties { object, .. } if prim_water::props(*object).is_some() => {
+            prim_water::props(*object)
+                .map(|props| NetEvent::ObjectProperties(vec![props]))
+                .into_iter()
+                .collect()
         }
         // the other objects' names for the hover tips (AURORA_DEMO_HOVER_TIPS)
         aurora_net::NetCommand::RequestObjectProperties { object, .. } if hover_tips::scenario().is_some() => {

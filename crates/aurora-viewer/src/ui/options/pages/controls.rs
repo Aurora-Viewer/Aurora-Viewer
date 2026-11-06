@@ -92,6 +92,26 @@ pub fn page(cx: &mut Cx) {
             0,
         );
     });
+    // #2008: the same settings as the AO's Movement tab, for every account.
+    cx.group(tr!("movement-prim-water"), |cx| {
+        cx.unfolded().experimental().toggle(
+            tr!("movement-prim-water"),
+            tr!("ui-options-prim-water-help"),
+            &field!(water_volumes.enabled),
+        );
+        let off = !cx.s.water_volumes.enabled;
+        cx.subs(off, |cx| {
+            cx.below()
+                .row(tr!("movement-prim-water-words"), "", &field!(water_volumes.words), |ui, s| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut s.water_volumes.words)
+                            .hint_text(crate::movement::water_volume::DEFAULT_WORDS)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .changed()
+                });
+        });
+    });
 }
 
 /// "Show Friends Only" itself (FSRenderFriendsOnly), the switch of the
