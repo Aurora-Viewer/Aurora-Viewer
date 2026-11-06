@@ -2146,7 +2146,10 @@ mod tests {
             (KeyCode::KeyX, Action::EnvMidnight, 4),
             (KeyCode::KeyJ, Action::EnvShared, 0),
         ] {
-            assert_eq!(kb.triggered(&Input::key(code), ctrl_shift), Some(action), "{code:?}");
+            // the key that carries the letter on this PC's layout (`sanitized`
+            // binds them like `KeyBindings::default`: Y is KeyZ on QWERTZ)
+            let key = layout::current().named_key(code);
+            assert_eq!(kb.triggered(&Input::key(key), ctrl_shift), Some(action), "{code:?}");
             assert_eq!(kb.users(&kb.get(action)[0].clone().expect("default binding")), [action]);
             assert_eq!(action.time_of_day(), Some(time));
         }
@@ -2238,6 +2241,7 @@ mod tests {
             ),
             (Action::Minimap, (true, true, false), [K::KeyM, K::Semicolon, K::Semicolon, K::KeyM]),
             (Action::People, (true, true, false), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
+            (Action::EnvMidday, (true, true, false), [K::KeyY, K::KeyY, K::KeyY, K::KeyZ]),
             (
                 Action::PhotoToDisk,
                 (true, false, false),
