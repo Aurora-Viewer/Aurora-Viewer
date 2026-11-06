@@ -669,6 +669,12 @@ pub struct Settings {
     /// their conversation on its card (#1198); a payment from anyone else
     /// shows there only when it is open. On by default.
     pub payment_opens_conversation: bool,
+    /// Preferences › Chat › Conversations: L$ received show a toast
+    /// (NotifyMoneyReceived, on by default, #2675).
+    pub notify_money_received: bool,
+    /// Preferences › Chat › Conversations: L$ received rise into the balance
+    /// (`ui/balance_gains.rs`, Aurora's own, on by default).
+    pub balance_gain_animation: bool,
     /// Preferences › Chat › Conversations: our own direct payment to a
     /// resident opens their conversation on its card (#1198); otherwise it
     /// shows there only when it is open. Off by default.
@@ -1889,6 +1895,8 @@ impl Default for Settings {
             payment_confirm_threshold: 200,
             always_track_payments: false,
             payment_opens_conversation: true,
+            notify_money_received: true,
+            balance_gain_animation: true,
             payment_sent_opens_conversation: false,
             maps: MapSettings::default(),
             search: Default::default(),

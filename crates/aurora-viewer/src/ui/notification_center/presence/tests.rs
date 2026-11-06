@@ -149,6 +149,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         ping_ms: 38,
         balance: Some(1000),
         show_balance: true,
+        balance_gains: Vec::new(),
         voice: (crate::voice::VoiceLight::Off, String::new()),
         slurl: String::new(),
         status: Default::default(),

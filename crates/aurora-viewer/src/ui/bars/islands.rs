@@ -452,7 +452,15 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     ui.painter().circle_filled(dot, 4.5, p.bar);
     crate::ui::presence::paint_mark(ui.painter(), dot, 3.0, status_shape(&st.status), col, p.bar);
     if let Some(g) = balance {
+        let size = g.size();
         crate::ui::widgets::paint_ink_left(ui.painter(), g, Pos2::new(disc.right() + 6.0, rect.center().y), p.ink);
+        let anchor = crate::ui::balance_gains::Anchor {
+            right: disc.right() + 6.0 + size.x,
+            text_top: rect.center().y - size.y / 2.0,
+            top: island.bottom() + MARGIN,
+        };
+        let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+        crate::ui::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, font);
     }
     if let Some(money) = money {
         if money.hovered() {
@@ -1132,6 +1140,7 @@ mod tests {
             ping_ms: 38,
             balance: Some(1000),
             show_balance: true,
+            balance_gains: Vec::new(),
             voice: (crate::voice::VoiceLight::Off, String::new()),
             slurl: String::new(),
             status: Default::default(),

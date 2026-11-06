@@ -231,6 +231,8 @@ pub struct StatusInfo<'a> {
     pub balance: Option<i32>,
     /// The balance shown (`show_balance`, #1340).
     pub show_balance: bool,
+    /// The L$ received on their way into the balance.
+    pub balance_gains: Vec<super::balance_gains::GainRow>,
     /// Voice connection light and its explanation.
     pub voice: (crate::voice::VoiceLight, String),
     /// SLURL of the current position (shown when the location is edited).
@@ -1977,6 +1979,12 @@ pub fn top_bars(
                         if balance.clicked() {
                             action = BarAction::BuyCurrency;
                         }
+                        let anchor = super::balance_gains::Anchor {
+                            right: balance.rect.right(),
+                            text_top: balance.rect.top(),
+                            top: balance.rect.bottom() + 4.0,
+                        };
+                        super::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, egui::FontId::proportional(12.0));
                         menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st.show_balance, &mut action));
                     }
                     // the conversations' thumbnails, left of the balance as
