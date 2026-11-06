@@ -5612,7 +5612,7 @@ impl App {
             // media on an item we wear (on our back, or a HUD) and made, on a
             // site the list does not know: no question unless `-ask` turns
             // filter_trust_own_worn off; `-blocked` puts the site in the list
-            // as blocked; `-gift`: an item someone else made, asked about
+            // as blocked; `-gift`: an item someone else made, trusted too
             "worn" | "worn-ask" | "worn-blocked" | "worn-gift" | "hud" | "hud-ask" | "hud-blocked" | "hud-gift" => {
                 let url = "https://media.example.com/earring/index.html";
                 self.settings.media.filter_trust_own_worn = !mode.ends_with("-ask");
