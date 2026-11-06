@@ -248,6 +248,44 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     ));
     let xr = xr_runtime_in(&head, &tail).unwrap_or_else(|| "not collected: no OpenXR runtime initialized".into());
     rows.push(("XR runtime", xr));
+    for phase in ["start", "loss"] {
+        let path = dir.join(format!("environment-{phase}.json"));
+        let snapshot = super::read_limited(&path, 512 * 1024)
+            .ok()
+            .and_then(|json| serde_json::from_str::<super::environment::Snapshot>(&json).ok())
+            .unwrap_or_default();
+        let mut snapshot = snapshot;
+        if phase == "start"
+            && !snapshot.displays_collected
+            && let Ok(json) = super::read_limited(&dir.join("environment-displays-start.json"), 32 * 1024)
+            && let Ok(displays) = serde_json::from_str::<Vec<super::environment::Display>>(&json)
+        {
+            snapshot.displays_collected = true;
+            snapshot.displays = displays;
+        }
+        for (field, value) in super::environment::public_rows(&snapshot) {
+            let field = match field {
+                "Third-party modules in process" => match phase {
+                    "start" => "Third-party modules at session start",
+                    _ => "Third-party modules at GPU loss",
+                },
+                "Overlay programs running" => match phase {
+                    "start" => "Overlay programs at session start",
+                    _ => "Overlay programs at GPU loss",
+                },
+                "Displays" => match phase {
+                    "start" => "Displays at session start",
+                    _ => "Displays at GPU loss",
+                },
+                "Power" => match phase {
+                    "start" => "Power at session start",
+                    _ => "Power at GPU loss",
+                },
+                _ => continue,
+            };
+            rows.push((field, value));
+        }
+    }
     if record.demo {
         rows.push(("Demo session", "yes".into()));
     }
@@ -1682,7 +1720,7 @@ mod tests {
         let body = build_at(&record, &dir, None).body;
         assert!(
             body.contains(
-                "| Overlay hooks | collected: Discord (in-game overlay or Go Live capture), DiscordHook64.dll; \
+                "| Overlay hooks | collected: Discord legacy game hook, DiscordHook64.dll; \
                  RivaTuner Statistics Server (MSI Afterburner's on-screen display), RTSSHooks64.dll |"
             ),
             "{body}"
@@ -1694,6 +1732,183 @@ mod tests {
                 .iter()
                 .all(|h| !h.program.contains('|') && !h.file.contains('|'))
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn write_environment_snapshot(dir: &Path, phase: &str, snapshot: &super::super::environment::Snapshot) {
+        std::fs::write(dir.join(format!("environment-{phase}.json")), serde_json::to_vec(snapshot).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn missing_or_malformed_environment_snapshots_publish_not_collected_rows() {
+        let (dir, record) = session();
+        let empty = build_at(&record, &dir, None).body;
+        for phase in ["session start", "GPU loss"] {
+            for field in ["Third-party modules", "Overlay programs", "Displays", "Power"] {
+                assert!(empty.contains(&format!("| {field} at {phase} | not collected:")), "{empty}");
+            }
+        }
+
+        std::fs::write(dir.join("environment-start.json"), b"not-json").unwrap();
+        std::fs::write(dir.join("environment-loss.json"), b"{\"modules\":[").unwrap();
+        std::fs::write(dir.join("environment-displays-start.json"), b"not-json").unwrap();
+        let malformed = build_at(&record, &dir, None).body;
+        for phase in ["session start", "GPU loss"] {
+            for field in ["Third-party modules", "Overlay programs", "Displays", "Power"] {
+                assert!(malformed.contains(&format!("| {field} at {phase} | not collected:")), "{malformed}");
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn environment_report_uses_both_snapshots_and_keeps_native_hdr_facts() {
+        use super::super::environment::{Display, Module, Snapshot};
+
+        let (dir, record) = session();
+        write_environment_snapshot(
+            &dir,
+            "start",
+            &Snapshot {
+                modules_collected: true,
+                modules: vec![Module {
+                    name: "session-hook.dll".into(),
+                    version: Some("1.2.3.4".into()),
+                    signer: "other".into(),
+                    class: "third-party".into(),
+                }],
+                processes_collected: true,
+                processes: vec!["OBS".into()],
+                displays_collected: true,
+                displays: vec![Display {
+                    width: 3840,
+                    height: 2160,
+                    refresh_hz: Some(144),
+                    hdr: Some(true),
+                    vrr: Some(false),
+                }],
+                power_collected: true,
+                power_profile: Some("balanced".into()),
+                power_source: Some("AC".into()),
+            },
+        );
+        // The supplemental winit row has no HDR data; it must not replace the
+        // native Windows display snapshot that already has it.
+        std::fs::write(
+            dir.join("environment-displays-start.json"),
+            serde_json::to_vec(&[Display {
+                width: 1920,
+                height: 1080,
+                refresh_hz: Some(60),
+                hdr: Some(false),
+                vrr: Some(true),
+            }])
+            .unwrap(),
+        )
+        .unwrap();
+        write_environment_snapshot(
+            &dir,
+            "loss",
+            &Snapshot {
+                modules_collected: true,
+                modules: vec![Module {
+                    name: "loss-hook.dll".into(),
+                    version: None,
+                    signer: "other".into(),
+                    class: "third-party".into(),
+                }],
+                processes_collected: true,
+                processes: vec!["Discord".into()],
+                displays_collected: true,
+                displays: vec![Display {
+                    width: 2560,
+                    height: 1440,
+                    refresh_hz: Some(60),
+                    hdr: Some(false),
+                    vrr: Some(true),
+                }],
+                power_collected: true,
+                power_profile: Some("performance".into()),
+                power_source: Some("battery".into()),
+            },
+        );
+
+        let body = build_at(&record, &dir, None).body;
+        for expected in [
+            "| Third-party modules at session start | collected: session-hook.dll |",
+            "| Overlay programs at session start | collected: OBS |",
+            "| Displays at session start | collected: 1 displays (Display 1 4K or higher 144 Hz HDR on VRR off); mixed refresh no |",
+            "| Power at session start | collected: profile balanced; power source AC |",
+            "| Third-party modules at GPU loss | collected: loss-hook.dll |",
+            "| Overlay programs at GPU loss | collected: Discord |",
+            "| Displays at GPU loss | collected: 1 displays (Display 1 1440p class 60 Hz HDR off VRR on); mixed refresh no |",
+            "| Power at GPU loss | collected: profile performance; power source battery |",
+        ] {
+            assert!(body.contains(expected), "missing {expected}\n{body}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn environment_rows_strip_paths_controls_and_unapproved_process_or_power_names() {
+        use super::super::environment::{Display, Module, Snapshot};
+
+        let (dir, record) = session();
+        write_environment_snapshot(
+            &dir,
+            "start",
+            &Snapshot {
+                modules_collected: true,
+                modules: vec![
+                    Module {
+                        name: "capture-hook.dll".into(),
+                        version: None,
+                        signer: "other".into(),
+                        class: "third-party".into(),
+                    },
+                    Module {
+                        name: r"C:\Users\PrivateName\secret.dll".into(),
+                        version: None,
+                        signer: "other".into(),
+                        class: "third-party".into(),
+                    },
+                    Module {
+                        name: "bad\nname.dll".into(),
+                        version: None,
+                        signer: "other".into(),
+                        class: "third-party".into(),
+                    },
+                ],
+                processes_collected: true,
+                processes: vec!["OBS".into(), "Private User".into(), r"C:\Users\PrivateName\secret.exe".into()],
+                displays_collected: true,
+                displays: vec![Display {
+                    width: 1920,
+                    height: 1080,
+                    refresh_hz: Some(60),
+                    hdr: None,
+                    vrr: None,
+                }],
+                power_collected: true,
+                power_profile: Some("Private User's custom power plan".into()),
+                power_source: Some(r"C:\Users\PrivateName".into()),
+            },
+        );
+
+        let body = build_at(&record, &dir, None).body;
+        assert!(body.contains("capture-hook.dll"), "{body}");
+        assert!(body.contains("| Overlay programs at session start | collected: OBS |"), "{body}");
+        assert!(body.contains("profile not reported; power source not reported"), "{body}");
+        for private in [
+            "PrivateName",
+            "Private User",
+            "secret.dll",
+            "secret.exe",
+            "bad",
+            "custom power plan",
+        ] {
+            assert!(!body.contains(private), "leaked {private}:\n{body}");
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 

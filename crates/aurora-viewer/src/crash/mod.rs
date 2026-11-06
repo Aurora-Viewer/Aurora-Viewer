@@ -5,6 +5,9 @@
 //! (`github.rs`), with the text they can read first (`summary.rs`), and
 //! asked for by default; the full diagnostics stay in the session folder.
 
+mod environment;
+#[cfg(windows)]
+mod environment_windows;
 pub mod github;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -235,6 +238,7 @@ fn start_inner() -> anyhow::Result<()> {
         dir: dir.clone(),
         panic_file,
     });
+    environment::start(&dir);
     if record.demo && std::env::var("AURORA_DEMO_CRASH").as_deref() == Ok("recovery") {
         return Ok(());
     }
@@ -349,6 +353,7 @@ pub fn gpu_lost() {
 /// may recover from. Keep only the first loss snapshot for this session.
 pub fn gpu_loss_snapshot() {
     crate::overlay_hooks::loss_snapshot();
+    environment::at_gpu_loss();
 }
 
 #[cfg(windows)]
@@ -374,11 +379,17 @@ fn write_first_overlay_loss_snapshot(dir: &Path, files: &[&str]) {
     }
 }
 
+/// A confirmed device loss, including one that the app will try to recover.
+pub fn gpu_loss_detected() {
+    gpu_loss_snapshot();
+}
+
 /// A GPU device loss the viewer recovered from (app/gpu_recovery.rs), `ms`
 /// to its new window and renderer, `safe` with the safe graphics level: one
 /// line each in `gpu-recoveries.txt`, which the session's report counts if
 /// it ends badly later. The session goes on: nothing marks it failed.
 pub fn gpu_recovered(ms: u128, safe: bool) {
+    environment::at_gpu_loss();
     use std::io::Write;
     let Some(session) = SESSION.get() else {
         return;
@@ -406,11 +417,23 @@ pub fn gpu_lost_at_start() {
 }
 
 fn mark_gpu_lost(when: &[u8]) {
+    environment::at_gpu_loss();
     if let Some(session) = SESSION.get() {
         let _ = std::fs::write(session.dir.join("gpu-lost.txt"), when);
         let _ = std::fs::write(session.dir.join("failed"), []);
         ending_in_gpu_trouble(&session.dir);
     }
+}
+
+/// Records the numeric display facts winit exposes, without monitor names.
+pub fn note_display_snapshot(displays: impl IntoIterator<Item = (u32, u32, Option<u32>)>) {
+    environment::note_winit_displays(displays.into_iter().map(|(width, height, refresh_hz)| environment::Display {
+        width,
+        height,
+        refresh_hz,
+        hdr: None,
+        vrr: None,
+    }));
 }
 
 /// In the session folder while the photo window's "Photo quality" holds

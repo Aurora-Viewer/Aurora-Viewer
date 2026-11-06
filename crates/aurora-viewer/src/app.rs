@@ -17447,6 +17447,10 @@ impl ApplicationHandler for App {
         if self.gfx.is_some() {
             return;
         }
+        crate::crash::note_display_snapshot(event_loop.available_monitors().map(|monitor| {
+            let size = monitor.size();
+            (size.width, size.height, monitor.refresh_rate_millihertz().map(|rate| rate / 1000))
+        }));
         // captures keep a fixed, predictable window
         let capture = self.capture.is_some();
         let (mut w, mut h) = (self.settings.window_width.max(800), self.settings.window_height.max(600));

@@ -102,10 +102,11 @@ What each part tells the one who fixes it:
   five when in the session, how long the recovery took and whether it came
   back with the safe graphics. Only shown when the session ended badly later.
 - **Overlay hooks**: the overlay or capture programs that injected their
-  hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
-  game capture), named from the viewer's fixed list only; a separate
-  snapshot records known hooks at the first confirmed GPU loss in the
-  session, including a loss before the first frame or followed by renderer recovery.
+  hook into the viewer during the session (Discord's legacy hook, Steam,
+  RivaTuner, OBS, Medal, NVIDIA Share, FPS Monitor, Bandicam), named from the
+  viewer's fixed list only; a separate snapshot records known hooks at the
+  first confirmed GPU loss in the session, including a loss before the first
+  frame or followed by renderer recovery.
 - **Vulkan layers installed**: names enumerated by the loader. Enumeration
   does not prove a layer was enabled or running in the instance.
 - **GPU errors**: sanitized operation names and counts from the retained
@@ -129,6 +130,22 @@ What each part tells the one who fixes it:
 - **XR runtime**: a fixed public category (SteamVR, Meta, Virtual Desktop,
   Monado, Windows Mixed Reality or other) and whether it created the Vulkan
   device. The runtime's own free-form name stays local.
+- **Environment snapshot**: bounded module basenames with numeric version
+  where available, fixed folder classifications and Windows signature categories,
+  known overlay process
+  labels, display resolution class and refresh rate, Windows HDR state,
+  and a fixed power-plan category plus AC / battery state. A snapshot is taken
+  at session start and again on confirmed GPU device loss. Active VRR is
+  reported as unknown because the queried APIs do not expose its current
+  state. Full paths,
+  command lines, device names, and arbitrary plan names are not included;
+  module details remain local and the report lists only third-party names.
+- **Vulkan layers on offer**: the `VK_LAYER_*` names the Vulkan loader offers
+  to the viewer, noted at the very start, so a crash while Vulkan starts has
+  them too.
+- **GPU errors**: the errors wgpu reported, first of each in the order they
+  came: `out-of-memory` or the wgpu operation that failed
+  (`Queue::write_buffer`). Their messages stay in the local log.
 - **Last state**: screen, frame rate, frame time, window size, graphics
   preset, memory, video memory used / budget, texture memory pressure,
   objects, avatars, regions, as noted every 2 seconds, and the swapchain
