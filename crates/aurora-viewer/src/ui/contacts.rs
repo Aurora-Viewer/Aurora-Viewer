@@ -1200,7 +1200,6 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
     let sel = &st.friends_sel;
     let n = sel.len();
     let all_online = sel.iter().all(|id| world.social.friends.iter().any(|f| f.id == *id && f.online));
-    let soon = aurora_i18n::tr!("ui-contacts-coming-soon-in-aurora");
     let im_tip = if n > 1 {
         aurora_i18n::tr!("ui-contacts-multi-person-conference-coming-soon-in-aurora")
     } else {
@@ -1246,7 +1245,15 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
             actions.push(ContactsAction::OfferTeleport(*id));
         }
     }
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-map"), soon, false);
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-map"),
+        aurora_i18n::tr!("ui-contacts-map-tip"),
+        friend_map_enabled(world, sel),
+    ) {
+        context::request(ui.ctx(), CtxAction::ShowOnMap(sel[0]));
+    }
     if side_button(
         ui,
         p,
@@ -1283,6 +1290,12 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
         .size(12.0)
         .color(p.muted),
     );
+}
+
+/// Legacy Viewer FSFloaterContacts::refreshUI: show the map button only for
+/// one online friend who granted map location, unless @showworldmap is set.
+fn friend_map_enabled(world: &World, selection: &[Uuid]) -> bool {
+    selection.len() == 1 && world.social.can_map_friend(selection[0]) && !world.rlva.has("showworldmap")
 }
 
 // ------------------------------------------------------------------- groups
@@ -2300,6 +2313,88 @@ mod tests {
             rights_after(all, rights::MAP_LOCATION, false),
             rights::ONLINE_STATUS | rights::MODIFY_OBJECTS
         );
+    }
+
+    #[test]
+    fn friend_map_button_follows_received_map_right() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (friend, other) = (id(2), id(3));
+        world.social.friends.push(crate::world::social::Friend {
+            id: friend,
+            online: true,
+            rights_given: 0,
+            rights_has: rights::MAP_LOCATION,
+        });
+        assert!(friend_map_enabled(&world, &[friend]));
+        assert!(!friend_map_enabled(&world, &[friend, other]));
+
+        world.social.friends[0].online = false;
+        assert!(!friend_map_enabled(&world, &[friend]));
+        world.social.friends[0].online = true;
+        world.social.friends[0].rights_has = 0;
+        world.social.friends[0].rights_given = rights::MAP_LOCATION;
+        assert!(!friend_map_enabled(&world, &[friend]), "only rights received from the friend count");
+
+        world.social.friends[0].rights_has = rights::MAP_LOCATION;
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Controller".into(),
+            source_id: id(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@showworldmap=n".into(),
+        }));
+        assert!(world.rlva.has("showworldmap"));
+        assert!(!friend_map_enabled(&world, &[friend]));
+    }
+
+    #[test]
+    fn clicking_the_friend_map_button_requests_map_tracking() {
+        use crate::ui::widgets::elide_tests::Frames;
+        use egui::{Event, PointerButton};
+
+        let (friend, mut world) = (id(2), World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load())));
+        world.social.friends.push(crate::world::social::Friend {
+            id: friend,
+            online: true,
+            rights_given: 0,
+            rights_has: rights::MAP_LOCATION,
+        });
+        let mut st = ContactsUi {
+            friends_sel: vec![friend],
+            ..Default::default()
+        };
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let draw = |ui: &mut egui::Ui, world: &World, st: &mut ContactsUi| {
+            friend_buttons(ui, &p, world, st, &mut Vec::new());
+        };
+        let labels = frames.run(Vec::new(), |ui| draw(ui, &world, &mut st));
+        let map = labels
+            .iter()
+            .find(|text| text.source == aurora_i18n::tr!("ui-contacts-map"))
+            .expect("map button label is drawn");
+        let point = map.rect.center();
+        for pressed in [true, false] {
+            frames.run(
+                vec![
+                    Event::PointerMoved(point),
+                    Event::PointerButton {
+                        pos: point,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                |ui| draw(ui, &world, &mut st),
+            );
+        }
+        assert!(matches!(
+            context::take_requests(&frames.ctx).as_slice(),
+            [CtxAction::ShowOnMap(id)] if *id == friend
+        ));
     }
 
     #[test]

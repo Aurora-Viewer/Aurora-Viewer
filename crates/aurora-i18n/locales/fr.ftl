@@ -2049,6 +2049,7 @@ demo-sound-reverb-hall = Grande salle
 common-world-map = Carte du monde
 ui-options-integrated-graphics = Carte graphique intégrée
 ui-contacts-map = Carte...
+ui-contacts-map-tip = Afficher la position actuelle de l’ami sur la carte
 ui-inventory-view-calling-cards = Cartes de visite
 common-category = Catégorie :
 ui-contacts-this-contact-set-is-empty = Ce cercle est vide.
