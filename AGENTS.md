@@ -128,13 +128,16 @@ gestures, wearables and object contents.
   the shared helpers:
   - `world::inventory::actions::agent_mask` and `held`: the rights the agent
     holds on an item (its own, group-owned, someone else's, a Library item);
+    `actions::task_agent_mask` for an item of an object's contents;
   - `actions::FULL` and `actions::asset_uuid_shown`: whether an asset id may
     be shown;
   - `world::inventory::asset_ids`: the same rule in bulk for the windows that
     list ids; an id the rule does not allow is written `hidden-` and a short
     tag;
   - `build::texture_copy`: which texture and material ids a copy may carry
-    from one prim to another, and the items that follow them.
+    from one prim to another, and the items that follow them;
+  - `build::contents_drop::worn_refused`: what a worn object refuses, on
+    every path that applies a texture or a material.
 
   A feature that needs a rule none of them gives adds it there, with its
   tests, instead of reading `owner_mask` or `everyone_mask` itself.
