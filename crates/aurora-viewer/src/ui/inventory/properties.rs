@@ -43,7 +43,7 @@ pub(super) fn show(
             item: it,
             edit,
             can_edit,
-            can_next_owner: can_edit,
+            can_next_owner: can_edit && rules::next_owner_editable(it),
             can_describe: can_edit && it.owner_mask & rules::MODIFY != 0,
             can_thumbnail: can_edit,
             names: &facts.names,

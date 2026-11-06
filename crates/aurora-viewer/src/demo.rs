@@ -238,6 +238,9 @@ pub mod sound_parcels;
 /// reverb of the surroundings (AURORA_DEMO_SOUND_REVERB).
 #[path = "demo_sound_reverb.rs"]
 pub mod sound_reverb;
+/// The files the scenarios take from a folder, and which ones a build reads.
+#[path = "demo_source.rs"]
+pub mod source;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
 #[path = "demo_staff.rs"]
 pub mod staff;
@@ -6167,14 +6170,15 @@ pub fn chime() -> (Uuid, aurora_audio::SoundClip) {
     (u(0x50_0001), aurora_audio::SoundClip::from_pcm(&pcm, 1, rate))
 }
 
-/// AURORA_DEMO_SOUND: an interface sound for the offline demo, read (never
-/// written) from the real sound cache when a grid session already loaded it,
-/// else a short tick whose pitch depends on the asset (so that different
-/// sounds can be told apart).
+/// AURORA_DEMO_SOUND: an interface sound for the offline demo. A development
+/// build reads it (never writes it) from the sound cache of grid sessions
+/// when one already loaded it (`source`); otherwise a short tick whose pitch
+/// depends on the asset (so that different sounds can be told apart).
 pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
     let demo_cache = crate::settings::cache_dir();
-    if let Some(real) = demo_cache.parent()
-        && let Ok(data) = crate::cache::read(real.join(crate::settings::ASSET_STORE).join("sound").join(format!("{id}.ogg")))
+    if source::reads_cache_files()
+        && let Some(real) = demo_cache.parent()
+        && let Ok(data) = crate::cache::read(crate::scene::sounds::cache_file(&real.join(crate::settings::ASSET_STORE), &id))
         && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
     {
         return clip;
@@ -9055,13 +9059,23 @@ fn demo_day(sky: Llsd) -> Llsd {
         .unwrap_or_else(|| llsd_map! { "type" => "water" });
     frames.insert("water".into(), water);
     let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);
+    let mut day = llsd_map! {
+        "frames" => Llsd::Map(frames),
+        "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
+    };
+    // AURORA_DEMO_SKY_FLAGS: the day's settings flags (0 as a viewer saves
+    // them by default; `none` leaves the key out, which reads as 0)
+    match std::env::var("AURORA_DEMO_SKY_FLAGS").ok().as_deref().map(str::trim) {
+        Some("none") => {}
+        flags => {
+            let flags = flags.and_then(|f| f.parse::<i32>().ok()).unwrap_or(0);
+            day.insert("flags", flags);
+        }
+    }
     llsd_map! {
         "day_length" => 14400,
         "day_offset" => 0,
-        "day_cycle" => llsd_map! {
-            "frames" => Llsd::Map(frames),
-            "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
-        },
+        "day_cycle" => day,
     }
 }
 

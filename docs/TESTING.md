@@ -3853,6 +3853,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROJECTOR=1`, `point`, `cluster`, `cluster-orbit`, `cluster-scan` or `cluster-bench` | Projectors and overlapping shadow-map transitions |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
+| `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
@@ -4059,6 +4060,16 @@ both open states and the selection count. Capture at frame 620.
   at 0.02 on the other, without adding up. `shell`: the layer also shows its
   other faces; the back one, seen from behind, must add nothing (same values
   as with `1`).
+- **`AURORA_DEMO_SKY_FLAGS=<flags>|none`**: the settings flags of the EEP
+  day `AURORA_DEMO_SKY` gives the region (0 by default): 1 no copy, 2 no
+  modify, 4 no transfer, 8 no save, added up; `none` leaves the `flags` key
+  out, which reads as 0 like the Legacy Viewer (no restriction). With the
+  shared environment shown (a local sky kept by the demo profile has its
+  own rights), "New sky…" (or "New water…") of the bar's environment menu
+  then opens on settings with these rights, and its status line says
+  which: 0 and `none` change nothing; 1 greys Save As, 2 the panels too; 4
+  keeps Save As, the new item's next owner without transfer; 8 leaves only
+  "Apply to myself only".
 - **`AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r>,<fog g>,<fog b>]`**:
   the water of the EEP day `AURORA_DEMO_SKY` gives the region, with these
   values as a region's asset carries them (the normal scale on its three
@@ -4641,8 +4652,9 @@ both open states and the selection count. Capture at frame 620.
     stream: region left`, then `demo stream: textures evicted`); read
     `s_maintain`, `sync`, `s_sync_list` and `r_submit` in `max:`.
   - With `,j2k=<folder>` after the numbers, the textures are the
-    `.j2c` files of that folder (a viewer's `cache\tex`, looped over
-    if there are fewer of them than objects) instead of drawn checkerboards:
+    `.j2c` files of that folder (looped over if there are fewer of them
+    than objects; plain files, or in a development build also a store's
+    `tex`, as for `AURORA_DEMO_ARRIVAL`) instead of drawn checkerboards:
     each file is handed to the streaming as a successful read of the disk
     cache and follows the real path from the JPEG2000 decode onwards, at
     the level its on-screen size asks for. This is the return to a
@@ -4684,9 +4696,11 @@ both open states and the selection count. Capture at frame 620.
   `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
   the folder's `mat` subfolder), whose textures are served from `tex`
   when it holds them, else one of the others in their place. `<folder>`
-  holds plain asset files, or is this installation's cache store
-  (`cache/store`, read through `crate::cache`; an earlier build cannot
-  serve it). Every asset is
+  holds plain asset files; a development build (`dev`, `ci`,
+  `debugging`) also reads files of the cache's format, such as the cache
+  store (`cache/store`, through `crate::cache`; an earlier build cannot
+  serve it), while a `--release` build leaves them out and takes plain
+  folders only (`demo_source.rs`; the log says so once). Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to
   this machine only), which answers each request after `net` milliseconds
   (200 by default; about 70 for the asset hosts on a good link); with
@@ -9465,7 +9479,8 @@ What the inventory must show with these scenarios:
   and the window). `stop` ends the stream after the last title: "No
   stream playing", the history kept. No sound is played.
 - **`AURORA_DEMO_SOUND=1|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
-  sounds (taken from the real sound cache if it exists, otherwise a brief
+  sounds (in a development build, taken from the sound cache of grid
+  sessions if it holds them; otherwise, and in a `--release` build, a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
   The wind sound is silent too, unless this or `AURORA_DEMO_WIND` is set.

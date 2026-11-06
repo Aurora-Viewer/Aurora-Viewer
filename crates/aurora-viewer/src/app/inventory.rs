@@ -517,6 +517,16 @@ impl App {
             }
             InvAction::Restore(id) => {
                 if let Some(it) = self.world.inventory.items.get(&id).cloned() {
+                    if !rules::restorable(&it, self.world.home_grid.is_some()) {
+                        // CantRestoreToWorldNoCopy
+                        self.world.notifications.push(
+                            crate::world::notifications::Kind::Alert,
+                            aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
+                            aurora_i18n::tr!("ui-inventory-restore-no-copy"),
+                            crate::world::notifications::Data::None,
+                        );
+                        return;
+                    }
                     self.send(NetCommand::RestoreInventoryObject(it));
                 }
             }
@@ -572,9 +582,10 @@ impl App {
                     .landmarks
                     .request_action(asset, crate::world::landmarks::Action::ShowOnMap, Instant::now());
             }
-            InvAction::ThumbnailCopied(asset) => {
+            InvAction::ThumbnailCopied { asset, clipboard } => {
                 self.inventory_ui.clipboard = vec![asset];
                 self.inventory_ui.cut = false;
+                self.thumbnail_copied(asset, clipboard);
             }
             InvAction::Thumbnail { request, item, input } => self.inventory_image_action(request, item, input),
             InvAction::TeleportLandmark(_) => {}
