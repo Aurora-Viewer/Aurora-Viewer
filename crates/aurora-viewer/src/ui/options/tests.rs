@@ -1237,6 +1237,42 @@ fn the_conversations_choice_switches_the_style() {
 }
 
 #[test]
+fn diagnostics_preferences_show_all_startup_switches_and_repro_bundle_action() {
+    let mut frames = Frames::new();
+    let (mut settings, mut state, mut result) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    settings.diagnostic_environment.use_preferences = true;
+    state.demo_open_cogs = true;
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut settings, &mut state, &mut result, Page::System, 0, Vec::new());
+    }
+    for label in [
+        aurora_i18n::tr!("deep-diagnostics-next-session"),
+        aurora_i18n::tr!("deep-diagnostics-use-preferences"),
+        aurora_i18n::tr!("deep-diagnostics-gpu-validation"),
+        aurora_i18n::tr!("deep-diagnostics-gpu-recovery"),
+        aurora_i18n::tr!("deep-diagnostics-cpu-cull"),
+        aurora_i18n::tr!("deep-diagnostics-contact-variant"),
+        aurora_i18n::tr!("deep-diagnostics-vram-budget"),
+        aurora_i18n::tr!("deep-diagnostics-present-mode"),
+        aurora_i18n::tr!("deep-diagnostics-bundle-save"),
+    ] {
+        assert!(texts.iter().any(|text| text.source == label), "{label} is painted");
+    }
+    let save = aurora_i18n::tr!("deep-diagnostics-bundle-save");
+    let center = texts
+        .iter()
+        .find(|text| text.source == save)
+        .expect("bundle action is painted")
+        .rect
+        .center();
+    for events in click(center) {
+        let _ = page_frame(&mut frames, &mut settings, &mut state, &mut result, Page::System, 0, events);
+    }
+    assert!(result.save_repro_bundle);
+}
+
+#[test]
 fn the_dot_of_a_modified_row_puts_it_back() {
     let mut frames = Frames::new();
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());

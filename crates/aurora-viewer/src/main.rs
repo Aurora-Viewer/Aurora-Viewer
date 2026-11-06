@@ -30,6 +30,7 @@ mod crash;
 mod creation_permissions;
 mod credentials;
 mod cursors;
+mod deep_diagnostics;
 mod deep_profile;
 mod demo;
 mod dev_toolbox;
@@ -154,6 +155,8 @@ fn main() -> anyhow::Result<()> {
     {
         return Ok(());
     }
+    let deep_diagnostics = deep_diagnostics::consume_next_session(&settings::Settings::path())?;
+    deep_diagnostics::apply_environment(&deep_diagnostics);
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();

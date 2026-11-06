@@ -12061,3 +12061,37 @@ used. The loader and headset runtime are installed separately. Runtime selection
 is still performed by OpenXR (`XR_RUNTIME_JSON` may select a development manifest).
 This is also accepted during normal viewer startup; no loader is downloaded or
 bundled. See [VR setup](VR.md) for platform requirements and validation status.
+
+### Deep GPU diagnostics and repro bundles
+
+Help › Diagnostics (opens Preferences › Language and updates › GPU diagnostics) has a one-session switch.
+It is off by default. When enabled, Aurora consumes the saved switch before
+starting worker threads, then enables wgpu debug/validation flags, detailed
+render/device logging, transfer breadcrumbs and 30 Hz flight-recorder sampling
+for that run. The setting is cleared before the process starts, so a crash does
+not re-enable it. A banner stays visible during the diagnostic session. GPU
+timestamps and pass labels are collected when the adapter/backend supports
+them; unsupported timestamp queries remain unavailable.
+Child viewer relaunches restore the launcher's original diagnostic environment
+first, then apply the currently saved preferences. The one-session validation
+and transfer-breadcrumb overrides therefore do not leak into updater or VR
+restarts.
+
+The optional startup controls map to the existing `AURORA_GPU_VALIDATION`,
+`AURORA_CONTACT_VARIANT`, `AURORA_GPU_RECOVERY`, `AURORA_VRAM_BUDGET_MB`,
+`AURORA_CPU_CULL` and `AURORA_PRESENT_MODE` variables. They apply only when
+“Apply these diagnostic switches at startup” is enabled. Otherwise variables
+set outside Aurora are preserved. Values are allowlisted and the VRAM budget
+is limited to 256–1048576 MB.
+
+To exercise the complete offline workflow, open Help › Diagnostics, enable
+the one-session switch, restart, confirm the banner, and run
+`AURORA_DEMO_GPU_HANG`. In Diagnostics,
+choose Save a repro bundle and review its contents before selecting a ZIP path.
+The archive contains a closed-vocabulary log summary, the last public crash
+report, a schema-validated flight-recorder dump, validated numeric GPU
+breadcrumbs, numeric display/environment facts, and allowlisted
+graphics/diagnostic settings. It excludes raw logs, crash
+traces, full settings, personal paths/names, credentials, and the private GPU
+fault artifact. Inspect every ZIP member for those exclusions. This is an
+offline test; it does not connect to a grid.

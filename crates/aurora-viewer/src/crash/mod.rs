@@ -76,6 +76,27 @@ pub fn session_log() -> Option<std::fs::File> {
     std::fs::File::create(SESSION.get()?.dir.join("session.log")).ok()
 }
 
+/// The current session's local artifact directory. Callers may add only
+/// explicitly selected, bounded artifacts to an export.
+pub fn current_session_dir() -> Option<PathBuf> {
+    SESSION.get().map(|session| session.dir.clone())
+}
+
+/// The newest crash summary that has already passed the public report's
+/// closed-vocabulary filtering. Raw traces and logs are never returned here.
+pub fn latest_public_report() -> Option<String> {
+    let mut sessions = std::fs::read_dir(root())
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    sessions.sort_by_key(|dir| std::fs::metadata(dir).and_then(|m| m.modified()).ok());
+    sessions
+        .into_iter()
+        .rev()
+        .find_map(|dir| read_limited(&dir.join("public-report.md"), 128 * 1024).ok())
+}
+
 fn root() -> PathBuf {
     root_for(std::env::var_os("AURORA_DEMO").is_some(), std::env::var_os("AURORA_DEMO_CRASH_DIR"))
 }

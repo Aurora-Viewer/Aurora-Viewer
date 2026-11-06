@@ -10,6 +10,21 @@ mod hover_height;
 mod saver;
 pub mod stream_list;
 
+/// Development render switches exposed by Preferences › Language and updates
+/// (the Legacy Viewer has no matching controls).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiagnosticEnvironment {
+    /// Whether the Preferences values override inherited environment values.
+    pub use_preferences: bool,
+    pub gpu_validation: bool,
+    pub contact_variant: String,
+    pub gpu_recovery: bool,
+    pub vram_budget_mb: String,
+    pub cpu_cull: bool,
+    pub present_mode: String,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -428,6 +443,11 @@ pub struct Settings {
     pub ignored_update: String,
     pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
+    /// Ask the next process to run one session with expensive GPU diagnostics.
+    /// `main` consumes this before starting any threads so a crash cannot
+    /// leave the expensive mode enabled for another launch.
+    pub deep_diagnostics_next_session: bool,
+    pub diagnostic_environment: DiagnosticEnvironment,
     /// Firestorm Language: default follows the OS.
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
@@ -1738,6 +1758,8 @@ impl Default for Settings {
             ignored_update: String::new(),
             area_search: Default::default(),
             crash_reports: CrashReports::Ask,
+            deep_diagnostics_next_session: false,
+            diagnostic_environment: Default::default(),
             language: "default".into(),
             language_is_public: true,
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),

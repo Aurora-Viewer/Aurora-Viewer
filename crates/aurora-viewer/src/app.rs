@@ -115,6 +115,7 @@ mod region_restart;
 mod region_window;
 mod relogin;
 mod report_abuse;
+mod repro_bundle;
 mod reset_skeleton;
 mod rlva;
 mod safe_graphics;
@@ -10653,6 +10654,21 @@ impl App {
             // the second, or a click that changed a row's size is lost.
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
+            if crate::deep_diagnostics::active() {
+                egui::Area::new(egui::Id::unique("deep-diagnostics-session-banner"))
+                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 10.0))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::new()
+                            .fill(self.palette.warn.gamma_multiply(0.92))
+                            .corner_radius(egui::CornerRadius::same(5))
+                            .inner_margin(egui::Margin::symmetric(12, 6))
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new(aurora_i18n::tr!("deep-diagnostics-active")).color(self.palette.ink));
+                            });
+                    });
+            }
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
@@ -13236,6 +13252,10 @@ impl App {
             BarAction::ExportStreamList => self.export_stream_list(),
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
+            BarAction::Diagnostics => {
+                self.panels.settings = true;
+                self.options_ui.open(ui::options::Page::System, 0);
+            }
             BarAction::CopyVersion => self.copy_version(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
             BarAction::ToggleReportAbuse => {
@@ -14614,6 +14634,9 @@ impl App {
         }
         if res.back_up {
             self.back_up_settings(ctx);
+        }
+        if res.save_repro_bundle {
+            self.save_repro_bundle();
         }
         if res.pick_backup {
             self.pick_settings_backup();

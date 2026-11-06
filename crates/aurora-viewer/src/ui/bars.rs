@@ -33,6 +33,8 @@ pub enum BarAction {
     Portals,
     CheckUpdates,
     ReportBug,
+    /// Help › Diagnostics opens the diagnostic controls in Preferences.
+    Diagnostics,
     /// The bug button's right click: the viewer's version to the clipboard,
     /// silently, for a report or a chat.
     CopyVersion,
@@ -1275,6 +1277,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if menu::item(ui, p, "bug-filled", aurora_i18n::tr!("bug-title")) {
             *action = BarAction::ReportBug;
+        }
+        if menu::item(ui, p, "device-desktop-filled", aurora_i18n::tr!("deep-diagnostics-menu")) {
+            *action = BarAction::Diagnostics;
         }
         if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("report-abuse-title")) {
             *action = BarAction::ReportAbuse;

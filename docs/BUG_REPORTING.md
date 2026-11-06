@@ -10,6 +10,32 @@ sharing them (the full trace may contain personal paths).
 
 ## Crash reports
 
+### Deep diagnostics
+
+When a GPU issue is difficult to reproduce, open Help › Diagnostics (which
+opens Preferences › Language and updates › GPU diagnostics) and enable “Deep
+diagnostics for the next session”.
+Restart Aurora, confirm the active banner, reproduce the issue once, then use
+Save a repro bundle. Before the file picker opens, Aurora lists the archive's
+contents and excluded data. The switch clears before startup and stays off
+after a crash; it does not require a persistent environment-variable edit.
+Updater and VR child restarts restore the launcher's original diagnostic
+environment before any currently saved preferences are applied.
+
+The optional environment controls on the same page take effect at the next
+start when “Apply these diagnostic switches at startup” is enabled. Otherwise
+inherited environment variables keep their existing behavior. Contact shadow
+variant and present mode choices are dropdowns; invalid values are ignored.
+
+The ZIP contains only bounded public-safe summaries and selected graphics
+and diagnostic settings. It
+does not include the raw log, full crash traces, full `settings.json`, account
+names, login details, filesystem paths, or the private raw driver-fault
+artifact. The flight-recorder and environment data are parsed and reduced to
+fixed labels, counts, and numbers before packaging. Review the ZIP yourself
+before attaching it to a report. The Legacy Viewer has no equivalent repro
+bundle workflow.
+
 After a crash, "Send a crash report" in the standalone window shows the
 issue to publish: exactly `public-report.md` (below), preceded by what the
 tester writes in "What were you doing when it happened?" (at least a few

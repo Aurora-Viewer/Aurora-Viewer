@@ -5,9 +5,10 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-const SAMPLE_CAP: usize = 600;
+const SAMPLE_CAP: usize = 1800;
 const EVENT_CAP: usize = 128;
-const SAMPLE_INTERVAL_MS: u64 = 100;
+const NORMAL_SAMPLE_INTERVAL_MS: u64 = 100;
+const DEEP_SAMPLE_INTERVAL_MS: u64 = 33;
 const METRIC_COUNT: usize = 15;
 const WINDOW_SECONDS_MS: u64 = 60_000;
 const RECENT_SECONDS_MS: u64 = 5_000;
@@ -176,6 +177,7 @@ pub struct SampleInput {
 struct Recorder {
     origin: Option<Instant>,
     last_sample_ms: Option<u64>,
+    sample_interval_ms: u64,
     samples: [Sample; SAMPLE_CAP],
     sample_head: usize,
     sample_len: usize,
@@ -200,6 +202,11 @@ impl Default for Recorder {
         Self {
             origin: None,
             last_sample_ms: None,
+            sample_interval_ms: if crate::deep_diagnostics::active() {
+                DEEP_SAMPLE_INTERVAL_MS
+            } else {
+                NORMAL_SAMPLE_INTERVAL_MS
+            },
             samples: std::array::from_fn(|_| Sample::default()),
             sample_head: 0,
             sample_len: 0,
@@ -227,7 +234,7 @@ impl Recorder {
     fn sample_at(&mut self, at_ms: u64, input: SampleInput) {
         if self
             .last_sample_ms
-            .is_some_and(|last| at_ms.saturating_sub(last) < SAMPLE_INTERVAL_MS)
+            .is_some_and(|last| at_ms.saturating_sub(last) < self.sample_interval_ms)
         {
             return;
         }
@@ -279,7 +286,7 @@ impl Recorder {
     fn sample_if_due(&mut self, at_ms: u64, input: impl FnOnce() -> SampleInput) {
         if self
             .last_sample_ms
-            .is_some_and(|last| at_ms.saturating_sub(last) < SAMPLE_INTERVAL_MS)
+            .is_some_and(|last| at_ms.saturating_sub(last) < self.sample_interval_ms)
         {
             return;
         }
@@ -477,8 +484,22 @@ pub fn publish_periodic(dir: &Path) {
 }
 
 pub fn report_from_json(json: &str) -> Option<String> {
+    let dump = dump_from_json(json)?;
+    Some(report(&dump))
+}
+
+/// Re-encode only the recognized fixed-schema dump fields. Unknown JSON
+/// properties are discarded so a local artifact cannot smuggle text into a
+/// public repro bundle.
+pub fn canonical_dump_json(json: &str) -> Option<String> {
+    let dump = dump_from_json(json)?;
+    let encoded = serde_json::to_string(&dump).ok()?;
+    (encoded.len() as u64 <= MAX_DUMP_BYTES).then_some(encoded)
+}
+
+fn dump_from_json(json: &str) -> Option<Dump> {
     let dump = serde_json::from_str::<Dump>(json).ok()?;
-    (dump.schema == 1).then(|| report(&dump))
+    (dump.schema == 1).then_some(dump)
 }
 
 #[derive(Clone, Copy)]
@@ -796,15 +817,15 @@ mod tests {
     }
 
     #[test]
-    fn ring_keeps_only_the_last_six_hundred_samples_and_orders_them() {
+    fn ring_keeps_only_the_last_eighteen_hundred_samples_and_orders_them() {
         let mut recorder = Recorder::default();
         for index in 0..SAMPLE_CAP + 2 {
-            recorder.sample_at(index as u64 * SAMPLE_INTERVAL_MS, input(index as f32, index as f32));
+            recorder.sample_at(index as u64 * NORMAL_SAMPLE_INTERVAL_MS, input(index as f32, index as f32));
         }
-        let dump = recorder.dump(Trigger::GpuLoss, (SAMPLE_CAP + 1) as u64 * SAMPLE_INTERVAL_MS);
+        let dump = recorder.dump(Trigger::GpuLoss, (SAMPLE_CAP + 1) as u64 * NORMAL_SAMPLE_INTERVAL_MS);
         assert_eq!(dump.samples.len(), SAMPLE_CAP);
         assert_eq!(dump.samples[0].values[1], Some(2.0));
-        assert_eq!(dump.samples[SAMPLE_CAP - 1].values[1], Some(601.0));
+        assert_eq!(dump.samples[SAMPLE_CAP - 1].values[1], Some((SAMPLE_CAP + 1) as f32));
     }
 
     #[test]
@@ -830,8 +851,8 @@ mod tests {
     fn samples_are_rate_limited_to_ten_hz() {
         let mut recorder = Recorder::default();
         recorder.sample_at(0, input(1.0, 1.0));
-        recorder.sample_at(99, input(2.0, 2.0));
-        recorder.sample_at(100, input(3.0, 3.0));
+        recorder.sample_at(NORMAL_SAMPLE_INTERVAL_MS - 1, input(2.0, 2.0));
+        recorder.sample_at(NORMAL_SAMPLE_INTERVAL_MS, input(3.0, 3.0));
         assert_eq!(recorder.sample_len, 2);
         assert_eq!(recorder.samples[1].values[1], Some(3.0));
     }
@@ -852,6 +873,21 @@ mod tests {
         });
         assert!(collected);
         assert_eq!(recorder.sample_len, 2);
+    }
+
+    #[test]
+    fn deep_diagnostics_records_at_thirty_hz_for_about_a_minute() {
+        let mut recorder = Recorder {
+            sample_interval_ms: DEEP_SAMPLE_INTERVAL_MS,
+            ..Default::default()
+        };
+        for index in 0..SAMPLE_CAP + 1 {
+            recorder.sample_at(index as u64 * DEEP_SAMPLE_INTERVAL_MS, input(index as f32, index as f32));
+        }
+        let dump = recorder.dump(Trigger::GpuLoss, SAMPLE_CAP as u64 * DEEP_SAMPLE_INTERVAL_MS);
+        assert_eq!(dump.samples.len(), SAMPLE_CAP);
+        assert_eq!(dump.samples[0].at_ms, DEEP_SAMPLE_INTERVAL_MS);
+        assert!(dump.samples.last().unwrap().at_ms - dump.samples[0].at_ms >= 59_000);
     }
 
     #[test]
@@ -904,11 +940,23 @@ mod tests {
     }
 
     #[test]
+    fn canonical_dump_discards_unknown_fields_before_export() {
+        let mut recorder = Recorder::default();
+        recorder.sample_at(0, input(1.0, 2.0));
+        let dump = serde_json::to_string(&recorder.dump(Trigger::GpuLoss, 0)).unwrap();
+        let with_unknown = dump.trim_end_matches('}').to_owned() + r#","private_name":"SECRET"}"#;
+        let canonical = canonical_dump_json(&with_unknown).unwrap();
+        assert!(!canonical.contains("private_name"));
+        assert!(!canonical.contains("SECRET"));
+        assert!(canonical.contains("\"schema\":1"));
+    }
+
+    #[test]
     fn ten_thousand_ring_samples_stay_under_one_hundred_milliseconds() {
         let mut recorder = Recorder::default();
         let started = Instant::now();
         for index in 0..10_000 {
-            recorder.sample_at(index as u64 * SAMPLE_INTERVAL_MS, input((index % 100) as f32, 10.0));
+            recorder.sample_at(index as u64 * NORMAL_SAMPLE_INTERVAL_MS, input((index % 100) as f32, 10.0));
         }
         assert!(
             started.elapsed() < Duration::from_millis(100),
