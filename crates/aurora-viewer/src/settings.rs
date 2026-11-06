@@ -21,7 +21,7 @@ pub enum MarkerAnchor {
     /// Above the name plate, or the head without one.
     #[default]
     AboveName,
-    /// On the avatar's centre of mass (its pelvis, the root of the skeleton).
+    /// On the avatar's chest.
     Body,
 }
 

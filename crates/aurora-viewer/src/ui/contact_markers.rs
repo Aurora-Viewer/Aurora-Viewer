@@ -39,6 +39,9 @@ const GLASS_TINT: f32 = 0.65;
 /// Opacity of the disc once landed, as a plate's badge.
 const BADGE_TINT: f32 = 0.9;
 const GLASS_SHADE: f32 = 0.65;
+/// Where the chest is without a skeleton (a resident known by their coarse
+/// location), as a share of the way from the root to the name tag.
+const CHEST: f32 = 0.4;
 /// Markers that blur the world behind them, nearest first; the others only
 /// tint it. Far apart on the screen, each widens the area blurred.
 const MAX_GLASS: usize = 12;
@@ -149,7 +152,8 @@ pub fn draw(
         tracker.clear();
         return;
     };
-    let seen = sightings(world, region, Instant::now());
+    let now = Instant::now();
+    let seen = sightings(world, region, now);
     let dt = tracker.update(region, ctx.input(|i| i.time), &seen, world.agent.position.z, |id| {
         marked(world, id).is_some()
     });
@@ -161,7 +165,20 @@ pub fn draw(
         .filter_map(|(id, entry)| {
             let alpha = entry.presence * proximity_alpha(entry.position.distance(world.agent.position), entry.marker.fade);
             let distance = entry.position.distance(eye);
-            let placed = place(id, entry, scene, proj, screen.center(), inner, tags, anchor, distance, dt)?;
+            let placed = place(
+                id,
+                entry,
+                world,
+                scene,
+                now,
+                proj,
+                screen.center(),
+                inner,
+                tags,
+                anchor,
+                distance,
+                dt,
+            )?;
             (alpha > 0.0).then_some((distance, placed, entry.marker, alpha))
         })
         .collect();
@@ -197,10 +214,25 @@ struct Placed {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The chest bone, kept relative to `root`: while a marker eases in from its
+/// coarse position, it stays with the marker and not with the avatar.
+fn chest(world: &World, scene: &Scene, id: &Uuid, now: Instant, root: Vec3, tag_anchor: Vec3) -> Vec3 {
+    let avatar = world
+        .objects
+        .index_of_uuid(id)
+        .and_then(|index| Scene::object_transform(world, index, now, 0));
+    match avatar.zip(scene.joint_world(world, id, "mChest", now)) {
+        Some(((position, ..), bone)) => root + bone - position,
+        None => root.lerp(tag_anchor, CHEST),
+    }
+}
+
 fn place(
     id: &Uuid,
     entry: &mut Entry,
+    world: &World,
     scene: &Scene,
+    now: Instant,
     proj: &Projector,
     center: Pos2,
     inner: Rect,
@@ -210,12 +242,13 @@ fn place(
     dt: f32,
 ) -> Option<Placed> {
     let root = proj.view_proj * entry.position.extend(1.0);
-    let head = proj.view_proj * scene.name_tag_anchor(id, entry.position).extend(1.0);
+    let tag_anchor = scene.name_tag_anchor(id, entry.position);
+    let head = proj.view_proj * tag_anchor.extend(1.0);
     let above = anchor == MarkerAnchor::AboveName;
     // as `Projector::project_name_tag`: above the root, not above a head
     // that perspective moves sideways
     let clip = if !above {
-        root
+        proj.view_proj * chest(world, scene, id, now, entry.position, tag_anchor).extend(1.0)
     } else if root.w > 0.05 && head.w > 0.05 {
         Vec4::new(root.x / root.w * head.w, head.y, head.z, head.w)
     } else {
