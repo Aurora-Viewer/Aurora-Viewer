@@ -844,6 +844,9 @@ pub enum NetEvent {
         object_id: Uuid,
         object_name: String,
         owner_name: String,
+        /// The owner's id (the OwnerData block; nil from simulators that
+        /// do not send it).
+        owner_id: Uuid,
         message: String,
         channel: i32,
         buttons: Vec<String>,
@@ -1559,6 +1562,10 @@ pub enum NetCommand {
     },
     Login(Box<LoginRequest>),
     Logout,
+    /// The viewer stopped waiting for a teleport or crossing to be confirmed:
+    /// agent updates resume, as LLAgent's teleport state back at
+    /// TELEPORT_NONE lets send_agent_update through.
+    ArrivalGivenUp,
     Chat {
         message: String,
         channel: i32,

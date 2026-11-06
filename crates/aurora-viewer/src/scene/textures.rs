@@ -1146,7 +1146,7 @@ impl PreviewSource {
         }
         let discard = self.decoded?;
         let bytes = if self.bytes.is_empty() {
-            Arc::new(std::fs::read(&self.jpeg).ok()?)
+            Arc::new(crate::cache::read(&self.jpeg).ok()?)
         } else {
             self.bytes
         };
@@ -1212,8 +1212,8 @@ impl PreviewSource {
         let bytes = if self.bytes.is_empty() {
             // Progressive downloads may only have a .part cache. Their ready
             // coarse pixels are already visible in the main scene.
-            std::fs::read(&self.jpeg)
-                .or_else(|_| std::fs::read(self.jpeg.with_extension("part")))
+            crate::cache::read(&self.jpeg)
+                .or_else(|_| crate::cache::read(self.jpeg.with_extension("part")))
                 .ok()
                 .map(Arc::new)?
         } else {
@@ -3145,6 +3145,13 @@ impl TextureStreamer {
     /// programs do on the PC.
     pub fn set_card_sharing(&mut self, on: bool) {
         self.card_sharing = on;
+    }
+
+    /// Bytes of the card's memory every program holds, from the counters
+    /// of gpu_load.rs (Windows, once read); None while the card is not read
+    /// as shared (demo and timed runs) or elsewhere.
+    pub fn card_used(&self) -> Option<u64> {
+        self.card_sharing.then(|| self.gpu.get().adapter_used).flatten()
     }
 
     /// Bytes of video memory the driver counts for this viewer, as of the

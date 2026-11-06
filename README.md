@@ -212,6 +212,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Clean sun shadows**: no hatching, no stair steps along curved surfaces.
 - **Highlights that hold still**: specular anti-aliasing stops shiny
   surfaces from shimmering as you move.
+- **Motion without smearing**: TAA follows each pixel's own motion, so
+  moving avatars, animesh and objects stay sharp.
 - **Details that stay**: normal maps keep their full strength, foliage,
   fences and hair stay solid in the distance, and textures load as finely as
   you expect close to the camera.
@@ -237,7 +239,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Nothing to relearn.** The rules, options and defaults you are used to,
   down to the chat commands of the built-in Animation Overrider.
 - **Voice, IMs, groups and offline messages**, with a conversation history
-  you can search, kept on your disk only. Voice comes with noise
+  you can search, kept on your disk only, that brings along the history of
+  the viewer you used before (Preferences › Chat). Voice comes with noise
   suppression, echo cancellation and gain control, a speaking glow that
   follows each voice, and a resident's volume at the top of their menu.
 - **A well-behaved client.** Aurora speaks to the servers the way they
@@ -320,6 +323,9 @@ are planned or in progress: they are not in the viewer yet.
   on-screen camera pad, and a 2 s or 10 s self-timer to get into your pose.
 - **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
   profile feed ([how to use it](#photos)).
+- **A photo roll**: the session's last 10 photos pile up in a small stack in
+  the viewfinder; look through them, then upload, e-mail or delete one
+  without taking another.
 - **Group photos, sharp**: Shift + click adds every avatar of a group shot
   to the focus, while the background keeps its blur.
 - **Pose without leaving the shot**: your HUDs answer clicks in the
@@ -404,6 +410,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Flat, calm and readable**: glass island bars, a notification center with
   history you can clear (finished script menus no longer pile up in it), the
   Inter font throughout and a redesigned performance window.
+- **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
+  or borders, at once and without a restart, and gives the window back
+  exactly as it was (Preferences › Graphics).
 - **In English, French and Japanese (日本語)**: the whole interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
@@ -694,7 +703,8 @@ The texture memory budget is set automatically from the detected VRAM.
   `@` mentions and name and gesture completion, and optional compact lines
   for automated messages; searchable conversation
   history kept on disk per account and grid in the Legacy Viewer's text
-  format, and offline messages.
+  format, imported from the Legacy Viewer and the other approved viewers
+  that write it, and offline messages.
 - **Voice** — nearby WebRTC voice, one-to-one, group and conference calls,
   invitations, adding participants and per-participant call volume; echo
   cancellation, automatic gain and noise suppression on the microphone.
@@ -1254,10 +1264,17 @@ Privacy. Questions about it: [contact@aurora-viewer.org](mailto:contact@aurora-v
 
 ## License
 
+Copyright © 2026 the Aurora Viewer contributors.
+
 Aurora Viewer is free software under the
 [GNU General Public License v3](LICENSE). Parts of it are ported
 from the Second Life viewer and Firestorm (originally LGPL 2.1); see
 [NOTICE.md](NOTICE.md) for details and third-party licenses.
+
+The name and the wolf logo identify the team's own builds: a modified version
+takes its own name and icon, see [TRADEMARKS.md](TRADEMARKS.md). The only
+official downloads are on [aurora-viewer.org](https://aurora-viewer.org) and in
+this repository's [releases](https://github.com/Aurora-Viewer/Aurora-Viewer/releases).
 
 Aurora Viewer is not affiliated with Linden Lab or the Firestorm project.
 Second Life® is a trademark of Linden Research, Inc.

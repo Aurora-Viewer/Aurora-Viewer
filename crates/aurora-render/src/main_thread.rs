@@ -425,16 +425,18 @@ impl Renderer {
         // waits on the device any more (device_lost.rs). `Destroyed` is the
         // device's own end at shutdown.
         let lost = DeviceLost::default();
+        crate::device_lost::forget_details();
         // AURORA_GPU_START_FAIL=lost: as if the driver lost the device now
         if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode == "lost") {
             log::error!("GPU device lost (Unknown): AURORA_GPU_START_FAIL");
-            lost.set();
+            lost.set_by("start");
         }
         let on_lost = lost.clone();
         device.set_device_lost_callback(move |reason, message| match reason {
             wgpu::DeviceLostReason::Destroyed => log::info!("GPU device released: {message}"),
             _ => {
-                on_lost.set();
+                crate::device_lost::note_reason(reason, &message);
+                on_lost.set_by("callback");
                 crate::pipeline_cache::device_lost();
                 log::error!("GPU device lost ({reason:?}): {message}");
                 // hang or fault, for the crash report (device_lost.rs)
@@ -1185,7 +1187,7 @@ impl Renderer {
             crate::device_lost::demo_hang(&self.device, queue);
         }
         if self.demo_lost == Some(self.frames) && !self.lost.get() {
-            self.lost.set();
+            self.lost.set_by("demo");
             log::error!("GPU device lost (Unknown): AURORA_DEMO_GPU_LOST at frame {}", self.frames);
             log::error!("GPU work at the loss: {}", self.lost.work_at_loss());
         }
