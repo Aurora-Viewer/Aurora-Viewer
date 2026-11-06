@@ -54,7 +54,10 @@ impl App {
         if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
             return Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()));
         }
-        let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)?;
+        // the VR runtime only when VR is wanted from the start: `--vr` (the
+        // restart the VR button offers) or Preferences › Camera › VR (#2309)
+        self.vr_set_up = crate::cli::get().vr || self.settings.camera.vr_at_start;
+        let renderer = Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu, self.vr_set_up)?;
         log::info!(
             "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
             renderer.info.name,
@@ -70,7 +73,7 @@ impl App {
     /// own list: here, not with the world's frames, so the login screen has
     /// it too (#894: only "Automatic" was offered before login).
     pub(super) fn note_gpus(&mut self, renderer: &Renderer) {
-        self.options_ui.vram = (renderer.info.vram_mb, renderer.info.integrated);
+        self.options_ui.vram = (renderer.info.dedicated_mb, renderer.info.shared_mb, renderer.info.integrated);
         self.options_ui.gpus = renderer.info.adapters.clone();
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;

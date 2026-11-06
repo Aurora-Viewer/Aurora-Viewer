@@ -155,6 +155,7 @@ impl App {
             std::thread::sleep(Duration::from_secs(10));
             log::warn!("the graphics card kept the viewer from closing: ended");
             withdraw_all(Duration::from_secs(1));
+            crate::logging::drain(crate::logging::DRAIN_WAIT);
             std::process::exit(0);
         });
         self.shutdown(event_loop);

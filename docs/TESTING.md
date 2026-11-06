@@ -82,7 +82,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1\|empty` | Open the avatar display-exceptions editor |
 | `AURORA_DEMO_POS="x,y"` | Start position |
-| `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
+| `AURORA_DEMO_PORTALS=1\|near\|friends\|no-build` | Open the portal creator and a shared-portal preview, or a portal refused on land without building |
 | `AURORA_DEMO_PORTALS=stranger\|stranger-groups\|stranger-hidden` | A non-friend's portal under each "Show portals from" choice |
 | `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
@@ -146,8 +146,11 @@ gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 ahead and its destination, owner and access label. `near` spawns it around our
 avatar: standing inside and moving across it before leaving the 1 m clearance (3.5 m for another resident’s portal)
 must never teleport. `friends` previews a denied friends-only portal from a
-non-friend. Apertures use world depth, so walls hide them and their labels.
-`AURORA_DEMO_PORTALS=return|return-private` shows a personal arrival return four metres behind the avatar, with a side view of the aperture with two additional in-memory arrival relays; all three share one aperture, including private redaction on the wire.
+non-friend. `no-build` makes the plaza someone else's land without building:
+no aperture opens and the window says a portal opens only where you can
+build (the same land test as rezzing). Apertures use world depth, so walls
+hide them and their labels.
+`AURORA_DEMO_PORTALS=return|return-private|return-no-build` shows a personal arrival return four metres behind the avatar, with a side view of the aperture with two additional in-memory arrival relays; all three share one aperture, including private redaction on the wire. A return is announced only where the traveler may build: `return-no-build` makes the plaza someone else's land without building, and the return still shows and can be crossed by the traveler, but nothing is announced for it to the region.
 Ordinary creation accepts a same-grid place link or region coordinates; one
 portal per creator expires after two minutes. Another Aurora client needs the
 ready 1.37 bridge and scripts enabled to receive regional invitations.
@@ -756,7 +759,11 @@ MSAA and SMAA). `-back` returns to the entire scene at frame 1500: with
 `AURORA_PROFILE=1`, the `memory summary` lines show that the textures of
 what the isolation leaves out are only lowered as out of view under memory
 pressure (`texture_mb` about 110 while isolated, not down to a few MB), so
-the entire scene does not reload all at once on its return (#1374).
+the entire scene does not reload all at once on its return (#1374). With
+`AURORA_CPU_CULL=1`, `own` and `pick` show the checkerboard all around the
+avatar, without a black ground; built with `--profile debugging`, a table of
+the occlusion that does not match the draws stops the viewer at the first
+frame without a background.
 
 `AURORA_DEMO_PHOTO_LOOK` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
 mode): at frame 600 the photo takes those looks, stacked in the order
@@ -1504,7 +1511,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_MOVELOCK=<mode>` | Bridge lifecycle/lock and native sitting choice; see details below |
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
-| `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending` | Movement options, local swimming poses and synthetic passage feedback |
+| `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending\|passage-refused` | Movement options, local swimming poses, synthetic passage feedback and a refused passage |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
@@ -2507,7 +2514,9 @@ foreach ($script in 'bridge', 'query', 'ik') {
 
 Execute their actual event handlers offline with
 `uv run scripts/test-bridge-lsl.py` (isolated Python 3.10/Lummao test runtime).
-The test covers silent startup/URL failures, exact owner/root discovery,
+The test covers silent startup/URL failures, exact owner/root discovery on the
+worn root's own channel, IK commands on the session's channel and IK discovery
+addressed to occupied seats and own attachments only,
 login revocation, confirmed-session region renewal, 60-second self-detachment, permission checks,
 unpaired peer/HTTP traffic and resumed discovery. It mocks simulator APIs;
 it does not emulate Havok or measure the compiled Mono memory budget.
@@ -2640,11 +2649,11 @@ cannot be acknowledged by this viewer; this fixture tests known loaded clips.
 
 **`AURORA_DEMO_MOVELOCK=on|off|moving|seated|error|timeout|endpoint|halted`** — Aurora's bridge and position lock. The demo seeds the library object, runs the nested inventory creation/copy/attach/script-upload/save callbacks, opens the options and shows the requested activation immediately in the bottom toolbar (the bottom-left indicator is off by default; tick it in the options); provisioning remains a separate diagnostic. `moving` and `seated` change physical maintenance internally while the button, enabled label and indicator remain active; `error` simulates failed compilation; `timeout` withholds the first hello and reports the script-startup timeout after 60 seconds; `endpoint` supplies an untrusted address and must show a refused connection response without exposing its URL. `halted` stops the script once it is ready, as a Stack-Heap Collision does: every request then times out; about ten seconds later the viewer finds the script not running, says it is reinstalling the bridge, recompiles it and saves it again (detach/reattach), and Movelock returns without any action. After three automatic reinstalls in ten minutes it stops and leaves Repair to the user. The demo installs both scripts of the bridge (controller and read-only query service) and answers the discovery probe with both hellos. A real bridge also reports the controller's lowest free memory with each status: the log line `script memory low mark` shows the margin left in Mono's 64 KB. The normal fixture uses the current secondlife.io simulator domain. Click the lock icon or press Ctrl+Alt+P to toggle; its right-click menu opens the options. Settings are saved per avatar. The human must validate real LSL permissions, physical bump resistance, movement/sitting, relog and region changes. Confirm a single existing object is reused/moved into inventory root → `#Aurora` → `Aurora Bridge`, with `#Aurora` sorted above system folders. The stable object/script name remains `#Aurora Bridge v1.0`; the installed protocol is 1.8. The factory waits for the new script to respond before detaching, then five seconds after detachment before reattaching, without requiring an inventory asset UUID update. A lost hello is repeated until confirmed; a stopped script can be started once. Startup, movement permission, simulator connection, inventory save and rejected responses have distinct progress/timeout messages. HTTPS must use the same simulator TLS trust as the other capability requests; redirects remain disabled. on_rez must preserve the queued attach event. Readiness must follow the real TAKE_CONTROLS grant without a script-debug error. The visible enabled state follows the user selection even while physically moving, seated, being pushed, waiting for acknowledgements or encountering a connection error; diagnostics remain in the options. Physical convergence (within 0.35 m of the anchor and below 0.5 m/s) remains internal. Region changes keep activation enabled; the obsolete region-off option is ignored. Movelock has no timeout/keepalive: it must still resist pushes after a long gap without viewer HTTP, until explicitly disabled. LSL control events alone release/reanchor the hold. Movement always releases the hold through simulator control events and relocks at the new position on release; all movement/nudge keys remain available. Old hard-lock settings are ignored. Toggling from the toolbar, shortcut or options emits no dedicated Movelock sound. Detach it explicitly: Movelock turns off, enhanced movement pauses and the bridge stays detached for the current session until enabled, worn or repaired again. The internal installation save must still reattach after its delay. Check explicit unlock and cleanup at logout; no elapsed timer may disable Movelock. Demo validates lifecycle and UI; it does not execute simulator physics. The human validated Movelock on 2026-10-15; the new movement motors retain its hold/reanchor functions.
 
-**`AURORA_DEMO_MOVEMENT=surface|underwater|breaststroke|backstroke|crawl|independent|float-low|float-high|off|run-fall|run-ao|run-drop|passage-blocked|passage-reached|passage-pending`** — Enable the movement aids and raise synthetic water at frame 360; `underwater` raises it further, and the three named stroke modes show the contributed local poses. Ctrl+Alt+M opens the AO Movement tab: running and flight use x1..x5 factors, with native x1 as default. Passage requires its own switch and Ctrl plus the configured jump key. Native flight is disabled on swim entry and its previous state is restored on ordinary exit. Vertical controls reach LSL only after capture acknowledgement; fast-up stays absent during swimming/controlled exit. The ordinary AO owns swimming choices and broadcasts inventory animation assets; private local IDs must never be broadcast. The six bundled priority-4 loops remain available locally without upload. No pack uploader or automatic swim-state seeding remains. The ordinary AO uses inventory assets, while swimming assignments belong to Aurora’s own set.
+**`AURORA_DEMO_MOVEMENT=surface|underwater|breaststroke|backstroke|crawl|independent|float-low|float-high|off|run-fall|run-ao|run-drop|passage-blocked|passage-reached|passage-pending|passage-refused`** — Enable the movement aids and raise synthetic water at frame 360; `underwater` raises it further, and the three named stroke modes show the contributed local poses. Ctrl+Alt+M opens the AO Movement tab: running and flight use x1..x5 factors, with native x1 as default. Passage requires its own switch and Ctrl plus the configured jump key. Native flight is disabled on swim entry and its previous state is restored on ordinary exit. Vertical controls reach LSL only after capture acknowledgement; fast-up stays absent during swimming/controlled exit. The ordinary AO owns swimming choices and broadcasts inventory animation assets; private local IDs must never be broadcast. The six bundled priority-4 loops remain available locally without upload. No pack uploader or automatic swim-state seeding remains. The ordinary AO uses inventory assets, while swimming assignments belong to Aurora’s own set.
 
 Water gestures (2026-10-17, bridge 1.23): use the configured ascent/descent actions (PageUp/PageDown by default). Tap descent at the surface: complete a physical dive after release and retain depth. Tap ascent underwater: return to the adjusted flotation height; holding/releasing that same press must never start flight or jump on arrival. Repeated ascent presses continue the return; descent cancels it. Current surface gesture: a single ascent press jumps, whether stationary or moving; at a solid shore with a safe landing it uses the rise-then-advance jump. A second distinct press within 400 ms requests higher flight when allowed; holding a key must not request flight. A no-fly parcel still allows a surface jump. Check the correct surface/underwater forward AO list across ascent and idle, short/tall avatars and float offsets from -0.5 to +0.5 m. Bridge 1.23 increases the surface return command to 3-5 m/s with stronger acceleration and braking near the goal; these are command limits, not measured Havok speeds. Inspect actual ascent duration and overshoot on the grid. Ceilings/occupied landings must stop the physical target; sitting, suspension, disable, bridge loss and timeout release pending phases. Check remapped keys, native/enhanced flight handover, shallow/deep water and automatic shore exits. Offline unit tests, LSL lint and prescribed native trajectories verify controls/animation continuity; they do not simulate Havok.
 
-Physical passage experiment (2026-10-16, bridge 1.16): human feedback confirms that 1.15 executes the action but fails at a wall (0.60 m progress, 1.31 m remaining, highest sampled speed 6.0 m/s, 11 impulse requests). At the maintainer's request, the new motor uses the accepted Movelock physics with its anchor at the bounded far-side target: SLED, linear/angular friction timescales 0.05 and MoveToTarget(target, 0.05). It changes no normal Movelock setting/anchor and does not capture keys. No impulse or velocity assignment is used. Verify whether this attraction crosses the same simple wall; record observed progress, remaining distance and sampled velocity, rather than command receipt. Impulse count is no longer displayed. Arrival or expiry must remove the temporary target/SLED, while enabling normal Movelock during the attempt must preserve the new normal anchor. Also check cancellation on disable, sitting, focus loss, region change and detachment; replay cannot retarget or renew the deadline. The server lifetime remains 1.2 s, viewer delivery allowance 1.5 s. The passage-blocked/reached/pending fixtures remain synthetic UI/protocol states; they do not simulate Havok or establish wall penetration.
+Physical passage experiment (2026-10-16, bridge 1.16): human feedback confirms that 1.15 executes the action but fails at a wall (0.60 m progress, 1.31 m remaining, highest sampled speed 6.0 m/s, 11 impulse requests). At the maintainer's request, the new motor uses the accepted Movelock physics with its anchor at the bounded far-side target: SLED, linear/angular friction timescales 0.05 and MoveToTarget(target, 0.05). It changes no normal Movelock setting/anchor and does not capture keys. No impulse or velocity assignment is used. Verify whether this attraction crosses the same simple wall; record observed progress, remaining distance and sampled velocity, rather than command receipt. Impulse count is no longer displayed. Arrival or expiry must remove the temporary target/SLED, while enabling normal Movelock during the attempt must preserve the new normal anchor. Also check cancellation on disable, sitting, focus loss, region change and detachment; replay cannot retarget or renew the deadline. The server lifetime remains 1.2 s, viewer delivery allowance 1.5 s. The passage-blocked/reached/pending fixtures remain synthetic UI/protocol states; they do not simulate Havok or establish wall penetration. `passage-refused` makes the plaza someone else's land without building and reads the real land test on it: the AO Movement tab shows why the passage is not sent (only through objects you own or can edit, or where you can build on both sides).
 
 The target sensor/completion radius is 0.10 m so the avatar's conservative body clears the far side before release; the previous 0.35 m completion radius could stop inside the wall despite a nominally clear goal. Actual-LSL checks cover that premature-stop case, normal arrival/overshoot and arrival observed after the deadline. On the grid, ensure that an apparent crossing is not immediately pulled/pushed back by an overlapping capsule.
 
@@ -4732,6 +4741,20 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
+| `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
+
+`AURORA_DEMO_UNINSTALL` opens Preferences › Language and updates on the
+action. `confirm` shows the confirmation and its list (the demo's made-up
+link classes, notification identity, two saved logins and one Blender);
+`running` the result window while the removal works; `result` the window
+once the dry run finished, with the folders that remain, read from the
+viewer's path helpers (shown from `%APPDATA%`, `%LOCALAPPDATA%` or `~`);
+`left` the same window scrolled down to those folders and their "Open
+folder" buttons.
+In demo mode, and with `AURORA_DEMO=1 aurora-viewer --uninstall`, nothing is
+read from or removed in the registry, the desktop files, the credential
+store or Blender: the log says what a real removal would do. Capture after
+frame 700 in English, French and Japanese.
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
 the agent's parcel, `sale` shows sale entries, `filters` opens Filters (required/excluded properties, permissions, click action and scope), and
@@ -4967,6 +4990,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_PHOTO_QUALITY_CRASH=1` | The "Photo quality turned off" card on the login screen |
+| `AURORA_DEMO_CAMERA_LIMITS=1` | The "Camera limits are back on" card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
@@ -4979,7 +5003,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
-| `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the 3D pauses, with its notice and window title, until a click |
+| `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
@@ -6148,12 +6172,12 @@ failure. Grid validation and any paid upload are performed by the human.
   taken as behind with GPU frames of 300 ms (another program keeping the
   card busy, #2355): after two of them the world is no longer drawn, its
   3D targets shrink, what is left is blurred and darkened, the notice
-  "3D paused…" shows in amber in the middle, under the windows, and the
+  "Render paused…" shows in amber in the middle, under the windows, and the
   window title ends with "— Paused"; the textures stay. The log says
-  `3D paused behind: the GPU frames take …`. A click in the window ends
+  `render paused behind: the GPU frames take …`. A click in the window ends
   the demo's busy card: the world is drawn again at once, sharp, and the
-  log says `3D drawing resumed`. With Preferences › Graphics › "Pause the
-  3D when the card is overloaded" off, nothing pauses. A capture run
+  log says `render resumed`. With Preferences › Graphics › "Pause the
+  Render when the card is overloaded" off, nothing pauses. A capture run
   pauses too (a real one never does): `AURORA_FPS_LIMIT=60`,
   `AURORA_DEMO_BUSY_PAUSE=900` and `AURORA_CAPTURE_FRAMES=1000`.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
@@ -7068,6 +7092,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   "Keep the safe graphics" drops them). Without the variable the real state
   is shown: the crash root's `gpu-trouble` mark, consumed at start, or the
   file kept aside.
+- **`AURORA_DEMO_CAMERA_LIMITS=1`**, with `AURORA_DEMO=1` and
+  `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's card that
+  version 33 of the settings shows once, after it turned the camera's
+  limits back on ("Unrestricted camera" and "Disable camera collisions"
+  off, the Legacy Viewer's defaults). "Camera preferences" opens
+  Preferences › Camera › Behavior on those two switches, "OK" hides the
+  card. The demo changes no setting; without the variable the card shows
+  only when the migration changed this settings file.
 - **`AURORA_DEMO_PHOTO_QUALITY_CRASH=1`**, with `AURORA_DEMO=1` and
   `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's card after a
   session that crashed (or was stopped) with the photo window's "Photo
@@ -7699,9 +7731,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     two runs, the result line ends on "Nothing new to import" and the file
     left out. `import:login`: what Import at login does, no window, and
     the notice it leaves in the nearby chat (messages and conversations
-    added, where to turn it off). Outside this mode the demo never imports
-    at login, whatever the setting: it would read the PC's real Legacy
-    Viewer folders.
+    added, where to turn it off). As Save nearby chat is off by default,
+    the seeded nearby chat file stays out of this import, while `import:run`
+    takes it. Outside this mode the demo never imports at login, whatever
+    the setting: it would read the PC's real Legacy Viewer folders.
     `import:same`: the list also has the folder Aurora writes to, unticked
     and greyed. `import:none`: no folder found, the window says so
     and offers the folder dialog.
@@ -8357,11 +8390,16 @@ over the category row goes forward/backward, stays within Body/Legs and does not
 scroll the parameter list. The self-avatar/attachment menu's Appearance › Edit
 Shape opens this editor. Asset arrivals and AO cycles must keep ready hint images
 visible, with no repeated "Preparing preview" placeholders.
-The right-aligned T-pose switch beside the height units shares the saved
-customise-animation setting in Preferences › Avatars › Animations. Toggle it in either place while editing:
-the other control must follow immediately, the choice must survive reopening,
-and the shape must stay unmodified. On the grid, disabling releases the editing
-animation; enabling uses the existing stand-up/customise animation sequence.
+The right-aligned Camera and A-Pose switches (Camera above A-Pose) share saved
+settings with every layer editor and Preferences > Avatars > Animations.
+Toggle each in either place: the other controls must follow, the choices must
+survive reopening and restarting, and the wearable draft must stay unmodified.
+With Camera off, opening, changing category, toggling A-Pose and closing must
+keep the camera framing. Switching Camera off mid-turn must stop at the
+displayed view; manual orbit, zoom and pan must still work. Switching it on
+while editing frames the selected category again. On the grid, disabling
+A-Pose releases the editing animation; enabling uses the existing
+stand-up/customise animation sequence, independently of Camera.
 `t-pose` supplies synthetic pelvis turn/return motions and starts with the switch
 on. Toggle it both ways: the camera must ease around the avatar over a half-turn,
 keeping its distance and the edited part in view. Reverse it mid-transition to
@@ -9126,7 +9164,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_PARCEL_MEDIA=<url>` or `1` | Parcel media |
 | `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
-| `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
+| `AURORA_DEMO_MEDIA_PACK=consent`, `declined`, `downloading`, `installing` or `failed` | The download's consent card, or a fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
@@ -9380,17 +9418,25 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_HUDS=media`.
 - **Media plugins.** The media scenarios need Aurora's media plugins pack
   (SLPlugin, CEF, LibVLC; on Linux GStreamer instead of LibVLC, from the
-  system). A viewer that finds no plugins downloads it once
-  from the Aurora release `media-plugins-<n>` into
-  `%LOCALAPPDATA%\Aurora\AuroraViewer\data\media-plugins\<n>`, in demo mode
-  too; every later run and every worktree reuses it. The media wait for it
+  system). A viewer that finds no plugins asks first (the card "Download
+  web and media support?", answered once per settings file, the demo's
+  included; a PC that already has a pack is not asked), then downloads it
+  once from the Aurora release `media-plugins-<n>` into
+  `%LOCALAPPDATA%\Aurora\AuroraViewer\data\media-plugins\<n>`; every later
+  run and every worktree reuses it. The media wait for it
   and start by themselves; the log says `media: downloading the plugins
   pack` then `media: plugins in …`. An installed Firestorm is no longer
   used, unless its folder is set in Preferences › Sound and voice › Media.
 - **`AURORA_DEMO_MEDIA_PACK`**, with `AURORA_DEMO=1`: shows a state of that
   download without the network, whatever is installed (the media then have
-  no plugins). `downloading` is at 45 %, `installing` is the extraction,
-  `failed` shows the error and its "Retry" button. To look at with
+  no plugins). `consent` shows the card that asks before the download
+  (its "Download" shows `downloading`, "Not now" `declined`; neither is
+  saved nor reaches the network), `declined` the "Download" buttons left
+  after "Not now", `downloading` is at 45 %, `installing` is the
+  extraction, `failed` shows the error and its "Retry" button. With
+  `declined`, `AURORA_DEMO_MEDIA_CLICK` also shows the button under the
+  media controls of a media face, and `AURORA_DEMO_WEB_BROWSER` the one
+  in place of the page. To look at with
   `AURORA_DEMO_OPTIONS`, in the Media group of the "Sound and voice" tab,
   and in the "Feed" tab of a profile, which shows the same progress
   instead of the page.
@@ -9431,8 +9477,8 @@ What the inventory must show with these scenarios:
   object worn on our back (that of `AURORA_DEMO_WORN`), `hud` on a worn HUD
   screen, both worn from an inventory item we made: no question, as "Trust
   my worn items" is on (the log has no `media filter: asking about` line).
-  `worn-gift` / `hud-gift` make that item someone else's creation, and the
-  question comes; `worn-ask` / `hud-ask` turn the option off for the run,
+  `worn-gift` / `hud-gift` make that item someone else's creation: no
+  question either, worn items are trusted whoever made them; `worn-ask` / `hud-ask` turn the option off for the run,
   and the question comes; `worn-blocked` / `hud-blocked` put the site in
   the list as blocked: refused without a question, told in the local chat.
 - **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|blacklist-ignored|avatar-menu|avatar-menu-mixed|avatar-menu-pie`** exercises Sound Explorer

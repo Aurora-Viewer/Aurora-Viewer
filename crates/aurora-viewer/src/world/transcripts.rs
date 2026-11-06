@@ -651,6 +651,44 @@ mod tests {
         clean(&w, &root);
     }
 
+    /// The report of the import under way.
+    fn imported(w: &mut World) -> crate::world::chat_log::import::Report {
+        for _ in 0..500 {
+            if let Some(report) = w.chat_log.take_imported() {
+                return report;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the import did not end");
+    }
+
+    #[test]
+    fn with_both_saves_off_the_login_import_does_not_run_and_the_window_still_does() {
+        use crate::world::chat_log::import::Account;
+        let root = temp();
+        let from = temp();
+        std::fs::write(from.join("Bob.txt"), "[2026/10/01 12:00]  Jane Doe: hello\n").unwrap();
+        std::fs::write(from.join("chat.txt"), "[2026/10/01 12:00]  Jane Doe: hi\n").unwrap();
+        let mut w = world(&root, Uuid::from_u128(1));
+        w.chat_log.set_legacy_apps(Vec::new());
+        let account = Account {
+            first: "Jane".into(),
+            last: "Doe".into(),
+            grid: "agni".into(),
+        };
+        w.chat_log.cfg.log_im = false;
+        w.chat_log.cfg.log_nearby = false;
+        assert!(!w.chat_log.import_found(account.clone()));
+        w.chat_log.cfg.log_nearby = true;
+        assert!(w.chat_log.import_found(account));
+        imported(&mut w);
+        w.chat_log.cfg.log_nearby = false;
+        assert!(w.chat_log.import(vec![from.clone()]));
+        assert_eq!(imported(&mut w).added, 2);
+        std::fs::remove_dir_all(from).unwrap();
+        clean(&w, &root);
+    }
+
     #[test]
     fn the_nearby_chat_is_logged_only_when_asked() {
         let root = temp();
