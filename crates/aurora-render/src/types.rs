@@ -184,6 +184,9 @@ pub mod flags {
     pub const PORTAL_CLIP: u32 = 16384;
     /// Procedural Aurora portal surface; uses the ordinary sorted blend/glow.
     pub const PORTAL_EFFECT: u32 = 32768;
+    /// Bit of flags[3], above texture animation: world and worn object
+    /// geometry, excluding HUDs and the system avatar's masked body.
+    pub const OBJECT_MASK_PICK: u32 = 1 << 30;
     /// Bit of flags[3], above the texture animation's 24 packed bits.
     /// World faces whose material permits Blend texture alpha only.
     pub const WORLD_BLEND_PICK: u32 = 1 << 31;
@@ -950,6 +953,35 @@ pub enum AntiAliasing {
     Taa,
     /// SMAA 1x, preset high (Firestorm RenderFSAAType 2).
     Smaa,
+    /// AMD FidelityFX Super Resolution 3.1 (fsr.rs) in the place of TAA,
+    /// the world drawn at the size of its quality mode.
+    Fsr(FsrQuality),
+}
+
+/// FSR's quality modes (FfxFsr3UpscalerQualityMode): how much smaller than
+/// the display the world is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsrQuality {
+    /// At the display size: FSR as an anti-aliasing only.
+    NativeAa,
+    Quality,
+    Balanced,
+    Performance,
+    UltraPerformance,
+}
+
+impl FsrQuality {
+    /// The display size over the render size
+    /// (ffxFsr3UpscalerGetUpscaleRatioFromQualityMode).
+    pub fn ratio(self) -> f32 {
+        match self {
+            FsrQuality::NativeAa => 1.0,
+            FsrQuality::Quality => 1.5,
+            FsrQuality::Balanced => 1.7,
+            FsrQuality::Performance => 2.0,
+            FsrQuality::UltraPerformance => 3.0,
+        }
+    }
 }
 
 /// A photo drawn at its own size (snapshot window): the frame that carries
@@ -995,6 +1027,8 @@ pub struct RenderSettings {
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
     pub aa: AntiAliasing,
+    /// With FSR: RCAS's strength (0..1), none without RCAS.
+    pub fsr_sharpness: Option<f32>,
     pub tonemapper: Tonemapper,
     /// "HDR and Emissive" (RenderDisableVintageMode, which drives
     /// RenderHDREnabled and RenderEnableEmissiveBuffer). Off, the Legacy
@@ -1045,6 +1079,7 @@ impl Default for RenderSettings {
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),
+            fsr_sharpness: Some(0.8),
             tonemapper: Tonemapper::KhronosNeutral,
             hdr: true,
             shadow_resolution: 2048,
@@ -2062,17 +2097,18 @@ mod tests {
     fn world_blend_pick_survives_zoom_packing_without_changing_texture_animation() {
         let animation = 1 | (7 << 8) | (15 << 16);
         let mut record = DrawRecord {
-            flags: [flags::PLANAR | flags::TEX_ANIM, 42, 128, animation],
+            flags: [flags::PLANAR | flags::TEX_ANIM, 42, 128, animation | flags::OBJECT_MASK_PICK],
             ..Default::default()
         };
         record.set_world_blend_pick(true);
         for zoom in [1.0, 0.1, 2.0, 8.0] {
             record.set_hud_zoom(zoom);
             assert_ne!(record.flags[3] & flags::WORLD_BLEND_PICK, 0);
+            assert_ne!(record.flags[3] & flags::OBJECT_MASK_PICK, 0);
             assert_eq!(record.flags[3] & 0x00ff_ffff, animation);
             assert_eq!(record.flags[0] & 0xffff, flags::PLANAR | flags::TEX_ANIM);
         }
         record.set_world_blend_pick(false);
-        assert_eq!(record.flags[3], animation);
+        assert_eq!(record.flags[3], animation | flags::OBJECT_MASK_PICK);
     }
 }
