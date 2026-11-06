@@ -9743,8 +9743,7 @@ impl App {
             }
             self.ik_editor.tick_project(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.ik_editor.tick_animations(&mut self.scene.anims, &mut self.world.inventory);
-            self.ik_editor
-                .tick_clip(&self.scene.jobs, &self.egui_ctx, self.world.avatar_lib.rig.clone());
+            self.ik_editor.tick_clip(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.scene.ik_edit = self.ik_editor.request();
             if self.demo
                 && let Ok(mode) = std::env::var("AURORA_DEMO_POSER")
@@ -15363,7 +15362,7 @@ impl App {
                         &self.scene,
                         projector,
                         self.camera.position,
-                        !self.camera.mouselook(),
+                        !self.camera.mouselook() && !(self.avatar_studio.active && self.avatar_studio.animation_editor),
                         !self.interface.immersive || self.settings.immersive_name_tags,
                         &self.settings,
                         &mut self.name_tag_visibility,
@@ -20781,6 +20780,30 @@ impl ApplicationHandler for App {
                         if let Some(input) = self.options_ui.capture_key(code, pressed, ke.repeat) {
                             self.finish_capture(input);
                         }
+                        return;
+                    }
+                    // The animation editor owns its accelerators before the
+                    // global keybind table (Home=Fly, Ctrl+S=Resync). egui
+                    // already received this event above; only route it when
+                    // no text field or focused widget owns keyboard input.
+                    if pressed
+                        && !ke.repeat
+                        && !altgr_text
+                        && let Some(key) = crate::ik_edit::Editor::map_timeline_key(&ke.logical_key)
+                        && self.ik_editor.handle_timeline_shortcut(
+                            &self.egui_ctx,
+                            key,
+                            egui::Modifiers {
+                                alt: self.alt,
+                                ctrl: self.ctrl,
+                                shift: self.shift,
+                                mac_cmd: self.command,
+                                command: self.command,
+                            },
+                        )
+                    {
+                        self.down.remove(&Input::key(code));
+                        self.egui_ctx.request_repaint();
                         return;
                     }
                     // egui received Close Window above (Ctrl+W and

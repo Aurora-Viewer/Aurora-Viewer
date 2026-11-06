@@ -7,6 +7,10 @@ pub(super) fn project(cam: &Cam, direction: Vec3) -> egui::Vec2 {
     egui::vec2(direction.dot(-cam.left), -direction.dot(cam.up))
 }
 
+pub(super) fn drag_delta(delta: egui::Vec2, sensitivity: f32, fine: bool) -> egui::Vec2 {
+    delta * sensitivity * 0.025 * if fine { 0.1 } else { 1.0 }
+}
+
 pub(super) fn rotate(cam: &Cam, parent: Quat, local: Quat, delta: egui::Vec2) -> Quat {
     let world_delta = Quat::from_axis_angle(cam.up, delta.x) * Quat::from_axis_angle(-cam.left, delta.y);
     (parent.inverse() * world_delta * parent * local).normalize()
@@ -53,5 +57,14 @@ mod tests {
                 assert!(movement.normalized().dot(delta.normalized()) > 0.9999);
             }
         }
+    }
+
+    #[test]
+    fn shift_precision_scales_rotation_without_changing_its_direction() {
+        let movement = egui::vec2(20.0, -12.0);
+        let regular = drag_delta(movement, 0.5, false);
+        let fine = drag_delta(movement, 0.5, true);
+        assert!((regular.length() / fine.length() - 10.0).abs() < 1e-5);
+        assert!((regular.normalized() - fine.normalized()).length() < 1e-6);
     }
 }

@@ -42,6 +42,19 @@ impl Editor {
                 name
             });
         }
+        let mut changed = false;
+        if self.clip.active && bone == rig.pelvis {
+            let mut lift = self.position.z - rig.local_pos[bone].z;
+            ui.label(aurora_i18n::tr!("anim-edit-root-height"));
+            if ui
+                .add(egui::Slider::new(&mut lift, -1.5..=1.5).suffix(" m"))
+                .on_hover_text(aurora_i18n::tr!("anim-edit-root-height-hint"))
+                .changed()
+            {
+                self.position.z = rig.local_pos[bone].z + lift;
+                changed = true;
+            }
+        }
         if self.clip.active {
             let mut enabled = self.enabled(bone);
             if widgets::switch_labeled(ui, palette, &mut enabled, aurora_i18n::tr!("ik-edit-enabled")).changed() {
@@ -57,7 +70,6 @@ impl Editor {
         if self.clip.active {
             self.chain_ui(ui, palette, world, frame, bone);
         }
-        let mut changed = false;
         let mut rotate = false;
         if self.control == Control::Pole {
             ui.label(aurora_i18n::tr!("ik-edit-pole-position"));

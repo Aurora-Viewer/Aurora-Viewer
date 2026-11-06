@@ -59,6 +59,51 @@ pub(super) fn write_inspection_pose(
     }
 }
 
+/// Lift the Studio's displayed skeleton and worn attachment anchors without
+/// changing its object transform or any animation data.
+pub(super) fn lift_display_pose(model: Option<Mat4>, height: f32, out: &mut [[[f32; 4]; 4]]) {
+    let Some(model) = model.filter(|model| model.is_finite() && model.determinant().abs() > 1e-8) else {
+        return;
+    };
+    if !height.is_finite() || height.abs() < f32::EPSILON {
+        return;
+    }
+    let local_lift = model.inverse().transform_vector3(Vec3::Z * height);
+    if !local_lift.is_finite() {
+        return;
+    }
+    for matrix in out.iter_mut().take(super::anim::ANCHOR_BASE) {
+        let mut transform = Mat4::from_cols_array_2d(matrix);
+        transform.w_axis += local_lift.extend(0.0);
+        *matrix = transform.to_cols_array_2d();
+    }
+}
+
+#[cfg(test)]
+mod display_lift_tests {
+    use super::*;
+
+    #[test]
+    fn studio_hover_lifts_joint_and_attachment_palettes_without_touching_other_slots() {
+        let model = Mat4::from_rotation_y(0.7) * Mat4::from_translation(Vec3::new(2.0, -1.0, 4.0));
+        let mut palette = vec![Mat4::IDENTITY.to_cols_array_2d(); super::super::anim::ANCHOR_BASE + 1];
+        let before = palette.clone();
+
+        lift_display_pose(Some(model), 0.4, &mut palette);
+
+        for index in [0, super::super::anim::ANCHOR_BASE - 1] {
+            let lifted = Mat4::from_cols_array_2d(&palette[index]);
+            let original = Mat4::from_cols_array_2d(&before[index]);
+            let world_delta = model.transform_vector3(lifted.w_axis.truncate() - original.w_axis.truncate());
+            assert!(world_delta.abs_diff_eq(Vec3::Z * 0.4, 1e-5));
+            assert_eq!(lifted.x_axis, original.x_axis);
+            assert_eq!(lifted.y_axis, original.y_axis);
+            assert_eq!(lifted.z_axis, original.z_axis);
+        }
+        assert_eq!(palette[super::super::anim::ANCHOR_BASE], before[super::super::anim::ANCHOR_BASE]);
+    }
+}
+
 /// Normalize only the displayed preset, including attachment joints. A mesh
 /// pelvis offset or the AO's entry pose must not lift it above the fixed stage.
 fn ground_inspection_pose(rig: &super::anim::Rig, pose: &mut [Mat4], model: Mat4, floor: f32) {
