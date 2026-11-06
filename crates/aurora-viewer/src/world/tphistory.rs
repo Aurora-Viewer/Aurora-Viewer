@@ -223,34 +223,82 @@ impl HistoryItem {
     }
 }
 
+/// How long dropping a storage waits for its last save (logout, quit): a
+/// stuck disk cannot hold up the viewer longer than that.
+const LAST_SAVE_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The saved history, oldest first (LLTeleportHistoryStorage::mItems).
+///
+/// The file is never lost to a save (#2626): it is replaced atomically, on
+/// the disk before the old one goes (a crash or a killed viewer during a
+/// save leaves the old file, where a plain write left it empty); a file
+/// that exists but cannot be read is never saved over in that session; and
+/// the lines this viewer cannot parse are written back as they were. The
+/// Legacy Viewer stops at the first bad line and saves over the rest.
 #[derive(Debug, Default)]
 pub struct HistoryStorage {
     pub items: Vec<HistoryItem>,
-    /// None: not saved (demo, before login).
+    /// Lines of the file that did not parse, kept for the next save.
+    kept: Vec<Vec<u8>>,
+    /// None: not saved (demo, before login, or a file that could not be read).
     path: Option<PathBuf>,
+    /// The thread that writes the file (atomic_file flushes the disk: never
+    /// on the frame thread), started at the first save.
+    writer: Option<Writer>,
+}
+
+#[derive(Debug)]
+struct Writer {
+    files: std::sync::mpsc::Sender<Vec<u8>>,
+    /// Told when the thread has written everything and stopped.
+    /// (in a Mutex: the World is shared with the frame's worker threads)
+    done: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl Drop for HistoryStorage {
+    fn drop(&mut self) {
+        if let Some(Writer { files, done }) = self.writer.take() {
+            drop(files);
+            let _ = done.into_inner().map(|d| d.recv_timeout(LAST_SAVE_WAIT));
+        }
+    }
 }
 
 impl HistoryStorage {
-    /// LLTeleportHistoryStorage::load: lines that do not parse are skipped
-    /// (Firestorm stops at the first one), then sorted by date.
+    /// LLTeleportHistoryStorage::load, then sorted by date. A line that does
+    /// not parse is kept as it is for the next save (the Legacy Viewer stops
+    /// reading there); a file that exists but cannot be read is left alone
+    /// for the session (not saved over).
     pub fn load(path: PathBuf) -> HistoryStorage {
-        let mut items = Vec::new();
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                match aurora_llsd::from_notation(line.as_bytes()) {
-                    Ok(v) if v.is_map() => items.push(HistoryItem::from_llsd(&v)),
-                    _ => log::info!("teleport history: a line could not be read"),
-                }
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => {
+                log::warn!("teleport history: can't read the saved history ({e}); it is left as it is and not saved this session");
+                return HistoryStorage::default();
             }
+        };
+        let (mut items, kept) = parse(&bytes);
+        if !kept.is_empty() {
+            log::info!(
+                "teleport history: {} line(s) could not be read; they are kept in the file",
+                kept.len()
+            );
         }
         items.sort_by(|a, b| a.date.total_cmp(&b.date));
-        HistoryStorage { items, path: Some(path) }
+        HistoryStorage {
+            items,
+            kept,
+            path: Some(path),
+            writer: None,
+        }
     }
 
     /// A history kept in memory only (the demo's).
     pub fn in_memory(items: Vec<HistoryItem>) -> HistoryStorage {
-        HistoryStorage { items, path: None }
+        let mut storage = HistoryStorage::default();
+        storage.items = items;
+        storage
     }
 
     /// LLTeleportHistoryStorage::addItem: the same title within 5 m replaces
@@ -303,28 +351,103 @@ impl HistoryStorage {
         }
     }
 
-    /// onClearTeleportHistoryDialog: purgeItems + save.
+    /// onClearTeleportHistoryDialog: purgeItems + save. The lines kept
+    /// unread go too: the user asked for an empty history.
     pub fn clear(&mut self) {
         self.items.clear();
+        self.kept.clear();
         self.save();
     }
 
-    fn save(&self) {
-        let Some(path) = &self.path else {
+    /// The file's bytes: the lines kept from the file, then the places.
+    fn file(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for line in &self.kept {
+            out.extend_from_slice(line);
+            out.push(b'\n');
+        }
+        for it in &self.items {
+            out.extend_from_slice(aurora_llsd::to_notation(&it.to_llsd()).as_bytes());
+            out.push(b'\n');
+        }
+        out
+    }
+
+    /// Hands the file to the writer thread; the newest one waiting wins.
+    fn save(&mut self) {
+        let Some(path) = self.path.clone() else {
             return;
         };
-        let mut text = String::new();
-        for it in &self.items {
-            text.push_str(&aurora_llsd::to_notation(&it.to_llsd()));
-            text.push('\n');
+        let file = self.file();
+        if self.writer.is_none() {
+            self.writer = spawn_writer(path.clone());
         }
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(e) = std::fs::write(path, text) {
-            log::warn!("can't save the teleport history: {e}");
+        let sent = self.writer.as_ref().is_some_and(|w| w.files.send(file.clone()).is_ok());
+        if !sent {
+            // no thread: written here, as before
+            self.writer = None;
+            if let Err(e) = write_file(&path, &file) {
+                log::warn!("can't save the teleport history: {e}");
+            }
         }
     }
+
+    /// Waits for the saves handed to the writer (tests).
+    #[cfg(test)]
+    fn flush(&mut self) {
+        if let Some(Writer { files, done }) = self.writer.take() {
+            drop(files);
+            let _ = done.into_inner().map(|d| d.recv());
+        }
+    }
+}
+
+/// The places of a file, and its lines that are not one (kept as they are).
+fn parse(bytes: &[u8]) -> (Vec<HistoryItem>, Vec<Vec<u8>>) {
+    let mut items = Vec::new();
+    let mut kept = Vec::new();
+    for line in bytes.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        match aurora_llsd::from_notation(line) {
+            Ok(v) if v.is_map() => items.push(HistoryItem::from_llsd(&v)),
+            _ => kept.push(line.to_vec()),
+        }
+    }
+    (items, kept)
+}
+
+fn write_file(path: &std::path::Path, file: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    crate::atomic_file::write(path, file)
+}
+
+fn spawn_writer(path: PathBuf) -> Option<Writer> {
+    let (files, queue) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (finished, done) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("aurora-tp-history".into())
+        .spawn(move || {
+            while let Ok(mut file) = queue.recv() {
+                while let Ok(newer) = queue.try_recv() {
+                    file = newer;
+                }
+                if let Err(e) = write_file(&path, &file) {
+                    log::warn!("can't save the teleport history: {e}");
+                }
+            }
+            let _ = finished.send(());
+        })
+        .map_err(|e| log::warn!("teleport history: no writer thread ({e}); saved on the caller's thread"))
+        .ok()?;
+    Some(Writer {
+        files,
+        done: std::sync::Mutex::new(done),
+    })
 }
 
 /// Accordion sections of the history (panel_teleport_history.xml).
@@ -569,10 +692,12 @@ mod tests {
         // an older date is sorted in
         s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 1500.0, String::new());
         assert_eq!(s.items[0].title, "Nordheim");
+        s.flush();
         let again = HistoryStorage::load(path.clone());
         assert_eq!(again.items, s.items);
         s.remove(0);
         s.clear();
+        s.flush();
         assert!(HistoryStorage::load(path.clone()).items.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -590,6 +715,80 @@ mod tests {
         assert_eq!(s.items.len(), 2);
         assert_eq!(s.items[0].title, "Ahern");
         assert_eq!(s.items[1].global, DVec3::new(256_148.0, 256_195.0, 24.0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #2626: the lines this viewer can't read (not LLSD, not UTF-8) are
+    /// written back at the next save instead of being lost.
+    #[test]
+    fn unreadable_lines_survive_a_save() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-kept-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let mut text = b"{'date':d\"2024-03-01T10:00:00.00Z\",'global_pos':[r1,r2,r3],'title':'Ahern'}\r\n".to_vec();
+        text.extend_from_slice(b"a line from a newer viewer\r\n");
+        // not UTF-8: a Latin-1 e acute
+        text.extend_from_slice(b"{'title':'caf\xe9'\n");
+        std::fs::write(&path, &text).unwrap();
+        let mut s = HistoryStorage::load(path.clone());
+        assert_eq!(s.items.len(), 1);
+        s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
+        s.flush();
+        let saved = std::fs::read(&path).unwrap();
+        let lines: Vec<&[u8]> = saved.split(|&b| b == b'\n').collect();
+        assert!(lines.contains(&&b"a line from a newer viewer"[..]));
+        assert!(lines.contains(&&b"{'title':'caf\xe9'"[..]));
+        let again = HistoryStorage::load(path.clone());
+        assert_eq!(again.items, s.items);
+        assert_eq!(again.kept.len(), 2);
+        // saved again: kept once, not twice
+        let mut again = again;
+        again.remove(0);
+        again.flush();
+        assert_eq!(HistoryStorage::load(path.clone()).kept.len(), 2);
+        // Clear history empties the file, kept lines included
+        again.clear();
+        again.flush();
+        let after_clear = HistoryStorage::load(path.clone());
+        assert!(after_clear.items.is_empty() && after_clear.kept.is_empty());
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #2626: a history that exists but can't be read is never saved over:
+    /// the session's places stay in memory only.
+    #[test]
+    fn unreadable_file_is_never_saved_over() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-locked-{}", std::process::id()));
+        // a folder where the file should be: reading it fails, as a locked
+        // or damaged file does
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let _ = std::fs::create_dir_all(path.join("inside"));
+        let mut s = HistoryStorage::load(path.clone());
+        assert!(s.path.is_none());
+        s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
+        assert_eq!(s.items.len(), 1);
+        assert!(s.writer.is_none());
+        drop(s);
+        assert!(path.join("inside").is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A missing file is an empty history that is saved at the first place.
+    #[test]
+    fn missing_file_starts_empty_and_saves() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphist-new-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        let mut s = HistoryStorage::load(path.clone());
+        assert!(s.items.is_empty() && s.path.is_some());
+        s.add("Nordheim", DVec3::new(256_000.0, 256_300.0, 40.0), 2000.0, String::new());
+        // dropping waits for the last save (logout, quit)
+        drop(s);
+        assert_eq!(HistoryStorage::load(path.clone()).items.len(), 1);
+        // the atomic write leaves no temporary file behind
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(names, vec![std::ffi::OsString::from(TELEPORT_HISTORY_FILE)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -3900,6 +3900,9 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            if !g.hud {
+                rec.flags[3] |= flags::OBJECT_MASK_PICK;
+            }
             rec.set_world_blend_pick(
                 !g.hud
                     && wearer.is_none()

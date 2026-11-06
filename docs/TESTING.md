@@ -88,7 +88,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
-| `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
+| `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (0: uncapped; 10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
@@ -314,7 +314,8 @@ highlights clip to white instead of rolling off, emissive PBR objects go
 dark, and in Preferences › Graphics › Image the tone mapping, its mix and
 the sharpness are greyed (the exposure too, under Light).
 
-`AURORA_AA`: 0 none, 1 FXAA, 2 to 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. Without
+`AURORA_AA`: 0 none, 1 FXAA, 2 to 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA, 7 AMD
+FSR 3.1 (its mode from `AURORA_FSR_QUALITY`, see below). Without
 it, the demo keeps the setting saved in its profile: 6 (SMAA) for a new
 profile, 3 (MSAA 4x) for a profile created when that was the default. MSAA
 has its own multisampled depth, filled by its own prepass (terrain and
@@ -363,8 +364,8 @@ of a screenshot (neither position nor maximised state saved) and its size is
 not remembered for the next launch. The actual size is at the start of the
 `perf settings` line.
 
-`AURORA_FPS_LIMIT`: user cap for tests (10–500 fps; positive values are
-brought back into this range, an invalid value is ignored). The lower cap in
+`AURORA_FPS_LIMIT`: user cap for tests (0 disables the user cap; positive
+values are brought back into 10–500 fps, an invalid value is ignored). The lower cap in
 the background still applies outside screenshots.
 
 ## Screenshots
@@ -1754,12 +1755,22 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-own-animesh|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-clear[-mesh]|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|panel-texture|panel-te|panel-mask|panel-linked-texture|panel-linked-te|panel-linked-mask|worn-other-mask|worn-other-mask-mesh|worn-mesh-mask|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-own-animesh|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-clear[-mesh]|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. Add `-seated` to a `worn-*` mode (before any `-moving` / `-held`
 suffix) to seat the wearer on a rotated prim with the synthetic sitting
 animation before installing the attachment.
+Worn-object fixtures snap their initial camera view so an uncapped run does
+not aim and press while the camera is still smoothing toward the wearer.
+`panel-texture` and `panel-te` place an invisible scripted panel before Buy,
+using the built-in transparent texture or a blank texture at zero TE alpha.
+`panel-mask` and `panel-linked-mask` use zero-alpha texels with an explicit
+Mask material. `worn-other-mask`, `worn-other-mask-mesh` and `worn-mesh-mask`
+exercise the same cutout on a worn prim, unrigged mesh and rigged mesh.
+`panel-linked-texture` and `panel-linked-te` inherit Touch from the opaque root
+behind the panel. Every panel mode must log `demo touch_start: prim=976` with
+a valid face and UV; neither Buy nor the opaque root must receive the click.
 Ordinary attachments must retain their attachment/script target while seated;
 the buried fixtures below also exercise the body occlusion boundary.
 `demo worn posture` confirms the seat parent. This covers our own and other
@@ -2318,8 +2329,9 @@ No real L$ and no connection to a grid.
   exit faces with Blank: they must not intercept the interaction. Explicitly
   double-sided PBR faces remain targets on both visible sides.
   `mask-zero` uses the zero-alpha texture in Mask mode:
-  the click must reach Buy (971), with `dialog=true` and no panel in the GPU
-  response. Capture after frame 620.
+  the passive panel must let Buy (971) receive the click, with `dialog=true`.
+  The GPU's second answer may contain the Mask panel, while its first keeps
+  the visible surface behind it. Capture after frame 620.
 - Add `-ready` to the Blend / Mask modes above to test hover without
   an automatic click. At frame 650, `demo cursor hover` must report
   `prim=Some(971), action=Some(Buy)` through zero/faint Blend and the
@@ -5000,11 +5012,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
+| `AURORA_DEMO_UPDATE_NOTICE=1\|ready` | The notice of a new version in the world, or of one downloaded |
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_GPU_HANG=<frame>` | A real GPU hang at that frame: the driver resets the GPU (affects other GPU programs) |
-| `AURORA_GPU_RECOVERY=1` | Recover from a GPU device loss on a new window and device instead of closing (work in progress) |
+| `AURORA_GPU_RECOVERY=1` / `=0` | Recover from a GPU device loss on a new window and device, or close, whatever Preferences › Graphics says (on by default) |
 | `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_PHOTO_QUALITY_CRASH=1` | The "Photo quality turned off" card on the login screen |
@@ -6118,7 +6131,8 @@ failure. Grid validation and any paid upload are performed by the human.
   (window minimized at start: its bar flashes at each IM instead of the
   button, then stays tinted while they wait unread) also keep them, and click the first IM card at frame 1250: the
   Conversations window opens or expands, comes to the front on that
-  conversation, and its card leaves the list. Capture with
+  conversation, its card leaves the list and its field takes the keyboard,
+  ready to type in (typing must not go to the nearby chat). Capture with
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
   existing sounds. `emote`: the second IM and the group's are emotes
@@ -7012,6 +7026,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   In a small window, the button stays reachable at the top right.
   `AURORA_DEMO_UPDATE_MAINTENANCE=cache|settings|both` shows the forced effects;
   when absent, the dialog announces the usual preservation and migrations.
+- **`AURORA_DEMO_UPDATE_NOTICE=1|ready`**, with `AURORA_DEMO=1`: the notice a
+  periodic update check shows in the world (made-up version 9.9.9), at frame
+  700; `ready` is the one of a version already downloaded (Automatic mode).
+  In Aurora's notification center the card has the aurora's edge and title
+  (still with Reduce motion); the Legacy notifications show a plain card. Its
+  buttons only close it: the demo checks for nothing.
 - **`AURORA_DEMO_GPU_DRIVER=old|old-linux|aged`**, with `AURORA_DEMO=1`: the
   driver check (`gpu_driver.rs`) reads a made-up card instead of the real one:
   `old` a GeForce GTX 1060 on NVIDIA 546.33 (under the 572.16 minimum),
@@ -7061,8 +7081,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   callback would set it, wgpu's own device stays alive. A list
   (`600,600,600`) gives one frame to each renderer of the run, the start's
   then each recovery's (a recovery's counts its frames from 0 again): with
-  `AURORA_GPU_RECOVERY=1`, three losses within a minute recover, recover
-  with the safe graphics level, then close.
+  the recovery on (the default), three losses within a minute recover,
+  recover with the safe graphics level, then close.
   The report's "Last state" table then shows the new device-lost fields
   (effects on, GPU frame times, session and region seconds,
   `GPU loss: first seen by` = `demo`), and its first table the
@@ -7077,9 +7097,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   device-lost callback follows (`GPU device lost (Unknown): Device is lost`).
   The reset is shared: other programs drawing with the GPU at that moment
   (a GPU-drawn terminal, a browser, another viewer) may lose their work or
-  close. Without `AURORA_GPU_RECOVERY=1` the viewer then closes as after
-  any loss. Once a run.
-- **`AURORA_GPU_RECOVERY=1`** (work in progress, off by default): a GPU
+  close. With the recovery off (`AURORA_GPU_RECOVERY=0`, or Preferences ›
+  Graphics) the viewer then closes as after any loss. Once a run.
+- **`AURORA_GPU_RECOVERY=1` / `=0`**: forces the recovery on or off for the
+  launch, whatever Preferences › Graphics › "Reopen after a graphics card
+  reset" says (`gpu_recovery`, on by default; `=0` also stops egui's CPU
+  copy). A VR session still closes. With the recovery on, a GPU
   device loss no longer ends the session. The window, the renderer and
   egui's input state are made again the way the start makes them
   (`app/gpu_recovery.rs`); the old window stays until the new one has
@@ -9730,6 +9753,12 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
 | `AURORA_TAA_MOTION=0` or `alt` | TAA reprojected through the camera alone, without the motion vectors, as before |
+| `AURORA_FSR_QUALITY=<0-4>` | FSR's mode for this launch, with `AURORA_AA=7`: native AA, quality, balanced, performance, ultra performance |
+| `AURORA_FSR_SHARPNESS=<0-1>` or `off` | FSR's RCAS sharpening for this launch, or none |
+| `AURORA_FSR_REACTIVE=0` | FSR without the reactive mask it generates from the blended faces |
+| `AURORA_FSR_BLEND_MOTION=0` | FSR without the depth and motion of the blended faces |
+| `AURORA_FSR_COMPOSITION=0` | FSR without its transparency and composition mask (running texture animations) |
+| `AURORA_FSR_MIP_BIAS=0` | FSR's smaller modes without the textures' mip bias |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
@@ -10094,6 +10123,35 @@ What the inventory must show with these scenarios:
   (`AURORA_DEMO_CROWD=20`, `AURORA_DEMO_POS=129,134`): with `0` their
   edges smear and shimmer while they move, with the default they stay
   clean. A still scene is the same in both.
+- **`AURORA_FSR_*`**: AMD FSR 3.1 (`AURORA_AA=7`, `fsr.rs` and
+  `shaders/fsr/`) takes TAA's place: it accumulates the jittered frames and,
+  below native AA, draws the world smaller than the window and rebuilds it
+  at the window's size (quality 67 %, balanced 59 %, performance 50 %, ultra
+  performance 33 %). The post effects after it run at the window's size.
+  - `AURORA_FSR_QUALITY` chooses the mode for this launch (default: the
+    saved one, quality for a new profile).
+  - `AURORA_FSR_SHARPNESS` sets RCAS (default 0.8 from Preferences);
+    under FSR the CAS sharpening of Preferences › Graphics › Image is off,
+    since both on top of each other turn FSR's faint sub-pixel pattern
+    into a checkerboard on smooth highlights. Capture the demo with
+    `AURORA_DEMO_CAMERA=none`, `AURORA_FSR_QUALITY=3`, frame 645: the glass
+    sphere's highlight shows no checkerboard at 3x zoom.
+  - `AURORA_FSR_REACTIVE=0` drops the reactive mask generated from the
+    scene before and after the blended faces: glass and particles then
+    leave trails when they move.
+  - `AURORA_FSR_BLEND_MOTION=0` drops the depth and motion the blended
+    faces covered from 10 % give FSR: the edges of a glass panel turn
+    jagged.
+  - `AURORA_FSR_COMPOSITION=0` drops the transparency and composition
+    mask, which marks the faces with a running texture animation
+    (llSetTextureAnim): with `AURORA_DEMO_TEXANIM=1` and
+    `AURORA_FSR_QUALITY=3`, the dark lines of the turning panel then show
+    twice (the history keeps them where they were) and the holes of the
+    scaled one get a rim; frame 1520, zoomed 2x.
+  - `AURORA_FSR_MIP_BIAS=0` keeps the textures' mips at 0 in the smaller
+    modes; by default they take `log2(render / window) - 1` (quality -1.58,
+    performance -2), as AMD's integration guide asks, for the window's
+    texture detail. Native AA has no bias.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility
