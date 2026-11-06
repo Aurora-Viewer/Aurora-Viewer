@@ -1809,7 +1809,7 @@ impl AnimStreamer {
             }
             if e.state == 0 {
                 e.state = 1;
-                let path = self.cache_dir.join("anim").join(format!("{id}.anim"));
+                let path = crate::cache::path(&self.cache_dir, "anim", id, "anim");
                 let tx = self.tx.clone();
                 let rig = rig.clone();
                 let id = *id;
@@ -1848,7 +1848,7 @@ impl AnimStreamer {
         };
         match r.data {
             Ok(d) => {
-                let path = self.cache_dir.join("anim").join(format!("{id}.anim"));
+                let path = crate::cache::path(&self.cache_dir, "anim", &id, "anim");
                 let tx = self.tx.clone();
                 let rig = rig.clone();
                 jobs.spawn(move || {

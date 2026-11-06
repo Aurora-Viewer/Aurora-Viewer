@@ -970,7 +970,7 @@ pub async fn save_content(
         body.insert("target", Llsd::String("mono".into()));
     }
     let ack = upload_content(http, cap, &body, data).await?;
-    if kind == 10 && !ack["compiled"].as_bool() {
+    if kind == 10 && !crate::scripts::compile_ok(&ack) {
         return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
     }
     let asset = ack["new_asset"].as_uuid();

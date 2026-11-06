@@ -93,7 +93,7 @@ impl SettingsStreamer {
     }
 
     fn path(&self, id: &Uuid) -> PathBuf {
-        self.cache_dir.join("settings").join(format!("{id}.settings"))
+        crate::cache::path(&self.cache_dir, "settings", id, "settings")
     }
 
     fn entry(&mut self, id: Uuid) -> &mut Entry {
@@ -178,7 +178,7 @@ impl SettingsStreamer {
             match e.step {
                 Step::New => {
                     e.step = Step::CacheCheck;
-                    let path = self.cache_dir.join("settings").join(format!("{id}.settings"));
+                    let path = crate::cache::path(&self.cache_dir, "settings", id, "settings");
                     let tx = self.tx.clone();
                     let id = *id;
                     jobs.spawn(move || {
