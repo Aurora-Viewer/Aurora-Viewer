@@ -690,25 +690,29 @@ fn not_worn_row(ui: &mut egui::Ui, p: &Palette, icon_name: &str, text: &str) {
 fn item_menu(
     response: &egui::Response,
     p: &Palette,
-    inv: &crate::world::inventory::Inventory,
+    world: &World,
+    st: &mut AppearanceUi,
     locks: &crate::world::rlva::WearLocks,
     selected: &[Uuid],
     actions: &mut Vec<Action>,
 ) {
     menu::context_menu(response, p, |ui| {
+        let inv = &world.inventory;
         let items: Vec<&InvItem> = selected.iter().filter_map(|id| inv.items.get(id)).collect();
-        if let [it] = items.as_slice()
-            && matches!(it.asset_type, 5 | 13)
-            && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"))
-        {
-            super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(it.id));
+        if let [it] = items.as_slice() {
+            items::worn_touch_edit_menu(ui, p, world, it);
         }
+        items::remove_item(ui, p, &items, locks, aurora_i18n::tr!("common-remove"), actions);
+        items::favorites_menu(ui, p, st, &items, actions);
+        menu::separator(ui, p);
         if let [it] = items.as_slice()
             && menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("ui-appearance-items-show-original"))
         {
             actions.push(Action::ShowOriginal(it.id));
         }
-        items::remove_item(ui, p, &items, locks, aurora_i18n::tr!("common-remove"), actions);
+        if !st.editing && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("ui-context-edit-outfit")) {
+            st.editing = true;
+        }
     });
 }
 
@@ -1266,10 +1270,10 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                     clipboard::request_focus(ui.ctx());
                     st.selected_item = Some(it.id);
                 }
-                item_menu(&resp, p, inv, &locks, &[it.id], actions);
+                item_menu(&resp, p, world, st, &locks, &[it.id], actions);
             } else {
                 st.select_item(&resp, WORN_SCOPE, it.id, &order);
-                item_menu(&resp, p, inv, &locks, &st.selected_items(WORN_SCOPE, it.id, &order), actions);
+                item_menu(&resp, p, world, st, &locks, &st.selected_items(WORN_SCOPE, it.id, &order), actions);
             }
             // a body part has none of these buttons: no empty row under it
             if edit && st.selected_item == Some(it.id) && it.asset_type != 13 {
@@ -2701,6 +2705,60 @@ mod tests {
             draw(&ctx, &mut world, &mut st, None);
         }
         assert!(egui::Popup::is_any_open(&ctx), "menu must remain open");
+    }
+
+    #[test]
+    fn worn_attachment_context_menu_offers_touch_edit_favorite_and_edit_outfit() {
+        let item = Uuid::from_u128(717);
+        for (label, expected) in [
+            (aurora_i18n::tr!("ui-context-touch").to_string(), "touch"),
+            (aurora_i18n::tr!("common-edit").to_string(), "edit"),
+            (aurora_i18n::tr!("common-add-to-favorites").to_string(), "favorite"),
+            (aurora_i18n::tr!("ui-context-edit-outfit").to_string(), "edit-outfit"),
+        ] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            world.agent_id = crate::demo::DEMO_AGENT;
+            model::seed_demo(&mut world.inventory, world.agent_id);
+            world.objects.upsert(1, crate::demo::action_avatar(false));
+            let mut object = crate::demo::hud::object(2, false);
+            object.full_id = Uuid::from_u128(80_717);
+            object.name_values = format!("AttachItemID STRING RW SV {item}");
+            object.update_flags |= crate::ui::context::flags::HANDLE_TOUCH;
+            world.objects.upsert(1, object);
+            assert!(items::worn_items(&world).contains(&item));
+
+            let mut st = AppearanceUi::default();
+            st.open(2, false);
+            for _ in 0..4 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            let name = world.inventory.items[&item].name.clone();
+            click_row(
+                &ctx,
+                &mut world,
+                &mut st,
+                &name,
+                egui::Modifiers::NONE,
+                egui::PointerButton::Secondary,
+            );
+            let actions = click_menu(&ctx, &mut world, &mut st, &label);
+            match expected {
+                "touch" => assert!(
+                    matches!(crate::ui::context::take_requests(&ctx).as_slice(), [crate::ui::context::CtxAction::TouchWorn(id)] if *id == item),
+                    "touch requests"
+                ),
+                "edit" => assert!(
+                    matches!(crate::ui::context::take_requests(&ctx).as_slice(), [crate::ui::context::CtxAction::EditWorn(id)] if *id == item),
+                    "edit requests"
+                ),
+                "favorite" => assert!(matches!(actions.as_slice(), [Action::Favorite(id)] if *id == item), "{actions:?}"),
+                "edit-outfit" => assert!(st.editing, "Edit outfit opens the editor"),
+                _ => unreachable!(),
+            }
+        }
     }
 
     #[test]
