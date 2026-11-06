@@ -2511,7 +2511,9 @@ foreach ($script in 'bridge', 'query', 'ik') {
 
 Execute their actual event handlers offline with
 `uv run scripts/test-bridge-lsl.py` (isolated Python 3.10/Lummao test runtime).
-The test covers silent startup/URL failures, exact owner/root discovery,
+The test covers silent startup/URL failures, exact owner/root discovery on the
+worn root's own channel, IK commands on the session's channel and IK discovery
+addressed to occupied seats and own attachments only,
 login revocation, confirmed-session region renewal, 60-second self-detachment, permission checks,
 unpaired peer/HTTP traffic and resumed discovery. It mocks simulator APIs;
 it does not emulate Havok or measure the compiled Mono memory budget.
