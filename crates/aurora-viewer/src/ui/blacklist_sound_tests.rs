@@ -13,6 +13,7 @@ struct Harness {
     p: Palette,
     ui: BlacklistUi,
     list: Derender,
+    ids: AssetIds,
     time: f64,
 }
 
@@ -27,6 +28,7 @@ impl Harness {
             p: theme.palette(),
             ui: BlacklistUi::default(),
             list: Derender::default(),
+            ids: super::tests::every(),
             time: 0.0,
         }
     }
@@ -42,7 +44,7 @@ impl Harness {
                 ..Default::default()
             },
             |_| {
-                action = self.ui.show(&self.ctx, &self.p, &self.list, &mut true);
+                action = self.ui.show(&self.ctx, &self.p, &self.list, &self.ids, &mut true);
             },
         );
         (crate::ui::login::test_output(output), action)
@@ -114,6 +116,39 @@ fn blacklist_sound_uuid_is_visible_and_copyable_without_confusing_it_with_its_ow
 }
 
 #[test]
+fn a_hidden_sound_uuid_is_neither_drawn_nor_copied() {
+    let asset = Uuid::parse_str("fedcba98-7654-4321-9abc-0123456789ab").unwrap();
+    let mut h = Harness::new();
+    h.ids = AssetIds::new(&crate::world::inventory::Inventory::default(), [], false);
+    widgets::place_floater(&h.ctx, WINDOW, egui::pos2(40.0, 40.0), Vec2::new(680.0, 320.0));
+    h.list.add_sound(
+        asset,
+        Entry {
+            name: "Demo owner".into(),
+            region: String::new(),
+            kind: Kind::Sound(0),
+            date: 0,
+            permanent: true,
+        },
+    );
+    for _ in 0..6 {
+        h.frame(Vec::new());
+    }
+    let (out, _) = h.frame(Vec::new());
+    assert!(!out.shapes.iter().any(|s| text_rect(&s.shape, &asset.to_string()).is_some()));
+    h.click_output(aurora_i18n::tr!("sound-explorer-asset"), egui::PointerButton::Secondary);
+    let (out, _) = h.click_output(aurora_i18n::tr!("build-ui-general-copy-uuid"), egui::PointerButton::Primary);
+    assert!(
+        !out.platform_output
+            .commands
+            .iter()
+            .any(|c| matches!(c, egui::OutputCommand::CopyText(_))),
+        "nothing to copy"
+    );
+    assert!(h.list.sound_blocked(asset, Uuid::nil(), 0), "the sound is still blocked");
+}
+
+#[test]
 fn blacklist_copying_multiple_categories_copies_the_owner_uuid_once() {
     let owner = Uuid::from_u128(45);
     let mut h = Harness::new();
@@ -164,6 +199,7 @@ fn blacklist_sound_category_row_removes_only_the_clicked_category() {
         p: theme.palette(),
         ui: BlacklistUi::default(),
         list: Derender::default(),
+        ids: super::tests::every(),
         time: 0.0,
     };
     h.list.add_sound(
