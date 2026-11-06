@@ -73,6 +73,22 @@ pub const COMMANDS: &[Command] = commands![
     "immersive", "maximize", "ui-bars-immersive", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
+    // Build and Me menu commands that can be added directly to a toolbar.
+    "ik_edit", "bone-filled", "ik-edit-title", true;
+    "build_edit", "pencil-filled", "ui-bars-edit-objects-ctrl-3", true;
+    "build_create", "circle-plus-filled", "ui-bars-create-prims-ctrl-4", true;
+    "build_land", "mountain-filled", "ui-bars-edit-land-ctrl-5", true;
+    "edit_particles", "sparkles-filled", "ui-bars-edit-particles", true;
+    "import", "file-upload-filled", "import-menu", true;
+    "blender_live", "cube-3d-sphere", "blender-live-title", true;
+    "buy_currency", "coin-filled", "currency-menu", true;
+    "money_tracker", "receipt-filled", "money-tracker-title", true;
+    "experiences", "flask-filled", "ui-experiences-title", true;
+    "stand_up", "man-filled", "common-stand-up", true;
+    "fly_override", "plane-departure-filled", "ui-bars-fly-override", true;
+    "movelock_options", "settings-filled", "movelock-options", true;
+    "quickjump", "arrow-big-up-lines-filled", "ui-bars-quickjump", true;
+    "movement_enhancer", "swimming", "movement-title", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", false;
     "destinations", "map-2", "toolbar-command-destinations", false;

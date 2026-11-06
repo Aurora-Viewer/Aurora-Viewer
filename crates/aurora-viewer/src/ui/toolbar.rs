@@ -12,7 +12,7 @@
 mod catalogue;
 mod editor;
 
-pub use catalogue::COMMANDS;
+pub use catalogue::{COMMANDS, find as command};
 
 use super::{
     menu,
@@ -21,6 +21,72 @@ use super::{
 use crate::theme::Palette;
 use egui::{Rect, Response};
 use serde::{Deserialize, Serialize};
+
+/// A menu's view of the saved bars. Commands carry their stable identifier,
+/// never a translated label, through the same edit path as toolbar dragging.
+#[derive(Clone, Default)]
+struct MenuToolbarState {
+    locked: bool,
+    commands: std::collections::HashSet<String>,
+}
+
+#[derive(Clone)]
+struct MenuEdit {
+    command: &'static str,
+    remove: bool,
+}
+
+#[derive(Clone)]
+struct MenuContext {
+    command: &'static str,
+    pos: egui::Pos2,
+}
+
+pub fn command_context(response: &Response, command: &'static str) {
+    if response.secondary_clicked() {
+        response.ctx.data_mut(|d| {
+            d.insert_temp(
+                egui::Id::unique("menu_toolbar_context"),
+                MenuContext {
+                    command,
+                    pos: response.interact_pointer_pos().unwrap_or(response.rect.left_bottom()),
+                },
+            )
+        });
+    }
+}
+
+/// The context menu belongs to the toolbar, so closing its originating
+/// dropdown or searching that dropdown cannot dismiss or filter its rows.
+pub fn show_command_context(ctx: &egui::Context, p: &Palette) {
+    let id = egui::Id::unique("menu_toolbar_context");
+    let Some(context) = ctx.data(|d| d.get_temp::<MenuContext>(id)) else {
+        return;
+    };
+    let state = ctx.data(|d| d.get_temp::<MenuToolbarState>(egui::Id::unique("menu_toolbar_state")));
+    let Some(state) = state else { return };
+    let mut open = true;
+    menu::popup_at(ctx, id, context.pos, &mut open, p, |ui| {
+        let remove = state.commands.contains(context.command);
+        let label = if remove {
+            aurora_i18n::tr!("toolbar-remove-from-menu")
+        } else {
+            aurora_i18n::tr!("toolbar-add-from-menu")
+        };
+        if menu::item_if(ui, p, if remove { "minus" } else { "plus" }, label, !state.locked) {
+            ui.ctx().data_mut(|d| {
+                d.get_temp_mut_or_default::<Vec<MenuEdit>>(egui::Id::unique("menu_toolbar_edits"))
+                    .push(MenuEdit {
+                        command: context.command,
+                        remove,
+                    });
+            });
+        }
+    });
+    if !open {
+        ctx.data_mut(|d| d.remove::<MenuContext>(id));
+    }
+}
 
 /// One of LLToolBarView's toolbars.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -492,6 +558,55 @@ impl ToolbarUi {
         if let Some(drag) = response.dnd_release_payload::<Drag>() {
             self.pending = Some(Edit::Insert(bar, drag.button.clone(), rank));
         }
+    }
+
+    /// Apply menu edits alongside drag/context edits, then refresh what the
+    /// menus show. The current lock and membership win over a stale popup.
+    pub fn commit_with_menus(&mut self, ctx: &egui::Context, layout: &Layout, settings: &mut ToolbarSettings) -> bool {
+        let mut changed = self.commit(layout, settings);
+        let edits = ctx
+            .data_mut(|d| d.remove_temp::<Vec<MenuEdit>>(egui::Id::unique("menu_toolbar_edits")))
+            .unwrap_or_default();
+        for edit in edits {
+            if settings.locked {
+                continue;
+            }
+            let Some(command) = catalogue::find(edit.command).filter(|c| c.ready) else {
+                continue;
+            };
+            let present = settings.location(command.id, layout).is_some();
+            if present != edit.remove {
+                continue;
+            }
+            self.pending = Some(if edit.remove {
+                Edit::Remove(command.id.to_owned())
+            } else {
+                Edit::Insert(
+                    Bar::Bottom,
+                    ToolButton {
+                        command: command.id.to_owned(),
+                        icon: command.icon.to_owned(),
+                        tooltip: String::new(),
+                    },
+                    usize::MAX,
+                )
+            });
+            changed |= self.commit(layout, settings);
+        }
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                egui::Id::unique("menu_toolbar_state"),
+                MenuToolbarState {
+                    locked: settings.locked,
+                    commands: Bar::ALL
+                        .into_iter()
+                        .flat_map(|bar| settings.bar(bar, layout))
+                        .map(|b| b.command.clone())
+                        .collect(),
+                },
+            )
+        });
+        changed
     }
 
     /// Save once for a real edit, never on hover, during dragging or on a no-op.

@@ -13225,3 +13225,7 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+
+# Menu commands can be added to or removed from a toolbar.
+toolbar-add-from-menu = Add to toolbar
+toolbar-remove-from-menu = Remove from toolbar

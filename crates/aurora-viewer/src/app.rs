@@ -15429,8 +15429,9 @@ impl App {
                 }
                 ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
+                ui::toolbar::show_command_context(ui.ctx(), &p);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
-                if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                if self.toolbar_ui.commit_with_menus(ui.ctx(), bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
                     self.settings.save();
                 }
                 // the Favorites button's right click: where the favourites live
