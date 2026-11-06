@@ -50,7 +50,7 @@ impl App {
                 .items
                 .values()
                 .filter(|it| it.asset_type == 56 && it.asset_id == asset)
-                .map(|it| Rights::from_item(it.owner_mask, 0).flags(0))
+                .map(|it| Rights::from_item(crate::world::inventory::actions::held(&self.world.inventory, it), 0).flags(0))
                 .reduce(|a, b| a & b),
             SourceRights::Unknown => None,
         }
@@ -109,7 +109,7 @@ impl App {
             self.env_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = name), true));
             return;
         };
-        let rights = Rights::from_item(it.owner_mask, doc.flags());
+        let rights = Rights::from_item(crate::world::inventory::actions::held(&self.world.inventory, &it), doc.flags());
         if rights.save {
             doc.set_name(&it.name);
             rights.apply(&mut doc);
@@ -346,7 +346,7 @@ impl App {
         self.env_editor.saving = None;
         match result {
             Ok(it) => {
-                let rights = Rights::from_item(it.owner_mask, 0);
+                let rights = Rights::from_item(crate::world::inventory::actions::agent_mask(&it, self.world.agent_id), 0);
                 self.world.inventory.add_items(vec![it.clone()]);
                 self.env_editor.saved(it.id, &it.name, rights);
                 log::info!("environment settings saved: {} ({})", it.name, it.asset_id);

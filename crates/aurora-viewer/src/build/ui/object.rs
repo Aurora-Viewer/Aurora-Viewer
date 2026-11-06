@@ -756,7 +756,7 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             ) {
                 tool.ui.shape_clipboard = Some(ShapeClip {
                     volume,
-                    sculpt: volume.sculpt,
+                    sculpt: sculpt_copy(world, volume.sculpt),
                 });
             }
         });
@@ -794,6 +794,18 @@ fn mixed_vectors(tool: &BuildTool, world: &World, s: &BuildSettings) -> [[bool; 
 fn copy_vector(ui: &egui::Ui, tool: &mut BuildTool, which: usize, v: Vec3, decimals: usize) {
     tool.ui.vec_clipboard[which] = Some(v);
     ui.ctx().copy_text(vector_text(v, decimals));
+}
+
+/// The sculpt map of "Copy" (LLPanelObject::onCopyParams): one the agent
+/// may not copy (`texture_copy::can_copy`) is replaced by the default
+/// sculpt map; the sculpt type stays.
+pub(super) fn sculpt_copy(world: &World, sculpt: Option<SculptParams>) -> Option<SculptParams> {
+    sculpt.map(|mut sc| {
+        if !crate::build::texture_copy::can_copy(&world.inventory, world.agent_id, sc.texture) {
+            sc.texture = crate::build::edits::SCULPT_DEFAULT.texture;
+        }
+        sc
+    })
 }
 
 /// "Paste" of the shape parameters (LLPanelObject::onPasteParams).
@@ -1185,6 +1197,33 @@ impl BuildTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sculpt_map_the_agent_cannot_copy_is_copied_as_the_default_one() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let map = uuid::Uuid::from_u128(0x5c01);
+        let sculpt = Some(SculptParams {
+            texture: map,
+            sculpt_type: 2,
+        });
+        let copied = sculpt_copy(&w, sculpt).expect("sculpt kept");
+        assert_eq!(copied.texture, crate::build::edits::SCULPT_DEFAULT.texture);
+        assert_eq!(copied.sculpt_type, 2, "the type stays");
+        let id = uuid::Uuid::from_u128(0x5c02);
+        let agent = w.agent_id;
+        w.inventory.items.insert(
+            id,
+            aurora_net::inventory::InvItem {
+                id,
+                asset_id: map,
+                owner: agent,
+                owner_mask: crate::world::inventory::actions::COPY,
+                ..Default::default()
+            },
+        );
+        assert_eq!(sculpt_copy(&w, sculpt), sculpt, "a copyable map is copied as it is");
+        assert_eq!(sculpt_copy(&w, None), None);
+    }
 
     fn box_params() -> VolumeParams {
         RawShape {

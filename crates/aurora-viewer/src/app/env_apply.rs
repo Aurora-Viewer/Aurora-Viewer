@@ -80,12 +80,13 @@ impl App {
         };
         let title = aurora_i18n::tr!("ui-env-editor-apply-parcel");
         let Some(target) = self.apply_target(false, title) else { return };
+        let mask = crate::world::inventory::actions::held(&self.world.inventory, &item);
         let command = LandCommand::EnvironmentApply {
             local_id: target.local_id(),
             track: None,
             asset: item.asset_id,
             name: item.name,
-            flags: env_apply::apply_flags(Some(item.owner_mask), item.flags),
+            flags: env_apply::apply_flags(Some(mask), item.flags),
             day_length: -1,
             day_offset: -1,
         };
@@ -342,7 +343,11 @@ impl App {
         let title = self.fixed_title();
         let Some(target) = self.apply_target(region, title) else { return };
         let item = self.env_editor.item.and_then(|id| self.world.inventory.items.get(&id).cloned());
-        let flags = env_apply::apply_flags(item.as_ref().map(|i| i.owner_mask), doc.flags());
+        let flags = env_apply::apply_flags(
+            item.as_ref()
+                .map(|i| crate::world::inventory::actions::held(&self.world.inventory, i)),
+            doc.flags(),
+        );
         doc.set_flags(flags);
         let cmd = match item.filter(|_| !self.env_editor.dirty) {
             Some(it) => {
@@ -391,7 +396,11 @@ impl App {
         let title = aurora_i18n::tr!("ui-day-editor-title");
         let Some(target) = self.apply_target(region, title) else { return };
         let item = self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id).cloned());
-        let flags = env_apply::apply_flags(item.as_ref().map(|i| i.owner_mask), doc.flags());
+        let flags = env_apply::apply_flags(
+            item.as_ref()
+                .map(|i| crate::world::inventory::actions::held(&self.world.inventory, i)),
+            doc.flags(),
+        );
         doc.set_flags(flags);
         let cmd = match item.filter(|_| !self.day_editor.dirty) {
             Some(it) => {

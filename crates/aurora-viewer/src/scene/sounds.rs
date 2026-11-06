@@ -278,7 +278,7 @@ pub struct SoundManager {
 
 /// The disk cache file of sound `id` in the store `cache_dir`.
 pub fn cache_file(cache_dir: &Path, id: &Uuid) -> PathBuf {
-    cache_dir.join("sound").join(format!("{id}.ogg"))
+    crate::cache::path(cache_dir, "sound", id, "ogg")
 }
 
 impl SoundManager {
