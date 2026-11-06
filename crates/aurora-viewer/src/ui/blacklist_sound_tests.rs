@@ -136,7 +136,7 @@ fn a_hidden_sound_uuid_is_neither_drawn_nor_copied() {
     }
     let (out, _) = h.frame(Vec::new());
     assert!(!out.shapes.iter().any(|s| text_rect(&s.shape, &asset.to_string()).is_some()));
-    h.click_output("Demo owner", egui::PointerButton::Secondary);
+    h.click_output(aurora_i18n::tr!("sound-explorer-asset"), egui::PointerButton::Secondary);
     let (out, _) = h.click_output(aurora_i18n::tr!("build-ui-general-copy-uuid"), egui::PointerButton::Primary);
     assert!(
         !out.platform_output
