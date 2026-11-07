@@ -1079,6 +1079,10 @@ impl Imports {
                             };
                             entry.options.max_width = maximum;
                             entry.options.max_height = maximum;
+                        } else if matches!(&entry.source, Some(Source::Material { .. })) {
+                            // Match the Legacy Viewer material editor's MAX_IMAGE_SIZE_DEFAULT (2048).
+                            entry.options.max_width = 2048;
+                            entry.options.max_height = 2048;
                         }
                         if let Some(source) = &entry.source {
                             entry.folder = if self.folders.active() || self.load_preferences.use_default_folders {
