@@ -24,6 +24,8 @@ pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
 pub struct AppearanceUi {
+    /// The account whose outfit pictures were read this session.
+    pictures_read: Option<Uuid>,
     pub(crate) json: json::State,
     pub tab: usize,
     pub fill_previews: bool,
@@ -503,6 +505,28 @@ impl AppearanceUi {
             .collect()
     }
 
+    /// A cached folder is current while its version is: a picture set from
+    /// another viewer can leave it without one. My Outfits is read again
+    /// once per session, one AIS read that gives all its outfits' pictures
+    /// (#2716). A read under way will do, and one held for the cache would
+    /// find the folder restored: wait for it.
+    fn read_pictures(&mut self, world: &mut World) {
+        use crate::world::inventory::FetchState;
+        if self.pictures_read == Some(world.agent_id) || world.inventory.requests_held() {
+            return;
+        }
+        let Some(id) = model::system_folder(&world.inventory, model::FT_MY_OUTFITS) else {
+            return;
+        };
+        self.pictures_read = Some(world.agent_id);
+        if let Some(folder) = world.inventory.folders.get_mut(&id)
+            && folder.state == FetchState::Fetched
+        {
+            folder.state = FetchState::Unknown;
+            world.inventory.request(id);
+        }
+    }
+
     pub fn refresh(&mut self, inv: &mut crate::world::inventory::Inventory) {
         self.requested_items.clear();
         self.prepared = None;
@@ -827,7 +851,7 @@ fn gallery(
                             egui::Stroke::new(1.0, if selected { p.violet } else { p.raised }),
                             egui::StrokeKind::Inside,
                         );
-                        let image = folder.info.thumbnail;
+                        let image = crate::world::appearance::outfit_image(&world.inventory, *id);
                         if !image.is_nil() {
                             st.wanted_images.insert(image);
                         }
@@ -1541,6 +1565,9 @@ pub fn show(
     )
     .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(390.0, 520.0);
+    if *open {
+        st.read_pictures(world);
+    }
     if *open && !st.editing && st.tab == 2 {
         let temporary = world.temp_attachments();
         world.request_temp_attachment_names(&temporary, std::time::Instant::now());
@@ -1961,7 +1988,7 @@ pub fn show(
     }
     json::confirmation(ctx, p, world, st, &mut actions);
     items::profile(ctx, p, world, st, &mut actions);
-    gallery::dialogs(ctx, p, world, st, images, &mut actions);
+    gallery::dialogs(ctx, p, world, st, &mut actions);
     folders::dialogs(ctx, p, world, st, &mut actions);
     gallery::finish_copy(ctx, world, st);
     actions
@@ -3804,5 +3831,40 @@ mod tests {
         for (text, pos) in &part {
             assert_eq!(whole.get(text), Some(pos), "{text} moved");
         }
+    }
+
+    /// #2716: a cached folder is current while its version is, whatever was
+    /// done to its pictures elsewhere: one read of My Outfits per session.
+    #[test]
+    fn the_outfit_pictures_are_read_again_once_per_session() {
+        use crate::world::inventory::FetchState;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let outfits = Uuid::from_u128(48);
+        world.inventory.add_folders(
+            vec![aurora_net::inventory::InvFolder {
+                id: outfits,
+                type_default: model::FT_MY_OUTFITS,
+                ..Default::default()
+            }],
+            false,
+        );
+        let state = |world: &World| world.inventory.folders[&outfits].state;
+        world.inventory.folders.get_mut(&outfits).expect("folder").state = FetchState::Fetched;
+        let mut st = AppearanceUi::default();
+        // the cache being read would restore the folder: not yet
+        world.inventory.hold_requests();
+        st.read_pictures(&mut world);
+        assert_eq!(state(&world), FetchState::Fetched);
+        world.inventory.release_requests();
+        st.read_pictures(&mut world);
+        assert_eq!(state(&world), FetchState::Fetching, "asked once");
+        world.inventory.folders.get_mut(&outfits).expect("folder").state = FetchState::Fetched;
+        st.read_pictures(&mut world);
+        assert_eq!(state(&world), FetchState::Fetched, "not twice");
+        // another account in the same run
+        world.agent_id = Uuid::from_u128(2);
+        st.read_pictures(&mut world);
+        assert_eq!(state(&world), FetchState::Fetching);
     }
 }
