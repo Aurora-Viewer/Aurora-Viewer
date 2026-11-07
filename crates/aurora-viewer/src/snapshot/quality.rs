@@ -163,7 +163,7 @@ fn photo_maxima() -> Values {
         water_reflections: 4,
         mirrors: 4,
         reflection_probes: 3,
-        probe_count: 64,
+        probe_count: 256,
         anisotropy: 16,
         ..Preset::Deluxe.values()
     }
@@ -322,7 +322,7 @@ fn held_bytes(v: &Values, screen: Screen) -> u64 {
     let ground = std::f64::consts::PI * f64::from(v.draw_distance).powi(2) * GROUND_BYTES_PER_M2;
     // HDR colour and depth at a fraction of the screen
     let reflection = |step: u8| (px * f64::from(Settings::reflection_scale(step)).powi(2) * 12.0) as u64;
-    let probes = u64::from(v.probe_count.clamp(8, 64)) * PROBE_BYTES;
+    let probes = u64::from(v.probe_count.clamp(8, 256)) * PROBE_BYTES;
     msaa + shadows + ground as u64 + reflection(v.water_reflections) + reflection(v.mirrors) + probes
 }
 
@@ -356,7 +356,7 @@ pub fn made_bytes(from: &Values, to: &Values, screen: Screen) -> u64 {
         }
     };
     let probes = if from.probe_count != to.probe_count {
-        u64::from(from.probe_count.clamp(8, 64)) * PROBE_BYTES
+        u64::from(from.probe_count.clamp(8, 256)) * PROBE_BYTES
     } else {
         0
     };

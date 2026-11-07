@@ -279,7 +279,7 @@ fn importing_a_named_project_copy_cannot_overwrite_its_existing_library_identity
     let old_id = saved.project.as_ref().unwrap().id;
     let mut working = saved.clone();
     working.definition.bindings[0].weight = 0.4;
-    editor.project.library.import(saved.encode().unwrap()).unwrap();
+    editor.project.library.import(saved.encode().unwrap(), &Default::default()).unwrap();
     let command = editor.project.library.command.take().unwrap();
     let imported = run(&root, working.clone(), command);
     assert_ne!(imported.project.as_ref().unwrap().id, old_id);
