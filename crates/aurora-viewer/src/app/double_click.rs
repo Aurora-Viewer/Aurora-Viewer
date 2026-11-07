@@ -150,7 +150,10 @@ impl App {
     /// run (SetAlwaysRun is one state for all three).
     fn sync_run(&mut self) {
         let run = self.running();
-        self.send(NetCommand::SetAlwaysRun(run));
+        self.send(NetCommand::SetRun {
+            running: run,
+            source: aurora_net::RunSource::Autopilot,
+        });
     }
 
     pub(super) fn travel_to_avatar(&mut self, id: uuid::Uuid, follow: bool) {

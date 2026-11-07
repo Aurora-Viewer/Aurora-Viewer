@@ -2186,7 +2186,7 @@ impl Session<'_> {
                 m.effect.push(reset_skeleton_effect(self.agent_id(), effect, target, animations));
                 self.send_main(&m, false);
             }
-            NetCommand::SetAlwaysRun(run) => {
+            NetCommand::SetRun { running: run, .. } => {
                 let mut m = SetAlwaysRun::default();
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();

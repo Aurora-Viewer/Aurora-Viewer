@@ -5,6 +5,14 @@ use aurora_net::{NetCommand, control};
 use glam::Vec3;
 use uuid::Uuid;
 
+fn run_source_allowed(source: aurora_net::RunSource, alwaysrun: bool, temprun: bool, enabled: bool) -> bool {
+    !enabled
+        || match source {
+            aurora_net::RunSource::Always | aurora_net::RunSource::Autopilot => !alwaysrun,
+            aurora_net::RunSource::Temporary | aurora_net::RunSource::Joystick => !temprun,
+        }
+}
+
 impl World {
     pub fn rlva_allows_im(&self, behaviour: &str, target: Uuid) -> bool {
         if !self.rlva.enabled() {
@@ -269,7 +277,9 @@ impl World {
                 (flags & control::STAND_UP == 0 || !blocked("unsit"))
                     && (flags & control::SIT_ON_GROUND == 0 || (!blocked("sit") && !(self.agent.is_sitting() && blocked("unsit"))))
             }
-            NetCommand::SetAlwaysRun(true) => !blocked("alwaysrun"),
+            NetCommand::SetRun { running: true, source } => {
+                run_source_allowed(*source, blocked("alwaysrun"), blocked("temprun"), self.rlva.enabled())
+            }
             NetCommand::BuyObject { .. } => !blocked("buy"),
             NetCommand::PayObject { .. } => !blocked("buy"),
             NetCommand::PayResident { .. } => !blocked("pay"),
@@ -564,6 +574,18 @@ fn teleport(option: &str) -> Option<NetCommand> {
 #[cfg(test)]
 mod teleport_tests {
     use super::*;
+
+    #[test]
+    fn run_restrictions_follow_the_source() {
+        use aurora_net::RunSource::*;
+        assert!(!run_source_allowed(Temporary, false, true, true));
+        assert!(run_source_allowed(Temporary, true, false, true));
+        assert!(!run_source_allowed(Always, true, false, true));
+        assert!(run_source_allowed(Always, false, true, true));
+        assert!(!run_source_allowed(Joystick, false, true, true));
+        assert!(!run_source_allowed(Autopilot, true, false, true));
+        assert!(run_source_allowed(Temporary, true, true, false));
+    }
 
     #[test]
     fn rlva_tpto_preserves_global_fractions_and_named_region_heading() {
