@@ -219,3 +219,103 @@ fn folder_names_refuse_slashes_and_folders_rename_and_delete() {
     assert_eq!(subfolders(&inv, root).len(), 1);
     assert!(inv.items.contains_key(&id(715)) && inv.items.contains_key(&id(719)));
 }
+
+fn with_legacy() -> (Inventory, Uuid) {
+    let mut inv = seeded();
+    seed_demo_legacy(&mut inv, AGENT);
+    let root = folder(&inv).expect("favorites");
+    (inv, root)
+}
+
+fn link_targets(inv: &Inventory, parent: Uuid) -> Vec<u128> {
+    let mut ids: Vec<u128> = inv.folders[&parent]
+        .items
+        .iter()
+        .filter_map(|i| inv.items.get(i))
+        .filter(|it| it.parent == parent)
+        .map(|it| if it.asset_type == 24 { it.asset_id } else { it.id }.as_u128())
+        .collect();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn the_legacy_folder_is_found_by_its_own_names() {
+    let (inv, root) = with_legacy();
+    let legacy = legacy_folder(&inv).expect("legacy favorites");
+    assert_ne!(legacy, root);
+    assert_eq!(inv.folders[&legacy].info.name, FOLDER);
+    assert_eq!(LEGACY_ROOT, "#Firestorm");
+    assert!(legacy_folder(&seeded()).is_none());
+    assert!(import_plan(&seeded(), root).is_none(), "no Legacy folder, no offer");
+}
+
+#[test]
+fn the_import_links_what_ours_lacks_at_the_same_place() {
+    let (mut inv, root) = with_legacy();
+    let before = inv.folders.len();
+    let plan = import_plan(&inv, root).expect("something to import");
+    // 713 at the top, 716 in Evening (715 is linked there already), 718 and
+    // 721 in the new Party folder; the broken link and 712 (linked) are left
+    assert_eq!(plan.links, 4);
+    assert_eq!(plan.folders, 1);
+    demo_mutate(&mut inv, AGENT, plan.change).expect("imported");
+    assert_eq!(inv.folders.len(), before + 1, "only Party is created");
+    let names: Vec<String> = subfolders(&inv, root).into_iter().map(|(_, n)| n).collect();
+    assert_eq!(names, ["Evening", "Party"], "Evening is reused");
+    let (evening, party) = (subfolders(&inv, root)[0].0, subfolders(&inv, root)[1].0);
+    assert!(link_targets(&inv, root).contains(&713));
+    assert_eq!(link_targets(&inv, evening), [715, 716, 719]);
+    assert_eq!(link_targets(&inv, party), [718, 721]);
+    // the Legacy folder and every original are untouched
+    let legacy = legacy_folder(&inv).expect("legacy");
+    assert_eq!(link_targets(&inv, legacy).len(), 3);
+    assert!(inv.items.contains_key(&id(713)) && inv.items[&id(713)].parent != root);
+    // running it again changes nothing
+    assert!(import_plan(&inv, root).is_none());
+}
+
+#[test]
+fn the_import_starts_from_an_empty_favorites_folder() {
+    let (mut inv, root) = with_legacy();
+    let rows: Vec<Uuid> = inv.folders[&root].items.clone();
+    let change = remove(&inv, &rows).expect("removal");
+    demo_mutate(&mut inv, AGENT, change).expect("emptied");
+    let evening = subfolders(&inv, root)[0].0;
+    let change = delete_folder(&inv, evening).expect("delete");
+    demo_mutate(&mut inv, AGENT, change).expect("deleted");
+    let plan = import_plan(&inv, root).expect("everything is new");
+    // 712 and 713 at the top; Evening (715, 716) and Party (718, 721) are made
+    assert_eq!((plan.links, plan.folders), (6, 2));
+    demo_mutate(&mut inv, AGENT, plan.change).expect("imported");
+    assert_eq!(link_targets(&inv, root), [712, 713]);
+    assert_eq!(subfolders(&inv, root).len(), 2);
+    assert!(import_plan(&inv, root).is_none());
+}
+
+#[test]
+fn the_import_skips_library_items_and_waits_for_a_complete_tree() {
+    let (mut inv, root) = with_legacy();
+    let legacy = legacy_folder(&inv).expect("legacy");
+    // 713 and 716 become Library items: nothing of them is linked
+    for n in [713, 716] {
+        let lib = Uuid::from_u128(0x11b0 + n);
+        let mut folder = inv.folders[&legacy].clone();
+        folder.info.id = lib;
+        folder.children.clear();
+        folder.items.clear();
+        folder.library = true;
+        inv.folders.insert(lib, folder);
+        inv.items.get_mut(&id(n)).expect("original").parent = lib;
+        inv.folders.get_mut(&lib).expect("lib").items.push(id(n));
+    }
+    let plan = import_plan(&inv, root).expect("718 and 721 remain");
+    assert_eq!(plan.links, 2);
+    assert!(plan.change.operations.iter().all(|op| match op {
+        Operation::Links { links, .. } => links.iter().all(|l| ![id(713), id(716)].contains(&l.target)),
+        _ => true,
+    }));
+    // a folder still being fetched: no offer
+    inv.folders.get_mut(&legacy).expect("legacy").state = FetchState::Fetching;
+    assert!(import_plan(&inv, root).is_none());
+}

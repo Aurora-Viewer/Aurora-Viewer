@@ -26,10 +26,11 @@ impl App {
         }
     }
 
-    /// `AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|create`: the window
+    /// `AURORA_DEMO_WEARABLE_FAVORITES=1|evening|recent|create|import|import-done`: the window
     /// open on the favorites of the Appearance demo (`evening`: its Evening
     /// folder; `recent`: sorted by most recent; `create`: no favorites yet,
-    /// the window creates the folder).
+    /// the window creates the folder; `import`: the Legacy
+    /// Viewer's favorites beside, the window offers to import them; `import-done`: after the import).
     pub(super) fn demo_wearable_favorites(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_WEARABLE_FAVORITES") else {
             return;
@@ -44,6 +45,16 @@ impl App {
         }
         if mode != "create" {
             crate::world::wearable_favorites::seed_demo(&mut self.world.inventory, self.world.agent_id);
+        }
+        if mode == "import" || mode == "import-done" {
+            crate::world::wearable_favorites::seed_demo_legacy(&mut self.world.inventory, self.world.agent_id);
+        }
+        // the click already made, to capture the window after it
+        if mode == "import-done"
+            && let Some(root) = crate::world::wearable_favorites::folder(&self.world.inventory)
+            && let Some(plan) = crate::world::wearable_favorites::import_plan(&self.world.inventory, root)
+        {
+            self.apply_inventory_action(ui::inventory::InvAction::Edit(plan.change));
         }
         if mode == "evening" {
             ui::appearance::wearable_favorites::demo_pick(&self.world.inventory, &mut self.appearance_ui, "Evening");

@@ -37,6 +37,9 @@ pub(crate) struct State {
     /// A folder asked for, with the subfolders there before it: picked
     /// when it appears (onNewFolderCallback).
     select_new: Option<(String, HashSet<Uuid>)>,
+    /// The import was sent and the inventory has not answered yet: the
+    /// button stays hidden, so that a second click cannot link twice.
+    import_sent: bool,
 }
 
 enum Dialog {
@@ -60,6 +63,10 @@ pub fn prepare(inv: &mut Inventory, st: &mut AppearanceUi, writable: bool) -> Op
     let st = &mut st.wearable_favorites;
     if let Some(root) = model::folder(inv) {
         crate::world::inventory::actions::request_tree(inv, root);
+        // the Legacy Viewer's favorites, to offer their import
+        if let Some(legacy) = model::legacy_folder(inv) {
+            crate::world::inventory::actions::request_tree(inv, legacy);
+        }
         return None;
     }
     if st.created || !writable {
@@ -107,6 +114,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, st: &mut Appearance
         let shown = root.map(|root| st.wearable_favorites.shown.unwrap_or(root));
         folder_bar(ui, p, inv, st, root, &folders);
         ui.add_space(4.0);
+        import_bar(ui, p, inv, st, root, &mut actions);
         let labels = items::worn_labels(world);
         let mut rows = match (root, shown) {
             (Some(root), Some(shown)) => model::entries(inv, root, shown),
@@ -237,6 +245,41 @@ fn folder_bar(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Appearan
             fav.dialog = Some(Dialog::Delete(id));
         }
     });
+}
+
+/// The offer to import the Legacy Viewer's favorites: shown only while the
+/// Legacy folder holds favorites ours does not link yet. It links them, and
+/// copies or moves nothing.
+fn import_bar(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut AppearanceUi, root: Option<Uuid>, actions: &mut Vec<Action>) {
+    let fav = &mut st.wearable_favorites;
+    let plan = root.and_then(|root| model::import_plan(inv, root));
+    let Some(plan) = plan else {
+        fav.import_sent = false;
+        return;
+    };
+    if fav.import_sent {
+        return;
+    }
+    let clicked = widgets::action_button(
+        ui,
+        p,
+        "download",
+        aurora_i18n::tr!("wearable-favorites-import"),
+        widgets::ActionKind::Flat,
+        Vec2::new(0.0, 26.0),
+    )
+    .on_hover_text(aurora_i18n::tr!("wearable-favorites-import-tip"))
+    .clicked();
+    ui.add_space(4.0);
+    if clicked {
+        log::info!(
+            "wearable favorites: importing the Legacy Viewer's favorites ({} links, {} new folders)",
+            plan.links,
+            plan.folders
+        );
+        fav.import_sent = true;
+        actions.push(Action::Folders(plan.change));
+    }
 }
 
 /// The filter, the sort menu and Remove.

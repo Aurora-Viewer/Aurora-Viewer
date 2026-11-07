@@ -26,6 +26,9 @@ use uuid::Uuid;
 pub const ROOT: &str = super::bridge::FOLDER;
 /// FS_WEARABLE_FAVORITES_FOLDER.
 pub const FOLDER: &str = "#Wearable Favorites";
+/// ROOT_FIRESTORM_FOLDER (indra/newview/llinventoryfunctions.h): the Legacy
+/// Viewer's own root folder, where it keeps its favorites.
+pub const LEGACY_ROOT: &str = "#Firestorm";
 
 /// FSWearableFavoritesSortOrder, LLWearableItemsList::ESortOrder without
 /// E_SORT_BY_TYPE_LAYER, which the window's menu does not offer. The
@@ -62,6 +65,12 @@ fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
 /// getWearableFavoritesFolderID: `#Wearable Favorites` in `#Aurora`.
 pub fn folder(inv: &Inventory) -> Option<Uuid> {
     child(inv, child(inv, inv.root, ROOT)?, FOLDER)
+}
+
+/// getWearableFavoritesFolderID as the Legacy Viewer reads it: the same
+/// folder name in its own root folder.
+pub fn legacy_folder(inv: &Inventory) -> Option<Uuid> {
+    child(inv, child(inv, inv.root, LEGACY_ROOT)?, FOLDER)
 }
 
 /// initCategory: the folders to create when it does not exist yet, the
@@ -242,19 +251,19 @@ fn entries_in(inv: &Inventory, folder: Uuid) -> Vec<Entry> {
         .collect()
 }
 
+fn outfit_link(it: &aurora_net::inventory::InvItem) -> OutfitLink {
+    OutfitLink {
+        target: it.id,
+        name: it.name.clone(),
+        desc: it.desc.clone(),
+        folder: false,
+        inv_type: it.inv_type,
+    }
+}
+
 /// link_inventory_object for each original, into `to`.
 pub fn link(inv: &Inventory, targets: &[Uuid], to: Uuid) -> Option<Mutation> {
-    let links: Vec<OutfitLink> = targets
-        .iter()
-        .filter_map(|id| inv.items.get(id))
-        .map(|it| OutfitLink {
-            target: it.id,
-            name: it.name.clone(),
-            desc: it.desc.clone(),
-            folder: false,
-            inv_type: it.inv_type,
-        })
-        .collect();
+    let links: Vec<OutfitLink> = targets.iter().filter_map(|id| inv.items.get(id)).map(outfit_link).collect();
     if links.is_empty() {
         return None;
     }
@@ -263,6 +272,100 @@ pub fn link(inv: &Inventory, targets: &[Uuid], to: Uuid) -> Option<Mutation> {
         refresh: vec![to],
         ..Default::default()
     })
+}
+
+/// What importing the Legacy Viewer's favorites does.
+#[derive(Debug)]
+pub struct Import {
+    pub change: Mutation,
+    /// The links it creates.
+    pub links: usize,
+    /// The subfolders it creates.
+    pub folders: usize,
+}
+
+/// The import of the Legacy Viewer's favorites (`#Firestorm/#Wearable
+/// Favorites`) into `favorites`: each original it links is linked at the
+/// same place of ours, its subfolders recreated by name (a subfolder of that
+/// name is reused). Nothing is copied or moved and the Legacy folder is not
+/// touched; what we already link at that place, a broken link and a Library
+/// item (as `droppable` refuses) are left out, so a second run has nothing
+/// to do. `None` when there is nothing to import, or while either tree is
+/// not fully fetched (a partial view would link twice).
+pub fn import_plan(inv: &Inventory, favorites: Uuid) -> Option<Import> {
+    let legacy = legacy_folder(inv)?;
+    if !loaded(inv, legacy) || !loaded(inv, favorites) {
+        return None;
+    }
+    let mut plan = Import {
+        change: Mutation::default(),
+        links: 0,
+        folders: 0,
+    };
+    let mut seen = HashSet::new();
+    import_folder(inv, legacy, favorites, true, &mut plan, &mut seen);
+    plan.change.refresh.sort();
+    plan.change.refresh.dedup();
+    (plan.links > 0).then_some(plan)
+}
+
+/// One Legacy folder into `to`; `existing` when `to` is ours already (a new
+/// folder has nothing in it yet).
+fn import_folder(inv: &Inventory, from: Uuid, to: Uuid, existing: bool, plan: &mut Import, seen: &mut HashSet<Uuid>) {
+    if !seen.insert(from) {
+        return;
+    }
+    let Some(f) = inv.folders.get(&from) else { return };
+    let mut have: HashSet<Uuid> = if existing {
+        entries_in(inv, to).into_iter().map(|e| e.target).collect()
+    } else {
+        HashSet::new()
+    };
+    let mut links = Vec::new();
+    for item in &f.items {
+        let Some(it) = inv.items.get(item).filter(|it| it.parent == from) else {
+            continue;
+        };
+        let Some(target) = original(inv, it.id) else { continue };
+        if super::inventory::actions::library(inv, target) || !have.insert(target) {
+            continue;
+        }
+        if let Some(original) = inv.items.get(&target) {
+            links.push(outfit_link(original));
+        }
+    }
+    if !links.is_empty() {
+        plan.links += links.len();
+        plan.change.refresh.push(to);
+        plan.change.operations.push(Operation::Links { parent: to, links });
+    }
+    let mut subfolders: Vec<_> = f
+        .children
+        .iter()
+        .filter_map(|id| inv.folders.get(id).filter(|c| c.info.parent == from && !c.library))
+        .map(|c| (c.info.name.clone(), c.info.id))
+        .collect();
+    subfolders.sort();
+    for (name, id) in subfolders {
+        let (dest, existing) = match existing.then(|| child(inv, to, &name)).flatten() {
+            Some(dest) => (dest, true),
+            None => {
+                // only worth creating when something will be linked in it
+                let mut probe = Import {
+                    change: Mutation::default(),
+                    links: 0,
+                    folders: 0,
+                };
+                import_folder(inv, id, Uuid::nil(), false, &mut probe, &mut seen.clone());
+                if probe.links == 0 {
+                    continue;
+                }
+                plan.folders += 1;
+                (new_folder(&mut plan.change, to, &name), false)
+            }
+        };
+        import_folder(inv, id, dest, existing, plan, seen);
+    }
 }
 
 /// handleRemove: remove_inventory_item of each selected row.
@@ -428,6 +531,91 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
         folders: vec![evening_info],
         items,
     }]);
+}
+
+/// `AURORA_DEMO_WEARABLE_FAVORITES=import`: the Legacy Viewer's folder next
+/// to ours (`#Firestorm/#Wearable Favorites`): one link ours has already,
+/// one it lacks, a broken link, an "Evening" subfolder (ours exists) and a
+/// "Party" one (ours does not).
+pub fn seed_demo_legacy(inv: &mut Inventory, agent: Uuid) {
+    use super::inventory::{FetchState, Folder};
+    let root = inv.root;
+    let folder = |inv: &mut Inventory, id: u128, parent: Uuid, name: &str| {
+        let id = Uuid::from_u128(id);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(p) = inv.folders.get_mut(&parent) {
+            p.children.push(id);
+        }
+        id
+    };
+    let brand = folder(inv, 790, root, LEGACY_ROOT);
+    let favorites = folder(inv, 791, brand, FOLDER);
+    let evening = folder(inv, 792, favorites, "Evening");
+    let party = folder(inv, 793, favorites, "Party");
+    let links = |inv: &Inventory, ids: &[u128]| -> Vec<OutfitLink> {
+        ids.iter()
+            .filter_map(|id| inv.items.get(&Uuid::from_u128(*id)))
+            .map(outfit_link)
+            .collect()
+    };
+    let mut top = links(inv, &[712, 713]);
+    top.push(OutfitLink {
+        target: Uuid::from_u128(799),
+        name: "Sold long ago".into(),
+        desc: String::new(),
+        folder: false,
+        inv_type: 18,
+    });
+    let night = links(inv, &[715, 716]);
+    let fun = links(inv, &[718, 721]);
+    // the contents of each folder with its subfolders: a read lists both
+    for (id, links) in [(evening, night), (party, fun), (favorites, top)] {
+        let folders = inv.folders[&id]
+            .children
+            .iter()
+            .filter_map(|c| inv.folders.get(c).map(|f| f.info.clone()))
+            .collect();
+        let items = links
+            .iter()
+            .map(|l| aurora_net::inventory::InvItem {
+                id: Uuid::new_v4(),
+                parent: id,
+                name: l.name.clone(),
+                desc: l.desc.clone(),
+                asset_type: 24,
+                inv_type: l.inv_type,
+                asset_id: l.target,
+                creator: agent,
+                owner: agent,
+                base_mask: 0x7fffffff,
+                owner_mask: 0x7fffffff,
+                ..Default::default()
+            })
+            .collect();
+        inv.apply(vec![aurora_net::inventory::FolderContents {
+            folder_id: id,
+            owner_id: agent,
+            version: 2,
+            folders,
+            items,
+        }]);
+    }
 }
 
 #[cfg(test)]
