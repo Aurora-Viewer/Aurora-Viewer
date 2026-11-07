@@ -83,7 +83,8 @@ pub fn row<R>(ui: &mut egui::Ui, p: &Palette, name: &str, width: f32, body: impl
 }
 
 /// LLSpinCtrl: a number to drag or type. `tentative` shows it as mixed
-/// (several values selected).
+/// (several values selected); a number typed over the mixed value is
+/// committed even when it equals the hidden first value.
 pub fn spin(
     ui: &mut egui::Ui,
     v: &mut f32,
@@ -106,6 +107,39 @@ pub fn spin_with_min_decimals(
     width: f32,
     tentative: bool,
     min_decimals: usize,
+) -> Edit {
+    spinner(ui, v, increment, range, decimals, width, tentative, min_decimals, true)
+}
+
+/// A position, size or rotation field: LLPanelObject::sendPosition /
+/// sendScale / sendRotation (indra/newview/llpanelobject.cpp) send only a
+/// value that differs from the object's, so a number typed over a mixed
+/// axis that equals the primary object's sends nothing.
+#[allow(clippy::too_many_arguments)]
+pub fn transform_spin(
+    ui: &mut egui::Ui,
+    v: &mut f32,
+    increment: f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    width: f32,
+    tentative: bool,
+    min_decimals: usize,
+) -> Edit {
+    spinner(ui, v, increment, range, decimals, width, tentative, min_decimals, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spinner(
+    ui: &mut egui::Ui,
+    v: &mut f32,
+    increment: f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    width: f32,
+    tentative: bool,
+    min_decimals: usize,
+    commit_typed_mixed: bool,
 ) -> Edit {
     // Commit-only fields are read from the object again each frame. Keep the
     // gesture's value until release, without sending intermediate server edits.
@@ -134,16 +168,25 @@ pub fn spin_with_min_decimals(
             1.0
         };
     let before = *v;
+    // Whether the field wrote a value this frame: a typed entry writes its
+    // parsed number even when it equals the one shown underneath.
+    let written = std::cell::Cell::new(false);
     // LLSpinCtrl::setValue displays server values (including megaprims)
     // unchanged; LLPanelObject::sendScale bounds only deliberate edits.
-    let mut dv = egui::DragValue::new(v)
-        .speed(speed)
-        .update_while_editing(false)
-        .range(range.clone())
-        .clamp_existing_to_range(false)
-        .custom_parser(aurora_i18n::parse_number)
-        .max_decimals(decimals)
-        .min_decimals(min_decimals.min(decimals));
+    let mut dv = egui::DragValue::from_get_set(|new| {
+        if let Some(new) = new {
+            *v = new as f32;
+            written.set(true);
+        }
+        f64::from(*v)
+    })
+    .speed(speed)
+    .update_while_editing(false)
+    .range(range.clone())
+    .clamp_existing_to_range(false)
+    .custom_parser(aurora_i18n::parse_number)
+    .max_decimals(decimals)
+    .min_decimals(min_decimals.min(decimals));
     if tentative {
         dv = dv.custom_formatter(|_, _| "—".into());
     }
@@ -175,6 +218,15 @@ pub fn spin_with_min_decimals(
     }
     if r.drag_stopped() {
         e.changed |= draft.is_some();
+        e.commit = true;
+    }
+    // LLSpinCtrl::onEditorCommit (indra/llui/llspinctrl.cpp) commits every
+    // typed entry. A mixed field shows "—" over the first selected value, so
+    // typing that same value (0 % over a linkset part with one transparent
+    // face) must still reach every selected face. Escape and an untouched
+    // "—" write nothing.
+    if commit_typed_mixed && tentative && written.get() && r.lost_focus() {
+        e.changed = true;
         e.commit = true;
     }
     e
