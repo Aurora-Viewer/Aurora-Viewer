@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+Experience generic-message documents accept standard spaced, case-insensitive
+LLSD codec headers. Full pushed environments retain receipt order independently
+for day, sky and water, so late asset responses cannot restore an older scene
+or erase newer independent halves. Clearing an unrelated experience leaves
+the active transition intact. `demo_experience` supplies the offline `scenes`
+sequence for two controller changes and return to shared lighting (#1805).
 Object contents item menus share `ui/object_actions::task_copy_request` and
 `app/contents_copy.rs` with the Open window's full-copy button. The editor
 queues one `build::ui::Request::CopyContents` for its selection; both editor
