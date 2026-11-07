@@ -108,6 +108,7 @@ pub mod user_info;
 pub mod voice_moderation;
 pub mod windlight_presets;
 pub mod worldmap;
+pub mod worn_listed;
 
 #[cfg(test)]
 mod automated_chat_tests;
@@ -417,6 +418,11 @@ pub struct World {
     /// them or they are in reach again (parked.rs).
     parked: HashMap<RegionHandle, parked::Parked>,
     appearances: HashMap<Uuid, (AvatarAppearance, u64)>,
+    /// The worn objects each avatar's last AvatarAppearance listed, kept
+    /// even when the message itself is dropped (stale, no parameters): the
+    /// Legacy Viewer fills mSimAttachments in parseAppearanceMessage, before
+    /// those checks. Read by the Dev Toolbox's J2 only (world/worn_listed.rs).
+    listed_worn: HashMap<Uuid, Vec<(Uuid, u8)>>,
     appearance_counter: u64,
     /// Bakes the scene swapped in, by avatar (`refresh_bakes`).
     bake_refreshes: HashMap<Uuid, u64>,
@@ -787,6 +793,7 @@ impl World {
             region_left: None,
             parked: HashMap::new(),
             appearances: HashMap::new(),
+            listed_worn: HashMap::new(),
             avatar_poses: HashMap::new(),
             avatar_models: HashMap::new(),
             avatar_shape_dz: HashMap::new(),
@@ -2246,7 +2253,7 @@ impl World {
     /// Worn objects the simulator listed in the avatar's last appearance
     /// (LLVOAvatar::mSimAttachments); 0 when it listed none.
     pub fn announced_attachments(&self, avatar: &Uuid) -> usize {
-        self.appearances.get(avatar).map(|(a, _)| a.attachments as usize).unwrap_or(0)
+        self.appearances.get(avatar).map_or(0, |(a, _)| a.attachments.len())
     }
 
     /// Inventory items attached to our avatar (AttachItemID name-values).
@@ -2993,6 +3000,7 @@ impl World {
             }
             NetEvent::Appearance(a) => {
                 let id = a.avatar_id;
+                self.listed_worn.insert(id, a.attachments.clone());
                 let own = id == self.agent_id;
                 let received = if own {
                     self.appearance_cof_version(&id).max(self.outfit.stepped_cof_version())
@@ -5919,7 +5927,7 @@ mod appearance_tests {
             cof_version,
             appearance_version: 1,
             hover_height: 0.0,
-            attachments: 0,
+            attachments: Vec::new(),
         }
     }
 
