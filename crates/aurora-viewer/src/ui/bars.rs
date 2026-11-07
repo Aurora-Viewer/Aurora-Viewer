@@ -92,6 +92,8 @@ pub enum BarAction {
     /// 360capture): the photo window in its 360° format, or closed when it
     /// is already open in it.
     Photo360,
+    /// The toolbar's Gaming mode, on or off (app/gaming_mode.rs).
+    ToggleGamingMode,
     /// Our profile on its Picks tab, or closed when Picks is shown
     /// (Avatar.TogglePicks, llviewermenu.cpp).
     MyPicks,
@@ -2750,6 +2752,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // Avatar.AlignToggle: the Compass in its saved layout
         "avatar_align" => toggle(super::avatar_align::window(panels.avatar_align_mini), &mut panels.avatar_align),
         "face_nearest_avatar" => return BarAction::FaceNearestAvatar,
+        "gaming_mode" => return BarAction::ToggleGamingMode,
         _ => {}
     }
     BarAction::None
@@ -3533,6 +3536,8 @@ pub(crate) fn toolbar_row(
             toolbar.picks_active
         } else if b.command == "photo_roll" {
             toolbar.photo_roll_active
+        } else if b.command == "gaming_mode" {
+            toolbar.gaming_mode_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
         } else if b.command == "name_tags" {
