@@ -50,7 +50,8 @@ fn sample_tex(t:u32,uv:vec2<f32>)->vec4<f32> {{return vec4<f32>(1.0);}}
 fn eval_material(v:VsOut,front:bool)->Material {{return Material(records[v.record].base_color);}}
 fn shade_material(v:VsOut,m:Material)->Material {{return m;}}
 fn rez_alpha(r:DrawRecord,v:VsOut)->f32 {{return 1.0;}}
-fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32> {{return vec4<f32>(1.0);}}
+fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>,c:f32)->vec4<f32> {{return vec4<f32>(1.0);}}
+fn normal_composition(r:DrawRecord)->f32 {{return 0.0;}}
 {fragments}
 @vertex fn vs(@builtin(vertex_index) vertex:u32,@builtin(instance_index) instance:u32)->VsOut {{
     let positions=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));
