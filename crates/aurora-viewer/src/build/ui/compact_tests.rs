@@ -2481,3 +2481,111 @@ fn face_selection_can_be_enabled_in_general_and_disabled_in_shape() {
         }
     }
 }
+
+/// Selects the transparency field of the texture section and types `text`,
+/// then finishes with `finish`.
+fn type_transparency(inspector: &mut Inspector, text: &str, finish: egui::Key) -> String {
+    for _ in 0..5 {
+        inspector.show(vec![]);
+    }
+    let (_, texts) = inspector.show(vec![]);
+    let caption = texts
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-transparency"))
+        .unwrap()
+        .1;
+    let (shown, field) = texts
+        .iter()
+        .find(|(_, rect)| (rect.center().y - caption.center().y).abs() < 8.0 && rect.left() > caption.right())
+        .cloned()
+        .unwrap();
+    inspector.show(vec![egui::Event::PointerMoved(field.center())]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: field.center(),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    assert!(inspector.ctx.memory(|m| m.focused()).is_some(), "The field must take the keyboard");
+    inspector.tool.out.clear();
+    if !text.is_empty() {
+        inspector.show(vec![egui::Event::Text(text.into())]);
+    }
+    inspector.show(vec![egui::Event::Key {
+        key: finish,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    inspector.show(vec![]);
+    shown
+}
+
+/// #1956: a linked part selected whole after one of its faces was made
+/// transparent shows a mixed transparency. Typing the value hidden under the
+/// "—" (the first face's 0 %) applies it to every face, as LLSpinCtrl::
+/// onEditorCommit + LLPanelFace::sendAlpha (selectionSetAlphaOnly) do; a
+/// face picked alone takes the value alone. Both window styles.
+#[test]
+fn typed_transparency_reaches_every_selected_face_even_over_a_mixed_value() {
+    let sent = |inspector: &Inspector| {
+        inspector
+            .tool
+            .out
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command,
+                    aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::SetTextures { .. })
+                )
+            })
+            .count()
+    };
+    for legacy in [false, true] {
+        let style = if legacy { "Legacy" } else { "Aurora" };
+        for (text, finish, applied) in [
+            ("0", egui::Key::Enter, true),
+            ("0", egui::Key::Tab, true),
+            ("0", egui::Key::Escape, false),
+            ("", egui::Key::Enter, false),
+        ] {
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 3;
+            let idx = inspector.tool.sel_prims(&inspector.world)[0];
+            let n = inspector.tool.num_faces(&inspector.world, idx);
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            Arc::make_mut(object.te.as_mut().unwrap()).faces[2].color[3] = 0.0;
+            let shown = type_transparency(&mut inspector, text, finish);
+            assert_eq!(shown, "—", "{style}: a whole prim with one transparent face is mixed");
+            let te = inspector.world.objects.get(idx).unwrap().te.clone().unwrap();
+            let alphas: Vec<f32> = te.faces[..n].iter().map(|f| f.color[3]).collect();
+            let all_opaque = alphas.iter().all(|a| *a == 1.0);
+            assert_eq!(all_opaque, applied, "{style} {text:?} {finish:?}: {alphas:?}");
+            assert_eq!(
+                sent(&inspector),
+                usize::from(applied),
+                "{style} {text:?} {finish:?}: one ObjectImage"
+            );
+        }
+
+        // One face picked alone: only that face changes.
+        let mut inspector = material_inspector();
+        inspector.settings.legacy_window = legacy;
+        inspector.tool.tab = 3;
+        inspector.tool.edit_mode = EditMode::Face;
+        inspector.tool.faces.insert(inspector.tool.selection[0], vec![2]);
+        let idx = inspector.tool.sel_prims(&inspector.world)[0];
+        let n = inspector.tool.num_faces(&inspector.world, idx);
+        let shown = type_transparency(&mut inspector, "100", egui::Key::Enter);
+        assert_eq!(shown, "0", "{style}: one opaque face");
+        let te = inspector.world.objects.get(idx).unwrap().te.clone().unwrap();
+        for (face, f) in te.faces[..n].iter().enumerate() {
+            assert_eq!(f.color[3], if face == 2 { 0.0 } else { 1.0 }, "{style}: face {face}");
+        }
+        assert_eq!(sent(&inspector), 1);
+    }
+}
