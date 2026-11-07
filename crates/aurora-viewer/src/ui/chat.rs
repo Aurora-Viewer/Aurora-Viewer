@@ -5059,6 +5059,7 @@ fn object_sender(resp: &egui::Response, p: &Palette, world: &World, line: &crate
 /// in the transcript's own menu where it has one.
 pub(super) fn line_object_sender(r: egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
     let Some(id) = line_object(line) else { return };
+    line_menu::demo_mark_object(&r);
     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
     if let Some(menu) = menu {
         line_menu::sender(&r, menu, id, line);
