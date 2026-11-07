@@ -283,6 +283,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "recent" | "recent-period" => row(Page::Inventory, 0, tr!("ui-inventory-recent-period")),
         "auto-accept" => row(Page::Inventory, 0, tr!("received-auto-accept")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
+        "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
         _ => None,
     };
     let audio = match what {
@@ -408,8 +409,8 @@ pub struct OptionsUi {
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
     pub cache_usage: u64,
     pub cache_clearing: bool,
-    /// Detected video memory (MB) and integrated GPU; set by the app.
-    pub vram: (Option<u64>, bool),
+    /// Detected dedicated/shared heaps (MB) and integrated GPU; set by the app.
+    pub vram: (Option<u64>, Option<u64>, bool),
     /// The GPUs that can draw the viewer, the one in use, and why the
     /// dedicated one may not be drawing; set by the app as soon as the
     /// renderer is created, so the login screen has them too (#894). The
@@ -427,10 +428,10 @@ pub struct OptionsUi {
     /// Media plugins folder found (empty: none) and plugins running.
     pub media_plugins: String,
     pub media_running: usize,
-    /// Aurora's media plugins pack (set by the app), and its "Retry" button
-    /// (cleared by the app).
+    /// Aurora's media plugins pack (set by the app), and its "Download" or
+    /// "Retry" button (cleared by the app).
     pub media_pack: crate::media::pack::PackState,
-    pub media_pack_retry: bool,
+    pub media_pack_download: bool,
     /// The account's media filter list while logged in (set by the app when
     /// it changes); the changes made here, applied by the app; the site
     /// being typed.
@@ -544,6 +545,13 @@ impl OptionsUi {
         self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-video-volume")));
     }
 
+    /// Opens Preferences › Camera › Behavior on the camera's limits (the
+    /// login card of `camera_limits_notice.rs`).
+    pub fn open_camera_limits(&mut self) {
+        self.open(Page::Camera, 1);
+        self.reveal = Some((Page::Camera, 1, aurora_i18n::tr!("ui-options-camera-unrestricted-camera")));
+    }
+
     /// Opens Preferences › Chat on the GIF picker's settings (#932).
     pub fn open_gifs(&mut self) {
         self.open(Page::Chat, 0);
@@ -635,6 +643,9 @@ pub struct OptionsResult {
     pub friends_only_keep: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
     pub open_dev_toolbox: bool,
+    /// "Remove Aurora from this computer" (Language and updates): the app
+    /// asks for the confirmation.
+    pub uninstall: bool,
     /// Back up the settings to a file the user chooses.
     pub back_up: bool,
     /// Choose a backup to restore (then `restore_modal` confirms it).
@@ -1046,6 +1057,30 @@ fn run_page(cx: &mut Cx, page: Page, tab: Option<usize>) {
     }
 }
 
+/// What Preferences says of each setting, in the interface's language: its
+/// path (`camera.fov`, with no space), the row's label and its hint. For the
+/// Debug Settings window, whose list is the settings themselves.
+pub fn describe_settings() -> Vec<(String, String, String)> {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut s = Settings::default();
+    let d = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut r = OptionsResult::default();
+    let mut out = Vec::new();
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Collect, "");
+        for page in Page::ALL {
+            run_page(&mut cx, page, None);
+        }
+        out = std::mem::take(&mut cx.described)
+            .into_iter()
+            .map(|(path, label, hint)| (path.replace(' ', ""), label, hint))
+            .collect();
+    });
+    out
+}
+
 /// The pages counted (modified rows, search hits), nothing drawn.
 fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult) {
     let query = st.query.clone();
@@ -1096,9 +1131,8 @@ fn count_due(st: &OptionsUi, now: f64, input: bool) -> bool {
             .is_none_or(|(at, query)| now - at >= COUNT_REFRESH || now < *at || *query != st.query)
 }
 
-/// One frame of `body` outside the window (tests), its textures dropped as
-/// a renderer would take them.
-#[cfg(test)]
+/// One frame of `body` outside the window (tests, `describe_settings`), its
+/// textures dropped as a renderer would take them.
 pub(crate) fn run_ui(ctx: &egui::Context, raw: egui::RawInput, body: impl FnMut(&mut egui::Ui)) {
     let mut output = ctx.run_ui(raw, body);
     output.textures_delta.clear();

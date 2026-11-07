@@ -33,6 +33,7 @@ pub mod context;
 pub mod controls;
 pub mod crosshair;
 pub mod debug_overlay;
+pub mod debug_settings;
 pub mod dev_toolbox;
 pub mod display_name;
 pub mod emoji;
@@ -74,6 +75,7 @@ pub mod marketplace;
 pub mod marketplace_listings;
 pub mod media;
 pub mod media_filter;
+pub mod media_pack;
 pub mod menu;
 pub mod minimap;
 pub mod money_tracker;
@@ -128,6 +130,7 @@ pub mod texture_picker;
 #[cfg(test)]
 mod theme_guard;
 pub mod toolbar;
+pub mod uninstall;
 pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
@@ -146,6 +149,7 @@ pub struct Panels {
     pub chat: bool,
     pub perf: bool,
     /// The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D).
+    pub debug_settings: bool,
     pub dev_toolbox: bool,
     /// Advanced › Region console (SimConsoleAsync, estate managers).
     pub sim_console: bool,
@@ -231,6 +235,7 @@ impl Panels {
         Panels {
             chat: settings.show_chat,
             perf: settings.show_perf,
+            debug_settings: false,
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,

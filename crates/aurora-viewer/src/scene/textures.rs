@@ -106,6 +106,9 @@ const PAGE_WAITS: usize = 16;
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(2);
 /// The memory budget is checked this often (a query to the driver).
 const BUDGET_EVERY: Duration = Duration::from_millis(250);
+/// Textures left without a slot by a full table are given one this often
+/// at most (`TextureStreamer::give_slots`).
+const RESLOT_EVERY: Duration = Duration::from_millis(250);
 /// Textures lowered a second under memory pressure, and per frame at least
 /// and at most: GPU copies of their coarser levels, small (Firestorm scales
 /// down within its 2 to 5 ms of texture work a frame, at least five
@@ -860,13 +863,6 @@ fn full_size(e: &Entry) -> Option<(u32, u32)> {
     }
 }
 
-/// Width of a texture's UI copy decoded at `discard` or coarser: no finer
-/// than the level that fits 256 px (`texture_cache::preview_discard`).
-fn ui_width(width: u32, height: u32, discard: u8) -> u32 {
-    let level = texture_cache::preview_discard(width, height).max(discard);
-    width.div_ceil(1 << level.min(31))
-}
-
 /// Bytes of a texture's mip chain at a discard level, about (a third more
 /// than its level 0); 0 while its size is not known.
 fn bytes_at(e: &Entry, discard: u8) -> u64 {
@@ -1053,6 +1049,15 @@ pub struct TextureStreamer {
     /// `report_slotless`).
     slotless: usize,
     slotless_unreported: usize,
+    /// The textures without a slot, given one as soon as the table has
+    /// room (`give_slots`), and those that got theirs since the scene last
+    /// took them (`take_reslotted`): what draws them still holds the white
+    /// texture and is built again. Without it a texture worn or in sight
+    /// stayed white for as long as it was used, until the next login
+    /// (#2822).
+    slotless_ids: Vec<Uuid>,
+    reslotted: Vec<Uuid>,
+    last_reslot: Instant,
     /// Textures that just became unavailable (`is_unavailable`): `upload`
     /// points their slot at the missing grey, so that their faces leave the
     /// rez grid (`textures::MISSING`).
@@ -1206,32 +1211,52 @@ impl PreviewSource {
         {
             return Some(image(w, h, pixels));
         }
+        let wanted = self.size.map(|(width, height)| {
+            let discard = texture_cache::preview_discard(width, height).max(self.decoded.unwrap_or(0));
+            texture_cache::discard_size(width, height, discard)
+        });
+        // (a coarser BC7 preview is kept for when the JPEG 2000 file gives
+        // nothing: a cache-only load with a .part file that fails to decode)
+        let mut coarse = None;
         if let Some(texture_cache::Transcoded::Bc7(cached)) = texture_cache::read_preview(&self.blocks)
-            && let Some((w, h, blocks)) = cached.levels.first()
-            && let Some(rgba) = aurora_render::bc7::decode_level(blocks, *w, *h)
+            && let Some((w, h, blocks)) = cached.levels.into_iter().next()
         {
-            return Some(image(*w, *h, rgba));
+            if wanted.is_none_or(|wanted| texture_cache::preview_is_fine_enough((w, h), wanted))
+                && let Some(rgba) = aurora_render::bc7::decode_level(&blocks, w, h)
+            {
+                return Some(image(w, h, rgba));
+            }
+            coarse = Some((w, h, blocks));
         }
-        let bytes = if self.bytes.is_empty() {
-            // Progressive downloads may only have a .part cache. Their ready
-            // coarse pixels are already visible in the main scene.
-            crate::cache::read(&self.jpeg)
-                .or_else(|_| crate::cache::read(self.jpeg.with_extension("part")))
-                .ok()
-                .map(Arc::new)?
-        } else {
-            self.bytes
-        };
-        let info = aurora_assets::j2k_info(&bytes)?;
-        // A progressive stream may only hold the coarser level already
-        // visible in the world. Never ask these bytes for a finer decode.
-        let discard = texture_cache::preview_discard(info.width, info.height).max(self.decoded.unwrap_or(0));
-        let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
-        Some(image(
-            pixels.width,
-            pixels.height,
-            super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize),
-        ))
+        let decoded = self.decoded;
+        let bytes = self.bytes;
+        let jpeg = self.jpeg;
+        let finer = (|| {
+            let bytes = if bytes.is_empty() {
+                // Progressive downloads may only have a .part cache. Their ready
+                // coarse pixels are already visible in the main scene.
+                crate::cache::read(&jpeg)
+                    .or_else(|_| crate::cache::read(jpeg.with_extension("part")))
+                    .ok()
+                    .map(Arc::new)?
+            } else {
+                bytes
+            };
+            let info = aurora_assets::j2k_info(&bytes)?;
+            // A progressive stream may only hold the coarser level already
+            // visible in the world. Never ask these bytes for a finer decode.
+            let discard = texture_cache::preview_discard(info.width, info.height).max(decoded.unwrap_or(0));
+            let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
+            Some(image(
+                pixels.width,
+                pixels.height,
+                super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize),
+            ))
+        })();
+        finer.or_else(|| {
+            let (w, h, blocks) = coarse?;
+            aurora_render::bc7::decode_level(&blocks, w, h).map(|rgba| image(w, h, rgba))
+        })
     }
 }
 
@@ -1319,6 +1344,9 @@ impl TextureStreamer {
             evicted: Vec::new(),
             slotless: 0,
             slotless_unreported: 0,
+            slotless_ids: Vec::new(),
+            reslotted: Vec::new(),
+            last_reslot: Instant::now(),
             unavailable: Vec::new(),
             trash: Trash::default(),
             cache_writer: None,
@@ -1355,13 +1383,11 @@ impl TextureStreamer {
 
     /// The transcoded chain of a texture (`texture_cache.rs`).
     fn transcoded_path(cache_dir: &std::path::Path, id: &Uuid) -> PathBuf {
-        cache_dir.join("tex").join(format!("{id}.bc7"))
+        crate::cache::path(cache_dir, "tex", id, "bc7")
     }
 
     fn cache_path(cache_dir: &std::path::Path, id: &Uuid, complete: bool) -> PathBuf {
-        cache_dir
-            .join("tex")
-            .join(format!("{id}.{}", if complete { "j2c" } else { "part" }))
+        crate::cache::path(cache_dir, "tex", id, if complete { "j2c" } else { "part" })
     }
 
     /// Reference a texture; returns its bindless slot (placeholder until loaded).
@@ -1602,6 +1628,9 @@ impl TextureStreamer {
         });
         e.urgent = own_bake(&self.own_bakes, &e.source);
         Self::settle(&mut self.todo, &mut self.counts, id, e);
+        if slot == NO_SLOT {
+            self.slotless_ids.push(id);
+        }
         slot
     }
 
@@ -1670,11 +1699,24 @@ impl TextureStreamer {
         self.local_slots.clear();
         self.slotless = 0;
         self.slotless_unreported = 0;
+        self.slotless_ids.clear();
+        // (the scene builds everything again on the new renderer)
+        self.reslotted.clear();
         self.staging = None;
         self.generation = self.generation.wrapping_add(1);
         let ids: Vec<Uuid> = self.entries.keys().copied().collect();
         for id in ids {
+            // (a full table evicts unused textures on the way)
+            if !self.entries.contains_key(&id) {
+                continue;
+            }
             let slot = self.new_slot(new);
+            let Some(e) = self.entries.get_mut(&id) else {
+                if slot != NO_SLOT {
+                    new.free(slot);
+                }
+                continue;
+            };
             set_slot_alpha(
                 &mut self.alpha_by_slot,
                 &mut self.generation,
@@ -1682,9 +1724,9 @@ impl TextureStreamer {
                 slot,
                 AlphaKind::Opaque,
             );
-            let Some(e) = self.entries.get_mut(&id) else {
-                continue;
-            };
+            if slot == NO_SLOT {
+                self.slotless_ids.push(id);
+            }
             e.slot = slot;
             e.decoded = None;
             e.gpu_size = (0, 0);
@@ -1706,22 +1748,109 @@ impl TextureStreamer {
     /// release first, instead of after `evict_after`: on arrival in a region
     /// they are those of the region just left, and a texture in use is
     /// never the one that goes without. [`NO_SLOT`], counted for the log,
-    /// when every slot holds a texture in use.
+    /// when every slot holds a texture in use (`give_slots` gives it one
+    /// later).
     fn new_slot(&mut self, table: &mut impl SlotTable) -> u32 {
+        self.free_slot(table).unwrap_or_else(|| {
+            // (drawn white, and nothing decoded for it is sent: `upload`)
+            self.slotless += 1;
+            self.slotless_unreported += 1;
+            NO_SLOT
+        })
+    }
+
+    /// A slot showing the placeholder, after the unused textures gave
+    /// theirs back if the table is full (`new_slot`).
+    fn free_slot(&mut self, table: &mut impl SlotTable) -> Option<u32> {
         if let Some(slot) = table.placeholder() {
-            return slot;
+            return Some(slot);
         }
         let entries = &self.entries;
         let unused = eviction_round(&mut self.unused, Instant::now(), Duration::ZERO, |id, since| {
             evictable(entries, id, since)
         });
         self.evict(table, unused);
-        table.placeholder().unwrap_or_else(|| {
-            // (drawn white, and nothing decoded for it is sent: `upload`)
-            self.slotless += 1;
-            self.slotless_unreported += 1;
-            NO_SLOT
-        })
+        table.placeholder()
+    }
+
+    /// The textures in use that went without a slot get one, as soon as the
+    /// table has room or holds unused textures (a region left, objects
+    /// gone): they are loaded again into it, from what they hold (as after a
+    /// device loss), and listed for the scene (`take_reslotted`). The
+    /// Legacy Viewer has no such table: a texture always has its own GL
+    /// name (LLImageGL::createGLTexture). Unused ones wait: met again, they
+    /// are given one first; else they are evicted. At most every
+    /// [`RESLOT_EVERY`]: each round makes the scene look for their users.
+    fn give_slots(&mut self, table: &mut impl SlotTable, now: Instant) {
+        if self.slotless_ids.is_empty() || now.duration_since(self.last_reslot) < RESLOT_EVERY {
+            return;
+        }
+        self.last_reslot = now;
+        let mut waiting = std::mem::take(&mut self.slotless_ids);
+        let (mut i, mut given) = (0, 0);
+        while i < waiting.len() {
+            let id = waiting[i];
+            match self.entries.get(&id) {
+                // (evicted, or given a slot through a device loss)
+                None => {
+                    waiting.swap_remove(i);
+                    continue;
+                }
+                Some(e) if e.slot != NO_SLOT => {
+                    waiting.swap_remove(i);
+                    continue;
+                }
+                Some(e) if e.refs == 0 => {
+                    i += 1;
+                    continue;
+                }
+                Some(_) => {}
+            }
+            let Some(slot) = self.free_slot(table) else {
+                break;
+            };
+            let Some(e) = self.entries.get_mut(&id) else {
+                table.free(slot);
+                waiting.swap_remove(i);
+                continue;
+            };
+            waiting.swap_remove(i);
+            self.slotless = self.slotless.saturating_sub(1);
+            set_slot_alpha(
+                &mut self.alpha_by_slot,
+                &mut self.generation,
+                &mut self.alpha_changes,
+                slot,
+                AlphaKind::Opaque,
+            );
+            e.slot = slot;
+            e.decoded = None;
+            e.gpu_size = (0, 0);
+            e.alpha = AlphaKind::Opaque;
+            if !e.busy() {
+                // as `gpu_reset_into`: read again, or decoded from memory
+                e.cache_state = if e.cache_state == 3 || e.data.is_empty() { 0 } else { 2 };
+            }
+            if e.unavailable() {
+                self.unavailable.push(id);
+            }
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
+            self.reslotted.push(id);
+            given += 1;
+        }
+        if given > 0 {
+            log::info!(
+                "texture table: {given} textures in use have a slot again, {} still without",
+                waiting.len()
+            );
+        }
+        self.slotless_ids = waiting;
+    }
+
+    /// The textures that got a slot since the last call (`give_slots`):
+    /// the faces drawing them still hold the white texture.
+    pub fn take_reslotted(&mut self, out: &mut Vec<Uuid>) {
+        out.append(&mut self.reslotted);
     }
 
     /// Forget evicted textures: their slots go back to the table, and what
@@ -1773,7 +1902,7 @@ impl TextureStreamer {
         let new = std::mem::take(&mut self.slotless_unreported);
         if new > 0 {
             log::warn!(
-                "texture table full ({capacity} slots, all holding a texture in use): {new} more textures have none, {} in all; they are drawn white until nothing uses them and they are met again",
+                "texture table full ({capacity} slots, all holding a texture in use): {new} more textures have none, {} in all; they are drawn white until a slot is free",
                 self.slotless
             );
         }
@@ -1906,7 +2035,7 @@ impl TextureStreamer {
             let source = self.preview_source(&id);
             self.ui_previews.request(id, source, jobs);
         }
-        self.note_usage(&id, 256.0);
+        self.note_usage_fixed(&id, 256.0);
     }
 
     pub fn release_transient_ui_image(&mut self, id: &Uuid) {
@@ -1930,8 +2059,14 @@ impl TextureStreamer {
     /// Width of the finest UI copy of a texture (its full size halved until
     /// it fits 256 px), once its header is known.
     pub fn ui_image_width(&self, id: &Uuid) -> Option<u32> {
+        self.ui_image_size(id).map(|(width, _)| width)
+    }
+
+    /// Dimensions of the finest copy requested for an interface image.
+    pub fn ui_image_size(&self, id: &Uuid) -> Option<(u32, u32)> {
         let (width, height) = self.full_size(id)?;
-        Some(ui_width(width, height, 0))
+        let discard = texture_cache::preview_discard(width, height);
+        Some(texture_cache::discard_size(width, height, discard))
     }
 
     /// Keep loading a texture whose UI copy came out `have` px wide, from
@@ -1940,15 +2075,24 @@ impl TextureStreamer {
     /// copy comes through `take_ui_image`, from the next upload, or from a
     /// worker when a finer level is already resident.
     pub fn refine_ui_image(&mut self, id: Uuid, have: u32, jobs: &Jobs) {
-        self.note_usage(&id, 256.0);
+        self.refine_ui_image_size(id, (have, have), jobs);
+    }
+
+    pub fn refine_ui_image_size(&mut self, id: Uuid, have: (u32, u32), jobs: &Jobs) {
+        self.note_usage_fixed(&id, 256.0);
         if self.ui_ready.contains_key(&id) {
             return;
         }
         let finer = self
             .entries
             .get(&id)
-            .and_then(|e| Some(ui_width(e.info?.width, e.info?.height, e.decoded?)))
-            .is_some_and(|width| width > have);
+            .and_then(full_size)
+            .zip(self.entries.get(&id).and_then(|e| e.decoded))
+            .is_some_and(|((width, height), decoded)| {
+                let discard = texture_cache::preview_discard(width, height).max(decoded);
+                let target = texture_cache::discard_size(width, height, discard);
+                target.0 > have.0 || target.1 > have.1
+            });
         if finer {
             let source = self.preview_source(&id);
             self.ui_previews.request(id, source, jobs);
@@ -2765,8 +2909,8 @@ impl TextureStreamer {
                         e.data = Arc::default();
                         e.complete = false;
                         e.info = None;
-                        let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.j2c")));
-                        let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.part")));
+                        let _ = std::fs::remove_file(Self::cache_path(&self.cache_dir, &id, true));
+                        let _ = std::fs::remove_file(Self::cache_path(&self.cache_dir, &id, false));
                     }
                     e.retry_at = Some(Instant::now() + Duration::from_secs(2u64.pow(e.failures.min(6))));
                     Self::settle(&mut self.todo, &mut self.counts, id, e);
@@ -2781,18 +2925,33 @@ impl TextureStreamer {
     /// streaming path of grid textures (placeholder, then upgrades).
     pub fn install_demo_stress(&mut self, renderer: &mut Renderer, textures: impl Iterator<Item = u32>) {
         for i in textures {
-            let id = crate::demo::stress_texture(i);
-            let _ = self.acquire(renderer, id, TexSource::Asset);
-            for discard in [2, 0] {
-                self.on_job(texture_result(
-                    id,
-                    discard as u8,
-                    crate::demo::stress_texture_mips(i, discard),
-                    (AlphaKind::Opaque, false),
-                    None,
-                    self.staging.as_deref(),
-                ));
+            let _ = self.acquire(renderer, crate::demo::stress_texture(i), TexSource::Asset);
+            self.feed_demo_stress(i);
+        }
+    }
+
+    /// AURORA_DEMO_TEXTURES with a full table (AURORA_TEXTURE_SLOTS): the
+    /// stress textures given a slot again (`give_slots`) have no data to
+    /// load from; their texels come again, as a download would bring them.
+    pub fn refeed_demo_stress(&mut self, textures: impl Iterator<Item = u32>) {
+        for i in textures {
+            if self.demo_needs_data(&crate::demo::stress_texture(i)) {
+                self.feed_demo_stress(i);
             }
+        }
+    }
+
+    fn feed_demo_stress(&mut self, i: u32) {
+        let id = crate::demo::stress_texture(i);
+        for discard in [2, 0] {
+            self.on_job(texture_result(
+                id,
+                discard as u8,
+                crate::demo::stress_texture_mips(i, discard),
+                (AlphaKind::Opaque, false),
+                None,
+                self.staging.as_deref(),
+            ));
         }
     }
 
@@ -3049,6 +3208,7 @@ impl TextureStreamer {
         };
         let evict = eviction_round(&mut self.unused, now, evict_after, |id, since| evictable(entries, id, since));
         self.evict(renderer, evict);
+        self.give_slots(renderer, now);
         if !self.evicted.is_empty() {
             // the J2C data and sculpt maps go with the entries (those a
             // full table took since the last frame too): freed off this
@@ -3199,6 +3359,7 @@ impl TextureStreamer {
         // "crowded" below stays on the driver's own figure)
         let shared = video.map(|v| aurora_render::vram::VideoMemory {
             budget: crate::instances::share_cap(v.budget, &self.peers),
+            shared_budget: crate::instances::share_cap(v.shared_budget, &self.peers),
             ..v
         });
         let load = self.gpu.get();
@@ -3368,6 +3529,8 @@ const KEEP_RGBA_FROM: u32 = 128;
 /// foliage, grass, fences and hair cut out of a texture do not thin out with
 /// the distance. The Legacy Viewer leaves the box-filtered mips of the
 /// driver (LLImageGL), which do; this is a deliberate improvement.
+/// Coverage restoration only raises alpha: lowering it could erase a HUD
+/// panel whose creator chose a higher cutoff than the automatic 0.5.
 /// `AURORA_ALPHA_COVERAGE=0` keeps the plain mips, to compare.
 pub(crate) fn alpha_coverage_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -3385,8 +3548,8 @@ fn mips_alpha_weighted() -> bool {
 
 /// The mip chain of a decoded texture, with its alpha coverage kept when
 /// its alpha is a mask. The texture does not know the cutoff of the faces
-/// that will use it: the default one (0.5) is taken, the cutoff of every
-/// face whose alpha is detected as a mask and of most masked materials.
+/// that will use it: the default one (0.5) is taken. The adjustment may
+/// never lower alpha, preserving what plain mips draw at every cutoff.
 fn mips_for(width: u32, height: u32, rgba: Vec<u8>, levels: u32, alpha: AlphaKind) -> Vec<(u32, u32, Vec<u8>)> {
     let mut mips = if mips_alpha_weighted() {
         aurora_render::build_mips_alpha_weighted(width, height, rgba, levels)
@@ -3544,6 +3707,17 @@ fn read_job(dir: &std::path::Path, id: Uuid, want: u8, blocks: bool, pool: Optio
     }
 }
 
+/// Whether the BC7 blocks of a decoded texture hold its alpha. Its class
+/// does not say: alpha of 250 to 254 is classed opaque ([`classify_alpha`]),
+/// so a face with no material stays out of the alpha passes, but a Mask
+/// material at a cutoff of 255 must still hide those texels (#2276; the
+/// Legacy Viewer discards `alpha < minimum_alpha`, with `mAlphaMaskCutoff`
+/// = cutoff / 255, llvovolume.cpp). The three-channel encoding stores alpha
+/// as 254 or 255, whatever the source.
+fn bc7_keeps_alpha(alpha: AlphaKind, alpha_channel: bool, rgba: &[u8]) -> bool {
+    alpha != AlphaKind::Opaque || (alpha_channel && rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 255))
+}
+
 fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &DecodeMeter) -> JobResult {
     let DecodeJob {
         id,
@@ -3564,6 +3738,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
             };
             let alpha_channel = img.components == 4 || img.components == 2;
             let alpha = if alpha_channel { classify_alpha(&rgba) } else { AlphaKind::Opaque };
+            let keep_alpha = bc7_keeps_alpha(alpha, alpha_channel, &rgba);
             let rgba_done = start.elapsed();
             let sculpt = keep_pixels.then(|| {
                 Arc::new(SculptMap {
@@ -3577,9 +3752,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
             let mips = mips_for(img.width, img.height, rgba, 16, alpha);
             let mips_done = start.elapsed();
             let tried = bc7 && pool.is_some();
-            let compressed = tried
-                .then(|| aurora_render::bc7::encode_chain(&mips, alpha != AlphaKind::Opaque))
-                .flatten();
+            let compressed = tried.then(|| aurora_render::bc7::encode_chain(&mips, keep_alpha)).flatten();
             let bc7_done = start.elapsed();
             let cache = cache.as_ref().map(|(path, info, writer)| CacheWrite {
                 path,
@@ -3604,6 +3777,20 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alpha_just_under_opaque_is_kept_though_classed_opaque() {
+        let flat = |a: u8| [90, 120, 200, a].repeat(16 * 16);
+        for a in 250..255 {
+            let rgba = flat(a);
+            assert_eq!(classify_alpha(&rgba), AlphaKind::Opaque, "alpha {a}");
+            assert!(bc7_keeps_alpha(AlphaKind::Opaque, true, &rgba), "alpha {a}");
+        }
+        // really opaque, or an alpha that JPEG 2000 did not carry
+        assert!(!bc7_keeps_alpha(AlphaKind::Opaque, true, &flat(255)));
+        assert!(!bc7_keeps_alpha(AlphaKind::Opaque, false, &flat(250)));
+        assert!(bc7_keeps_alpha(AlphaKind::Mask, true, &flat(255)));
+    }
 
     #[test]
     fn wearable_bakes_use_resident_bc7_pixels_without_jpeg_and_upgrade_progressively() {
@@ -4025,6 +4212,18 @@ mod tests {
         assert_eq!(s.entries[&Uuid::from_u128(1)].want, 0);
         s.recompute_wants();
         assert_eq!(s.entries[&Uuid::from_u128(1)].want, 2);
+    }
+
+    #[test]
+    fn interface_image_resolution_is_not_lowered_by_memory_pressure() {
+        let id = Uuid::from_u128(2);
+        for step in 0..=texture_budget::MAX_PRESSURE {
+            let mut s = pressed(step, vec![(2, large(Some(0)))]);
+            s.set_max_resolution(512);
+            s.note_usage_fixed(&id, 256.0);
+            let (want, _) = wanted(2048.0, None, &s.entries[&id], texture_budget::dropped(step));
+            assert_eq!(want, discard_for(2048.0, 256.0, None), "pressure step {step}");
+        }
     }
 
     #[test]
@@ -4826,6 +5025,66 @@ mod tests {
     }
 
     #[test]
+    fn textures_left_without_a_slot_get_one_once_the_table_has_room() {
+        // every slot holds a texture in use (1) or one of the region just
+        // left (2): a worn texture (7) and one nothing uses now (8) went
+        // without, drawn white, "loaded" as far as the streamer goes
+        let mut s = full_table(&[1], &[]);
+        let mut table = Slots::default();
+        for (n, refs) in [(7, 1), (8, 0)] {
+            let mut e = entry(Some(0), 100.0);
+            (e.slot, e.refs, e.data) = (NO_SLOT, refs, Arc::new(vec![0; 64]));
+            s.entries.insert(id(n), e);
+            s.slotless_ids.push(id(n));
+        }
+        s.slotless = 2;
+        let later = |s: &TextureStreamer| s.last_reslot + RESLOT_EVERY;
+        // the table still full of textures in use: nothing changes
+        let now = later(&s);
+        s.give_slots(&mut table, now);
+        assert_eq!(s.entries[&id(7)].slot, NO_SLOT);
+        assert_eq!((s.slotless_ids.len(), s.slotless), (2, 2));
+        // a slot frees up: not before the next round
+        table.left.push(30);
+        s.give_slots(&mut table, now);
+        assert_eq!(s.entries[&id(7)].slot, NO_SLOT);
+        // the texture in use takes it, loads again from its data, and the
+        // scene hears of it to build its faces again
+        let now = later(&s);
+        s.give_slots(&mut table, now);
+        let e = &s.entries[&id(7)];
+        assert_eq!((e.slot, e.decoded, e.cache_state, e.queued), (30, None, 2, true));
+        let mut out = Vec::new();
+        s.take_reslotted(&mut out);
+        assert_eq!(out, [id(7)]);
+        s.take_reslotted(&mut out);
+        assert_eq!(out.len(), 1);
+        // the unused one waits, and still counts
+        assert_eq!((s.slotless_ids.as_slice(), s.slotless), ([id(8)].as_slice(), 1));
+        assert_eq!(s.entries[&id(8)].slot, NO_SLOT);
+        // used again while the table is full: an unused texture (2) gives
+        // its slot back at once, as to a texture met for the first time
+        let t0 = Instant::now() - Duration::from_secs(5);
+        let mut e = entry(Some(0), 100.0);
+        (e.slot, e.refs, e.unused_since) = (12, 0, Some(t0));
+        s.entries.insert(id(2), e);
+        s.unused.push_back((t0, id(2)));
+        s.entries.get_mut(&id(8)).expect("entry").refs = 1;
+        let now = later(&s);
+        s.give_slots(&mut table, now);
+        assert_eq!(table.freed, [12]);
+        assert!(!s.entries.contains_key(&id(2)));
+        assert_eq!(s.entries[&id(8)].slot, 12);
+        assert!(s.slotless_ids.is_empty());
+        assert_eq!(s.slotless, 0);
+        // one evicted meanwhile simply leaves the list
+        s.slotless_ids.push(id(99));
+        let now = later(&s);
+        s.give_slots(&mut table, now);
+        assert!(s.slotless_ids.is_empty());
+    }
+
+    #[test]
     fn placeholders_then_largest_on_screen_then_oldest() {
         let mut q = PendingUploads::default();
         q.push(pending(1, 0), false, 900.0); // upgrade, large
@@ -4971,12 +5230,14 @@ mod tests {
     /// resident level gives a coarser copy (still to be refined).
     #[test]
     fn ui_copy_width_follows_the_level_held() {
-        assert_eq!(ui_width(1024, 768, 0), 256);
-        assert_eq!(ui_width(1024, 768, 2), 256);
-        assert_eq!(ui_width(1024, 768, 4), 64);
-        assert_eq!(ui_width(128, 128, 0), 128);
-        assert_eq!(ui_width(128, 128, 1), 64);
-        assert_eq!(ui_width(300, 200, 1), 150);
+        assert_eq!(
+            texture_cache::discard_size(1024, 768, texture_cache::preview_discard(1024, 768)),
+            (256, 192)
+        );
+        assert_eq!(texture_cache::discard_size(1024, 768, 4), (64, 48));
+        assert_eq!(texture_cache::discard_size(128, 128, 0), (128, 128));
+        assert_eq!(texture_cache::discard_size(128, 128, 1), (64, 64));
+        assert_eq!(texture_cache::discard_size(300, 200, 1), (150, 100));
     }
 
     #[test]

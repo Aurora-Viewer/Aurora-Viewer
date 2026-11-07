@@ -21,7 +21,7 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, VrView, zoom_lens};
+pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SavedViews, VrView, zoom_lens};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -738,6 +738,15 @@ impl Camera {
         }
     }
 
+    /// LLPickInfo::fetchResults uses calcFocusOffset for both camera focus
+    /// and handle_object_sit's AgentRequestSit. The offset is relative to
+    /// the clicked object's origin but remains in world axes.
+    pub fn object_pick_offset(&self, object: &FocusObject, point: Vec3, ray: Option<(Vec3, Vec3)>) -> Vec3 {
+        let Some(ray) = ray else { return point - object.position };
+        let virtual_camera = self.focus_target + (self.position - self.focus_target) / (1.0 + self.fov_zoom);
+        focus::calc_focus_offset(object, point, ray, self.position, self.forward(), virtual_camera)
+    }
+
     /// Alt+click (LLToolCamera::pickCallback): lock the camera on the
     /// clicked point, inside the clicked object when there is one.
     pub fn alt_focus(
@@ -750,10 +759,7 @@ impl Camera {
     ) {
         self.set_focus_on_avatar(false, true, true, agent, s);
         let focus = match object {
-            Some((_, g)) => {
-                let virtual_camera = self.focus_target + (self.position - self.focus_target) / (1.0 + self.fov_zoom);
-                g.position + focus::calc_focus_offset(&g, point, ray, self.position, self.forward(), virtual_camera)
-            }
+            Some((_, g)) => g.position + self.object_pick_offset(&g, point, Some(ray)),
             None => point,
         };
         self.set_focus_global(Some(focus), object.map(|o| o.0), object.map(|o| o.1), s);
@@ -779,6 +785,20 @@ impl Camera {
                     .zoom_time
                     .max(orbit_angle(a.start_camera - a.start_focus, camera - focus).abs() / PI * 1.35);
             }
+        }
+    }
+
+    /// Keep the displayed framing when automatic appearance movement is
+    /// switched off mid-turn. Manual camera transitions remain independent.
+    pub fn stop_appearance_view(&mut self) {
+        if !self.focus_on_avatar && self.focus_object.is_none() && self.anim.is_none_or(|animation| animation.orbit) {
+            self.anim = None;
+            self.focus_target = self.target;
+            self.focus_object = None;
+            self.focus_geom = None;
+            self.focus_offset_target = (self.position - self.target) / (1.0 + self.fov_zoom);
+            self.focus_offset = self.focus_offset_target;
+            self.smoothing_stop = true;
         }
     }
 
@@ -1041,8 +1061,26 @@ impl Camera {
 
     /// Arrival of a teleport (process_agent_movement_complete): the camera
     /// back on the avatar without animation; FSResetCameraOnTP also drops
-    /// the orbit, the pitch and the zoom (resetView of process_teleport_local).
-    pub fn on_teleport_arrival(&mut self, s: &CameraSettings) {
+    /// the orbit, the pitch and the zoom.
+    ///
+    /// `local`: a teleport inside the region (process_teleport_local). There
+    /// the Legacy Viewer calls resetView only when FSResetCameraOnTP is on;
+    /// off, only the avatar turns (slamLookAt, done by the world): a camera
+    /// on a point or an object, the flycam, the free camera and the zoom stay
+    /// where they are, and a camera on the avatar follows it there. A
+    /// teleport to another region always brings the camera back
+    /// (TELEPORT_START_ARRIVAL's resetView in update_tp_display); Aurora
+    /// keeps the orbit, pitch and zoom there when the switch is off.
+    pub fn on_teleport_arrival(&mut self, s: &CameraSettings, local: bool) {
+        if local && !s.reset_on_teleport {
+            // the eye jumps with the avatar instead of gliding across the
+            // region; a flycam or free camera keeps its own view (and the
+            // free camera its glide back when it ends)
+            if self.flycam.is_none() && self.free.is_none() {
+                self.snap();
+            }
+            return;
+        }
         self.clear_flycam();
         // a free camera stays in the region it left
         self.free = None;
@@ -2273,6 +2311,42 @@ mod tests {
     }
 
     #[test]
+    fn disabling_appearance_movement_stops_mid_turn_and_keeps_manual_camera_controls() {
+        for smoothing in [0.0, 1.0] {
+            let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+            let settings = CameraSettings {
+                smoothing,
+                ..Default::default()
+            };
+            let mut camera = Camera::default();
+            settle(&mut camera, &mut world, &settings);
+            let focus = world.agent.position + Vec3::Z;
+            camera.set_appearance_view(focus + Vec3::X * 3.0, focus, &mut world.agent, &settings);
+            settle(&mut camera, &mut world, &settings);
+            camera.set_appearance_view(focus - Vec3::X * 3.0, focus, &mut world.agent, &settings);
+            for _ in 0..30 {
+                camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+            }
+            let displayed = (camera.position, camera.target);
+            camera.stop_appearance_view();
+            for _ in 0..180 {
+                camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+                assert!(camera.position.abs_diff_eq(displayed.0, 1e-4), "keep the interrupted eye");
+                assert!(camera.target.abs_diff_eq(displayed.1, 1e-4), "keep the interrupted focus");
+            }
+            camera.orbit_drag(100.0, 25.0, 1.0, &mut world.agent);
+            settle(&mut camera, &mut world, &settings);
+            assert!(camera.position.distance(displayed.0) > 0.1, "manual orbit still works");
+            let target = camera.target + Vec3::Z;
+            camera.set_view(target + Vec3::X * 4.0, target, &mut world.agent, &settings);
+            camera.stop_appearance_view();
+            assert!(camera.anim.is_some(), "a manual focus transition is left running");
+            settle(&mut camera, &mut world, &settings);
+            assert!(camera.target.abs_diff_eq(target, 1e-4));
+        }
+    }
+
+    #[test]
     fn appearance_half_turns_animate_at_constant_distance_in_both_directions() {
         for fps in [30, 60, 144] {
             let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
@@ -2468,7 +2542,7 @@ mod tests {
         assert!(cam.free().is_none() && cam.mouselook());
         cam.toggle_mouselook(&mut w.agent, &s);
         cam.start_free(&mut w.agent, &s);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         assert!(cam.free().is_none());
     }
 
@@ -2595,7 +2669,7 @@ mod tests {
         cam.change_to_mouselook(&mut w.agent, &s, false);
         assert!(cam.flycam.is_none());
         cam.flycam = Some(flight);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         assert!(cam.flycam.is_none());
         cam.flycam = Some(flight);
         cam.start_free(&mut w.agent, &s);
@@ -2705,9 +2779,60 @@ mod tests {
         script(&mut w, Uuid::from_u128(123), vec![(12, 1.0), (7, 6.0)]);
         settle(&mut cam, &mut w, &s);
         w.agent.position = Vec3::new(128.0, 128.0, 2100.0);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         cam.update(&mut w, &s, &frame(1.0 / 60.0));
         assert!(cam.position.distance(w.agent.position) < 10.0);
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+    }
+
+    /// FSResetCameraOnTP off (issue #2828): a teleport inside the region
+    /// (process_teleport_local) leaves the camera where it is; one to
+    /// another region (TELEPORT_START_ARRIVAL's resetView) brings it back.
+    #[test]
+    fn return_after_teleporting_off_keeps_the_camera_inside_the_region() {
+        let off = CameraSettings {
+            reset_on_teleport: false,
+            ..Default::default()
+        };
+        let on = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &off);
+        let focus = Vec3::new(135.0, 130.0, 27.0);
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &off);
+        settle(&mut cam, &mut w, &off);
+        let view = (cam.position, cam.target);
+        // off, inside the region: the alt-camera stays on its point
+        w.agent.position = Vec3::new(40.0, 200.0, 30.0);
+        cam.on_teleport_arrival(&off, true);
+        settle(&mut cam, &mut w, &off);
+        assert!(!cam.focus_on_avatar);
+        assert!(cam.position.distance(view.0) < 0.01, "{:?} moved from {:?}", cam.position, view.0);
+        assert!(cam.target.distance(view.1) < 0.01);
+        // the flycam keeps flying
+        let flight = crate::joystick::flycam::Flycam::from_view(view.0, view.1, Vec3::Z, 0.8);
+        cam.flycam = Some(flight);
+        cam.on_teleport_arrival(&off, true);
+        assert!(cam.flycam.is_some());
+        cam.flycam = None;
+        // off, another region: back on the avatar
+        cam.on_teleport_arrival(&off, false);
+        settle(&mut cam, &mut w, &off);
+        assert!(cam.focus_on_avatar);
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+        // off, a camera on the avatar follows it inside the region
+        w.agent.position = Vec3::new(200.0, 60.0, 28.0);
+        cam.on_teleport_arrival(&off, true);
+        cam.update(&mut w, &off, &frame(1.0 / 60.0));
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+        // on, inside the region: back on the avatar too
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &on);
+        settle(&mut cam, &mut w, &on);
+        assert!(!cam.focus_on_avatar);
+        cam.flycam = Some(flight);
+        cam.on_teleport_arrival(&on, true);
+        settle(&mut cam, &mut w, &on);
+        assert!(cam.focus_on_avatar && cam.flycam.is_none());
         assert!(cam.target.distance(w.agent.position) < 3.0);
     }
 

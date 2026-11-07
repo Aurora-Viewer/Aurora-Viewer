@@ -18,6 +18,7 @@ pub mod chat_log;
 pub mod collisions;
 pub mod contact_sets;
 pub mod derender;
+pub mod dialog_names;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
@@ -111,6 +112,8 @@ pub mod worldmap;
 #[cfg(test)]
 mod automated_chat_tests;
 #[cfg(test)]
+mod dialog_name_tests;
+#[cfg(test)]
 mod fee_permission_tests;
 #[cfg(test)]
 mod flash_tests;
@@ -168,6 +171,44 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+    pub max_link_children: Option<u32>,
+    pub animated_object_max_tris: u32,
+}
+
+fn dirty_east_edge(region: &mut Region, y0: u32, y1: u32) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x == 0 || chunks_y == 0 || y0 >= y1 {
+        return;
+    }
+    // a chunk owns its 33 vertices, so a sample on a chunk boundary is also
+    // the last vertex of the chunk below (as Heightmap::apply_patch)
+    let first = (y0.saturating_sub(1) / terrain::CHUNK_CELLS).min(chunks_y - 1);
+    let last = ((y1 - 1) / terrain::CHUNK_CELLS).min(chunks_y - 1);
+    for cy in first..=last {
+        region.dirty_chunks.insert(cy * chunks_x + chunks_x - 1);
+    }
+}
+
+fn dirty_north_edge(region: &mut Region, x0: u32, x1: u32) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x == 0 || chunks_y == 0 || x0 >= x1 {
+        return;
+    }
+    let first = (x0.saturating_sub(1) / terrain::CHUNK_CELLS).min(chunks_x - 1);
+    let last = ((x1 - 1) / terrain::CHUNK_CELLS).min(chunks_x - 1);
+    for cx in first..=last {
+        region.dirty_chunks.insert((chunks_y - 1) * chunks_x + cx);
+    }
+}
+
+fn dirty_northeast_corner(region: &mut Region) {
+    let chunks_x = region.heightmap.size_x / terrain::CHUNK_CELLS;
+    let chunks_y = region.heightmap.size_y / terrain::CHUNK_CELLS;
+    if chunks_x > 0 && chunks_y > 0 {
+        region.dirty_chunks.insert(chunks_y * chunks_x - 1);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -413,6 +454,20 @@ pub struct World {
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
     pub teleporting: bool,
+    /// Teleports completed this session (their AgentMovementComplete): the
+    /// AO ends a sit the teleport ended (`ao::runtime::Frame::teleports`).
+    pub teleport_arrivals: u64,
+    /// Since when a teleport to another region waits for that region's
+    /// lists of our animations (`OWN_ANIMATIONS_WAIT` at most): the AO does
+    /// not act on the list of the region left (`awaiting_own_animations`),
+    /// and the seat's animations are checked in each list that comes.
+    own_animations_awaited: Option<Instant>,
+    /// That region's first list arrived: the AO acts again.
+    own_animations_listed: bool,
+    /// The seat's animations `get_off_for_teleport` stopped, with the seat
+    /// prim that played each: stopped again if the region we arrive in
+    /// still lists them from that seat.
+    teleport_seat_motions: Vec<(Uuid, Uuid)>,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
     pub tp_show_progress: bool,
@@ -596,6 +651,12 @@ pub struct World {
     crossing: bool,
     /// The last arrival was a border crossing: the agent was not placed.
     pub arrived_by_crossing: bool,
+    /// A TeleportLocal waits for its arrival (process_teleport_local).
+    local_teleport: bool,
+    /// The last arrival ended a teleport inside the region (TeleportLocal,
+    /// not TeleportFinish): the camera may stay where it is
+    /// (`Camera::on_teleport_arrival`).
+    pub arrived_by_local_teleport: bool,
     /// Inventory folders asked again after a failed fetch since the agent
     /// last changed region (`InventoryFetchFailed`).
     inventory_retried: HashSet<Uuid>,
@@ -654,6 +715,9 @@ const MAX_CHAT: usize = 2000;
 /// An arrival without teleport this far from where the agent is was not a
 /// walk into a neighbour: the agent is placed as for a teleport.
 const CROSSING_MAX_GAP: f32 = 64.0;
+/// The longest the AO waits, after a teleport to another region, for that
+/// region's first list of our animations (`World::awaiting_own_animations`).
+const OWN_ANIMATIONS_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 /// The typing notices of a conversation with one resident (llinstantmessage.h).
 pub const IM_TYPING_START: u8 = 41;
 pub const IM_TYPING_STOP: u8 = 42;
@@ -771,6 +835,10 @@ impl World {
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
+            teleport_arrivals: 0,
+            own_animations_awaited: None,
+            own_animations_listed: false,
+            teleport_seat_motions: Vec::new(),
             outfit: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
@@ -843,6 +911,8 @@ impl World {
             home_grid: None,
             crossing: false,
             arrived_by_crossing: false,
+            local_teleport: false,
+            arrived_by_local_teleport: false,
             inventory_retried: HashSet::new(),
             origin_shift: Vec3::ZERO,
             left_behind_since: None,
@@ -1139,9 +1209,37 @@ impl World {
         if show_progress {
             self.ui_sounds.push(UiSound::TeleportOut);
         }
+        self.teleport_seat_motions.clear();
         self.get_off_for_teleport();
         // teleportCore: gObjectList.resetDerenderList()
         self.clear_temporary_derenders();
+    }
+
+    /// After a teleport to another region, until that region's first list of
+    /// our animations (at most `OWN_ANIMATIONS_WAIT`): the list still held
+    /// is the region left's. The AO's sit and stand follow the stock states
+    /// of the arrival's list, as the Legacy AO's overrides do
+    /// (AOEngine::override from LLVOAvatar::processAnimationStateChanges);
+    /// ours also stops stock states itself, so it waits for that list
+    /// before sending anything: its stops then reach a region that has the
+    /// animations, and a stale stock sit cannot select the sit again.
+    pub fn awaiting_own_animations(&self, now: Instant) -> bool {
+        !self.own_animations_listed && self.own_animations_window(now)
+    }
+
+    fn own_animations_window(&self, now: Instant) -> bool {
+        self.own_animations_awaited
+            .is_some_and(|since| now.saturating_duration_since(since) < OWN_ANIMATIONS_WAIT)
+    }
+
+    /// The wait after a teleport ends with its window: the seat's motions
+    /// are not stopped in a later list (a new seat may play the same one).
+    fn end_own_animations_wait_if_expired(&mut self, now: Instant) {
+        if self.own_animations_awaited.is_some() && !self.own_animations_window(now) {
+            self.own_animations_awaited = None;
+            self.own_animations_listed = false;
+            self.teleport_seat_motions.clear();
+        }
     }
 
     /// Offset of a region's origin relative to the render origin (main region).
@@ -1313,7 +1411,7 @@ impl World {
 
     fn inventory_cache_path(&self) -> Option<std::path::PathBuf> {
         let dir = self.cache_dir.as_ref()?;
-        (!self.agent_id.is_nil()).then(|| dir.join("inventory").join(format!("{}.inv", self.agent_id)))
+        (!self.agent_id.is_nil()).then(|| crate::cache::path(dir, "inventory", &self.agent_id, "inv"))
     }
 
     /// Apply the inventory cache once its thread has read it (every frame
@@ -1922,7 +2020,7 @@ impl World {
             "ui-experiences-log-notice",
             what = what,
             experience = experience,
-            object = entry.object_name.clone(),
+            object = dialog_names::shown(&entry.object_name).into_owned(),
             parcel = entry.parcel_name.clone()
         );
         self.system_message(text.to_string());
@@ -1969,13 +2067,17 @@ impl World {
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {
         // the network layer already holds the sizes; this keeps every caller safe
         let size = (size.0.clamp(256, MAX_REGION_SIZE), size.1.clamp(256, MAX_REGION_SIZE));
-        if let Some(region) = self.regions.get_mut(&h)
+        let inserted = !self.regions.contains_key(&h);
+        let grew = if let Some(region) = self.regions.get_mut(&h)
             && region.heightmap.grow(size.0, size.1)
         {
             region.dirty_chunks.extend(0..region.heightmap.chunk_count());
             region.terrain_revision += 1;
             region.terrain_surface.applied = None;
-        }
+            true
+        } else {
+            false
+        };
         self.regions.entry(h).or_insert_with(|| Region {
             handle: h,
             name: String::new(),
@@ -1993,10 +2095,147 @@ impl World {
             max_tasks: 0,
             grid_status: Default::default(),
             currency_base_uri: String::new(),
+            max_link_children: None,
+            animated_object_max_tris: 0,
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
-        })
+        });
+        if inserted || grew {
+            self.dirty_terrain_dependents(h);
+        }
+        self.regions.get_mut(&h).expect("region exists")
+    }
+
+    pub(crate) fn terrain_edge_heights(&self, handle: RegionHandle) -> terrain::EdgeHeights {
+        let Some(region) = self.regions.get(&handle) else {
+            return Default::default();
+        };
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        let mut edges = terrain::EdgeHeights {
+            east: vec![None; region.heightmap.size_y as usize + 1],
+            north: vec![None; region.heightmap.size_x as usize + 1],
+        };
+        // only the regions touching each line are sampled (one pass over all
+        // regions, then a few candidates per vertex)
+        let east_x = ox + region.heightmap.size_x;
+        let north_y = oy + region.heightmap.size_y;
+        let touching = |line: u32, along_x: bool| -> Vec<&Region> {
+            self.regions
+                .values()
+                .filter(|n| {
+                    let (nx, ny) = aurora_net::handle_to_origin(n.handle);
+                    if along_x {
+                        ny <= line && line < ny + n.heightmap.size_y
+                    } else {
+                        nx <= line && line < nx + n.heightmap.size_x
+                    }
+                })
+                .collect()
+        };
+        let east_regions = touching(east_x, false);
+        let north_regions = touching(north_y, true);
+        for (y, sample) in edges.east.iter_mut().enumerate() {
+            let (gx, gy) = (east_x, oy + y as u32);
+            *sample = east_regions.iter().find_map(|neighbor| {
+                let (nx, ny) = aurora_net::handle_to_origin(neighbor.handle);
+                let (x, y) = (gx.checked_sub(nx)?, gy.checked_sub(ny)?);
+                if x < neighbor.heightmap.size_x && y < neighbor.heightmap.size_y {
+                    neighbor.heightmap.received_height(x, y)
+                } else {
+                    None
+                }
+            });
+        }
+        for (x, sample) in edges.north.iter_mut().enumerate() {
+            let (gx, gy) = (ox + x as u32, north_y);
+            *sample = north_regions.iter().find_map(|neighbor| {
+                let (nx, ny) = aurora_net::handle_to_origin(neighbor.handle);
+                let (x, y) = (gx.checked_sub(nx)?, gy.checked_sub(ny)?);
+                if x < neighbor.heightmap.size_x && y < neighbor.heightmap.size_y {
+                    neighbor.heightmap.received_height(x, y)
+                } else {
+                    None
+                }
+            });
+        }
+        edges
+    }
+
+    fn dirty_terrain_dependents(&mut self, handle: RegionHandle) {
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        let Some(changed) = self.regions.get(&handle) else { return };
+        let (ex, ey) = (ox + changed.heightmap.size_x, oy + changed.heightmap.size_y);
+        let handles: Vec<_> = self.regions.keys().copied().filter(|h| *h != handle).collect();
+        for candidate in handles {
+            let Some(region) = self.regions.get_mut(&candidate) else { continue };
+            let (cx, cy) = aurora_net::handle_to_origin(candidate);
+            let (cex, cey) = (cx + region.heightmap.size_x, cy + region.heightmap.size_y);
+            // an edge has size + 1 vertices: its last one is at cey / cex
+            if cex == ox {
+                let (lo, hi) = (oy.max(cy), ey.min(cey + 1));
+                if lo < hi {
+                    dirty_east_edge(region, lo - cy, hi - cy);
+                }
+            }
+            if cey == oy {
+                let (lo, hi) = (ox.max(cx), ex.min(cex + 1));
+                if lo < hi {
+                    dirty_north_edge(region, lo - cx, hi - cx);
+                }
+            }
+            if cex == ox && cey == oy {
+                dirty_northeast_corner(region);
+            }
+        }
+    }
+
+    fn dirty_terrain_patch_dependents(&mut self, handle: RegionHandle, patches: &[(u32, u32, u32)]) {
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        if !self.regions.contains_key(&handle) {
+            return;
+        }
+        let west_edges: Vec<_> = patches
+            .iter()
+            .filter(|(x, _, _)| *x == 0)
+            .map(|(_, y, size)| (oy + y, oy + y + size))
+            .collect();
+        let south_edges: Vec<_> = patches
+            .iter()
+            .filter(|(_, y, _)| *y == 0)
+            .map(|(x, _, size)| (ox + x, ox + x + size))
+            .collect();
+        let has_southwest_corner = patches.iter().any(|(x, y, _)| *x == 0 && *y == 0);
+        if west_edges.is_empty() && south_edges.is_empty() {
+            return;
+        }
+        let handles: Vec<_> = self.regions.keys().copied().filter(|h| *h != handle).collect();
+        for candidate in handles {
+            let Some(region) = self.regions.get_mut(&candidate) else { continue };
+            let (cx, cy) = aurora_net::handle_to_origin(candidate);
+            let (cex, cey) = (cx + region.heightmap.size_x, cy + region.heightmap.size_y);
+            if cex == ox {
+                for &(lo, hi) in &west_edges {
+                    let lo = lo.max(cy);
+                    let hi = hi.min(cey + 1);
+                    if lo < hi {
+                        dirty_east_edge(region, lo - cy, hi - cy);
+                    }
+                }
+            }
+            if cey == oy {
+                for &(lo, hi) in &south_edges {
+                    let lo = lo.max(cx);
+                    let hi = hi.min(cex + 1);
+                    if lo < hi {
+                        dirty_north_edge(region, lo - cx, hi - cx);
+                    }
+                }
+            }
+            if has_southwest_corner && cex == ox && cey == oy {
+                dirty_northeast_corner(region);
+            }
+        }
     }
 
     /// Visual parameter values (shape) of an avatar's last appearance.
@@ -2359,6 +2598,10 @@ impl World {
                 if self.set_main_region(handle) {
                     // no agent update before the new region completes the move
                     self.movement_complete = false;
+                    if self.teleporting {
+                        self.own_animations_awaited = Some(Instant::now());
+                        self.own_animations_listed = false;
+                    }
                     // LLViewerParcelMgr::onTeleportFinished: the new region's
                     // parcel is awaited; the one left must not lend its rules
                     // (flight, build, the bar's icons) in the meantime. The
@@ -2396,8 +2639,13 @@ impl World {
                 }
                 None
             }
+            NetEvent::RegionLinkLimit { handle, max_children } => {
+                self.ensure_region(handle, (256, 256)).max_link_children = max_children;
+                None
+            }
             NetEvent::SimulatorFeatures {
                 handle,
+                animated_object_max_tris,
                 voice_server_type,
                 avatar_hover_height,
                 materials_rate,
@@ -2411,6 +2659,7 @@ impl World {
                 export_supported,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
+                r.animated_object_max_tris = animated_object_max_tris;
                 r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
@@ -2498,6 +2747,7 @@ impl World {
                 }
                 self.crossing = false;
                 self.arrived_by_crossing = crossed && self.agent.position.distance(position) < CROSSING_MAX_GAP;
+                self.arrived_by_local_teleport = std::mem::take(&mut self.local_teleport) && !self.arrived_by_crossing;
                 if !self.arrived_by_crossing {
                     self.agent.position = position;
                     self.agent.set_look_at(look_at);
@@ -2552,6 +2802,7 @@ impl World {
                 }
                 self.arrived_once = true;
                 if self.teleporting {
+                    self.teleport_arrivals += 1;
                     self.friends_only_teleport_arrival();
                 }
                 self.teleporting = false;
@@ -2709,6 +2960,7 @@ impl World {
                 None
             }
             NetEvent::Terrain { handle, patches } => {
+                let edge_patches: Vec<_> = patches.iter().map(|p| (p.x * p.size, p.y * p.size, p.size)).collect();
                 // land can come before the handshake: its own place says
                 // the region reaches at least that far
                 let reach = |axis: fn(&aurora_net::terrain::TerrainPatch) -> u32| {
@@ -2716,12 +2968,15 @@ impl World {
                     end.min(MAX_REGION_SIZE).next_multiple_of(256).max(256)
                 };
                 let size = (reach(|p| p.x), reach(|p| p.y));
-                let r = self.ensure_region(handle, size);
-                for p in patches {
-                    let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
-                    r.dirty_chunks.extend(dirty);
+                {
+                    let r = self.ensure_region(handle, size);
+                    for p in patches {
+                        let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
+                        r.dirty_chunks.extend(dirty);
+                    }
+                    r.terrain_revision += 1;
                 }
-                r.terrain_revision += 1;
+                self.dirty_terrain_patch_dependents(handle, &edge_patches);
                 None
             }
             NetEvent::Wind { handle, grid } => {
@@ -2887,6 +3142,7 @@ impl World {
             NetEvent::RegionRemoved { handle } => {
                 self.parked.remove(&handle);
                 self.remove_region_objects(handle);
+                self.dirty_terrain_dependents(handle);
                 self.regions.remove(&handle);
                 self.coarse.remove(&handle);
                 None
@@ -2923,6 +3179,9 @@ impl World {
                     self.ui_sounds.push(UiSound::TeleportOut);
                 }
                 self.tp_show_progress = remote;
+                // TeleportFinish: the arrival is TELEPORT_START_ARRIVAL's,
+                // whatever a stale TeleportLocal said
+                self.local_teleport = false;
                 self.tp_progress = self.tp_progress.max(0.5);
                 self.tp_status = aurora_i18n::tr!("common-connecting-to-region").into();
                 // Legacy Viewer process_teleport_finish: apply both states,
@@ -2942,6 +3201,7 @@ impl World {
                 // AgentMovementComplete must record the arrival in history.
                 self.teleporting = true;
                 self.tp_show_progress = false;
+                self.local_teleport = true;
                 // A friend hop preserves existing flight here, but defers
                 // taking off (even if flagged by the server) until its
                 // arrival position has been applied.
@@ -3054,6 +3314,8 @@ impl World {
                         buttons,
                     }
                 };
+                // the menu keeps the name for blocking; the card shows it on one line
+                let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
                 let title = format!("{object_name} ({owner_name})");
                 let id = self.notifications.push(notifications::Kind::Script, title, message, data);
                 self.link_object_notification(id, object_id, &object_name, &owner_name);
@@ -3102,6 +3364,7 @@ impl World {
                     }
                 } else {
                     self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+                    let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
                     // ScriptQuestionCaution (PermissionsCautionEnabled, on by
                     // default): taking L$ or privileged land access warns first
                     let caution = experiences::caution(questions).then(|| notifications::CautionPrompt {
@@ -3190,6 +3453,7 @@ impl World {
                 url,
             } => {
                 let body = format!("{message}\n{url}");
+                let object_name = dialog_names::shown(&object_name).into_owned();
                 let id = self.notifications.push(
                     notifications::Kind::Url,
                     aurora_i18n::tr!("extra-offers-a-link", object_name = object_name.to_string()),
@@ -3260,7 +3524,37 @@ impl World {
                 let now = Instant::now();
                 self.drop_blacklisted_animations(avatar, &mut anims, &mut sources);
                 if avatar == self.agent_id {
-                    log::info!("own animations: {} playing", anims.len());
+                    // which of ours start and stop, for teleport reports (#2700)
+                    let before = self.animations.get(&avatar).map(Vec::as_slice).unwrap_or_default();
+                    let started: Vec<_> = anims.iter().map(|a| a.0).filter(|id| !before.iter().any(|p| p.id == *id)).collect();
+                    let stopped: Vec<_> = before.iter().map(|p| p.id).filter(|id| !anims.iter().any(|a| a.0 == *id)).collect();
+                    log::info!("own animations: {} playing, started {started:?}, stopped {stopped:?}", anims.len());
+                    self.end_own_animations_wait_if_expired(now);
+                    if self.own_animations_awaited.is_some() {
+                        self.own_animations_listed = true;
+                        // The region we arrive in can still list a seat
+                        // animation that teleportCore stopped in the region
+                        // left just before the request: stop it there too,
+                        // once, when that list names no other source for it
+                        // (a HUD here playing the same animation keeps it).
+                        // Deliberate difference: the Legacy Viewer sends no
+                        // second stop, but its AO leaves the stock sit to the
+                        // simulator and ours holds it (#2700, TASKS.md).
+                        let seats: HashSet<Uuid> = self.teleport_seat_motions.iter().map(|(_, seat)| *seat).collect();
+                        let mut motions = std::mem::take(&mut self.teleport_seat_motions);
+                        motions.retain(|(id, _)| {
+                            let from_seat = anims
+                                .iter()
+                                .zip(sources.iter().map(Some).chain(std::iter::repeat(None)))
+                                .any(|((a, _), source)| a == id && source.is_none_or(|s| s.is_nil() || seats.contains(s)));
+                            if from_seat && !self.animation_stops.contains(id) {
+                                log::info!("teleport: the arrival region still plays seat animation {id}: stop it again");
+                                self.animation_stops.push(*id);
+                            }
+                            !from_seat
+                        });
+                        self.teleport_seat_motions = motions;
+                    }
                     self.agent.ground_sit = anims.iter().any(|(id, _)| *id == body::ANIM_SIT_GROUND_CONSTRAINED);
                     // Firestorm process_avatar_animation / processAnimationStateChanges:
                     // source blocks correspond by index, and previous source entries
@@ -4526,6 +4820,19 @@ impl World {
         Some((region, format!("{:.1}, {:.1}, {:.1}", position.x, position.y, position.z)))
     }
 
+    /// An owner's name as the dialogs of objects show it: without
+    /// " Resident" when legacy names are trimmed (LLCacheName::cleanFullName
+    /// in process_script_question, buildFullName in process_script_dialog),
+    /// on one line ([`dialog_names::shown`]).
+    fn dialog_owner(&self, name: &str) -> String {
+        let name = if self.social.avatar_names.options.trim_resident {
+            name.strip_suffix(" Resident").unwrap_or(name)
+        } else {
+            name
+        };
+        dialog_names::shown(name).into_owned()
+    }
+
     fn link_object_notification(&mut self, id: u64, object: Uuid, name: &str, owner_name: &str) {
         use notifications::NameTarget;
         self.notifications.link_name(id, name, NameTarget::Object(object));
@@ -4575,12 +4882,12 @@ impl World {
             aurora_i18n::tr!("world-experiences-land-scope")
         };
         let lines = notifications::permission_lines(q.questions);
-        // LLCacheName::cleanFullName: the owner without " Resident"
-        let owner = q.owner_name.strip_suffix(" Resident").unwrap_or(&q.owner_name);
+        let object = dialog_names::shown(&q.object_name).into_owned();
+        let owner = self.dialog_owner(&q.owner_name);
         let body = aurora_i18n::tr!(
             "world-experiences-question",
-            object_name = q.object_name.clone(),
-            owner_name = owner.to_owned(),
+            object_name = object.clone(),
+            owner_name = owner.clone(),
             scope = scope.to_owned(),
             experience = name.clone(),
             questions = lines.join("\n• ")
@@ -4604,7 +4911,7 @@ impl World {
         );
         self.notifications
             .link_name(id, name, notifications::NameTarget::Experience(q.experience));
-        self.link_object_notification(id, q.task, &q.object_name, owner);
+        self.link_object_notification(id, q.task, &object, &owner);
         // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
         self.ui_sounds.push(UiSound::ScriptFloaterOpen);
     }
@@ -4890,7 +5197,9 @@ impl World {
         if let Some(item) = item
             && self.outfit.keeps_cof_link(item)
         {
-            // the region replaced it during the login restore: worn again
+            // before the login restore has read the COF, or replaced by the
+            // region while it puts the outfit on: the link stays, and the
+            // restore wears it again (mAttachmentInvLinkEnabled)
             return;
         }
         if let Some(item) = item
@@ -5102,6 +5411,13 @@ impl World {
 
     /// The sizes a prim may take on the agent's region (its OpenSimExtras,
     /// else Second Life's limits).
+    /// LLWorld::getMaxLinkedPrims plus the root: 255 children on Second
+    /// Life, 10,000 on OpenSim until OpenRegionInfo supplies another limit.
+    pub fn link_limit(&self) -> usize {
+        let default = if self.home_grid.is_some() { 10000 } else { 255 };
+        self.main().and_then(|r| r.max_link_children).unwrap_or(default) as usize + 1
+    }
+
     pub fn prim_limits(&self) -> crate::build::PrimLimits {
         crate::build::PrimLimits::from_extras(self.opensim_extras())
     }
@@ -5469,6 +5785,17 @@ impl World {
             root = parent;
         }
         self.release_linkset_camera(root, false);
+        // what the seat plays on us, before get_off stops it
+        if let Some(seat_key) = self.objects.get(i).and_then(|o| o.parent_key()) {
+            self.teleport_seat_motions = self
+                .seat_linkset_sources(seat_key)
+                .into_iter()
+                .flat_map(|seat| {
+                    let motions = self.animation_sources.get(&seat).into_iter().flatten();
+                    motions.map(move |id| (*id, seat)).collect::<Vec<_>>()
+                })
+                .collect();
+        }
         self.get_off(i, Instant::now());
         let pos = self
             .objects
@@ -5491,15 +5818,19 @@ impl World {
         let Some(seat_key) = avatar.parent_key().filter(|k| *k != ObjKey { region, local_id: parent }) else {
             return;
         };
-        let seat = self.objects.index_of(&seat_key).into_iter();
-        let children = self.objects.children_of(&seat_key).iter().copied();
-        let sources: Vec<_> = seat
-            .chain(children)
-            .filter_map(|idx| self.objects.get(idx).map(|o| o.full_id))
-            .collect();
-        for source in sources {
+        for source in self.seat_linkset_sources(seat_key) {
             self.stop_motion_from_source(source);
         }
+    }
+
+    /// The seat prim and its children: the sources LLVOAvatarSelf::
+    /// stopMotionFromSource releases when we get off it.
+    fn seat_linkset_sources(&self, seat_key: ObjKey) -> Vec<Uuid> {
+        let seat = self.objects.index_of(&seat_key).into_iter();
+        let children = self.objects.children_of(&seat_key).iter().copied();
+        seat.chain(children)
+            .filter_map(|idx| self.objects.get(idx).map(|o| o.full_id))
+            .collect()
     }
 
     /// LLVOAvatarSelf::detachObject: only the linkset, never an avatar
@@ -6403,6 +6734,33 @@ mod motion_tests {
         assert_eq!((o.parent_id, o.position), (0, Vec3::new(40.0, 50.0, 30.0)));
         assert!(!world.agent.is_sitting());
         assert_eq!(world.agent.position, Vec3::new(40.0, 50.0, 30.0));
+        assert_eq!(world.teleport_arrivals, 1, "the AO learns the teleport ended (#2700)");
+    }
+
+    /// Only a completed teleport counts for the AO (`ao::runtime::Frame::teleports`):
+    /// not the login, a failed teleport nor a walk into the neighbour region.
+    #[test]
+    fn only_completed_teleports_count_as_arrivals() {
+        let (mut world, handle) = teleport_fixture();
+        let arrive = |world: &mut World| {
+            world.apply(NetEvent::AgentMovementComplete {
+                handle,
+                position: Vec3::new(40.0, 50.0, 30.0),
+                look_at: Vec3::X,
+            });
+        };
+        arrive(&mut world);
+        assert_eq!(world.teleport_arrivals, 0, "a crossing or the login");
+        world.begin_teleport(false);
+        world.apply(NetEvent::TeleportFailed {
+            reason: "Offline test".into(),
+        });
+        assert_eq!(world.teleport_arrivals, 0, "a failed teleport arrives nowhere");
+        world.begin_teleport(false);
+        arrive(&mut world);
+        assert_eq!(world.teleport_arrivals, 1);
+        arrive(&mut world);
+        assert_eq!(world.teleport_arrivals, 1, "a repeated confirmation is no new teleport");
     }
 
     #[test]
@@ -6419,6 +6777,128 @@ mod motion_tests {
                 .all(|&c| world.objects.get(c).is_some_and(|o| !o.is_avatar()))
         );
         assert!(!world.agent.is_sitting());
+    }
+
+    /// #2700: after a teleport to another region the AO waits for that
+    /// region's first list of our animations, and a seat motion teleportCore
+    /// stopped in the region left is stopped again if that list still has it.
+    #[test]
+    fn a_teleport_to_another_region_waits_for_its_animations_and_stops_the_seat_motion_again() {
+        let (mut world, _) = teleport_from_seat(true);
+        let motion = world.animation_stops[0];
+        world.animation_stops.clear();
+        let start = Instant::now();
+        assert!(!world.awaiting_own_animations(start), "nothing awaited before the region changes");
+        let destination = aurora_net::origin_to_handle(512 * 256, 512 * 256);
+        world.apply(NetEvent::MainRegionChanged { handle: destination });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: destination,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        let now = Instant::now();
+        assert!(world.awaiting_own_animations(now), "the list held is the region left's");
+        assert!(!world.awaiting_own_animations(now + OWN_ANIMATIONS_WAIT), "never waits for good");
+        let other = Uuid::from_u128(74);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion, 1), (other, 1)],
+            sources: Vec::new(),
+        });
+        assert!(!world.awaiting_own_animations(Instant::now()));
+        assert_eq!(world.animation_stops, vec![motion], "only the seat's motion, once");
+        world.animation_stops.clear();
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion, 1), (other, 1)],
+            sources: Vec::new(),
+        });
+        assert!(world.animation_stops.is_empty());
+    }
+
+    /// Review of PR #2829: the second stop of a seat motion only stops it
+    /// when the arrival region plays it from that seat (or names no source):
+    /// a HUD there playing the same animation keeps it. Every list of the
+    /// wait is checked, not only the first; the AO acts again from the first.
+    #[test]
+    fn the_seat_motion_is_stopped_again_only_from_the_seat_during_the_wait() {
+        let (mut world, seat) = teleport_from_seat(true);
+        let motion = world.animation_stops[0];
+        world.animation_stops.clear();
+        let destination = aurora_net::origin_to_handle(512 * 256, 512 * 256);
+        world.apply(NetEvent::MainRegionChanged { handle: destination });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: destination,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        let hud = world.agent_id;
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion, 1)],
+            sources: vec![hud],
+        });
+        assert!(world.animation_stops.is_empty(), "played from another source: kept");
+        assert!(!world.awaiting_own_animations(Instant::now()), "the AO acts from the first list");
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion, 2)],
+            sources: vec![seat],
+        });
+        assert_eq!(world.animation_stops, vec![motion], "a later list of the wait, from the seat");
+        world.animation_stops.clear();
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion, 2)],
+            sources: vec![seat],
+        });
+        assert!(world.animation_stops.is_empty(), "once only");
+    }
+
+    /// Review of PR #2829: once the wait has expired with no list, its state
+    /// goes with it: a later seat playing the same animation keeps it.
+    #[test]
+    fn the_wait_after_a_teleport_ends_with_its_window() {
+        let (mut world, _) = teleport_from_seat(true);
+        let motion = world.animation_stops[0];
+        world.animation_stops.clear();
+        let destination = aurora_net::origin_to_handle(512 * 256, 512 * 256);
+        world.apply(NetEvent::MainRegionChanged { handle: destination });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: destination,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        let expired = Instant::now()
+            .checked_sub(OWN_ANIMATIONS_WAIT)
+            .expect("the clock has run this long");
+        world.own_animations_awaited = Some(expired);
+        assert!(!world.awaiting_own_animations(Instant::now()));
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion, 1)],
+            sources: Vec::new(),
+        });
+        assert!(world.animation_stops.is_empty(), "no stop after the window");
+        assert!(world.own_animations_awaited.is_none() && world.teleport_seat_motions.is_empty());
+    }
+
+    /// Neither a teleport within the region nor a walk into the next one
+    /// waits for a new list of our animations.
+    #[test]
+    fn only_a_teleport_to_another_region_waits_for_our_animations() {
+        let (mut world, _) = teleport_fixture();
+        let next = aurora_net::origin_to_handle(512 * 256, 512 * 256);
+        world.apply(NetEvent::MainRegionChanged { handle: next });
+        assert!(!world.awaiting_own_animations(Instant::now()), "a crossing");
+        world.begin_teleport(false);
+        world.apply(NetEvent::TeleportLocal { flying: false });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: next,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(!world.awaiting_own_animations(Instant::now()), "a teleport in the region");
     }
 
     #[test]
@@ -6656,6 +7136,14 @@ mod motion_tests {
         assert!(!world.teleporting && !world.tp_show_progress);
         assert_eq!(world.tp_history.previous().expect("previous arrival").position, previous);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+        // the camera may stay where it is (issue #2828), for this arrival only
+        assert!(world.arrived_by_local_teleport);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(61.0, 70.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(!world.arrived_by_local_teleport);
     }
 
     #[test]
@@ -6684,6 +7172,7 @@ mod motion_tests {
         assert!(!world.teleporting && world.tp_show_progress);
         assert_eq!(world.main_region, Some(destination));
         assert!(world.parcel_name.is_empty());
+        assert!(!world.arrived_by_local_teleport, "another region: the camera comes back");
     }
 
     #[test]
@@ -7693,6 +8182,8 @@ mod motion_tests {
 
     fn scripted_detach_fixture(point: u8) -> (World, aurora_net::objects::ObjectUpdate, RegionHandle) {
         let (mut world, _, mut worn, here, _) = worn_fixture();
+        // later in the session: the login restore is over
+        world.outfit = outfit::OutfitRestore::finished();
         appearance::seed_demo(&mut world.inventory, world.agent_id);
         worn.state = point.rotate_left(4);
         worn.name_values = format!("AttachItemID STRING RW SV {}", Uuid::from_u128(717));
@@ -8112,6 +8603,7 @@ mod motion_tests {
             }
             let features = |enabled| NetEvent::SimulatorFeatures {
                 handle: here,
+                animated_object_max_tris: 0,
                 voice_server_type: String::new(),
                 avatar_hover_height: enabled,
                 materials_rate: None,
@@ -8576,5 +9068,99 @@ mod region_size_order_tests {
         });
         let map = &world.regions[&1].heightmap;
         assert_eq!((map.size_x, map.size_y), (MAX_REGION_SIZE, MAX_REGION_SIZE));
+    }
+
+    #[test]
+    fn east_neighbour_edge_uses_received_samples_and_falls_back_when_missing() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(east, (256, 256));
+        let edges = world.terrain_edge_heights(west);
+        assert!(edges.east.iter().all(Option::is_none));
+        // inserting the regions already dirtied edges: only the patch counts below
+        world.regions.get_mut(&west).expect("west").dirty_chunks.clear();
+
+        let heights: Vec<_> = (0..256).map(|i| 40.0 + (i / 16) as f32).collect();
+        world.apply(NetEvent::Terrain {
+            handle: east,
+            patches: vec![TerrainPatch {
+                x: 0,
+                y: 0,
+                size: 16,
+                heights,
+            }],
+        });
+        let edges = world.terrain_edge_heights(west);
+        assert_eq!(edges.east[0], Some(40.0));
+        assert_eq!(edges.east[15], Some(55.0));
+        assert_eq!(edges.east[16], None);
+        assert!(world.regions[&west].dirty_chunks.contains(&7));
+    }
+
+    #[test]
+    fn a_patch_on_a_chunk_boundary_dirties_both_chunks_that_share_the_vertex() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(east, (256, 256));
+        world.regions.get_mut(&west).expect("west").dirty_chunks.clear();
+        // east patch (0, 2): y 32..48, whose first row is the top vertex of
+        // west chunk 7 and the bottom one of chunk 15
+        world.apply(NetEvent::Terrain {
+            handle: east,
+            patches: vec![TerrainPatch {
+                x: 0,
+                y: 2,
+                size: 16,
+                heights: vec![9.0; 256],
+            }],
+        });
+        let dirty = &world.regions[&west].dirty_chunks;
+        assert!(dirty.contains(&7) && dirty.contains(&15), "{dirty:?}");
+    }
+
+    #[test]
+    fn terrain_edge_sampling_supports_a_512_metre_neighbour() {
+        let mut world = world();
+        let west = aurora_net::origin_to_handle(0, 0);
+        let large_east = aurora_net::origin_to_handle(256, 0);
+        world.ensure_region(west, (256, 256));
+        world.ensure_region(large_east, (512, 256));
+        world.apply(NetEvent::Terrain {
+            handle: large_east,
+            patches: vec![patch(0, 0), patch(0, 1)],
+        });
+        let edges = world.terrain_edge_heights(west);
+        assert_eq!(edges.east[0], Some(5.0));
+        assert_eq!(edges.east[31], Some(5.0));
+        assert_eq!(edges.east[32], None);
+    }
+
+    #[test]
+    fn north_and_diagonal_neighbours_supply_their_shared_edges() {
+        let mut world = world();
+        let here = aurora_net::origin_to_handle(0, 0);
+        let north = aurora_net::origin_to_handle(0, 256);
+        let northeast = aurora_net::origin_to_handle(256, 256);
+        world.ensure_region(here, (256, 256));
+        world.ensure_region(north, (256, 256));
+        world.ensure_region(northeast, (256, 256));
+        world.regions.get_mut(&here).expect("here").dirty_chunks.clear();
+        world.apply(NetEvent::Terrain {
+            handle: north,
+            patches: vec![patch(0, 0)],
+        });
+        world.apply(NetEvent::Terrain {
+            handle: northeast,
+            patches: vec![patch(0, 0)],
+        });
+        let edges = world.terrain_edge_heights(here);
+        assert_eq!(edges.north[0], Some(5.0));
+        assert_eq!(edges.east[256], Some(5.0));
+        assert!(world.regions[&here].dirty_chunks.contains(&56));
+        assert!(world.regions[&here].dirty_chunks.contains(&63));
     }
 }

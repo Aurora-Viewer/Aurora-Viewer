@@ -29,6 +29,7 @@ mod im_queries;
 mod inventory;
 pub mod last_points;
 pub mod login;
+pub mod modifiers;
 mod naming;
 pub mod offers;
 mod policy;
