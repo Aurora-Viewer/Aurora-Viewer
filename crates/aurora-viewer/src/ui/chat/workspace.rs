@@ -20,6 +20,8 @@ use uuid::Uuid;
 
 /// Below this width the column becomes a rail of pictures.
 pub(super) const RAIL_BELOW: f32 = 600.0;
+/// The window's least width with the column as a rail (`chat::show`).
+pub(super) const LEAST: f32 = 300.0;
 /// The members' panel shows when the messages keep at least this width.
 const MESSAGES_MIN: f32 = 360.0;
 /// How far past a threshold a window must go back before the layout
@@ -62,8 +64,51 @@ fn ease(ctx: &egui::Context, id: egui::Id, target: f32, instant: bool) -> f32 {
     value
 }
 
-/// The column is a rail at this window width, given what it was last frame.
-fn rail_now(was: Option<bool>, width: f32) -> bool {
+/// What the button at the foot of the column (`sidebar::column_toggle`)
+/// asked. There is no mode to choose: all false is the automatic layout,
+/// and each field departs from it for as long as it means something.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ColumnChoice {
+    /// A rail at any width, until the button expands it again. The
+    /// settings keep it (`Settings::chat_column_collapsed`).
+    pub collapsed: bool,
+    /// The whole column in a window narrow enough for the rail. It ends
+    /// with the narrowness: a window widened past the threshold has the
+    /// column anyway, and is automatic again when narrowed.
+    pub opened: bool,
+}
+
+impl ColumnChoice {
+    /// The column is a rail, `narrow` being the automatic answer.
+    pub(super) fn rail(self, narrow: bool) -> bool {
+        self.collapsed || (narrow && !self.opened)
+    }
+
+    /// The choice after a click on the button. Closing what was opened in
+    /// a narrow window goes back to automatic, without collapsing the
+    /// column for the day the window is wide again.
+    pub(super) fn toggled(self, narrow: bool) -> ColumnChoice {
+        ColumnChoice {
+            collapsed: !self.rail(narrow) && !self.opened,
+            opened: self.rail(narrow) && narrow,
+        }
+    }
+
+    /// The window's least width: the column opened by hand keeps its
+    /// width and the conversation the room the rail leaves it, so a click
+    /// in a smaller window makes the window grow to fit.
+    pub(super) fn least_width(self) -> f32 {
+        if self.opened {
+            LEAST - sidebar::RAIL + sidebar::WIDTH
+        } else {
+            LEAST
+        }
+    }
+}
+
+/// The window is narrow enough for the rail at this width, given what it
+/// was last frame.
+fn narrow_now(was: Option<bool>, width: f32) -> bool {
     match was {
         Some(true) => width < RAIL_BELOW + HYSTERESIS,
         _ => width < RAIL_BELOW,
@@ -118,12 +163,13 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     // the window's edge dragged: its width changes under a held button
     st.layout_dragged = ui.input(|i| i.pointer.primary_down()) && st.layout_width.is_some_and(|w| (w - size.x).abs() > 0.1);
     st.layout_width = Some(size.x);
-    let rail_wanted = rail_now(st.layout_rail, size.x);
-    st.layout_rail = Some(rail_wanted);
+    let narrow = narrow_now(st.layout_narrow, size.x);
+    st.layout_narrow = Some(narrow);
+    st.column.opened &= narrow;
     let column = ease(
         ui.ctx(),
         ui.scope_id().with("column_width"),
-        if rail_wanted { sidebar::RAIL } else { sidebar::WIDTH },
+        if st.column.rail(narrow) { sidebar::RAIL } else { sidebar::WIDTH },
         st.layout_dragged,
     );
     // the entries take the rail's look once the column is closer to it
@@ -152,6 +198,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
             contacts_sub,
             docked,
             rail,
+            narrow,
             column,
             h,
         );
@@ -181,7 +228,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
                 });
                 return;
             }
-            pane(ui, p, icons, emoji, pics, images, gestures, world, st, actions, compact, rail, h);
+            pane(ui, p, icons, emoji, pics, images, gestures, world, st, actions, compact, narrow, h);
         });
     });
 }
@@ -225,7 +272,9 @@ pub(super) fn pane(
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
     compact: bool,
-    rail: bool,
+    // the window, not the column: a column collapsed in a wide window
+    // leaves the members' panel more room, not less
+    narrow: bool,
     h: f32,
 ) {
     let pane = ui.available_rect_before_wrap();
@@ -241,7 +290,7 @@ pub(super) fn pane(
     let width = pane.width();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     drops(ui, p, pane, st, kind, actions);
-    let members_room = !rail && members_room_now(st.layout_members_room, width);
+    let members_room = !narrow && members_room_now(st.layout_members_room, width);
     st.layout_members_room = Some(members_room);
     // the panel's width eases to its new one when the room comes or goes
     // with the window's size; the head's button shows or hides it at once
