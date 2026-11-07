@@ -289,6 +289,7 @@ impl World {
     /// Empty the nearby chat (the "clear" command of the chat bar).
     pub fn clear_nearby_chat(&mut self) {
         self.chat.clear();
+        self.chat_objects.clear();
         self.chat_clock.renumbered();
     }
 
