@@ -373,6 +373,14 @@ impl PcmSink {
         let (pushed, _) = prod.push_partial_slice(stereo);
         pushed.len() / 2
     }
+
+    /// Frames queued and not yet taken by the mixer (0 for a null sink): the
+    /// sound waiting between the producer and the output. One atomic load.
+    pub fn queued_frames(&self) -> usize {
+        self.prod
+            .as_ref()
+            .map_or(0, |p| p.buffer().capacity().saturating_sub(p.slots()) / 2)
+    }
 }
 
 /// Consumer end of [`PcmSink::loopback`]: interleaved stereo 48 kHz samples.
@@ -408,9 +416,12 @@ mod tests {
         let (mut sink, mut tap) = PcmSink::loopback(16);
         assert_eq!(sink.push(&[0.5, -0.5], 2), 1);
         assert_eq!(tap.available(), 2);
+        assert_eq!(sink.queued_frames(), 1);
         let mut out = [0.0; 4];
         assert_eq!(tap.read(&mut out), 2);
         assert_eq!(&out[..2], &[0.5, -0.5]);
+        assert_eq!(sink.queued_frames(), 0);
+        assert_eq!(PcmSink::null().queued_frames(), 0);
     }
 
     #[test]
