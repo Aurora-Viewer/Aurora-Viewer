@@ -445,6 +445,21 @@ fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::P
 /// bar's labels. Never saved.
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
+    if matches!(mode, "menu-add" | "menu-remove") {
+        settings.locked = false;
+        let mut buttons = settings.buttons(layout).to_vec();
+        buttons.retain(|button| button.command != "import");
+        if mode == "menu-remove" {
+            let command = catalogue::find("import").unwrap();
+            buttons.push(ToolButton {
+                command: command.id.into(),
+                icon: command.icon.into(),
+                tooltip: String::new(),
+            });
+        }
+        settings.buttons = Some(buttons);
+        return;
+    }
     if matches!(mode, "empty-left" | "empty-right") {
         let bottom = settings.buttons(layout).to_vec();
         settings.buttons = Some(Vec::new());
@@ -497,6 +512,26 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     let Some(mode) = demo_mode() else {
         return Vec::new();
     };
+    // With AURORA_DEMO_MENU_SEARCH set to the translated Import label,
+    // right-click its real search result after the menu opens. Capture 750.
+    if matches!(mode, "menu-add" | "menu-remove") {
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("toolbar_menu_demo"), true));
+        if matches!(frame, 650 | 651)
+            && let Some(rect) = ctx.data(|d| d.get_temp::<Rect>(egui::Id::unique(("toolbar_menu_command", "import"))))
+        {
+            let pos = rect.center();
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed: frame == 650,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+        }
+        return Vec::new();
+    }
     if matches!(mode, "side" | "empty-left" | "empty-right") {
         return Vec::new();
     }

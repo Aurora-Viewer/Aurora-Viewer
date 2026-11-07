@@ -173,3 +173,144 @@ fn contents_menu_opens_the_legacy_content_pages_and_the_message_of_the_day() {
         assert_eq!(matches!(action, BarAction::MessageOfTheDay), motd);
     }
 }
+
+#[test]
+fn menu_toolbar_import_is_a_ready_command_that_opens_the_import_chooser() {
+    let ctx = egui::Context::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    assert!(
+        super::super::toolbar::COMMANDS
+            .iter()
+            .any(|command| command.id == "import" && command.ready)
+    );
+    assert!(matches!(run_command(&ctx, "import", &mut panels), BarAction::Import));
+}
+
+#[test]
+fn menu_toolbar_right_click_import_adds_and_removes_without_running_it() {
+    use crate::ui::toolbar::{Bar, ToolbarSettings, ToolbarUi};
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let p = theme.palette();
+    let layout = Layout::default();
+    let mut settings = ToolbarSettings::default();
+    let mut toolbar = ToolbarUi::default();
+    toolbar.commit_with_menus(&ctx, &layout, &mut settings);
+    let mut time = 0.0;
+    let mut frame = |events| {
+        time += 0.2;
+        let mut action = BarAction::None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
+                    ui.menu_button(aurora_i18n::tr!("common-build"), |ui| {
+                        menu::searchable(ui, &p, |ui| build_menu(ui, &p, &mut action, "", false));
+                    });
+                });
+                crate::ui::toolbar::show_command_context(&ctx, &p);
+            },
+        );
+        output.textures_delta.clear();
+        assert!(matches!(action, BarAction::None), "toolbar edits must not execute Import");
+        let changed = toolbar.commit_with_menus(&ctx, &layout, &mut settings);
+        (output, changed, settings.clone())
+    };
+    let build = text_position(&frame(Vec::new()).0, aurora_i18n::tr!("common-build"));
+    for remove in [false, true] {
+        for pressed in [true, false] {
+            frame(click_events(build, pressed));
+        }
+        for _ in 0..4 {
+            frame(Vec::new());
+        }
+        frame(vec![egui::Event::Text(aurora_i18n::tr!("import-menu").to_owned())]);
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+        let import = text_position(&frame(Vec::new()).0, aurora_i18n::tr!("import-menu"));
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(import),
+                egui::Event::PointerButton {
+                    pos: import,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        for _ in 0..4 {
+            frame(Vec::new());
+        }
+        let label = if remove {
+            aurora_i18n::tr!("toolbar-remove-from-menu")
+        } else {
+            aurora_i18n::tr!("toolbar-add-from-menu")
+        };
+        let target = text_position(&frame(Vec::new()).0, label);
+        frame(click_events(target, true));
+        let (_, changed, saved) = frame(click_events(target, false));
+        assert!(changed);
+        assert_eq!(saved.location("import", &layout), if remove { None } else { Some(Bar::Bottom) });
+        if !remove {
+            let button = saved.bar(Bar::Bottom, &layout).last().unwrap();
+            assert_eq!(button.command, "import");
+            assert!(button.tooltip.is_empty());
+            assert_eq!(crate::ui::toolbar::label(button), aurora_i18n::tr!("import-menu"));
+            let restored: ToolbarSettings = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+            assert_eq!(restored.location("import", &layout), Some(Bar::Bottom));
+        }
+        for pressed in [true, false] {
+            frame(vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+        }
+        frame(Vec::new());
+    }
+}
+
+#[test]
+fn menu_toolbar_first_batch_dispatches_the_existing_actions_and_windows() {
+    let ctx = egui::Context::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    for (id, expected) in [
+        ("ik_edit", BarAction::IkEdit),
+        ("build_edit", BarAction::Build(1)),
+        ("build_create", BarAction::Build(2)),
+        ("build_land", BarAction::Build(3)),
+        ("edit_particles", BarAction::EditParticles),
+        ("import", BarAction::Import),
+        ("blender_live", BarAction::BlenderLive),
+        ("buy_currency", BarAction::BuyCurrency),
+        ("stand_up", BarAction::StandUp),
+        ("fly_override", BarAction::ToggleFlyOverride),
+        ("movelock_options", BarAction::MoveLockOptions),
+        ("quickjump", BarAction::ToggleQuickjump),
+        ("movement_enhancer", BarAction::MovementEnhancer),
+    ] {
+        assert!(crate::ui::toolbar::command(id).unwrap().ready, "{id}");
+        let actual = run_command(&ctx, id, &mut panels);
+        assert_eq!(std::mem::discriminant(&actual), std::mem::discriminant(&expected), "{id}");
+        if let BarAction::Build(expected_mode) = expected {
+            assert!(matches!(actual, BarAction::Build(mode) if mode == expected_mode), "{id}");
+        }
+    }
+    panels.experiences = false;
+    panels.money_tracker = false;
+    for id in ["money_tracker", "experiences"] {
+        assert!(crate::ui::toolbar::command(id).unwrap().ready);
+        assert!(matches!(run_command(&ctx, id, &mut panels), BarAction::None));
+    }
+    assert!(panels.money_tracker && panels.experiences);
+}
