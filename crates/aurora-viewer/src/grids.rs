@@ -241,7 +241,7 @@ pub fn store(settings: &mut Settings, mut grid: Grid, previous: Option<&str>) ->
         Some(old.service.as_str()) != previous && old.service != grid.service && service(&old.login).ok().as_ref() != Some(&login)
     });
     settings.grids.push(grid);
-    settings.grids.sort_by_key(|grid| grid.name.to_lowercase());
+    settings.grids.sort_by_key(|grid| crate::natural_order::key(&grid.name));
     Ok(())
 }
 

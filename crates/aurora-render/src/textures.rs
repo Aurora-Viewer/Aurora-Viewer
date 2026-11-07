@@ -204,7 +204,7 @@ struct PageWorker {
 }
 
 impl PageWorker {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(device: &wgpu::Device, integrated: bool) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<PageJob>();
         let (made_tx, made) = std::sync::mpsc::channel::<MadePage>();
         let device = device.clone();
@@ -215,7 +215,7 @@ impl PageWorker {
                 match job {
                     PageJob::Make { key, layers } => {
                         let t0 = Instant::now();
-                        let (texture, view) = match make_page(&device, key, layers) {
+                        let (texture, view) = match make_page(&device, key, layers, integrated) {
                             Ok(page) => page,
                             Err(e) => {
                                 // (nothing comes back: once the request times
@@ -315,7 +315,7 @@ fn log_slow_page(key: PageKey, layers: u32, ms: f32, by: &str) {
 }
 
 /// A page, or why video memory could not hold it.
-fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> Result<DeadPage, String> {
+fn make_page(device: &wgpu::Device, key: PageKey, layers: u32, integrated: bool) -> Result<DeadPage, String> {
     let desc = wgpu::TextureDescriptor {
         label: Some("texture page"),
         size: wgpu::Extent3d {
@@ -336,7 +336,7 @@ fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> Result<DeadPag
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
     };
-    crate::gpu_alloc::try_texture(device, &desc, &view, layers as u64 * key.layer_bytes())
+    crate::gpu_alloc::try_texture(device, &desc, &view, layers as u64 * key.layer_bytes(), integrated)
 }
 
 const NO_SLOT: u32 = u32::MAX;
@@ -583,6 +583,7 @@ struct PageStore {
     /// Emptied pages the current bind group may still hold: taken by
     /// `TextureTable::maintain` once it is rebuilt.
     retired: Vec<DeadPage>,
+    integrated: bool,
 }
 
 /// Pages created since the start: by the caller (the main thread) and by
@@ -600,7 +601,12 @@ pub struct PagesMade {
 }
 
 impl PageStore {
+    #[cfg(test)]
     fn new(capacity: u32, page_capacity: u32, max_layers: u32, max_dim: u32) -> Self {
+        Self::new_with_integrated(capacity, page_capacity, max_layers, max_dim, false)
+    }
+
+    fn new_with_integrated(capacity: u32, page_capacity: u32, max_layers: u32, max_dim: u32, integrated: bool) -> Self {
         Self {
             slots: Vec::with_capacity(capacity as usize),
             free_slots: BinaryHeap::new(),
@@ -626,6 +632,7 @@ impl PageStore {
             made: PagesMade::default(),
             spares: Vec::new(),
             retired: Vec::new(),
+            integrated,
         }
     }
 
@@ -751,7 +758,7 @@ impl PageStore {
                 }
                 let layers = self.next_page_layers(key);
                 let t0 = Instant::now();
-                match make_page(device, key, layers) {
+                match make_page(device, key, layers, self.integrated) {
                     Ok((texture, view)) => {
                         self.page_backoff.succeeded();
                         let ms = t0.elapsed().as_secs_f32() * 1000.0;
@@ -1216,6 +1223,18 @@ impl TextureTable {
     /// `capacity`: slots (textures) of the table; `bindable`: elements the
     /// device lets a shader bind in one array, which bounds the pages.
     pub fn new(device: &wgpu::Device, writes: &mut GpuWrites, capacity: u32, bindable: u32, anisotropy: u16) -> Self {
+        Self::new_with_integrated(device, writes, capacity, bindable, anisotropy, false)
+    }
+
+    /// As [`Self::new`], with the selected adapter class for page allocation.
+    pub fn new_with_integrated(
+        device: &wgpu::Device,
+        writes: &mut GpuWrites,
+        capacity: u32,
+        bindable: u32,
+        anisotropy: u16,
+        integrated: bool,
+    ) -> Self {
         let partial = device.features().contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
         let limits = device.limits();
         let capacity = capacity.max(RESERVED + 1);
@@ -1259,7 +1278,7 @@ impl TextureTable {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut store = PageStore::new(capacity, page_capacity, max_layers, limits.max_texture_dimension_2d);
+        let mut store = PageStore::new_with_integrated(capacity, page_capacity, max_layers, limits.max_texture_dimension_2d, integrated);
         store.bc7 = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         for (slot, rgba) in [
             (WHITE, [255u8, 255, 255, 255]),
@@ -1315,7 +1334,7 @@ impl TextureTable {
             last_rebuild: Instant::now(),
             last_compact: Instant::now(),
             doomed: Default::default(),
-            worker: PageWorker::new(device),
+            worker: PageWorker::new(device, integrated),
             requests: PageRequests::default(),
             last_destroy: Instant::now(),
             shrinks: Vec::new(),
@@ -1790,11 +1809,13 @@ pub fn alpha_coverage(data: &[u8], cutoff: u8) -> f32 {
 /// averages thin opaque texels with the empty ones around them, so a leaf,
 /// a blade of grass, a hair strand or a fence wire falls under the cutoff a
 /// few levels down and the foliage thins out with the distance. Each level
-/// from 1 on gets its alpha scaled so that the share of texels at or above
-/// the cutoff matches level 0's: the threshold of the level that keeps that
-/// share is found on its alpha histogram, and the level is scaled by
-/// cutoff / threshold. Level 0 and the colour are left as they are; a
-/// level that level 0 leaves fully drawn or fully hidden is not touched.
+/// from 1 on can have its alpha raised to restore level 0's share: find the
+/// threshold on its histogram and scale by cutoff / threshold. A fuller
+/// level stays at the plain average (LLImageBase::generateMip,
+/// indra/llimage/llimage.cpp). Never lower alpha: the same texture may be
+/// used with a higher material cutoff, and dimming even its opaque texels
+/// erased HUD panels (#2163, #2452). Level 0 and colour stay unchanged;
+/// fully drawn or fully hidden textures are not touched.
 pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
     let cutoff = cutoff.max(1);
     let Some(target) = mips.first().map(|(_, _, d)| alpha_coverage(d, cutoff)) else {
@@ -1818,7 +1839,10 @@ pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
             kept[t] = kept[t + 1] + hist[t];
         }
         let want = target * n as f32;
-        let threshold = (1..256usize)
+        if kept[usize::from(cutoff)] as f32 >= want {
+            continue;
+        }
+        let threshold = (1..=usize::from(cutoff))
             .min_by(|&a, &b| {
                 let da = (kept[a] as f32 - want).abs();
                 let db = (kept[b] as f32 - want).abs();
@@ -1880,6 +1904,39 @@ mod tests {
         assert!((alpha_coverage(&mips[0].2, MASK_CUTOFF) - 0.25).abs() < 1e-3);
         // two levels down a line is a quarter of a texel: nothing draws
         assert_eq!(alpha_coverage(&mips[2].2, MASK_CUTOFF), 0.0);
+    }
+
+    #[test]
+    fn alpha_coverage_keeps_masked_hud_panels_at_the_creators_cutoff() {
+        // An opaque panel with a one-texel transparent border. Its 8 x 8
+        // mip already covers more than level 0 at the automatic cutoff.
+        // Scaling that coverage down made even its opaque centre 165/255:
+        // a HUD material cut at 200/255 disappeared altogether (#2163).
+        let mut pixels = [20, 40, 80, 255].repeat(64 * 64);
+        for y in 0..64 {
+            for x in 0..64 {
+                if x == 0 || y == 0 || x == 63 || y == 63 {
+                    pixels[(y * 64 + x) * 4 + 3] = 0;
+                }
+            }
+        }
+        let plain = build_mips(64, 64, pixels, 16);
+        assert!(alpha_coverage(&plain[3].2, 200) > 0.5);
+        let mut kept = plain.clone();
+        preserve_alpha_coverage(&mut kept, MASK_CUTOFF);
+        assert!(alpha_coverage(&kept[3].2, 200) > 0.5, "a 200/255 HUD panel must remain visible");
+        for (level, ((_, _, before), (_, _, after))) in plain.iter().zip(&kept).enumerate() {
+            for cutoff in [1, 128, 200, 255] {
+                assert!(
+                    alpha_coverage(after, cutoff) >= alpha_coverage(before, cutoff),
+                    "level {level}, cutoff {cutoff}: coverage preservation must not hide a panel the plain mip draws"
+                );
+            }
+            for (before, after) in before.as_chunks::<4>().0.iter().zip(after.as_chunks::<4>().0) {
+                assert_eq!(after[..3], before[..3]);
+                assert!(after[3] >= before[3], "level {level}: alpha must never decrease");
+            }
+        }
     }
 
     /// 128 × 128 texels, a quarter of them opaque, scattered (splitmix64).

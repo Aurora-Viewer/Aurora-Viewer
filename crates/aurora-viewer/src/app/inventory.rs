@@ -400,7 +400,7 @@ impl App {
                         self.open_physics_editor(it.id);
                         return;
                     }
-                    if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY != 0 {
+                    if matches!(it.asset_type, 7 | 10) && rules::held(&self.world.inventory, &it) & rules::COPY != 0 {
                         self.record_library_use(id);
                     }
                     if it.asset_type == 10 {
@@ -414,7 +414,7 @@ impl App {
                     if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
                         return;
                     }
-                    if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY == 0 {
+                    if matches!(it.asset_type, 7 | 10) && rules::held(&self.world.inventory, &it) & rules::COPY == 0 {
                         self.inventory_preview(
                             id,
                             it.asset_id,
@@ -517,6 +517,16 @@ impl App {
             }
             InvAction::Restore(id) => {
                 if let Some(it) = self.world.inventory.items.get(&id).cloned() {
+                    if !rules::restorable(&it, self.world.home_grid.is_some()) {
+                        // CantRestoreToWorldNoCopy
+                        self.world.notifications.push(
+                            crate::world::notifications::Kind::Alert,
+                            aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
+                            aurora_i18n::tr!("ui-inventory-restore-no-copy"),
+                            crate::world::notifications::Data::None,
+                        );
+                        return;
+                    }
                     self.send(NetCommand::RestoreInventoryObject(it));
                 }
             }
@@ -540,7 +550,7 @@ impl App {
                                         .inventory
                                         .items
                                         .get(&id)
-                                        .filter(|it| it.owner_mask & rules::COPY == 0)
+                                        .filter(|it| rules::held(&self.world.inventory, it) & rules::COPY == 0)
                                         .map(|_| id)
                                 })
                                 .collect();
@@ -572,9 +582,10 @@ impl App {
                     .landmarks
                     .request_action(asset, crate::world::landmarks::Action::ShowOnMap, Instant::now());
             }
-            InvAction::ThumbnailCopied(asset) => {
+            InvAction::ThumbnailCopied { asset, clipboard } => {
                 self.inventory_ui.clipboard = vec![asset];
                 self.inventory_ui.cut = false;
+                self.thumbnail_copied(asset, clipboard);
             }
             InvAction::Thumbnail { request, item, input } => self.inventory_image_action(request, item, input),
             InvAction::TeleportLandmark(_) => {}
