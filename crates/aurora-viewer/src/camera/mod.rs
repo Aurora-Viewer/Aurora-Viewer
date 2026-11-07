@@ -21,7 +21,7 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, VrView, zoom_lens};
+pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SavedViews, VrView, zoom_lens};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -1061,8 +1061,26 @@ impl Camera {
 
     /// Arrival of a teleport (process_agent_movement_complete): the camera
     /// back on the avatar without animation; FSResetCameraOnTP also drops
-    /// the orbit, the pitch and the zoom (resetView of process_teleport_local).
-    pub fn on_teleport_arrival(&mut self, s: &CameraSettings) {
+    /// the orbit, the pitch and the zoom.
+    ///
+    /// `local`: a teleport inside the region (process_teleport_local). There
+    /// the Legacy Viewer calls resetView only when FSResetCameraOnTP is on;
+    /// off, only the avatar turns (slamLookAt, done by the world): a camera
+    /// on a point or an object, the flycam, the free camera and the zoom stay
+    /// where they are, and a camera on the avatar follows it there. A
+    /// teleport to another region always brings the camera back
+    /// (TELEPORT_START_ARRIVAL's resetView in update_tp_display); Aurora
+    /// keeps the orbit, pitch and zoom there when the switch is off.
+    pub fn on_teleport_arrival(&mut self, s: &CameraSettings, local: bool) {
+        if local && !s.reset_on_teleport {
+            // the eye jumps with the avatar instead of gliding across the
+            // region; a flycam or free camera keeps its own view (and the
+            // free camera its glide back when it ends)
+            if self.flycam.is_none() && self.free.is_none() {
+                self.snap();
+            }
+            return;
+        }
         self.clear_flycam();
         // a free camera stays in the region it left
         self.free = None;
@@ -2524,7 +2542,7 @@ mod tests {
         assert!(cam.free().is_none() && cam.mouselook());
         cam.toggle_mouselook(&mut w.agent, &s);
         cam.start_free(&mut w.agent, &s);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         assert!(cam.free().is_none());
     }
 
@@ -2651,7 +2669,7 @@ mod tests {
         cam.change_to_mouselook(&mut w.agent, &s, false);
         assert!(cam.flycam.is_none());
         cam.flycam = Some(flight);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         assert!(cam.flycam.is_none());
         cam.flycam = Some(flight);
         cam.start_free(&mut w.agent, &s);
@@ -2761,9 +2779,60 @@ mod tests {
         script(&mut w, Uuid::from_u128(123), vec![(12, 1.0), (7, 6.0)]);
         settle(&mut cam, &mut w, &s);
         w.agent.position = Vec3::new(128.0, 128.0, 2100.0);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         cam.update(&mut w, &s, &frame(1.0 / 60.0));
         assert!(cam.position.distance(w.agent.position) < 10.0);
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+    }
+
+    /// FSResetCameraOnTP off (issue #2828): a teleport inside the region
+    /// (process_teleport_local) leaves the camera where it is; one to
+    /// another region (TELEPORT_START_ARRIVAL's resetView) brings it back.
+    #[test]
+    fn return_after_teleporting_off_keeps_the_camera_inside_the_region() {
+        let off = CameraSettings {
+            reset_on_teleport: false,
+            ..Default::default()
+        };
+        let on = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &off);
+        let focus = Vec3::new(135.0, 130.0, 27.0);
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &off);
+        settle(&mut cam, &mut w, &off);
+        let view = (cam.position, cam.target);
+        // off, inside the region: the alt-camera stays on its point
+        w.agent.position = Vec3::new(40.0, 200.0, 30.0);
+        cam.on_teleport_arrival(&off, true);
+        settle(&mut cam, &mut w, &off);
+        assert!(!cam.focus_on_avatar);
+        assert!(cam.position.distance(view.0) < 0.01, "{:?} moved from {:?}", cam.position, view.0);
+        assert!(cam.target.distance(view.1) < 0.01);
+        // the flycam keeps flying
+        let flight = crate::joystick::flycam::Flycam::from_view(view.0, view.1, Vec3::Z, 0.8);
+        cam.flycam = Some(flight);
+        cam.on_teleport_arrival(&off, true);
+        assert!(cam.flycam.is_some());
+        cam.flycam = None;
+        // off, another region: back on the avatar
+        cam.on_teleport_arrival(&off, false);
+        settle(&mut cam, &mut w, &off);
+        assert!(cam.focus_on_avatar);
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+        // off, a camera on the avatar follows it inside the region
+        w.agent.position = Vec3::new(200.0, 60.0, 28.0);
+        cam.on_teleport_arrival(&off, true);
+        cam.update(&mut w, &off, &frame(1.0 / 60.0));
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+        // on, inside the region: back on the avatar too
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &on);
+        settle(&mut cam, &mut w, &on);
+        assert!(!cam.focus_on_avatar);
+        cam.flycam = Some(flight);
+        cam.on_teleport_arrival(&on, true);
+        settle(&mut cam, &mut w, &on);
+        assert!(cam.focus_on_avatar && cam.flycam.is_none());
         assert!(cam.target.distance(w.agent.position) < 3.0);
     }
 
