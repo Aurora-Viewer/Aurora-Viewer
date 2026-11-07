@@ -438,6 +438,8 @@ pub enum Action {
     HideParticles,
     /// Aurora's Dev Toolbox window (Ctrl+Alt+D).
     DevToolbox,
+    /// Advanced.ShowDebugSettings.
+    DebugSettings,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
     Rebake,
     /// Avatar health's "Stop avatar animations", the scripts keeping their
@@ -632,6 +634,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 aurora_i18n::tr!("keybinds-debug"),
                 vec![
                     (Action::DevToolbox, aurora_i18n::tr!("dev-toolbox-title")),
+                    (Action::DebugSettings, aurora_i18n::tr!("toolbar-command-debug-settings")),
                     (Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency")),
                     (Action::SelectionOutlines, aurora_i18n::tr!("keybinds-selection-outlines")),
                     (Action::Beacons, aurora_i18n::tr!("beacons-title")),
@@ -926,6 +929,7 @@ impl KeyBindings {
             ),
             // Aurora's Dev Toolbox (Advanced › Dev Toolbox)
             (Action::DevToolbox, [kalt(K::KeyD, true, false), None]),
+            (Action::DebugSettings, [kalt(K::KeyS, true, true), None]),
             // menu_viewer.xml: Avatar Health
             (Action::StopAnimations, [kalt(K::KeyA, false, true), None]),
             (Action::ResyncAnimations, [kmod(K::KeyS, true, false), None]),
@@ -2268,6 +2272,7 @@ mod tests {
                 [K::Equal, K::Equal, K::Slash, K::BracketRight],
             ),
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
+            (Action::DebugSettings, (true, true, true), [K::KeyS; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
             (Action::ResyncAnimations, (true, false, false), [K::KeyS; 4]),

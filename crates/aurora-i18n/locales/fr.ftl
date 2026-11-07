@@ -13378,3 +13378,24 @@ build-link-owners = Les objets à lier doivent avoir le même propriétaire.
 build-link-regions = Les objets à lier doivent se trouver dans la même région.
 build-link-animesh = La sélection dépasse la limite de triangles des objets animés.
 build-link-restricted = Une restriction empêche la liaison de cette sélection.
+
+# Debug Settings window (LLFloaterSettingsDebug)
+debug-settings-search = Rechercher un paramètre
+debug-settings-changed-only = Afficher uniquement les paramètres modifiés
+debug-settings-none-selected = Choisissez un paramètre dans la liste.
+debug-settings-not-in-preferences = Les Préférences n'ont pas de ligne pour ce paramètre.
+debug-settings-rlva-locked = Verrouillé par une restriction RLVa.
+debug-settings-refused = Cette valeur a été refusée :
+debug-settings-default = Par défaut : { $value }
+debug-settings-copy-name = Copier le nom
+debug-settings-copied = Copié
+debug-settings-reset = Rétablir la valeur par défaut
+debug-settings-type-bool = Activé ou désactivé
+debug-settings-type-int = Nombre entier
+debug-settings-type-float = Nombre
+debug-settings-type-text = Texte
+debug-settings-type-vector = Plusieurs nombres
+debug-settings-warning-title = Avertissement
+debug-settings-warning-text = L'utilisation de la fenêtre Paramètres de débogage n'est pas prise en charge. Modifier ces paramètres peut fortement dégrader votre expérience et entraîner une perte de données, de fonctionnalités, voire d'accès au service. Ne modifiez aucune valeur sans savoir exactement ce que vous faites.
+debug-settings-warning-ignore = Ne plus afficher cet avertissement
+debug-settings-type-color = Couleur

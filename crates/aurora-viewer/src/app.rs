@@ -80,6 +80,7 @@ mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
+mod debug_settings;
 mod graphics_start;
 mod grid_status;
 mod group_titles;
@@ -754,6 +755,9 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Debug Settings (Advanced.ShowDebugSettings).
+    debug_settings_ui: ui::debug_settings::DebugSettingsUi,
+    debug_settings_demo_done: bool,
     /// Quick preferences (the toolbar's `quickprefs`).
     quick_prefs_ui: ui::quick_prefs::QuickPrefsUi,
     quick_prefs_demo_done: bool,
@@ -1679,6 +1683,8 @@ impl App {
             create_landmark_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            debug_settings_ui: Default::default(),
+            debug_settings_demo_done: false,
             quick_prefs_ui: Default::default(),
             quick_prefs_demo_done: false,
             follow_ui: Default::default(),
@@ -4571,6 +4577,9 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
+            Action::DebugSettings => {
+                ui::widgets::toggle_floater(&self.egui_ctx, ui::debug_settings::WINDOW, &mut self.panels.debug_settings)
+            }
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
@@ -17474,6 +17483,7 @@ impl App {
                 // Quick preferences' environment block shares the window's
                 // lists and "Personal lighting"
                 let quick_actions = self.quick_prefs_window(&ctx, &p, &mut lighting);
+                self.debug_settings_window(&ctx, &p);
                 let reset = self.personal_lighting(&ctx, &p, lighting);
                 self.env_actions(env_actions.into_iter().chain(quick_actions).chain(reset));
                 self.draw_env_editor(&ctx, &p);

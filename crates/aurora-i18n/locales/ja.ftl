@@ -13355,3 +13355,24 @@ build-link-owners = リンクするオブジェクトの所有者は同じであ
 build-link-regions = リンクするオブジェクトは同じリージョンにある必要があります。
 build-link-animesh = 選択内容はアニメーションオブジェクトの三角形数の上限を超えています。
 build-link-restricted = 制限により、選択したオブジェクトをリンクできません。
+
+# Debug Settings window (LLFloaterSettingsDebug)
+debug-settings-search = 設定を検索
+debug-settings-changed-only = 変更した設定のみ表示
+debug-settings-none-selected = 一覧から設定を選んでください。
+debug-settings-not-in-preferences = この設定は環境設定にありません。
+debug-settings-rlva-locked = RLVa の制限によりロックされています。
+debug-settings-refused = この値は受け付けられませんでした:
+debug-settings-default = デフォルト: { $value }
+debug-settings-copy-name = 名前をコピー
+debug-settings-copied = コピーしました
+debug-settings-reset = デフォルトに戻す
+debug-settings-type-bool = オンまたはオフ
+debug-settings-type-int = 整数
+debug-settings-type-float = 数値
+debug-settings-type-text = テキスト
+debug-settings-type-vector = 複数の数値
+debug-settings-warning-title = 警告
+debug-settings-warning-text = デバッグ設定ウィンドウの使用はサポートされていません。デバッグ設定を変更すると、動作に深刻な影響が出たり、データや機能、サービスへのアクセスを失ったりするおそれがあります。内容を正確に理解していない値は変更しないでください。
+debug-settings-warning-ignore = この警告を今後表示しない
+debug-settings-type-color = 色
