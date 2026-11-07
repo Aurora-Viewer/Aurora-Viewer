@@ -155,11 +155,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.0..=4.0,
                     " s",
                 );
-                cx.slider(
+                // up to Phototools' 300, logarithmic so that the Preferences'
+                // 0-9 stay easy to pick
+                cx.slider_log(
                     tr!("ui-options-camera-smoothing"),
                     tr!("ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag"),
                     &field!(camera.smoothing),
-                    0.0..=9.0,
+                    0.0..=300.0,
+                    0.1,
                     "",
                 );
                 cx.slider(
