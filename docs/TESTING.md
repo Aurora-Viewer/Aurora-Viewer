@@ -7374,11 +7374,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the `maps` part). `friend` follows Nova: the card shows "Loading…" then her
   region, the drawer's Friends tab lights her line; Orion, who does not share
   his position, is greyed. `legacy` shows the side panel layout without
-  touching the setting (Preferences › Aurora › World map). What to see: the
-  place card at the bottom left (rating, people, X / Y / Z, distance, five
-  buttons on one line), the layer pills at the top right (greyed when zoomed
-  out), zoom / my position / home at the bottom right; the panels fade while
-  the map is dragged and never let a click through to the map.
+  touching the setting (Preferences › Aurora › World map). `show-on-map`
+  shows a place in another region the way Places, the favorites bar and
+  search do: the map opens on it, not on the avatar. What to see: the place
+  card at the bottom left (rating, people, X / Y / Z, distance, five buttons
+  on one line), the layer pills at the top right (greyed when zoomed out),
+  zoom / my position / home at the bottom right; the panels fade while the map
+  is dragged and never let a click through to the map.
   `beacon` shows a nearby destination without the world-map window: the
   bright upper column stays visible up to the screen edge, with a pin and a
   readable location / distance label. A second column descends from the

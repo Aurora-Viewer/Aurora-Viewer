@@ -823,6 +823,18 @@ impl WorldMap {
         self.place_track(x, y, z, teleport);
     }
 
+    /// Show a place on the map: tracked, and the map centred on it as soon
+    /// as its region is known. The map's opening puts it back on the agent
+    /// (LLFloaterWorldMap::onOpen), so this is what shows the place, on every
+    /// path of `trackLocation` then `showInstance("world_map", "center")`:
+    /// LLPanelPlaces::onShowOnMapButtonClicked (indra/newview/llpanelplaces.cpp),
+    /// LLLandmarksPanel::doShowOnMap, the favorites bar, search, picks, group
+    /// land and the inventory landmark.
+    pub fn show_location(&mut self, x: f64, y: f64, z: f32) {
+        self.track_location(x, y, z, false);
+        self.focus_track = true;
+    }
+
     fn place_track(&mut self, x: f64, y: f64, z: f32, teleport: bool) {
         let (gx, gy) = ((x.max(0.0) / 256.0) as u32, (y.max(0.0) / 256.0) as u32);
         let mut t = Track {
@@ -1277,6 +1289,23 @@ mod tests {
             assert!(w.map.avatar.is_none());
             assert!(w.take_map_commands().iter().all(|c| !matches!(c, NetCommand::FindAgent(_))));
         }
+    }
+
+    #[test]
+    fn showing_a_place_centres_the_map_and_tracking_alone_does_not() {
+        let mut m = WorldMap::default();
+        m.track_location(256_010.0, 256_266.0, 25.0, false);
+        assert!(!m.focus_track, "a beacon set from the minimap leaves the map where it is");
+        m.show_location(256_010.0, 256_266.0, 25.0);
+        assert!(m.focus_track);
+        assert!(m.track.as_ref().is_some_and(|t| t.pending), "its region is still unknown");
+        assert!(
+            m.out.iter().all(|c| !matches!(c, NetCommand::TeleportTo { .. })),
+            "showing a place never teleports"
+        );
+        m.apply_blocks(vec![yiff()]);
+        assert!(m.focus_track, "still to centre, now that the region is known");
+        assert!(m.track.as_ref().is_some_and(|t| !t.pending));
     }
 
     #[test]
