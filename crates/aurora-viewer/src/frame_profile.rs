@@ -1168,7 +1168,7 @@ mod tests {
         assert!(l.contains(" calls=40 "), "{l}");
         assert!(l.contains(" r_finish=0.00 ") && l.contains(" g_objects=0.000 "), "{l}");
         assert!(
-            l.contains(" g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_bloom=0.000 | shadow_path="),
+            l.contains(" g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_clouds=0.000 g_bloom=0.000 | shadow_path="),
             "{l}"
         );
         assert!(
