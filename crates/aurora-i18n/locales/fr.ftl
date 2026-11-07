@@ -3297,6 +3297,7 @@ ui-options-quickjump = Sauter et atterrir sans délai d'animation
 ui-options-quickjump-help = L'avatar quitte le sol et repart après l'atterrissage aussitôt, sans attendre les animations de préparation au saut et d'atterrissage. Aussi dans Moi › Saut rapide.
 ui-options-fly-after-teleport = Voler après un téléport
 ui-options-fly-after-teleport-help = L'avatar vole toujours à l'arrivée d'un téléport, sauf dans une région qui interdit le vol
+ui-options-friends-only-show-help = Seuls vous et vos amis sont montrés : les autres avatars disparaissent, et reviennent aussitôt une fois désactivé. Le même interrupteur que le bouton de la barre d'outils et le menu Monde. Un téléport le désactive, sauf si la ligne suivante le garde. Gardé pour chaque compte.
 ui-options-friends-only-keep = Garder « Ne montrer que les amis » après un téléport
 ui-options-friends-only-keep-help = « Ne montrer que les amis » reste activé à l'arrivée d'un téléport. Désactivé, le téléport le désactive. Une fois désactivé, les autres avatars reviennent aussitôt. Gardé pour chaque compte.
 ui-options-friends-only-keep-login = Gardé pour chaque compte : connectez-vous pour le modifier.

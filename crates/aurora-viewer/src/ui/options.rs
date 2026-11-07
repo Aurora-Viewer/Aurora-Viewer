@@ -401,6 +401,8 @@ pub struct OptionsUi {
     /// The session's "Show my favorite landmarks at login", while logged in
     /// with an account the login screen remembers (set by the app).
     pub login_favorites: Option<bool>,
+    /// The account's "Show Friends Only", while logged in (set by the app).
+    pub friends_only: Option<bool>,
     /// The account's "Keep Show Friends Only after teleporting", while
     /// logged in (set by the app).
     pub friends_only_keep: Option<bool>,
@@ -639,6 +641,8 @@ pub struct OptionsResult {
     pub account: Option<crate::world::user_info::Change>,
     /// "Show my favorite landmarks at login" switched (Privacy).
     pub login_favorites: Option<bool>,
+    /// "Show Friends Only" switched (Controls).
+    pub friends_only: Option<bool>,
     /// "Keep Show Friends Only after teleporting" switched (Controls).
     pub friends_only_keep: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
