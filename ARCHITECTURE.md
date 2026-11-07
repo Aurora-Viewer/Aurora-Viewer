@@ -3754,6 +3754,24 @@ GPU had queued (`Renderer::pick_world`), is now only used for comparison
 (panic), every wait ends, the pending clicks receive an empty reply and the
 viewer closes cleanly.
 
+The 360° snapshot (`app/capture_360.rs`, `ui/capture_360.rs`,
+`snapshot/capture_360.rs`; LLFloater360Capture) draws its six faces as
+photo frames: for each face the camera is swapped for a flycam looking
+along the face, 90° high and wide (`PhotoFrame::cube_face`), and put back
+at the next frame; the world holds still through the photo mode's freeze,
+and "Hide all avatars" flags every avatar and what it wears through the
+photo isolation's `hide_avatars`. The faces are drawn by ordinary cameras,
+which a cube map's faces mirror: the +X and -X captures swap layers and
+the cube is sampled at (-x, y, z) (`aurora-render/src/equirect.rs`, proven
+against the cube face formulas). The faces ride with a frame packet
+(`FramePacket::equirect`), fill a cube texture, and a compute pass
+(`shaders/equirect.wgsl`) writes the equirectangular image, read back on
+the render thread and returned with the frame result; the JPEG carries the
+GPano XMP block as an APP1 segment. While the window is open the session
+posts `{"mode":"360"}` to the InterestList capability of every region
+(`NetCommand::SetInterestListMode`), again to the agent's region when its
+capabilities arrive, and `default` when it closes.
+
 Worn HUDs go through `scene/hud.rs` (lists of our avatar, interest of the textures, triangle picking) and the shared projection `aurora-render/src/hud.rs`. The attachment points in `Scene::object_transform` are relative to the screen, with the aspect of `mScreen`, without the position or the orientation of the avatar. The renderer draws the opaque / masked then the transparent faces after post-processing, in an independent depth, before egui; it reuses the geometry, the bindless textures, the materials and the UV animations of the world. `demo_hud.rs` provides the offline updates and touch replies.
 
 The editing of HUDs reuses the building tools: `build/geom.rs` adapts their camera to the orthographic HUD projection (parallel rays, handles of constant size in pixels), `build/mod.rs::edit_parent` provides the transform of the attachment point to convert the moves into local coordinates. HUD and world selections stay separate. `build/manip.rs` sends the local positions on release with the linkset flag; the Object tab also uses the local values for HUDs. Direct moving with the chosen key (Ctrl by default) shares this same edit_parent and the picking of the visible faces, with the double-sided exceptions. Preferences › Shortcuts › Other › HUDs uses `ui/options/pages/shortcuts.rs` and the `keybinds::Action::HudDrag` action: the two keys share the capture, the clearing, the conflicts and the reset of the other shortcuts. Modifiers alone are captured on release and their left / right sides are equivalent. `Settings::sanitized` migrates the old `hud_drag_key` to the main key without overwriting the two choices already saved; `app/hud_drag.rs` uses these shortcuts for the gesture and the cursor. Settings version 10 replaces the former Alt-only default with Ctrl once (#266), while preserving other saved bindings and cleared slots.

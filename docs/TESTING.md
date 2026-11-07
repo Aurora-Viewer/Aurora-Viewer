@@ -384,6 +384,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail, the photo quality on a card short of video memory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
+| `AURORA_DEMO_SNAPSHOT_360=<folder>[:preview\|medium\|high\|maximum][:hide]` | The 360° snapshot window opened at frame 600, its panorama written to the folder |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
 | `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
@@ -740,6 +741,26 @@ photo mode closes and our profile opens on its main tab with the picture. `toolb
 the right toolbar (dimmed, "No photos this session yet", until the first
 photo), then closes photo mode and opens the quick view with it (the button
 lit). The log gives `photo reel demo: <n> photos in the reel`.
+
+`AURORA_DEMO_SNAPSHOT_360`: the 360° snapshot window (the toolbar's
+`360capture`, LLFloater360Capture) opens at frame 600 and, as the Legacy
+Viewer does at its opening, captures at once: the world frozen, six square
+90° faces drawn from the camera's position (the log gives `360 capture:
+6 faces of <n> px drawn in <ms>`), the 4096 × 2048 panorama built on the
+GPU (`360 capture: 4096 x 2048 panorama in <ms>`) and shown in the window,
+then written to `<folder>` under `sl360_<region>_4096x2048_<face>_<stamp>.jpg`
+(`360 capture: saved <path>`), with the six faces beside it as
+`face_<layer>.png` (the Legacy Viewer's `360CaptureDebugSaveImage`). A
+word after the folder picks the quality level (`preview` 128 px faces by
+default, `medium` 512, `high` 1024, `maximum` 2048); `hide` ticks "Hide
+all avatars". Look at the JPEG: the
+six faces must join without a seam (the plaza's ground and sky run
+across the whole width, the horizon is a straight line at mid height),
+the zenith and the nadir are stretched across the top and bottom rows
+without a hole, north (+Y) is at the centre column and east at three
+quarters. The log also gives the interest list mode asked of the regions
+(`interest list mode 360`, then `default` when the window closes), which
+the demo has no simulator to send to.
 
 `AURORA_DEMO_ISOLATE` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
 mode): at frame 640 `own` shows our avatar alone (My avatar), the sky,

@@ -13336,3 +13336,23 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+# La fenêtre Photo 360° (LLFloater360Capture, floater_360capture.xml)
+capture-360-quality-label = Qualité
+capture-360-quality-preview = Aperçu (rapide)
+capture-360-quality-medium = Moyenne
+capture-360-quality-high = Élevée
+capture-360-quality-maximum = Maximale
+capture-360-quality-preview-tip = Qualité d'aperçu
+capture-360-quality-medium-tip = Qualité moyenne
+capture-360-quality-high-tip = Qualité élevée
+capture-360-quality-maximum-tip = Qualité maximale
+capture-360-hide-avatars = Masquer les avatars
+capture-360-create = Créer une image 360
+capture-360-capturing = Rendu de la face { $face } sur 6…
+capture-360-projecting = Assemblage de l'image 360°…
+capture-360-saving = Enregistrement de l'image 360°…
+capture-360-saved = { $name } enregistrée
+capture-360-failed = L'image 360° n'a pas pu être créée.
+capture-360-save-failed = L'image 360° n'a pas pu être enregistrée : { $error }
+capture-360-save-dialog = Enregistrer l'image 360°

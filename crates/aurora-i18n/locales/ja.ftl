@@ -13313,3 +13313,23 @@ picker-pipette-no-texture = コピー可能なテクスチャがインベント�
 picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
+
+# ３６０度スナップショットのウィンドウ（LLFloater360Capture, floater_360capture.xml）
+capture-360-quality-label = 品質
+capture-360-quality-preview = プレビュー（高速）
+capture-360-quality-medium = 通常
+capture-360-quality-high = 高
+capture-360-quality-maximum = 最高品位
+capture-360-quality-preview-tip = プレビュー程度の品質
+capture-360-quality-medium-tip = 通常品質
+capture-360-quality-high-tip = 高品質
+capture-360-quality-maximum-tip = 最高品質
+capture-360-hide-avatars = アバターをすべて隠す
+capture-360-create = ３６０度画像を作成
+capture-360-capturing = ６面中{ $face }面目を描画中…
+capture-360-projecting = ３６０度画像を作成中…
+capture-360-saving = ３６０度画像を保存中…
+capture-360-saved = { $name }を保存しました
+capture-360-failed = ３６０度画像を作成できませんでした。
+capture-360-save-failed = ３６０度画像を保存できませんでした：{ $error }
+capture-360-save-dialog = ３６０度画像を保存

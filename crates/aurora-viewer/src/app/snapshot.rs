@@ -142,6 +142,9 @@ pub(super) struct PhotoFrame {
     /// Its look, placed for the part drawn.
     pub look: Option<aurora_render::looks::PhotoLook>,
     pub context: aurora_render::PhotoContext,
+    /// A face of a 360° snapshot: the square 90° projection, whatever the
+    /// window's proportions (`app/capture_360.rs`).
+    pub cube_face: bool,
 }
 
 type Thumb = (PathBuf, Option<(u32, u32, Vec<u8>)>);
@@ -487,7 +490,8 @@ impl App {
         if !self.panels.snapshot || !self.in_world() {
             self.snapshots.ui.freeze_world = false;
         }
-        let wanted = self.snapshots.ui.freeze_world;
+        // (a 360° snapshot holds the world still while its faces are drawn)
+        let wanted = self.snapshots.ui.freeze_world || (self.capture_360.capturing() && self.in_world());
         if wanted != self.snapshots.world_freeze.is_some() {
             self.snapshots.world_freeze = wanted.then_some(snapshot::Hold {
                 at: now,
@@ -511,6 +515,11 @@ impl App {
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
         let s = &mut self.snapshots;
         s.capturing = None;
+        // a 360° snapshot's face first: the photo's own parts wait for it
+        if let Some(frame) = self.capture_360.photo_frame(renderer.size(), self.settings.render_scale_percent) {
+            s.capturing = renderer.snapshot_request;
+            return Some(frame);
+        }
         let job = s.job.as_mut()?;
         if job.asked {
             if renderer.failed() || renderer.device_lost() {
@@ -563,6 +572,7 @@ impl App {
                 scale,
                 look: None,
                 context: aurora_render::PhotoContext::Record,
+                cube_face: false,
             });
         }
         let tile = job.tiles[job.next].draw;
@@ -602,6 +612,7 @@ impl App {
             } else {
                 aurora_render::PhotoContext::None
             },
+            cube_face: false,
         })
     }
 

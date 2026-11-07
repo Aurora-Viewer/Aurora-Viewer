@@ -13340,3 +13340,23 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+
+# The 360° snapshot window (LLFloater360Capture, floater_360capture.xml)
+capture-360-quality-label = Quality level
+capture-360-quality-preview = Preview (fast)
+capture-360-quality-medium = Medium
+capture-360-quality-high = High
+capture-360-quality-maximum = Maximum
+capture-360-quality-preview-tip = Preview quality
+capture-360-quality-medium-tip = Medium quality
+capture-360-quality-high-tip = High quality
+capture-360-quality-maximum-tip = Maximum quality
+capture-360-hide-avatars = Hide all avatars
+capture-360-create = Create 360 image
+capture-360-capturing = Drawing face { $face } of 6…
+capture-360-projecting = Building the 360° image…
+capture-360-saving = Saving the 360° image…
+capture-360-saved = Saved { $name }
+capture-360-failed = The 360° image could not be made.
+capture-360-save-failed = The 360° image could not be saved: { $error }
+capture-360-save-dialog = Save the 360° image

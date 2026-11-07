@@ -1,8 +1,8 @@
 // The 360° snapshot's equirectangular image from its six cube faces
 // (equirect.rs). One thread per output pixel: its direction in the z-up
-// world, the cube sampled four times across the pixel (the faces are
-// finer than the panorama at every quality level, the hardware filters
-// across the faces' edges), the mean written.
+// world, the cube sampled four times across the pixel (the hardware
+// filters across the faces' edges; the mean smooths the faces finer than
+// the panorama, High and Maximum), the mean written.
 
 const PI: f32 = 3.14159265358979;
 const TAU: f32 = 6.28318530717959;

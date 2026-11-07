@@ -334,6 +334,19 @@ pub struct Camera {
     /// Roll of the view around its direction (radians, positive turns the
     /// picture clockwise): the photo viewfinder's tilt, 0 elsewhere.
     pub roll: f32,
+    /// A view imposed for one frame (a face of the 360° snapshot,
+    /// `app/capture_360.rs`): the eye where the camera is, the view along
+    /// `forward` with `up`, `fov_y` high; nothing else of the camera moves,
+    /// and nothing clears it but its owner.
+    pub fixed_view: Option<FixedView>,
+}
+
+/// A view imposed on the camera for a frame (`Camera::fixed_view`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FixedView {
+    pub forward: Vec3,
+    pub up: Vec3,
+    pub fov_y: f32,
 }
 
 impl Default for Camera {
@@ -398,6 +411,7 @@ impl Default for Camera {
             free: None,
             flycam: None,
             flycam_lens: None,
+            fixed_view: None,
             shake: Vec3::ZERO,
             roll: 0.0,
         }
@@ -420,6 +434,9 @@ impl Camera {
     }
 
     pub fn forward(&self) -> Vec3 {
+        if let Some(fixed) = self.fixed_view {
+            return fixed.forward;
+        }
         (self.target - self.position).normalize_or(Vec3::X)
     }
 
@@ -1461,6 +1478,16 @@ impl Camera {
 
     /// Once per frame, after the avatar moved (LLAgentCamera::updateCamera).
     pub fn update(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
+        self.update_moving(world, s, f);
+        // the imposed view, over whatever the frame did to the camera
+        if let Some(fixed) = self.fixed_view {
+            self.target = self.position + fixed.forward;
+            self.fov_y = fixed.fov_y;
+            self.roll = 0.0;
+        }
+    }
+
+    fn update_moving(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
         if !world.rlva.enabled() {
             self.update_unrestricted(world, s, f);
             return;
@@ -1925,6 +1952,9 @@ impl Camera {
     }
 
     pub fn view(&self) -> Mat4 {
+        if let Some(fixed) = self.fixed_view {
+            return glam::camera::rh::view::look_to_mat4(self.position, fixed.forward, fixed.up);
+        }
         if let Some(flycam) = self.flycam {
             return glam::camera::rh::view::look_to_mat4(self.position + self.shake, flycam.forward(), flycam.up());
         }
@@ -1935,6 +1965,9 @@ impl Camera {
     }
 
     pub fn view_up(&self) -> Vec3 {
+        if let Some(fixed) = self.fixed_view {
+            return fixed.up;
+        }
         if let Some(flycam) = self.flycam {
             return flycam.up();
         }
