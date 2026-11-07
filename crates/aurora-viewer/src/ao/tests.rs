@@ -1282,3 +1282,104 @@ fn a_teleport_off_the_seat_ends_the_held_sit_override() {
     r.update(Some(&set), f, at(3000), |_| true, |_| 0);
     assert_eq!(r.current, Some(State::Sitting));
 }
+
+/// Seats `r` on an object with the AO's sit, as the simulator's echo leaves
+/// it: our sit and its cover playing, the stock sit stopped and held.
+fn seat_with_ao_sit(r: &mut Runtime, set: &Set, at: Instant) -> [PlayingAnimation; 2] {
+    let raw = [signal(State::Sitting, at)];
+    let mut f = frame(&raw);
+    f.on_object = true;
+    r.update(Some(set), f, at, |_| true, |_| 0);
+    let echo = [
+        PlayingAnimation::from_signal(step(set, State::Sitting, 0), 2, at, None),
+        PlayingAnimation::from_signal(SIT_GENERIC, 3, at, None),
+    ];
+    let mut f = frame(&echo);
+    f.on_object = true;
+    r.update(Some(set), f, at + Duration::from_millis(100), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Sitting));
+    echo
+}
+
+/// #2700, review of PR #2829: the arrival list can still carry the stock
+/// sit. The AO overrides it while it is listed, as the Legacy AO does, but
+/// the echo of its own stop must not leave it holding the sit off any
+/// object. A teleport the simulator started (llTeleportAgent) can arrive
+/// with us still seated, and the unseat follows: that ends the hold too. A
+/// new sit on an object afterwards is held as usual.
+#[test]
+fn after_a_teleport_off_the_seat_the_sit_is_not_held_again() {
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let at = |ms: u64| now + Duration::from_millis(ms);
+    let sit_override = step(&set, State::Sitting, 0);
+    let stops_the_sit = |cmd: &[(Uuid, bool)]| {
+        cmd.contains(&(sit_override, false))
+            && cmd.contains(&(SIT_GENERIC, false))
+            && !cmd
+                .iter()
+                .any(|(id, start)| *start && (*id == State::Sitting.motion() || *id == sit_override))
+    };
+
+    // The arrival list still has the stock sit, then the echo of our stop.
+    let mut r = Runtime::default();
+    let echo = seat_with_ao_sit(&mut r, &set, now);
+    let raw = [echo[0], echo[1], signal(State::Sitting, at(3000))];
+    let mut f = frame(&raw);
+    f.teleports = 1;
+    let (_, cmd) = r.update(Some(&set), f, at(3000), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Sitting), "the AO overrides a listed stock sit");
+    assert!(cmd.contains(&(State::Sitting.motion(), false)));
+    let mut f = frame(&echo);
+    f.teleports = 1;
+    let (pose, cmd) = r.update(Some(&set), f, at(3100), |_| true, |_| 0);
+    assert_ne!(r.current, Some(State::Sitting), "our stop's echo ends the sit off any object");
+    assert!(stops_the_sit(&cmd), "{cmd:?}");
+    assert!(!pose.iter().any(|a| a.id == sit_override || a.id == State::Sitting.motion()));
+    let mut f = frame(&echo);
+    f.teleports = 1;
+    r.update(Some(&set), f, at(5000), |_| true, |_| 0);
+    assert_ne!(r.current, Some(State::Sitting), "and stays ended");
+
+    // A teleport the simulator started: still seated on arrival, unseated later.
+    let mut r = Runtime::default();
+    let echo = seat_with_ao_sit(&mut r, &set, now);
+    let mut f = frame(&echo);
+    f.on_object = true;
+    f.teleports = 1;
+    assert!(r.update(Some(&set), f, at(3000), |_| true, |_| 0).1.is_empty());
+    assert_eq!(r.current, Some(State::Sitting), "still seated");
+    let mut f = frame(&echo);
+    f.teleports = 1;
+    let (_, cmd) = r.update(Some(&set), f, at(3500), |_| true, |_| 0);
+    assert_ne!(r.current, Some(State::Sitting), "the later unseat ends the sit");
+    assert!(stops_the_sit(&cmd), "{cmd:?}");
+
+    // Sitting on an object again after the teleport is an ordinary sit.
+    let raw = [signal(State::Sitting, at(6000))];
+    let mut f = frame(&raw);
+    f.on_object = true;
+    f.teleports = 1;
+    r.update(Some(&set), f, at(6000), |_| true, |_| 0);
+    let echo = [
+        PlayingAnimation::from_signal(sit_override, 2, at(6100), None),
+        PlayingAnimation::from_signal(SIT_GENERIC, 3, at(6100), None),
+    ];
+    let mut f = frame(&echo);
+    f.on_object = true;
+    f.teleports = 1;
+    r.update(Some(&set), f, at(6100), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Sitting), "the new sit is held");
+}
+
+/// The changes held back after a teleport to another region are sent as
+/// their net result: the last change of each animation, stops first.
+#[test]
+fn held_changes_keep_the_last_change_of_each_animation() {
+    let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+    let mut held = Vec::new();
+    runtime::hold_changes(&mut held, vec![(a, false), (b, true)]);
+    runtime::hold_changes(&mut held, vec![(b, false), (c, true)]);
+    runtime::hold_changes(&mut held, vec![(a, true)]);
+    assert_eq!(held, vec![(b, false), (c, true), (a, true)]);
+}
