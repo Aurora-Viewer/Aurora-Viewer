@@ -277,6 +277,8 @@ pub(super) fn show(
     contacts_sub: ContactsSub,
     docked: bool,
     rail: bool,
+    // the window is narrow enough for the rail (`rail`: what is drawn)
+    narrow: bool,
     // RAIL or WIDTH, or on its way from one to the other
     width: f32,
     height: f32,
@@ -319,7 +321,8 @@ pub(super) fn show(
     let filter = st.side_filter.trim().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let voice = voice_panel_wanted(world, st);
-    let list_h = (column.bottom() - ui.cursor().top() - if voice { voice_panel_h(rail) + VOICE_PANEL_GAP } else { 0.0 } - 6.0).max(ENTRY_H);
+    let list_h =
+        (column.bottom() - ui.cursor().top() - if voice { voice_panel_h(rail) + 2.0 * VOICE_PANEL_GAP } else { 0.0 } - FOOT_H).max(ENTRY_H);
     egui::ScrollArea::vertical()
         .id_salt("conversation_column")
         .max_height(list_h)
@@ -529,7 +532,54 @@ pub(super) fn show(
     if voice {
         voice_panel(ui, p, world, st, actions, rail);
     }
+    column_toggle(ui, p, st, actions, column, narrow);
     contacts_clicked
+}
+
+/// The foot of the column, under its list or call panel: what its button
+/// takes, and a little air.
+const FOOT_H: f32 = 34.0;
+const FOOT_BUTTON: f32 = 24.0;
+
+/// The button that collapses and expands the column, at the bottom left of
+/// the window (`workspace::ColumnChoice`). An Aurora addition: the Legacy
+/// Viewer's window has tabs and no such list. The nearest is the unregistered
+/// LLFloaterIMContainer (indra/newview/llfloaterimcontainer.cpp):
+/// onExpandCollapseButtonClicked, ConversationsListPaneCollapsed, and
+/// assignResizeLimits for the least width of `ColumnChoice::least_width`.
+/// Over the rail's pictures in both layouts, it does not move from under
+/// the pointer that used it. The rail has no search field to clear a search
+/// from: collapsing ends it.
+fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut Vec<ConvAction>, column: egui::Rect, narrow: bool) {
+    let rail = st.column.rail(narrow);
+    let (icon, tip) = if rail {
+        ("layout-sidebar-left-expand-filled", aurora_i18n::tr!("ui-chat-column-expand"))
+    } else {
+        ("layout-sidebar-left-collapse-filled", aurora_i18n::tr!("ui-chat-column-collapse"))
+    };
+    let center = egui::pos2(column.left() + RAIL / 2.0, column.bottom() - 6.0 - FOOT_BUTTON / 2.0);
+    let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(FOOT_BUTTON));
+    let resp = ui.interact(rect, control_id("column-toggle"), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised.gamma_multiply(0.7));
+    }
+    super::thread::paint_icon(
+        ui.painter(),
+        icon,
+        egui::Rect::from_center_size(center, egui::Vec2::splat(16.0)),
+        if resp.hovered() { p.ink } else { p.muted },
+    );
+    if resp.on_hover_text(tip).clicked() {
+        let was = st.column.collapsed;
+        st.column = st.column.toggled(narrow);
+        if st.column.collapsed != was {
+            actions.push(ConvAction::ColumnCollapsed(st.column.collapsed));
+        }
+        if !rail {
+            st.side_filter.clear();
+        }
+    }
 }
 
 /// What the nearby chat's entry says: who can hear us, and its last line.
@@ -959,15 +1009,15 @@ fn voice_panel_h(rail: bool) -> f32 {
 /// The call panel's buttons (the mockup's `.vpanel .rb`).
 const VOICE_BUTTON_H: f32 = 28.0;
 
-/// Room under the call panel, the same as under the conversation's field.
-const VOICE_PANEL_GAP: f32 = 12.0;
+/// Room above and below the call panel, between the list and the foot.
+const VOICE_PANEL_GAP: f32 = 6.0;
 
 fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rail: bool) {
     let Some(call) = world.calls.active.as_ref() else {
         return;
     };
     let conversation = call.conversation();
-    let bottom = ui.max_rect().bottom() - VOICE_PANEL_GAP;
+    let bottom = ui.max_rect().bottom() - FOOT_H - VOICE_PANEL_GAP;
     let rect = egui::Rect::from_min_max(
         egui::pos2(ui.max_rect().left(), bottom - voice_panel_h(rail)),
         egui::pos2(ui.max_rect().right(), bottom),
