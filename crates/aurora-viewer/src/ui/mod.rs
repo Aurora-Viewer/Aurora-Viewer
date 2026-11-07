@@ -105,6 +105,7 @@ pub mod quick_prefs;
 pub mod region;
 pub mod region_message_prompt;
 pub mod region_restart;
+pub mod region_tracker;
 pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
@@ -160,6 +161,7 @@ pub struct Panels {
     pub minimap: bool,
     /// World map (Ctrl+M).
     pub world_map: bool,
+    pub region_tracker: bool,
     pub beacons: bool,
     pub owned_land: bool,
     pub settings: bool,
@@ -240,6 +242,7 @@ impl Panels {
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
+            region_tracker: false,
             beacons: false,
             owned_land: false,
             settings: false,
