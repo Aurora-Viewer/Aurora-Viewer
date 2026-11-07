@@ -24,10 +24,17 @@ const ARRIVE_FRAME: u64 = 180;
 const PANEL: f32 = 1.55;
 
 pub fn enabled() -> bool {
-    std::env::var("AURORA_DEMO_LEGACY_BUMP").is_ok_and(|v| v.trim() == "1")
+    static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        std::env::var("AURORA_DEMO").is_ok_and(|v| v.trim() == "1")
+            && std::env::var("AURORA_DEMO_LEGACY_BUMP").is_ok_and(|v| v.trim() == "1")
+    });
+    *ENABLED
 }
 
 pub fn texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if !enabled() {
+        return None;
+    }
     match *id {
         DIFFUSE => Some(diffuse()),
         EXPLICIT_NORMAL => Some(explicit_normal()),
@@ -171,5 +178,20 @@ impl LegacyBumpDemo {
         objects.push(panel(19, 153.2, 125.2, Some(PBR_MATERIAL)));
         world.apply(NetEvent::ObjectUpdates { handle: HANDLE, objects });
         log::info!("demo legacy bump: codes 0–17, explicit legacy normal, and PBR normal controls");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standard_preset_fixture_does_not_replace_a_grid_asset() {
+        if !enabled() {
+            let crate::scene::legacy_bump::BumpSource::Standard(id) = crate::scene::legacy_bump::bump_source(9) else {
+                panic!("Cut Stone preset missing");
+            };
+            assert!(crate::demo::local_texture(&id).is_none());
+        }
     }
 }
