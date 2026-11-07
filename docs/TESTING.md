@@ -4303,6 +4303,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
 | `AURORA_DEMO_SOFT_MASK=1` | Our avatar wears a skin-tone Mask disc on the groin; soft fringe must stay visible (#1492) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
+| `AURORA_DEMO_LEGACY_BUMP=1` | Legacy texture-entry bump codes 0–17, plus explicit legacy-normal and PBR-normal precedence controls |
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
@@ -4469,6 +4470,17 @@ both open states and the selection count. Capture at frame 620.
   from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
   at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
   the sun draws across a low-poly ball.
+- **`AURORA_DEMO_LEGACY_BUMP=1`**: after frame 180, the plaza gets 18 panels
+  labelled by their texture-entry bump code, 0–17, followed by an explicit
+  legacy normal-map control and a PBR normal-map control. Check that 0 stays
+  flat, brightness/darkness and each standard pattern show relief, and the
+  two explicit-normal controls retain their own map. Change Shininess through
+  None/Low/Medium/High on the same test face to ensure the stored shine value
+  and highlights remain independent of the bump preset. The generated maps
+  load with their source textures and improve as finer source levels arrive;
+  revisiting a face should reuse its cached map. Legacy Viewer references:
+  `LLDrawPoolBump::bindBumpMap`, `std_bump.ini`,
+  `LLBumpImageList::generateNormalMapFromAlpha` and `normgenF.glsl`.
 - **`AURORA_DEMO_RIGGED_PROP=1`**: a five-link chain modelled down the
   back of the default skeleton, bound to the chest, and encoded as an
   upload does it (vertices normalized, the bind shape bringing them back

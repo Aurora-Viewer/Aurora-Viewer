@@ -3096,6 +3096,18 @@ including roll, zoom and region-origin shifts. It is cleared by reset,
 mouselook, teleport and photo free-camera entry. Preferences › Mouse and
 keyboard › Joystick and 3D mouse (`ui/options/pages/joystick.rs`) shares the
 normal search, modified-settings and reset paths.
+
+Legacy texture-entry bump codes are resolved in `scene/legacy_bump.rs`.
+`TextureStreamer` requests the diffuse image for brightness/darkness or the
+`std_bump.ini` source for codes 3–17, then generates wrapped heightfield
+normals on the background job pool. Generated normals are keyed by the source
+image revision and bump mode, held with the face's texture references, and
+replaced when a finer source level arrives. `Scene::rebuild_faces` binds the
+result only when the face has no explicit legacy normal; PBR normal maps keep
+their material precedence. The conversion follows
+`LLBumpImageList::generateNormalMapFromAlpha` and `normgenF.glsl` in the
+Legacy Viewer. `AURORA_DEMO_LEGACY_BUMP=1` supplies local stand-in sources and
+explicit-normal/PBR controls.
 Its four button assignments capture native press counters from the selected
 device, including taps released between frames. Capture suspends controller
 actions and cancels when its row, device or application focus goes away.
