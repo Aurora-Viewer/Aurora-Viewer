@@ -259,9 +259,14 @@ pub fn paint_number(painter: &egui::Painter, text: &str, font: &egui::FontId, le
     let mut x = left_center.x;
     for part in parts(text) {
         let width = part_width(painter, part, font);
-        let galley = painter.layout_no_wrap(part.to_owned(), font.clone(), color);
-        let left = x + (width - galley.size().x) / 2.0;
-        crate::ui::widgets::paint_ink_left(painter, galley, egui::pos2(left, left_center.y), color);
+        // `paint_ink_left` starts at the ink: a part's leading space stays
+        let ink = part.trim_start();
+        if !ink.is_empty() {
+            let cell = part_width(painter, ink, font);
+            let galley = painter.layout_no_wrap(ink.to_owned(), font.clone(), color);
+            let left = x + width - cell + (cell - galley.size().x) / 2.0;
+            crate::ui::widgets::paint_ink_left(painter, galley, egui::pos2(left, left_center.y), color);
+        }
         x += width;
     }
 }
