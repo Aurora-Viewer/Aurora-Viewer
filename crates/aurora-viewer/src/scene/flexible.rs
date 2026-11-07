@@ -190,7 +190,6 @@ impl Scene {
                     region.map_or(Vec3::ZERO, |r| r.wind.velocity(sample - offset, r.heightmap.size_x as f32))
                 }
             });
-            let path = state.sim.render_path(pos, rot);
             // (a selected one keeps its outline in step with its mesh)
             if cull && !hud && !self.selection_silhouettes.contains(&idx) {
                 let water = region.and_then(|r| r.info.as_ref()).map(|i| i.water_height);
@@ -199,6 +198,7 @@ impl Scene {
                     return None;
                 }
             }
+            let path = state.sim.render_path(pos, rot);
             let mesh = aurora_prim::volume::generate_flexible_volume(
                 &o.volume,
                 aurora_prim::volume::DETAIL_SCALES[g.lod as usize % 4],

@@ -58,7 +58,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         o.prim_material,
         o.parent_id == 0,
         o.click_action,
-        o.is_flexible(),
+        o.has_flexible_path(),
     );
     let mesh = volume.is_mesh();
     let legacy_canvas =
@@ -138,7 +138,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             ) {
                 set_flexible(tool, world, idx, v, click);
             }
-            let flex_on = flexible && enabled;
+            let flex_on = flexible && enabled && !mesh;
             let mut f = extra.flexible.unwrap_or(FLEX_DEFAULT);
             let mut e = Edit::default();
             ui.add_enabled_ui(flex_on, |ui| {
