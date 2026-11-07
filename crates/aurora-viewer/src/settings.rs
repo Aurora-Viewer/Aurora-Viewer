@@ -1394,6 +1394,11 @@ pub struct Settings {
     /// graphics card once it is known (`graphics_presets::for_machine`).
     #[serde(skip)]
     pub new_profile: bool,
+    /// The keyboard's defaults were placed for a layout that may only stand
+    /// in for the active one (a new profile, or a file older than version
+    /// 34): the first report of `keybinds::LayoutWatch` moves them.
+    #[serde(skip)]
+    pub defaults_follow_reported_layout: bool,
     /// Version 33 turned the camera's limits back on in this file: the login
     /// screen says so once (`ui/login/camera_limits_notice.rs`).
     #[serde(skip)]
@@ -1451,7 +1456,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 33;
+const SETTINGS_VERSION: u32 = 34;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -2132,6 +2137,7 @@ impl Default for Settings {
             settings_version: SETTINGS_VERSION,
             newer_file: None,
             new_profile: false,
+            defaults_follow_reported_layout: false,
             camera_limits_restored: false,
         }
     }
@@ -2372,6 +2378,7 @@ impl Settings {
         let forced = std::env::var_os("AURORA_CAPTURE").is_some();
         s.window_maximized = window_starts_maximized(saved_window.0, saved_window.1, forced);
         s.new_profile = new_profile;
+        s.defaults_follow_reported_layout = new_profile;
         s.finished(newer)
     }
 
@@ -2674,6 +2681,13 @@ impl Settings {
             self.camera_limits_restored = camera.disable_constraints || camera.ignore_sim_constraints;
             camera.disable_constraints = false;
             camera.ignore_sim_constraints = false;
+        }
+        if self.settings_version < 34 {
+            // the letter shortcuts of version 12 (or older defaults moved
+            // then) were placed for the first layout of a Wayland keymap,
+            // which only stood in for the active one: they follow the layout
+            // the compositor reports first (`keybinds::LayoutWatch`)
+            self.defaults_follow_reported_layout = true;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -4115,6 +4129,25 @@ mod tests {
         let bytes = serde_json::to_vec(&existing).expect("serialize synthetic settings");
         let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
         assert_eq!(saved.sanitized().keybinds, existing.keybinds);
+    }
+
+    /// A file older than version 34 had its letters placed for the first
+    /// layout of a Wayland keymap: they follow the first reported layout,
+    /// once (`KeyBindings::follow_layout_change`); a newer file waits for none.
+    #[test]
+    fn older_files_follow_the_reported_keyboard_layout_once() {
+        for (version, follows) in [(12, true), (31, true), (33, true), (SETTINGS_VERSION, false)] {
+            let file = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            let loaded = file.sanitized();
+            assert_eq!(loaded.defaults_follow_reported_layout, follows, "version {version}");
+            assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+            // saved, the file is the current version: the next launch waits for no report
+            let saved: Settings = serde_json::from_slice(&serde_json::to_vec(&loaded).expect("write settings")).expect("read settings");
+            assert!(!saved.sanitized().defaults_follow_reported_layout, "only once");
+        }
     }
 
     /// The move of the letter shortcuts to the layout's letters runs once

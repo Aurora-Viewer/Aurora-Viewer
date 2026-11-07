@@ -7,6 +7,8 @@
 
 mod layout;
 
+pub use layout::{LayoutChange, Watch as LayoutWatch};
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use winit::event::MouseButton;
@@ -1300,8 +1302,18 @@ impl KeyBindings {
     }
 
     fn follow_letters_of(&mut self, layout: &layout::KeyboardLayout) {
-        let before = Self::us_places(layout.movement_keys());
-        let after = Self::for_layout(layout);
+        self.move_defaults(&Self::us_places(layout.movement_keys()), &Self::for_layout(layout));
+    }
+
+    /// The defaults of this profile were chosen for a layout that only stood
+    /// in for the active one, not reported yet (Wayland, `LayoutWatch`): its
+    /// letter shortcuts still on those defaults move to the active layout's,
+    /// with the rules of `follow_layout_letters`.
+    pub fn follow_layout_change(&mut self, change: &LayoutChange) {
+        self.move_defaults(&Self::for_layout(change.before), &Self::for_layout(change.after));
+    }
+
+    fn move_defaults(&mut self, before: &Self, after: &Self) {
         for ((action, old), (_, new)) in before.map.iter().zip(&after.map) {
             for slot in 0..2 {
                 let (Some(old), Some(new)) = (&old[slot], &new[slot]) else {
@@ -2335,6 +2347,32 @@ mod tests {
         let mut kb = KeyBindings::us_places(fr.movement_keys());
         kb.follow_letters_of(&fr);
         assert_eq!(kb, KeyBindings::for_layout(&fr));
+    }
+
+    /// Wayland: a profile made while the first layout of `us,fr` stood in
+    /// for the active French one moves to AZERTY's places once the
+    /// compositor reports it, and the user's own keys stay.
+    #[test]
+    fn defaults_placed_for_a_stand_in_layout_move_to_the_reported_one() {
+        use KeyCode as K;
+        let (us, fr) = (layout::KeyboardLayout::wasd(), layout::KeyboardLayout::zqsd());
+        let change = |before, after| LayoutChange {
+            before,
+            after,
+            guessed: true,
+        };
+        let mut kb = KeyBindings::for_layout(&us);
+        kb.follow_layout_change(&change(&us, &fr));
+        assert_eq!(kb, KeyBindings::for_layout(&fr));
+        kb.follow_layout_change(&change(&fr, &us));
+        assert_eq!(kb, KeyBindings::for_layout(&us));
+
+        let mut kb = KeyBindings::for_layout(&us);
+        kb.set(Action::Mouselook, 0, k(K::KeyL)); // the user's own key
+        kb.follow_layout_change(&change(&us, &fr));
+        assert_eq!(kb.get(Action::Mouselook)[0], k(K::KeyL));
+        assert_eq!(kb.get(Action::Minimap)[0], kmod(K::Semicolon, true, true));
+        assert_eq!(kb.get(Action::Forward)[1], k(K::KeyW));
     }
 
     #[test]
