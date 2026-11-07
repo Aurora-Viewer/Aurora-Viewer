@@ -254,7 +254,7 @@ pub fn top(
     right = bell_rect.left() - MARGIN;
     let sys_rect = row(screen, right - system_width(ui, st), right);
     right = sys_rect.left() - MARGIN;
-    let acc_rect = row(screen, right - account_width(ui, p, st), right);
+    let acc_rect = row(screen, right - account_width(ui, st), right);
     right = acc_rect.left() - MARGIN;
     // the conversations' thumbnails in an island of their own, left of the
     // account, where the Legacy Viewer's chiclets stand (#1134); the place
@@ -419,7 +419,7 @@ fn account_slot_width(balance: Option<&std::sync::Arc<egui::Galley>>) -> f32 {
     4.0 + DISC + balance.map_or(0.0, |g| 6.0 + g.size().x.ceil()) + 8.0
 }
 
-fn account_width(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> f32 {
+fn account_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
     PAD * 2.0 + account_slot_width(balance_galley(ui, st).as_ref())
 }
 
@@ -1538,9 +1538,7 @@ mod tests {
         let mut st = status(true, true);
         let width = |st: &StatusInfo| {
             let mut w = 0.0;
-            let mut out = ctx.run_ui(Default::default(), |ui| {
-                w = account_width(ui, &crate::theme::Theme::default().palette(), st)
-            });
+            let mut out = ctx.run_ui(Default::default(), |ui| w = account_width(ui, st));
             out.textures_delta.clear();
             w
         };
