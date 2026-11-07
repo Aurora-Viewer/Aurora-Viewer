@@ -13333,6 +13333,34 @@ ui-options-camera-vr-at-start-help = The VR button then enters VR at once. Off, 
 
 app-vr-leave = Press { $key } to return to desktop mode
 
+wearable-favorites-all = All favorites
+wearable-favorites-new-folder = New folder
+wearable-favorites-rename-folder = Rename folder
+wearable-favorites-delete-folder = Delete folder
+wearable-favorites-delete-confirm = Delete the folder "{ $name }"? Its { $count ->
+    [one] { $count } favorite is
+   *[other] { $count } favorites are
+} removed from it; the items stay in your inventory.
+wearable-favorites-invalid-name = The folder name "{ $name }" cannot contain a slash.
+wearable-favorites-filter = Filter favorites
+wearable-favorites-sort = Sort
+wearable-favorites-sort-name = Sort by name
+wearable-favorites-sort-recent = Sort by most recent
+wearable-favorites-sort-type = Sort by type name
+wearable-favorites-remove = Remove from favorites
+wearable-favorites-empty = No favorites yet. Drag clothing, body parts or objects here from your inventory.
+wearable-favorites-no-match = No favorite matches this filter.
+wearable-favorites-assign = Assign to folder
+wearable-favorites-delete-real-items = This folder holds items of your own, not only favorites. Move them out first.
+wearable-favorites-loading = Your inventory is still loading.
+wearable-favorites-sync = Sync from Legacy Viewer
+wearable-favorites-sync-tip = Adds the favorites of #Firestorm/#Wearable Favorites to this list. Subfolders are matched by name. Nothing is removed, and the Legacy Viewer's folder is not changed.
+wearable-favorites-synced = { $count ->
+    [one] { $count } favorite added.
+   *[other] { $count } favorites added.
+}
+wearable-favorites-synced-none = Already in sync.
+
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 
 picker-pipette-no-texture = No copyable texture found in your inventory.

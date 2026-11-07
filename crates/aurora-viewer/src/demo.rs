@@ -279,6 +279,8 @@ pub mod turn;
 /// (AURORA_DEMO_VOICE_CONTROLS).
 #[path = "demo_voice_controls.rs"]
 pub mod voice_controls;
+#[path = "demo_wearable_favorites.rs"]
+pub mod wearable_favorites;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;

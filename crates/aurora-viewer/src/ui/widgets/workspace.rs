@@ -480,6 +480,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
+        "wearable_favorites" => "hanger-2-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
