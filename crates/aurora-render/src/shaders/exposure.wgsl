@@ -86,7 +86,13 @@ fn cs_exposure(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invo
     let average = partial[0] / (GRID * GRID);
     let max_l = max(p.b.x, 1e-4);
     let l = clamp(average, 0.0, max_l) / max_l;
-    let goal = mix(p.b.z, p.b.y, l * l);
+    var goal = mix(p.b.z, p.b.y, l * l);
+    // An Aurora difference, on purpose: a truly dark scene stays dark, where the
+    // Legacy Viewer lifts it to its highest exposure. Dim interiors and daylight
+    // keep the Legacy Viewer's exposure. Not on a sky without exposure (range 1)
+    if (p.b.z > 1.0) {
+        goal *= mix(0.4, 1.0, smoothstep(0.003, 0.015, average));
+    }
     // USE_LAST_EXPOSURE: eased towards with the speed of
     // RenderDynamicExposureSpeedError / SpeedTarget
     let prev = state[0];
