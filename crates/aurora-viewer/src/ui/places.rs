@@ -496,7 +496,12 @@ impl PlacesUi {
         });
         ui.add_space(4.0);
         let before = self.tab;
-        widgets::tabs(
+        // The Legacy Viewer's "Places Tabs" (panel_places.xml) centres tabs
+        // sized to their labels; here they are stretched to the window's
+        // width by the human's choice (#2641), as Teleport / Map / Profile
+        // share it under the list. Too narrow for equal shares, the labels'
+        // shares are kept, and the long label its ellipsis.
+        widgets::filled_tabs(
             ui,
             p,
             &mut self.tab,
@@ -1349,14 +1354,24 @@ mod tests {
     }
 
     /// #2641: in the Legacy Viewer's tabs, Teleport / Map / Profile stay
-    /// whole at the bottom of the window, at its opening size and at its
-    /// minimum, at more than one interface scale (the list gives way).
+    /// whole at the bottom of the window (the list gives way), and the three
+    /// tabs span the width of the window, their labels whole or ellipsised,
+    /// never clipped: at its opening size, at its minimum, wide, and at more
+    /// than one interface scale.
     #[test]
-    fn legacy_tabs_keep_their_bottom_buttons_whole() {
-        fn text_rects(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<(String, egui::Rect, egui::Rect)>) {
+    fn legacy_tabs_span_the_window_and_keep_their_bottom_buttons_whole() {
+        #[derive(Default)]
+        struct Drawn {
+            /// Text, its ink, its clip.
+            texts: Vec<(String, egui::Rect, egui::Rect)>,
+            /// Thin filled rectangles (the tabs' underlines).
+            lines: Vec<egui::Rect>,
+        }
+        fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Drawn) {
             match shape {
-                egui::epaint::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip)),
-                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| text_rects(s, clip, out)),
+                egui::epaint::Shape::Text(t) => out.texts.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip)),
+                egui::epaint::Shape::Rect(r) if r.rect.height() <= 2.5 && r.rect.width() > 1.0 => out.lines.push(r.rect),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, clip, out)),
                 _ => {}
             }
         }
@@ -1364,15 +1379,23 @@ mod tests {
         let world = World::new(library);
         let images = std::collections::HashMap::new();
         let mut emoji = crate::ui::emoji::Emoji::load();
-        let labels = [
+        let buttons = [
             aurora_i18n::tr!("common-teleport"),
             aurora_i18n::tr!("common-map"),
             aurora_i18n::tr!("common-profile"),
         ];
+        let tabs = [
+            aurora_i18n::tr!("common-favorites"),
+            aurora_i18n::tr!("common-landmarks"),
+            aurora_i18n::tr!("ui-places-teleport-history"),
+        ];
+        let min = Vec2::new(260.0, 300.0);
         for (size, zoom) in [
             (None, 1.0),
-            (Some(Vec2::new(260.0, 300.0)), 1.0),
-            (Some(Vec2::new(260.0, 300.0)), 1.5),
+            (Some(min), 1.0),
+            (Some(min), 1.5),
+            (Some(Vec2::new(700.0, 588.0)), 1.0),
+            (None, 1.5),
         ] {
             let ctx = egui::Context::default();
             let theme = crate::theme::Theme::default();
@@ -1410,21 +1433,54 @@ mod tests {
                 output.textures_delta.clear();
                 shapes = output.shapes;
             }
-            let mut texts = Vec::new();
+            let mut drawn = Drawn::default();
             for s in &shapes {
-                text_rects(&s.shape, s.clip_rect, &mut texts);
+                collect(&s.shape, s.clip_rect, &mut drawn);
             }
-            for label in &labels {
-                let (_, rect, clip) = texts
+            let find = |label: &str| {
+                drawn
+                    .texts
                     .iter()
-                    .rev()
-                    .find(|(t, ..)| t == label)
-                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom})"));
+                    // an ellipsised label may keep only its start
+                    .find(|(t, ..)| t == label || t.strip_suffix('…').is_some_and(|start| label.starts_with(start)))
+                    .map(|(_, rect, clip)| (*rect, *clip))
+                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom})"))
+            };
+            for label in &buttons {
+                let (rect, clip) = find(label);
                 assert!(
                     clip.contains_rect(rect.expand(-0.5)),
                     "« {label} » cut off ({size:?}, zoom {zoom}): text {rect:?}, clip {clip:?}"
                 );
             }
+            // each tab: its label and the underline under it, 6 points in
+            // from both of its edges (widgets::underline)
+            let mut spans = Vec::new();
+            for label in &tabs {
+                let (text, clip) = find(label);
+                let line = drawn
+                    .lines
+                    .iter()
+                    .find(|l| l.top() > text.bottom() && l.top() < text.bottom() + 20.0 && l.x_range().contains(text.center().x))
+                    .unwrap_or_else(|| panic!("underline of « {label} » ({size:?}, zoom {zoom}): {:?}", drawn.lines));
+                let tab = egui::Rect::from_x_y_ranges(line.left() - 6.0..=line.right() + 6.0, text.y_range());
+                assert!(
+                    tab.contains_rect(text.expand(-0.5)) && clip.contains_rect(text.expand(-0.5)),
+                    "« {label} » cut off ({size:?}, zoom {zoom}): text {text:?}, tab {tab:?}, clip {clip:?}"
+                );
+                spans.push((tab, clip));
+            }
+            // together, the width of the window's content (its clip)
+            let (first, clip) = spans[0];
+            let last = spans[2].0;
+            assert!(
+                (first.left() - clip.left()).abs() <= 1.5 && (last.right() - clip.right()).abs() <= 1.5,
+                "tabs from {} to {}, content from {} to {} ({size:?}, zoom {zoom})",
+                first.left(),
+                last.right(),
+                clip.left(),
+                clip.right()
+            );
         }
     }
 
