@@ -9367,6 +9367,7 @@ web-browser-secure = Secure connection (https)
 web-browser-not-secure = The connection is not secure
 web-browser-loading = Loading…
 marketplace-unavailable = The Marketplace shows here once connected to Second Life.
+destinations-unavailable = This grid has no destination guide.
 marketplace-listings-title = Marketplace listings
 marketplace-listings-menu = Marketplace listings
 marketplace-listings-tab-all = All

@@ -9354,6 +9354,7 @@ web-browser-secure = 安全な接続 (https)
 web-browser-not-secure = 接続は安全ではありません
 web-browser-loading = 読み込み中…
 marketplace-unavailable = Second Lifeに接続すると、マーケットプレイスがここに表示されます。
+destinations-unavailable = このグリッドには行き先ガイドがありません。
 marketplace-listings-title = マーケットプレイスの出品リスト
 marketplace-listings-menu = マーケットプレイスの出品リスト
 marketplace-listings-tab-all = すべて
