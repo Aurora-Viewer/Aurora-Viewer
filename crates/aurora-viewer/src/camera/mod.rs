@@ -21,7 +21,7 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SavedViews, VrView, zoom_lens};
+pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE, SavedViews, VrView, zoom_lens};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -36,7 +36,7 @@ pub(crate) fn view_reference_up(direction: Vec3) -> Vec3 {
 use crate::agent::AgentState;
 use crate::scene::Scene;
 use crate::world::World;
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{DVec3, Mat4, Quat, Vec3, Vec4};
 use std::f32::consts::{PI, TAU};
 use std::time::Instant;
 use uuid::Uuid;
@@ -307,8 +307,11 @@ pub struct Camera {
     /// mCameraVirtualPositionAgent: camera target before the FOV push-out.
     virtual_position: Vec3,
     anim: Option<Animation>,
-    smoothing_last_global: Vec3,
-    smoothing_last_agent: Vec3,
+    /// In double precision, as LLAgentCamera's LLVector3d: a strong smoothing
+    /// moves by less than a step of the f32 coordinates in a frame, and would
+    /// stop short of its goal (`SMOOTHING_RANGE`).
+    smoothing_last_global: DVec3,
+    smoothing_last_agent: DVec3,
     smoothing_stop: bool,
     tool: Option<Tool>,
     avatar: AvatarFrame,
@@ -374,8 +377,8 @@ impl Default for Camera {
             ml_zoom: Default::default(),
             virtual_position: Vec3::ZERO,
             anim: None,
-            smoothing_last_global: Vec3::ZERO,
-            smoothing_last_agent: Vec3::ZERO,
+            smoothing_last_global: DVec3::ZERO,
+            smoothing_last_agent: DVec3::ZERO,
             smoothing_stop: false,
             tool: None,
             avatar: AvatarFrame {
@@ -1033,8 +1036,6 @@ impl Camera {
             &mut self.target,
             &mut self.focus_target,
             &mut self.virtual_position,
-            &mut self.smoothing_last_global,
-            &mut self.smoothing_last_agent,
             &mut self.head,
             &mut self.avatar.root,
             &mut self.avatar.position,
@@ -1042,6 +1043,8 @@ impl Camera {
         ] {
             *p += delta;
         }
+        self.smoothing_last_global += delta.as_dvec3();
+        self.smoothing_last_agent += delta.as_dvec3();
         if let Some(free) = &mut self.free {
             free.position += delta;
         }
@@ -1309,7 +1312,7 @@ impl Camera {
         self.smoothing_stop = true;
         self.zoom_in(1.0);
         self.update_focus_offset();
-        self.smoothing_last_global = self.focus_target + self.focus_offset_target;
+        self.smoothing_last_global = (self.focus_target + self.focus_offset_target).as_dvec3();
     }
 
     /// Already eased by the edit tool; translate the view in this frame,
@@ -1326,8 +1329,8 @@ impl Camera {
         self.target += delta;
         self.position += delta;
         self.virtual_position += delta;
-        self.smoothing_last_global += delta;
-        self.smoothing_last_agent += delta;
+        self.smoothing_last_global += delta.as_dvec3();
+        self.smoothing_last_agent += delta.as_dvec3();
         self.smoothing_stop = true;
         if let Some(anim) = self.anim.as_mut() {
             anim.start_camera += delta;
@@ -1608,8 +1611,8 @@ impl Camera {
             self.lag = Vec3::ZERO;
             self.current_distance = self.target_distance;
             self.current_fov_zoom = self.fov_zoom;
-            self.smoothing_last_global = camera_target;
-            self.smoothing_last_agent = camera_target - self.avatar.position;
+            self.smoothing_last_global = camera_target.as_dvec3();
+            self.smoothing_last_agent = (camera_target - self.avatar.position).as_dvec3();
             self.position = camera_target;
             self.target = focus_target;
             self.fov_y = self.zoomed_fov(s, f.aspect);
@@ -1654,20 +1657,24 @@ impl Camera {
         // depends on `k`, so on the frame time: a camera at rest then moved
         // by one step of its coordinates in about one frame out of four.
         let agent_pos = self.avatar.position;
-        let mut relative = camera - agent_pos;
+        let mut global = camera.as_dvec3();
+        let mut relative = (camera - agent_pos).as_dvec3();
         self.smoothing_stop |= f.build_mode;
         if self.third_person() && !self.smoothing_stop {
-            let k = interpolant(s.smoothing * SMOOTHING_HALF_LIFE, dt);
+            let k = f64::from(interpolant(s.smoothing * SMOOTHING_HALF_LIFE, dt));
+            let max = f64::from(MAX_CAMERA_SMOOTH_DISTANCE);
             if self.focus_on_avatar && self.focus_object.is_none() {
-                if (relative - self.smoothing_last_agent).length() < MAX_CAMERA_SMOOTH_DISTANCE {
+                if (relative - self.smoothing_last_agent).length() < max {
                     relative = self.smoothing_last_agent.lerp_monotonic(relative, k);
-                    camera = relative + agent_pos;
+                    camera = relative.as_vec3() + agent_pos;
+                    global = camera.as_dvec3();
                 }
-            } else if (camera - self.smoothing_last_global).length() < MAX_CAMERA_SMOOTH_DISTANCE {
-                camera = self.smoothing_last_global.lerp_monotonic(camera, k);
+            } else if (global - self.smoothing_last_global).length() < max {
+                global = self.smoothing_last_global.lerp_monotonic(global, k);
+                camera = global.as_vec3();
             }
         }
-        self.smoothing_last_global = camera;
+        self.smoothing_last_global = global;
         self.smoothing_last_agent = relative;
         self.smoothing_stop = false;
 
@@ -3114,6 +3121,48 @@ mod tests {
     /// of close objects. Coordinates and frame times of the report (alt
     /// camera at 2 106 m, 110 to 180 frames per second); several views,
     /// since only some coordinates were unstable (about four in ten).
+    /// The strongest smoothing, with an alt camera high up, where a step of
+    /// the coordinates is largest and each frame's step of the smoothing is
+    /// smallest: the camera covers half its way per half-life and gets there,
+    /// at any frame rate.
+    #[test]
+    fn the_strongest_smoothing_keeps_its_half_life_and_arrives_at_any_frame_rate() {
+        let quick = CameraSettings {
+            smoothing: 0.0,
+            zoom_time: 0.0,
+            ..Default::default()
+        };
+        let s = CameraSettings {
+            smoothing: *SMOOTHING_RANGE.end(),
+            ..quick.clone()
+        };
+        let half_life = s.smoothing * SMOOTHING_HALF_LIFE;
+        let avatar = Vec3::new(108.2, 187.6, 2105.8);
+        for fps in [60u32, 144, 1000] {
+            let dt = 1.0 / fps as f32;
+            let mut w = world_at(avatar);
+            let mut cam = Camera::default();
+            settle(&mut cam, &mut w, &quick);
+            let focus = avatar + Vec3::new(3.0, -2.0, 0.5);
+            cam.set_view(focus + Vec3::new(-4.0, 3.0, 1.0), focus, &mut w.agent, &quick);
+            settle(&mut cam, &mut w, &quick);
+            let start = cam.position;
+            let goal = focus + Vec3::new(4.0, -3.0, 1.0);
+            cam.set_view(goal, focus, &mut w.agent, &s);
+            let gap = |c: &Camera| c.position.distance(goal);
+            let first = gap(&cam).max(start.distance(goal));
+            for _ in 0..(half_life * fps as f32) as u32 {
+                cam.update(&mut w, &s, &frame(dt));
+            }
+            let ratio = gap(&cam) / first;
+            assert!((ratio - 0.5).abs() < 0.02, "{fps} fps: {ratio} of the way left after a half-life");
+            for _ in 0..(14.0 * half_life * fps as f32) as u32 {
+                cam.update(&mut w, &s, &frame(dt));
+            }
+            assert!(gap(&cam) < 0.002, "{fps} fps: stopped {} m short", gap(&cam));
+        }
+    }
+
     #[test]
     fn a_camera_at_rest_stays_bit_identical_whatever_the_frame_time() {
         let s = CameraSettings::default();

@@ -5,7 +5,7 @@
 
 use super::super::COMBO_W;
 use super::super::cx::{Cx, Nothing, field, fields};
-use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE};
+use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
 use egui::RichText;
 
 /// Three fields x / y / z (x forward, y left, z up).
@@ -156,12 +156,25 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.0..=4.0,
                     " s",
                 );
-                cx.slider(
+                // Logarithmic, where Phototools' 0 to 300 is linear: the usual
+                // values, 0 to 9, keep most of the rail.
+                cx.row(
                     tr!("ui-options-camera-smoothing"),
                     tr!("ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag"),
                     &field!(camera.smoothing),
-                    0.0..=9.0,
-                    "",
+                    |ui, s| {
+                        ui.spacing_mut().slider_width = super::super::SLIDER_W;
+                        ui.add(crate::ui::widgets::restricted_number(
+                            egui::Slider::new(&mut s.camera.smoothing, SMOOTHING_RANGE)
+                                .logarithmic(true)
+                                .smallest_positive(0.1)
+                                .max_decimals(2)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .trailing_fill(true),
+                            crate::ui::widgets::TextPolicy::Decimal,
+                        ))
+                        .changed()
+                    },
                 );
                 cx.slider(
                     tr!("ui-options-camera-flying-camera-lag"),
