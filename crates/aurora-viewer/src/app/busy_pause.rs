@@ -85,7 +85,7 @@ impl App {
     /// The 3D drawing pauses: behind past the driver's memory budget
     /// (texture_budget::Background), or behind on a busy card (this module).
     pub(super) fn drawing_paused(&self) -> bool {
-        self.scene.textures.drawing_paused() || self.busy_pause.paused()
+        self.scene.textures.drawing_paused() || self.busy_pause.paused() || self.gaming_mode_pauses()
     }
 
     /// Every frame, after the render: the pause follows the GPU time.
@@ -112,7 +112,8 @@ impl App {
 
     /// The notice over the paused world.
     pub(super) fn busy_pause_notice(&self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        if !self.busy_pause.paused() {
+        let gaming = self.gaming_mode_pauses();
+        if !self.busy_pause.paused() && !gaming {
             return;
         }
         // The paused world, blurred and darkened (the modals' blur, ui_blur.rs:
@@ -134,7 +135,9 @@ impl App {
             .interactable(false)
             .show(ctx, |ui| {
                 crate::ui::widgets::overlay(ui, p, egui::Margin::symmetric(16, 10), |ui| {
-                    let text = if self.busy_pause.forced {
+                    let text = if gaming {
+                        self.gaming_mode_notice()
+                    } else if self.busy_pause.forced {
                         aurora_i18n::tr!("busy-pause-forced-notice")
                     } else {
                         aurora_i18n::tr!("busy-pause-notice")
