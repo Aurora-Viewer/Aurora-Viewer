@@ -73,6 +73,17 @@ impl Body {
         }
     }
 
+    /// Face `prim_dir` at once, without the lag nor a turn animation
+    /// (FSAvatarAlignBase::snapAvatarBody / snapRemoteAvatarBody: mRoot set
+    /// to the new heading).
+    pub fn snap(&mut self, prim_dir: Vec3) {
+        let fwd = flat(prim_dir);
+        if fwd != Vec3::ZERO {
+            self.rotation = Quat::from_rotation_z(fwd.y.atan2(fwd.x));
+            self.turning = false;
+        }
+    }
+
     /// Advance one frame. Returns the turn direction while turning
     /// (+1 left, -1 right), for our own control flags.
     pub fn update(&mut self, i: &Input, dt: f32) -> i8 {

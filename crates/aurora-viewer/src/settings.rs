@@ -1174,6 +1174,8 @@ pub struct Settings {
     /// FirstUseFlyOverride notification, once ever). The override itself is
     /// never saved (`World::fly_override`).
     pub fly_override_warned: bool,
+    /// The Compass opens in its compact layout (AvatarAlignMini, off).
+    pub avatar_align_mini: bool,
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
@@ -2050,6 +2052,7 @@ impl Default for Settings {
             crouch_toggle: false,
             quickjump: false,
             fly_override_warned: false,
+            avatar_align_mini: false,
             block_click_sit: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
             follow: Default::default(),
