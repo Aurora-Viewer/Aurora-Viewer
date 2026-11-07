@@ -235,7 +235,7 @@ pub struct StatusInfo<'a> {
     pub show_balance: bool,
     /// The L$ gained and spent, under the balance.
     pub balance_gains: Vec<super::balance_gains::GainRow>,
-    /// The balance's colour this frame: it flashes when L$ spent land.
+    /// The balance's colour this frame: it flashes when a row lands.
     pub balance_ink: Color32,
     /// The switch of those rows, for the balance's menu.
     pub balance_highlight: bool,
