@@ -145,6 +145,7 @@ impl App {
         }
         if let Some(id) = keyword_sound {
             log::debug!(target: "ui_sound", "UISndFSKeywordSound ({id})");
+            self.scene.sounds.want_kept(id);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
         }
     }
@@ -273,6 +274,7 @@ impl App {
                     }
                     self.world.social.session_mut(session);
                     self.world.social.focus_im = Some(session);
+                    self.chat_ui.conv_focus_request = true;
                     crate::ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
                 }
                 Some(Open::NearbyChat) => {

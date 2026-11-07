@@ -200,7 +200,13 @@ pub enum InvAction {
     },
     Marketplace(Uuid, crate::ui::marketplace_listings::Command),
     Profile(Uuid),
-    ThumbnailCopied(Uuid),
+    /// The item image was copied; `clipboard`: its id is on the system
+    /// clipboard too (the asset id rule allows it), else the copy stays in
+    /// the viewer (LLFloaterChangeItemThumbnail::onCopyToClipboard).
+    ThumbnailCopied {
+        asset: Uuid,
+        clipboard: bool,
+    },
     Thumbnail {
         request: Uuid,
         item: Uuid,
@@ -231,6 +237,9 @@ pub struct Facts {
     /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
     /// (LLLandmarksPanel "teleport", LLPanelPlaces' Teleport button).
     pub landmark_blocked: bool,
+    /// On an OpenSim grid (`World::home_grid`): "Restore to last position"
+    /// keeps no-copy items there.
+    pub opensim: bool,
 }
 
 impl Facts {
@@ -251,7 +260,7 @@ impl Facts {
                 (*id, ap.hud, super::appearance::items::point_name(name).to_owned())
             })
             .collect();
-        points.sort_by_cached_key(|(_, _, name)| name.to_lowercase());
+        points.sort_by_cached_key(|(_, _, name)| crate::natural_order::key(name));
         let worn_at = world
             .worn_attachment_points()
             .into_iter()
@@ -299,6 +308,7 @@ impl Facts {
                 }),
             rlva: world.rlva_wear_locks(),
             landmark_blocked: !world.rlva_can_teleport_landmark(),
+            opensim: world.home_grid.is_some(),
         }
     }
 
@@ -437,6 +447,21 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
     })
 }
 
+/// Finder state follows the selected panel, including the temporary filters
+/// restored by Find links / Find similar (LLPanelMainInventory::onFilterSelected,
+/// indra/newview/llpanelmaininventory.cpp).
+#[derive(Default)]
+struct TabFilters {
+    filters_initialized: bool,
+    filters: view::Filters,
+    saved_filters: Option<view::Filters>,
+    advanced: bool,
+    quick_text: String,
+    active_smart: Option<u64>,
+    similar: bool,
+    links_filter: Option<Uuid>,
+}
+
 #[derive(Default)]
 pub struct InventoryUi {
     pub default_permissions_open: bool,
@@ -457,6 +482,7 @@ pub struct InventoryUi {
     /// Display owner rights plus next-owner rights in this window only.
     pub show_next_owner: bool,
     filters_initialized: bool,
+    tab_filters: [TabFilters; 5],
     filters: view::Filters,
     saved_filters: Option<view::Filters>,
     /// Advanced search in this window: `filters.smart` holds the rules and
@@ -710,6 +736,11 @@ impl InventoryUi {
     }
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
+        self.show_original_in(inv, id, 0);
+    }
+
+    fn show_original_in(&mut self, inv: &Inventory, id: Uuid, tab: usize) {
+        self.switch_filter_tab(tab);
         self.keyboard_selection = false;
         // first: leaving advanced mode puts the quick-search text back
         self.leave_advanced();
@@ -718,7 +749,6 @@ impl InventoryUi {
         self.saved_filters = None;
         self.filters_initialized = true;
         self.links_filter = None;
-        self.tab = 0;
         self.expand_all = None;
         self.selected = Some(id);
         self.selection.clear();
@@ -731,10 +761,14 @@ impl InventoryUi {
     /// Marketplace inbox (and the inbox itself), which the main tab leaves
     /// out (#752, #1604).
     pub fn show_notified(&mut self, inv: &Inventory, id: Uuid) {
-        self.show_original(inv, id);
-        if crate::world::inventory::actions::system(inv, 50).is_some_and(|inbox| crate::world::inventory::actions::under(inv, id, inbox)) {
-            self.tab = RECEIVED_TAB;
-        }
+        let tab = if crate::world::inventory::actions::system(inv, 50)
+            .is_some_and(|inbox| crate::world::inventory::actions::under(inv, id, inbox))
+        {
+            RECEIVED_TAB
+        } else {
+            0
+        };
+        self.show_original_in(inv, id, tab);
     }
 
     /// LLPanelMainInventory::onClearSearch / LLOpenFoldersWithSelection
@@ -780,6 +814,7 @@ impl InventoryUi {
     }
 
     pub(crate) fn find_links(&mut self, id: Uuid) {
+        self.switch_filter_tab(0);
         self.search.clear();
         if self.saved_filters.is_none() {
             self.saved_filters = Some(self.filters.clone());
@@ -789,7 +824,6 @@ impl InventoryUi {
         self.filters_initialized = true;
         self.links_filter = Some(id);
         self.fetch_all = true;
-        self.tab = 0;
     }
     /// Advanced search on: what was typed in quick search becomes its rules
     /// (`SmartQuery::from_quick`), so nothing is lost.
@@ -828,6 +862,7 @@ impl InventoryUi {
     /// Show a saved smart search (`id`) or an unsaved query (None) in this
     /// window, over the whole inventory.
     pub(crate) fn open_smart(&mut self, id: Option<u64>, query: smart::SmartQuery) {
+        self.switch_filter_tab(0);
         if !self.advanced {
             self.quick_text = std::mem::take(&mut self.search);
             self.advanced = true;
@@ -838,11 +873,11 @@ impl InventoryUi {
         self.links_filter = None;
         self.active_smart = id;
         self.fetch_all = true;
-        self.tab = 0;
     }
     /// Find similar: like Find all links, the filters in place come back
     /// when its chip is removed.
     pub(crate) fn find_similar(&mut self, query: smart::SmartQuery) {
+        self.switch_filter_tab(0);
         if self.saved_filters.is_none() {
             self.saved_filters = Some(self.filters.clone());
         }
@@ -862,6 +897,24 @@ impl InventoryUi {
     /// The rules of the advanced search, None in quick search.
     pub(crate) fn smart_query(&mut self) -> Option<&mut smart::SmartQuery> {
         self.filters.smart.as_mut()
+    }
+
+    fn switch_filter_tab(&mut self, tab: usize) {
+        if self.tab == tab {
+            return;
+        }
+        let mut next = std::mem::take(&mut self.tab_filters[tab.min(4)]);
+        std::mem::swap(&mut self.filters_initialized, &mut next.filters_initialized);
+        std::mem::swap(&mut self.filters, &mut next.filters);
+        std::mem::swap(&mut self.saved_filters, &mut next.saved_filters);
+        std::mem::swap(&mut self.advanced, &mut next.advanced);
+        std::mem::swap(&mut self.quick_text, &mut next.quick_text);
+        std::mem::swap(&mut self.active_smart, &mut next.active_smart);
+        std::mem::swap(&mut self.similar, &mut next.similar);
+        std::mem::swap(&mut self.links_filter, &mut next.links_filter);
+        self.tab_filters[self.tab.min(4)] = next;
+        self.tab = tab;
+        self.fetch_generation = None;
     }
     /// The list is the flattened result tree, drawn row by row in sight only
     /// (`search_scroll`): a search or a filter, and every tab but the plain
@@ -1695,16 +1748,24 @@ fn next_owner_control(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     }
 }
 
-/// Show `tab`, each tab keeping its own search when the preference says so.
+/// Each tab keeps its finder; sharing the quick-search text is optional.
 fn set_tab(st: &mut InventoryUi, prefs: &InventoryPreferences, tab: usize) {
-    if st.tab != tab {
-        st.fetch_generation = None;
+    if st.tab == tab {
+        return;
     }
-    if prefs.separate_searches && st.tab != tab {
-        st.searches[st.tab.min(4)] = std::mem::take(&mut st.search);
-        st.search.clone_from(&st.searches[tab.min(4)]);
+    let text = if st.advanced { st.quick_text.clone() } else { st.search.clone() };
+    st.searches[st.tab.min(4)] = text.clone();
+    st.switch_filter_tab(tab);
+    controls::init_filters(st, prefs);
+    if !st.advanced {
+        st.search = if prefs.separate_searches {
+            st.searches[tab.min(4)].clone()
+        } else {
+            text
+        };
+    } else {
+        st.search.clear();
     }
-    st.tab = tab;
 }
 
 /// The combined Received view has no writable background folder. Individual
@@ -1726,7 +1787,7 @@ fn list_scope(inv: &mut Inventory, st: &mut InventoryUi, prefs: &InventoryPrefer
     // Aurora presents it as a tab, as requested, instead of a second bottom pane.
     // A folder window has no tabs: its folder is its root.
     let root = if !st.scope.is_nil() {
-        st.tab = 0;
+        set_tab(st, prefs, 0);
         st.scope
     } else {
         inv.root
@@ -2263,6 +2324,187 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_tab_filters_keep_independent_defaults_and_live_edits() {
+        for separate_searches in [false, true] {
+            let mut prefs = InventoryPreferences {
+                separate_searches,
+                ..Default::default()
+            };
+            prefs.filter_defaults.permissions = rules::COPY;
+            prefs.filters_for_mut(2).age = view::Age::Newer;
+            prefs.filters_for_mut(2).hours = 7 * 24;
+            let mut st = InventoryUi::default();
+            controls::init_filters(&mut st, &prefs);
+            st.search = "hat".into();
+            st.filters.types = 1 << 6;
+            let main = st.filters.clone();
+            for tab in [2, 3, 4, RECEIVED_TAB] {
+                set_tab(&mut st, &prefs, tab);
+                assert_eq!(&st.filters, prefs.filters_for(tab));
+                assert_eq!(st.search, if separate_searches { "" } else { "hat" });
+                st.filters.permissions = rules::MODIFY;
+                st.filters.hours = 10 + tab as u32;
+            }
+            for tab in [0, 2, 3, 4, RECEIVED_TAB, 0] {
+                set_tab(&mut st, &prefs, tab);
+                if tab == 0 {
+                    assert_eq!(st.filters, main);
+                    assert_eq!(st.search, "hat");
+                } else {
+                    assert_eq!(st.filters.permissions, rules::MODIFY);
+                    assert_eq!(st.filters.hours, 10 + tab as u32);
+                }
+            }
+            // A second inventory window starts from defaults, not live edits.
+            let mut second = InventoryUi::default();
+            set_tab(&mut second, &prefs, 2);
+            assert_eq!(&second.filters, prefs.filters_for(2));
+        }
+    }
+
+    #[test]
+    fn inventory_tab_filters_preserve_advanced_and_temporary_searches() {
+        let prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        controls::init_filters(&mut st, &prefs);
+        st.search = "hat".into();
+        st.filters.permissions = rules::COPY;
+        st.find_links(Uuid::from_u128(10));
+        set_tab(&mut st, &prefs, 2);
+        assert!(st.links_filter.is_none() && st.saved_filters.is_none());
+        st.search = "recent".into();
+        st.enter_advanced(view::SearchField::Name);
+        let rules = st.filters.smart.clone();
+        set_tab(&mut st, &prefs, 0);
+        assert!(!st.advanced && st.filters.smart.is_none());
+        assert_eq!(st.search, "recent");
+        assert_eq!(st.links_filter, Some(Uuid::from_u128(10)));
+        st.restore_saved_filters();
+        assert_eq!(st.filters.permissions, rules::COPY);
+        set_tab(&mut st, &prefs, 2);
+        assert!(st.advanced);
+        assert_eq!(st.filters.smart, rules);
+        st.leave_advanced();
+        assert_eq!(st.search, "recent");
+    }
+
+    #[test]
+    fn inventory_tab_filters_survive_show_original_and_find_similar_elsewhere() {
+        let prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        set_tab(&mut st, &prefs, 2);
+        st.filters.types = 1 << 19;
+        st.filters.age = view::Age::Older;
+        let recent = st.filters.clone();
+        st.show_original(&Inventory::default(), Uuid::from_u128(1));
+        assert_eq!(st.tab, 0);
+        assert!(!st.filters.active());
+        set_tab(&mut st, &prefs, 2);
+        assert_eq!(st.filters, recent);
+        st.find_similar(smart::SmartQuery::default());
+        assert_eq!(st.tab, 0);
+        set_tab(&mut st, &prefs, 2);
+        assert_eq!(st.filters, recent);
+        assert!(!st.finding_similar() && !st.advanced);
+        set_tab(&mut st, &prefs, 0);
+        assert!(st.finding_similar() && st.advanced);
+        st.end_similar();
+        assert!(st.filters.smart.is_none());
+    }
+
+    #[test]
+    fn clicking_inventory_tabs_switches_filters_in_both_layouts() {
+        use crate::ui::widgets::elide_tests::Frames;
+
+        for classic in [false, true] {
+            let mut frames = Frames::new();
+            crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+            let p = crate::theme::Theme::default().palette();
+            let mut inv = view_inventory(false);
+            let mut prefs = InventoryPreferences {
+                last_logout: 1,
+                ..Default::default()
+            };
+            prefs.filter_defaults.types = 1 << 1;
+            prefs.filters_for_mut(2).types = 1 << 6;
+            let mut st = InventoryUi::default();
+            let mut run = |st: &mut InventoryUi, events| {
+                st.visible.clear();
+                frames.run(events, |ui| {
+                    ui.set_max_size(Vec2::new(380.0, 700.0));
+                    if classic {
+                        inventory_contents(ui, &p, &Icons::default(), &mut inv, st, &mut prefs, &Facts::default(), &mut vec![]);
+                    } else {
+                        aurora::contents(
+                            ui,
+                            &p,
+                            &Icons::default(),
+                            &mut inv,
+                            st,
+                            &mut prefs,
+                            &Facts::default(),
+                            &std::collections::HashMap::new(),
+                            &mut vec![],
+                        );
+                    }
+                })
+            };
+            for _ in 0..3 {
+                run(&mut st, vec![]);
+            }
+            assert_eq!(st.filters.types, 1 << 1);
+            st.filters.permissions = rules::COPY;
+            for (tab, label) in [
+                (
+                    2,
+                    if classic {
+                        aurora_i18n::tr!("common-recent")
+                    } else {
+                        aurora_i18n::tr!("inventory-tab-recent")
+                    },
+                ),
+                (
+                    0,
+                    if classic {
+                        aurora_i18n::tr!("common-inventory")
+                    } else {
+                        aurora_i18n::tr!("inventory-tab-all")
+                    },
+                ),
+                (
+                    2,
+                    if classic {
+                        aurora_i18n::tr!("common-recent")
+                    } else {
+                        aurora_i18n::tr!("inventory-tab-recent")
+                    },
+                ),
+            ] {
+                let texts = run(&mut st, vec![]);
+                let pos = texts.iter().find(|text| text.source == label).expect("tab label").rect.center();
+                for pressed in [true, false] {
+                    run(
+                        &mut st,
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                    );
+                }
+                run(&mut st, vec![]);
+                assert_eq!(st.tab, tab, "classic={classic}");
+                assert_eq!(st.filters.types, if tab == 0 { 1 << 1 } else { 1 << 6 });
+                assert_eq!(st.filters.permissions, if tab == 0 { rules::COPY } else { 0 });
+            }
+        }
+    }
 
     #[test]
     fn quick_search_never_keeps_advanced_rules() {

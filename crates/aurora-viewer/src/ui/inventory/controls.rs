@@ -45,7 +45,10 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
         aurora_i18n::tr!("ui-inventory-controls-show-library"),
         &mut prefs.show_library,
     );
-    changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-pictures"), &mut prefs.thumbnail_tooltips);
+    changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-tooltips"), &mut prefs.show_hover_tooltips);
+    if prefs.show_hover_tooltips {
+        changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-pictures"), &mut prefs.thumbnail_tooltips);
+    }
     changed |= check(ui, p, aurora_i18n::tr!("inventory-folder-colors"), &mut prefs.folder_colors_enabled);
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-recent-tab"), &mut prefs.show_recent);
     if prefs.show_recent {
@@ -159,10 +162,11 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
     });
 }
 
-/// A window starts with the filters kept by default.
+/// Each tab starts with its own saved finder defaults.
 pub fn init_filters(st: &mut InventoryUi, prefs: &InventoryPreferences) {
     if !st.filters_initialized {
-        st.filters.clone_from(&prefs.filter_defaults);
+        st.filters.clone_from(prefs.filters_for(st.tab));
+        st.advanced = st.filters.smart.is_some();
         st.filters_initialized = true;
     }
 }
@@ -521,7 +525,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                         *f = Filters::default();
                     }
                     if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-keep-by-default")).clicked() {
-                        prefs.filter_defaults.clone_from(f);
+                        prefs.filters_for_mut(st.tab).clone_from(f);
                     }
                 });
                 let note = match prefs.recent_hours {

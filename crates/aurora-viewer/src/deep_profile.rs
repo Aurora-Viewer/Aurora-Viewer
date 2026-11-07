@@ -585,6 +585,7 @@ mod tests {
                     budget: 7000 << 20,
                     usage: 4000 << 20,
                     allocated: 3500 << 20,
+                    shared_budget: 0,
                 }),
                 textures: 1200,
                 texture_bytes: 1500 << 20,

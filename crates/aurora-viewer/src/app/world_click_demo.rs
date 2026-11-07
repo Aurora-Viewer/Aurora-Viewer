@@ -34,6 +34,8 @@ impl App {
         // `-moving`: the wearer moves between the press and the GPU's
         // answer, as an animated avatar does
         let (mode, moving) = mode.strip_suffix("-moving").map_or((mode, false), |m| (m, true));
+        let (mode, seated) = mode.strip_suffix("-seated").map_or((mode, false), |m| (m, true));
+        let (mode, near) = mode.strip_suffix("-near").map_or((mode, false), |m| (m, true));
         let drag = mode.ends_with("-drag");
         if mode.starts_with("avatar") || spec.ends_with("-keep-camera") {
             // Camera comparisons need a stationary subject even when another
@@ -59,6 +61,9 @@ impl App {
             if spec.ends_with("-keep-camera") || mode == "avatar-return" || drag {
                 self.settings.camera.click_avatar_keeps_camera = spec.ends_with("-keep-camera");
             }
+            if seated && mode.starts_with("worn-") {
+                self.world_click_seat(mode);
+            }
             self.world_click_fixture(mode);
             if moving
                 && let Some(o) = self
@@ -70,6 +75,17 @@ impl App {
                 // a small clicker, which a few frames of motion take off
                 // the cursor's ray
                 o.scale = Vec3::splat(0.1);
+            }
+        }
+        if near && mode.starts_with("worn-") && self.frame_count == 679 {
+            // Move the deeply buried test clicker towards the camera, so
+            // the seated classic body exercises the legacy 10 cm override.
+            if let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(975))
+                && let Some((pos, rot, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+                && let Some(o) = self.world.objects.get_mut(idx)
+            {
+                let anchor = rot * o.rotation.inverse();
+                o.position += anchor.inverse() * (self.camera.position - pos).normalize_or_zero() * 0.18;
             }
         }
         if moving && (701..=705).contains(&self.frame_count) {
@@ -100,12 +116,18 @@ impl App {
             }
             self.world.apply(panel);
         }
-        if (680..=700).contains(&self.frame_count) && !mode.starts_with("mouselook-") {
+        // A real hover holds the pointer over a posed surface long enough
+        // for its asynchronous answer. Tracking the moving mesh at every
+        // frame continually asks a different pixel instead of testing that.
+        let aiming = if mode.starts_with("worn-") { 650..=680 } else { 680..=700 };
+        if aiming.contains(&self.frame_count) && !mode.starts_with("mouselook-") {
             let cursor = if mode.starts_with("avatar-tag") {
                 self.name_tags.iter().find(|t| t.id == self.world.agent_id).map(|t| {
                     let p = t.rect.center() * self.egui_ctx.pixels_per_point();
                     (p.x, p.y)
                 })
+            } else if mode.starts_with("avatar-gap-") {
+                self.avatar_gap_point(mode).and_then(|point| self.build.cam.project_px(point))
             } else if mode.starts_with("avatar") {
                 self.world
                     .objects
@@ -138,7 +160,7 @@ impl App {
                     _ => 971,
                 };
                 self.world.objects.index_of_uuid(&crate::demo::action_id(local)).and_then(|idx| {
-                    let pos = if mode == "worn-mesh"
+                    let pos = if mode.starts_with("worn-mesh")
                         || mode.starts_with("worn-own")
                         || (mode.starts_with("worn-other") && mode != "worn-other-link")
                     {
@@ -152,7 +174,7 @@ impl App {
                         let pose = *self.world.avatar_poses.get(&avatar.full_id)?.get(joint)?;
                         let rest = self.world.avatar_lib.attach_points.get(&1)?.skel_position;
                         let (pos, rot, _) = Scene::object_transform(&self.world, wearer, Instant::now(), 0)?;
-                        let offset = if mode == "worn-mesh" {
+                        let offset = if mode.starts_with("worn-mesh") {
                             Vec3::new(0.30, 0.0, 0.0)
                         } else if mode == "worn-own-animesh" {
                             OWN_ANIMESH
@@ -170,6 +192,22 @@ impl App {
             };
             if let Some(cursor) = cursor {
                 self.cursor_pos = cursor;
+            }
+        }
+        if self.frame_count == 699 && mode.starts_with("worn-") {
+            let wearer = self
+                .world
+                .objects
+                .index_of_uuid(&crate::demo::action_id(975))
+                .and_then(|idx| self.scene.gpu.get(idx))
+                .and_then(|g| g.owner_avatar)
+                .and_then(|idx| self.world.objects.get(idx));
+            if let Some(avatar) = wearer {
+                log::info!(
+                    "demo worn posture: mode={mode}, seated={}, parent={}",
+                    avatar.parent_id != 0,
+                    avatar.parent_id
+                );
             }
         }
         if self.frame_count == 700 {
@@ -248,8 +286,105 @@ impl App {
         );
     }
 
+    /// Exercise attachment picking through avatar -> rotated seat parenting.
+    fn world_click_seat(&mut self, mode: &str) {
+        let own = mode.starts_with("worn-own");
+        let Some((idx, local, owner, size, region)) = self
+            .world
+            .objects
+            .avatars()
+            .find(|(_, a)| (a.full_id == self.world.agent_id) == own)
+            .map(|(idx, a)| (idx, a.key.local_id, a.full_id, a.scale, a.key.region))
+        else {
+            return;
+        };
+        let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0) else {
+            return;
+        };
+        let offset = self.world.region_offset(region).unwrap_or_default();
+        let mut seat = crate::demo::action_overlay(989, pos - offset - Vec3::Z * 0.65, glam::Quat::from_rotation_z(0.6));
+        if let NetEvent::ObjectUpdates { objects, .. } = &mut seat {
+            for o in objects {
+                o.scale = Vec3::new(1.2, 1.2, 0.4);
+                o.click_action = crate::interaction::code::NONE;
+                o.update_flags = 0;
+            }
+        }
+        self.world.apply(seat);
+        let mut avatar = crate::demo::action_avatar(true);
+        avatar.local_id = local;
+        avatar.full_id = owner;
+        avatar.parent_id = 989;
+        avatar.position = Vec3::new(0.15, 0.0, 0.65);
+        avatar.rotation = glam::Quat::from_rotation_z(-0.2);
+        avatar.scale = size;
+        self.world.apply(NetEvent::ObjectUpdates {
+            handle: region,
+            objects: vec![avatar],
+        });
+        self.world.apply(NetEvent::AvatarAnimations {
+            avatar: owner,
+            anims: vec![(crate::demo::SEAT_ANIM, 1)],
+            sources: vec![crate::demo::action_id(989)],
+        });
+    }
+
     fn world_click_fixture(&mut self, mode: &str) {
         let mode = mode.strip_suffix("-ctrl").unwrap_or(mode);
+        if mode.starts_with("avatar-gap-") {
+            let Some(point) = self.avatar_gap_point(mode) else { return };
+            let legs = mode == "avatar-gap-legs";
+            if legs {
+                // The default demo wears a system skirt: leave the gap
+                // between the legs visible instead of clicking its fabric.
+                let Some(idx) = self.world.objects.index_of_uuid(&self.world.agent_id) else {
+                    return;
+                };
+                let Some(o) = self.world.objects.get(idx) else { return };
+                let mut appearance = self
+                    .world
+                    .server_appearance()
+                    .cloned()
+                    .unwrap_or_else(|| aurora_net::AvatarAppearance {
+                        avatar_id: self.world.agent_id,
+                        texture_entry: o.te.clone(),
+                        visual_params: self.world.avatar_lib.shape_params.values_with(&[]),
+                        cof_version: 0,
+                        appearance_version: 0,
+                        hover_height: 0.0,
+                        attachments: 0,
+                    });
+                appearance.texture_entry = appearance.texture_entry.or_else(|| o.te.clone());
+                if let Some(te) = &mut appearance.texture_entry {
+                    let te = Arc::make_mut(te);
+                    let base = *te.face(0);
+                    te.faces.resize(te.faces.len().max(20), base);
+                    te.faces[19].texture = crate::scene::avatar::IMG_INVISIBLE;
+                }
+                // A bake change must advance the appearance generation;
+                // changing the object's TE alone leaves cached parts intact.
+                appearance.appearance_version = 0;
+                self.world.apply(NetEvent::Appearance(appearance));
+            }
+            self.settings.set_render_exception(self.world.agent_id, 2);
+            self.camera.set_view(
+                point + Vec3::new(-4.0, 0.0, if legs { 0.9 } else { 0.0 }),
+                point,
+                &mut self.world.agent,
+                &self.settings.camera,
+            );
+            let behind = if legs { 0.4 } else { 2.0 };
+            let mut panel = crate::demo::action_overlay(975, point + Vec3::X * behind, glam::Quat::IDENTITY);
+            if let NetEvent::ObjectUpdates { objects, .. } = &mut panel {
+                for o in objects {
+                    o.scale = Vec3::new(0.1, 2.0, 2.0);
+                    o.click_action = crate::interaction::code::TOUCH;
+                    o.update_flags = ui::context::flags::HANDLE_TOUCH;
+                }
+            }
+            self.world.apply(panel);
+            return;
+        }
         if mode.starts_with("photo-") {
             self.panels.snapshot = true;
             self.settings.photo_window = crate::settings::PhotoWindowStyle::Aurora;
@@ -337,7 +472,11 @@ impl App {
             let clear = mode.starts_with("worn-other-clear");
             let unrigged_mesh = matches!(
                 mode,
-                "worn-other-mesh" | "worn-other-hidden-mesh" | "worn-other-hidden-mesh-under" | "worn-other-clear-mesh"
+                "worn-other-mesh"
+                    | "worn-other-hidden-mesh"
+                    | "worn-other-hidden-mesh-under"
+                    | "worn-other-clear-mesh"
+                    | "worn-other-mask-mesh"
             );
             if unrigged_mesh && let Some(g) = self.gfx.as_mut() {
                 // a mesh without a skin, placed by its attachment point
@@ -365,13 +504,16 @@ impl App {
                     &mut self.world.agent,
                     &self.settings.camera,
                 );
+                // Start the fixture at rest: a frame-counted aim can outpace
+                // camera smoothing when the viewer runs without an FPS cap.
+                self.camera.snap();
             }
             // `worn-own-mesh`: the scripted rigged mesh on our own chest;
             // `worn-own-animesh`: the same mesh as an animesh we wear, with
             // a skeleton of its own (a pet on the head)
             let own_animesh = mode == "worn-own-animesh";
             let own_mesh = mode.starts_with("worn-own-mesh") || own_animesh;
-            let mut events = if mode == "worn-mesh" || own_mesh {
+            let mut events = if mode.starts_with("worn-mesh") || own_mesh {
                 if let Some(g) = self.gfx.as_mut() {
                     self.scene.install_demo_animesh(&mut g.renderer);
                 }
@@ -473,6 +615,20 @@ impl App {
                     events.push(event);
                 }
             }
+            if mode.contains("-mask") {
+                for event in &mut events {
+                    if let NetEvent::ObjectUpdates { objects, .. } = event {
+                        for o in objects.iter_mut().filter(|o| o.local_id == 975) {
+                            if let Some(te) = o.texture_entry.as_mut() {
+                                for face in &mut Arc::make_mut(te).faces {
+                                    face.texture = crate::demo::TEX_PICK_ZERO;
+                                    face.material_id = crate::demo::MAT_MASK;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             for event in events {
                 self.world.apply(event);
             }
@@ -500,6 +656,12 @@ impl App {
             for mut event in crate::demo::action_events() {
                 if let NetEvent::ObjectUpdates { objects, .. } = &mut event {
                     objects.retain(|o| o.local_id == 971);
+                    if mode.starts_with("panel-linked-") {
+                        for root in &mut *objects {
+                            root.click_action = crate::interaction::code::TOUCH;
+                            root.update_flags = ui::context::flags::HANDLE_TOUCH;
+                        }
+                    }
                     point = objects.first().map(|o| o.position).or(point);
                     self.world.apply(event);
                 }
@@ -510,7 +672,9 @@ impl App {
         let direction = (self.camera.position - point).normalize_or(-Vec3::X);
         let pos = point + direction * 2.0;
         let rotation = glam::Quat::from_rotation_arc(Vec3::X, direction);
-        let mut overlay = if mode.starts_with("plate-wall") {
+        let mut overlay = if mode.starts_with("panel-") && mode.ends_with("-mask") {
+            crate::demo::alpha_click_overlay("mask-zero", pos, rotation)
+        } else if mode.starts_with("plate-wall") || mode.starts_with("panel-") {
             crate::demo::action_overlay(976, pos, rotation)
         } else {
             let alpha = match mode {
@@ -524,6 +688,32 @@ impl App {
         if let NetEvent::ObjectUpdates { objects, .. } = &mut overlay {
             for o in objects {
                 o.scale = Vec3::new(0.12, 5.0, 5.0);
+                if mode.starts_with("panel-") {
+                    let linked = mode.starts_with("panel-linked-");
+                    o.click_action = if linked {
+                        crate::interaction::code::NONE
+                    } else {
+                        crate::interaction::code::TOUCH
+                    };
+                    o.update_flags = if linked { 0 } else { ui::context::flags::HANDLE_TOUCH };
+                    o.text.clear();
+                    if linked {
+                        o.parent_id = 971;
+                        o.position -= point;
+                    }
+                    if let Some(te) = o.texture_entry.as_mut() {
+                        for face in &mut Arc::make_mut(te).faces {
+                            face.texture = if mode.ends_with("-mask") {
+                                crate::demo::TEX_PICK_ZERO
+                            } else if mode.ends_with("-texture") {
+                                aurora_prim::te::TRANSPARENT_TEXTURE
+                            } else {
+                                aurora_prim::te::BLANK_TEXTURE
+                            };
+                            face.color[3] = if mode.ends_with("-te") { 0.0 } else { 1.0 };
+                        }
+                    }
+                }
                 if mode == "camera-te" {
                     o.update_flags = ui::context::flags::HANDLE_TOUCH;
                     if let Some(te) = o.texture_entry.as_mut() {
@@ -544,5 +734,16 @@ impl App {
             }
             self.world.apply(wall);
         }
+    }
+
+    fn avatar_gap_point(&self, mode: &str) -> Option<Vec3> {
+        let idx = self.world.objects.index_of_uuid(&self.world.agent_id)?;
+        let pos = Scene::object_transform(&self.world, idx, Instant::now(), 0)?.0;
+        let offset = if mode == "avatar-gap-head" {
+            Vec3::new(0.0, 0.18, 0.8)
+        } else {
+            Vec3::new(0.0, 0.0, -0.65)
+        };
+        Some(pos + offset)
     }
 }
