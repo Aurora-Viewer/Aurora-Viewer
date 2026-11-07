@@ -21,9 +21,10 @@ impl Follower {
                     pose,
                     Some(Pose::Standing | Pose::Walking | Pose::Running | Pose::Crouching | Pose::CrouchWalk)
                 ));
-        // Free-camera/focus suspension releases the motor, and its AO signal
-        // becomes stock hover/flight again. Preserve an established surface
-        // hold while inspecting it, but never infer a new hold from a speed.
+        // A free-camera or loading suspension releases the motor, and its AO
+        // signal becomes stock hover/flight again. Preserve an established
+        // surface hold while inspecting it, but never infer a new hold from a
+        // speed.
         let inspecting = frame.suspended
             && self.surface
             && !frame.flying

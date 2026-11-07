@@ -281,11 +281,12 @@ impl App {
             flying: self.world.agent.flying,
             can_fly,
             seated: self.world.agent.is_sitting(),
-            suspended: self.world.teleporting
-                || !self.world.movement_complete
-                || !self.focused
-                || self.camera.free().is_some()
-                || self.autopilot.is_some(),
+            suspended: crate::movement::aids_suspended(
+                self.world.teleporting,
+                !self.world.movement_complete,
+                self.camera.free().is_some(),
+                self.autopilot.is_some(),
+            ),
             locked: self.settings.bridge.get(&self.world.agent_id).is_some_and(|prefs| prefs.enabled)
                 && self.bridge_runtime.locked()
                 && !(self.input.forward
