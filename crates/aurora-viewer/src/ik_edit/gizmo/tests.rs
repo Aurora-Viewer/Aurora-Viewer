@@ -21,6 +21,21 @@ fn geometry(tool: Tool, basis: Quat, ppp: f32, edge_on: bool) -> Geometry {
     g
 }
 
+fn rolled_geometry(basis: Quat) -> Geometry {
+    let pivot = Vec3::new(128.0, 132.0, 20.0);
+    let eye = pivot + Vec3::new(3.0, -4.0, 3.0);
+    let direction = (pivot - eye).normalize();
+    let up = Quat::from_axis_angle(direction, 0.65) * Vec3::Z;
+    let view = glam::camera::rh::view::look_to_mat4(eye, direction, up);
+    let proj = Projector {
+        view_proj: glam::camera::rh::proj::directx::perspective_infinite_reverse(0.8, 16.0 / 9.0, 0.05) * view,
+        width: 1600.0,
+        height: 900.0,
+        ppp: 1.5,
+    };
+    Geometry::new(&proj, pivot, basis, Tool::Rotate).expect("rolled perspective geometry")
+}
+
 #[test]
 fn bone_gizmo_axes_and_planes_follow_world_or_rotated_bone_axes_at_every_ui_scale() {
     let local = Quat::from_rotation_z(0.65) * Quat::from_rotation_x(0.35);
@@ -88,6 +103,44 @@ fn bone_gizmo_edge_on_ring_uses_a_visible_tangent_without_moving_the_contact() {
     let moved = drag.update(start + tangent * radius * 0.4).unwrap();
     assert_eq!(moved.position, pose.position);
     assert!(moved.rotation.dot(Quat::from_rotation_x(0.4) * pose.rotation).abs() > 0.99999);
+}
+
+#[test]
+fn bone_gizmo_camera_roll_ring_picks_after_axis_rings_and_rotates_in_screen_plane() {
+    let basis = Quat::from_rotation_y(0.4) * Quat::from_rotation_z(0.25);
+    for g in [geometry(Tool::Rotate, basis, 1.5, false), rolled_geometry(basis)] {
+        let pose = Pose {
+            position: g.pivot,
+            rotation: basis * Quat::from_rotation_x(0.35),
+        };
+        let start = g.cam.project(g.view_ring(0.0)).unwrap();
+        let sweep = g.cam.project(g.view_ring(std::f32::consts::FRAC_PI_2)).unwrap();
+        assert_eq!(g.pick(start), Some(Part::Roll));
+        let inside = g.cam.project(g.pivot + g.cam.left * g.length * 0.8).unwrap();
+        assert_ne!(g.pick(inside), Some(Part::Roll));
+        for axis in 0..3 {
+            let on_ring = g.cam.project(g.ring(axis, 0.3)).unwrap();
+            assert!(matches!(g.pick(on_ring), Some(Part::Ring(_))));
+        }
+        let mut moving = g;
+        moving.tool = Tool::Move;
+        assert_ne!(moving.pick(start), Some(Part::Roll));
+
+        // The axis is the camera-to-joint line, in world space.
+        let axis = g.part_axis(Part::Roll);
+        assert!(axis.cross(g.pivot - g.cam.eye).length() < 1e-4);
+        let mut drag = Drag::new(g, Part::Roll, start, pose).expect("view-facing roll drag");
+        let moved = drag.update(sweep).expect("screen-plane rotation");
+        assert_eq!(moved.position, pose.position);
+        // A quarter turn about that axis, in the pointer's direction: the
+        // joint's point under the start of the drag ends under the pointer.
+        let turn = moved.rotation * pose.rotation.inverse();
+        assert!((turn.to_axis_angle().1.abs() - std::f32::consts::FRAC_PI_2).abs() < 1e-3);
+        let carried = turn * (g.view_ring(0.0) - g.pivot);
+        assert!(carried.distance(g.view_ring(std::f32::consts::FRAC_PI_2) - g.pivot) < g.length * 1e-3);
+        let back = drag.update(start).expect("back to the start");
+        assert!(back.rotation.dot(pose.rotation).abs() > 0.99999);
+    }
 }
 
 #[test]
