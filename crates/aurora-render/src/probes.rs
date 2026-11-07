@@ -124,7 +124,7 @@ impl ProbeSets {
 /// Side of the shadow map of the probe being captured, in texels: the tile
 /// of an atlas laid out like the main view's.
 pub const SHADOW_SIZE: u32 = 1024;
-/// How far around a probe its capture sees and is shadowed (m):
+/// How far around a probe the surfaces of its capture are shadowed (m):
 /// RenderReflectionProbeDrawDistance.
 pub const SHADOW_RANGE: f32 = 64.0;
 
@@ -152,7 +152,7 @@ pub fn shadow_matrix(origin: Vec3, sun_dir: Vec3) -> Mat4 {
 pub(crate) mod capture_lighting {
     pub const LIT: u32 = 0x20000;
     pub const AMBIANCE: u32 = 0x40000;
-    /// Any capture, of any sky: PROBE_CAPTURE_DOME, no sky under the dome.
+    /// Any capture, of any sky: PROBE_CAPTURE_DOME, the sea under the dome.
     pub const DOME: u32 = 0x80000;
 
     /// The bits of the radiance capture and of the irradiance capture.

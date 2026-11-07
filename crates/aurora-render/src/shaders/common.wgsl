@@ -400,8 +400,9 @@ fn mirrored_pass() -> bool {
 // dark surroundings in its captures, not the sky. probes::CaptureLighting.
 const PROBE_CAPTURE_LIT: u32 = 0x20000u;
 const PROBE_CAPTURE_AMBIANCE: u32 = 0x40000u;
-// frame.light_mode.z, any capture of a probe: no sky under the rim of the
-// Legacy Viewer's dome (sky_pixel in env.wgsl). probes::capture_lighting::DOME.
+// frame.light_mode.z, any capture of a probe: the sea instead of the sky under
+// the rim of the Legacy Viewer's dome (sky_pixel in env.wgsl).
+// probes::capture_lighting::DOME.
 const PROBE_CAPTURE_DOME: u32 = 0x80000u;
 
 // Probes are sampled in the main view and in the captures of the probes
