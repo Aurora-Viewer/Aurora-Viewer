@@ -109,7 +109,7 @@ impl SoundExplorer {
                 Some((column, reverse)) => {
                     let order = match column {
                         1 => kind(&a.entry).cmp(kind(&b.entry)),
-                        2 => a.owner.to_lowercase().cmp(&b.owner.to_lowercase()),
+                        2 => crate::natural_order::cmp(&a.owner, &b.owner),
                         _ => a.entry.asset.cmp(&b.entry.asset),
                     };
                     (if reverse { order.reverse() } else { order }).then_with(newest)
