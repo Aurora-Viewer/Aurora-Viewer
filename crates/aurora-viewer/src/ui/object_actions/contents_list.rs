@@ -271,7 +271,7 @@ pub(super) fn show(
                                     .as_ref()
                                     .err()
                                     .copied()
-                                    .unwrap_or(aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory"));
+                                    .unwrap_or(aurora_i18n::tr!("contents-copy-selection-tip"));
                                 if menu::item_tip(ui, p, "briefcase-filled", label, transfers.is_ok(), tip) {
                                     actions.push(ContentsAction::Take(object, taken.to_vec()));
                                 }

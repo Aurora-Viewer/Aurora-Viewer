@@ -15,7 +15,7 @@ use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
-use crate::light_tiles::{self, LightSets};
+use crate::light_tiles::{self, SLICES, TILES};
 use crate::renderer::make_view;
 use crate::types::ProbeGpu;
 
@@ -23,8 +23,12 @@ use crate::types::ProbeGpu;
 pub const PROBE_RES: u32 = 128;
 /// Mips 128 .. 2 (LL: log2(resolution)); the shaders use max lod 6.
 pub const PROBE_MIPS: u32 = 7;
-/// Probes the shaders can see per frame (the default probe included).
-pub const MAX_PROBES: usize = 64;
+/// Probes the shaders can see per frame (the default probe included):
+/// RenderReflectionProbeCount's maximum. Must match `MAX_PROBES` in
+/// common.wgsl.
+pub const MAX_PROBES: usize = 256;
+/// Words of a probe set ([`ProbeSets`]): one bit per probe of the list.
+pub const WORDS: usize = MAX_PROBES / 32;
 pub const PROBE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Faces are captured at twice the probe resolution and downsampled (LL
 /// super-samples x4 and blurs before its mip chain).
@@ -63,9 +67,58 @@ struct ProbeHeader {
     enabled: u32,
     _pad: u32,
     /// The box probes of the list: bit `i` of word `i / 32` (`box_mask`).
-    boxes: [u32; 4],
+    boxes: [u32; WORDS],
     /// The probes of the main view's fragments ([`tiles`]).
-    sets: LightSets,
+    sets: ProbeSets,
+}
+
+/// The probe sets of a view, as `ProbeSet` in common.wgsl holds them: laid
+/// out as the lights' (`light_tiles::LightSets`), but each set is
+/// [`WORDS`] words (bit `i` of word `i / 32`: probe `i` of the frame's
+/// list), one per column, row and slice. The lights' sets hold 64.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub struct ProbeSets {
+    /// x, y: columns and rows per pixel.
+    pub grid: [f32; 4],
+    /// The camera's forward axis (a fragment's depth).
+    pub forward: [f32; 4],
+    /// x: 1 when the sets narrow the list.
+    pub mode: [u32; 4],
+    pub columns: [[u32; WORDS]; TILES],
+    pub rows: [[u32; WORDS]; TILES],
+    pub slices: [[u32; WORDS]; SLICES],
+}
+
+impl ProbeSets {
+    /// The whole list for every fragment.
+    pub fn whole() -> ProbeSets {
+        Zeroable::zeroed()
+    }
+
+    /// Probe `i` in every set.
+    fn hold_everywhere(&mut self, i: usize) {
+        let (word, bit) = (i / 32, 1u32 << (i % 32));
+        for set in self.columns.iter_mut().chain(&mut self.rows).chain(&mut self.slices) {
+            set[word] |= bit;
+        }
+    }
+
+    /// The probes a fragment at pixel (`x`, `y`) and `depth` walks, as
+    /// `probe_word` in common.wgsl finds them.
+    #[cfg(test)]
+    fn at(&self, x: f32, y: f32, depth: f32) -> [u32; WORDS] {
+        if self.mode[0] == 0 {
+            return [u32::MAX; WORDS];
+        }
+        let tile = |px: f32, per_px: f32| ((px * per_px) as usize).min(TILES - 1);
+        let (c, r, s) = (
+            self.columns[tile(x, self.grid[0])],
+            self.rows[tile(y, self.grid[1])],
+            self.slices[light_tiles::slice_of(depth)],
+        );
+        std::array::from_fn(|w| c[w] & r[w] & s[w])
+    }
 }
 
 /// How a fragment walks the probes (AURORA_PROBE_WALK; the image is the
@@ -125,8 +178,7 @@ impl ProbeWalk {
     }
 }
 
-// (the sets of the lights hold as many members as there are probes)
-const _: () = assert!(MAX_PROBES == light_tiles::LIGHTS);
+const _: () = assert!(MAX_PROBES.is_multiple_of(32));
 
 /// A sphere around what a probe covers: its influence sphere or, for a box
 /// probe, the sphere through the corners of its box.
@@ -159,14 +211,35 @@ pub fn extent(p: &ProbeGpu) -> (Vec3, f32) {
 /// the screen `size` in pixels, the camera at `eye` (the position the
 /// shaders measure depths from).
 ///
-/// A fragment used to walk the whole list (32 probes by default, up to 64)
+/// A fragment used to walk the whole list (32 probes by default, up to 256)
 /// to find the few that cover it; the walk, not the samples of those few,
 /// was what the probes cost. Same image: a probe left out covers none of
 /// the fragments drawn there, and those that stay are added in the same
 /// order. The default probe, first of the list, is sampled whatever its
 /// sphere says: it is in every set.
-pub fn tiles(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], probes: &[ProbeGpu]) -> LightSets {
-    let mut sets = light_tiles::bin_spheres(view, proj, eye, size, probes.iter().map(extent));
+pub fn tiles(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], probes: &[ProbeGpu]) -> ProbeSets {
+    let size = [size[0].max(1) as f32, size[1].max(1) as f32];
+    let forward = light_tiles::view_forward(view);
+    let mut sets = ProbeSets::whole();
+    sets.mode[0] = 1;
+    sets.grid = [TILES as f32 / size[0], TILES as f32 / size[1], 0.0, 0.0];
+    sets.forward = forward.extend(0.0).to_array();
+    for (i, p) in probes.iter().take(MAX_PROBES).enumerate() {
+        let (centre, radius) = extent(p);
+        let Some(reach) = light_tiles::reach(view, proj, eye, forward, size, centre, radius) else {
+            continue;
+        };
+        let (word, bit) = (i / 32, 1u32 << (i % 32));
+        for (table, [from, to]) in [
+            (&mut sets.columns[..], reach.x),
+            (&mut sets.rows[..], reach.y),
+            (&mut sets.slices[..], reach.z),
+        ] {
+            for set in &mut table[from..=to] {
+                set[word] |= bit;
+            }
+        }
+    }
     sets.hold_everywhere(0);
     sets
 }
@@ -174,8 +247,8 @@ pub fn tiles(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], probes: &[ProbeG
 /// The box probes of a list (kind below zero), which keep the automatic
 /// probes out of what they enclose: the shaders test these first. The
 /// default probe, first of the list, is never one.
-pub fn box_mask(probes: &[ProbeGpu]) -> [u32; 4] {
-    let mut mask = [0u32; 4];
+pub fn box_mask(probes: &[ProbeGpu]) -> [u32; WORDS] {
+    let mut mask = [0u32; WORDS];
     for (i, p) in probes.iter().enumerate().take(MAX_PROBES).skip(1) {
         if p.params[3] < 0.0 {
             mask[i / 32] |= 1 << (i % 32);
@@ -225,8 +298,15 @@ pub(crate) struct Probes {
 }
 
 impl Probes {
+    /// The cube slots a device can hold of the `slots` asked: six layers
+    /// per cube, 256 probes want 1536 (desktop GPUs allow 2048).
+    pub fn fitted_slots(device: &wgpu::Device, slots: u32) -> u32 {
+        let fit = (device.limits().max_texture_array_layers / 6).max(1);
+        slots.clamp(1, MAX_PROBES as u32).min(fit)
+    }
+
     pub fn new(device: &wgpu::Device, slots: u32) -> Probes {
-        let slots = slots.clamp(1, MAX_PROBES as u32);
+        let slots = Self::fitted_slots(device, slots);
         let mk_cubes = |label: &str, layers: u32, res: u32, mips: u32, usage: wgpu::TextureUsages| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -494,7 +574,7 @@ impl Probes {
     /// Upload the probe list (index 0 = default probe) and the sets the
     /// main view's fragments find their probes in ([`tiles`]; only read
     /// when the frame says so, `ProbeWalk::shader_mode`).
-    pub fn upload(&self, queue: &wgpu::Queue, enabled: bool, probes: &[ProbeGpu], sets: &LightSets) {
+    pub fn upload(&self, queue: &wgpu::Queue, enabled: bool, probes: &[ProbeGpu], sets: &ProbeSets) {
         let n = probes.len().min(MAX_PROBES);
         let header = ProbeHeader {
             count: n as u32,
@@ -640,36 +720,50 @@ mod tests {
         };
         // default, automatic, box, manual sphere, box
         let mut list = vec![probe(0.0), probe(0.0), probe(-1.0), probe(1.0), probe(-1.0)];
-        assert_eq!(box_mask(&list), [0b10100, 0, 0, 0]);
+        assert_eq!(box_mask(&list)[..], [0b10100, 0, 0, 0, 0, 0, 0, 0]);
         // (the default probe is never one, whatever it says)
         list[0] = probe(-1.0);
-        assert_eq!(box_mask(&list), [0b10100, 0, 0, 0]);
+        assert_eq!(box_mask(&list)[..], [0b10100, 0, 0, 0, 0, 0, 0, 0]);
         list.resize(40, probe(0.0));
         list[39] = probe(-1.0);
+        list.resize(200, probe(0.0));
+        list[199] = probe(-1.0);
         list.resize(MAX_PROBES + 6, probe(-1.0));
         let mask = box_mask(&list);
         assert_eq!(mask[1] & 0xff, 0b1000_0000, "probe 39, in the second word");
-        assert_eq!(mask[1] >> 8, 0x00ff_ffff, "then every probe up to the last the shaders see");
-        assert_eq!([mask[2], mask[3]], [0, 0]);
-        assert_eq!(std::mem::size_of::<ProbeHeader>(), 32 + std::mem::size_of::<LightSets>());
+        assert_eq!([mask[2], mask[3], mask[4], mask[5]], [0, 0, 0, 0]);
+        assert_eq!(mask[6] & 0xff, 0b1000_0000, "probe 199, in the seventh word");
+        assert_eq!(mask[6] >> 8, 0x00ff_ffff, "then every probe up to the last the shaders see");
+        assert_eq!(mask[7], u32::MAX);
+        // the header (16 bytes), the mask, the sets; the probes after it, 16-aligned
+        assert_eq!(
+            std::mem::size_of::<ProbeHeader>(),
+            16 + 4 * WORDS + std::mem::size_of::<ProbeSets>()
+        );
+        assert_eq!(std::mem::size_of::<ProbeHeader>() % 16, 0);
         let src = include_str!("shaders/common.wgsl");
         let set = &src[src.find("struct ProbeSet {").expect("ProbeSet")..];
         // the header, the mask, the sets (laid out as LightSets), the probes
         let fields = [
             "_pad: u32,",
-            "boxes: vec4<u32>,",
+            "boxes: ProbeMask,",
             "tile_grid: vec4<f32>,",
             "tile_forward: vec4<f32>,",
             "tile_mode: vec4<u32>,",
-            "tile_columns: array<vec4<u32>, 16>,",
-            "tile_rows: array<vec4<u32>, 16>,",
-            "tile_slices: array<vec4<u32>, 16>,",
-            "probes: array<Probe, 64>,",
+            "tile_columns: array<ProbeMask, 32>,",
+            "tile_rows: array<ProbeMask, 32>,",
+            "tile_slices: array<ProbeMask, 32>,",
+            "probes: array<Probe, MAX_PROBES>,",
         ];
         let at: Vec<usize> = fields.iter().map(|f| set.find(f).unwrap_or_else(|| panic!("{f}"))).collect();
         assert!(at.is_sorted(), "{at:?}");
         assert_eq!(light_tiles::TILES, 32);
-        assert!(src.contains("probe_set.boxes.xy & held"));
+        assert!(src.contains(&format!("const MAX_PROBES: u32 = {MAX_PROBES}u;")));
+        // (no line end in the pattern: a Windows checkout has CRLF)
+        let mask = &src[src.find("struct ProbeMask {").expect("ProbeMask")..];
+        assert!(mask[..mask.find('}').expect("end of ProbeMask")].contains(&format!("w: array<u32, {WORDS}>,")));
+        assert!(src.contains("var boxes = probe_set.boxes.w[k];"));
+        assert!(src.contains("boxes &= probe_word(k, count, tiles, cell);"));
         // nearer than this the shaders walk the whole list: the sets hold
         // what is further than the plane the extents are cut by
         assert!(src.contains("const PROBE_TILES_NEAREST: f32 = 0.01;"));
@@ -746,7 +840,8 @@ mod tests {
             // the default probe, whose sphere is far from the view here
             let mut probes = vec![probe(eye + Vec3::new(-9000.0, 0.0, 0.0), 10.0, 0.0, Mat4::ZERO)];
             for i in 1..MAX_PROBES {
-                let c = eye + Vec3::new(rnd() * 90.0 - 20.0, rnd() * 80.0 - 40.0, rnd() * 30.0 - 15.0);
+                // (256 probes over four times the 64 of before: the same density)
+                let c = eye + Vec3::new(rnd() * 180.0 - 40.0, rnd() * 160.0 - 80.0, rnd() * 30.0 - 15.0);
                 if i % 3 == 0 {
                     // a box of any size, turned any way
                     let turn = glam::Quat::from_euler(glam::EulerRot::ZYX, rnd() * 6.0, rnd() * 6.0, rnd() * 6.0);
@@ -768,16 +863,16 @@ mod tests {
                     let ndc = Vec3::new(fx / SIZE[0] as f32 * 2.0 - 1.0, 1.0 - fy / SIZE[1] as f32 * 2.0, 0.5);
                     let dir = (inv.project_point3(ndc) - eye).normalize();
                     let mut depth = 0.1;
-                    while depth < 130.0 {
+                    while depth < 220.0 {
                         let p = eye + dir * (depth / dir.dot(forward));
                         let found = sets.at(fx, fy, forward.dot(p - eye));
                         fragments += 1;
-                        walked += found.count_ones();
+                        walked += found.iter().map(|w| w.count_ones()).sum::<u32>();
                         for (i, probe) in probes.iter().enumerate() {
                             if covers(i, probe, p) {
                                 covered += 1;
                                 assert!(
-                                    found & (1 << i) != 0,
+                                    found[i / 32] & (1 << (i % 32)) != 0,
                                     "probe {i} ({probe:?}) missing at pixel {x},{y}, depth {depth}"
                                 );
                             }
@@ -786,7 +881,7 @@ mod tests {
                     }
                 }
             }
-            // and the sets do narrow the list of 64
+            // and the sets do narrow the list of 256
             let (mean, mean_covered) = (walked as f32 / fragments as f32, covered as f32 / fragments as f32);
             assert!(
                 covered > 100_000 && mean < 16.0,
@@ -821,7 +916,11 @@ mod tests {
         let far = probe(eye + Vec3::new(-9000.0, 0.0, 0.0), 10.0, 0.0, Mat4::ZERO);
         let sets = tiles(view, proj, eye, [1200, 800], &[far, far, probe(Vec3::ZERO, 1.0, -1.0, Mat4::ZERO)]);
         for (x, y, depth) in [(0.5, 0.5, 0.2), (600.0, 400.0, 30.0), (1199.5, 799.5, 4000.0)] {
-            assert_eq!(sets.at(x, y, depth), 0b101, "pixel {x},{y}, depth {depth}");
+            assert_eq!(
+                sets.at(x, y, depth)[..],
+                [0b101, 0, 0, 0, 0, 0, 0, 0],
+                "pixel {x},{y}, depth {depth}"
+            );
         }
     }
 
