@@ -13314,6 +13314,24 @@ picker-pipette-no-material = コピー可能なマテリアルがインベント
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
 
+# Parcel radio state and stream failures
+music-state-connecting = 接続中…
+music-state-filter-waiting = 回答待ち（メディアフィルター）
+music-state-filter-blocked = メディアフィルターでブロックされています
+music-state-channel-off = 音楽チャンネルが無効です
+music-state-muted = ミュート中、または音量がゼロです
+music-state-no-device = 音声出力を利用できません
+music-state-error = 再生できません：{ $reason }
+music-error-web-page = このアドレスはストリームではなくウェブページです
+music-error-playlist = このアドレスはストリームではなくプレイリストです
+music-error-http = HTTP ステータス { $code }
+music-error-tls = 安全な接続に失敗しました
+music-error-connection = 接続に失敗しました
+music-error-address = ストリームのアドレスが無効、または未対応です
+music-error-format = 音声形式が無効、または未対応です
+music-error-interrupted = 音声ストリームが中断されました
+music-error-notice = 区画の音楽：{ $status }
+music-error-worker = 音楽プレーヤーを起動できません
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = オブジェクトをリンクできません
 build-link-downloading = オブジェクト情報をダウンロード中です。しばらく待ってから再度リンクしてください。

@@ -79,6 +79,7 @@ mod gestures;
 mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
+mod parcel_music;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
 mod graphics_start;
 mod grid_status;
@@ -846,6 +847,8 @@ pub struct App {
     app_link_parcels: HashSet<uuid::Uuid>,
     /// Parcel music stream on (radio toggle).
     music_playing: bool,
+    music_status: ui::audio::MusicStatus,
+    music_error_said: std::collections::HashSet<String>,
     /// Parcel media and media on a prim (web / video plugins).
     media: crate::media::MediaManager,
     media_ui: ui::media::MediaUi,
@@ -1742,6 +1745,8 @@ impl App {
             remote_object: None,
             app_link_parcels: HashSet::new(),
             music_playing: false,
+            music_status: ui::audio::MusicStatus::None,
+            music_error_said: Default::default(),
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
                     let o = e.output_info();
@@ -5740,50 +5745,54 @@ impl App {
 
     fn update_audio(&mut self) {
         let in_world = self.in_world();
-        let url = if in_world {
-            self.world
-                .parcel
-                .as_ref()
-                .map(|pc| pc.music_url.trim().to_owned())
-                .unwrap_or_default()
+        // Unknown parcel during a teleport/crossing is not a silent parcel.
+        parcel_music::update_parcel(
+            &mut self.music_parcel_url,
+            &mut self.music_playing,
+            &mut self.music_override,
+            if in_world {
+                self.world.parcel.as_ref().map(|pc| pc.music_url.as_str())
+            } else {
+                Some("")
+            },
+            self.settings.audio.music_autoplay,
+        );
+        let url = self.music_override.as_deref().unwrap_or(&self.music_parcel_url).to_owned();
+        let available = !url.is_empty();
+        let mut want = if in_world && self.music_playing {
+            url.to_owned()
         } else {
             String::new()
         };
-        // only web streams
-        let url = if url.starts_with("http://") || url.starts_with("https://") {
-            url
-        } else {
-            String::new()
-        };
-        if url != self.music_parcel_url {
-            // new parcel stream: autoplay, or keep playing if the music was on;
-            // it replaces a stream started by `/music`
-            self.music_override = None;
-            self.music_playing = !url.is_empty() && (self.settings.audio.music_autoplay || self.music_playing);
-            self.music_parcel_url = url.clone();
+        // Recheck permission even while a previously approved stream continues.
+        // No connection is made until the resident answers the filter question.
+        use crate::media::filter::Verdict;
+        let mut verdict = Verdict::Allow;
+        let blocked_scheme = !want.is_empty() && crate::media::filter::refused_scheme(&want).is_some();
+        if blocked_scheme {
+            want.clear();
+        } else if !want.is_empty() && self.settings.media.filter {
+            verdict = self.world.media_filter.check_music(&want);
+            if !matches!(verdict, Verdict::Allow) {
+                want.clear();
+            }
         }
+        let a = &self.settings.audio;
+        let muted = a.muted[0] || a.muted[4] || a.volume[0] <= 0.0 || a.volume[4] <= 0.0 || self.minimized_mute.active;
         let Some(engine) = &self.audio_engine else {
+            self.music_status =
+                ui::audio::MusicStatus::from_stream(available, self.music_playing, a.enabled[4], muted, verdict, None, blocked_scheme);
+            self.tell_music_error(&url);
             return;
         };
-        let url = match &self.music_override {
-            Some(u) if u.starts_with("http://") || u.starts_with("https://") => u.clone(),
-            _ => url,
-        };
-        let mut want = if self.music_playing { url } else { String::new() };
-        // the media filter (filterAudioUrl): nothing reaches the station
-        // before the resident answered; a refusal turns the radio off. A
-        // file or script URL never plays, with the filter off too.
-        if !want.is_empty() && (self.settings.media.filter || crate::media::filter::refused_scheme(&want).is_some()) {
-            use crate::media::filter::{Source, Verdict};
-            match self.world.media_filter.check(&want, Source::Music) {
-                Verdict::Allow => {}
-                Verdict::Ask => want.clear(),
-                Verdict::Deny => {
-                    self.music_playing = false;
-                    self.music_override = None;
-                    want.clear();
-                }
-            }
+        // Apply a disabled Music channel before starting a new station, so the
+        // first frame cannot briefly connect while the channel is switched off.
+        if self
+            .applied_audio
+            .as_ref()
+            .is_none_or(|previous| previous.enabled[4] != a.enabled[4])
+        {
+            engine.set_enabled(aurora_audio::Channel::Music, a.enabled[4]);
         }
         if want != self.stream_url {
             if want.is_empty() {
@@ -5794,8 +5803,19 @@ impl App {
             }
             self.stream_url = want;
         }
-        // StreamTitleDisplay: the station's title, told when it changes
-        let title = match engine.stream_status() {
+        let status = engine.stream_status();
+        self.music_status = ui::audio::MusicStatus::from_stream(
+            available,
+            self.music_playing,
+            self.settings.audio.enabled[4],
+            muted,
+            verdict,
+            Some(&status),
+            blocked_scheme,
+        );
+        self.tell_music_error(&url);
+        // StreamTitleDisplay: the station's title, told when it changes.
+        let title = match status {
             aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
             _ => None,
         };
@@ -5834,6 +5854,15 @@ impl App {
             self.applied_audio = Some(a.clone());
         }
         self.sync_minimized_mute();
+    }
+
+    fn tell_music_error(&mut self, url: &str) {
+        if matches!(self.music_status, ui::audio::MusicStatus::Error(_))
+            && parcel_music::first_error_notice(&mut self.music_error_said, url)
+        {
+            self.world
+                .system_message(aurora_i18n::tr!("music-error-notice", status = self.music_status.text()));
+        }
     }
 
     /// MuteWhenMinimized (audio_update_volume): every sound stops while the
@@ -15391,8 +15420,11 @@ impl App {
                     },
                 };
                 let media = ui::audio::MediaState {
-                    music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
+                    music_available: self.music_playing
+                        || self.music_override.as_ref().is_some_and(|url| !url.is_empty())
+                        || !self.music_parcel_url.is_empty(),
                     music_playing: self.music_playing,
+                    music_status: self.music_status,
                     media_available: self.settings.media.enabled
                         && self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty()),
                     media_playing: self.media.parcel_playing(),

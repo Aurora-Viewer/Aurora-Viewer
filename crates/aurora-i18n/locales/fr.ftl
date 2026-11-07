@@ -13337,6 +13337,24 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
+# Parcel radio state and stream failures
+music-state-connecting = Connexion…
+music-state-filter-waiting = En attente de votre réponse (filtre des médias)
+music-state-filter-blocked = Bloqué par le filtre des médias
+music-state-channel-off = Canal Musique désactivé
+music-state-muted = Son coupé ou volume à zéro
+music-state-no-device = Sortie audio indisponible
+music-state-error = Lecture impossible : { $reason }
+music-error-web-page = Cette adresse est une page web, pas un flux audio
+music-error-playlist = Cette adresse est une liste de lecture, pas un flux audio
+music-error-http = Statut HTTP { $code }
+music-error-tls = Échec de la connexion sécurisée
+music-error-connection = Échec de la connexion
+music-error-address = Adresse du flux invalide ou non prise en charge
+music-error-format = Format audio invalide ou non pris en charge
+music-error-interrupted = Flux audio interrompu
+music-error-notice = Musique de la parcelle : { $status }
+music-error-worker = Impossible de démarrer le lecteur audio
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Impossible de lier les objets
 build-link-downloading = Les informations des objets sont en cours de téléchargement. Veuillez patienter puis réessayer.

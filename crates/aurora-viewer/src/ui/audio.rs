@@ -70,11 +70,100 @@ fn enable_box(audio: &mut AudioSettings, i: usize) -> Option<&mut bool> {
     }
 }
 
+/// Radio intent and actual output are distinct: a requested stream may be
+/// waiting for consent, disabled, connecting or failing.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MusicStatus {
+    #[default]
+    None,
+    Stopped,
+    Connecting,
+    Playing,
+    WaitingFilter,
+    BlockedFilter,
+    ChannelOff,
+    Muted,
+    NoDevice,
+    Error(aurora_audio::StreamError),
+}
+
+impl MusicStatus {
+    pub fn from_stream(
+        available: bool,
+        requested: bool,
+        enabled: bool,
+        muted: bool,
+        filter: crate::media::filter::Verdict,
+        stream: Option<&aurora_audio::StreamStatus>,
+        blocked_scheme: bool,
+    ) -> Self {
+        use crate::media::filter::Verdict;
+        if !available {
+            return Self::None;
+        }
+        if !requested {
+            return Self::Stopped;
+        }
+        if blocked_scheme {
+            return Self::Error(aurora_audio::StreamError::Address);
+        }
+        if matches!(filter, Verdict::Deny) {
+            return Self::BlockedFilter;
+        }
+        if !enabled {
+            return Self::ChannelOff;
+        }
+        if muted {
+            return Self::Muted;
+        }
+        if matches!(filter, Verdict::Ask) {
+            return Self::WaitingFilter;
+        }
+        match stream {
+            None => Self::NoDevice,
+            Some(aurora_audio::StreamStatus::Playing { .. }) => Self::Playing,
+            Some(aurora_audio::StreamStatus::Error(error)) => Self::Error(*error),
+            Some(_) => Self::Connecting,
+        }
+    }
+
+    pub fn text(self) -> String {
+        use aurora_audio::StreamError;
+        let text = match self {
+            Self::None => aurora_i18n::tr!("ui-bars-tip-music-none"),
+            Self::Stopped => aurora_i18n::tr!("ui-bars-tip-music-stopped"),
+            Self::Playing => aurora_i18n::tr!("ui-bars-tip-music-playing"),
+            Self::Connecting => aurora_i18n::tr!("music-state-connecting"),
+            Self::WaitingFilter => aurora_i18n::tr!("music-state-filter-waiting"),
+            Self::BlockedFilter => aurora_i18n::tr!("music-state-filter-blocked"),
+            Self::ChannelOff => aurora_i18n::tr!("music-state-channel-off"),
+            Self::Muted => aurora_i18n::tr!("music-state-muted"),
+            Self::NoDevice => aurora_i18n::tr!("music-state-no-device"),
+            Self::Error(error) => {
+                let reason = match error {
+                    StreamError::WebPage => aurora_i18n::tr!("music-error-web-page").to_owned(),
+                    StreamError::Playlist => aurora_i18n::tr!("music-error-playlist").to_owned(),
+                    StreamError::HttpStatus(code) => aurora_i18n::tr!("music-error-http", code = code.to_string()),
+                    StreamError::Tls => aurora_i18n::tr!("music-error-tls").to_owned(),
+                    StreamError::Connection => aurora_i18n::tr!("music-error-connection").to_owned(),
+                    StreamError::Address => aurora_i18n::tr!("music-error-address").to_owned(),
+                    StreamError::AudioFormat => aurora_i18n::tr!("music-error-format").to_owned(),
+                    StreamError::Interrupted => aurora_i18n::tr!("music-error-interrupted").to_owned(),
+                    StreamError::Worker => aurora_i18n::tr!("music-error-worker").to_owned(),
+                };
+                return aurora_i18n::tr!("music-state-error", reason = reason);
+            }
+        };
+        text.to_owned()
+    }
+}
+
 /// What the parcel offers and what is playing.
 #[derive(Default, Clone, Copy)]
 pub struct MediaState {
     pub music_available: bool,
     pub music_playing: bool,
+    pub music_status: MusicStatus,
     pub media_available: bool,
     pub media_playing: bool,
 }
@@ -179,19 +268,20 @@ pub fn top_controls(
                 toggle_master_mute(audio);
                 action = AudioAction::Changed;
             }
-            let music = toggle(
-                ui,
-                "radio",
-                if !media.music_available {
-                    aurora_i18n::tr!("ui-audio-no-music-on-this-parcel")
-                } else if media.music_playing {
-                    aurora_i18n::tr!("ui-audio-stop-parcel-music")
-                } else {
-                    aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
-                },
-                media.music_playing,
-                media.music_available,
-            );
+            let tip = if !media.music_available {
+                aurora_i18n::tr!("ui-audio-no-music-on-this-parcel").to_owned()
+            } else {
+                format!(
+                    "{}\n{}",
+                    if media.music_playing {
+                        aurora_i18n::tr!("ui-audio-stop-parcel-music")
+                    } else {
+                        aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
+                    },
+                    media.music_status.text()
+                )
+            };
+            let music = toggle(ui, "radio", &tip, media.music_playing, media.music_available);
             if music.clicked() && media.music_available {
                 action = AudioAction::ToggleMusic;
             }
@@ -390,6 +480,62 @@ mod tests {
                 aurora_i18n::tr!("settings-multimedia"),
                 aurora_i18n::tr!("common-voice")
             ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod music_status_tests {
+    use super::*;
+    use crate::media::filter::Verdict;
+    use aurora_audio::{StreamError, StreamStatus};
+
+    #[test]
+    fn parcel_music_ui_requires_engine_playback_and_audible_channel() {
+        let playing = StreamStatus::Playing { title: None };
+        assert_eq!(
+            MusicStatus::from_stream(true, true, true, false, Verdict::Allow, Some(&playing), true),
+            MusicStatus::Error(StreamError::Address)
+        );
+        assert_eq!(
+            MusicStatus::from_stream(true, true, true, false, Verdict::Allow, Some(&playing), false),
+            MusicStatus::Playing
+        );
+        assert_eq!(
+            MusicStatus::from_stream(true, true, true, false, Verdict::Ask, Some(&playing), false),
+            MusicStatus::WaitingFilter
+        );
+        assert_eq!(
+            MusicStatus::from_stream(true, true, false, false, Verdict::Allow, Some(&playing), false),
+            MusicStatus::ChannelOff
+        );
+        assert_eq!(
+            MusicStatus::from_stream(true, true, true, true, Verdict::Allow, Some(&playing), false),
+            MusicStatus::Muted
+        );
+        assert_eq!(
+            MusicStatus::from_stream(true, true, true, false, Verdict::Allow, None, false),
+            MusicStatus::NoDevice
+        );
+        assert_eq!(
+            MusicStatus::from_stream(
+                true,
+                true,
+                true,
+                false,
+                Verdict::Allow,
+                Some(&StreamStatus::Error(StreamError::WebPage)),
+                false
+            ),
+            MusicStatus::Error(StreamError::WebPage)
+        );
+        assert_eq!(
+            MusicStatus::from_stream(true, true, true, false, Verdict::Allow, Some(&StreamStatus::Connecting), false),
+            MusicStatus::Connecting
+        );
+        assert_eq!(
+            MusicStatus::from_stream(true, false, true, false, Verdict::Allow, Some(&playing), false),
+            MusicStatus::Stopped
         );
     }
 }
