@@ -461,6 +461,9 @@ pub struct World {
     /// first list of our animations: the AO does not act on the list of the
     /// region left (`awaiting_own_animations`).
     own_animations_awaited: Option<Instant>,
+    /// The seat's animations `get_off_for_teleport` stopped, to stop again
+    /// if the region we arrive in still lists them.
+    teleport_seat_stops: Vec<Uuid>,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
     pub tp_show_progress: bool,
@@ -824,6 +827,7 @@ impl World {
             tp_failed: false,
             teleport_arrivals: 0,
             own_animations_awaited: None,
+            teleport_seat_stops: Vec::new(),
             outfit: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
@@ -1192,6 +1196,7 @@ impl World {
         if show_progress {
             self.ui_sounds.push(UiSound::TeleportOut);
         }
+        self.teleport_seat_stops.clear();
         self.get_off_for_teleport();
         // teleportCore: gObjectList.resetDerenderList()
         self.clear_temporary_derenders();
@@ -3489,7 +3494,17 @@ impl World {
                     let started: Vec<_> = anims.iter().map(|a| a.0).filter(|id| !before.iter().any(|p| p.id == *id)).collect();
                     let stopped: Vec<_> = before.iter().map(|p| p.id).filter(|id| !anims.iter().any(|a| a.0 == *id)).collect();
                     log::info!("own animations: {} playing, started {started:?}, stopped {stopped:?}", anims.len());
-                    self.own_animations_awaited = None;
+                    if self.own_animations_awaited.take().is_some() {
+                        // The region we arrive in can still list a seat
+                        // animation that teleportCore stopped in the region
+                        // left just before the request: stop it there too.
+                        for id in std::mem::take(&mut self.teleport_seat_stops) {
+                            if anims.iter().any(|a| a.0 == id) && !self.animation_stops.contains(&id) {
+                                log::info!("teleport: the arrival region still plays seat animation {id}: stop it again");
+                                self.animation_stops.push(id);
+                            }
+                        }
+                    }
                     self.agent.ground_sit = anims.iter().any(|(id, _)| *id == body::ANIM_SIT_GROUND_CONSTRAINED);
                     // Firestorm process_avatar_animation / processAnimationStateChanges:
                     // source blocks correspond by index, and previous source entries
@@ -5718,7 +5733,9 @@ impl World {
             root = parent;
         }
         self.release_linkset_camera(root, false);
+        let queued = self.animation_stops.len();
         self.get_off(i, Instant::now());
+        self.teleport_seat_stops = self.animation_stops[queued.min(self.animation_stops.len())..].to_vec();
         let pos = self
             .objects
             .get(i)
@@ -6698,10 +6715,13 @@ mod motion_tests {
     }
 
     /// #2700: after a teleport to another region the AO waits for that
-    /// region's first list of our animations, never for good.
+    /// region's first list of our animations, and a seat motion teleportCore
+    /// stopped in the region left is stopped again if that list still has it.
     #[test]
-    fn a_teleport_to_another_region_waits_for_its_animations() {
+    fn a_teleport_to_another_region_waits_for_its_animations_and_stops_the_seat_motion_again() {
         let (mut world, _) = teleport_from_seat(true);
+        let motion = world.animation_stops[0];
+        world.animation_stops.clear();
         let start = Instant::now();
         assert!(!world.awaiting_own_animations(start), "nothing awaited before the region changes");
         let destination = aurora_net::origin_to_handle(512 * 256, 512 * 256);
@@ -6714,12 +6734,21 @@ mod motion_tests {
         let now = Instant::now();
         assert!(world.awaiting_own_animations(now), "the list held is the region left's");
         assert!(!world.awaiting_own_animations(now + OWN_ANIMATIONS_WAIT), "never waits for good");
+        let other = Uuid::from_u128(74);
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(Uuid::from_u128(74), 1)],
+            anims: vec![(motion, 1), (other, 1)],
             sources: Vec::new(),
         });
         assert!(!world.awaiting_own_animations(Instant::now()));
+        assert_eq!(world.animation_stops, vec![motion], "only the seat's motion, once");
+        world.animation_stops.clear();
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion, 1), (other, 1)],
+            sources: Vec::new(),
+        });
+        assert!(world.animation_stops.is_empty());
     }
 
     /// Neither a teleport within the region nor a walk into the next one
