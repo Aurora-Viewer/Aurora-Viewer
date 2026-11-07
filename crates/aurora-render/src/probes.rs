@@ -725,6 +725,17 @@ mod tests {
     /// A point straight ahead of each face lands at the image center, the
     /// s axis to the right and the t axis downward (Vulkan convention).
     #[test]
+    fn face_views_are_mirrored() {
+        // the cube convention is left-handed: a capture must count as a
+        // mirrored view (`misc.w` 2), or fs_reflect drops the surfaces that
+        // face the probe and shows the back of what is behind them
+        for face in 0..6 {
+            let view = face_view(glam::Vec3::new(10.0, 20.0, 30.0), face);
+            assert!(view.determinant() < 0.0, "face {face}");
+        }
+    }
+
+    #[test]
     fn face_views_follow_the_cube_convention() {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, 0.1);
         let o = Vec3::new(10.0, 20.0, 30.0);

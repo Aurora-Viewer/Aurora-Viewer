@@ -6466,9 +6466,11 @@ impl Backend {
             let mut u = self.frame_uniforms(&cf, crate::probes::face_view(c.origin, c.face), None, &cascades, &splits);
             probe_vp = Mat4::from_cols_array_2d(&u.view_proj);
             // reflection pass: no SSAO / SSR / mirrors, no clip plane; the
-            // surfaces lit by the probes where the scene is
+            // surfaces lit by the probes where the scene is. 2: the views of a
+            // cube's faces are mirrored (probes::face_view), so a surface facing
+            // the probe is rasterized as a back face
             let (radiance_bits, irradiance_bits) = crate::probes::capture_lighting::bits(c.sky_only, irr_capture);
-            u.misc = [0.0, 0.0, 0.0, 1.0];
+            u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = [0.0; 4];
             u.light_sets.mode[2] |= radiance_bits | crate::probes::capture_lighting::DOME;
             // the sun stops at the roofs (display_cube_face, generateSunShadow)

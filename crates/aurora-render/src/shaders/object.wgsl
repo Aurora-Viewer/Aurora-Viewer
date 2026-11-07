@@ -1547,7 +1547,7 @@ fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    // A mirrored view (water, mirror) flips the winding: the side facing
+    // A mirrored view (water, mirror, the faces of a probe) flips the winding: the side facing
     // its camera is the one rasterized as a back face. Single-sided faces
     // show that side only, as in the Legacy Viewer's culled reflection and
     // hero probe passes: a mirror's own surface, a few centimetres in front

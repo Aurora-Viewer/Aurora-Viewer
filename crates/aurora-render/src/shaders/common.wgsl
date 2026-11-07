@@ -388,7 +388,8 @@ fn in_reflection_pass() -> bool {
     return frame.misc.w > 0.5;
 }
 
-/// Planar reflection passes (water, mirror): a view mirrored by a plane.
+/// Reflection passes with a mirrored view: planar ones (water, mirror) and
+/// the faces of a probe (probes::face_view).
 fn mirrored_pass() -> bool {
     return frame.misc.w > 1.5;
 }
