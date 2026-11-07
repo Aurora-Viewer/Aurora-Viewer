@@ -283,6 +283,9 @@ pub struct PlacesUi {
     /// Inventory changes asked from a menu, sent with the window's actions.
     pending_edits: Vec<aurora_net::inventory::operations::Mutation>,
     raise: bool,
+    /// AURORA_DEMO_PLACES=…:classic: the Legacy Viewer's tabs for this run,
+    /// whatever Preferences › Aurora › Places says (not saved).
+    pub demo_classic: bool,
 }
 
 impl PlacesUi {
@@ -507,22 +510,33 @@ impl PlacesUi {
             self.selected = None;
         }
         ui.add_space(4.0);
-        // the list, above the bottom bar
-        let list_h = (ui.available_height() - 32.0).max(40.0);
-        egui::ScrollArea::vertical()
-            .id_salt(("places-list", self.tab))
-            .max_height(list_h)
-            .min_scrolled_height(list_h)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if history {
-                    self.history_list(ui, p, world, actions);
-                } else {
-                    self.landmark_list(ui, p, world, by_date, actions);
-                }
-            });
-        ui.add_space(6.0);
+        // panel_places.xml: button_layout_panel keeps its height at the
+        // bottom and places_layout_panel takes what is left above it. The
+        // buttons are laid out first, from the bottom, as in the profile
+        // view: a fixed share for them cut them off once the theme's
+        // spacing and button height outgrew it (#2641)
+        let rest = ui.available_rect_before_wrap();
+        ui.allocate_rect(rest, Sense::hover());
+        let mut bottom_up = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rest)
+                .layout(egui::Layout::bottom_up(egui::Align::Min)),
+        );
+        let ui = &mut bottom_up;
         self.list_buttons(ui, p, world, actions);
+        ui.add_space(6.0);
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("places-list", self.tab))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if history {
+                        self.history_list(ui, p, world, actions);
+                    } else {
+                        self.landmark_list(ui, p, world, by_date, actions);
+                    }
+                });
+        });
     }
 
     /// The landmark selected, with its asset.
@@ -1332,6 +1346,86 @@ mod tests {
             }
         }
         actions
+    }
+
+    /// #2641: in the Legacy Viewer's tabs, Teleport / Map / Profile stay
+    /// whole at the bottom of the window, at its opening size and at its
+    /// minimum, at more than one interface scale (the list gives way).
+    #[test]
+    fn legacy_tabs_keep_their_bottom_buttons_whole() {
+        fn text_rects(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<(String, egui::Rect, egui::Rect)>) {
+            match shape {
+                egui::epaint::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip)),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| text_rects(s, clip, out)),
+                _ => {}
+            }
+        }
+        let library = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let world = World::new(library);
+        let images = std::collections::HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let labels = [
+            aurora_i18n::tr!("common-teleport"),
+            aurora_i18n::tr!("common-map"),
+            aurora_i18n::tr!("common-profile"),
+        ];
+        for (size, zoom) in [
+            (None, 1.0),
+            (Some(Vec2::new(260.0, 300.0)), 1.0),
+            (Some(Vec2::new(260.0, 300.0)), 1.5),
+        ] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            ctx.set_zoom_factor(zoom);
+            // the icons as in the viewer (without them, the menus fall back
+            // to wider text buttons)
+            let _icons = crate::ui::icons::Icons::load(&ctx, None);
+            let p = theme.palette();
+            if let Some(size) = size {
+                widgets::size_floater(&ctx, "places", size);
+            }
+            let mut places = PlacesUi::default();
+            let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+            let mut shapes = Vec::new();
+            for _ in 0..4 {
+                let mut c = Ctx {
+                    p: &p,
+                    world: &world,
+                    images: &images,
+                    emoji: &mut emoji,
+                    want_names: &mut names,
+                    wanted_images: &mut wanted,
+                    want_groups: &mut groups,
+                };
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |root| {
+                        places.show(root.ctx(), &mut c, &mut true, false, false, None);
+                    },
+                );
+                output.textures_delta.clear();
+                shapes = output.shapes;
+            }
+            let mut texts = Vec::new();
+            for s in &shapes {
+                text_rects(&s.shape, s.clip_rect, &mut texts);
+            }
+            for label in &labels {
+                let (_, rect, clip) = texts
+                    .iter()
+                    .rev()
+                    .find(|(t, ..)| t == label)
+                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom})"));
+                assert!(
+                    clip.contains_rect(rect.expand(-0.5)),
+                    "« {label} » cut off ({size:?}, zoom {zoom}): text {rect:?}, clip {clip:?}"
+                );
+            }
+        }
     }
 
     #[test]
