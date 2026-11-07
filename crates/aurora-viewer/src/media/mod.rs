@@ -418,6 +418,8 @@ pub struct MediaFrame<'a> {
     pub channel_volume: f32,
     pub agent_speed: f32,
     pub window_focused: bool,
+    /// Gaming mode (app/gaming_mode.rs): no media draws.
+    pub gaming_mode: bool,
     pub net: Option<(&'a tokio::runtime::Handle, reqwest::Client)>,
     pub cache_dir: &'a std::path::Path,
     pub language: &'a str,
