@@ -1144,6 +1144,8 @@ mod tests {
             friends_only: false,
             fly_override: false,
             quiet_snapshots: false,
+            animation_speed: 1.0,
+            slow_motion_animations: false,
             marketplace: false,
             parcel_landmark: None,
             can_set_home: false,
