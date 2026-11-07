@@ -1014,6 +1014,9 @@ pub struct TextureStreamer {
     max_resolution: u32,
     /// Textures in view still loading, from the last pass.
     pending_in_view: usize,
+    /// Passes of `recompute_wants` so far (a photo waits for one after the
+    /// drawing resumes, `snapshot::PausedWait`).
+    wants_passes: u64,
     /// The last `update` had somewhere to download textures from.
     can_fetch: bool,
     /// Textures the demo draws itself, see [`DemoSource`].
@@ -1317,6 +1320,7 @@ impl TextureStreamer {
             full_resolution: false,
             max_resolution: crate::settings::MAX_TEXTURE_RESOLUTION,
             pending_in_view: 0,
+            wants_passes: 0,
             can_fetch: false,
             demo_source: None,
             ui_wanted: Default::default(),
@@ -2223,6 +2227,7 @@ impl TextureStreamer {
         reductions.extend(over_max);
         self.bytes_below = bytes_below;
         self.pending_in_view = pending;
+        self.wants_passes += 1;
         self.passes_at_step = self.passes_at_step.saturating_add(1);
     }
 
@@ -2246,6 +2251,12 @@ impl TextureStreamer {
     /// photo quality waits for them, `app::snapshot`).
     pub fn pending_in_view(&self) -> usize {
         self.pending_in_view
+    }
+
+    /// How many times the wants were computed: `pending_in_view` is from
+    /// the last of them.
+    pub fn wants_passes(&self) -> u64 {
+        self.wants_passes
     }
 
     fn bytes_needed(e: &Entry) -> usize {
