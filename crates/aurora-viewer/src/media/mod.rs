@@ -397,6 +397,10 @@ impl Default for MediaSettings {
 struct ObjMedia {
     idx: usize,
     fetched_version: Option<u32>,
+    /// Object media version of the last GET asked (0 without one): asked
+    /// once per version, like LLVOVolume::processUpdateMessage asks once per
+    /// media change, so a failed GET is not asked again until the next one.
+    asked_version: Option<u32>,
     data: Option<ObjectMediaData>,
     hud: bool,
     on_other_avatar: bool,
