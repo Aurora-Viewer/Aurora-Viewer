@@ -1775,7 +1775,8 @@ pub enum NetCommand {
         local_id: u32,
         object: Uuid,
     },
-    /// Sit on an object (AgentRequestSit; `offset` in the object frame).
+    /// Sit on an object (AgentRequestSit; `offset` from the clicked object's
+    /// render position, along world axes: handle_object_sit / LLPickInfo).
     RequestSit {
         handle: RegionHandle,
         target: Uuid,
