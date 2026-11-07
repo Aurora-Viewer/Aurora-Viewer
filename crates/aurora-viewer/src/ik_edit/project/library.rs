@@ -62,7 +62,7 @@ fn list(root: &Path) -> Result<Vec<Identity>, String> {
     Ok(entries)
 }
 fn sort(entries: &mut [Identity]) {
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.id.cmp(&b.id)));
+    entries.sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then(a.id.cmp(&b.id)));
 }
 #[derive(Clone, Copy)]
 enum EditKind {

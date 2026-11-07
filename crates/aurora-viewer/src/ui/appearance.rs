@@ -1454,7 +1454,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
                 && world.inventory.folders.get(&it.parent).is_some_and(|f| !f.library)
         })
         .collect();
-    items.sort_by_key(|it| it.name.to_lowercase());
+    items.sort_by_key(|it| crate::natural_order::key(&it.name));
     for it in items {
         let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
         row_gap(ui);

@@ -364,7 +364,7 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
     let column = Column::ALL.get(settings.sort as usize).copied().unwrap_or(Column::Name);
     rows.sort_by(|a, b| {
         use std::cmp::Ordering;
-        let by_name = || a.name.to_lowercase().cmp(&b.name.to_lowercase());
+        let by_name = || crate::natural_order::cmp(&a.name, &b.name);
         // the lit rows of a flag column come first
         let flag = |x: bool, y: bool| y.cmp(&x);
         let order = match column {

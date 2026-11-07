@@ -3225,6 +3225,7 @@ impl TextureStreamer {
         // "crowded" below stays on the driver's own figure)
         let shared = video.map(|v| aurora_render::vram::VideoMemory {
             budget: crate::instances::share_cap(v.budget, &self.peers),
+            shared_budget: crate::instances::share_cap(v.shared_budget, &self.peers),
             ..v
         });
         let load = self.gpu.get();
@@ -3394,6 +3395,8 @@ const KEEP_RGBA_FROM: u32 = 128;
 /// foliage, grass, fences and hair cut out of a texture do not thin out with
 /// the distance. The Legacy Viewer leaves the box-filtered mips of the
 /// driver (LLImageGL), which do; this is a deliberate improvement.
+/// Coverage restoration only raises alpha: lowering it could erase a HUD
+/// panel whose creator chose a higher cutoff than the automatic 0.5.
 /// `AURORA_ALPHA_COVERAGE=0` keeps the plain mips, to compare.
 pub(crate) fn alpha_coverage_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -3411,8 +3414,8 @@ fn mips_alpha_weighted() -> bool {
 
 /// The mip chain of a decoded texture, with its alpha coverage kept when
 /// its alpha is a mask. The texture does not know the cutoff of the faces
-/// that will use it: the default one (0.5) is taken, the cutoff of every
-/// face whose alpha is detected as a mask and of most masked materials.
+/// that will use it: the default one (0.5) is taken. The adjustment may
+/// never lower alpha, preserving what plain mips draw at every cutoff.
 fn mips_for(width: u32, height: u32, rgba: Vec<u8>, levels: u32, alpha: AlphaKind) -> Vec<(u32, u32, Vec<u8>)> {
     let mut mips = if mips_alpha_weighted() {
         aurora_render::build_mips_alpha_weighted(width, height, rgba, levels)
