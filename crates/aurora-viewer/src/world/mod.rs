@@ -65,6 +65,7 @@ pub mod notification_history;
 pub mod notifications;
 pub mod object_im_filter;
 pub mod objects;
+pub mod omnifilter;
 pub mod open_ims;
 pub mod outfit;
 pub mod outfit_backup;
@@ -450,6 +451,12 @@ pub struct World {
     pub point_at: pointat::PointAts,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
+    /// The Omnifilter's rules (`crate::omnifilter`, `world/omnifilter.rs`).
+    pub omnifilter: crate::omnifilter::Engine,
+    /// Answers of matched dialogs waiting for their rule's delay.
+    omnifilter_replies: Vec<(Instant, omnifilter::Reply)>,
+    /// Links a rule opened, for the app.
+    omnifilter_urls: Vec<String>,
     pub anti_spam: anti_spam::Registry,
     pub teleporting: bool,
     /// Only a teleport to another region needs a loading screen. Unknown
@@ -793,6 +800,9 @@ impl World {
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
             object_im_filter: object_im_filter::Settings::default(),
+            omnifilter: Default::default(),
+            omnifilter_replies: Vec::new(),
+            omnifilter_urls: Vec::new(),
             anti_spam: Default::default(),
             appearance_counter: 1,
             bake_refreshes: HashMap::new(),
@@ -930,7 +940,10 @@ impl World {
         // a setting, not the session's: the arrival's lines follow it too
         let quiet = self.quiet_automated_chat;
         let fly_override = self.fly_override;
+        // the rules are the computer's, not the session's
+        let omnifilter = std::mem::take(&mut self.omnifilter);
         *self = World::new(lib);
+        self.omnifilter = omnifilter;
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
         self.quiet_automated_chat = quiet;
@@ -3210,6 +3223,16 @@ impl World {
                 object_id,
                 object_name,
                 owner_name,
+                owner_id,
+                message,
+                channel,
+                buttons,
+            } if self.omnifilter_script_dialog(sender, object_id, &object_name, &owner_name, owner_id, &message, channel, &buttons) => None,
+            NetEvent::ScriptDialog {
+                sender,
+                object_id,
+                object_name,
+                owner_name,
                 owner_id: _,
                 message,
                 channel,
@@ -3371,9 +3394,18 @@ impl World {
             }
             NetEvent::LoadUrl {
                 object_name,
+                owner_id,
+                owner_is_group,
+                message,
+                url,
+                ..
+            } if self.omnifilter_load_url(&object_name, owner_id, owner_is_group, &message, &url) => None,
+            NetEvent::LoadUrl {
+                object_name,
                 object_id,
                 message,
                 url,
+                ..
             } => {
                 let body = format!("{message}\n{url}");
                 let object_name = dialog_names::shown(&object_name).into_owned();
@@ -4192,6 +4224,11 @@ impl World {
         if self.receive_hand_contacts(&c, Instant::now()) {
             return;
         }
+        // process_chat_from_simulator: before the debug channel takes its
+        // lines
+        if !self.omnifilter_chat(&mut c) {
+            return;
+        }
         if self.script_debug.route(&c, self.agent_id, Instant::now()) || self.anti_spam_chat(&c) {
             return;
         }
@@ -4287,7 +4324,7 @@ impl World {
         // a message to the whole region, before the rules of conversations
         // (region_messages.rs)
         if region_messages::is_region_message(&im) {
-            if !self.anti_spam_im(&im) {
+            if !self.anti_spam_im(&im) && self.omnifilter_im(&mut im) {
                 self.on_region_message(&im);
             }
             return;
@@ -4296,6 +4333,10 @@ impl World {
             return;
         }
         if self.anti_spam_im(&im) {
+            return;
+        }
+        // processNewMessage: every dialog, before it is handled
+        if !self.omnifilter_im(&mut im) {
             return;
         }
         // IM queries obey the same friends-only policy, before recvim.
