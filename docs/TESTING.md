@@ -5269,8 +5269,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   conversation; notifications for a sale ("for Steel helmet"), an object paid with its name
   ("for Tip jar") and without, and a stranger's L$20, no card. `balance`: no toast; 6 seconds
   after the start, three payments 0.9 s apart rise under the balance (12,480 L$), in its
-  colour, stacked downwards, then a purchase of L$300 in the danger colour: the number drops
-  at once. They leave one at a time; the number counts up for what was gained;
+  colour, stacked downwards, then a purchase of L$300, bold in the danger colour: the number
+  drops at once, and flashes in that colour when the row reaches it. They leave one at a time; the number counts up for what was gained;
   `AURORA_DEMO_BARS=legacy`, or Reduce motion, to see the other looks. `earning`:
   from 12,480 L$, every 10 seconds for as long as the viewer runs, a sale, an object paid or a
   direct payment of 20 to 300 L$, a purchase of as much, or ten times as much L$ bought, with
