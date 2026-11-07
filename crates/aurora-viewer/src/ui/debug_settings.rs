@@ -33,7 +33,7 @@ const WIDTH: f32 = 720.0;
 const HEIGHT: f32 = 520.0;
 const LIST_W: f32 = 340.0;
 const GAP: f32 = 12.0;
-const BUTTON: Vec2 = Vec2::new(170.0, 28.0);
+const BUTTON: Vec2 = Vec2::new(0.0, 28.0);
 /// How often the values are read again while the window is open: another
 /// window may change them, and reading all of them each frame is wasted work.
 const REFRESH: Duration = Duration::from_millis(500);
@@ -149,34 +149,29 @@ impl DebugSettingsUi {
             Vec2::new(WIDTH, HEIGHT),
         )
         .show(ctx, p, open, |ui| {
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 220.0).max(120.0);
-                widgets::search_field(ui, &mut self.filter, tr!("debug-settings-search"), width);
-                changed |=
-                    widgets::checkbox(ui, p, &mut settings.debug_settings_changed_only, tr!("debug-settings-changed-only")).changed();
-            });
+            // Fixed areas, not rows sized by what they hold: a window grows
+            // with its content, so content that fills its room and a little
+            // more would widen the window at every frame.
+            let width = ui.available_width();
+            widgets::search_field(ui, &mut self.filter, tr!("debug-settings-search"), width);
+            changed |= widgets::checkbox(ui, p, &mut settings.debug_settings_changed_only, tr!("debug-settings-changed-only")).changed();
             ui.add_space(6.0);
             let shown = self.shown(settings.debug_settings_changed_only);
             // `onUpdateFilter` selects the first match of a search
             if !self.filter.is_empty() && !shown.iter().any(|i| Some(&self.entries[*i].key) == self.selected.as_ref()) {
                 self.select(shown.first().map(|i| self.entries[*i].key.clone()));
             }
-            let size = ui.available_size();
-            let details_w = (size.x - LIST_W - GAP).max(120.0);
-            ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(
-                    Vec2::new(LIST_W, size.y),
-                    egui::Layout::top_down_justified(egui::Align::LEFT),
-                    |ui| {
-                        ui.set_max_width(LIST_W);
-                        self.list(ui, p, &shown);
-                    },
-                );
-                ui.add_space(GAP);
-                ui.allocate_ui_with_layout(Vec2::new(details_w, size.y), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.set_max_width(details_w);
-                    changed |= self.details(ui, p, settings, locks);
-                });
+            let (room, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+            let list = egui::Rect::from_min_size(room.min, Vec2::new(LIST_W.min(room.width() * 0.5), room.height()));
+            let details = egui::Rect::from_min_max(egui::Pos2::new(list.right() + GAP, room.top()), room.max);
+            let list_layout = egui::Layout::top_down_justified(egui::Align::LEFT);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(list).layout(list_layout), |ui| {
+                self.list(ui, p, &shown);
+            });
+            let details_layout = egui::Layout::top_down(egui::Align::LEFT);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(details).layout(details_layout), |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(details));
+                changed |= self.details(ui, p, settings, locks);
             });
         });
         changed |= self.warning(ctx, p, settings, open);
@@ -302,7 +297,7 @@ impl DebugSettingsUi {
                 .color(p.muted),
         );
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let copied = self.copied.is_some_and(|at| at.elapsed() < COPIED_FOR);
             let label = if copied {
                 tr!("debug-settings-copied")
@@ -356,7 +351,7 @@ impl DebugSettingsUi {
             Kind::Vector { whole, .. } => {
                 let mut items = entry.value.as_array().cloned().unwrap_or_default();
                 let mut edited = false;
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     for item in &mut items {
                         if let Some(n) = number(ui, item, whole) {
                             *item = if whole { json!(n as i64) } else { json!(n as f32) };
@@ -477,6 +472,48 @@ mod tests {
         // most of the list has words of its own; print the share for the PR
         println!("debug settings: {described} of {} have Preferences' words", list.len());
         assert!(described * 2 > list.len(), "{described} of {}", list.len());
+    }
+
+    /// A window whose content asks for a little more than it has grows at
+    /// every frame: its size stays the same whichever setting is chosen.
+    #[test]
+    fn no_setting_makes_the_window_grow() {
+        let p = crate::theme::Theme::default().palette();
+        let mut s = Settings::default();
+        s.debug_settings_warning_ignored = true;
+        let mut st = DebugSettingsUi::default();
+        st.read_entries(&s);
+        let keys: Vec<String> = st.entries.iter().map(|e| e.key.clone()).collect();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(4000.0, 2000.0));
+        let mut grew = Vec::new();
+        for key in keys {
+            let ctx = egui::Context::default();
+            let raw = || egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            };
+            st.selected = Some(key.clone());
+            st.typing = None;
+            let width = |ctx: &egui::Context, st: &mut DebugSettingsUi, s: &mut Settings| {
+                let mut open = true;
+                crate::ui::options::run_ui(ctx, raw(), |ui| {
+                    st.show(ui.ctx(), &p, &mut open, s, Locks::default());
+                });
+                ctx.globally_used_rect().width()
+            };
+            for _ in 0..3 {
+                width(&ctx, &mut st, &mut s);
+            }
+            let settled = width(&ctx, &mut st, &mut s);
+            for _ in 0..6 {
+                width(&ctx, &mut st, &mut s);
+            }
+            let last = width(&ctx, &mut st, &mut s);
+            if last > settled + 0.5 {
+                grew.push(format!("{key}: {settled} -> {last}"));
+            }
+        }
+        assert!(grew.is_empty(), "{} settings: {}", grew.len(), grew.join("\n"));
     }
 
     #[test]
