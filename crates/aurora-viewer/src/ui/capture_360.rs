@@ -77,7 +77,12 @@ impl Capture360Ui {
     /// The left panel: the quality level, the avatars, the two buttons.
     fn panel(ui: &mut egui::Ui, p: &Palette, view: &View, settings: &mut Settings, actions: &mut Vec<Action>) {
         ui.add_space(4.0);
-        ui.label(RichText::new(aurora_i18n::tr!("capture-360-quality-label")).size(12.0).strong().color(p.ink));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("capture-360-quality-label"))
+                .size(12.0)
+                .strong()
+                .color(p.ink),
+        );
         ui.add_space(2.0);
         ui.indent("capture_360_quality", |ui| {
             for q in Quality::ALL {

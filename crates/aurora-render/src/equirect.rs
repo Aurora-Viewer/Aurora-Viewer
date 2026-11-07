@@ -168,11 +168,7 @@ impl Equirect {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
-        Equirect {
-            layout,
-            pipeline,
-            sampler,
-        }
+        Equirect { layout, pipeline, sampler }
     }
 
     /// The panorama of `job` (width, height, RGBA8), read back here: None
@@ -393,7 +389,10 @@ mod tests {
                 let (col, row) = ((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
                 let (layer, s, t) = cube_lookup(Vec3::new(-d.x, d.y, d.z));
                 assert_eq!(layer, cam.layer, "{cam:?} at {d:?}");
-                assert!((s - col).abs() < 1e-4 && (t - row).abs() < 1e-4, "{cam:?} at {d:?}: ({s}, {t}) vs ({col}, {row})");
+                assert!(
+                    (s - col).abs() < 1e-4 && (t - row).abs() < 1e-4,
+                    "{cam:?} at {d:?}: ({s}, {t}) vs ({col}, {row})"
+                );
             }
         }
         assert!(layers.iter().all(|l| *l), "every layer is filled");

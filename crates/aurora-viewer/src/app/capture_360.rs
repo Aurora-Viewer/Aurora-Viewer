@@ -131,7 +131,11 @@ impl App {
             self.capture_360.was_open = open;
             // LLFloater360Capture's constructor and destructor: everything
             // around while the window is open, the camera's view again after
-            let mode = if open { InterestListMode::Capture360 } else { InterestListMode::Default };
+            let mode = if open {
+                InterestListMode::Capture360
+            } else {
+                InterestListMode::Default
+            };
             log::info!("360 capture: interest list mode {} asked of the regions", mode.as_str());
             self.send(NetCommand::SetInterestListMode(mode));
             if open {
@@ -320,7 +324,10 @@ impl App {
         // more, and the texture stays modest
         let (pw, ph, preview) = crate::snapshot::save::downscale(width, height, &rgba, width / 2);
         let image = egui::ColorImage::from_rgba_unmultiplied([pw as usize, ph as usize], &preview);
-        self.capture_360.preview = Some(self.egui_ctx.load_texture("capture_360_preview", image, egui::TextureOptions::LINEAR));
+        self.capture_360.preview = Some(
+            self.egui_ctx
+                .load_texture("capture_360_preview", image, egui::TextureOptions::LINEAR),
+        );
         self.capture_360.image = Some(Panorama {
             width,
             height,
