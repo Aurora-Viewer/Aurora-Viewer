@@ -4546,9 +4546,10 @@ both open states and the selection count. Capture at frame 620.
   recovery. No full-size CPU normal images persist after upload. Regression
   tests cover BC7-only source pixels, source-refresh epochs, shared identities,
   normal placeholders, memory reduction and final-user eviction.
-  For captures, start at `AURORA_DEMO_POS=128,118` for the compact wall or
-  `115,112` for the matrix. Panels share a vertical plane so no preset hides
-  another. The two explicit-normal controls sit above the preset rows.
+  For captures, start at `AURORA_DEMO_POS=168,118` for the compact wall or
+  `155,112` for the matrix. The wall is east of the plaza exhibits. Panels
+  share a vertical plane so no preset hides another. The two explicit-normal
+  controls sit above the preset rows.
   For grid diagnosis, `AURORA_DEBUG_LEGACY_BUMP=1` logs standard preset
   requests, source component counts, generated texture sizes and stable slots
   by bump code. It does not log asset URLs or locations.

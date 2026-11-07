@@ -184,7 +184,8 @@ impl LegacyBumpDemo {
             let shine = if self.matrix { (index / 18) as u8 } else { 3 };
             let col = if self.matrix { code } else { code % 6 };
             let row = if self.matrix { index / 18 } else { code / 6 };
-            let x = 146.0;
+            // Keep the wall east of the plaza's unrelated material exhibits.
+            let x = 186.0;
             let y = if self.matrix { 109.5 } else { 121.0 } + col as f32 * 2.1;
             let mut object = panel(index, code as u8, shine, x, y, None);
             object.position.z += row as f32 * 2.1;
@@ -192,7 +193,7 @@ impl LegacyBumpDemo {
         }
         // Competing valid bump 9 makes a precedence regression visible.
         for (index, y, material) in [(72, 123.1, LEGACY_MATERIAL), (73, 125.2, PBR_MATERIAL)] {
-            let mut object = panel(index, 9, 3, 146.0, y, Some(material));
+            let mut object = panel(index, 9, 3, 186.0, y, Some(material));
             object.position.z += if self.matrix { 8.4 } else { 6.3 };
             objects.push(object);
         }
