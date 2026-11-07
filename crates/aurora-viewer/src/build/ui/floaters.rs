@@ -786,7 +786,9 @@ mod link_error_tests {
             tool.ui.legacy_window = legacy;
             tool.ui.link_error = Some(aurora_i18n::tr!("build-link-modify").into());
             let palette = crate::theme::Theme::default().palette();
-            let _ = context.run_ui(Default::default(), |ui| link_error(ui.ctx(), &palette, &mut tool));
+            let mut output = context.run_ui(Default::default(), |ui| link_error(ui.ctx(), &palette, &mut tool));
+            // Headless frames have no renderer to consume their texture updates.
+            output.textures_delta.clear();
             assert!(tool.ui.link_error.is_some());
             let input = egui::RawInput {
                 events: vec![egui::Event::Key {
@@ -798,7 +800,8 @@ mod link_error_tests {
                 }],
                 ..Default::default()
             };
-            let _ = context.run_ui(input, |ui| link_error(ui.ctx(), &palette, &mut tool));
+            let mut output = context.run_ui(input, |ui| link_error(ui.ctx(), &palette, &mut tool));
+            output.textures_delta.clear();
             assert!(tool.ui.link_error.is_none());
             assert!(tool.open, "Escape dismissed the notice, preserving the editor");
         }
