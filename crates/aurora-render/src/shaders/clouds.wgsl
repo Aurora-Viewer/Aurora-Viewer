@@ -1,0 +1,433 @@
+// Volumetric clouds, a sky-attached layer (clouds.rs). Nubis-style modelling
+// (Schneider & Vos, "The Real-time Volumetric Cloudscapes of Horizon Zero
+// Dawn", SIGGRAPH 2015): a weather map, a height profile per cloud type and a
+// Perlin-Worley base noise eroded by a Worley detail noise; Hillaire-style
+// energy conserving integration (Frostbite, SIGGRAPH 2016) with multiple
+// scattering octaves (Wrenninge 2013).
+//
+// Standalone module (its own bindings, no scene shader): the compute entry
+// points generate the noise (`gen_*`, a slice per frame), trace the sky
+// pixels at half resolution, a quarter of them per frame (`trace`), and
+// rebuild the half resolution image from the trace and the history
+// (`recon`); the render entry points composite that image into the sky
+// (`vs_clouds`, `fs_clouds`, `fs_clouds_g`). The weather map is drawn by the
+// scene shader (env.wgsl `fs_cloud_weather`), which holds the cloud texture.
+//
+// The marching works in a y-up frame (`yup`); the viewer's world is z-up.
+
+struct U {
+    inv_vp: mat4x4f,       // clip (ndc, 0.5, 1) to a direction (rotation only, z-up)
+    prev_vp: mat4x4f,      // last frame's rotation-only view-projection
+    sun: vec4f,            // xyz: direction of the light (z-up)
+    sun_col: vec4f,        // linear radiance of the light on a cloud
+    amb_col: vec4f,        // linear radiance of the sky light on a cloud
+    haze: vec4f,           // rgb: haze colour (linear), w: distance of 1/e (km)
+    cam: vec4f,            // xy: camera position in the cloud map's frame (km, z-up horizontal)
+    delta: vec4f,          // xyz: camera move since the last frame (km, z-up), w: 1 = reproject it
+    drift: vec4f,          // xy: offset of the pattern (km), z: map tile (km), w: extinction scale
+    layer: vec4f,          // x: bottom, y: top (km above the camera), z: type (0 St .. 1 Cu)
+    sizes: vec4u,          // full w, h, half w, h
+    misc: vec4u,           // frame, steps, light steps, history valid
+    gen: vec4u,            // z of the first noise layer of this frame's slice
+}
+
+@group(0) @binding(0) var<uniform> u: U;
+@group(0) @binding(1) var base_w: texture_storage_3d<rgba8unorm, write>;
+@group(0) @binding(2) var detail_w: texture_storage_3d<rgba8unorm, write>;
+@group(0) @binding(3) var curl_w: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(5) var base_t: texture_3d<f32>;
+@group(0) @binding(6) var detail_t: texture_3d<f32>;
+@group(0) @binding(7) var curl_t: texture_2d<f32>;
+@group(0) @binding(8) var weather_t: texture_2d<f32>;
+@group(0) @binding(9) var samp: sampler;
+@group(0) @binding(10) var trace_w: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(11) var tdepth_w: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(13) var trace_t: texture_2d<f32>;
+@group(0) @binding(14) var tdepth_t: texture_2d<f32>;
+@group(0) @binding(15) var hist_t: texture_2d<f32>;
+@group(0) @binding(16) var hist_w: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(19) var depth_t: texture_depth_2d;
+
+const PI: f32 = 3.14159265;
+const R_PLANET: f32 = 6371.0;
+const FAR_KM: f32 = 45.0;
+const BASE_KM: f32 = 10.0;
+const BASE_Y: f32 = 2.0;     // the base noise is stretched vertically: heaps wider than tall
+const DETAIL_KM: f32 = 0.45;
+const CURL_KM: f32 = 3.0;
+const SIGMA: f32 = 110.0;    // extinction per km at density 1
+// Brightness of the lit side and of the sky light on a cloud against the
+// Legacy layer's for the same sky, found by eye on the demo skies side by
+// side.
+const SUN_GAIN: f32 = 2.2;
+const AMB_GAIN: f32 = 0.9;
+
+fn yup(v: vec3f) -> vec3f { return vec3f(v.x, v.z, v.y); }
+
+// ---------------------------------------------------------------- hashing and periodic noise
+fn hash_u(x: u32) -> u32 {
+    let v = x * 747796405u + 2891336453u;
+    let w = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+fn hash3(c: vec3i) -> u32 {
+    return hash_u(bitcast<u32>(c.x) ^ hash_u(bitcast<u32>(c.y) ^ hash_u(bitcast<u32>(c.z) + 0x9e3779b9u)));
+}
+fn rand3(c: vec3i) -> vec3f {
+    let h = hash3(c);
+    return vec3f(f32(h & 1023u), f32((h >> 10u) & 1023u), f32((h >> 20u) & 1023u)) / 1023.0;
+}
+fn wrap3(c: vec3i, p: i32) -> vec3i { return ((c % p) + p) % p; }
+fn remap(v: f32, lo: f32, hi: f32, nlo: f32, nhi: f32) -> f32 { return nlo + (v - lo) * (nhi - nlo) / (hi - lo); }
+
+fn grad3(c: vec3i, f: vec3f) -> f32 {
+    let g = rand3(c) * 2.0 - 1.0;
+    return dot(normalize(g + vec3f(1e-4)), f);
+}
+// Periodic gradient noise, about [0, 1].
+fn perlin3(p: vec3f, period: i32) -> f32 {
+    let i = vec3i(floor(p));
+    let f = fract(p);
+    let w = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let n000 = grad3(wrap3(i + vec3i(0, 0, 0), period), f - vec3f(0.0, 0.0, 0.0));
+    let n100 = grad3(wrap3(i + vec3i(1, 0, 0), period), f - vec3f(1.0, 0.0, 0.0));
+    let n010 = grad3(wrap3(i + vec3i(0, 1, 0), period), f - vec3f(0.0, 1.0, 0.0));
+    let n110 = grad3(wrap3(i + vec3i(1, 1, 0), period), f - vec3f(1.0, 1.0, 0.0));
+    let n001 = grad3(wrap3(i + vec3i(0, 0, 1), period), f - vec3f(0.0, 0.0, 1.0));
+    let n101 = grad3(wrap3(i + vec3i(1, 0, 1), period), f - vec3f(1.0, 0.0, 1.0));
+    let n011 = grad3(wrap3(i + vec3i(0, 1, 1), period), f - vec3f(0.0, 1.0, 1.0));
+    let n111 = grad3(wrap3(i + vec3i(1, 1, 1), period), f - vec3f(1.0, 1.0, 1.0));
+    let x0 = mix(mix(n000, n100, w.x), mix(n010, n110, w.x), w.y);
+    let x1 = mix(mix(n001, n101, w.x), mix(n011, n111, w.x), w.y);
+    return mix(x0, x1, w.z) * 0.6 + 0.5;
+}
+// Periodic cellular noise: 1 at the feature points.
+fn worley3(p: vec3f, period: i32) -> f32 {
+    let i = vec3i(floor(p));
+    let f = fract(p);
+    var d = 1e9;
+    for (var z = -1; z <= 1; z++) {
+        for (var y = -1; y <= 1; y++) {
+            for (var x = -1; x <= 1; x++) {
+                let o = vec3i(x, y, z);
+                let fp = vec3f(o) + rand3(wrap3(i + o, period)) - f;
+                d = min(d, dot(fp, fp));
+            }
+        }
+    }
+    return 1.0 - saturate(sqrt(d));
+}
+fn worley_fbm(p: vec3f, f: i32) -> f32 {
+    return worley3(p * f32(f), f) * 0.625 + worley3(p * f32(2 * f), 2 * f) * 0.25 + worley3(p * f32(4 * f), 4 * f) * 0.125;
+}
+
+// ---------------------------------------------------------------- noise generation, a slice a frame
+@compute @workgroup_size(4, 4, 4)
+fn gen_base(@builtin(global_invocation_id) gid: vec3u) {
+    let n = textureDimensions(base_w);
+    let id = vec3u(gid.x, gid.y, gid.z + u.gen.x);
+    if any(id >= n) { return; }
+    let p = (vec3f(id) + 0.5) / f32(n.x);
+    var pf = 0.0;
+    var amp = 1.0;
+    var tot = 0.0;
+    var fr = 4;
+    for (var o = 0; o < 4; o++) {
+        pf += amp * perlin3(p * f32(fr), fr);
+        tot += amp;
+        amp *= 0.5;
+        fr *= 2;
+    }
+    pf = saturate((pf / tot - 0.5) * 1.8 + 0.5);
+    let w0 = worley_fbm(p, 4);
+    let w1 = worley_fbm(p, 8);
+    let w2 = worley_fbm(p, 16);
+    // Perlin-Worley (Schneider 2015): Perlin dilated by the Worley cells,
+    // billowy and connected.
+    let pw = saturate(remap(pf, w0 - 1.0, 1.0, 0.0, 1.0));
+    textureStore(base_w, id, vec4f(pw, w0, w1, w2));
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn gen_detail(@builtin(global_invocation_id) id: vec3u) {
+    let n = textureDimensions(detail_w);
+    if any(id >= n) { return; }
+    let p = (vec3f(id) + 0.5) / f32(n.x);
+    textureStore(detail_w, id, vec4f(worley_fbm(p, 2), worley_fbm(p, 4), worley_fbm(p, 8), 1.0));
+}
+
+@compute @workgroup_size(8, 8)
+fn gen_curl(@builtin(global_invocation_id) id: vec3u) {
+    let n = textureDimensions(curl_w);
+    if any(id.xy >= n) { return; }
+    let p = (vec2f(id.xy) + 0.5) / f32(n.x) * 8.0;
+    let e = 0.05;
+    let dx = perlin3(vec3f(p + vec2f(e, 0.0), 0.5), 8) - perlin3(vec3f(p - vec2f(e, 0.0), 0.5), 8);
+    let dy = perlin3(vec3f(p + vec2f(0.0, e), 0.5), 8) - perlin3(vec3f(p - vec2f(0.0, e), 0.5), 8);
+    let c = vec2f(dy, -dx) / (2.0 * e);
+    textureStore(curl_w, id.xy, vec4f(saturate(c * 0.5 + 0.5), 0.0, 1.0));
+}
+
+// ---------------------------------------------------------------- density
+fn height_of(p: vec3f) -> f32 { return length(p + vec3f(0.0, R_PLANET, 0.0)) - R_PLANET; }
+fn top_km() -> f32 { return u.layer.y; }
+
+// The weather map, laid over the layer: one tile is `u.drift.z` km. `off` is
+// the camera's position and the drift of the pattern (km, horizontal).
+fn weather_at(p: vec3f, off: vec2f) -> vec4f {
+    return textureSampleLevel(weather_t, samp, (p.xz + off) / u.drift.z, 0.0);
+}
+
+fn height_grad(hf: f32, t: f32, top: f32) -> f32 {
+    // Flat bases for every type; stratus a slab, stratocumulus a lumpy
+    // sheet, cumulus a rounded dome whose top varies (B).
+    let top_end = mix(1.0, mix(0.35, 1.0, top), t);
+    let base_ramp = smoothstep(0.0, mix(0.2, 0.07, t), hf);
+    let top_fall = 1.0 - smoothstep(mix(0.7, 0.25, t) * top_end, top_end, hf);
+    return base_ramp * top_fall;
+}
+
+fn density(p: vec3f, w: vec4f, off: vec2f, full: bool) -> f32 {
+    let h = height_of(p);
+    let hf = (h - u.layer.x) / (top_km() - u.layer.x);
+    if hf <= 0.0 || hf >= 1.0 || w.r < 0.01 { return 0.0; }
+    let t = u.layer.z;
+    let q = vec3f(p.x + off.x, h, p.z + off.y);
+    let n = textureSampleLevel(base_t, samp, vec3f(q.x, q.y * BASE_Y, q.z) / BASE_KM, 0.0);
+    let low = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
+    var base = saturate(remap(n.r, low - 1.0, 1.0, 0.0, 1.0));
+    base *= height_grad(hf, t, w.b);
+    // Cumulus: coverage shrinks with height, so domes rather than columns.
+    let cov = w.r * mix(1.0, mix(1.0, 0.55, hf), t);
+    base = saturate(remap(base, 1.0 - cov, 1.0, 0.0, 1.0)) * cov;
+    if !full || base <= 0.0 { return base; }
+    let c = textureSampleLevel(curl_t, samp, q.xz / CURL_KM, 0.0).xy * 2.0 - 1.0;
+    let qd = q + vec3f(c.x, 0.0, c.y) * 0.12 * (1.0 - hf);
+    let d = textureSampleLevel(detail_t, samp, qd / DETAIL_KM, 0.0);
+    let df = d.r * 0.625 + d.g * 0.25 + d.b * 0.125;
+    // Wispy at the base, billowy towards the top (Schneider 2015).
+    let m = mix(df, 1.0 - df, saturate(hf * 4.0));
+    let er = mix(0.35, 0.85, t);
+    return saturate(remap(base, m * er, 1.0, 0.0, 1.0));
+}
+
+// ---------------------------------------------------------------- lighting
+fn hg(c: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    return (1.0 - g2) / (4.0 * PI * pow(1.0 + g2 - 2.0 * g * c, 1.5));
+}
+
+// Exit distance of a ray from the camera (inside the sphere) through the
+// sphere of radius `r`.
+fn sphere_far(d: vec3f, r: f32) -> f32 {
+    let b = R_PLANET * d.y;
+    let c = R_PLANET * R_PLANET - r * r;
+    return -b + sqrt(b * b - c);
+}
+
+struct Res {
+    col: vec3f,
+    t: f32,
+    depth: f32,
+}
+
+// `dir` is a y-up direction. Radiance and transmittance of the layer along
+// it, and the transmittance-weighted distance of the clouds met.
+fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
+    var r: Res;
+    r.col = vec3f(0.0);
+    r.t = 1.0;
+    r.depth = FAR_KM;
+    // no clouds below the horizon (as Legacy Viewer SL-11589)
+    if dir.y <= 0.0 { return r; }
+    let t0 = sphere_far(dir, R_PLANET + u.layer.x);
+    let t1 = min(sphere_far(dir, R_PLANET + top_km()), FAR_KM);
+    if t0 >= t1 { return r; }
+    let ds = (t1 - t0) / f32(steps);
+    let sun = yup(u.sun.xyz);
+    let ct = dot(dir, sun);
+    var wsum = 0.0;
+    for (var i = 0u; i < steps; i++) {
+        let tt = t0 + (f32(i) + jitter) * ds;
+        let p = dir * tt;
+        let w = weather_at(p, off);
+        let dens = density(p, w, off, true);
+        if dens > 0.002 {
+            let sigma = dens * SIGMA * u.drift.w;
+            // Light march: a cone of growing taps on the cheap density, and
+            // one far tap.
+            var od = 0.0;
+            var ls = 0.05;
+            var lp = p;
+            for (var j = 0u; j < lsteps; j++) {
+                lp += sun * ls;
+                od += density(lp, weather_at(lp, off), off, false) * ls;
+                ls *= 1.7;
+            }
+            let fp = lp + sun * 1.2;
+            od += density(fp, weather_at(fp, off), off, false);
+            od *= SIGMA * u.drift.w;
+            var s = 0.0;
+            var a = 1.0;
+            var b = 1.0;
+            var cc = 1.0;
+            for (var o = 0u; o < 3u; o++) {
+                s += a * exp(-od * b) * mix(hg(ct, -0.3 * cc), hg(ct, 0.8 * cc), 0.7);
+                a *= 0.5;
+                b *= 0.5;
+                cc *= 0.5;
+            }
+            let powder = 1.0 - 0.6 * exp(-sigma * 0.15);
+            let hf = saturate((height_of(p) - u.layer.x) / (top_km() - u.layer.x));
+            let ls_rad = u.sun_col.rgb * SUN_GAIN * s * 4.0 * PI * powder + u.amb_col.rgb * AMB_GAIN * mix(0.45, 1.0, hf);
+            let ext = exp(-sigma * ds);
+            let absorbed = r.t * (1.0 - ext);
+            r.col += ls_rad * absorbed;
+            wsum += tt * absorbed;
+            r.t *= ext;
+            if r.t < 0.01 { break; }
+        }
+    }
+    if r.t < 0.999 {
+        r.depth = wsum / (1.0 - r.t);
+        // Aerial perspective: far clouds melt into the haze.
+        let f = exp(-r.depth / u.haze.w);
+        r.col = r.col * f + (1.0 - r.t) * (1.0 - f) * u.haze.rgb;
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------- views
+fn view_dir(px: vec2f) -> vec3f {
+    let full = vec2f(u.sizes.xy);
+    let ndc = vec2f(px.x / full.x * 2.0 - 1.0, 1.0 - px.y / full.y * 2.0);
+    let w = u.inv_vp * vec4f(ndc, 0.5, 1.0);
+    return normalize(w.xyz / w.w);
+}
+// The sky is what the depth prepass left at the far plane (reverse-Z: 0).
+fn is_sky(px: vec2u) -> bool {
+    return textureLoad(depth_t, min(px, u.sizes.xy - 1u), 0) == 0.0;
+}
+fn checker(frame: u32) -> vec2u {
+    switch frame % 4u {
+        case 0u: { return vec2u(0u, 0u); }
+        case 1u: { return vec2u(1u, 1u); }
+        case 2u: { return vec2u(1u, 0u); }
+        default: { return vec2u(0u, 1u); }
+    }
+}
+fn jitter_of(p: vec2u) -> f32 {
+    // Interleaved gradient noise, rotated each frame by the golden ratio.
+    let ign = fract(52.9829189 * fract(0.06711056 * f32(p.x) + 0.00583715 * f32(p.y)));
+    return fract(ign + f32(u.misc.x) * 0.618034);
+}
+fn sky_off() -> vec2f { return u.cam.xy + u.drift.xy; }
+
+// ---------------------------------------------------------------- main-view trace (sky pixels, half res, a quarter a frame)
+@compute @workgroup_size(8, 8)
+fn trace(@builtin(global_invocation_id) id: vec3u) {
+    let ts = textureDimensions(trace_w);
+    if any(id.xy >= ts) { return; }
+    let hp = id.xy * 2u + checker(u.misc.x);
+    let fpx = (vec2f(hp) + 0.5) * 2.0;
+    if any(hp >= u.sizes.zw) || !is_sky(vec2u(fpx)) {
+        textureStore(trace_w, id.xy, vec4f(0.0, 0.0, 0.0, 1.0));
+        textureStore(tdepth_w, id.xy, vec4f(FAR_KM));
+        return;
+    }
+    if u.layer.w > 0.5 {
+        // AURORA_CLOUDS_DEBUG=weather: the coverage under the ray's entry
+        // into the layer, as light on the sky
+        let d = yup(view_dir(fpx));
+        let p = d * (u.layer.x / max(d.y, 0.02));
+        let w = weather_at(p, sky_off());
+        textureStore(trace_w, id.xy, vec4f(vec3f(w.r), 0.2));
+        textureStore(tdepth_w, id.xy, vec4f(10.0));
+        return;
+    }
+    let r = march(yup(view_dir(fpx)), u.misc.y, u.misc.z, jitter_of(hp), sky_off());
+    textureStore(trace_w, id.xy, vec4f(r.col, r.t));
+    textureStore(tdepth_w, id.xy, vec4f(r.depth));
+}
+
+// ---------------------------------------------------------------- temporal reconstruction (half res)
+@compute @workgroup_size(8, 8)
+fn recon(@builtin(global_invocation_id) id: vec3u) {
+    let hp = id.xy;
+    if any(hp >= u.sizes.zw) { return; }
+    let fpx = (vec2f(hp) + 0.5) * 2.0;
+    if !is_sky(vec2u(fpx)) {
+        textureStore(hist_w, hp, vec4f(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+    let c = vec2i(hp / 2u);
+    let ts = vec2i(textureDimensions(trace_t)) - 1;
+    var mn = vec4f(1e9);
+    var mx = vec4f(-1e9);
+    for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+            let s = textureLoad(trace_t, clamp(c + vec2i(dx, dy), vec2i(0), ts), 0);
+            mn = min(mn, s);
+            mx = max(mx, s);
+        }
+    }
+    let fresh = textureLoad(trace_t, c, 0);
+    let depth = textureLoad(tdepth_t, c, 0).r;
+    let is_fresh = all(hp % 2u == checker(u.misc.x));
+    // Reprojection: the rotation, and the camera's horizontal move (the
+    // pattern is anchored to the world); time comes through the clamp.
+    let dir = view_dir(fpx);
+    var pd = dir;
+    if u.delta.w > 0.5 {
+        pd = normalize(dir * depth + u.delta.xyz);
+    }
+    let clip = u.prev_vp * vec4f(pd, 1.0);
+    let ndc = clip.xy / clip.w;
+    let puv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    let valid = u.misc.w == 1u && clip.w > 0.0 && all(puv >= vec2f(0.0)) && all(puv <= vec2f(1.0));
+    var o = fresh;
+    if valid {
+        let h = clamp(textureSampleLevel(hist_t, samp, puv, 0.0), mn, mx);
+        if is_fresh {
+            o = mix(h, fresh, 0.25);
+        } else {
+            o = h;
+        }
+    }
+    textureStore(hist_w, hp, o);
+}
+
+// ---------------------------------------------------------------- composite into the sky pass
+// Drawn right after the sky, with the blend `dst * T + L`: the haze, the
+// stars, the moon and the sun already in the target are seen through the
+// clouds' transmittance.
+@vertex
+fn vs_clouds(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+    let x = f32((vi << 1u) & 2u);
+    let y = f32(vi & 2u);
+    return vec4f(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+}
+
+fn clouds_pixel(pos: vec4f) -> vec4f {
+    let uv = pos.xy / vec2f(u.sizes.xy);
+    return textureSampleLevel(hist_t, samp, uv, 0.0);
+}
+
+@fragment
+fn fs_clouds(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+    return clouds_pixel(pos);
+}
+
+struct GOut {
+    @location(0) color: vec4f,
+    @location(1) gbuf: vec4f,
+}
+
+// With the G-buffer of the SSR: its target is not written (empty mask).
+@fragment
+fn fs_clouds_g(@builtin(position) pos: vec4f) -> GOut {
+    var o: GOut;
+    o.color = clouds_pixel(pos);
+    o.gbuf = vec4f(0.0);
+    return o;
+}

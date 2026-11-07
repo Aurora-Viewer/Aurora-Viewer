@@ -893,6 +893,8 @@ struct Pipelines {
     hud_debug_red: wgpu::RenderPipeline,
     hud_debug_blue: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
+    /// The volumetric clouds' weather map (env.wgsl `fs_cloud_weather`).
+    clouds_weather: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
     /// PBR terrain (vs_terrain_pbr / fs_terrain_pbr), masked or not.
     terrain_pbr: wgpu::RenderPipeline,
@@ -1041,6 +1043,8 @@ struct GpuTimer {
     last_ssao: Option<f32>,
     /// Last time of the contact shadows (ms).
     last_contact: Option<f32>,
+    /// Last time of the volumetric clouds' compute (ms).
+    last_clouds: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
@@ -1108,7 +1112,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 25;
+const GPU_MARKS: u32 = 26;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1170,6 +1174,9 @@ const MARK_CONTACT_END: u32 = 23;
 const MARK_WATER_INTERFACE_END: u32 = 24;
 const MARK_WATER_AIR_BEGIN: u32 = 25;
 const MARK_WATER_AIR_END: u32 = 26;
+/// After the volumetric clouds' compute (clouds.rs), which follow
+/// `MARK_DEPTH_MSAA_END`; inside the terrain and sky element's range.
+const MARK_CLOUDS_END: u32 = 27;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1258,6 +1265,7 @@ impl GpuTimer {
             last_depth: None,
             last_ssao: None,
             last_contact: None,
+            last_clouds: None,
             last_bloom: None,
             last_effects: None,
             slot_prepass: Default::default(),
@@ -1289,6 +1297,7 @@ impl GpuTimer {
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
+                            self.last_clouds = Some(ms(MARK_DEPTH_MSAA_END, MARK_CLOUDS_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
                             self.last_effects = Some(GPU_EFFECT_PARTS.map(|(a, b)| ms(a, b)));
                             if msaa_prepass() == MsaaPrepass::Alternate {
@@ -1631,6 +1640,10 @@ pub(crate) struct Backend {
     /// The night sky's stars (stars.rs), made once.
     stars: wgpu::Buffer,
     contact: crate::contact_shadows::ContactShadows,
+    /// The volumetric clouds (clouds.rs), made while the setting is on.
+    clouds: Option<crate::clouds::Clouds>,
+    /// This frame draws the volumetric clouds over the sky.
+    clouds_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
@@ -3264,6 +3277,8 @@ impl Backend {
             water_effects,
             stars,
             contact,
+            clouds: None,
+            clouds_now: false,
             contact_now: false,
             gtao_normals_now: false,
             motion_now: false,
@@ -3492,6 +3507,17 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Always,
             gbuf: ssr,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
+        });
+        let clouds_weather = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::Rgba8Unorm),
+            depth_format: None,
+            write_mask: wgpu::ColorWrites::ALL,
+            ..base("cloud weather", "vs_sky", "fs_cloud_weather")
         });
         let terrain = pipe(PipeDesc {
             gbuf: ssr,
@@ -4177,6 +4203,7 @@ impl Backend {
             hud_debug_red,
             hud_debug_blue,
             sky,
+            clouds_weather,
             terrain,
             terrain_pbr,
             pre_terrain,
@@ -6333,6 +6360,30 @@ impl Backend {
         if specular_aa_now(self.settings.specular_aa) {
             main.light_sets.mode[2] |= 0x8000;
         }
+        // ---- volumetric clouds (clouds.rs): over the sky of the main view
+        // when the setting is on and the Legacy layer would draw something;
+        // not under the water (the sky is seen through its fog), nor in a
+        // cut-out photo (no sky), nor in a photo (its tiles and sizes keep no
+        // history: the Legacy layer, for now). Until the noise is made the
+        // sky shader keeps the Legacy layer.
+        let cloud_params = f
+            .clouds
+            .as_ref()
+            .filter(|_| !f.cutout && snapshot.is_none() && f.photo_tile == Mat4::IDENTITY && f.camera_pos.z >= camera_water_level)
+            .and_then(|c| {
+                let rotation = Mat4::from_mat3(glam::Mat3::from_mat4(f.view));
+                crate::clouds::Params::new(f, c, f.proj * rotation, inv_view_proj_rot(f.proj, f.view))
+            });
+        match (&f.clouds, &mut self.clouds) {
+            (None, clouds) => *clouds = None,
+            (Some(_), clouds @ None) => *clouds = Some(crate::clouds::Clouds::new(&self.device)),
+            _ => {}
+        }
+        self.clouds_now = cloud_params.is_some() && self.clouds.as_ref().is_some_and(|c| c.ready());
+        if self.clouds_now {
+            // (common.wgsl: the sky pass leaves the clouds to clouds.rs)
+            main.features[1] = 1;
+        }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
@@ -7817,6 +7868,43 @@ impl Backend {
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             t.slot_prepass[slot].set(prepass_wanted);
         }
+        // ---- volumetric clouds: the weather map when its parameters changed,
+        // the noise slice, the trace and the reconstruction (clouds.rs)
+        let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
+        let scene_gbuf = self.targets.gbuf.is_some();
+        if let (Some(clouds), Some(p)) = (&mut self.clouds, &cloud_params) {
+            if clouds.weather_stale(p.weather_key) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("cloud weather"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: clouds.weather_target(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.pipelines.clouds_weather);
+                pass.set_bind_group(0, &self.groups.a, &[]);
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.draw(0..3, 0..1);
+                drop(pass);
+                clouds.weather_drawn(p.weather_key);
+            }
+            let size = (self.targets.color_tex.width(), self.targets.color_tex.height());
+            clouds.encode(&self.device, &self.queue, &mut encoder, p, &self.targets.depth_ss, size);
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
+        } else if let Some(clouds) = &mut self.clouds {
+            clouds.skipped();
+        }
+        mark(&mut encoder, MARK_CLOUDS_END);
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -7891,6 +7979,14 @@ impl Backend {
             if !f.cutout {
                 pass.set_pipeline(&self.pipelines.sky);
                 pass.draw(0..3, 0..1);
+                // the clouds over the sky: dst * T + L
+                if self.clouds_now
+                    && let Some(clouds) = &self.clouds
+                {
+                    clouds.draw(&mut pass, scene_samples, scene_gbuf);
+                    // (the composite has its own group 0)
+                    pass.set_bind_group(0, &self.groups.a, &[]);
+                }
             }
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
@@ -9045,6 +9141,7 @@ impl Backend {
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
+        stats.gpu_clouds = self.timer.as_ref().and_then(|t| t.last_clouds).filter(|_| self.clouds_now);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         if profile_frames && let Some(e) = stats.gpu_elements {

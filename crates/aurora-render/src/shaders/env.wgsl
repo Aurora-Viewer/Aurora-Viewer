@@ -355,7 +355,12 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     // skyF.glsl: added to the haze color before its x 2, under the clouds
     let haze = a.color + sky_rainbow(a.light_dot) + sky_halo(a.light_dot);
     var c = clamp(haze * 2.0, vec3<f32>(0.0), vec3<f32>(5.0));
-    let clouds = sky_clouds(d);
+    // (frame.features.y: the main view's clouds are composited over the sky
+    // by the volumetric layer, clouds.rs; the Legacy layer is skipped)
+    var clouds = vec4<f32>(0.0);
+    if (frame.features.y == 0u) {
+        clouds = sky_clouds(d);
+    }
     c = mix(c, clouds.rgb, clouds.a);
     var col = srgb_to_linear(c) * frame.sky_cloud_pd2.w;
     let cover = 1.0 - clouds.a;
@@ -377,6 +382,30 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
         col += frame.sun_color.rgb * disk * 6.0 * cover;
     }
     return col;
+}
+
+// The volumetric clouds' weather map (clouds.rs), drawn when the sky's cloud
+// parameters or the cloud texture change, never per frame. One tile of the
+// map is one repeat of the cloud texture, as the Legacy layer's `alpha1`
+// (sky_clouds) cuts its coverage from it: the same two taps (the texture,
+// and the texture 16 times smaller as detail), the same cover shift from
+// `cloud_shadow`. The scroll and the placement are applied by the trace.
+// R: coverage, G: unused (the type is the sky's, a uniform), B: the detail
+// tap, which varies the cloud tops, A: unused.
+const CLOUD_WEATHER_SIZE: f32 = 512.0;
+
+@fragment
+fn fs_cloud_weather(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if (frame.tex_slots.x == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let uv = pos.xy / CLOUD_WEATHER_SIZE;
+    let pd2 = frame.sky_cloud_pd2.xyz;
+    let density = 2.0 * (frame.sky_sunlight.w - 0.25);
+    let n1 = cloud_noise(uv) - 0.5;
+    let detail = cloud_noise(uv * 8.0);
+    let x = n1 + (detail - 0.5) * pd2.z * 0.6 + density;
+    return vec4<f32>(smoothstep(0.0, 0.3, x), 0.0, detail, 0.0);
 }
 
 fn sky_pixel(in: SkyOut) -> vec4<f32> {
