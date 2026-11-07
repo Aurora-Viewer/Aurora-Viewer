@@ -495,6 +495,9 @@ impl App {
     pub(super) fn show_scripts(&mut self, ctx: &egui::Context, p: &Palette) {
         self.script_editors.agent = self.world.agent_id;
         self.script_editors.agent_name = self.world.social.name_of(&self.world.agent_id);
+        // shortcut: the agent's region, not the object's (have_lua_enabled); fine
+        // until objects in a neighbour region are edited across a SLua border
+        self.script_editors.lua_scripts = self.world.main().is_some_and(|r| r.lua_scripts);
         let rights: Vec<_> = self
             .script_editors
             .documents

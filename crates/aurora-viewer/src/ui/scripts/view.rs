@@ -381,6 +381,34 @@ fn header(
     }
 }
 
+/// The compile target picker (panel_script_ed.xml `compile_target`, in its
+/// order). The Lua targets need a region with SLua, as
+/// LLScriptEdCore::postBuild enables them from LuaScriptsEnabled.
+fn compile_target(ui: &mut egui::Ui, e: &mut Editor) {
+    use aurora_net::scripts::CompileTarget;
+    let label = |t: CompileTarget| match t {
+        CompileTarget::Mono => aurora_i18n::tr!("script-target-mono"),
+        CompileTarget::Lsl2 => aurora_i18n::tr!("script-target-lsl2"),
+        CompileTarget::LslLuau => aurora_i18n::tr!("script-target-lsl-luau"),
+        CompileTarget::Luau => aurora_i18n::tr!("script-target-luau"),
+    };
+    egui::ComboBox::from_id_salt(("script_compile_target", e.target.object, e.target.item))
+        .selected_text(label(e.compile))
+        .show_ui(ui, |ui| {
+            for t in [
+                CompileTarget::Mono,
+                CompileTarget::Lsl2,
+                CompileTarget::LslLuau,
+                CompileTarget::Luau,
+            ] {
+                let lua = matches!(t, CompileTarget::LslLuau | CompileTarget::Luau);
+                ui.add_enabled_ui(!lua || e.lua_scripts, |ui| ui.selectable_value(&mut e.compile, t, label(t)));
+            }
+        })
+        .response
+        .on_hover_text(aurora_i18n::tr!("script-target-hint"));
+}
+
 fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut Vec<Action>) {
     let ctx = ui.ctx().clone();
     ui.horizontal(|ui| {
@@ -423,25 +451,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
         ui.add_enabled_ui(
             e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
             |ui| {
-                use aurora_net::scripts::CompileTarget;
-                match e.compile {
-                    CompileTarget::Mono | CompileTarget::Lsl2 => {
-                        let mut mono = e.compile == CompileTarget::Mono;
-                        if crate::ui::widgets::checkbox(ui, p, &mut mono, "Mono")
-                            .on_hover_text(aurora_i18n::tr!("script-mono-hint"))
-                            .changed()
-                        {
-                            e.compile = if mono { CompileTarget::Mono } else { CompileTarget::Lsl2 };
-                        }
-                    }
-                    // shortcut: read-only until the Phase 2 target dropdown
-                    CompileTarget::Luau => {
-                        ui.label(aurora_i18n::tr!("script-target-luau"));
-                    }
-                    CompileTarget::LslLuau => {
-                        ui.label(aurora_i18n::tr!("script-target-lsl-luau"));
-                    }
-                }
+                compile_target(ui, e);
             },
         );
     });

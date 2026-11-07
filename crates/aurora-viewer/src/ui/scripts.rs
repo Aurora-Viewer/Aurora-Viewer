@@ -82,6 +82,7 @@ pub struct Editor {
     pub compile: CompileTarget,
     baseline_compile: CompileTarget,
     experience: experiences::State,
+    lua_scripts: bool,
     running: Option<bool>,
     status: String,
     errors: Vec<String>,
@@ -162,6 +163,8 @@ pub struct Editors {
     includes: std::collections::HashMap<Uuid, PendingInclude>,
     pub agent: Uuid,
     pub agent_name: String,
+    /// The region runs SLua: the Lua compile targets can be chosen.
+    pub lua_scripts: bool,
 }
 
 struct PendingInclude {
@@ -465,6 +468,7 @@ impl Editors {
             compile: CompileTarget::Mono,
             baseline_compile: CompileTarget::Mono,
             experience: experiences::State::default(),
+            lua_scripts: false,
             running: None,
             status: if can_read {
                 aurora_i18n::tr!("common-loading-2")
@@ -653,6 +657,7 @@ impl Editors {
                 e.processor_settings.clone_from(settings);
             }
             e.processor_environment.agent = self.agent;
+            e.lua_scripts = self.lua_scripts;
             if e.processor_environment.agent_name != self.agent_name {
                 e.processor_environment.agent_name.clone_from(&self.agent_name);
             }
@@ -1452,7 +1457,7 @@ mod tests {
                     let label = if area == "menu" {
                         aurora_i18n::tr!("script-menu-file")
                     } else {
-                        "Mono"
+                        aurora_i18n::tr!("script-target-mono")
                     };
                     show(&ctx, &mut editors, vec![])
                         .shapes

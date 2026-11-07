@@ -928,6 +928,8 @@ pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
         (5 | 13, _) => wearable_icon(asset_type, flags),
         (6, _) => "Inv_Object",
         (7, _) => "Inv_Notecard",
+        // LLInventoryIcon::getIconName: SST_LUA scripts get Inv_Script_Luau
+        (10, _) if aurora_net::scripts::is_slua_item(flags) => "Inv_Script_Luau",
         (10, _) => "Inv_Script",
         (20, _) => "Inv_Animation",
         (21, _) => "Inv_Gesture",
