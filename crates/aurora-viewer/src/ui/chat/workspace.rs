@@ -84,6 +84,11 @@ impl ColumnChoice {
         self.collapsed || (narrow && !self.opened)
     }
 
+    /// The column is what a click asked, not what the window decides.
+    pub(super) fn by_hand(self) -> bool {
+        self.collapsed || self.opened
+    }
+
     /// The choice after a click on the button. Closing what was opened in
     /// a narrow window goes back to automatic, without collapsing the
     /// column for the day the window is wide again.
