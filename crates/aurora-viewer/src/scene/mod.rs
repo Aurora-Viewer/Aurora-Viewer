@@ -8,6 +8,7 @@ pub mod animesh;
 pub mod animesh_report;
 mod auto_hover;
 pub mod avatar;
+pub mod avatar_snow;
 pub mod banlines;
 pub mod blend_order;
 mod blender_live;
@@ -50,6 +51,8 @@ pub mod picking;
 mod plants;
 pub mod portals;
 pub mod probes;
+mod rain_ground;
+pub mod rain_sound;
 pub mod rez;
 mod sculpt_watch;
 mod selection_demo;
@@ -57,6 +60,8 @@ pub mod settings;
 pub mod shape;
 mod shown_bakes;
 mod skin_binds;
+pub mod snow_detail;
+pub mod snow_trail;
 pub mod sound_occlusion;
 pub mod sound_reverb;
 pub mod sounds;
@@ -64,6 +69,7 @@ pub mod still_check;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
+pub mod thunder;
 mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
@@ -433,6 +439,8 @@ pub struct ObjGpu {
     /// Avatar wearing this object (attachments), for the avatar limit.
     pub owner_avatar: Option<usize>,
     pub first_person_hidden: bool,
+    /// Physical (FLAGS_USE_PHYSICS): out of the rain's shelter map.
+    pub physical: bool,
     /// Reflection probe flagged as a mirror (box); listed in
     /// `Scene::mirror_objects`.
     pub mirror: bool,
@@ -521,6 +529,7 @@ impl ObjGpu {
             (posed.is_some(), object_flags::POSED),
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
             (self.photo_hidden, object_flags::PHOTO_HIDDEN),
+            (self.physical, object_flags::PHYSICAL),
         ] {
             if on {
                 fl |= bit;
@@ -777,6 +786,12 @@ pub struct AvatarSample {
 }
 
 pub struct Scene {
+    /// Aurora Weather: the lying snow's detail texture.
+    pub snow_detail: snow_detail::SnowDetail,
+    /// Aurora Weather: the snow gathered on the avatars near the camera.
+    pub avatar_snow: avatar_snow::AvatarSnow,
+    /// Aurora Weather: the feet watched for footprints in the snow.
+    pub snow_trails: snow_trail::SnowTrails,
     auto_hover: auto_hover::AutoHover,
     remote_soles: auto_hover::RemoteSoles,
     foot_scope: foot_scope::Scope,
@@ -920,6 +935,9 @@ pub struct Scene {
     light_scratch: lights::Scratch,
     /// The projectors that cast shadows (`lights.rs`).
     spot_shadows: lights::SpotShadowSlots,
+    /// Rain prototype: the terrain's heights around the camera
+    /// (`rain_ground.rs`).
+    rain_ground: rain_ground::RainGroundCache,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -1026,7 +1044,7 @@ pub struct Scene {
     /// How muffled each world sound is behind walls (sound_occlusion.rs).
     sound_occlusion: sound_occlusion::SoundOcclusion,
     /// The reverb of the surroundings (sound_reverb.rs).
-    sound_reverb: sound_reverb::SoundReverb,
+    pub sound_reverb: sound_reverb::SoundReverb,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -1455,6 +1473,9 @@ impl Scene {
         default_motions::register(&mut anims, &avatar_lib.rig);
         let physics_rig = body_physics::PhysicsRig::new(&avatar_lib.shape_params, &avatar_lib.rig).map(Arc::new);
         Scene {
+            snow_detail: Default::default(),
+            avatar_snow: Default::default(),
+            snow_trails: Default::default(),
             jobs,
             job_rx,
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),
@@ -1527,6 +1548,7 @@ impl Scene {
             light_textures: HashMap::new(),
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
+            rain_ground: Default::default(),
             mirror_objects: Default::default(),
             selection_wire: Default::default(),
             inspected_mesh: None,
@@ -2680,7 +2702,13 @@ impl Scene {
         // environment selector's items)
         for id in world.eep.wanted_settings() {
             match self.settings.get(id) {
-                settings::SettingsState::Ready(s) => world.eep.on_settings(id, Some(s)),
+                settings::SettingsState::Ready(s) => {
+                    // its Aurora Weather, from its name, before it applies
+                    if let settings::MapState::Ready(map) = self.settings.map(id) {
+                        world.eep.note_asset_weather(id, crate::weather::region::of_settings(&map));
+                    }
+                    world.eep.on_settings(id, Some(s));
+                }
                 settings::SettingsState::Failed => world.eep.on_settings(id, None),
                 settings::SettingsState::Pending => {}
             }
@@ -3127,9 +3155,12 @@ impl Scene {
     fn apply_move(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, m: MoveSync) {
         self.note_light(world, idx);
         let posed = self.posed_of(renderer, self.gpu.get(idx).and_then(|g| g.geom), m.posed_rest);
+        // (as `sync_object`: what moves is out of the rain's shelter map)
+        let physical = world.objects.get(idx).is_some_and(|o| o.update_flags & 1 != 0) || Self::linkset_moving(world, idx);
         let Some(g) = self.gpu.get_mut(idx) else {
             return;
         };
+        g.physical = physical;
         g.posed = posed;
         g.wide = g.wide.filter(|_| posed.is_some());
         g.hud = m.xf.2;
@@ -3422,6 +3453,11 @@ impl Scene {
         g.hud = hud;
         g.owner_avatar = owner_avatar;
         g.first_person_hidden = first_person_hidden;
+        // FLAGS_USE_PHYSICS, or moving now (its linkset reported with a
+        // velocity or a spin: keyframed motion, a scripted walker): the
+        // snow is laid where it stands from the ground's memory, so on what
+        // moves it slid over it
+        g.physical = o.update_flags & 1 != 0 || Self::linkset_moving(world, idx);
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
         let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
         if mirror != g.mirror {
@@ -3955,6 +3991,24 @@ impl Scene {
         let object_auto_mask = rigged_owner.is_none() && !g.hud;
         self.finish_faces(renderer, idx, &mut g, object_auto_mask);
         self.gpu[idx] = g;
+    }
+
+    /// Whether object `idx` or a prim it is linked to (up to its root) was
+    /// last reported moving or turning.
+    fn linkset_moving(world: &World, mut idx: usize) -> bool {
+        for _ in 0..16 {
+            let Some(o) = world.objects.get(idx) else {
+                return false;
+            };
+            if o.velocity.length_squared() > 1e-4 || o.angular_velocity.length_squared() > 1e-4 {
+                return true;
+            }
+            let Some(parent) = world.objects.parent_of(o) else {
+                return false;
+            };
+            idx = parent;
+        }
+        false
     }
 
     /// For an attachment, the wearing avatar (full id, object index).
@@ -5467,6 +5521,12 @@ impl Scene {
         // only the skeletons posed this frame are uploaded (the others
         // keep their last pose), by the sync: with the anchors of what they
         // wear, which need their owner's place in this frame
+        // the snow on each avatar, after its pose (which fills its entries)
+        for (id, slot) in &self.palette_slots {
+            if let Some(m) = self.palettes.get_mut(*slot as usize * anim::PALETTE_JOINTS + anim::AVATAR_SNOW) {
+                *m = [[self.avatar_snow.amount(id), 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
+            }
+        }
         self.posed_slots.clear();
         self.posed_slots.extend(posed.iter().map(|p| p.1));
         for (owner, slot) in posed {

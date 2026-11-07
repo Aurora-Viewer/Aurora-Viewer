@@ -7,6 +7,8 @@
 pub mod backup;
 pub(crate) mod cx;
 mod pages;
+/// Aurora's own marked in its gradient, outside Preferences too.
+pub(crate) use pages::aurora::aurora_word;
 mod saved_graphics;
 mod scale;
 

@@ -81,6 +81,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "diaper",
     "door-enter",
     "door-exit",
+    "eraser",
     "external-link",
     "eye-closed",
     "eye-off",

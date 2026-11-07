@@ -71,7 +71,11 @@ pub fn day_around(current: &Llsd, frame: &SettingsDoc) -> Option<DayDoc> {
     }
     let mut day = DayDoc::from_llsd(current)?;
     let mut map = frame.llsd_ref().clone();
-    if let Llsd::Map(m) = &mut map {
+    // the sky's name goes, unless it carries Aurora Weather (its code is the
+    // weather this sky sets: weather/region.rs)
+    if let Llsd::Map(m) = &mut map
+        && crate::weather::region::SkyWeather::from_name(frame.name()).is_none()
+    {
         m.remove("name");
     }
     match frame.kind() {

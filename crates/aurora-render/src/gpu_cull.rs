@@ -69,6 +69,8 @@ pub mod object_flags {
     /// Left out of the photo by its isolation (the viewer's
     /// `snapshot::isolate`): not drawn, casting no shadow, in no reflection.
     pub const PHOTO_HIDDEN: u32 = 128;
+    /// Physical (moves on its own): not in the rain's shelter map.
+    pub const PHYSICAL: u32 = 256;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -144,6 +146,10 @@ pub mod frame_flags {
     pub const BLEND_CASTS: u32 = 2048;
     pub const FIRST_PERSON: u32 = 4096;
     pub const SHOW_SELF: u32 = 8192;
+    /// Projector map 1 is the rain prototype's shelter map: what moves
+    /// (avatars, rigged meshes, physical objects) is left out of it, so
+    /// that it leaves no dry patch following it.
+    pub const SPOT_SHELTER: u32 = 16384;
 }
 
 const CLASSIFY_GROUP: u32 = 128;
@@ -501,7 +507,10 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         && o.flags & object_flags::NO_PROBE == 0
         && (c - Vec3::new(frame.probe_eye[0], frame.probe_eye[1], frame.probe_eye[2])).length() - r < frame.probe_eye[3]
         && sphere_in(&frame.probe, c, r);
-    if !viewed && !shadow_reach && !reflect_reach && !captured {
+    // the rain's shelter map: all of its square, blended faces too, shadows
+    // or not (cull.wgsl)
+    let shelters = fl & frame_flags::SPOT_SHELTER != 0 && fl & (frame_flags::SPOT << 1) != 0 && sphere_in(&frame.spots[1], c, r);
+    if !viewed && !shadow_reach && !reflect_reach && !captured && !shelters {
         return (0, false);
     }
     // small object culling is the camera's too
@@ -535,9 +544,11 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
             }
         }
     }
-    if caster {
+    if caster || shelters {
+        let moves = o.flags & (object_flags::AVATAR | object_flags::RIGGED | object_flags::PHYSICAL) != 0 || o.avatar < n;
         for (k, planes) in frame.spots.iter().enumerate() {
-            if fl & (frame_flags::SPOT << k) != 0 && sphere_in(planes, c, r) {
+            let shelter = k == 1 && fl & frame_flags::SPOT_SHELTER != 0;
+            if (caster || shelter) && fl & (frame_flags::SPOT << k) != 0 && sphere_in(planes, c, r) && !(shelter && moves) {
                 m |= 1 << (BIN_SPOT + k);
             }
         }
@@ -1532,7 +1543,7 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 49] = [
+        let pairs: [(&str, u32); 51] = [
             ("F_PROBE_SHADOW", frame_flags::PROBE_SHADOW),
             ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
             ("F_SHOW_SELF", frame_flags::SHOW_SELF),
@@ -1577,6 +1588,8 @@ mod tests {
             ("OBJ_NO_PROBE", object_flags::NO_PROBE),
             ("OBJ_POSED", object_flags::POSED),
             ("OBJ_PHOTO_HIDDEN", object_flags::PHOTO_HIDDEN),
+            ("OBJ_PHYSICAL", object_flags::PHYSICAL),
+            ("F_SPOT_SHELTER", frame_flags::SPOT_SHELTER),
             ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),
             ("AV_TOO_COMPLEX", avatar_state::TOO_COMPLEX),
