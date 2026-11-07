@@ -92,10 +92,6 @@ impl Source {
         Source::UrlRequest,
     ];
 
-    pub fn from_i32(v: i32) -> Option<Source> {
-        Source::ALL.into_iter().find(|s| *s as i32 == v)
-    }
-
     fn bit(self) -> u16 {
         1 << self as u8
     }
@@ -487,6 +483,7 @@ impl Engine {
     }
 
     /// Whether a rule of the set in use has this name.
+    #[cfg(test)]
     pub fn has_rule(&self, name: &str) -> bool {
         self.current_set().rules.iter().any(|r| r.name == name)
     }

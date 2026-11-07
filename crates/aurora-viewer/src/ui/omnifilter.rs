@@ -41,8 +41,9 @@ pub struct OmnifilterUi {
     prompt: Option<Prompt>,
     prompt_name: String,
     prompt_error: Option<NameError>,
-    /// The set the selection belongs to.
-    set: usize,
+    /// The set the selection belongs to (None: the window has not shown
+    /// one yet).
+    set: Option<usize>,
 }
 
 fn source_label(s: Source) -> (&'static str, &'static str) {
@@ -165,14 +166,15 @@ impl OmnifilterUi {
             WINDOW,
             aurora_i18n::tr!("omnifilter-title"),
             egui::pos2(260.0, 120.0),
-            Vec2::new(760.0, 540.0),
+            Vec2::new(860.0, 560.0),
         );
-        window.min_size = Vec2::new(700.0, 420.0);
+        window.min_size = Vec2::new(800.0, 440.0);
         window.show(ctx, p, open, |ui| {
             self.sets_row(ui, p, engine, settings);
             widgets::divider(ui, p);
-            if self.set != engine.current() {
-                self.set = engine.current();
+            // reloadRule: a set shown selects its first rule
+            if self.set != Some(engine.current()) {
+                self.set = Some(engine.current());
                 self.selected = (!engine.current_set().rules.is_empty()).then_some(0);
             }
             if self.selected.is_some_and(|i| i >= engine.current_set().rules.len()) {
@@ -207,7 +209,7 @@ impl OmnifilterUi {
             let mut chosen = current;
             egui::ComboBox::from_id_salt("omnifilter_sets")
                 .selected_text(set_label(current, &engine.current_set().name))
-                .width(180.0)
+                .width(160.0)
                 .show_ui(ui, |ui| {
                     for (i, s) in engine.sets().iter().enumerate() {
                         ui.selectable_value(&mut chosen, i, set_label(i, &s.name));
@@ -310,7 +312,7 @@ impl OmnifilterUi {
             Ok(index) => {
                 settings.omnifilter.rule_set = index;
                 self.prompt = None;
-                self.set = index;
+                self.set = Some(index);
                 // onNewRuleSetNameSelectedCallback: a new set starts with
                 // one new rule
                 if prompt == Prompt::New {
@@ -611,7 +613,7 @@ mod tests {
         let mut settings = Settings::default();
         crate::ui::widgets::steady_tests::assert_window_steady(
             WINDOW,
-            &[Vec2::new(760.0, 540.0), Vec2::new(700.0, 420.0)],
+            &[Vec2::new(860.0, 560.0), Vec2::new(800.0, 440.0)],
             aurora_i18n::tr!("omnifilter-import-legacy"),
             OmnifilterUi::default,
             |ui, ctx, p| ui.show(ctx, p, &mut engine, &mut settings, &mut true),
