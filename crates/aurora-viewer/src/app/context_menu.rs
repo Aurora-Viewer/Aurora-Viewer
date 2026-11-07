@@ -71,7 +71,6 @@ impl App {
         if self.gfx.is_none() {
             return;
         }
-        let now = Instant::now();
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
@@ -88,6 +87,9 @@ impl App {
         }
         // the previous menu's selection goes, as deselectUnused would
         self.build.release_menu_selection(&self.world);
+        // Shift or Ctrl alone adds to the selection or takes out of it
+        // (LLToolPie::handleRightClickPick, the click's mask)
+        let extend = crate::build::BuildTool::menu_extends(self.shift, self.ctrl, self.alt);
         let me = self.world.agent_id;
         let target = match picked.and_then(|i| self.world.objects.get(i).map(|o| (i, o))) {
             Some((_, o)) if o.is_avatar() => Target::Avatar {
@@ -99,7 +101,7 @@ impl App {
                 let (key, full_id) = (o.key, o.full_id);
                 match ui::context::wearer(&self.world, idx) {
                     Some(w) if w == me => {
-                        self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
                         self.flush_build();
                         Target::Attachment { key }
                     }
@@ -111,12 +113,12 @@ impl App {
                         attachment: Some(full_id),
                     },
                     None => {
-                        let offset = Scene::object_transform(&self.world, idx, now, 0)
-                            .map(|(pos, rot, _)| rot.inverse() * (point - pos))
-                            .unwrap_or(Vec3::ZERO);
+                        let ray = self.object_menu.ray;
+                        let offset =
+                            super::object_actions::object_sit_offset(&self.world, &self.camera, idx, point, ray).unwrap_or(Vec3::ZERO);
                         // selected and outlined while the menu is open
                         // (LLToolSelect::handleObjectSelection, temp_select)
-                        self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
                         self.flush_build();
                         Target::Object { key, full_id, offset }
                     }
@@ -366,7 +368,7 @@ impl App {
         let (commands, requests, properties) = self.object_profile.take_output();
         if !commands.is_empty() {
             self.interactions.on_properties(&properties);
-            self.build.on_properties(properties);
+            self.build.on_properties(&self.world, properties);
         }
         for command in commands {
             self.send(command);

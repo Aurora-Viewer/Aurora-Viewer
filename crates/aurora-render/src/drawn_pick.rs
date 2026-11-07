@@ -20,6 +20,10 @@
 //! texture texels only for the camera). Nothing is drawn nor allocated
 //! per frame when nobody asks: the cost is one pass over the visible
 //! geometry, vertex work only, in the frame of a click.
+//! Left interactions also put Mask cutout geometry into the second answer,
+//! retaining the visible opaque surface behind it for attachment priorities.
+//! Only world and worn objects enter it; system avatar alpha layers keep
+//! their displayed cutouts.
 //! The red/blue transparency overlays also enter the second pass with
 //! their full triangles, as displayed, even for camera picks.
 //!
@@ -67,7 +71,8 @@ pub struct DrawnFace {
 pub struct Drawn {
     /// The nearest opaque or alpha-masked face.
     pub opaque: Option<DrawnFace>,
-    /// The nearest alpha-blended face in front of it.
+    /// The nearest alpha-blended face, or Mask cutout for a left interaction,
+    /// in front of the visible opaque surface.
     pub blend: Option<DrawnFace>,
 }
 
