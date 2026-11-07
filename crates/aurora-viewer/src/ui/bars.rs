@@ -136,7 +136,7 @@ pub enum BarAction {
     BuyCurrency,
     /// The balance shown or hidden (its right click, the account island's).
     ShowBalance(bool),
-    /// "Highlight L$ received as it arrives", from the balance's menu.
+    /// "Highlight L$ changes as they happen", from the balance's menu.
     BalanceHighlight(bool),
     /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
     /// of its movement menu, Advanced.SetDoubleClickAction).
@@ -233,7 +233,7 @@ pub struct StatusInfo<'a> {
     pub balance: Option<i32>,
     /// The balance shown (`show_balance`, #1340).
     pub show_balance: bool,
-    /// The L$ received on their way into the balance.
+    /// The L$ gained and spent, under the balance.
     pub balance_gains: Vec<super::balance_gains::GainRow>,
     /// The switch of those rows, for the balance's menu.
     pub balance_highlight: bool,
@@ -446,7 +446,7 @@ pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, acti
     if menu::check(ui, p, "coin-filled", aurora_i18n::tr!("ui-bars-show-balance"), shown, true) {
         *action = BarAction::ShowBalance(!shown);
     }
-    // the L$ received rising into it: nothing to rise into while it is hidden
+    // the L$ gained and spent: nowhere to show them while it is hidden
     let highlight = st.balance_highlight;
     if menu::check(
         ui,

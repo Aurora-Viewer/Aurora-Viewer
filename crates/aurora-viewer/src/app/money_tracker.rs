@@ -121,10 +121,21 @@ impl App {
             // the source of the demo's chance: no crate only for this
             let random = uuid::Uuid::new_v4();
             let number = random.as_u128();
-            let (kind, item) = match number % 3 {
+            let amount = earning_amount(number >> 8);
+            let balance = self.world.balance.unwrap_or(0);
+            let (kind, item) = match number % 5 {
                 0 => (OBJECT_SALE, "Steel helmet"),
                 1 => (PAY_OBJECT, "Tip jar"),
-                _ => (GIFT, "Payment"),
+                2 => (GIFT, "Payment"),
+                // a purchase, and L$ bought: only the balance moves
+                3 => {
+                    self.world.apply(NetEvent::Balance(balance - amount));
+                    return;
+                }
+                _ => {
+                    self.world.apply(NetEvent::Balance(balance + amount * 10));
+                    return;
+                }
             };
             let payers = [crate::demo::DEMO_NOVA, crate::demo::DEMO_TESS, crate::demo::DEMO_FRIEND];
             let ev = NetEvent::MoneyTransaction {
@@ -135,7 +146,7 @@ impl App {
                 source_group: false,
                 dest: self.world.agent_id,
                 dest_group: false,
-                amount: earning_amount(number >> 8),
+                amount,
                 item: item.into(),
                 description: "Transaction".into(),
             };
@@ -149,6 +160,8 @@ impl App {
                 self.world.payment(&ev);
                 let balance = self.world.balance.unwrap_or(0) + amount;
                 self.world.apply(NetEvent::Balance(balance));
+            } else {
+                self.world.apply(ev);
             }
         }
     }
@@ -162,9 +175,9 @@ impl App {
     /// conversation when you pay a resident" on; `friend`: a friend's payment opens their conversation, a stranger's
     /// (no conversation) shows nowhere; `off`: the same with the option off,
     /// no conversation opens; `sale`: the toasts of L$ received without a
-    /// card; `balance`: payments rising into the balance, no toast;
-    /// `earning`: 20 to 300 L$ every 10 seconds, a sale, an object paid or
-    /// a direct payment, with the saved switches.
+    /// card; `balance`: payments and a purchase at the balance, no toast;
+    /// `earning`: 20 to 300 L$ every 10 seconds, a sale, an object paid, a
+    /// direct payment, a purchase or L$ bought, with the saved switches.
     pub(super) fn demo_payment(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_PAYMENT") else {
             return;
@@ -189,7 +202,6 @@ impl App {
             // this frame's payments, before the next frame reads it
             self.world.payments.notify_direct = true;
             self.world.payments.notify_received = true;
-            self.world.payments.rise_into_balance = true;
         }
         if mode == "sale" {
             let earned = |n: u128, kind, amount, item: &str| match paid(n, DEMO_NOVA, amount, item) {
@@ -227,6 +239,7 @@ impl App {
         if mode == "balance" {
             self.demo_money_notices = Some((false, false, true));
             self.world.apply(NetEvent::Balance(12480));
+            self.balance_gains.resync();
             let start = Instant::now() + std::time::Duration::from_secs(6);
             for (n, (after, source, amount)) in [(0, DEMO_NOVA, 100), (1, DEMO_TESS, 2500), (2, DEMO_FRIEND, 25)]
                 .into_iter()
@@ -235,11 +248,15 @@ impl App {
                 let at = start + std::time::Duration::from_millis(after * 900);
                 self.demo_gains.push_back((at, paid(11 + n as u128, source, amount, "Payment")));
             }
+            // and a purchase: only the balance moves
+            self.demo_gains
+                .push_back((start + std::time::Duration::from_millis(2700), NetEvent::Balance(14805)));
             return;
         }
         if mode == "earning" {
             // the saved switches stay: they can be turned while it runs
             self.world.apply(NetEvent::Balance(12480));
+            self.balance_gains.resync();
             self.demo_earning = Some(Instant::now() + EARNING_EVERY);
             return;
         }

@@ -46,7 +46,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-balance-help"),
                     &field!(show_balance),
                 );
-                // the L$ received rising into it (#2675); also the
+                // the L$ gained and spent under it (#2675); also the
                 // balance's right click and the account island's
                 cx.toggle(
                     tr!("ui-options-balance-gain-animation"),
