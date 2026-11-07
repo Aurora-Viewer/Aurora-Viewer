@@ -7912,6 +7912,8 @@ mod motion_tests {
 
     fn scripted_detach_fixture(point: u8) -> (World, aurora_net::objects::ObjectUpdate, RegionHandle) {
         let (mut world, _, mut worn, here, _) = worn_fixture();
+        // later in the session: the login restore is over
+        world.outfit = outfit::OutfitRestore::finished();
         appearance::seed_demo(&mut world.inventory, world.agent_id);
         worn.state = point.rotate_left(4);
         worn.name_values = format!("AttachItemID STRING RW SV {}", Uuid::from_u128(717));
