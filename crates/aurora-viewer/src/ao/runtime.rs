@@ -25,6 +25,8 @@ pub struct Frame<'a> {
     pub seat_animations: bool,
     pub underwater: bool,
     pub region: Option<u64>,
+    /// Teleports completed so far (`World::teleport_arrivals`).
+    pub teleports: u64,
 }
 
 #[derive(Default)]
@@ -59,6 +61,11 @@ pub struct Runtime {
     restoring: Option<(State, PlayingAnimation, Instant)>,
     anchor_blend: super::anchor_blend::Blend,
     anchor_signal: Option<PlayingAnimation>,
+    teleports: u64,
+    /// A completed teleport ended our sit: `Some(false)` while we are still
+    /// seated (the simulator unseats us later after a teleport it started),
+    /// `Some(true)` once off any object, until we sit on one again.
+    teleport_unseat: Option<bool>,
 }
 
 impl Default for Runtime {
@@ -85,8 +92,21 @@ impl Default for Runtime {
             restoring: None,
             anchor_blend: Default::default(),
             anchor_signal: None,
+            teleports: 0,
+            teleport_unseat: None,
         }
     }
+}
+
+/// Folds this frame's animation changes into the ones held back while
+/// `World::awaiting_own_animations`: the last change of each animation wins,
+/// stops before starts as `Runtime::update_with_easing` orders them.
+pub fn hold_changes(held: &mut Vec<(Uuid, bool)>, changes: Vec<(Uuid, bool)>) {
+    for (id, start) in changes {
+        held.retain(|(other, _)| *other != id);
+        held.push((id, start));
+    }
+    held.sort_by_key(|(_, start)| *start);
 }
 
 impl Runtime {
@@ -378,6 +398,33 @@ impl Runtime {
             self.suppressed.clear();
             self.restoring = None;
         }
+        // LLAgent::teleportCore (indra/newview/llagent.cpp) gets a seated
+        // agent off its seat, and the Legacy AO ends its sit override when
+        // the arrival's animation list no longer has the stock sit
+        // (AOEngine::override(ANIM_AGENT_SIT, false), aoengine.cpp). Ours
+        // stopped that stock sit itself and holds it, and the echo of that
+        // stop looks like the stock sit ending. So once a teleport has taken
+        // us off any seat, possibly after the arrival when the simulator
+        // started the teleport (llTeleportAgent), the sit is no longer held:
+        // the held one ends, and a stock sit an arrival list still carries
+        // plays only while listed. Sitting on an object again lifts this
+        // (issue #2700).
+        if frame.teleports != self.teleports {
+            self.teleports = frame.teleports;
+            self.teleport_unseat = Some(false);
+        }
+        match (self.teleport_unseat, frame.on_object) {
+            (Some(false), false) => self.teleport_unseat = Some(true),
+            (Some(true), true) => self.teleport_unseat = None,
+            _ => {}
+        }
+        let unseated = self.teleport_unseat == Some(true);
+        if unseated {
+            if matches!(self.raw_hold, Some((State::Sitting, _))) {
+                self.raw_hold = None;
+            }
+            self.restoring = self.restoring.filter(|(state, _, _)| *state != State::Sitting);
+        }
         self.restoring = self
             .restoring
             .filter(|(state, _, _)| !frame.on_object || (*state == State::Sitting && !frame.seat_animations));
@@ -417,7 +464,7 @@ impl Runtime {
                         .map(|(state, signal, _)| (state, signal))
                 });
         }
-        self.raw_hold = primary;
+        self.raw_hold = primary.filter(|(state, _)| !(unseated && *state == State::Sitting));
         if let Some(signal) = frame.run_hold {
             primary = Some((State::Running, signal));
         }
