@@ -3708,7 +3708,7 @@ ui-profile-this-user-has-no-picks = L'utilisateur n'a pas de favoris
 ui-profile-this-user-has-no-classified-listings = L'utilisateur n'a pas de petites annonces
 ui-inventory-controls-library = La bibliothèque
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = La caméra peut aller au-delà de la distance d'affichage, sous le sol et plus près des objets
-ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival = La caméra se replace derrière l'avatar à l'arrivée
+ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = Après une téléportation dans la région, la caméra se replace derrière l'avatar. Désactivé, elle reste où elle est.
 ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un léger retard (1 par défaut, 0 = aucun)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = La caméra suit l'objet sur lequel elle est fixée quand il bouge
 app-inventory-thumbnail-invalid-capture = La capture est invalide.
@@ -5153,7 +5153,7 @@ ui-bars-back = { "Retour : " }{ $d }
 keybinds-backspace-2 = Retour arrière
 ui-appearance-back-to-worn-items = Retour aux éléments portés
 ui-land-covenant-resell = Revendre :
-ui-options-camera-return-after-teleporting = Revenir après une téléportation
+ui-options-camera-return-after-a-teleport-in-the-region = Revenir après une téléportation dans la région
 ui-appearance-back-to-outfits = Revenir aux tenues
 ui-options-camera-return-when-moving = Revenir en bougeant
 keybinds-return-to-avatar = Revenir à l'avatar
