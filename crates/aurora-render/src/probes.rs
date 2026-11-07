@@ -759,7 +759,9 @@ mod tests {
         assert!(at.is_sorted(), "{at:?}");
         assert_eq!(light_tiles::TILES, 32);
         assert!(src.contains(&format!("const MAX_PROBES: u32 = {MAX_PROBES}u;")));
-        assert!(src.contains(&format!("struct ProbeMask {{\n    w: array<u32, {WORDS}>,")));
+        // (no line end in the pattern: a Windows checkout has CRLF)
+        let mask = &src[src.find("struct ProbeMask {").expect("ProbeMask")..];
+        assert!(mask[..mask.find('}').expect("end of ProbeMask")].contains(&format!("w: array<u32, {WORDS}>,")));
         assert!(src.contains("var boxes = probe_set.boxes.w[k];"));
         assert!(src.contains("boxes &= probe_word(k, count, tiles, cell);"));
         // nearer than this the shaders walk the whole list: the sets hold
