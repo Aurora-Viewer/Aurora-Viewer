@@ -8610,7 +8610,6 @@ impl Backend {
                 // without HDR there is none to keep)
                 hold: (snapshot.is_some() || f.exposure_lock || f.cutout) && self.settings.hdr,
                 glow: self.glow_drawn,
-                inv_view_proj: unjittered_vp.inverse(),
             },
             &self.post_buffer,
             POST_AUTO_EXPOSURE_OFFSET,

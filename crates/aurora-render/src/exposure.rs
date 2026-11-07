@@ -12,7 +12,6 @@
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
@@ -95,7 +94,6 @@ impl Override {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ExposureU {
-    inv_view_proj: [[f32; 4]; 4],
     a: [f32; 4],
     b: [f32; 4],
 }
@@ -113,7 +111,6 @@ pub(crate) struct FrameExposure {
     pub(crate) hold: bool,
     /// The glow of the last frame is there to add (RenderGlow).
     pub(crate) glow: bool,
-    pub(crate) inv_view_proj: Mat4,
 }
 
 pub(crate) struct Exposure {
@@ -330,7 +327,6 @@ impl Exposure {
         let reset = on == self.was_off || Override::from_env() == Override::Alternate || !f.hdr;
         self.was_off = !on;
         let u = ExposureU {
-            inv_view_proj: f.inv_view_proj.to_cols_array_2d(),
             a: [dt, DIFFUSE_SCALE, if f.glow { 1.0 } else { 0.0 }, if reset { 1.0 } else { 0.0 }],
             b: [COEFFICIENT, lo, hi, if f.hold { -1.0 } else { -SPEED_ERROR.ln() / SPEED_TARGET }],
         };
