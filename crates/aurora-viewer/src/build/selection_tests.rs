@@ -1258,6 +1258,30 @@ fn a_rectangle_started_on_an_object_takes_it_only_if_the_rectangle_does() {
 }
 
 #[test]
+fn a_press_ends_with_the_build_tools() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99610);
+    tool.mouse_down(&mut world, &mut settings, None, Some(idx), None, (10.0, 10.0), Mods::default());
+    tool.close(&mut world, &mut settings);
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(tool.selection.is_empty(), "the release does not select after the tools closed");
+}
+
+#[test]
+fn a_rectangle_from_a_hud_stays_in_hud_space_after_clearing_the_selection() {
+    let (mut world, mut tool, mut settings) = seated_fixture(false);
+    let hud = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+    tool.click_select(&mut world, &settings, Some(hud), false);
+    assert!(tool.hud_selected(&world));
+    tool.mouse_down(&mut world, &mut settings, None, Some(hud), None, (10.0, 10.0), Mods::default());
+    tool.update(&mut world, &settings, None, (40.0, 40.0), false, Mods::default());
+    assert!(tool.selection.is_empty(), "the drag cleared it");
+    assert!(tool.hud_selected(&world), "the rectangle is still drawn over the HUD");
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(!tool.hud_selected(&world), "it was only for the drag");
+}
+
+#[test]
 fn select_by_surrounding_is_saved_and_on_when_a_profile_lacks_it() {
     let settings = BuildSettings {
         select_surrounding: false,
