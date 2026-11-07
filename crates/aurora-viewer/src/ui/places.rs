@@ -1103,15 +1103,13 @@ impl PlacesUi {
         // updateVerbs with a profile shown: Teleport, Map and the
         // overflow menu (Profile hidden)
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
-            let w = ((ui.available_width() - 30.0) / 2.0).max(60.0);
+            ui.spacing_mut().item_spacing.x = 6.0;
             if place_details::teleport_button(
                 ui,
                 p,
                 aurora_i18n::tr!("common-teleport"),
                 aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
                 place.global.is_some() && place_details::teleport_allowed(place, world),
-                w,
             ) && let Some(a) = place_details::teleport_action(place, world)
             {
                 match a {
@@ -1122,13 +1120,12 @@ impl PlacesUi {
                     _ => {}
                 }
             }
-            if place_details::button(
+            if place_details::map_button(
                 ui,
                 p,
                 aurora_i18n::tr!("common-map"),
                 aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
                 place.global.is_some(),
-                w,
             ) && let Some(g) = place.global
             {
                 actions.push(PlacesAction::ShowOnMap(g));
