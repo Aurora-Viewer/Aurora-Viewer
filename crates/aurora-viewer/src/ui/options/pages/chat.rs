@@ -34,6 +34,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-chat-channel-hint"),
                     &field!(show_chat_channel),
                 );
+                // the row of FSFloaterNearbyChat's recent emojis, a switch
+                // in place of its arrow, on
+                cx.toggle(
+                    tr!("ui-options-show-recent-emojis"),
+                    tr!("ui-options-show-recent-emojis-hint"),
+                    &field!(show_recent_emojis),
+                );
                 // #475: objects' lines like the notices, off (not in the
                 // Legacy Viewer)
                 cx.toggle(

@@ -3747,6 +3747,16 @@ impl App {
                     )
                 };
                 self.load_region_titles(l.agent_id);
+                self.chat_ui.recent_emojis = if self.demo {
+                    let mut recent = ui::emoji::recent::Recent::demo(&crate::demo::recent_emojis());
+                    if let Ok(favorites) = std::env::var("AURORA_DEMO_FAVORITE_EMOJIS") {
+                        recent.demo_favorites(&favorites);
+                        self.emoji.tab = ui::emoji::FAVORITES_TAB;
+                    }
+                    recent
+                } else {
+                    ui::emoji::recent::Recent::load(crate::settings::account_dir(&l.agent_id))
+                };
                 self.world.favorites = if self.demo {
                     Default::default()
                 } else {
@@ -13234,8 +13244,10 @@ impl App {
             return;
         }
         // :shortcode: emoji
+        let message = ui::emoji::expand_shortcodes(&c.message);
+        self.chat_ui.recent_emojis.note(&message);
         self.send(NetCommand::Chat {
-            message: ui::emoji::expand_shortcodes(&c.message),
+            message,
             channel: c.channel,
             chat_type: c.chat_type,
         });
@@ -13367,6 +13379,7 @@ impl App {
                 ui::chat::colon_emote(&mut text);
             }
             let text = ui::emoji::expand_shortcodes(&text);
+            self.chat_ui.recent_emojis.note(&text);
             if self.world.is_group_session(&to) {
                 self.world.send_session_im(to, &text);
                 continue;
@@ -16044,6 +16057,7 @@ impl App {
                 self.chat_ui.compact_im_notices =
                     self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
+                self.chat_ui.recent_emojis.enabled = self.settings.show_recent_emojis;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
@@ -18643,6 +18657,13 @@ impl ApplicationHandler for App {
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
                 }
                 self.chat_ui.gif_open = !matches!(mode, crate::demo::Gifs::NoKey | crate::demo::Gifs::Menu);
+                if mode == crate::demo::Gifs::Recent {
+                    for n in 0..5 {
+                        self.settings
+                            .gifs
+                            .note_sent(crate::gif_search::Provider::Giphy, &format!("demo{n}"));
+                    }
+                }
                 self.chat_ui.gifs.demo_scene(mode);
             }
             // AURORA_DEMO_OBJECT_CHAT=<style>|lines[:on]: the nearby chat in
