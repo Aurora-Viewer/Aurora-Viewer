@@ -4,7 +4,11 @@
 //! toolbar's `avatar` command (commands.xml: Floater.Toggle
 //! avatar_welcome_pack) and Me › Avatar Welcome Pack… (menu_viewer.xml,
 //! after the attachments): the grid's page of ready-made avatars in a
-//! browser without chrome, 530 x 438 and not resizable.
+//! browser without chrome. Its web view is 530 x 438 like the Legacy
+//! `<web_browser>` (the window adds the title bar and frame), which is also
+//! its minimum; unlike the Legacy Viewer's fixed floater it can be enlarged,
+//! a deliberate difference asked for by the human after testing on the grid,
+//! and the web view follows the window.
 //!
 //! Its browser is trusted (`trusted_content="true"`): a body or an outfit
 //! chosen on the page sends `secondlife://app/wear_folder/?folder_name=…`
@@ -26,8 +30,22 @@ use egui::{Rect, RichText, Vec2};
 
 pub const WINDOW: &str = "avatar_welcome_pack";
 
-/// floater_avatar_welcome_pack.xml: 530 x 438, `can_resize="false"`.
-const SIZE: Vec2 = Vec2::new(530.0, 438.0);
+/// What the page gets, from floater_avatar_welcome_pack.xml: its
+/// `<web_browser>` is 530 x 438 (the floater adds the title bar around it).
+/// The page's avatar images are laid out for that view, so it is the web
+/// view, not the window, that opens at this size, and it is also the
+/// smallest it can be: the window can only grow (the Legacy floater has
+/// `can_resize="false"`).
+const VIEW: Vec2 = Vec2::new(530.0, 438.0);
+
+/// What the window adds around the web view before it is measured: the
+/// title bar and the frame (`measure_chrome` replaces it with the real one).
+const FIRST_CHROME: Vec2 = Vec2::new(2.0, super::layout::TITLE_BAR_H + 7.0);
+
+/// The window that holds a `VIEW` web view inside `chrome`.
+fn window_size(chrome: Vec2) -> Vec2 {
+    (VIEW + chrome).round()
+}
 
 /// The `AvatarWelcomePack` default (app_settings/settings.xml).
 const SECOND_LIFE_PAGE: &str = "https://lecs-viewer-web-components.s3.amazonaws.com/v3.0/[GRID_LOWERCASE]/vawp/index.html";
@@ -93,6 +111,8 @@ pub struct AvatarWelcomeUi {
     /// The page the running browser was sent to (the grid's page can change
     /// after a Hypergrid teleport: handleUrlChanged).
     loaded: String,
+    /// What the window adds around the web view, as last measured.
+    chrome: Option<Vec2>,
 }
 
 impl AvatarWelcomeUi {
@@ -121,11 +141,26 @@ impl AvatarWelcomeUi {
             return Vec::new();
         }
         let work = super::layout::work_area(ctx);
-        let default = Rect::from_min_size((work.center() - SIZE * 0.5).round(), SIZE);
+        let chrome = self.chrome.unwrap_or(FIRST_CHROME);
+        let size = window_size(chrome);
+        let default = Rect::from_min_size((work.center() - size * 0.5).round(), size);
         let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("toolbar-command-avatar"), default.min, default.size());
-        floater.min_size = SIZE;
-        floater.resizable = false;
-        floater.show(ctx, p, open, |ui| self.contents(ui, p, env));
+        floater.min_size = size;
+        floater.resizable = true;
+        floater.flush_body = true;
+        let view = floater.show(ctx, p, open, |ui| self.contents(ui, p, env));
+        // the title bar and frame as laid out: the web view never gets less
+        // than VIEW, so the page's images are not cut
+        let outer = ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW)));
+        if let (Some(view), Some(outer)) = (view.flatten(), outer)
+            && !widgets::floater_minimized(ctx, WINDOW)
+        {
+            let measured = (outer.size() - view).max(Vec2::ZERO);
+            self.chrome = Some(measured);
+            if (view.x < VIEW.x - 0.5 || view.y < VIEW.y - 0.5) && !ctx.input(|i| i.pointer.any_down()) {
+                widgets::size_floater(ctx, WINDOW, outer.size().max(window_size(measured)));
+            }
+        }
         let commands = std::mem::take(&mut self.web.folder_commands);
         // LLWearFolderHandler: the page lets go of the keyboard once a body
         // is worn; and no window keeps it once closed or minimized
@@ -139,7 +174,8 @@ impl AvatarWelcomeUi {
         commands
     }
 
-    fn contents(&mut self, ui: &mut egui::Ui, p: &Palette, env: &PackWeb) {
+    /// Draws the page; returns the web view's size (None: no page).
+    fn contents(&mut self, ui: &mut egui::Ui, p: &Palette, env: &PackWeb) -> Option<Vec2> {
         let Some(url) = env.url else {
             ui.add_space(24.0);
             ui.vertical_centered(|ui| {
@@ -149,7 +185,7 @@ impl AvatarWelcomeUi {
                         .color(p.muted),
                 );
             });
-            return;
+            return None;
         };
         if self.loaded != url {
             log::info!("avatar welcome pack: {url}");
@@ -157,8 +193,9 @@ impl AvatarWelcomeUi {
             self.web.trust(url);
             self.web.navigate_again(url);
         }
-        let size = Vec2::new(ui.available_width(), (ui.available_height() - 2.0).max(120.0));
+        let size = ui.available_size().max(Vec2::splat(120.0));
         self.web.show(ui, p, env.paths, env.browser, env.cookie, size);
+        Some(size)
     }
 }
 
@@ -212,11 +249,20 @@ mod tests {
     }
 
     #[test]
+    fn the_web_view_opens_at_the_legacy_size_and_never_shrinks_below_it() {
+        assert_eq!(VIEW, Vec2::new(530.0, 438.0));
+        // the window is the view plus what it adds around it, whatever that is
+        for chrome in [FIRST_CHROME, Vec2::new(0.0, 43.0), Vec2::new(4.0, 50.0)] {
+            assert_eq!(window_size(chrome) - chrome, VIEW);
+        }
+    }
+
+    #[test]
     fn the_window_keeps_its_size() {
         let browser = aurora_media::BrowserSettings::default();
         crate::ui::widgets::steady_tests::assert_window_steady(
             WINDOW,
-            &[SIZE],
+            &[window_size(FIRST_CHROME)],
             aurora_i18n::text("avatar-welcome-unavailable"),
             AvatarWelcomeUi::default,
             |ui, ctx, p| {
