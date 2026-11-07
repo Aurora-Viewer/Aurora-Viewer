@@ -6363,13 +6363,19 @@ impl Backend {
         // ---- volumetric clouds (clouds.rs): over the sky of the main view
         // when the setting is on and the Legacy layer would draw something;
         // not under the water (the sky is seen through its fog), nor in a
-        // cut-out photo (no sky), nor in a photo (its tiles and sizes keep no
-        // history: the Legacy layer, for now). Until the noise is made the
-        // sky shader keeps the Legacy layer.
+        // cut-out photo (no sky). A photo, a tile of one or any other still
+        // is traced once in full (clouds.rs `StillSpec`), with no history.
+        // Until the noise is made the sky shader keeps the Legacy layer.
+        let still = (snapshot.is_some() || f.photo_tile != Mat4::IDENTITY).then(|| {
+            let photo = self.gtao.photo.unwrap_or((self.config.width, self.config.height));
+            crate::clouds::StillSpec {
+                origin: crate::clouds::still_origin(photo_part(f.photo_tile), photo),
+            }
+        });
         let cloud_params = f
             .clouds
             .as_ref()
-            .filter(|_| !f.cutout && snapshot.is_none() && f.photo_tile == Mat4::IDENTITY && f.camera_pos.z >= camera_water_level)
+            .filter(|_| !f.cutout && f.camera_pos.z >= camera_water_level)
             .and_then(|c| {
                 let rotation = Mat4::from_mat3(glam::Mat3::from_mat4(f.view));
                 crate::clouds::Params::new(f, c, f.proj * rotation, inv_view_proj_rot(f.proj, f.view))
@@ -7899,10 +7905,10 @@ impl Backend {
                 clouds.weather_drawn(p.weather_key);
             }
             let size = (self.targets.color_tex.width(), self.targets.color_tex.height());
-            clouds.encode(&self.device, &self.queue, &mut encoder, p, &self.targets.depth_ss, size);
+            clouds.encode(&self.device, &self.queue, &mut encoder, p, &self.targets.depth_ss, size, still);
             clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
-            clouds.skipped();
+            clouds.skipped(still.is_some());
         }
         mark(&mut encoder, MARK_CLOUDS_END);
         // ---- scene pass A: sky, terrain, opaque, masked

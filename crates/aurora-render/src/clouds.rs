@@ -53,6 +53,31 @@ const PERIOD_KM: f64 = 105.0;
 /// Steps of the march and taps of the light march (Medium).
 const STEPS: u32 = 64;
 const LIGHT_STEPS: u32 = 5;
+/// A still (a photo, a tile of one, a cube face) is traced once, with no
+/// history: every pixel of the frame, more steps, and a few sub-samples whose
+/// jitter is spread over the step grid.
+const STILL_STEPS: u32 = 128;
+const STILL_LIGHT_STEPS: u32 = 6;
+const STILL_SAMPLES: u32 = 4;
+
+/// A frame that is drawn once and read back (a photo, one tile of a tiled
+/// photo, a face of a 360 degree photo): it is traced in full and takes no
+/// part in the live history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StillSpec {
+    /// The frame's first pixel in the whole image (0, 0 unless it is a
+    /// tile): the jitter is keyed on the whole image's pixels, so that
+    /// neighbouring tiles agree along their border.
+    pub origin: (u32, u32),
+}
+
+/// The pixel of the whole photo that a tile starts at. `part` is the tile's
+/// part of the photo in fractions (left, top, width, height: the renderer's
+/// `photo_part`), `photo` the whole photo's size in pixels.
+pub fn still_origin(part: [f32; 4], photo: (u32, u32)) -> (u32, u32) {
+    let at = |fraction: f32, side: u32| (fraction.max(0.0) * side as f32).round() as u32;
+    (at(part[0], photo.0), at(part[1], photo.1))
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -357,6 +382,7 @@ struct Pipelines {
     gen_detail: wgpu::ComputePipeline,
     gen_curl: wgpu::ComputePipeline,
     trace: wgpu::ComputePipeline,
+    trace_still: wgpu::ComputePipeline,
     recon: wgpu::ComputePipeline,
 }
 
@@ -373,6 +399,9 @@ pub(crate) struct Clouds {
     /// Frames of noise generation made; [`NOISE_FRAMES`] when complete.
     noise_frames: u32,
     sized: Option<Sized>,
+    /// The full resolution image of a still, kept for the frames of the
+    /// same photo and dropped by the first live frame after it.
+    still: Option<((u32, u32), wgpu::TextureView)>,
     /// The history written last (index into `Sized::history`), if valid.
     latest: Option<usize>,
     prev_vp: Mat4,
@@ -432,6 +461,7 @@ impl Clouds {
             gen_detail: compute("gen_detail"),
             gen_curl: compute("gen_curl"),
             trace: compute("trace"),
+            trace_still: compute("trace_still"),
             recon: compute("recon"),
         };
         let noise = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
@@ -506,6 +536,7 @@ impl Clouds {
             weather_key: None,
             noise_frames: 0,
             sized: None,
+            still: None,
             latest: None,
             prev_vp: Mat4::IDENTITY,
             prev_camera_km: [0.0; 2],
@@ -546,18 +577,37 @@ impl Clouds {
         p: &Params,
         depth: &wgpu::TextureView,
         size: (u32, u32),
+        still: Option<StillSpec>,
     ) {
         let size = (size.0.max(2), size.1.max(2));
-        if self.sized.as_ref().is_none_or(|s| s.size != size) {
-            self.sized = Some(Self::make_sized(device, size));
-            self.latest = None;
+        // (a still keeps its own image: the live history, its size and its
+        // camera stay as the last live frame left them, so that the first
+        // live frame after the photo does not flash)
+        if still.is_none() {
+            self.still = None;
+            if self.sized.as_ref().is_none_or(|s| s.size != size) {
+                self.sized = Some(Self::make_sized(device, size));
+                self.latest = None;
+            }
+        } else if self.still.as_ref().is_none_or(|(s, _)| *s != size) {
+            use wgpu::TextureFormat::Rgba16Float;
+            let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+            let view = texture(
+                device,
+                "cloud still",
+                [size.0, size.1, 1],
+                wgpu::TextureDimension::D2,
+                Rgba16Float,
+                usage,
+            )
+            .create_view(&Default::default());
+            self.still = Some((size, view));
         }
-        let Some(sized) = &self.sized else { return };
         let step = noise_step(self.noise_frames);
         let [ox, oy] = p.offset_km();
         let moved = [0, 1].map(|i| (p.camera_km[i] - self.prev_camera_km[i]) as f32);
         let (hw, hh) = (size.0 / 2, size.1 / 2);
-        let reproject = self.latest.is_some();
+        let reproject = self.latest.is_some() && still.is_none();
         let u = CloudU {
             inv_vp: p.inv_vp.to_cols_array_2d(),
             prev_vp: self.prev_vp.to_cols_array_2d(),
@@ -570,8 +620,15 @@ impl Clouds {
             drift: [0.0, 0.0, p.tile_km, p.extinction],
             layer: [p.layer.0, p.layer.1, p.kind, debug_view() as f32],
             sizes: [size.0, size.1, hw, hh],
-            misc: [self.frame, STEPS, LIGHT_STEPS, u32::from(reproject)],
-            gen_z: [step.base_z.unwrap_or(0), 0, 0, 0],
+            misc: match still {
+                Some(_) => [0, STILL_STEPS, STILL_LIGHT_STEPS, 0],
+                None => [self.frame, STEPS, LIGHT_STEPS, u32::from(reproject)],
+            },
+            // (the noise slice, then a still's origin and sub-samples)
+            gen_z: match still {
+                Some(s) => [step.base_z.unwrap_or(0), s.origin.0, s.origin.1, STILL_SAMPLES],
+                None => [step.base_z.unwrap_or(0), 0, 0, 0],
+            },
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let group = |pipeline: &wgpu::ComputePipeline, label: &str, entries: &[wgpu::BindGroupEntry<'_>]| {
@@ -621,10 +678,44 @@ impl Clouds {
         // sky shader keeps the Legacy layer until then)
         let shown = self.ready();
         self.noise_frames = (self.noise_frames + 1).min(NOISE_FRAMES);
-        self.frame += 1;
+        if still.is_none() {
+            self.frame += 1;
+        }
         if !shown {
             return;
         }
+        if let Some((_, target)) = &self.still {
+            pass(
+                "cloud still",
+                &self.pipelines.trace_still,
+                group(
+                    &self.pipelines.trace_still,
+                    "trace still",
+                    &[
+                        entry(0, self.uniform.as_entire_binding()),
+                        entry(5, tv(&self.base)),
+                        entry(6, tv(&self.detail)),
+                        entry(7, tv(&self.curl)),
+                        entry(8, tv(&self.weather)),
+                        entry(9, wgpu::BindingResource::Sampler(&self.sampler)),
+                        entry(16, tv(target)),
+                        entry(19, tv(depth)),
+                    ],
+                ),
+                [size.0.div_ceil(8), size.1.div_ceil(8), 1],
+            );
+            self.composite_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("clouds composite"),
+                layout: &self.layout,
+                entries: &[
+                    entry(0, self.uniform.as_entire_binding()),
+                    entry(9, wgpu::BindingResource::Sampler(&self.sampler)),
+                    entry(15, tv(target)),
+                ],
+            }));
+            return;
+        }
+        let Some(sized) = &self.sized else { return };
         let write = self.latest.map_or(0, |i| 1 - i);
         let read = self.latest.unwrap_or(1 - write);
         let ts = (hw.div_ceil(2), hh.div_ceil(2));
@@ -781,16 +872,49 @@ impl Clouds {
         pass.draw(0..3, 0..1);
     }
 
-    /// The clouds were not recorded this frame: nothing to draw.
-    pub fn skipped(&mut self) {
+    /// The clouds were not recorded this frame: nothing to draw. A still
+    /// leaves the live history alone.
+    pub fn skipped(&mut self, still: bool) {
         self.composite_group = None;
-        self.latest = None;
+        if !still {
+            self.latest = None;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `jitter_still` of the shader.
+    fn still_jitter(p: (u32, u32), s: u32, n: u32) -> f32 {
+        let ign = (52.982_918 * (0.06711056 * p.0 as f32 + 0.00583715 * p.1 as f32).fract()).fract();
+        (ign + s as f32 / n as f32).fract()
+    }
+
+    #[test]
+    fn a_tile_starts_at_its_pixel_of_the_photo() {
+        assert_eq!(still_origin([0.0, 0.0, 1.0, 1.0], (1920, 1080)), (0, 0));
+        // the middle tile of a 3 x 3 grid of a 1000 x 700 photo
+        let part = [334.0 / 1000.0, 233.0 / 700.0, 333.0 / 1000.0, 234.0 / 700.0];
+        assert_eq!(still_origin(part, (1000, 700)), (334, 233));
+    }
+
+    #[test]
+    fn the_jitter_follows_the_photo_pixel_not_the_tile() {
+        // the pixel (400, 250) of a photo, seen from the tile that starts at
+        // (334, 233) or from the one that starts at (300, 200)
+        let a = (334 + 66, 233 + 17);
+        let b = (300 + 100, 200 + 50);
+        assert_eq!(a, b);
+        for s in 0..STILL_SAMPLES {
+            assert_eq!(still_jitter(a, s, STILL_SAMPLES), still_jitter(b, s, STILL_SAMPLES));
+            assert!((0.0..1.0).contains(&still_jitter(a, s, STILL_SAMPLES)));
+        }
+        // the sub-samples are spread over the step grid
+        let j: Vec<f32> = (0..STILL_SAMPLES).map(|s| still_jitter(a, s, STILL_SAMPLES)).collect();
+        assert!(j.windows(2).all(|w| w[0] != w[1]));
+    }
 
     #[test]
     fn the_uniform_matches_the_shader() {
@@ -1060,6 +1184,6 @@ mod tests {
             )
             .unwrap_or_else(|e| panic!("{}: {e:?}", ep.name));
         }
-        assert_eq!(module.entry_points.len(), 8);
+        assert_eq!(module.entry_points.len(), 9);
     }
 }

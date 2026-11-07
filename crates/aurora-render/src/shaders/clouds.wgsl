@@ -28,7 +28,7 @@ struct U {
     layer: vec4f,          // x: bottom, y: top (km above the camera), z: type (0 St .. 1 Cu)
     sizes: vec4u,          // full w, h, half w, h
     misc: vec4u,           // frame, steps, light steps, history valid
-    gen: vec4u,            // z of the first noise layer of this frame's slice
+    gen: vec4u,            // x: z of the first noise layer of this frame's slice; a still: yz: its first pixel in the whole image, w: sub-samples
 }
 
 @group(0) @binding(0) var<uniform> u: U;
@@ -451,6 +451,37 @@ fn trace(@builtin(global_invocation_id) id: vec3u) {
     let r = march(yup(view_dir(fpx)), u.misc.y, u.misc.z, jitter_of(hp), sky_off());
     textureStore(trace_w, id.xy, vec4f(r.col, r.t));
     textureStore(tdepth_w, id.xy, vec4f(r.depth));
+}
+
+// ---------------------------------------------------------------- still trace (a photo, a tile, a cube face)
+// One shot, no history: every pixel of the frame, `u.gen.w` sub-samples whose
+// jitters are spread over the step grid. The jitter is keyed on the pixel's
+// place in the whole image (`u.gen.yz` is the frame's first pixel in it), so
+// that the tiles of a photo agree along their borders; the direction follows
+// from the tile's own projection, which is the whole photo's.
+fn jitter_still(p: vec2u, s: u32, n: u32) -> f32 {
+    let ign = fract(52.9829189 * fract(0.06711056 * f32(p.x) + 0.00583715 * f32(p.y)));
+    return fract(ign + f32(s) / f32(n));
+}
+
+@compute @workgroup_size(8, 8)
+fn trace_still(@builtin(global_invocation_id) id: vec3u) {
+    if any(id.xy >= u.sizes.xy) { return; }
+    if !is_sky(id.xy) {
+        textureStore(hist_w, id.xy, vec4f(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+    let dir = yup(view_dir(vec2f(id.xy) + 0.5));
+    let g = id.xy + u.gen.yz;
+    let n = max(u.gen.w, 1u);
+    var col = vec3f(0.0);
+    var t = 0.0;
+    for (var s = 0u; s < n; s++) {
+        let r = march(dir, u.misc.y, u.misc.z, jitter_still(g, s, n), sky_off());
+        col += r.col;
+        t += r.t;
+    }
+    textureStore(hist_w, id.xy, vec4f(col / f32(n), t / f32(n)));
 }
 
 // ---------------------------------------------------------------- temporal reconstruction (half res)

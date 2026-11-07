@@ -4185,9 +4185,15 @@ both open states and the selection count. Capture at frame 620.
   bases and bright rims for `fair`, rows that merge towards the horizon, a
   grey uniform sheet for `overcast`, no hard edge at the horizon (the far
   clouds melt into the haze), the sun's disc and the stars behind the
-  clouds' transparency. Under water, in a photo (tiles and sizes keep no
-  history), in a cut-out photo and in the reflections (water, mirror,
-  probes) the Legacy layer is drawn, for now.
+  clouds' transparency. A photo (one pass, the tiles of a large one, any
+  frame drawn once and read back) traces the layer in full instead: every
+  pixel, 128 steps, 4 sub-samples with their jitter keyed on the pixel of
+  the whole photo (no seam between tiles), no history, so that the live
+  view's history is untouched and does not flash after the shot; try
+  `AURORA_DEMO_SNAPSHOT=shoot` (and `AURORA_DEMO_SNAPSHOT_TILE=512` for
+  tiles) with this scenario. Under water, in a cut-out photo (no sky) and
+  in the reflections (water, mirror, probes) the Legacy layer is drawn,
+  for now.
   `AURORA_PROFILE=1` prints `g_clouds=` (the noise, trace and
   reconstruction compute, in ms; the composite is inside the sky's time).
 - **`AURORA_CLOUDS=aurora|legacy`**: volumetric clouds or the Legacy Viewer's
