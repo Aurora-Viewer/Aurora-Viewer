@@ -35,6 +35,30 @@ impl Default for Filters {
 pub struct Row {
     pub entry: Entry,
     pub owner: String,
+    /// The asset id may be written (`world::inventory::asset_ids`): the
+    /// Legacy Viewer's sound column has no width
+    /// (floater_NACL_explore_sounds.xml).
+    pub asset_shown: bool,
+}
+
+impl Row {
+    /// The sound column: the asset id, or nothing.
+    fn asset_text(&self) -> String {
+        if self.asset_shown {
+            self.entry.asset.to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    /// The row's tooltip: the owner, then the asset id when it may be written.
+    fn tooltip(&self) -> String {
+        if self.asset_shown {
+            format!("{}\n{}", self.owner, self.entry.asset)
+        } else {
+            self.owner.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +109,7 @@ impl SoundExplorer {
                 Some((column, reverse)) => {
                     let order = match column {
                         1 => kind(&a.entry).cmp(kind(&b.entry)),
-                        2 => a.owner.to_lowercase().cmp(&b.owner.to_lowercase()),
+                        2 => crate::natural_order::cmp(&a.owner, &b.owner),
                         _ => a.entry.asset.cmp(&b.entry.asset),
                     };
                     (if reverse { order.reverse() } else { order }).then_with(newest)
@@ -215,7 +239,7 @@ impl SoundExplorer {
                                 )
                             },
                         );
-                        let texts = [status, kind(&row.entry).to_owned(), row.owner.clone(), row.entry.asset.to_string()];
+                        let texts = [status, kind(&row.entry).to_owned(), row.owner.clone(), row.asset_text()];
                         let mut x = rect.left();
                         for (column, text) in texts.iter().enumerate() {
                             let w = rect.width() * WEIGHTS[column];
@@ -234,7 +258,7 @@ impl SoundExplorer {
                             );
                             x += w;
                         }
-                        response.clone().on_hover_text(format!("{}\n{}", row.owner, row.entry.asset));
+                        response.clone().on_hover_text(row.tooltip());
                         if response.clicked() {
                             self.click(id, &order, ui.input(|i| i.modifiers));
                         }
