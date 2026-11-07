@@ -110,7 +110,11 @@ fn interface_colors(cx: &mut Cx) {
         });
         if !high_contrast {
             // the system's colours count once they are followed
-            let colors = if cx.s.follow_system_theme { &shown } else { &cx.s.interface_colors };
+            let colors = if crate::system_theme::following(cx.s) {
+                &shown
+            } else {
+                &cx.s.interface_colors
+            };
             let adjusted = crate::interface_colors::adjusted(colors);
             if adjusted.text {
                 cx.note(tr!("ui-options-interface-colors-text-adjusted"));

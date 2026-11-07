@@ -57,8 +57,9 @@ fn a_chosen_background_or_text_keeps_the_pair_off_the_system() {
 /// The light pair goes through the same rules as a background of one's own.
 #[test]
 fn the_light_pair_needs_no_readability_adjustment() {
+    let skin = crate::theme::Theme::default().skin_palette();
     let c = colors(light(None), &InterfaceColors::default());
-    let adjusted = crate::interface_colors::adjusted(&c);
+    let (_, adjusted) = crate::interface_colors::derive(skin, &c);
     assert!(!adjusted.text, "{adjusted:?}");
 }
 
@@ -107,4 +108,47 @@ fn the_lighter_accents_read_on_the_light_pair() {
     for c in [p.violet_light, p.violet_pale, p.indigo_light] {
         assert!(crate::interface_colors::contrast(c, p.panel) >= 4.5, "{c:?}");
     }
+}
+
+/// A period no `Duration` holds keeps the default instead of stopping the run.
+#[test]
+fn a_demo_period_out_of_range_is_ignored() {
+    for raw in ["dark;secs=inf", "dark;secs=1e30", "dark;secs=NaN", "dark;secs=0"] {
+        assert_eq!(parse_demo(raw).every, Duration::from_secs(4), "{raw}");
+    }
+}
+
+/// The light accent is text on the panels and the hovered face under
+/// `on_accent`: every accent keeps the face, on the light pair the text too.
+#[test]
+fn the_hovered_accent_face_keeps_its_label() {
+    use crate::interface_colors::{contrast, derive};
+    let skin = crate::theme::Theme::default().skin_palette();
+    let grey = InterfaceColors {
+        accent: Some([0xFF, 0xFF, 0xFF, 255]),
+        surface: Some([0x78, 0x78, 0x78, 255]),
+        ..InterfaceColors::default()
+    };
+    let (p, _) = derive(skin, &grey);
+    assert!(contrast(p.violet_light, p.on_accent) >= 3.0, "{p:?}");
+    for rgb in [
+        [0xFF, 0xE0, 0x00],
+        [0x16, 0xA3, 0x4A],
+        [0x3D, 0xAE, 0xE9],
+        [0xE1, 0x1D, 0x8F],
+        [0xFF, 0xFF, 0xFF],
+        [0x10, 0x10, 0x40],
+    ] {
+        let (p, _) = derive(skin, &colors(light(Some(rgb)), &InterfaceColors::default()));
+        assert!(contrast(p.violet_light, p.on_accent) >= 3.0, "{rgb:?}: {p:?}");
+        assert!(contrast(p.violet_light, p.panel) >= 4.5, "{rgb:?}: {p:?}");
+    }
+}
+
+#[test]
+fn the_repeated_read_stops_with_the_option() {
+    set_active(true);
+    assert!(active());
+    set_active(false);
+    assert!(!active());
 }

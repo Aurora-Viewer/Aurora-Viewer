@@ -208,8 +208,14 @@ pub fn derive(skin: Palette, colors: &InterfaceColors) -> (Palette, Adjusted) {
     // the lighter accents colour text and icons (a count, a selected row,
     // initials): on another panel they read like the states above
     if p.panel != skin.panel {
-        for c in [&mut p.violet_light, &mut p.violet_pale, &mut p.indigo_light] {
+        for c in [&mut p.violet_pale, &mut p.indigo_light] {
             *c = readable(*c, p.panel, TEXT);
+        }
+        // the light accent is also the hovered accent face, under `on_accent`:
+        // on a mid-grey panel, where the two pull apart, that face comes first
+        let moved = readable(p.violet_light, p.panel, TEXT);
+        if contrast(moved, p.on_accent) >= UI {
+            p.violet_light = moved;
         }
     }
     (p, adjusted)

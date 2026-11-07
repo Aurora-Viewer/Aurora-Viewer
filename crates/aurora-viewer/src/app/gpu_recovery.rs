@@ -32,31 +32,9 @@ impl App {
         }
         let window = Arc::new(event_loop.create_window(attrs)?);
         crate::window_hold::install(&window);
+        // kept with the option off too: turning it on starts from this mode
         crate::system_theme::window_theme(window.theme());
         Ok(window)
-    }
-
-    /// The interface's colours again when the followed system changed.
-    pub(super) fn follow_system_theme(&mut self) {
-        if !following_system(&self.settings) {
-            return;
-        }
-        crate::system_theme::start(false);
-        crate::system_theme::tick();
-        if !crate::system_theme::take_changed() {
-            return;
-        }
-        let colors = wanted_interface_colors(&self.settings);
-        if colors == crate::interface_colors::current() {
-            return;
-        }
-        log::info!("system theme: {:?}", crate::system_theme::current());
-        crate::interface_colors::set(colors);
-        self.palette = self.skin.theme.palette();
-        self.cursors.set_palette(&self.palette);
-        self.skin.theme.apply(&self.egui_ctx, text_scale(&self.settings));
-        apply_chat_text_scale(&self.egui_ctx, &self.settings);
-        crate::crash::update(&self.skin.theme, &self.settings);
     }
 
     /// The renderer for `window`, the user's settings applied once the
