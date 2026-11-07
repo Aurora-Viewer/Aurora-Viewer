@@ -587,6 +587,10 @@ struct ObjVis {
     in_view: bool,
     casts: bool,
     reflects: bool,
+    /// In the probe captures' list: they measure from the probe, which the
+    /// renderer knows (`ProbeCapture::reach`), so the camera's reach and
+    /// small object culling do not apply.
+    probes: bool,
 }
 
 /// Object tests of the CPU lists, the same as `face_mask` in cull.wgsl:
@@ -624,18 +628,21 @@ fn object_visibility(
     let in_view = ctx.view.sphere_visible(sc, sr);
     let casts = ctx.shadows && d - sr < ctx.shadow_distance;
     let reflects = ctx.reflections && d - sr < ctx.reflection_distance;
-    if !in_view && !casts && !reflects {
+    let probes = ctx.reflections;
+    if !in_view && !casts && !reflects && !probes {
         return None;
     }
     // tiny objects far away are culled (LL-like small object culling)
-    if ctx.view.pixel_size(sc, sr) < 1.5 && !g.is_avatar {
+    let large = ctx.view.pixel_size(sc, sr) >= 1.5 || g.is_avatar;
+    if !large && !probes {
         return None;
     }
     Some(ObjVis {
         sphere: (sc, sr),
-        in_view,
-        casts,
-        reflects,
+        in_view: in_view && large,
+        casts: casts && large,
+        reflects: reflects && large,
+        probes,
     })
 }
 
@@ -3900,6 +3907,9 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            if !g.hud {
+                rec.flags[3] |= flags::OBJECT_MASK_PICK;
+            }
             rec.set_world_blend_pick(
                 !g.hud
                     && wearer.is_none()
@@ -4681,6 +4691,7 @@ impl Scene {
                 in_view,
                 casts,
                 reflects,
+                probes,
             }) = object_visibility(
                 g,
                 idx,
@@ -4775,15 +4786,17 @@ impl Scene {
                             alpha: pass.record_flags() != 0,
                         });
                     }
-                    if reflects && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
+                    if matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
                         let c = ShadowCaster {
                             cmd,
                             center: sc,
                             radius: sr,
                             alpha: false,
                         };
-                        l.refl.push(c);
-                        if avatar.is_none() && g.skeleton_owner.is_none() {
+                        if reflects {
+                            l.refl.push(c);
+                        }
+                        if probes && avatar.is_none() && g.skeleton_owner.is_none() {
                             l.probe.push(c);
                         }
                     }
@@ -7202,6 +7215,7 @@ mod tests {
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];
         frame.probe = frame.water;
+        frame.probe_eye = [0.0, 0.0, 0.0, 1e9];
         frame.sizes[1] = n as u32;
         let objects: Vec<CullObject> = gpu.iter().enumerate().map(|(i, g)| g.cull_object(i)).collect();
         let spheres = aurora_render::gpu_cull::world_spheres(&objects, &palettes, &[], &[]);
@@ -7225,7 +7239,7 @@ mod tests {
                     v.in_view && solid,
                     v.casts && f.pass != Pass::Hidden,
                     v.reflects && solid,
-                    v.reflects && solid && g.avatar(i).is_none() && g.skeleton_owner.is_none(),
+                    v.probes && solid && g.avatar(i).is_none() && g.skeleton_owner.is_none(),
                     v.in_view,
                 ),
                 None => (false, false, false, false, false),

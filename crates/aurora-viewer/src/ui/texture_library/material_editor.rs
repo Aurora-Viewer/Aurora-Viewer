@@ -175,7 +175,7 @@ impl Editor {
                     ui.label(RichText::new(aurora_i18n::tr!("resource-preview-read-only")).small().color(p.muted));
                 }
                 ui.label(
-                    RichText::new(if item.owner_mask & rules::COPY != 0 {
+                    RichText::new(if rules::held(&world.inventory, item) & rules::COPY != 0 {
                         aurora_i18n::tr!("texture-library-copy")
                     } else {
                         aurora_i18n::tr!("texture-library-no-copy")
@@ -255,7 +255,7 @@ impl Editor {
             }
             if ui
                 .add_enabled(
-                    item.owner_mask & rules::COPY != 0 && self.saving.is_none(),
+                    rules::held(&world.inventory, item) & rules::COPY != 0 && self.saving.is_none(),
                     egui::Button::new(aurora_i18n::tr!("common-save-as")),
                 )
                 .clicked()
@@ -406,7 +406,7 @@ impl Editor {
         let texture = rules::original(&world.inventory, cargo.0)
             .and_then(|id| world.inventory.items.get(&id))
             .filter(|it| is_texture(it));
-        let allowed = ui.is_enabled() && texture.is_some_and(map_source);
+        let allowed = ui.is_enabled() && texture.is_some_and(|it| map_source(&world.inventory, it));
         crate::ui::inventory::drag::feedback(
             ui.ctx(),
             if allowed {
@@ -451,7 +451,11 @@ impl Editor {
                 || asset.is_nil()
                 || crate::scene::avatar::bake_slot_for(&asset).is_some()
                 || [aurora_prim::te::BLANK_TEXTURE, aurora_prim::te::TRANSPARENT_TEXTURE].contains(&asset)
-                || world.inventory.items.values().any(|it| it.asset_id == asset && map_source(it));
+                || world
+                    .inventory
+                    .items
+                    .values()
+                    .any(|it| it.asset_id == asset && map_source(&world.inventory, it));
             if allowed {
                 let mut value = (*self.draft).clone();
                 *map_mut(&mut value, slot) = (!asset.is_nil()).then_some(asset);
@@ -478,15 +482,18 @@ impl Editor {
     }
 }
 pub(super) fn can_edit(world: &World, item: &aurora_net::inventory::InvItem) -> bool {
-    item.owner == world.agent_id && !item.group_owned && item.owner_mask & rules::MODIFY != 0 && !rules::library(&world.inventory, item.id)
+    item.owner == world.agent_id
+        && !item.group_owned
+        && rules::agent_mask(item, world.agent_id) & rules::MODIFY != 0
+        && !rules::library(&world.inventory, item.id)
 }
 fn is_texture(item: &aurora_net::inventory::InvItem) -> bool {
     matches!(item.asset_type, 0 | 15)
 }
 /// LLMaterialEditor::postBuild filters replacement maps by COPY|TRANSFER,
 /// for the picker and for drops alike.
-fn map_source(item: &aurora_net::inventory::InvItem) -> bool {
-    is_texture(item) && item.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER
+fn map_source(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem) -> bool {
+    is_texture(item) && rules::held(inv, item) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER
 }
 fn scalar(ui: &mut egui::Ui, label: &str, value: &mut f32) {
     ui.label(label);
@@ -625,11 +632,11 @@ mod tests {
             ..Default::default()
         };
         let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
-        assert!(map_source(&texture(0, full)));
-        assert!(map_source(&texture(0, rules::COPY | rules::TRANSFER)));
-        assert!(!map_source(&texture(0, rules::COPY | rules::MODIFY)));
-        assert!(!map_source(&texture(0, rules::MODIFY | rules::TRANSFER)));
-        assert!(!map_source(&texture(7, full)));
+        assert!(map_source(&Default::default(), &texture(0, full)));
+        assert!(map_source(&Default::default(), &texture(0, rules::COPY | rules::TRANSFER)));
+        assert!(!map_source(&Default::default(), &texture(0, rules::COPY | rules::MODIFY)));
+        assert!(!map_source(&Default::default(), &texture(0, rules::MODIFY | rules::TRANSFER)));
+        assert!(!map_source(&Default::default(), &texture(7, full)));
     }
     #[test]
     fn a_map_upload_finishing_during_save_is_kept_as_a_new_draft() {
