@@ -168,6 +168,30 @@ pub struct Rejection {
 }
 
 impl Rejection {
+    pub fn from_message(message: &str) -> Self {
+        let message = message
+            .split_whitespace()
+            .map(|word| {
+                let token = word.trim_start_matches(['\'', '"', '(', '[']);
+                if token.contains(":/") || token.contains(":\\") || token.starts_with("\\\\") || token.starts_with('/') {
+                    "…"
+                } else {
+                    word
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(512)
+            .collect::<String>();
+        Self {
+            status: None,
+            identifier: String::new(),
+            messages: (!message.is_empty()).then_some(message).into_iter().collect(),
+        }
+    }
+
     // LLMeshUploadThread::log_upload_error reads error.message, identifier
     // and the per-model errors array. Never propagate the full LLSD response.
     pub(super) fn from_response(status: Option<u16>, value: &Llsd) -> Self {
