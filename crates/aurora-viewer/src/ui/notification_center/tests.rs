@@ -2,6 +2,36 @@ use super::*;
 use crate::world::notifications::Kind;
 use uuid::Uuid;
 
+#[test]
+fn teleport_history_hides_old_destinations_and_actions_under_showloc() {
+    use crate::world::notification_history::{Entry, Follow, Look, Outcome};
+    let original = Entry {
+        time: 0,
+        look: Look::Teleport,
+        title: "Tess offers a teleport".into(),
+        body: "Test Destination (12, 34, 56)".into(),
+        name_links: Vec::new(),
+        outcome: Outcome::Declined,
+        follow: Follow::Place("secondlife://Test%20Destination/12/34/56".into()),
+    };
+    let mut shown = original.clone();
+    hide_teleport_history_location(&mut shown, false);
+    assert_eq!(shown, original);
+    hide_teleport_history_location(&mut shown, true);
+    assert_eq!(shown.body, aurora_i18n::tr!("rlva-hidden-generic"));
+    assert_eq!(shown.follow, Follow::None);
+    assert!(!shown.body.contains("Test Destination"));
+    // Filtering the displayed copy leaves normal history available again
+    // when the restriction is lifted.
+    assert!(original.body.contains("Test Destination"));
+    shown.follow = Follow::Restore;
+    hide_teleport_history_location(&mut shown, true);
+    assert_eq!(shown.follow, Follow::None);
+    shown.follow = Follow::Conversation(Uuid::from_u128(1));
+    hide_teleport_history_location(&mut shown, true);
+    assert_eq!(shown.follow, Follow::Conversation(Uuid::from_u128(1)));
+}
+
 fn info(list: &mut Notifications, title: &str) -> u64 {
     list.push(Kind::Info, title, "", Data::None)
 }
