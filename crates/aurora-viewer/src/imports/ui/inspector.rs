@@ -323,7 +323,7 @@ pub(super) fn show(
                                                                         }
                                                                         let current = Arc::make_mut(animation);
                                                                         header.joints = std::mem::take(&mut current.joints);
-                                                                        if current.base_priority != header.base_priority {
+                                                                        if bvh.is_some() && current.base_priority != header.base_priority {
                                                                             for joint in &mut header.joints {
                                                                                 joint.priority = header.base_priority;
                                                                             }
