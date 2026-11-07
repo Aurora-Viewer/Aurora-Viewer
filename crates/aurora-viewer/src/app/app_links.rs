@@ -125,7 +125,7 @@ impl App {
 
     /// LLAgentHandler::handle, the verbs besides the profile.
     fn run_agent_verb(&mut self, id: Uuid, verb: AgentVerb) {
-        let blocked = self.world.mutes.is_muted_id(&id);
+        let blocked = self.world.object_block_entry(&id).is_some();
         let act = match verb {
             AgentVerb::Im => CtxAction::Im(id),
             AgentVerb::Pay => CtxAction::PayResident(id),

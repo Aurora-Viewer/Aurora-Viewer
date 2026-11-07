@@ -303,6 +303,10 @@ fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, col
         .font(egui::FontId::new(chat_size(ui.ctx(), 13.5), crate::ui::fonts::semibold(ui.ctx())))
         .color(color);
     let r = ui.add(crate::ui::widgets::elided_label(ui, text, max).sense(egui::Sense::click()));
+    if who.object {
+        super::line_object_sender(r, env.p, env.world, line, env.menu);
+        return;
+    }
     if who.avatar.is_nil() {
         return;
     }
@@ -471,6 +475,12 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
         let (glyph, tint) = super::object_row::object_glyph(line, p, crate::ui::colors::sender_color(line));
         paint_icon(ui.painter(), glyph, rect.shrink(9.0), tint);
+        let cube = ui.interact(
+            rect,
+            ui.scope_id().with(("thread_pic", line.time, line.source)),
+            egui::Sense::click(),
+        );
+        super::line_object_sender(cube.on_hover_text(name), p, env.world, line, env.menu);
         return;
     }
     if !who.avatar.is_nil() {
@@ -645,6 +655,9 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, ta
     if !who.avatar.is_nil() {
         crate::ui::menu::separator(ui, p);
         crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, line);
+    } else if let Some(object) = super::line_object(line) {
+        crate::ui::menu::separator(ui, p);
+        super::sender_menu(ui, p, env.world, object, line);
     }
 }
 

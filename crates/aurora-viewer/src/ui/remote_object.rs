@@ -95,7 +95,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
                 close = true;
             }
             // onClickBlock: disabled once the object is blocked
-            let blocked = world.mutes.is_muted_id(&o.id);
+            let blocked = world.object_block_entry(&o.id).is_some();
             if action_button_if(
                 ui,
                 p,

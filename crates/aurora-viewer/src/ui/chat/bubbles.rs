@@ -234,7 +234,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                 )
                 .sense(egui::Sense::click()),
             );
-            if !avatar.is_nil() {
+            if object {
+                super::line_object_sender(r, p, world, line, env.menu);
+            } else if !avatar.is_nil() {
                 line_name_menu(&r, p, world, avatar, line, env.menu);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(aurora_i18n::tr!("common-view-profile"))
@@ -331,7 +333,10 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         if !own && look.tail {
             let pic = egui::Rect::from_min_size(egui::pos2(rect.left() - PIC_GAP - PIC, rect.bottom() - PIC), egui::Vec2::splat(PIC));
             sender_picture(ui, env, line, pic, &name, avatar, object, logged);
-            if !avatar.is_nil() {
+            if object {
+                let cube = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
+                super::line_object_sender(cube.on_hover_text(name.as_str()), p, world, line, env.menu);
+            } else if !avatar.is_nil() {
                 let resp = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
                 line_name_menu(&resp, p, world, avatar, line, env.menu);
                 if resp

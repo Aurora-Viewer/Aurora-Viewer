@@ -477,8 +477,8 @@ impl HistoryUi {
             super::select_lines(ui, &content, &drawn, selection, &copied);
         });
         super::line_menu::show(ui, menu, p, |ui, target| {
-            if let Some(avatar) = target.sender {
-                super::super::context::chat_sender_menu(ui, p, world, avatar, &target.line);
+            if let Some(sender) = target.sender {
+                super::sender_menu(ui, p, world, sender, &target.line);
             }
         });
         debug_assert!(self.lines.len() <= PAGE);
