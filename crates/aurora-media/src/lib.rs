@@ -20,6 +20,7 @@
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project,
 //! originally LGPL 2.1.
 
+mod file_picker;
 pub mod media;
 pub mod message;
 pub mod process;

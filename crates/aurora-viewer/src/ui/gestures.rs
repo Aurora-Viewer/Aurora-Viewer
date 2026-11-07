@@ -133,7 +133,7 @@ impl GesturesUi {
             .filter(|it| it.asset_type == 21 && !rules::library(inv, it.id) && !rules::in_type(inv, it.id, 14))
             .map(|it| it.id)
             .collect();
-        self.catalog.sort_by_cached_key(|id| inv.items[id].name.to_lowercase());
+        self.catalog.sort_by_cached_key(|id| crate::natural_order::key(&inv.items[id].name));
         self.selected.retain(|id| inv.items.contains_key(id));
     }
 }
@@ -434,11 +434,13 @@ impl GesturesUi {
             let it = &inv.items[id];
             let gesture = manager.entries.get(id);
             let primary = match self.sort {
-                1 => gesture.map_or_else(String::new, |e| e.definition.trigger.to_lowercase()),
-                2 => gesture.map_or_else(String::new, |e| keys::shortcut(e.definition.key, e.definition.mask)),
-                _ => it.name.to_lowercase(),
+                1 => gesture.map_or_else(Default::default, |e| crate::natural_order::key(&e.definition.trigger)),
+                2 => gesture.map_or_else(Default::default, |e| {
+                    crate::natural_order::key(&keys::shortcut(e.definition.key, e.definition.mask))
+                }),
+                _ => crate::natural_order::key(&it.name),
             };
-            (primary, it.name.to_lowercase(), *id)
+            (primary, crate::natural_order::key(&it.name), *id)
         });
         if self.descending {
             rows.reverse();
