@@ -13336,3 +13336,14 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+# Object linking: LLSelectMgr::linkObjects
+build-link-error-title = Impossible de lier les objets
+build-link-downloading = Les informations des objets sont en cours de téléchargement. Veuillez patienter puis réessayer.
+build-link-too-many = Impossible de lier { $count } prims. Le maximum est de { $max }.
+build-link-modify = Vous devez avoir le droit de modifier chaque objet à lier.
+build-link-permanent = Un objet permanent de cette sélection ne peut pas être lié depuis une autre région.
+build-link-owners = Les objets à lier doivent avoir le même propriétaire.
+build-link-regions = Les objets à lier doivent se trouver dans la même région.
+build-link-animesh = La sélection dépasse la limite de triangles des objets animés.
+build-link-restricted = Une restriction empêche la liaison de cette sélection.

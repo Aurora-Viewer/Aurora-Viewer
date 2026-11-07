@@ -13313,3 +13313,14 @@ picker-pipette-no-texture = コピー可能なテクスチャがインベント�
 picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
+
+# Object linking: LLSelectMgr::linkObjects
+build-link-error-title = オブジェクトをリンクできません
+build-link-downloading = オブジェクト情報をダウンロード中です。しばらく待ってから再度リンクしてください。
+build-link-too-many = { $count } 個のプリムはリンクできません。上限は { $max } 個です。
+build-link-modify = リンクするすべてのオブジェクトを編集する権限が必要です。
+build-link-permanent = 選択した恒久オブジェクトは別のリージョンからリンクできません。
+build-link-owners = リンクするオブジェクトの所有者は同じである必要があります。
+build-link-regions = リンクするオブジェクトは同じリージョンにある必要があります。
+build-link-animesh = 選択内容はアニメーションオブジェクトの三角形数の上限を超えています。
+build-link-restricted = 制限により、選択したオブジェクトをリンクできません。
