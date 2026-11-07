@@ -197,19 +197,21 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
     let mut events = Vec::new();
     let mut queried = 0u8;
     let mut capped = false;
+    // The window in the query itself: WER files every kind of problem as
+    // 1001, and the newest 1000 of them alone can miss a crash some time ago.
+    let query = event_query(since, until);
     for channel in ["System", "Application"] {
         let result = output_before(
-            std::process::Command::new("wevtutil.exe").args([
+            std::process::Command::new(system_tool("wevtutil.exe")).args([
                 "qe",
                 channel,
-                "/q:*[System[(EventID=4101 or EventID=1001)]]",
+                &query,
                 "/rd:true",
                 "/f:xml",
                 // One root element around the events: without it, two or
                 // more events are not one XML document and none parse.
                 "/e:Events",
-                // Keep enough recent records to cover the recovery window
-                // even on busy systems; the parser filters to the time span.
+                // a cap all the same; the parser keeps the window too
                 "/c:1000",
             ]),
             deadline,
@@ -240,6 +242,38 @@ pub fn collect(dir: &Path, unix: Option<u64>) {
     }
     let status = windows_status(queried, events.len(), capped);
     let _ = std::fs::write(dir.join("os-gpu-events.status"), status);
+}
+
+/// The XPath of the GPU reset events between `since` and `until` (Unix
+/// seconds): Display 4101 (a driver reset, System) and Windows Error
+/// Reporting's 1001 (Application), which `parse_windows_events` narrows to
+/// its LiveKernelEvent reports.
+#[cfg(any(windows, test))]
+fn event_query(since: u64, until: u64) -> String {
+    let time = |unix: u64| {
+        chrono::DateTime::from_timestamp(unix.min(i64::MAX as u64) as i64, 0)
+            .unwrap_or_default()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    };
+    format!(
+        "/q:*[System[(EventID=4101 or EventID=1001) and TimeCreated[@SystemTime>='{}' and @SystemTime<='{}']]]",
+        time(since),
+        time(until)
+    )
+}
+
+/// A tool of Windows' own, by its full path: a bare name is searched in the
+/// viewer's folder before System32.
+#[cfg(windows)]
+fn system_tool(name: &str) -> std::path::PathBuf {
+    windows_root().join("System32").join(name)
+}
+
+#[cfg(windows)]
+fn windows_root() -> std::path::PathBuf {
+    std::env::var_os("SystemRoot")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"))
 }
 
 #[cfg(any(windows, test))]
@@ -303,18 +337,16 @@ fn parse_windows_events(xml: &str, since: u64, until: u64) -> (Vec<String>, bool
                     return Some(format!("Display 4101 at {}", time.to_rfc3339()));
                 }
                 if id == 1001 && provider.to_ascii_lowercase().contains("error reporting") {
-                    let data = || {
-                        event
-                            .descendants()
-                            .filter(|node| node.tag_name().name() == "Data")
-                            .filter_map(|node| node.text())
-                    };
+                    let mut data = event
+                        .descendants()
+                        .filter(|node| node.tag_name().name() == "Data")
+                        .filter_map(|node| node.text());
                     // Windows Error Reporting files every kind of problem as
                     // 1001: only its LiveKernelEvent reports are GPU resets.
-                    if !data().any(|text| text.trim().eq_ignore_ascii_case("LiveKernelEvent")) {
-                        return None;
-                    }
-                    let code = data().find_map(live_kernel_code)?;
+                    // The code is P1, after the event's name: the fields
+                    // before it (the bucket) are numbers of their own.
+                    data.find(|text| text.trim().eq_ignore_ascii_case("LiveKernelEvent"))?;
+                    let code = data.find_map(live_kernel_code)?;
                     return Some(format!("LiveKernelEvent {code} at {}", time.to_rfc3339()));
                 }
                 None
@@ -349,6 +381,24 @@ mod windows_parser_tests {
         assert!(events[0].starts_with("Display 4101 at 2026-11-04T10:00:00"));
         assert!(events[1].starts_with("LiveKernelEvent 141 at 2026-11-04T10:00:01"));
         assert!(events.iter().all(|event| !event.contains("private event contents")));
+    }
+
+    #[test]
+    fn the_event_query_asks_for_the_window_only() {
+        let since = chrono::DateTime::parse_from_rfc3339("2026-11-04T09:58:00Z").unwrap().timestamp() as u64;
+        assert_eq!(
+            super::event_query(since, since + 420),
+            "/q:*[System[(EventID=4101 or EventID=1001) and TimeCreated[@SystemTime>='2026-11-04T09:58:00.000Z' and @SystemTime<='2026-11-04T10:05:00.000Z']]]"
+        );
+    }
+
+    #[test]
+    fn a_live_kernel_event_code_is_read_after_the_event_name() {
+        // a bucket that happens to read 141 is not the code
+        let xml = r#"<Events><Event><System><Provider Name="Windows Error Reporting"/><EventID>1001</EventID><TimeCreated SystemTime="2026-11-04T10:00:01.000Z"/></System><EventData><Data>141</Data><Data>0</Data><Data>LiveKernelEvent</Data><Data>Not available</Data><Data>0</Data><Data>117</Data></EventData></Event></Events>"#;
+        let (events, _) = super::parse_windows_events(xml, 0, i64::MAX as u64);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].starts_with("LiveKernelEvent 117 at "), "{events:?}");
     }
 
     #[test]
@@ -431,7 +481,10 @@ fn windows_graphics_settings(deadline: Instant) -> Vec<String> {
         (r"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers", "HwSchMode"),
         (r"HKLM\SOFTWARE\Microsoft\Windows\Dwm", "OverlayTestMode"),
     ] {
-        let output = output_before(std::process::Command::new("reg.exe").args(["query", key, "/v", name]), deadline);
+        let output = output_before(
+            std::process::Command::new(system_tool("reg.exe")).args(["query", key, "/v", name]),
+            deadline,
+        );
         if let Ok(output) = output
             && output.status.success()
         {
@@ -447,10 +500,7 @@ fn windows_graphics_settings(deadline: Instant) -> Vec<String> {
 
 #[cfg(windows)]
 fn watchdog_dumps(since: u64, until: u64) -> Vec<String> {
-    let root = std::env::var_os("SystemRoot")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"));
-    std::fs::read_dir(root.join("LiveKernelReports").join("WATCHDOG"))
+    std::fs::read_dir(windows_root().join("LiveKernelReports").join("WATCHDOG"))
         .into_iter()
         .flatten()
         .flatten()
@@ -493,11 +543,14 @@ fn parse_dmesg(text: &str, boot: u64, since: u64, until: u64) -> (Vec<String>, b
     }))
 }
 
+/// A kernel line of a GPU driver's: one that names it. "timeout", "reset"
+/// or "fault" alone would take USB, disk and network lines too, and
+/// "default"; the public row counts these lines as GPU records.
 #[cfg(target_os = "linux")]
 fn gpu_kernel_line(line: &str) -> bool {
-    const TERMS: [&str; 8] = ["amdgpu", "radeon", "nouveau", "nvidia", "i915", "timeout", "reset", "fault"];
-    // Short terms only as whole words: "xe" is in "exec", "ring" in "string".
-    const WORDS: [&str; 4] = ["xe", "drm", "gpu", "ring"];
+    const TERMS: [&str; 5] = ["amdgpu", "radeon", "nouveau", "nvidia", "i915"];
+    // Short terms only as whole words: "xe" is in "exec".
+    const WORDS: [&str; 3] = ["xe", "drm", "gpu"];
     let lower = line.to_ascii_lowercase();
     TERMS.iter().any(|term| lower.contains(term)) || lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|word| WORDS.contains(&word))
 }
@@ -511,6 +564,10 @@ mod tests {
         assert!(gpu_kernel_line("xe 0000:03:00.0: [drm] GT0: hang"));
         assert!(gpu_kernel_line("[drm:amdgpu_job_timedout] ring gfx_0.0.0 timeout"));
         assert!(!gpu_kernel_line("audit: exec of /usr/bin/string during boot"));
+        // the words of a GPU reset, from another driver: not counted
+        assert!(!gpu_kernel_line("usb 1-4: reset high-speed USB device number 3 using xhci_hcd"));
+        assert!(!gpu_kernel_line("nvme nvme0: I/O 12 QID 3 timeout, aborting"));
+        assert!(!gpu_kernel_line("cfg80211: loading the default regulatory fault rules"));
     }
 
     #[test]

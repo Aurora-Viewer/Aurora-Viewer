@@ -20,14 +20,14 @@
 //!
 //! OBS Studio's game capture layer (`VK_LAYER_OBS_HOOK`, Wallpaper Engine's
 //! copy declares the same variable) joined the overlays after #2443: its
-//! manifest registers `graphics-hook64.dll` as an implicit layer, which may
-//! load in an application even when OBS is not running. A saved,
-//! build-qualified Windows crash sample recorded this DLL in 35 of 56
-//! device-lost reports and 3 of 29 other crash reports. These are
-//! loaded-module observations in a small crash-only
-//! sample, not proof that the OBS layer was active or caused a loss. OBS's
-//! Window Capture needs no layer and keeps working; a streamer who wants Game
-//! Capture allows the overlays.
+//! manifest registers `graphics-hook64.dll` as an implicit layer, which
+//! loads into Vulkan programs as soon as OBS is installed, running or not.
+//! It was loaded in 61 % of the GPU device-lost reports of 0.8.5 to 0.9.1
+//! (33 of 54) against 10 % of the other crash reports (3 of 30), most of
+//! them hangs the driver reset with the GPU frames well under its time limit
+//! (#2443): modules loaded, in a small sample of crashes, not proof that the
+//! layer was active or caused a loss. OBS's Window Capture needs no layer
+//! and keeps working; a streamer who wants Game Capture allows the overlays.
 //!
 //! Kept in any case during normal startup: ReShade's layer (installed on
 //! purpose for a program), and the GPU drivers' own layers
