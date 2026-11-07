@@ -167,6 +167,9 @@ struct Sim {
     link_up: bool,
     /// When the seed capability was last asked for (timelines).
     caps_asked_at: Option<Instant>,
+    /// The interest list mode this region was last told
+    /// (LLViewerRegion::mInterestListMode): the same one is not posted again.
+    interest_list: InterestListMode,
 }
 
 impl Sim {
@@ -198,6 +201,7 @@ impl Sim {
             decode_failures: 0,
             link_up: false,
             caps_asked_at: None,
+            interest_list: InterestListMode::Default,
         }
     }
 }
@@ -3447,12 +3451,19 @@ impl Session<'_> {
     }
 
     /// LLViewerRegion::setInterestListMode: the mode posted to one region's
-    /// InterestList capability (nothing without the capability); the reply
-    /// only logged.
-    fn post_interest_list(&self, addr: SocketAddr) {
-        let Some(sim) = self.sims.get(&addr) else { return };
-        let Some(url) = sim.caps.get("InterestList").cloned() else { return };
+    /// InterestList capability, `{"mode": "360" | "default"}` (nothing
+    /// without the capability, nothing to a region already in that mode);
+    /// the reply only logged.
+    fn post_interest_list(&mut self, addr: SocketAddr) {
         let mode = self.interest_list;
+        let Some(sim) = self.sims.get_mut(&addr) else { return };
+        // (a region whose capabilities have not come is left for their
+        // arrival, as LLAgent::changeInterestListMode skips it)
+        let Some(url) = sim.caps.get("InterestList").cloned() else { return };
+        if sim.interest_list == mode {
+            return;
+        }
+        sim.interest_list = mode;
         let handle = sim.handle;
         let body = caps::interest_list_body(mode);
         let http = self.sh.caps_http.clone();
