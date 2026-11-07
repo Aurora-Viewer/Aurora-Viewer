@@ -173,7 +173,7 @@ fn collada_skin_libraries_load_without_scene_instances_and_do_not_duplicate_expl
 #[test]
 fn collada_duplicate_controller_ids_require_equivalent_definitions() {
     let skeleton = crate::Skeleton::parse(include_bytes!("../../../aurora-viewer/assets/character/avatar_skeleton.xml")).expect("skeleton");
-    let document_same_controller = collada_objects(
+    let document_identical_controller = collada_objects(
         r##"<node id="mPelvis" type="JOINT"/>
         <node name="first"><instance_controller url="#a-skin"/></node>
         <node name="second"><instance_controller url="#a-skin"/></node>"##,
@@ -182,7 +182,7 @@ fn collada_duplicate_controller_ids_require_equivalent_definitions() {
         false,
     );
 
-    assert!(collada::parse(document_same_controller.as_bytes(), &skeleton).is_ok());
+    assert!(collada::parse(document_identical_controller.as_bytes(), &skeleton).is_ok());
 
     let document_different_controller = collada_objects(
         r##"<node id="mPelvis" type="JOINT"/>
@@ -193,7 +193,14 @@ fn collada_duplicate_controller_ids_require_equivalent_definitions() {
         true,
     );
 
-    assert!(collada::parse(document_different_controller.as_bytes(), &skeleton).is_err());
+    let error = collada::parse(document_different_controller.as_bytes(), &skeleton)
+        .expect_err("conflicting duplicate controller definitions must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate Collada ID for non-equivalent elements: a-skin"),
+        "unexpected error: {error}"
+    );
 }
 
 fn cube() -> Model {
