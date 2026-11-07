@@ -365,6 +365,40 @@ mod tests {
     }
 
     #[test]
+    fn failed_object_sit_does_not_return_after_a_later_ground_sit() {
+        let mut w = world();
+        restrict(&mut w, A, "standtp=n");
+        let request = NetCommand::RequestSit {
+            handle: w.main_region.unwrap(),
+            target: CHILD,
+            offset: glam::Vec3::ZERO,
+        };
+        assert!(w.rlva_allows_command(&request, Uuid::nil()));
+        w.rlva_note_sit_command(&request, Uuid::nil());
+        // The simulator never seats us. A later ground sit must not confirm
+        // this failed object's pending origin.
+        w.rlva_update_stand();
+        w.agent.position += glam::Vec3::new(10.0, 0.0, 0.0);
+        let ground = NetCommand::OneShotControl(control::SIT_ON_GROUND);
+        assert!(w.rlva_allows_command(&ground, Uuid::nil()));
+        w.rlva_note_sit_command(&ground, Uuid::nil());
+        w.agent.ground_sit = true;
+        w.rlva_update_stand();
+        w.agent.ground_sit = false;
+        w.rlva_update_stand();
+        assert!(w.rlva.stand_return.is_none(), "a ground sit must not use a failed object's origin");
+        assert!(w.rlva.stand_origin.is_none(), "discard the stale pending origin");
+
+        let fresh = (w.main_region.unwrap(), w.agent.position);
+        w.rlva_note_sit_command(&request, Uuid::nil());
+        seated(&mut w, true);
+        w.rlva_update_stand();
+        seated(&mut w, false);
+        w.rlva_update_stand();
+        assert_eq!(w.rlva.stand_return, Some(fresh), "the next object sit uses its own origin");
+    }
+
+    #[test]
     fn standtp_added_after_sitting_does_not_invent_an_origin() {
         let mut w = world();
         seated(&mut w, true);
