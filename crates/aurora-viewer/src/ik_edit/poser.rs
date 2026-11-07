@@ -103,6 +103,10 @@ pub(super) struct State {
     /// A joint, shaft or gizmo handle was under the pointer, or dragged, in
     /// the last frame: the next press is the poser's, not a HUD's.
     pointer_owned: bool,
+    /// A newly selected pose joint asks the app to frame it once. Camera
+    /// ownership stays with App, which applies the user's preference.
+    focus_requested: Option<(usize, crate::camera::AutoCameraMove)>,
+    open_frame_pending: bool,
     /// The joints edited over every subject, counted as the window shows:
     /// what a close that stops the pose would lose.
     edited_total: usize,
@@ -137,6 +141,13 @@ pub(super) fn group(name: &str) -> usize {
     }
 }
 impl Editor {
+    pub fn take_poser_focus_request(&mut self) -> Option<(usize, crate::camera::AutoCameraMove)> {
+        self.poser.focus_requested.take()
+    }
+    pub fn take_poser_focus(&mut self, world: &World) -> Option<(Vec3, crate::camera::AutoCameraMove)> {
+        let (bone, cause) = self.take_poser_focus_request()?;
+        Some((self.editor_frame(world)?.joints.get(bone)?.w_axis.truncate(), cause))
+    }
     pub(super) fn poser_edited(&self, bone: usize) -> bool {
         self.poser.active && self.poser.sessions.get(&self.poser.subject).is_some_and(|s| s.edited(bone))
     }
@@ -205,6 +216,7 @@ impl Editor {
             ignore_script_ik: true,
             poser: State {
                 active: true,
+                open_frame_pending: true,
                 name: aurora_i18n::tr!("poser-new-name").to_string(),
                 priority: 4,
                 ..Default::default()
