@@ -576,6 +576,16 @@ pub struct Notifications {
 const MAX: usize = 100;
 
 impl Notifications {
+    /// Refresh an active notification's presentation, including the entry
+    /// snapshot used if it departs before the next history tick.
+    pub fn update_body(&mut self, id: u64, body: String) {
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.body.clone_from(&body);
+        }
+        if let Some((_, entry)) = self.seen.iter_mut().find(|(seen, _)| *seen == id) {
+            entry.body = body;
+        }
+    }
     /// The id of the last notification pushed (0 before the first).
     pub fn last_id(&self) -> u64 {
         self.next
