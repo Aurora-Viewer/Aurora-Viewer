@@ -1086,6 +1086,12 @@ pub struct PreviewSource {
 }
 pub type PreviewRevision = (usize, Option<u8>, Option<(u32, u32)>, bool);
 
+fn legacy_bump_diagnostics() -> bool {
+    static ENABLED: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("AURORA_DEBUG_LEGACY_BUMP").is_ok_and(|v| v == "1"));
+    *ENABLED
+}
+
 /// Worker result payload, separated from `JobResult` for main-thread upload.
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct LegacyBumpKey {
@@ -1179,8 +1185,11 @@ impl PreviewSource {
     /// Standard bump presets use the last component of the source asset as
     /// height. The ordinary RGBA conversion fills alpha with 255 for one- and
     /// three-component textures, so decode this worker-only source separately.
-    pub fn standard_bump_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+    pub fn standard_bump_image(self, id: Uuid, mode: u8) -> Option<Arc<aurora_render::preview::Image>> {
         if self.local.is_some() || self.procedural {
+            if legacy_bump_diagnostics() {
+                log::info!("legacy bump source: mode={mode} local image");
+            }
             return self.inspector_image(id);
         }
         if let Some(discard) = self.decoded {
@@ -1196,6 +1205,14 @@ impl PreviewSource {
                 && let Ok(pixels) = aurora_assets::decode_j2k(&bytes, discard)
                 && let Some(rgba) = standard_bump_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize)
             {
+                if legacy_bump_diagnostics() {
+                    log::info!(
+                        "legacy bump source: mode={mode} j2k components={} size={}x{}",
+                        pixels.components,
+                        pixels.width,
+                        pixels.height
+                    );
+                }
                 return Some(Arc::new(aurora_render::preview::Image {
                     size: [pixels.width, pixels.height],
                     rgba: rgba.into(),
@@ -1208,6 +1225,14 @@ impl PreviewSource {
             return None;
         };
         let (width, height, blocks) = cached.levels.first()?;
+        if legacy_bump_diagnostics() {
+            log::info!(
+                "legacy bump source: mode={mode} cache components={} size={}x{}",
+                cached.info.components,
+                width,
+                height
+            );
+        }
         let mut rgba = aurora_render::bc7::decode_level(blocks, *width, *height)?;
         let channel = match cached.info.components {
             1 => 0,
@@ -1326,7 +1351,14 @@ impl TextureStreamer {
         if !(1..=17).contains(&mode) {
             return None;
         }
-        self.legacy_bump_wanted.insert((source_id, mode));
+        if self.legacy_bump_wanted.insert((source_id, mode)) && mode >= 3 && legacy_bump_diagnostics() {
+            log::info!(
+                "legacy bump requested: mode={mode} decoded={:?} size={:?} bytes={}",
+                source.decoded,
+                source.size,
+                source.bytes.len()
+            );
+        }
         self.schedule_legacy_bump(source_id, mode, source, jobs)
     }
 
@@ -1353,7 +1385,7 @@ impl TextureStreamer {
         log::debug!("legacy bump normal queued: mode={mode} source={source_id} revision={revision:?} generated={generated_id}");
         jobs.spawn(move || {
             let image = (if mode >= 3 {
-                source.standard_bump_image(source_id)
+                source.standard_bump_image(source_id, mode)
             } else {
                 source.inspector_image(source_id)
             })
@@ -1389,6 +1421,9 @@ impl TextureStreamer {
         }
         let Some(image) = image else {
             self.legacy_bump_failed.insert(key);
+            if mode >= 3 && legacy_bump_diagnostics() {
+                log::info!("legacy bump generation failed: mode={mode} revision={revision:?}");
+            }
             log::debug!("legacy bump normal failed: mode={mode} source={source_id} revision={revision:?} generated={generated_id}");
             return None;
         };
@@ -1408,6 +1443,9 @@ impl TextureStreamer {
             })
             .collect();
         let slot = renderer.create_texture(&mips)?;
+        if mode >= 3 && legacy_bump_diagnostics() {
+            log::info!("legacy bump generated: mode={mode} size={width}x{height} slot={slot}");
+        }
         self.register_local_image(generated_id, slot, alpha, has_alpha);
         // A generated image replaces the face's prior normal source, so the
         // scene must rebuild its material lists even when alpha stayed opaque.
@@ -1757,6 +1795,9 @@ impl TextureStreamer {
             && let Some(slot) = self.local_slots.get(&id).copied()
         {
             if let Some(generated) = self.legacy_bump_slots.get_mut(&id) {
+                if generated.refs == 0 && generated.key.mode >= 3 && legacy_bump_diagnostics() {
+                    log::info!("legacy bump bound: mode={} slot={slot}", generated.key.mode);
+                }
                 generated.refs = generated.refs.saturating_add(1);
             }
             return slot;
@@ -4077,7 +4118,7 @@ mod tests {
             size: Some((64, 64)),
             procedural: false,
         };
-        let image = source.standard_bump_image(Uuid::new_v4()).expect("preset source");
+        let image = source.standard_bump_image(Uuid::new_v4(), 9).expect("preset source");
         assert_eq!(image.size, [64, 64]);
         for (source, pixel) in source_pixels.as_chunks::<3>().0.iter().zip(image.rgba.as_chunks::<4>().0) {
             assert_eq!(pixel[3], source[2]);

@@ -99,7 +99,11 @@ pub fn normal_from_height_scaled(width: usize, height: usize, heights: &[u8], sc
             let encoded = (normal * 0.5 + Vec3::splat(0.5)) * 255.0;
             out.push([
                 encoded.x.round() as u8,
-                encoded.y.round() as u8,
+                // Our JPEG 2000 rows are top-down. The Legacy Viewer builds
+                // these normals from bottom-up raw rows, while both shaders
+                // use the face's +T bitangent. Reverse only the generated
+                // green channel to keep the same relief orientation.
+                255 - encoded.y.round() as u8,
                 encoded.z.round() as u8,
                 heights[y * width + x],
             ]);
@@ -143,7 +147,10 @@ mod tests {
     #[test]
     fn flat_and_periodic_heightfields_produce_finite_upward_normals() {
         let flat = normal_from_height(2, 2, &[100; 4], 64.0).unwrap();
-        assert!(flat.iter().all(|p| *p == [127, 127, 255, 100] || *p == [128, 128, 255, 100]));
+        assert!(
+            flat.iter()
+                .all(|p| (127..=128).contains(&p[0]) && (127..=128).contains(&p[1]) && p[2] == 255 && p[3] == 100)
+        );
         let periodic = normal_from_height(2, 2, &[0, 255, 255, 0], 64.0).unwrap();
         assert_eq!(periodic.len(), 4);
         assert!(periodic.iter().all(|p| p[2] > 127));
@@ -156,6 +163,14 @@ mod tests {
         assert_ne!(image[1][0], 127);
         // At x=0, the left neighbor is x=2 due to wrapped sampling.
         assert_ne!(image[0][0], image[1][0]);
+    }
+
+    #[test]
+    fn top_down_vertical_height_ramp_has_bottom_up_legacy_green_orientation() {
+        let heights = [0, 0, 0, 100, 100, 100, 200, 200, 200];
+        let image = normal_from_height(3, 3, &heights, 64.0).unwrap();
+        assert!(image[4][1] > 128, "the middle row's height increases toward the image bottom");
+        assert!(image[4][2] > 128);
     }
 
     #[test]

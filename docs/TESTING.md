@@ -4494,6 +4494,9 @@ both open states and the selection count. Capture at frame 620.
   revisiting a face should reuse its cached map. Legacy Viewer references:
   `LLDrawPoolBump::bindBumpMap`, `std_bump.ini`,
   `LLBumpImageList::generateNormalMapFromAlpha` and `normgenF.glsl`.
+  For grid diagnosis, `AURORA_DEBUG_LEGACY_BUMP=1` logs standard preset
+  requests, source component counts, generated texture sizes and first binds
+  by bump code. It does not log asset URLs or locations.
 - **`AURORA_DEMO_RIGGED_PROP=1`**: a five-link chain modelled down the
   back of the default skeleton, bound to the chest, and encoded as an
   upload does it (vertices normalized, the bind shape bringing them back
