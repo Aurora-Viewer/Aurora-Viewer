@@ -73,9 +73,10 @@ impl World {
     /// objects (LLMute::LLMute, get_object_to_mute_from_id in
     /// indra/newview/llmutelist.cpp, originally LGPL 2.1): a script says
     /// things from the prim it sits in, often a child, chiefly in a worn
-    /// object. Aurora difference: the walk stops under an avatar on every
-    /// worn object, where the Legacy Viewer stops only under our own and
-    /// turns a block of someone's attachment into a block of its wearer.
+    /// object. Aurora difference: the Legacy Viewer goes up one level, so a
+    /// block taken on a child prim lands on the root there too, but one
+    /// taken on the root prim of someone's attachment lands on its wearer.
+    /// Here it stays on the attachment, like on ours.
     pub fn object_block_root(&self, id: &Uuid) -> Uuid {
         let mut root = *id;
         let mut idx = self.objects.index_of_uuid(id);
@@ -105,6 +106,9 @@ impl World {
     /// The block entry that covers an object: its own id (a block taken
     /// while it was out of the scene) or its root.
     pub fn object_block_entry(&self, id: &Uuid) -> Option<Uuid> {
+        if self.mutes.len() == 0 {
+            return None;
+        }
         [*id, self.object_block_root(id)].into_iter().find(|i| self.mutes.is_muted_id(i))
     }
 
@@ -229,15 +233,18 @@ impl World {
         self.groups.out.push(cmd);
         if flags == 0 || flags & flag::TEXT_CHAT != 0 {
             // LLNotifications::cancelByOwner (agents), scripts of the object
-            self.notifications.list.retain(|n| match &n.data {
+            // and of the other prims of its linkset
+            let mut list = std::mem::take(&mut self.notifications.list);
+            list.retain(|n| match &n.data {
                 Data::Lure { from, .. }
                 | Data::TeleportRequest { from, .. }
                 | Data::Inventory { from, .. }
                 | Data::RlvaQuery { from, .. } => *from != id,
-                Data::Dialog { object, .. } | Data::TextBox { object, .. } => *object != id,
-                Data::Permissions { task, .. } => *task != id,
+                Data::Dialog { object, .. } | Data::TextBox { object, .. } => *object != id && self.object_block_root(object) != id,
+                Data::Permissions { task, .. } => *task != id && self.object_block_root(task) != id,
                 _ => true,
             });
+            self.notifications.list = list;
             self.close_orphan_inventory_offers();
         }
         if self.groups.report_blocks {
@@ -438,6 +445,73 @@ mod tests {
         w.toggle_block_object(child, "Worn Thing").expect("unblocked");
         assert!(w.mutes.get(&root).is_none());
         assert!(!w.chat_blocked(&said_by(child, w.agent_id)));
+    }
+
+    fn question(task: Uuid) -> aurora_net::NetEvent {
+        aurora_net::NetEvent::ScriptQuestion {
+            task_id: task,
+            item_id: Uuid::from_u128(0x17e),
+            object_name: "Worn Thing".into(),
+            owner_name: "Someone".into(),
+            questions: 4,
+            experience: Uuid::nil(),
+            region: 0,
+        }
+    }
+
+    fn dialog(object: Uuid) -> aurora_net::NetEvent {
+        aurora_net::NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object_id: object,
+            object_name: "Worn Thing".into(),
+            owner_name: "Someone".into(),
+            owner_id: Uuid::nil(),
+            message: "Choose".into(),
+            channel: -42,
+            buttons: vec!["Yes".into()],
+        }
+    }
+
+    fn asks(w: &World, prim: Uuid) -> bool {
+        w.notifications.list.iter().any(|n| match &n.data {
+            Data::Permissions { task, .. } => *task == prim,
+            Data::Dialog { object, .. } => *object == prim,
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn a_blocked_linkset_asks_nothing_from_a_child_prim() {
+        let (mut w, child, root) = worn_world();
+        w.block(root, "Worn Thing", MuteType::Object).expect("blocked");
+        w.apply(question(child));
+        assert!(!asks(&w, child), "process_script_question: isMuted looks at the parent");
+    }
+
+    #[test]
+    fn blocking_a_linkset_closes_what_its_child_prims_asked() {
+        for event in [question as fn(Uuid) -> aurora_net::NetEvent, dialog] {
+            let (mut w, child, _) = worn_world();
+            w.apply(event(child));
+            assert!(asks(&w, child), "the question is open");
+            w.toggle_block_object(child, "Worn Thing").expect("blocked");
+            assert!(!asks(&w, child), "and goes with the block");
+        }
+    }
+
+    #[test]
+    fn a_blocked_linkset_preloads_nothing_from_a_child_prim() {
+        let (mut w, child, root) = worn_world();
+        let preload = || {
+            aurora_net::NetEvent::PreloadSounds(vec![aurora_net::SoundPreload {
+                sound: Uuid::from_u128(0x50),
+                object: child,
+                owner: Uuid::from_u128(0x0e),
+            }])
+        };
+        assert!(w.apply(preload()).is_some());
+        w.block(root, "Worn Thing", MuteType::Object).expect("blocked");
+        assert!(w.apply(preload()).is_none());
     }
 
     #[test]

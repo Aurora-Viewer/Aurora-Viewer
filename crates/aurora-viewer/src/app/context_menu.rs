@@ -280,7 +280,7 @@ impl App {
         f.edit = crate::build::selectable(w, idx);
         f.id = o.full_id;
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
-        f.blocked = w.object_block_entry(&root_id).is_some();
+        f.blocked = w.object_block_entry(&o.full_id).is_some();
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
         if let Some(root) = w.hud_root(idx).and_then(|i| w.objects.get(i)) {
             f.local_hud_scale = Some(w.hud_scales.scale(root.full_id));
