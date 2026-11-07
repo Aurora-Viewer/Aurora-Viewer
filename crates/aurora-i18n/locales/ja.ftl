@@ -13313,3 +13313,27 @@ picker-pipette-no-texture = コピー可能なテクスチャがインベント�
 picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
+
+wearable-favorites-all = 全てのお気に入り
+wearable-favorites-empty = 装着可能な着用物やＨＵＤをドラッグしてリストに追加します。
+wearable-favorites-no-match = アイテムが見つかりませんでした。
+wearable-favorites-filter = フィルタ
+wearable-favorites-new-folder-tip = 新しいお気に入りフォルダを作成
+wearable-favorites-rename-folder-tip = 選択したお気に入りフォルダの名前を変更
+wearable-favorites-delete-folder-tip = 選択したお気に入りフォルダを削除
+wearable-favorites-options-tip = お気に入りのオプション
+wearable-favorites-remove-tip = お気に入りをリストから削除
+wearable-favorites-sort-name = 名前で並べ替え
+wearable-favorites-sort-recent = 新しい順に並べ替え
+wearable-favorites-sort-type = 種類で並べ替え
+wearable-favorites-assign = フォルダに割り当て
+wearable-favorites-new-folder-prompt = 新しいお気に入りの着用物のフォルダ名を入力してください：
+wearable-favorites-new-folder-default = 新しいフォルダ
+wearable-favorites-rename-prompt = お気に入りの着用物のフォルダ「{ $name }」の新しい名前を入力してください：
+wearable-favorites-delete-confirm =
+    お気に入りの着用物のフォルダ「{ $name }」を削除してもよろしいですか？
+
+    フォルダとその中のお気に入りリンクのみが削除されます。元のインベントリアイテムは削除されません。
+wearable-favorites-invalid-name =
+    お気に入りの着用物のフォルダ「{ $name }」を作成できませんでした。
+    フォルダ名に「/」または「\」を含めることはできません。

@@ -13336,3 +13336,27 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+wearable-favorites-all = Tous les favoris
+wearable-favorites-empty = Faites glisser les objets ici pour les ajouter à la liste.
+wearable-favorites-no-match = Aucun élément ne correspond.
+wearable-favorites-filter = Filtrer les objets
+wearable-favorites-new-folder-tip = Créer un nouveau dossier de favoris
+wearable-favorites-rename-folder-tip = Renommer le dossier de favoris sélectionné
+wearable-favorites-delete-folder-tip = Supprimer le dossier de favoris sélectionné
+wearable-favorites-options-tip = Options des vêtements préférés
+wearable-favorites-remove-tip = Retirer de la liste des vêtements préférés
+wearable-favorites-sort-name = Trier par nom
+wearable-favorites-sort-recent = Trier par date
+wearable-favorites-sort-type = Trier par type
+wearable-favorites-assign = Assigner au dossier
+wearable-favorites-new-folder-prompt = Saisissez un nom pour le nouveau dossier des vêtements préférés :
+wearable-favorites-new-folder-default = Nouveau dossier
+wearable-favorites-rename-prompt = Saisissez un nouveau nom pour le dossier des vêtements préférés { $name } :
+wearable-favorites-delete-confirm =
+    Supprimer le dossier des vêtements préférés « { $name } » ?
+
+    Seuls le dossier et ses liens sont supprimés. Les éléments d’origine de l’inventaire ne sont pas supprimés.
+wearable-favorites-invalid-name =
+    Impossible de créer le dossier des vêtements préférés « { $name } ».
+    Les noms de dossier ne peuvent pas contenir / ou \.
