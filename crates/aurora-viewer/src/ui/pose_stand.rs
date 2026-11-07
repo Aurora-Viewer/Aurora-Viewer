@@ -41,7 +41,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, open: &mut bool, current: Option<U
             let shown = current.and_then(|id| poses.iter().find(|p| p.id == id)).map_or("", |p| p.label());
             egui::ComboBox::from_id_salt("pose_stand_pose")
                 .selected_text(shown)
-                .width((ui.available_width() - 48.0).max(120.0))
+                // the Legacy combo's width; following the window's would
+                // let a fixed window grow with its content
+                .width(240.0)
                 .show_ui(ui, |ui| {
                     for pose in &poses {
                         if ui.selectable_label(current == Some(pose.id), pose.label()).clicked() {
