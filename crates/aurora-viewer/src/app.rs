@@ -13698,9 +13698,7 @@ impl App {
                     return;
                 }
                 // as the camera controls' presets (LLFloaterCamera::switchToPreset)
-                self.settings.camera.apply_preset(preset);
-                self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
-                self.settings.save();
+                self.switch_camera_view(preset);
             }
             BarAction::GraphicsPreferences => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);

@@ -1096,6 +1096,9 @@ pub struct Settings {
     /// presets) or the viewfinder (`camera::presets`); kept apart from
     /// `camera`, which "Reset" sets back.
     pub camera_shots: Vec<crate::camera::CameraShot>,
+    /// The user's own Rear, Front, Side and Shoulder views (`camera::SavedViews`,
+    /// issue #2755), kept by "Reset" like `camera_shots`.
+    pub camera_views: crate::camera::SavedViews,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -2021,6 +2024,7 @@ impl Default for Settings {
             interface_colors: Default::default(),
             classic_controls: false,
             camera_shots: Vec::new(),
+            camera_views: Default::default(),
             plates_friends_only_full: false,
             plates_friend_tint: true,
             plates_hover_expand: true,
@@ -2503,6 +2507,7 @@ impl Settings {
         self.ground_feet_max_avatars = self.ground_feet_max_avatars.min(MAX_GROUND_FEET_AVATARS);
         self.camera = std::mem::take(&mut self.camera).sanitized();
         crate::camera::presets::sanitize(&mut self.camera_shots);
+        self.camera_views.sanitize();
         if self.settings_version < 5 {
             // new defaults: no vsync, no frame cap (the old "0 = screen rate,
             // 1 = unlimited" setting becomes a switch + value)
