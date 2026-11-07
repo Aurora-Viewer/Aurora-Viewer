@@ -842,6 +842,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
+| `AURORA_DEMO_TP_CAM=alt\|alt-off` | The camera on a point before the demo teleport, "Return after a teleport in the region" on or off |
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
@@ -1205,6 +1206,16 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.
+- **`AURORA_DEMO_TP_CAM`** (issue #2828): with `AURORA_DEMO_TP`, the camera
+  is put on a point 8 m ahead just before the teleport, as with Alt and a
+  click. `alt` keeps Preferences › Camera › "Return after a teleport in the
+  region" on, `alt-off` turns it off for that teleport only (never saved).
+  The log gives `camera: teleport arrival (inside the region true, return
+  after teleport …), on the avatar …`. Inside the region, `alt-off` leaves
+  the view where it was (on the avatar `false`) while `alt` brings it back
+  behind the avatar (`true`); with `remote` both come back, like the
+  Legacy Viewer. Capture at frame 400 (`AURORA_DEMO_TP="60,60,30"`) to see
+  it.
 - **`AURORA_TP_SCREEN`**: `legacy` brings back the teleport screen of
   before 2026-10-17 (0.8 s at least after the arrival, then a bar easing at
   2.6 per second up to 98.5 %), `alt` uses it every other teleport, starting

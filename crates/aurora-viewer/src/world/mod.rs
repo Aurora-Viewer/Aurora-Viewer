@@ -637,6 +637,12 @@ pub struct World {
     crossing: bool,
     /// The last arrival was a border crossing: the agent was not placed.
     pub arrived_by_crossing: bool,
+    /// A TeleportLocal waits for its arrival (process_teleport_local).
+    local_teleport: bool,
+    /// The last arrival ended a teleport inside the region (TeleportLocal,
+    /// not TeleportFinish): the camera may stay where it is
+    /// (`Camera::on_teleport_arrival`).
+    pub arrived_by_local_teleport: bool,
     /// Inventory folders asked again after a failed fetch since the agent
     /// last changed region (`InventoryFetchFailed`).
     inventory_retried: HashSet<Uuid>,
@@ -884,6 +890,8 @@ impl World {
             home_grid: None,
             crossing: false,
             arrived_by_crossing: false,
+            local_teleport: false,
+            arrived_by_local_teleport: false,
             inventory_retried: HashSet::new(),
             origin_shift: Vec3::ZERO,
             left_behind_since: None,
@@ -2686,6 +2694,7 @@ impl World {
                 }
                 self.crossing = false;
                 self.arrived_by_crossing = crossed && self.agent.position.distance(position) < CROSSING_MAX_GAP;
+                self.arrived_by_local_teleport = std::mem::take(&mut self.local_teleport) && !self.arrived_by_crossing;
                 if !self.arrived_by_crossing {
                     self.agent.position = position;
                     self.agent.set_look_at(look_at);
@@ -3116,6 +3125,9 @@ impl World {
                     self.ui_sounds.push(UiSound::TeleportOut);
                 }
                 self.tp_show_progress = remote;
+                // TeleportFinish: the arrival is TELEPORT_START_ARRIVAL's,
+                // whatever a stale TeleportLocal said
+                self.local_teleport = false;
                 self.tp_progress = self.tp_progress.max(0.5);
                 self.tp_status = aurora_i18n::tr!("common-connecting-to-region").into();
                 // Legacy Viewer process_teleport_finish: apply both states,
@@ -3135,6 +3147,7 @@ impl World {
                 // AgentMovementComplete must record the arrival in history.
                 self.teleporting = true;
                 self.tp_show_progress = false;
+                self.local_teleport = true;
                 // A friend hop preserves existing flight here, but defers
                 // taking off (even if flagged by the server) until its
                 // arrival position has been applied.
@@ -6873,6 +6886,14 @@ mod motion_tests {
         assert!(!world.teleporting && !world.tp_show_progress);
         assert_eq!(world.tp_history.previous().expect("previous arrival").position, previous);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+        // the camera may stay where it is (issue #2828), for this arrival only
+        assert!(world.arrived_by_local_teleport);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(61.0, 70.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(!world.arrived_by_local_teleport);
     }
 
     #[test]
@@ -6901,6 +6922,7 @@ mod motion_tests {
         assert!(!world.teleporting && world.tp_show_progress);
         assert_eq!(world.main_region, Some(destination));
         assert!(world.parcel_name.is_empty());
+        assert!(!world.arrived_by_local_teleport, "another region: the camera comes back");
     }
 
     #[test]
