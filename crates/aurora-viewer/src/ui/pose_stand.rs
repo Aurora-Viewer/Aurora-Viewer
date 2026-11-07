@@ -53,7 +53,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, open: &mut bool, current: Option<U
                 });
             let tip = aurora_i18n::tr!("pose-stand-lock");
             let mut on = lock;
-            if widgets::checkbox(ui, p, &mut on, "").on_hover_text(tip).changed() {
+            let check = widgets::checkbox(ui, p, &mut on, "");
+            // no visible label (the lock icon stands for it): screen readers get the text
+            check.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, tip));
+            if check.on_hover_text(tip).changed() {
                 action = Some(Action::Lock(on));
             }
             let (rect, resp) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());

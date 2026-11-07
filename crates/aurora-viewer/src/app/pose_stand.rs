@@ -28,6 +28,10 @@ impl App {
             None => {}
         }
         self.sync_pose_stand();
+        let effects = self
+            .pose_stand
+            .late_release(self.world.agent.is_sitting(), std::time::Instant::now());
+        self.apply_pose_stand(effects);
     }
 
     /// onCommitCombo: the pose kept for the next opening, then played.

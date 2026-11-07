@@ -2962,6 +2962,10 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        // FSFloaterPoseStand::onClose for the departing account: its AO back on
+        // before the settings are saved and the account state replaced
+        self.close_pose_stand();
+        self.panels.pose_stand = false;
         // the login screen and Preferences say "L$" again, not the last grid's money
         aurora_i18n::set_currency("");
         // Capture the layout before replacing account-specific UI state.

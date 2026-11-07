@@ -10,7 +10,12 @@
 //! `app/pose_stand.rs` carries out the [`Effect`]s in their order.
 
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
+
+/// How long a closed stand waits for a ground-sit that was asked and not yet
+/// confirmed, to stand up again.
+const RELEASE_WAIT: Duration = Duration::from_secs(10);
 
 /// FSPoseStandLock (off) and FSPoseStandLastSelectedPose (empty), both
 /// saved across sessions.
@@ -121,9 +126,41 @@ pub struct Stand {
     locked: bool,
     /// mAOPaused: the opening turned the AO off.
     ao_paused: bool,
+    /// The window closed before the ground-sit it asked for was confirmed:
+    /// stand up as soon as we sit, until this time.
+    release_until: Option<Instant>,
+    /// The server seated us since the lock asked (seen by `late_release`).
+    sit_confirmed: bool,
 }
 
 impl Stand {
+    /// The lock holds the avatar on the ground: other features must not
+    /// stand it up meanwhile (the stand reconciles on closing).
+    pub fn holds_avatar(&self) -> bool {
+        self.open && self.locked
+    }
+
+    /// Each frame after a closing: the ground-sit asked by the lock may be
+    /// confirmed after the window closed (`close` found us still standing).
+    /// Stand up then, so that the lock does not outlive the stand.
+    pub fn late_release(&mut self, sitting: bool, now: Instant) -> Vec<Effect> {
+        if self.locked && sitting {
+            self.sit_confirmed = true;
+        }
+        let Some(until) = self.release_until else {
+            return Vec::new();
+        };
+        if self.open || now >= until {
+            self.release_until = None;
+            return Vec::new();
+        }
+        if sitting {
+            self.release_until = None;
+            return vec![Effect::StandUp];
+        }
+        Vec::new()
+    }
+
     /// The pose playing.
     pub fn current(&self) -> Option<Uuid> {
         self.current
@@ -134,6 +171,7 @@ impl Stand {
     pub fn open(&mut self, facts: Facts, settings: &Settings) -> Vec<Effect> {
         let mut out = Vec::new();
         self.open = true;
+        self.release_until = None;
         // set at each opening: the Legacy Viewer keeps an old mAOPaused when
         // the AO was turned on again meanwhile, and a later closing could
         // then turn on an AO that was off when the stand opened
@@ -165,6 +203,7 @@ impl Stand {
     /// noted as asked even when RLVa refuses the move, as there.
     fn set_lock(&mut self, on: bool) -> Vec<Effect> {
         self.locked = on;
+        self.sit_confirmed = false;
         vec![if on { Effect::SitOnGround } else { Effect::StandUp }]
     }
 
@@ -185,6 +224,10 @@ impl Stand {
         self.open = false;
         if self.locked && sitting {
             out.extend(self.set_lock(false));
+        } else if self.locked && !self.sit_confirmed {
+            // the ground-sit is still on its way: release it when it lands
+            self.locked = false;
+            self.release_until = Some(Instant::now() + RELEASE_WAIT);
         }
         if let Some(pose) = self.current.take() {
             out.push(Effect::Stop(pose));
@@ -286,6 +329,36 @@ mod tests {
             assert!(!stand.open(facts, &lock).contains(&Effect::SitOnGround));
             assert!(!stand.close(true, false).contains(&Effect::StandUp));
         }
+    }
+
+    #[test]
+    fn a_ground_sit_confirmed_after_closing_is_released() {
+        let lock = Settings {
+            lock: true,
+            last_pose: String::new(),
+        };
+        let mut stand = Stand::default();
+        stand.open(Facts::default(), &lock);
+        assert!(stand.holds_avatar());
+        assert!(stand.late_release(false, Instant::now()).is_empty());
+        // closed before the server seated us
+        assert!(!stand.close(false, false).contains(&Effect::StandUp));
+        assert!(!stand.holds_avatar());
+        let now = Instant::now();
+        assert!(stand.late_release(false, now).is_empty(), "not seated yet");
+        assert_eq!(stand.late_release(true, now), vec![Effect::StandUp]);
+        assert!(stand.late_release(true, now).is_empty(), "once");
+        // never seated: the wait ends
+        let mut stand = Stand::default();
+        stand.open(Facts::default(), &lock);
+        stand.close(false, false);
+        assert!(stand.late_release(true, now + RELEASE_WAIT * 2).is_empty());
+        // a new opening drops the old wait
+        let mut stand = Stand::default();
+        stand.open(Facts::default(), &lock);
+        stand.close(false, false);
+        stand.open(Facts::default(), &Settings::default());
+        assert!(stand.late_release(true, now).is_empty());
     }
 
     #[test]
