@@ -2057,6 +2057,7 @@ demo-sound-reverb-hall = 大きなホール
 common-world-map = ワールドマップ
 ui-options-integrated-graphics = 内蔵グラフィックス
 ui-contacts-map = マップ…
+ui-contacts-map-tip = 友達の現在地を地図上に表示
 ui-inventory-view-calling-cards = コーリングカード
 common-category = カテゴリ：
 ui-contacts-this-contact-set-is-empty = コンタクトセットに何も登録がありません

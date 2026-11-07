@@ -2060,6 +2060,7 @@ demo-sound-reverb-hall = Large hall
 common-world-map = World map
 ui-options-integrated-graphics = Integrated graphics
 ui-contacts-map = Map...
+ui-contacts-map-tip = Show current location of friend on the map
 ui-inventory-view-calling-cards = Calling cards
 common-category = Category:
 ui-contacts-this-contact-set-is-empty = This contact set is empty.
