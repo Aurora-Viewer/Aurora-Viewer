@@ -188,7 +188,7 @@ fn rows<'a>(
                 .map(move |flag| (RowId { id: *id, flag }, e))
         })
         .collect();
-    let text = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase());
+    let text = |a: &str, b: &str| crate::natural_order::cmp(a, b);
     rows.sort_by(|(ia, a), (ib, b)| {
         let order = match sort {
             None => b.date.cmp(&a.date),

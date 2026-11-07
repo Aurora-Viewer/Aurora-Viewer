@@ -685,7 +685,16 @@ struct DepthNormalOut {
     @location(0) normal: vec3<f32>,
     @location(1) motion_cur: vec4<f32>,
     @location(2) motion_prev: vec4<f32>,
+    @location(3) @interpolate(flat) composition: f32,
 };
+
+// What a face adds to the encoded normal's x (`NORMAL_COMPOSITION` or 0,
+// common.wgsl): a running texture animation moves the texture over a face
+// whose motion is still, which FSR's history cannot follow.
+fn normal_composition(rec: DrawRecord) -> f32 {
+    let animated = (rec.flags.x & FLAG_TEX_ANIM) != 0u && bitcast<f32>(rec.anim.w) != 0.0;
+    return select(0.0, NORMAL_COMPOSITION, animated);
+}
 
 @vertex
 fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
@@ -698,6 +707,7 @@ fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
     let motion = motion_clips(rec, in, ep);
     out.motion_cur = motion[0];
     out.motion_prev = motion[1];
+    out.composition = normal_composition(rec);
     return out;
 }
 
@@ -731,23 +741,24 @@ fn vs_depth_mask_normal(in: VsIn) -> DepthMaskOut {
 }
 
 // The world normal facing the side drawn (eval_material), octahedral as in
-// the G-buffer, then the pixel's motion.
-fn depth_normal(n: vec3<f32>, front: bool, motion_cur: vec4<f32>, motion_prev: vec4<f32>) -> vec4<f32> {
+// the G-buffer (plus `composition` on x), then the pixel's motion.
+fn depth_normal(n: vec3<f32>, front: bool, motion_cur: vec4<f32>, motion_prev: vec4<f32>, composition: f32) -> vec4<f32> {
     let m = normalize(select(-n, n, front));
-    return vec4<f32>(oct_encode(m), screen_motion(motion_cur, motion_prev));
+    return vec4<f32>(oct_encode(m) + vec2<f32>(composition, 0.0), screen_motion(motion_cur, motion_prev));
 }
 
 @fragment
 fn fs_depth_normal(in: DepthNormalOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, in.composition);
 }
 
 // Only selected while an avatar intersects a portal. The ordinary normal
 // prepass keeps its compact vertex output without a record/position fetch.
 @fragment
 fn fs_depth_portal_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    portal_clip(records[in.record], in.world_pos);
-    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(rec));
 }
 
 // fs_depth_mask with the normal.
@@ -759,7 +770,7 @@ fn fs_depth_mask_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) ->
     if (a < rec.params.w) {
         discard;
     }
-    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(rec));
 }
 
 // Alpha from which fs_depth_contact writes depth: half covered; 1/255 for
@@ -819,7 +830,7 @@ fn fs_depth_contact(in: VsOut, @builtin(front_facing) front: bool) {
 fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     depth_contact(in.record, in.uv, in.world_pos);
-    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(records[in.record]));
 }
 
 // Depth of the rigged blended faces nearly opaque, before any of their
@@ -1772,6 +1783,19 @@ fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
+// LLToolPie::handleMouseDown's transparent pick includes object Mask holes.
+// System avatar alpha layers keep their displayed cutouts: their hidden
+// body triangles must not occlude a worn clicker.
+@fragment
+fn fs_pick_mask(in: PickOut) -> @location(0) vec4<u32> {
+    let rec = records[in.record];
+    if ((rec.flags.w & FLAG_OBJECT_MASK_PICK) == 0u) {
+        discard;
+    }
+    portal_clip(rec, in.world_pos);
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
+}
+
 // LLImageGL::updatePickMask (indra/llrender/llimagegl.cpp, LGPL 2.1).
 const PICK_ALPHA_CUTOFF: f32 = 32.0 / 255.0;
 
@@ -1861,7 +1885,7 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 fn fs_shadow(in: ShadowOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    let tex_alpha = sample_tex(rec.tex.x, in.uv).a;
+    let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {

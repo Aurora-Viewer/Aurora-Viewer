@@ -92,9 +92,11 @@ item is answered here; Command+H stays Hide.
 ## Web pages and video
 
 Web pages and video in the world need the media plugins, which are not part
-of the application: the first time they are needed, the viewer downloads
-Aurora's media plugins pack (about 335 MB) into the `media-plugins` folder of
-its settings (table below), once. A Legacy Viewer installed on the Mac can
+of the application: the first time they are needed, the viewer asks before
+it downloads Aurora's media plugins pack (about 335 MB) into the
+`media-plugins` folder of its settings (table below), once. "Not now" leaves
+a Download button in Preferences › Sound and voice › Media and where the page
+would show. A Legacy Viewer installed on the Mac can
 lend its plugins instead: in **Preferences › Media**, type the path of its
 application (its `.app` in `/Applications`) as the plugins folder.
 

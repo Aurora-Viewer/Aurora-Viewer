@@ -109,7 +109,7 @@ pub(super) fn show(
         offline_ids(world, conversation, &pending).iter().map(member).collect()
     };
     for list in [&mut moderators, &mut participants, &mut invited, &mut offline] {
-        list.sort_by_key(|m| m.name.to_lowercase());
+        list.sort_by_key(|m| crate::natural_order::key(&m.name));
     }
     egui::ScrollArea::vertical()
         .id_salt(("members", conversation))

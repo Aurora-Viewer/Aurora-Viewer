@@ -368,6 +368,9 @@ pub struct MediaSettings {
     pub filter_explained: bool,
     /// Folder with SLPlugin and llplugin\ (empty: automatic).
     pub plugin_dir: String,
+    /// Aurora's own: the answer to the download of the media plugins pack
+    /// (`pack.rs`); asked once, the first time it is needed.
+    pub pack_consent: pack::Consent,
 }
 
 impl Default for MediaSettings {
@@ -384,6 +387,7 @@ impl Default for MediaSettings {
             filter_trust_own_worn: true,
             filter_explained: false,
             plugin_dir: String::new(),
+            pack_consent: pack::Consent::Unasked,
         }
     }
 }
