@@ -40,6 +40,8 @@ pub use restricted_text::show as restricted_text_edit;
 pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
+#[cfg(test)]
+mod tab_widths_tests;
 mod text_field;
 mod unread;
 mod volume;
@@ -1767,24 +1769,61 @@ fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, false, false)
+    tabs_row(ui, p, selected, labels, TabWidths::Fit, false)
 }
 
 /// The same tab strip at the density of fixed inspector controls.
 pub fn compact_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, false, true)
+    tabs_row(ui, p, selected, labels, TabWidths::Fit, true)
 }
 
 /// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
 pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, true, false)
+    tabs_row(ui, p, selected, labels, TabWidths::Even, false)
 }
 
-fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool, compact: bool) -> bool {
+/// Tabs that always span the row: equal widths while every label fits in
+/// its share, else shares that follow the labels (the narrow tab strip of
+/// `tabs`), so a long label is cut no more than there.
+pub fn filled_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, TabWidths::Fill, false)
+}
+
+/// How a tab strip shares its row.
+#[derive(Clone, Copy)]
+enum TabWidths {
+    /// Sized to the labels, a little wider when there is room.
+    Fit,
+    /// Equal shares of the row.
+    Even,
+    /// The whole row: equal shares when every label fits, else by label.
+    Fill,
+}
+
+/// The width of each tab: `text` the room each label needs, `room` the
+/// row's width, `gap` the space between two tabs.
+fn tab_widths(text: &[f32], room: f32, gap: f32, mode: TabWidths) -> Vec<f32> {
+    let n = text.len().max(1) as f32;
+    let gaps = (n - 1.0) * gap;
+    let total: f32 = text.iter().sum::<f32>() + gaps;
+    let compact = ((room - gaps) / (total - gaps)).clamp(0.0, 1.0);
+    let extra = ((room - total) / n).max(0.0);
+    let even = ((room - gaps) / n).max(0.0);
+    let widest = text.iter().copied().fold(0.0, f32::max);
+    text.iter()
+        .map(|&w| match mode {
+            TabWidths::Even => even,
+            TabWidths::Fill if even >= widest => even,
+            TabWidths::Fill => w * compact + extra,
+            TabWidths::Fit => w * compact + extra.min(40.0),
+        })
+        .collect()
+}
+
+fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], mode: TabWidths, compact: bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let n = labels.len().max(1) as f32;
         let font = control_font(ui, 12.0);
         let minimum_height = if compact { 22.0 } else { 30.0 };
         let height = if ui.style().override_font_id.is_some() {
@@ -1796,17 +1835,9 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
             .iter()
             .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
             .collect();
-        let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
-        let total: f32 = text_w.iter().sum::<f32>() + gaps;
-        let compact = ((ui.available_width() - gaps) / (total - gaps)).clamp(0.0, 1.0);
-        let extra = ((ui.available_width() - total) / n).max(0.0);
-        let even_width = ((ui.available_width() - gaps) / n).max(0.0);
+        let widths = tab_widths(&text_w, ui.available_width(), ui.spacing().item_spacing.x, mode);
         for (i, (label, enabled)) in labels.iter().enumerate() {
-            let w = if stretched {
-                even_width
-            } else {
-                text_w[i] * compact + extra.min(40.0)
-            };
+            let w = widths[i];
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), if *enabled { Sense::click() } else { Sense::hover() });
             let sel = *selected == i;
             if sel || (resp.hovered() && *enabled) {

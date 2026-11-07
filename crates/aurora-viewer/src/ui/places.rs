@@ -283,6 +283,9 @@ pub struct PlacesUi {
     /// Inventory changes asked from a menu, sent with the window's actions.
     pending_edits: Vec<aurora_net::inventory::operations::Mutation>,
     raise: bool,
+    /// AURORA_DEMO_PLACES=…:classic: the Legacy Viewer's tabs for this run,
+    /// whatever Preferences › Aurora › Places says (not saved).
+    pub demo_classic: bool,
 }
 
 impl PlacesUi {
@@ -493,7 +496,12 @@ impl PlacesUi {
         });
         ui.add_space(4.0);
         let before = self.tab;
-        widgets::tabs(
+        // The Legacy Viewer's "Places Tabs" (panel_places.xml) centres tabs
+        // sized to their labels; here they are stretched to the window's
+        // width by the human's choice (#2641), as Teleport / Map / Profile
+        // share it under the list. Too narrow for equal shares, the labels'
+        // shares are kept, and the long label its ellipsis.
+        widgets::filled_tabs(
             ui,
             p,
             &mut self.tab,
@@ -507,22 +515,33 @@ impl PlacesUi {
             self.selected = None;
         }
         ui.add_space(4.0);
-        // the list, above the bottom bar
-        let list_h = (ui.available_height() - 32.0).max(40.0);
-        egui::ScrollArea::vertical()
-            .id_salt(("places-list", self.tab))
-            .max_height(list_h)
-            .min_scrolled_height(list_h)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if history {
-                    self.history_list(ui, p, world, actions);
-                } else {
-                    self.landmark_list(ui, p, world, by_date, actions);
-                }
-            });
-        ui.add_space(6.0);
+        // panel_places.xml: button_layout_panel keeps its height at the
+        // bottom and places_layout_panel takes what is left above it. The
+        // buttons are laid out first, from the bottom, as in the profile
+        // view: a fixed share for them cut them off once the theme's
+        // spacing and button height outgrew it (#2641)
+        let rest = ui.available_rect_before_wrap();
+        ui.allocate_rect(rest, Sense::hover());
+        let mut bottom_up = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rest)
+                .layout(egui::Layout::bottom_up(egui::Align::Min)),
+        );
+        let ui = &mut bottom_up;
         self.list_buttons(ui, p, world, actions);
+        ui.add_space(6.0);
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("places-list", self.tab))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if history {
+                        self.history_list(ui, p, world, actions);
+                    } else {
+                        self.landmark_list(ui, p, world, by_date, actions);
+                    }
+                });
+        });
     }
 
     /// The landmark selected, with its asset.
@@ -1332,6 +1351,137 @@ mod tests {
             }
         }
         actions
+    }
+
+    /// #2641: in the Legacy Viewer's tabs, Teleport / Map / Profile stay
+    /// whole at the bottom of the window (the list gives way), and the three
+    /// tabs span the width of the window, their labels whole or ellipsised,
+    /// never clipped: at its opening size, at its minimum, wide, and at more
+    /// than one interface scale.
+    #[test]
+    fn legacy_tabs_span_the_window_and_keep_their_bottom_buttons_whole() {
+        #[derive(Default)]
+        struct Drawn {
+            /// Text, its ink, its clip.
+            texts: Vec<(String, egui::Rect, egui::Rect)>,
+            /// Thin filled rectangles (the tabs' underlines).
+            lines: Vec<egui::Rect>,
+        }
+        fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Drawn) {
+            match shape {
+                egui::epaint::Shape::Text(t) => out.texts.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip)),
+                egui::epaint::Shape::Rect(r) if r.rect.height() <= 2.5 && r.rect.width() > 1.0 => out.lines.push(r.rect),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, clip, out)),
+                _ => {}
+            }
+        }
+        let library = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let world = World::new(library);
+        let images = std::collections::HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let buttons = [
+            aurora_i18n::tr!("common-teleport"),
+            aurora_i18n::tr!("common-map"),
+            aurora_i18n::tr!("common-profile"),
+        ];
+        let tabs = [
+            aurora_i18n::tr!("common-favorites"),
+            aurora_i18n::tr!("common-landmarks"),
+            aurora_i18n::tr!("ui-places-teleport-history"),
+        ];
+        let min = Vec2::new(260.0, 300.0);
+        for (size, zoom) in [
+            (None, 1.0),
+            (Some(min), 1.0),
+            (Some(min), 1.5),
+            (Some(Vec2::new(700.0, 588.0)), 1.0),
+            (None, 1.5),
+        ] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            ctx.set_zoom_factor(zoom);
+            // the icons as in the viewer (without them, the menus fall back
+            // to wider text buttons)
+            let _icons = crate::ui::icons::Icons::load(&ctx, None);
+            let p = theme.palette();
+            if let Some(size) = size {
+                widgets::size_floater(&ctx, "places", size);
+            }
+            let mut places = PlacesUi::default();
+            let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+            let mut shapes = Vec::new();
+            for _ in 0..4 {
+                let mut c = Ctx {
+                    p: &p,
+                    world: &world,
+                    images: &images,
+                    emoji: &mut emoji,
+                    want_names: &mut names,
+                    wanted_images: &mut wanted,
+                    want_groups: &mut groups,
+                };
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |root| {
+                        places.show(root.ctx(), &mut c, &mut true, false, false, None);
+                    },
+                );
+                output.textures_delta.clear();
+                shapes = output.shapes;
+            }
+            let mut drawn = Drawn::default();
+            for s in &shapes {
+                collect(&s.shape, s.clip_rect, &mut drawn);
+            }
+            let find = |label: &str| {
+                drawn
+                    .texts
+                    .iter()
+                    // an ellipsised label may keep only its start
+                    .find(|(t, ..)| t == label || t.strip_suffix('…').is_some_and(|start| label.starts_with(start)))
+                    .map(|(_, rect, clip)| (*rect, *clip))
+                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom})"))
+            };
+            for label in &buttons {
+                let (rect, clip) = find(label);
+                assert!(
+                    clip.contains_rect(rect.expand(-0.5)),
+                    "« {label} » cut off ({size:?}, zoom {zoom}): text {rect:?}, clip {clip:?}"
+                );
+            }
+            // each tab: its label and the underline under it, 6 points in
+            // from both of its edges (widgets::underline)
+            let mut spans = Vec::new();
+            for label in &tabs {
+                let (text, clip) = find(label);
+                let line = drawn
+                    .lines
+                    .iter()
+                    .find(|l| l.top() > text.bottom() && l.top() < text.bottom() + 20.0 && l.x_range().contains(text.center().x))
+                    .unwrap_or_else(|| panic!("underline of « {label} » ({size:?}, zoom {zoom}): {:?}", drawn.lines));
+                let tab = egui::Rect::from_x_y_ranges(line.left() - 6.0..=line.right() + 6.0, text.y_range());
+                assert!(
+                    tab.contains_rect(text.expand(-0.5)) && clip.contains_rect(text.expand(-0.5)),
+                    "« {label} » cut off ({size:?}, zoom {zoom}): text {text:?}, tab {tab:?}, clip {clip:?}"
+                );
+                spans.push((tab, clip));
+            }
+            // together, the width of the window's content (its clip)
+            let (first, clip) = spans[0];
+            let last = spans[2].0;
+            assert!(
+                (first.left() - clip.left()).abs() <= 1.5 && (last.right() - clip.right()).abs() <= 1.5,
+                "tabs from {} to {}, content from {} to {} ({size:?}, zoom {zoom})",
+                first.left(),
+                last.right(),
+                clip.left(),
+                clip.right()
+            );
+        }
     }
 
     #[test]
