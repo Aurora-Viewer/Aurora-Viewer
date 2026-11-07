@@ -27,7 +27,7 @@ use crate::world::World;
 use crate::world::inventory::Inventory;
 use crate::world::inventory::actions;
 use crate::world::landmarks::{Landmarks, Resolved};
-use crate::world::place_details::{Source as Profile, Stage};
+use crate::world::place_details::{Place as PlaceProfile, Source as Profile, Stage};
 use crate::world::place_snapshots::Spot;
 use crate::world::tphistory::{self, HistoryItem};
 use crate::world::worldmap::WorldMap;
@@ -78,6 +78,8 @@ pub struct AuroraState {
     pub(super) pending_click: Option<(Key, f64)>,
     /// The place profile asked for the preview (OpenProfile sent).
     previewed: Option<Profile>,
+    /// A profile was opened from outside the lists (`PlacesUi::show_profile`).
+    pub(super) opened: bool,
     /// The notes being typed, for that place.
     note: Option<(Key, String)>,
     /// The new name being typed.
@@ -334,6 +336,12 @@ pub fn delete_place(inv: &Inventory, place: &Place) -> Option<Mutation> {
     actions::move_selection(inv, &items_of(place), trash, &none, &none).ok()
 }
 
+/// The landmark profile to show instead of the lists: place links and parcels
+/// stay in the preview, and a line's own profile never counts.
+fn opened_landmark(opened: bool, panel: Option<&PlaceProfile>) -> Option<&PlaceProfile> {
+    panel.filter(|place| opened && matches!(place.source, Profile::Landmark { .. }))
+}
+
 /// The lines of the list: a place, or a section title of the history.
 /// A frame's list is short-lived: its places stay inline.
 #[allow(clippy::large_enum_variant)]
@@ -351,6 +359,11 @@ struct RowOut {
 impl PlacesUi {
     /// The body of Aurora's window.
     pub(super) fn aurora_body(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, actions: &mut Vec<PlacesAction>) {
+        if let Some(place) = opened_landmark(self.aurora.opened, c.world.place_details.panel.as_ref()).cloned() {
+            self.opened_profile(ui, c, &place, actions);
+            return;
+        }
+        self.aurora.opened = false;
         let world = c.world;
         let history = &world.tp_storage.items;
         // rebuilt only when the inventory, a landmark asset, the history or
@@ -433,6 +446,26 @@ impl PlacesUi {
             self.narrow(ui, c, env, cat, &lines, link.is_some(), actions);
         }
         self.folder_dialogs(ui.ctx(), c.p, &world.inventory, actions);
+    }
+
+    /// A landmark's profile opened from elsewhere, with the Legacy tabs' way
+    /// back. The lists may not hold that landmark: they only read the
+    /// Landmarks and Favorites folders.
+    fn opened_profile(&mut self, ui: &mut egui::Ui, c: &mut Ctx, place: &PlaceProfile, actions: &mut Vec<PlacesAction>) {
+        let mut inner = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(ui.max_rect().shrink2(Vec2::new(12.0, 10.0)))
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        let asked = actions.len();
+        self.profile_view(&mut inner, c, place, actions);
+        // back to the list: the preview has lost its profile, so it asks
+        // again for the line it shows
+        if actions[asked..].iter().any(|a| matches!(a, PlacesAction::CloseProfile)) {
+            self.aurora.opened = false;
+            self.aurora.selected = None;
+            self.aurora.previewed = None;
+        }
     }
 
     /// Select a line and ask for its profile.
@@ -1836,6 +1869,26 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn only_a_landmark_opened_from_elsewhere_replaces_the_lists() {
+        use crate::world::place_details::PlaceDetails;
+        let open = |source| {
+            let mut details = PlaceDetails::default();
+            details.open_panel(source, &WorldMap::default(), &mut Landmarks::default(), std::time::Instant::now());
+            details
+        };
+        let landmark = open(Profile::Landmark { item: id(1), asset: id(2) });
+        // a notecard's landmark, the inventory's About Landmark, the map
+        assert!(opened_landmark(true, landmark.panel.as_ref()).is_some());
+        // a line of the list keeps its preview
+        assert!(opened_landmark(false, landmark.panel.as_ref()).is_none());
+        // a place link or a parcel stays in the preview
+        let parcel = open(Profile::Parcel(id(3)));
+        assert!(opened_landmark(true, parcel.panel.as_ref()).is_none());
+        // Back closed the profile
+        assert!(opened_landmark(true, None).is_none());
     }
 
     fn folder(n: u128, parent: u128, t: i32) -> InvFolder {

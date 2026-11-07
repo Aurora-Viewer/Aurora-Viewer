@@ -309,6 +309,15 @@ impl PlacesUi {
         self.raise = true;
     }
 
+    /// A place profile opened from outside the lists (a notecard's landmark,
+    /// the inventory, the map): the window comes to the front and Aurora's
+    /// shows that profile (LLFloaterSidePanelContainer::showPanel "places",
+    /// indra/newview/fsfloaterplacedetails.cpp).
+    pub fn show_profile(&mut self) {
+        self.raise();
+        self.aurora.opened = true;
+    }
+
     /// TeleportFromLandmark from elsewhere (a standalone landmark window).
     pub fn confirm_landmark(&mut self, asset: Uuid, name: String) {
         self.confirm = Some(Confirm::Landmark { asset, name });
@@ -1096,7 +1105,7 @@ impl PlacesUi {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let w = ((ui.available_width() - 30.0) / 2.0).max(60.0);
-            if place_details::button(
+            if place_details::teleport_button(
                 ui,
                 p,
                 aurora_i18n::tr!("common-teleport"),

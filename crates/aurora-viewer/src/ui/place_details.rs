@@ -306,7 +306,7 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
     let global = place.global;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
-        if button(
+        if teleport_button(
             ui,
             p,
             aurora_i18n::tr!("common-teleport-3"),
@@ -360,6 +360,23 @@ pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: b
     ui.add_enabled(enabled, |ui: &mut egui::Ui| ui.add_sized([width, 23.0], b))
         .on_hover_text(tip)
         .clicked()
+}
+
+/// The Teleport button of a place profile, in the highlight colour with the
+/// icon of Aurora's Places window. Deliberate difference: the Legacy Viewer's
+/// button is plain, here the main action stands out.
+pub fn teleport_button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool, width: f32) -> bool {
+    widgets::action_button_if(
+        ui,
+        p,
+        "location-filled",
+        label,
+        widgets::ActionKind::Primary,
+        egui::vec2(width, 23.0),
+        enabled,
+    )
+    .on_hover_text(tip)
+    .clicked()
 }
 
 /// The panel of a place: landmark info for a landmark, place profile else.
