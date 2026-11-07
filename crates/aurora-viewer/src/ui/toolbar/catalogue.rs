@@ -75,7 +75,7 @@ pub const COMMANDS: &[Command] = commands![
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", false;
-    "destinations", "map-2", "toolbar-command-destinations", false;
+    "destinations", "map-2", "toolbar-command-destinations", true;
     "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
     "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;

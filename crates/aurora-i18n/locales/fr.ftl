@@ -9361,6 +9361,7 @@ web-browser-secure = Connexion sécurisée (https)
 web-browser-not-secure = La connexion n'est pas sécurisée
 web-browser-loading = Chargement…
 marketplace-unavailable = La Place du marché s'affiche ici une fois connecté à Second Life.
+destinations-unavailable = Cette grille n’a pas de guide des destinations.
 marketplace-listings-title = Annonces Place du marché
 marketplace-listings-menu = Annonces Place du marché
 marketplace-listings-tab-all = Toutes
