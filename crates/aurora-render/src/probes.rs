@@ -140,14 +140,7 @@ pub fn shadow_matrix(origin: Vec3, sun_dir: Vec3) -> Mat4 {
     let eye = origin - light_dir * (SHADOW_RANGE + pad);
     let view = glam::camera::rh::view::look_at_mat4(eye, origin, up);
     let depth = SHADOW_RANGE * 2.0 + 2.0 * pad;
-    let proj = glam::camera::rh::proj::directx::orthographic(
-        -SHADOW_RANGE,
-        SHADOW_RANGE,
-        -SHADOW_RANGE,
-        SHADOW_RANGE,
-        0.1,
-        depth,
-    );
+    let proj = glam::camera::rh::proj::directx::orthographic(-SHADOW_RANGE, SHADOW_RANGE, -SHADOW_RANGE, SHADOW_RANGE, 0.1, depth);
     proj * view
 }
 
