@@ -9200,3 +9200,39 @@ mod particle_tests {
         }
     }
 }
+
+/// AURORA_DEMO_TERRAIN_CROSSING=1: retain the viewpoint while changing
+/// the render origin twice, so terrain continuity can be compared directly.
+pub fn terrain_crossing_step(world: &mut crate::world::World, frame: u64) {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("AURORA_DEMO_TERRAIN_CROSSING").is_some()) {
+        return;
+    }
+    let neighbour = HANDLE + (256_u64 << 32);
+    if frame == 60 {
+        let Some(region) = world.regions.get(&HANDLE) else { return };
+        let Some(info) = &region.info else { return };
+        let mut info = (**info).clone();
+        let heightmap = region.heightmap.clone();
+        info.handle = neighbour;
+        info.is_main = false;
+        info.name = "Aurora Demo Neighbour".into();
+        info.region_id = Uuid::from_u128(0xded00000_0000_0000_0000_000000002335);
+        world.apply(NetEvent::RegionHandshake(Arc::new(info)));
+        if let Some(region) = world.regions.get_mut(&neighbour) {
+            region.heightmap = heightmap;
+            region.dirty_chunks.extend(0..region.heightmap.chunk_count());
+        }
+    }
+    if matches!(frame, 600 | 900) {
+        let handle = if frame == 600 { neighbour } else { HANDLE };
+        let Some(offset) = world.region_offset(handle) else { return };
+        let position = world.agent.position - offset;
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position,
+            look_at: Vec3::X,
+        });
+        log::info!("terrain crossing demo: render origin changed at frame {frame}, viewpoint retained");
+    }
+}
