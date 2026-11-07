@@ -2584,6 +2584,73 @@ fn empty_trash_ignores_rlva_locks_without_exempting_other_purges() {
     assert!(!world.rlva_inventory_mutation_allowed(&purge(Uuid::from_u128(92)), Uuid::nil()));
 }
 
+/// #2718: an object worn from the ground while something else is @detach
+/// locked: its item is not in the inventory yet.
+#[test]
+fn rlva_detach_lock_keeps_an_object_worn_from_the_ground() {
+    use aurora_net::AttachRequest;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let handle = world.main_region.expect("demo region");
+    let attachment = |world: &crate::world::World, item_id: Uuid, point: u8| {
+        crate::demo::outfit_attachment(&AttachRequest {
+            item_id,
+            owner_id: world.agent_id,
+            point,
+            add: true,
+            flags: 0,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        })
+    };
+    let (locked, ground) = (Uuid::from_u128(0xE001), Uuid::from_u128(0xE002));
+    let object = attachment(&world, locked, 2);
+    world.objects.upsert(handle, object);
+    let source = world
+        .worn_attachment(&locked)
+        .map(|i| world.objects.get(i).unwrap().full_id)
+        .expect("worn");
+    world.movement_complete = true;
+    let tick = |world: &mut crate::world::World| {
+        world.rlva_watchdog_tick(std::time::Instant::now());
+        world.rlva_watchdog_tick(std::time::Instant::now());
+    };
+    tick(&mut world);
+    command(&mut world.rlva, source, "@detach=n");
+    tick(&mut world);
+
+    // the object keeps its own id: only its item is new
+    let mut object = attachment(&world, ground, 3);
+    object.full_id = Uuid::from_u128(0xE102);
+    world.objects.upsert(handle, object);
+    assert!(!world.inventory.items.contains_key(&ground));
+    tick(&mut world);
+    assert!(
+        world.rlva.watchdog.rejected.is_empty(),
+        "the wearer's other lock does not refuse it"
+    );
+    assert!(world.worn_attachment(&ground).is_some());
+
+    // a lock on the point itself still does
+    let (held, refused) = (Uuid::from_u128(0xE003), 4);
+    command(&mut world.rlva, source, "@detach:chest=n,addattach=n");
+    let mut object = attachment(&world, held, refused);
+    object.full_id = Uuid::from_u128(0xE103);
+    world.objects.upsert(handle, object);
+    tick(&mut world);
+    assert!(world.rlva.watchdog.rejected.contains(&held), "@addattach still refuses it");
+    assert!(
+        !world.rlva_can_add(Uuid::from_u128(0xE00F), 3, Uuid::nil()),
+        "an item neither known nor worn stays refused"
+    );
+}
+
 #[test]
 fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not() {
     use crate::world::World;
