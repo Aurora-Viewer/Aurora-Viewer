@@ -578,7 +578,17 @@ fn footer(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, friend: Optio
     if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, mappable).clicked() {
         context::request(ui.ctx(), CtxAction::ShowOnMap(id));
     }
-    if widgets::action_button(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, size).clicked() {
+    if widgets::action_button_if(
+        ui,
+        p,
+        "coin-filled",
+        aurora_i18n::tr!("common-pay"),
+        ActionKind::Flat,
+        size,
+        world.rlva_can_pay(),
+    )
+    .clicked()
+    {
         context::request(ui.ctx(), CtxAction::PayResident(id));
     }
     if friend.is_some() {

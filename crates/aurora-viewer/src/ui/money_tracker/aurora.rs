@@ -297,7 +297,7 @@ impl MoneyTrackerUi {
                     if menu::item(ui, p, "user-filled", aurora_i18n::tr!("money-tracker-profile")) {
                         actions.push(TrackerAction::Profile(id));
                     }
-                    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("money-tracker-pay")) {
+                    if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("money-tracker-pay"), world.rlva_can_pay()) {
                         actions.push(TrackerAction::Pay { id, group: false });
                     }
                 }
@@ -305,7 +305,7 @@ impl MoneyTrackerUi {
                     if menu::item(ui, p, "users-group", aurora_i18n::tr!("money-tracker-group-profile")) {
                         actions.push(TrackerAction::GroupProfile(id));
                     }
-                    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("money-tracker-pay")) {
+                    if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("money-tracker-pay"), world.rlva_can_pay()) {
                         actions.push(TrackerAction::Pay { id, group: true });
                     }
                 }
