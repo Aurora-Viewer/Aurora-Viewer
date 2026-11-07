@@ -68,6 +68,10 @@ pub struct WorldMapUi {
     /// Pointer the zoom keeps fixed, relative to the view center.
     zoom_pivot: Option<Vec2>,
     was_open: bool,
+    focus_search: bool,
+    /// The next opening comes from a script (llMapDestination): it must not
+    /// take the keyboard.
+    opened_by_script: bool,
     tiles_complete: bool,
     search: String,
     selected: Option<(u32, u32)>,
@@ -95,6 +99,8 @@ impl Default for WorldMapUi {
             target_zoom: -1.0,
             zoom_pivot: None,
             was_open: false,
+            focus_search: false,
+            opened_by_script: false,
             tiles_complete: false,
             search: String::new(),
             selected: None,
@@ -137,6 +143,12 @@ struct MapInput {
 }
 
 impl WorldMapUi {
+    /// The map is about to open for a script (llMapDestination), not for
+    /// the user: its search does not take the keyboard.
+    pub fn open_for_script(&mut self) {
+        self.opened_by_script = true;
+    }
+
     /// AURORA_DEMO_MAP=search:<text>: the region search, as if typed.
     pub fn demo_search(&mut self, world: &mut World, text: &str) {
         self.search = text.to_owned();
@@ -175,11 +187,15 @@ impl WorldMapUi {
         let mut actions = Vec::new();
         if !*open {
             self.was_open = false;
+            self.focus_search = false;
             return actions;
         }
         if !self.was_open {
-            // LLFloaterWorldMap::onOpen: back on our position, items reloaded
+            // LLFloaterWorldMap::onOpen: back on our position, items reloaded,
+            // and the location editor takes the keyboard when the user opened
+            // the map (from the toolbar, a menu, Ctrl+M or a "show on map")
             self.was_open = true;
+            self.focus_search = !std::mem::take(&mut self.opened_by_script);
             self.pan = Vec2::ZERO;
             self.target_pan = Vec2::ZERO;
             self.zoom = (opts.world_scale.max(1.0) / 256.0).log2().clamp(ZOOM_MIN, ZOOM_MAX);
@@ -903,6 +919,9 @@ impl WorldMapUi {
                 aurora_i18n::tr!("ui-worldmap-regions-by-name"),
                 ui.available_width() - 84.0,
             );
+            if std::mem::take(&mut self.focus_search) {
+                r.request_focus();
+            }
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 go = true;
             }
@@ -1478,5 +1497,119 @@ mod coordinate_tests {
         let t = b.world.map.track.as_ref().expect("typed destination awaiting metadata");
         assert_eq!((t.x, t.y, t.z), (256600.0, 256700.0, 30.0));
         assert!(t.pending && !t.teleport);
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use std::sync::Arc;
+
+    struct Bench {
+        ctx: egui::Context,
+        map: WorldMapUi,
+        world: World,
+        tiles: MapTiles,
+        camera: MapCamera,
+        settings: MapSettings,
+        images: HashMap<Uuid, egui::TextureHandle>,
+        avatars: HashMap<Uuid, egui::TextureHandle>,
+        style: WorldMapStyle,
+        time: f64,
+    }
+
+    impl Bench {
+        fn new(style: WorldMapStyle) -> Self {
+            let mut world = World::new(Arc::new(AvatarLibrary::load()));
+            world.main_region = Some(aurora_net::origin_to_handle(256000, 256000));
+            let mut bench = Self {
+                ctx: egui::Context::default(),
+                map: WorldMapUi::default(),
+                world,
+                tiles: MapTiles::new(),
+                camera: MapCamera {
+                    pos: glam::Vec3::new(128.0, 128.0, 70.0),
+                    dir: glam::Vec3::X,
+                    hfov: 1.0,
+                    far: 128.0,
+                },
+                settings: MapSettings::default(),
+                images: HashMap::new(),
+                avatars: HashMap::new(),
+                style,
+                time: 0.0,
+            };
+            bench.frame(false, vec![]);
+            bench
+        }
+
+        fn frame(&mut self, open: bool, events: Vec<egui::Event>) {
+            self.time += 0.1;
+            let ctx = self.ctx.clone();
+            let p = crate::theme::Theme::default().palette();
+            let pictures = MapPictures {
+                images: &self.images,
+                avatars: &self.avatars,
+            };
+            let mut open = open;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 1000.0))),
+                    time: Some(self.time),
+                    events,
+                    ..Default::default()
+                },
+                |_| {
+                    self.map.show(
+                        &ctx,
+                        &p,
+                        &mut self.world,
+                        &mut self.tiles,
+                        &self.camera,
+                        &mut self.settings,
+                        self.style,
+                        &pictures,
+                        &mut open,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn opening_the_map_focuses_search_and_types_in_both_layouts() {
+        for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
+            let mut bench = Bench::new(style);
+            // opened by the user (toolbar, menu, Ctrl+M)
+            bench.frame(true, vec![]);
+            let focused = match style {
+                WorldMapStyle::Legacy => bench.ctx.memory(|memory| memory.focused().is_some()),
+                WorldMapStyle::Aurora => bench.ctx.memory(|memory| memory.has_focus(overlay::search_id())),
+            };
+            assert!(focused, "map search should receive focus for {style:?}");
+            bench.frame(true, vec![egui::Event::Text("ab".into())]);
+            let query = match style {
+                WorldMapStyle::Legacy => &bench.map.search,
+                WorldMapStyle::Aurora => &bench.map.ov.query,
+            };
+            assert_eq!(query, "ab", "typed text should reach {style:?} map search");
+        }
+    }
+
+    #[test]
+    fn programmatic_map_open_does_not_take_keyboard_focus() {
+        for style in [WorldMapStyle::Legacy, WorldMapStyle::Aurora] {
+            let mut bench = Bench::new(style);
+            // llMapDestination
+            bench.map.open_for_script();
+            bench.frame(true, vec![]);
+            let focused = match style {
+                WorldMapStyle::Legacy => bench.ctx.memory(|memory| memory.focused().is_some()),
+                WorldMapStyle::Aurora => bench.ctx.memory(|memory| memory.has_focus(overlay::search_id())),
+            };
+            assert!(!focused, "a programmatic {style:?} map open must not take focus");
+        }
     }
 }
