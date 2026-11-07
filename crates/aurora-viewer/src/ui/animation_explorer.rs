@@ -27,6 +27,22 @@ pub struct Row {
     pub started: Instant,
     /// LLKeyframeMotion::getPriority once the motion has loaded.
     pub priority: Option<i32>,
+    /// The animation id may be written (`world::inventory::asset_ids`): the
+    /// Legacy Viewer's animation_id column has no width
+    /// (floater_animation_explorer.xml).
+    pub animation_shown: bool,
+}
+
+impl Row {
+    /// The row's tooltip: who played it, then the animation id when it may
+    /// be written.
+    fn tooltip(&self) -> String {
+        if self.animation_shown {
+            format!("{}\n{}", self.name, self.animation)
+        } else {
+            self.name.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +106,7 @@ impl AnimationExplorer {
             rows.sort_by(|a, b| {
                 let (a, b) = (&self.rows[*a], &self.rows[*b]);
                 let order = match column {
-                    Column::PlayedBy => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    Column::PlayedBy => crate::natural_order::cmp(&a.name, &b.name),
                     Column::Played => b.playing.cmp(&a.playing).then(b.started.cmp(&a.started)),
                     Column::Priority => a.priority.cmp(&b.priority),
                 };
@@ -235,7 +251,7 @@ impl AnimationExplorer {
                         );
                         x += w;
                     }
-                    let response = response.on_hover_text(format!("{}\n{}", row.name, row.animation));
+                    let response = response.on_hover_text(row.tooltip());
                     if response.clicked() {
                         self.selected = Some(row.id);
                     }

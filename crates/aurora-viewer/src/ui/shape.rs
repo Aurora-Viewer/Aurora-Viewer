@@ -10,7 +10,59 @@ use egui::{RichText, Vec2};
 pub enum Action {
     Save(Option<String>),
     Retry,
-    CustomizeAnimation(bool),
+    Appearance(AppearanceAction),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum AppearanceAction {
+    Camera(bool),
+    Pose(bool),
+}
+
+#[derive(Clone, Copy)]
+pub struct AppearanceControls {
+    pub camera: bool,
+    pub pose: bool,
+}
+
+impl From<&crate::settings::Settings> for AppearanceControls {
+    fn from(settings: &crate::settings::Settings) -> Self {
+        Self {
+            camera: settings.appearance_camera_movement,
+            pose: settings.customize_animation,
+        }
+    }
+}
+
+pub(super) fn appearance_controls(ui: &mut egui::Ui, p: &Palette, mut controls: AppearanceControls) -> Vec<AppearanceAction> {
+    let mut actions = Vec::new();
+    for (value, label, hint, camera) in [
+        (
+            &mut controls.camera,
+            aurora_i18n::tr!("appearance-editor-camera"),
+            aurora_i18n::tr!("ui-options-appearance-camera-hint"),
+            true,
+        ),
+        (
+            &mut controls.pose,
+            aurora_i18n::tr!("shape-a-pose"),
+            aurora_i18n::tr!("ui-options-customize-animation-hint"),
+            false,
+        ),
+    ] {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::switch_labeled(ui, p, value, label).on_hover_text(hint).changed() {
+                    actions.push(if camera {
+                        AppearanceAction::Camera(*value)
+                    } else {
+                        AppearanceAction::Pose(*value)
+                    });
+                }
+            });
+        });
+    }
+    actions
 }
 
 fn groups() -> [&'static str; 9] {
@@ -84,7 +136,7 @@ fn category_wheel(
     None
 }
 
-pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State, mut customize_animation: bool) -> (Vec<Action>, Vec<i32>) {
+pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State, controls: AppearanceControls) -> (Vec<Action>, Vec<i32>) {
     if !st.open {
         return (Vec::new(), Vec::new());
     }
@@ -117,50 +169,49 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
                     widgets::glyph(ui, "man-filled", p.muted, 24.0);
                     ui.add(egui::Label::new(RichText::new(&draft.item.name).strong().size(15.0).color(p.ink)).truncate());
                 });
-                ui.add_enabled_ui(modify && !busy, |ui| {
-                    let mut selection = male;
-                    ui.horizontal(|ui| {
-                        widgets::radio_value(ui, p, &mut selection, true, aurora_i18n::tr!("shape-male"));
-                        widgets::radio_value(ui, p, &mut selection, false, aurora_i18n::tr!("shape-female"));
-                    });
-                    if selection != male {
-                        draft.edited.params.insert(80, f32::from(selection));
-                        changed = true;
-                    }
-                });
-                let weights = world
-                    .avatar_lib
-                    .shape_params
-                    .weights_with(world.server_visual_params(), &draft.edited.params);
-                let shape = world.avatar_lib.shape_params.shape_weights(weights, &world.avatar_lib.rig);
-                let (_, height) = crate::scene::shape::body_size(&world.avatar_lib.rig, &shape.local_pos, &shape.scale);
-                // LLPanelEditWearable::updateTypeSpecificControls adds 0.195 m
-                // to the server collision height for the displayed stature.
-                let height = height + 0.195;
-                ui.horizontal(|ui| {
-                    let value = aurora_i18n::number((height * if st.feet { 3.28084 } else { 1.0 }) as f64, 2);
-                    ui.label(RichText::new(aurora_i18n::tr!("shape-height", value = value)).color(p.muted));
-                    if widgets::flat_button(
-                        ui,
-                        p,
-                        if st.feet {
-                            aurora_i18n::tr!("shape-feet")
-                        } else {
-                            aurora_i18n::tr!("shape-meters")
-                        },
-                    )
-                    .clicked()
-                    {
-                        st.feet = !st.feet;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if widgets::switch_labeled(ui, p, &mut customize_animation, aurora_i18n::tr!("shape-t-pose"))
-                            .on_hover_text(aurora_i18n::tr!("ui-options-customize-animation-hint"))
-                            .changed()
-                        {
-                            actions.push(Action::CustomizeAnimation(customize_animation));
+                ui.columns(2, |columns| {
+                    columns[0].add_enabled_ui(modify && !busy, |ui| {
+                        let mut selection = male;
+                        ui.horizontal(|ui| {
+                            widgets::radio_value(ui, p, &mut selection, true, aurora_i18n::tr!("shape-male"));
+                            widgets::radio_value(ui, p, &mut selection, false, aurora_i18n::tr!("shape-female"));
+                        });
+                        if selection != male {
+                            draft.edited.params.insert(80, f32::from(selection));
+                            changed = true;
                         }
                     });
+                    let weights = world
+                        .avatar_lib
+                        .shape_params
+                        .weights_with(world.server_visual_params(), &draft.edited.params);
+                    let shape = world.avatar_lib.shape_params.shape_weights(weights, &world.avatar_lib.rig);
+                    let (_, height) = crate::scene::shape::body_size(&world.avatar_lib.rig, &shape.local_pos, &shape.scale);
+                    // LLPanelEditWearable::updateTypeSpecificControls adds 0.195 m
+                    // to the server collision height for the displayed stature.
+                    let height = height + 0.195;
+                    columns[0].horizontal(|ui| {
+                        let value = aurora_i18n::number((height * if st.feet { 3.28084 } else { 1.0 }) as f64, 2);
+                        ui.label(RichText::new(aurora_i18n::tr!("shape-height", value = value)).color(p.muted));
+                        if widgets::flat_button(
+                            ui,
+                            p,
+                            if st.feet {
+                                aurora_i18n::tr!("shape-feet")
+                            } else {
+                                aurora_i18n::tr!("shape-meters")
+                            },
+                        )
+                        .clicked()
+                        {
+                            st.feet = !st.feet;
+                        }
+                    });
+                    actions.extend(
+                        appearance_controls(&mut columns[1], p, controls)
+                            .into_iter()
+                            .map(Action::Appearance),
+                    );
                 });
             });
             ui.add_space(6.0);
@@ -511,6 +562,96 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shape_and_layer_editors_offer_camera_above_pose_without_editing_the_draft() {
+        for layer in [false, true] {
+            let (mut world, mut shape) = crate::shape_editor::tests::fixture();
+            let (mut layer_world, mut wearable, _) = crate::wearable_editor::tests::fixture(14);
+            let ctx = egui::Context::default();
+            let palette = crate::theme::Theme::default().palette();
+            let mut draw = |events, controls| {
+                let mut actions = Vec::new();
+                let output = run_headless(
+                    &ctx,
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if layer {
+                            for action in super::super::wearable::show(
+                                ui.ctx(),
+                                &palette,
+                                &mut layer_world,
+                                &mut wearable,
+                                &Default::default(),
+                                controls,
+                            ) {
+                                if let super::super::wearable::Action::Appearance(action) = action {
+                                    actions.push(action);
+                                }
+                            }
+                        } else {
+                            for action in show(ui.ctx(), &palette, &mut world, &mut shape, controls).0 {
+                                if let Action::Appearance(action) = action {
+                                    actions.push(action);
+                                }
+                            }
+                        }
+                    },
+                );
+                (actions, output)
+            };
+            let controls = AppearanceControls { camera: true, pose: true };
+            let mut output = Default::default();
+            for _ in 0..4 {
+                let result = draw(Vec::new(), controls);
+                assert!(result.0.is_empty());
+                output = result.1;
+            }
+            let label = |key| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == aurora_i18n::text(key) => {
+                            let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                            assert!(shape.clip_rect.contains_rect(rect), "control stays visible");
+                            Some(rect.center())
+                        }
+                        _ => None,
+                    })
+                    .expect("appearance control")
+            };
+            let camera = label("appearance-editor-camera");
+            let pose = label("shape-a-pose");
+            assert!(camera.y < pose.y);
+            for (pos, expected) in [(camera, AppearanceAction::Camera(false)), (pose, AppearanceAction::Pose(false))] {
+                for pressed in [true, false] {
+                    let events = vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ];
+                    let (actions, _) = draw(events, controls);
+                    if pressed {
+                        assert!(actions.is_empty());
+                    } else {
+                        assert_eq!(actions, vec![expected]);
+                        break;
+                    }
+                }
+            }
+            assert!(!shape.draft.as_ref().expect("shape draft").dirty());
+            assert!(!wearable.draft.as_ref().expect("layer draft").dirty());
+        }
+    }
     fn run_headless(ctx: &egui::Context, input: egui::RawInput, draw: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
         let mut output = ctx.run_ui(input, draw);
         // These tests inspect layout/input without a renderer. Explicitly
@@ -527,7 +668,14 @@ mod tests {
             ..Default::default()
         };
         let _ = run_headless(ctx, input, |ui| {
-            actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, state, true).0;
+            actions = show(
+                ui.ctx(),
+                &crate::theme::Theme::default().palette(),
+                world,
+                state,
+                AppearanceControls { camera: true, pose: true },
+            )
+            .0;
         });
         actions
     }
@@ -551,7 +699,13 @@ mod tests {
         let mut output = Default::default();
         for _ in 0..3 {
             output = run_headless(&ctx, input.clone(), |ui| {
-                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state, true);
+                let _ = show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    &mut world,
+                    &mut state,
+                    AppearanceControls { camera: true, pose: true },
+                );
             });
         }
         let at = output
@@ -622,7 +776,13 @@ mod tests {
             };
             let mut frame = |state: &mut State| {
                 run_headless(&ctx, input.clone(), |ui| {
-                    let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, state, true);
+                    let _ = show(
+                        ui.ctx(),
+                        &crate::theme::Theme::default().palette(),
+                        &mut world,
+                        state,
+                        AppearanceControls { camera: true, pose: true },
+                    );
                 })
             };
             for _ in 0..8 {
@@ -703,7 +863,13 @@ mod tests {
         let mut output = Default::default();
         for _ in 0..4 {
             output = run_headless(&ctx, input.clone(), |ui| {
-                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state, true);
+                let _ = show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    &mut world,
+                    &mut state,
+                    AppearanceControls { camera: true, pose: true },
+                );
             });
         }
         assert!(

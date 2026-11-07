@@ -48,6 +48,9 @@ pub struct PluginProcess {
     input: Vec<u8>,
     output: Vec<u8>,
     heartbeat: Instant,
+    /// LLPluginProcessParent::mBlocked: no heartbeat is sent while CEF
+    /// waits for a native file picker (or another blocking response).
+    blocked: bool,
     plugin_file: String,
     plugin_dir: String,
     shm: HashMap<String, SharedMemory>,
@@ -107,6 +110,7 @@ impl PluginProcess {
             input: Vec::new(),
             output: Vec::new(),
             heartbeat: Instant::now() + LAUNCH_TIMEOUT,
+            blocked: false,
             plugin_file: plugin_file.to_string_lossy().into_owned(),
             plugin_dir: plugin_dir.to_string_lossy().into_owned(),
             shm: HashMap::new(),
@@ -154,6 +158,12 @@ impl PluginProcess {
     pub fn send(&mut self, m: &PluginMessage) {
         if self.stream.is_none() {
             return;
+        }
+        if m.has("blocking_response") {
+            self.blocked = false;
+            // LLPluginProcessParent::sendMessage resets the timeout after
+            // a blocking request: the resident may have taken any time.
+            self.heartbeat = Instant::now() + LOCKUP_TIMEOUT;
         }
         log::trace!("media → plugin: {}:{}", m.class, m.name);
         self.output.extend_from_slice(m.generate().as_bytes());
@@ -266,7 +276,7 @@ impl PluginProcess {
         if self.child_exited() {
             return self.fail("plugin process quit".into());
         }
-        if Instant::now() > self.heartbeat {
+        if self.timed_out(Instant::now()) {
             self.fail(
                 if self.state == ProcState::Running {
                     "plugin locked up"
@@ -276,6 +286,10 @@ impl PluginProcess {
                 .into(),
             );
         }
+    }
+
+    fn timed_out(&self, now: Instant) -> bool {
+        !self.blocked && now > self.heartbeat
     }
 
     fn pump_output(&mut self) -> std::io::Result<()> {
@@ -327,6 +341,9 @@ impl PluginProcess {
     }
 
     fn receive(&mut self, m: PluginMessage) {
+        if m.has("blocking_request") {
+            self.blocked = true;
+        }
         if m.class != CLASS_INTERNAL {
             log::trace!("media ← plugin: {}:{}", m.class, m.name);
             self.received.push_back(m);
@@ -524,6 +541,48 @@ impl PluginPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_file_picker_suspends_lockup_timeout_until_the_blocking_response() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let _plugin = TcpStream::connect(listener.local_addr().expect("address")).expect("connect");
+        let (stream, _) = listener.accept().expect("accept");
+        let now = Instant::now();
+        let mut process = PluginProcess {
+            listener: None,
+            stream: Some(stream),
+            child: None,
+            state: ProcState::Running,
+            input: Vec::new(),
+            output: Vec::new(),
+            heartbeat: now - Duration::from_secs(1),
+            blocked: false,
+            plugin_file: String::new(),
+            plugin_dir: String::new(),
+            shm: HashMap::new(),
+            received: VecDeque::new(),
+            sleep_time: 0.01,
+            exit_deadline: None,
+            plugin_version: String::new(),
+            cpu_usage: 0.0,
+        };
+        assert!(process.timed_out(now));
+        process.receive(
+            PluginMessage::new("media", "pick_file")
+                .with("blocking_request", true)
+                .with("multiple_files", true),
+        );
+        assert!(!process.timed_out(now + Duration::from_secs(600)));
+        assert_eq!(process.take_messages().front().expect("file request").name, "pick_file");
+        // Ordinary traffic must not release the wait for the picker.
+        process.send(&PluginMessage::new("media", "set_volume").with("volume", 0.5));
+        assert!(!process.timed_out(now + Duration::from_secs(600)));
+        process.send(&crate::file_picker::response(Vec::new()));
+        assert!(!process.blocked);
+        assert!(!process.timed_out(Instant::now()));
+        assert!(process.timed_out(Instant::now() + LOCKUP_TIMEOUT + Duration::from_secs(1)));
+        process.state = ProcState::Done;
+    }
 
     fn folder(root: &Path, name: &str, launcher_inside: bool) -> PathBuf {
         let dir = root.join(name);

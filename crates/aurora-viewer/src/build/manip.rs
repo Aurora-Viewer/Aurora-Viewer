@@ -588,7 +588,10 @@ impl Manip {
             return;
         };
         let cam = p.cam;
-        if s.select_limit().is_some_and(|max| f.pivot.distance(cam.eye) > max + 64.0) {
+        // HUD depth bounds place the orthographic eye independently of the
+        // avatar. World selection distance must not hide HUD handles (as in
+        // LLManipTranslate::render, indra/newview/llmaniptranslate.cpp).
+        if cam.hud.is_none() && s.select_limit().is_some_and(|max| f.pivot.distance(cam.eye) > max + 64.0) {
             return;
         }
         let drag = self.drag.as_ref().filter(|d| d.started);
@@ -1498,7 +1501,7 @@ fn drag_update(
                 // Firestorm refuses to copy individual parts
             } else {
                 let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
-                for m in &d.movers {
+                for m in d.movers.iter().filter(|m| super::copyable_object(world, m.idx)) {
                     by_region.entry(m.key.region).or_default().push(m.key.local_id);
                 }
                 for (handle, ids) in by_region {
@@ -2803,6 +2806,125 @@ mod tests {
         assert!(save_movers(&world, &[key], false, EditMode::Stretch, Instant::now()).is_empty());
         world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MOVE;
         assert!(save_movers(&world, &[key], false, EditMode::Move, Instant::now()).is_empty());
+    }
+
+    #[test]
+    fn hud_no_modify_gizmos_draw_beyond_world_selection_distance_and_keep_edit_restrictions() {
+        let mut world = hud_world();
+        for event in crate::demo::hud::no_modify_events() {
+            world.apply(event);
+        }
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let key = world.objects.get(root).unwrap().key;
+        let settings = BuildSettings {
+            limit_select_distance: true,
+            max_select_distance: 128.0,
+            ..Default::default()
+        };
+        let cam = Cam::for_hud(aurora_render::HudView::new([1280, 720], 1.0, -513.0, 1.0), 1.0);
+        let now = Instant::now();
+        let paint = |world: &World, cam: &Cam, mode, linked| {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 720.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let painter = ui.ctx().layer_painter(egui::LayerId::background());
+                    let mut p = Painter3d::new(painter, cam, crate::theme::Theme::default().palette());
+                    Manip::default().draw(&mut p, world, &settings, &[key], linked, mode, now);
+                    p.flush();
+                },
+            );
+            // This paint-only test has no GPU to apply texture deltas.
+            output.textures_delta.clear();
+            output.shapes.iter().any(|s| !matches!(s.shape, egui::Shape::Noop))
+        };
+        for mode in [EditMode::Move, EditMode::Rotate] {
+            assert!(paint(&world, &cam, mode, false), "No-modify HUD {mode:?} handles must be visible");
+            assert!(!paint(&world, &cam, mode, true), "No linked-part edits without Modify");
+            let world_cam = Cam { hud: None, ..cam };
+            assert!(!paint(&world, &world_cam, mode, false), "Keep the world distance limit");
+        }
+        assert!(!paint(&world, &cam, EditMode::Stretch, false));
+        world.objects.get_mut(root).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MOVE;
+        for mode in [EditMode::Move, EditMode::Rotate] {
+            assert!(!paint(&world, &cam, mode, false), "The simulator's Move flag still applies");
+        }
+    }
+
+    #[test]
+    fn hud_no_modify_move_and_rotation_handles_update_only_the_whole_linkset() {
+        for mode in [EditMode::Move, EditMode::Rotate] {
+            let mut world = hud_world();
+            for event in crate::demo::hud::no_modify_events() {
+                world.apply(event);
+            }
+            let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+            let o = world.objects.get(root).unwrap();
+            let (key, position, rotation, scale, state) = (o.key, o.position, o.rotation, o.scale, o.state);
+            let children: Vec<_> = super::super::family(&world, root)
+                .into_iter()
+                .skip(1)
+                .map(|i| {
+                    let o = world.objects.get(i).unwrap();
+                    (i, o.position, o.rotation, o.scale)
+                })
+                .collect();
+            let settings = BuildSettings {
+                snap: false,
+                ..Default::default()
+            };
+            let now = Instant::now();
+            let cam = Cam::for_hud(
+                aurora_render::HudView::new([1280, 720], 1.0, -513.0, 1.0).in_area([0.0, 19.0, 1280.0, 720.0]),
+                1.0,
+            );
+            let f = frame(&world, &settings, &[key], false, now, None).unwrap();
+            let (start, end, part) = if mode == EditMode::Move {
+                let start = cam.project_px(f.pivot + Vec3::Y * arrow_length(&cam, &f, f.pivot) * 0.9).unwrap();
+                (start, (start.0 + 40.0, start.1), Part::Arrow(1))
+            } else {
+                let radius = ring_radius(&cam, &f, f.pivot);
+                let start = cam.project_px(f.pivot + Vec3::new(0.0, 0.6, 0.8) * radius).unwrap();
+                let end = cam.project_px(f.pivot + Vec3::new(0.0, 0.8, 0.6) * radius).unwrap();
+                (start, end, Part::Ring(0))
+            };
+            let mut manip = Manip::default();
+            assert!(manip.try_grab(&mut world, &settings, &cam, &[key], false, mode, start, now));
+            assert_eq!(manip.drag.as_ref().unwrap().part, part);
+            let mut out = Vec::new();
+            manip.update(
+                &mut world,
+                &settings,
+                &cam,
+                &[key],
+                false,
+                mode,
+                end,
+                false,
+                Mods::default(),
+                now,
+                &mut out,
+                None,
+            );
+            manip.release(&mut world, &settings, false, &mut out);
+            let o = world.objects.get(root).unwrap();
+            if mode == EditMode::Move {
+                assert!(o.position.abs_diff_eq(position - Vec3::Y * (40.0 / 701.0), 1e-5));
+                assert_eq!(o.rotation, rotation);
+            } else {
+                assert!(!o.rotation.abs_diff_eq(rotation, 1e-3));
+            }
+            assert_eq!((o.scale, o.state), (scale, state));
+            for (idx, pos, rot, scale) in children {
+                let child = world.objects.get(idx).unwrap();
+                assert_eq!((child.position, child.rotation, child.scale), (pos, rot, scale));
+            }
+            assert!(matches!(&out[..], [BuildCmd::Transform { updates, .. }]
+                if updates.len() == 1 && updates[0].local_id == key.local_id && updates[0].linked && updates[0].scale.is_none()));
+        }
     }
 
     #[test]
