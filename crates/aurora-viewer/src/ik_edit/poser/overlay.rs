@@ -71,7 +71,18 @@ impl Editor {
         let painter = ctx.layer_painter(layer);
         let segments = self.skeleton_segments(world, proj, frame);
         self.draw_segments(&painter, p, &segments);
-        let gizmo_owns = if self.poser.transform == 2 {
+        let selected_enabled = self.selected.is_none_or(|bone| {
+            self.poser
+                .sessions
+                .get(&self.poser.subject)
+                .is_none_or(|session| session.pose.enabled[bone])
+        });
+        let gizmo_owns = if !selected_enabled {
+            self.gizmo.cancel();
+            self.poser.scale_gizmo.cancel();
+            self.drag = None;
+            false
+        } else if self.poser.transform == 2 {
             self.gizmo.cancel();
             self.show_pose_scale(ctx, p, proj, frame, rig)
         } else {
@@ -92,6 +103,11 @@ impl Editor {
                 continue;
             };
             let selected = chosen == Some(joint);
+            let enabled = self
+                .poser
+                .sessions
+                .get(&self.poser.subject)
+                .is_none_or(|session| session.pose.enabled[joint]);
             let response = egui::Area::new(egui::Id::unique(("poser-joint", joint)))
                 .fixed_pos(at - egui::vec2(6.0, 6.0))
                 .order(egui::Order::Background)
@@ -100,7 +116,7 @@ impl Editor {
                 .show(ctx, |ui| {
                     let sense = if gizmo_owns {
                         Sense::hover()
-                    } else if self.poser.transform == 2 {
+                    } else if !enabled || self.poser.transform == 2 {
                         Sense::click()
                     } else {
                         Sense::click_and_drag()
@@ -109,17 +125,22 @@ impl Editor {
                     if selected {
                         ui.painter().circle_stroke(rect.center(), 7.0, Stroke::new(2.0, p.teal));
                     }
-                    ui.painter().circle_filled(
-                        rect.center(),
-                        if selected { 4.5 } else { 2.5 },
-                        if self.poser_edited(joint) {
-                            p.violet_light
-                        } else if selected {
-                            p.teal
-                        } else {
-                            p.ink
-                        },
-                    );
+                    if enabled {
+                        ui.painter().circle_filled(
+                            rect.center(),
+                            if selected { 4.5 } else { 2.5 },
+                            if self.poser_edited(joint) {
+                                p.violet_light
+                            } else if selected {
+                                p.teal
+                            } else {
+                                p.ink
+                            },
+                        );
+                    } else {
+                        ui.painter()
+                            .circle_stroke(rect.center(), if selected { 4.5 } else { 3.0 }, Stroke::new(1.0, p.muted_dim));
+                    }
                     response
                 })
                 .inner;

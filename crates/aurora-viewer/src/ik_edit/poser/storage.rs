@@ -100,8 +100,19 @@ pub(super) fn native(rig: &Rig, pose: &SubjectPose, translations: &[usize], name
         joints: pose.matrices(rig, Mat4::IDENTITY),
         at: Instant::now(),
     };
+    let joints: Vec<_> = pose
+        .enabled
+        .iter()
+        .enumerate()
+        .filter_map(|(bone, enabled)| enabled.then_some(bone))
+        .collect();
+    let translations: Vec<_> = translations
+        .iter()
+        .copied()
+        .filter(|bone| pose.enabled.get(*bone).copied().unwrap_or(false))
+        .collect();
     document
-        .record(rig, &frame, 0, &(0..rig.len()).collect::<Vec<_>>(), translations)
+        .record(rig, &frame, 0, &joints, &translations)
         .map_err(|k| aurora_i18n::text(k).to_owned())?;
     let animation = document.animation().map_err(|k| aurora_i18n::text(k).to_owned())?;
     let bytes = aurora_assets::import_animation::encode(&animation).map_err(|e| e.to_string())?;

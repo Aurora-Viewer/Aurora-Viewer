@@ -49,14 +49,14 @@ pub(super) fn encode(rig: &Rig, pose: &SubjectPose, unlock_pelvis: bool) -> Resu
     for frame in 0..3 {
         for &bone in &order {
             if bone == rig.pelvis {
-                let p = if unlock_pelvis && frame > 0 {
+                let p = if unlock_pelvis && pose.enabled[bone] && frame > 0 {
                     basis.inverse() * (pose.positions[bone] - rig.local_pos[bone]) / 0.0254
                 } else {
                     Vec3::ZERO
                 };
                 let _ = write!(out, "{:.6} {:.6} {:.6} ", p.x, p.y, p.z);
             }
-            let q = if frame == 0 || bone == rig.pelvis && !unlock_pelvis {
+            let q = if frame == 0 || !pose.enabled[bone] || bone == rig.pelvis && !unlock_pelvis {
                 Quat::IDENTITY
             } else {
                 basis.inverse() * pose.rotations[bone] * basis
