@@ -5664,7 +5664,6 @@ ui-bars-script-library = スクリプトライブラリ
 ui-bars-message-of-the-day = 本日のメッセージ
 ui-bars-wiki = Auroraビューア wiki
 ui-bars-knowledge-base = ナレッジベース
-ui-bars-sysinfo-button = 会話のシステム情報ボタン
 ui-bars-about = Auroraビューアについて
 cmdline-dice-successes = { "成功数：" }{ $successes }
 build-manip-south = 南
