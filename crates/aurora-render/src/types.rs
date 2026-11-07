@@ -93,20 +93,31 @@ pub fn unpack_tangent(normal: [i8; 4]) -> Option<(Vec3, f32)> {
 }
 
 /// Per-vertex skinning data (parallel stream): 4 joint indices and 4
-/// normalized weights. Terrain uses these same eight bytes for its frame
+/// normalized 16-bit weights. The Legacy Viewer sends its weights to the
+/// GPU as floats (LLVolumeFace's weight4, objectSkinV.glsl): 8 bits are not
+/// enough there, because bodies that drive long bone position offsets with
+/// very small weights turn each 1/255 step into millimetres of movement and
+/// the surface terraces (#2372). Terrain uses this same stream for its frame
 /// ([`pack_terrain_frame`]); its records never enable skinning.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct SkinVertex {
     /// Mesh joint indices into the record's skin bindings (`flags[2]`).
     pub joints: [u8; 4],
-    pub weights: [u8; 4],
+    /// Unorm16 weights ([`pack_skin_weight`]), renormalised by the shader.
+    pub weights: [u16; 4],
 }
 
-/// Terrain has no skeleton: its parallel 8-byte stream holds octahedral
-/// normal/tangent directions (two snorm16 values each). This keeps the
-/// Legacy Viewer's terrain frame without reducing it to snorm8 or deriving
-/// the tangent from the normal. No vertex stride or GPU binding is added.
+/// The packed weight of a joint influence, 0.0..=1.0 in 65535 steps.
+pub fn pack_skin_weight(w: f32) -> u16 {
+    (w.clamp(0.0, 1.0) * 65535.0).round() as u16
+}
+
+/// Terrain has no skeleton: its parallel stream holds octahedral
+/// normal/tangent directions (two snorm16 values each): the normal in the
+/// joint bytes, the tangent in the first two weights (the last two stay 0).
+/// This keeps the Legacy Viewer's terrain frame without reducing it to snorm8
+/// or deriving the tangent from the normal. No GPU binding is added.
 pub fn pack_terrain_frame(normal: Vec3, tangent: Vec3) -> SkinVertex {
     let pack = |v: Vec3| {
         let v = v / v.abs().element_sum().max(1e-20);
@@ -115,20 +126,22 @@ pub fn pack_terrain_frame(normal: Vec3, tangent: Vec3) -> SkinVertex {
             p = (glam::Vec2::ONE - glam::Vec2::new(p.y, p.x).abs())
                 * glam::Vec2::new(if p.x < 0.0 { -1.0 } else { 1.0 }, if p.y < 0.0 { -1.0 } else { 1.0 });
         }
-        let x = ((p.x.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
-        let y = ((p.y.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
-        [x[0], x[1], y[0], y[1]]
+        [
+            (p.x.clamp(-1.0, 1.0) * 32767.0).round() as i16,
+            (p.y.clamp(-1.0, 1.0) * 32767.0).round() as i16,
+        ]
     };
+    let [nx, ny] = pack(normal).map(i16::to_le_bytes);
+    let [tx, ty] = pack(tangent);
     SkinVertex {
-        joints: pack(normal),
-        weights: pack(tangent),
+        joints: [nx[0], nx[1], ny[0], ny[1]],
+        weights: [tx as u16, ty as u16, 0, 0],
     }
 }
 
 pub fn unpack_terrain_frame(frame: SkinVertex) -> (Vec3, Vec3) {
-    let unpack = |bytes: [u8; 4]| {
-        let x = f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32767.0;
-        let y = f32::from(i16::from_le_bytes([bytes[2], bytes[3]])) / 32767.0;
+    let unpack = |x: i16, y: i16| {
+        let (x, y) = (f32::from(x) / 32767.0, f32::from(y) / 32767.0);
         let mut n = Vec3::new(x, y, 1.0 - x.abs() - y.abs());
         if n.z < 0.0 {
             n.x = (1.0 - y.abs()) * if x < 0.0 { -1.0 } else { 1.0 };
@@ -136,7 +149,11 @@ pub fn unpack_terrain_frame(frame: SkinVertex) -> (Vec3, Vec3) {
         }
         n.normalize_or(Vec3::Z)
     };
-    (unpack(frame.joints), unpack(frame.weights))
+    let j = frame.joints;
+    (
+        unpack(i16::from_le_bytes([j[0], j[1]]), i16::from_le_bytes([j[2], j[3]])),
+        unpack(frame.weights[0] as i16, frame.weights[1] as i16),
+    )
 }
 
 /// One mesh joint of a skinned mesh (LLMeshSkinInfo): its inverse bind
@@ -1739,7 +1756,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terrain_frames_keep_direction_precision_in_the_existing_eight_bytes() {
+    fn small_weights_on_long_bone_offsets_deform_smoothly() {
+        // #2372: a body moves bones about 0.8 m and weights the surface a
+        // few percent on them. What the shader moves (weights renormalised,
+        // object.wgsl skin_matrix) must follow the mesh's weight closely.
+        let lever = 0.8;
+        let moved = |packed: [f32; 2]| packed[0] / (packed[0] + packed[1]) * lever;
+        let mut old_error = 0.0f32;
+        for i in 1..=200 {
+            let w = i as f32 * 0.0003;
+            let new = moved([pack_skin_weight(w), pack_skin_weight(1.0 - w)].map(f32::from));
+            assert!((new - w * lever).abs() < 0.00005, "weight {w}: {new} m instead of {} m", w * lever);
+            let old = moved([w, 1.0 - w].map(|w| (w * 255.0).round()));
+            old_error = old_error.max((old - w * lever).abs());
+        }
+        // the 8-bit weights stepped by more than a millimetre
+        assert!(old_error > 0.001, "{old_error}");
+        // the Legacy Viewer's smallest influence (LLVolume) still counts
+        assert!(pack_skin_weight(0.001) > 0);
+        assert_eq!(pack_skin_weight(1.0), u16::MAX);
+    }
+
+    #[test]
+    fn terrain_frames_keep_direction_precision_in_the_skin_stream() {
         for x in -3..=3 {
             for y in -3..=3 {
                 for z in -3..=3 {
@@ -1755,7 +1794,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(std::mem::size_of::<SkinVertex>(), 8);
+        assert_eq!(std::mem::size_of::<SkinVertex>(), 12);
         assert_eq!(std::mem::size_of::<Vertex>(), 24);
     }
 

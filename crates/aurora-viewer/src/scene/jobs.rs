@@ -596,7 +596,7 @@ pub fn mesh_to_faces(
                                 // LLSkinningUtil::getPerVertexSkinMatrix:
                                 // clamp in the mesh's palette before remapping.
                                 sv.joints[k] = map[(j[k] as usize).min(map.len() - 1)];
-                                sv.weights[k] = (w[k].clamp(0.0, 1.0) * 255.0).round() as u8;
+                                sv.weights[k] = aurora_render::pack_skin_weight(w[k]);
                             }
                             sv
                         })
@@ -643,7 +643,7 @@ mod tests {
             [9, 9, 9, 3],
             "invalid indices clamp to the last mesh joint before mapping"
         );
-        assert_eq!(vertices[1].weights, [128, 64, 64, 0]);
+        assert_eq!(vertices[1].weights, [32768, 16384, 16384, 0]);
         assert_eq!(vertices[2].joints, [9, 7, 3, 9]);
         let (faces, _, _) = mesh_to_faces(&[face], None, Some(&[]));
         assert!(faces[0].as_ref().unwrap().skin.is_none(), "an empty palette cannot skin vertices");
