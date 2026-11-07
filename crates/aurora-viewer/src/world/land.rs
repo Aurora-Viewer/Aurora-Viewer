@@ -103,9 +103,12 @@ pub fn owned_by_agent(p: &ParcelInfo, a: &AgentRights, power: u64) -> bool {
 /// to, or a group role allowed to create there. "Belong to" rather than the
 /// active group: objects are rezzed under the land's group when we are in
 /// it (`group_for_rez`, RezUnderLandGroup, on by default in both viewers).
-/// The Legacy Viewer adds gods, which we never are; estate managers get
-/// nothing more there either.
+/// Admin status also permits building anywhere; estate managers get
+/// nothing more here.
 pub fn agent_can_build(p: &ParcelInfo, a: &AgentRights) -> bool {
+    if a.god {
+        return true;
+    }
     let owner = p.owner_id.is_nil() || (!p.is_group_owned && p.owner_id == a.id);
     let group = a.in_group(&p.group_id) && p.flags & pf::CREATE_GROUP_OBJECTS != 0;
     owner || p.flags & pf::CREATE_OBJECTS != 0 || group || a.has_power(&p.group_id, powers::LAND_ALLOW_CREATE)
@@ -156,10 +159,7 @@ impl super::World {
     }
 
     fn build_rights(&self) -> AgentRights<'_> {
-        AgentRights {
-            id: self.agent_id,
-            groups: &self.groups.groups,
-        }
+        self.agent_rights()
     }
 
     /// allowAgentBuild on the parcel we stand on (mAgentParcel).
@@ -1268,7 +1268,11 @@ mod tests {
     fn building_needs_our_land_open_land_or_its_group() {
         let member = [group(50, powers::NONE)];
         let creator = [group(50, powers::LAND_ALLOW_CREATE)];
-        let stranger = AgentRights { id: me(), groups: &[] };
+        let stranger = AgentRights {
+            id: me(),
+            groups: &[],
+            god: false,
+        };
         let mut p = ParcelInfo {
             owner_id: me(),
             group_id: Uuid::from_u128(50),
@@ -1281,18 +1285,33 @@ mod tests {
         // someone else's land with no build: nobody but its group's creators
         p.owner_id = Uuid::from_u128(9);
         assert!(!agent_can_build(&p, &stranger));
-        assert!(!agent_can_build(&p, &AgentRights { id: me(), groups: &member }));
+        assert!(!agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &member,
+                god: false
+            }
+        ));
         assert!(agent_can_build(
             &p,
             &AgentRights {
                 id: me(),
-                groups: &creator
+                groups: &creator,
+                god: false,
             }
         ));
         // group building: members only
         p.flags = pf::CREATE_GROUP_OBJECTS;
         assert!(!agent_can_build(&p, &stranger));
-        assert!(agent_can_build(&p, &AgentRights { id: me(), groups: &member }));
+        assert!(agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &member,
+                god: false
+            }
+        ));
         // building for everyone
         p.flags = pf::CREATE_OBJECTS;
         assert!(agent_can_build(&p, &stranger));
@@ -1301,19 +1320,39 @@ mod tests {
         p.owner_id = Uuid::from_u128(50);
         p.is_group_owned = true;
         assert!(!agent_can_build(&p, &stranger));
-        assert!(!agent_can_build(&p, &AgentRights { id: me(), groups: &member }));
+        assert!(!agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &member,
+                god: false
+            }
+        ));
         assert!(agent_can_build(
             &p,
             &AgentRights {
                 id: me(),
-                groups: &creator
+                groups: &creator,
+                god: false,
+            }
+        ));
+        assert!(agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &[],
+                god: true
             }
         ));
     }
 
     #[test]
     fn an_unknown_parcel_is_never_open() {
-        let a = AgentRights { id: me(), groups: &[] };
+        let a = AgentRights {
+            id: me(),
+            groups: &[],
+            god: false,
+        };
         assert_eq!(BuildRight::of(None, &a), BuildRight::Unknown);
         let open = ParcelInfo {
             owner_id: Uuid::from_u128(9),

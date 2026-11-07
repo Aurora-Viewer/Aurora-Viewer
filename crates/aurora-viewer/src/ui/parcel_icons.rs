@@ -59,13 +59,10 @@ pub struct ParcelState<'a> {
 /// The shared build rule ([`crate::world::land::agent_can_build`]) on the
 /// parcel we stand on.
 pub fn agent_can_build(s: &ParcelState) -> bool {
-    // allowAgentBuild: a god builds anywhere.
-    if s.god_level > 0 {
-        return true;
-    }
     let rights = crate::world::land::AgentRights {
         id: s.agent_id,
         groups: s.group.map_or(&[], std::slice::from_ref),
+        god: s.god_level > 0,
     };
     crate::world::land::agent_can_build(s.parcel, &rights)
 }
@@ -443,6 +440,11 @@ mod tests {
             ..state(0, &parcel)
         };
         assert!(!parcel_icons(&s)[3].ok);
+        let god = ParcelState {
+            god_level: 200,
+            ..state(0, &parcel)
+        };
+        assert!(agent_can_build(&god));
     }
 
     /// The place menu writes the first clause of a tooltip, in both languages'
