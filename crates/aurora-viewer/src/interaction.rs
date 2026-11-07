@@ -258,10 +258,16 @@ impl Interactions {
             d.inventory = Some(result.clone());
         }
     }
-    pub fn on_contents(&mut self, object: Uuid, result: Result<Vec<aurora_net::inventory::InvItem>, String>) {
+    pub fn on_contents(&mut self, object: Uuid, mut result: Result<Vec<aurora_net::inventory::InvItem>, String>) {
         if let Some(c) = &mut self.contents
             && c.target.object == object
         {
+            // The Open window lists the contents by name, numbers by value,
+            // like LLPanelObjectInventory's folder view (LLInventorySort,
+            // indra/newview/llfolderviewmodelinventory.cpp).
+            if let Ok(items) = &mut result {
+                items.sort_by_cached_key(|i| crate::natural_order::key(&i.name));
+            }
             c.result = Some(result);
         }
     }

@@ -1851,6 +1851,8 @@ mod tests {
             timestamps: false,
             max_textures: 0,
             vram_mb: None,
+            dedicated_mb: None,
+            shared_mb: None,
             integrated: false,
             vendor_id: 0,
             max_texture_size: 0,

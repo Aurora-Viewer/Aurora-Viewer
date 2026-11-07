@@ -3225,6 +3225,7 @@ impl TextureStreamer {
         // "crowded" below stays on the driver's own figure)
         let shared = video.map(|v| aurora_render::vram::VideoMemory {
             budget: crate::instances::share_cap(v.budget, &self.peers),
+            shared_budget: crate::instances::share_cap(v.shared_budget, &self.peers),
             ..v
         });
         let load = self.gpu.get();
@@ -3394,6 +3395,8 @@ const KEEP_RGBA_FROM: u32 = 128;
 /// foliage, grass, fences and hair cut out of a texture do not thin out with
 /// the distance. The Legacy Viewer leaves the box-filtered mips of the
 /// driver (LLImageGL), which do; this is a deliberate improvement.
+/// Coverage restoration only raises alpha: lowering it could erase a HUD
+/// panel whose creator chose a higher cutoff than the automatic 0.5.
 /// `AURORA_ALPHA_COVERAGE=0` keeps the plain mips, to compare.
 pub(crate) fn alpha_coverage_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -3411,8 +3414,8 @@ fn mips_alpha_weighted() -> bool {
 
 /// The mip chain of a decoded texture, with its alpha coverage kept when
 /// its alpha is a mask. The texture does not know the cutoff of the faces
-/// that will use it: the default one (0.5) is taken, the cutoff of every
-/// face whose alpha is detected as a mask and of most masked materials.
+/// that will use it: the default one (0.5) is taken. The adjustment may
+/// never lower alpha, preserving what plain mips draw at every cutoff.
 fn mips_for(width: u32, height: u32, rgba: Vec<u8>, levels: u32, alpha: AlphaKind) -> Vec<(u32, u32, Vec<u8>)> {
     let mut mips = if mips_alpha_weighted() {
         aurora_render::build_mips_alpha_weighted(width, height, rgba, levels)
@@ -3570,6 +3573,17 @@ fn read_job(dir: &std::path::Path, id: Uuid, want: u8, blocks: bool, pool: Optio
     }
 }
 
+/// Whether the BC7 blocks of a decoded texture hold its alpha. Its class
+/// does not say: alpha of 250 to 254 is classed opaque ([`classify_alpha`]),
+/// so a face with no material stays out of the alpha passes, but a Mask
+/// material at a cutoff of 255 must still hide those texels (#2276; the
+/// Legacy Viewer discards `alpha < minimum_alpha`, with `mAlphaMaskCutoff`
+/// = cutoff / 255, llvovolume.cpp). The three-channel encoding stores alpha
+/// as 254 or 255, whatever the source.
+fn bc7_keeps_alpha(alpha: AlphaKind, alpha_channel: bool, rgba: &[u8]) -> bool {
+    alpha != AlphaKind::Opaque || (alpha_channel && rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 255))
+}
+
 fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &DecodeMeter) -> JobResult {
     let DecodeJob {
         id,
@@ -3590,6 +3604,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
             };
             let alpha_channel = img.components == 4 || img.components == 2;
             let alpha = if alpha_channel { classify_alpha(&rgba) } else { AlphaKind::Opaque };
+            let keep_alpha = bc7_keeps_alpha(alpha, alpha_channel, &rgba);
             let rgba_done = start.elapsed();
             let sculpt = keep_pixels.then(|| {
                 Arc::new(SculptMap {
@@ -3603,9 +3618,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
             let mips = mips_for(img.width, img.height, rgba, 16, alpha);
             let mips_done = start.elapsed();
             let tried = bc7 && pool.is_some();
-            let compressed = tried
-                .then(|| aurora_render::bc7::encode_chain(&mips, alpha != AlphaKind::Opaque))
-                .flatten();
+            let compressed = tried.then(|| aurora_render::bc7::encode_chain(&mips, keep_alpha)).flatten();
             let bc7_done = start.elapsed();
             let cache = cache.as_ref().map(|(path, info, writer)| CacheWrite {
                 path,
@@ -3630,6 +3643,20 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alpha_just_under_opaque_is_kept_though_classed_opaque() {
+        let flat = |a: u8| [90, 120, 200, a].repeat(16 * 16);
+        for a in 250..255 {
+            let rgba = flat(a);
+            assert_eq!(classify_alpha(&rgba), AlphaKind::Opaque, "alpha {a}");
+            assert!(bc7_keeps_alpha(AlphaKind::Opaque, true, &rgba), "alpha {a}");
+        }
+        // really opaque, or an alpha that JPEG 2000 did not carry
+        assert!(!bc7_keeps_alpha(AlphaKind::Opaque, true, &flat(255)));
+        assert!(!bc7_keeps_alpha(AlphaKind::Opaque, false, &flat(250)));
+        assert!(bc7_keeps_alpha(AlphaKind::Mask, true, &flat(255)));
+    }
 
     #[test]
     fn wearable_bakes_use_resident_bc7_pixels_without_jpeg_and_upgrade_progressively() {
