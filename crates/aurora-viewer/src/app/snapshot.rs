@@ -249,6 +249,11 @@ pub(super) struct Snapshots {
 }
 
 impl Snapshots {
+    /// A photo is being drawn (the crash report's effects list).
+    pub(super) fn drawing(&self) -> bool {
+        self.job.is_some()
+    }
+
     /// After a GPU recovery (gpu_recovery.rs): a photo under way is given up,
     /// its frames asked of the lost renderer never come back.
     pub(super) fn gpu_lost(&mut self) {
@@ -836,7 +841,7 @@ impl App {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-profile-not-ready").to_owned(), true));
             return;
         };
-        self.snapshots.reel.start(size, Some(&rgba), cutout);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let caption: String = self.snapshots.ui.caption.chars().take(profile::MAX_CAPTION).collect();
         let add_location = self.settings.snapshot.profile_location;
         let auth = self.snapshots.web_auth.clone();
@@ -952,7 +957,7 @@ impl App {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-email-unavailable").to_owned(), true));
             return;
         }
-        self.snapshots.reel.start(size, Some(&rgba), cutout);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let postcard = self.photo_postcard_fields();
         let quality = self.settings.snapshot.jpeg_quality;
         let demo_fail = self.demo && std::env::var("AURORA_DEMO_SNAPSHOT").is_ok_and(|m| m == "postcard-fail");
@@ -1219,7 +1224,7 @@ impl App {
         };
         self.snapshots.message_item = None;
         self.snapshots.message_profile = false;
-        self.snapshots.reel.start(size, None, cutout);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         self.snapshots.saving = Some(save::Saving::start(save::Job {
             width: size.0,
             height: size.1,
@@ -1256,8 +1261,8 @@ impl App {
 
     /// What the window shows of a photo for the inventory.
     pub(super) fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
-        // a photo of the reel sent again goes at its own size (fitted to the
-        // inventory's when it was read back): its price follows
+        // a photo of the reel sent again goes at its own size (never above
+        // the largest texture when it was read back): its price follows
         let capture = match &self.snapshots.reel.pending {
             Some((_, (w, h, _))) => (*w, *h),
             None => self.photo_size(window),
@@ -1306,7 +1311,7 @@ impl App {
     /// Scale and encode the texture on a worker; the shutter sounds as the
     /// upload starts, like saveTexture's playSnapshotAnimAndSound.
     pub(super) fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, cutout: bool) {
-        self.snapshots.reel.start(size, Some(&rgba), cutout);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
@@ -2468,9 +2473,18 @@ LUT_3D_SIZE {n}
     /// the user's values back as soon as either is off (they are also what
     /// a save in the meantime writes, `Settings::to_saved`).
     fn photo_quality(&mut self, renderer: &Renderer) {
+        // switched on from Preferences › Graphics: the photo window's first
+        // warning still comes before the boost
+        if self.panels.snapshot && self.settings.snapshot.quality && !self.settings.snapshot.quality_warned {
+            self.settings.snapshot.quality = false;
+            self.snapshots.quality_ask = true;
+        }
         let want = self.panels.snapshot && self.settings.snapshot.quality;
         match (&self.settings.photo_held, want) {
             (None, true) => {
+                // marked before the boost: a crash while it is drawn turns
+                // the switch off at the next start
+                crate::crash::photo_quality(true);
                 let mut held = snapshot::quality::boost(&mut self.settings);
                 // within what the video memory leaves, from the start, and
                 // with room for what the estimate leaves out: the whole
@@ -2515,6 +2529,7 @@ LUT_3D_SIZE {n}
                     held.restore(&mut self.settings);
                 }
                 log::info!("photo quality: off, the user's settings back");
+                crate::crash::photo_quality(false);
                 self.snapshots.fit = None;
                 self.snapshots.settings_changed = true;
             }
@@ -2532,6 +2547,34 @@ LUT_3D_SIZE {n}
         // the textures in view at full resolution only with the whole boost:
         // lowered, the video memory has no room for them either
         self.scene.textures.full_resolution = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_none_or(|f| f.step == 0);
+    }
+
+    /// The last session crashed or was stopped with "Photo quality" on: the
+    /// switch goes off (the graphics settings themselves were never saved
+    /// raised), and the login screen says so with a way to turn it back on.
+    /// The Legacy Viewer has no such boost. `AURORA_DEMO_PHOTO_QUALITY_CRASH=1`
+    /// shows the card in demo.
+    pub(super) fn photo_quality_at_start(&mut self) {
+        let crashed = crate::crash::take_photo_quality_crash();
+        let demo = std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_PHOTO_QUALITY_CRASH").is_some();
+        if demo || (crashed && self.settings.snapshot.quality && self.settings.snapshot.quality_off_after_crash) {
+            log::warn!("the last session ended badly with the photo quality on: switched off");
+            self.settings.snapshot.quality = false;
+            self.settings.save();
+            self.login_form.photo_quality_off = true;
+        } else if crashed {
+            log::info!("the last session ended badly with the photo quality on: left as it is");
+        }
+    }
+
+    /// The login card's answer: back on (true) or just read.
+    pub(super) fn photo_quality_off_answer(&mut self, back_on: bool) {
+        self.login_form.photo_quality_off = false;
+        if back_on {
+            log::info!("photo quality turned back on from the login card");
+            self.settings.snapshot.quality = true;
+            self.settings.save();
+        }
     }
 
     /// The photo quality still climbing towards the whole boost: a photo
@@ -2823,6 +2866,7 @@ LUT_3D_SIZE {n}
             }
             if demo.quality {
                 self.settings.snapshot.quality = true;
+                self.settings.snapshot.quality_warned = true;
             }
             if demo.light {
                 let mut light = snapshot::light::PhotoLight {

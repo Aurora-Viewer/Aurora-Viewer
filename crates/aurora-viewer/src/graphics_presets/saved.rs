@@ -47,6 +47,10 @@ quality_fields! {
     tonemap_mix: f32,
     dof: crate::dof::Settings,
     occlusion_culling: bool,
+    // FSR's mode and sharpening, with the anti-aliasing of `quality`: the
+    // levels never choose FSR, a saved profile can
+    fsr_quality: u8,
+    fsr_sharpness: u32,
 }
 
 impl Saved {
@@ -205,13 +209,46 @@ mod tests {
         saved.apply(&mut s);
         assert!(s.draw_distance <= 512.0);
         assert!(s.shadow_quality <= 4);
-        assert!(s.antialiasing <= 6);
+        assert!(s.antialiasing <= 7);
         assert!(s.dof.f_number.is_finite());
         assert_eq!(s.graphics_saved.len(), 0);
         assert!(valid_name(" Photo / nuit 🌙 "));
         assert!(!valid_name("  "));
         assert!(!valid_name("two\nlines"));
         assert!(!valid_name(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn graphics_saved_keeps_the_fsr_mode_and_older_entries_take_the_defaults() {
+        let mut s = Settings {
+            antialiasing: 7,
+            fsr_quality: 3,
+            fsr_sharpness: 25,
+            ..Settings::default()
+        };
+        let saved = Saved::capture(&s);
+        let json = serde_json::to_value(&saved).expect("serialize the profile");
+        s.antialiasing = 6;
+        s.fsr_quality = 0;
+        s.fsr_sharpness = 100;
+        saved.apply(&mut s);
+        assert_eq!((s.antialiasing, s.fsr_quality, s.fsr_sharpness), (7, 3, 25));
+        let mut old = json;
+        let fields = old.as_object_mut().expect("profile object");
+        fields.remove("fsr_quality");
+        fields.remove("fsr_sharpness");
+        let old: Saved = serde_json::from_value(old).expect("profile saved before FSR");
+        old.apply(&mut s);
+        let d = Settings::default();
+        assert_eq!(
+            (s.antialiasing, s.fsr_quality, s.fsr_sharpness),
+            (7, d.fsr_quality, d.fsr_sharpness)
+        );
+        let mut bad: Saved = serde_json::from_str("{}").expect("partial profile");
+        bad.fsr_quality = 200;
+        bad.fsr_sharpness = 9_999;
+        bad.apply(&mut s);
+        assert!(s.fsr_quality <= 4 && s.fsr_sharpness <= 100);
     }
 
     #[test]

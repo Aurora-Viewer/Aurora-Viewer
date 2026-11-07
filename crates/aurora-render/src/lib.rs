@@ -19,11 +19,12 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
-pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic};
+pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic, loss_details};
 mod dof;
 mod drawn_pick;
 mod exposure;
 pub mod frame_priority;
+mod fsr;
 pub mod gpu_alloc;
 pub mod gpu_cull;
 mod gtao;
@@ -46,6 +47,7 @@ mod portal_tests;
 pub mod present;
 pub mod preview;
 pub mod probes;
+pub mod projector_shadows;
 mod render_thread;
 mod renderer;
 mod rlva;
@@ -89,6 +91,7 @@ pub fn vr_headset_ready() -> bool {
 }
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod vr_mirror;
+pub mod write_staging;
 pub mod writes;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod xr_device;
@@ -110,7 +113,7 @@ pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{world_label_at, world_line_at};
-pub use main_thread::{GpuInfo, Renderer};
+pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
