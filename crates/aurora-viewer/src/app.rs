@@ -12367,6 +12367,10 @@ impl App {
                     self.world.apply(ev);
                 }
             }
+            // (with a full table: those given a slot once the others left)
+            if self.frame_count > 300 && self.frame_count.is_multiple_of(30) {
+                self.scene.textures.refeed_demo_stress(0..2 * n);
+            }
         }
         // Wait until login's loading fade is over, so the demo exercises a
         // teleport from the visible world even on a very fast machine.

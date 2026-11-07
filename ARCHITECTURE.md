@@ -3654,6 +3654,11 @@ unused textures per frame, downloaded data to be written noted on arrival),
 and the memory the main thread gives back (decoded levels, J2C data, picking
 triangles) is freed by a separate thread (`Jobs::discard`): while the tasks
 allocate on all the cores, freeing it in place cost several milliseconds.
+Each texture in use holds a slot of the renderer's table (262,144 of them,
+`aurora-render/src/textures.rs`); one that found it full is drawn white
+until a slot frees up, then gets it and loads again, and the objects that
+draw it are built again (`TextureStreamer::give_slots`,
+`Scene::rebuild_reslotted`; #2822).
 
 Alpha coverage restoration (`aurora-render/src/textures.rs`) only increases
 the box-filtered mip alpha. A texture may be shared by faces with different

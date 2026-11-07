@@ -9987,7 +9987,7 @@ What the inventory must show with these scenarios:
     colour and the overview the warning "Video memory over the driver's
     budget".
 - **`AURORA_TEXTURE_SLOTS=<n>`**: the texture table holds n textures
-  instead of 65,536 (`aurora-render/src/textures.rs`; the `renderer ready:`
+  instead of 262,144 (`aurora-render/src/textures.rs`; the `renderer ready:`
   line of the log gives its size). Each texture known to the streamer holds
   a slot of it, from the first face that uses it until 45 s after the last
   one stopped. Used to fill the table in demo.
@@ -10007,6 +10007,16 @@ What the inventory must show with these scenarios:
     all get their texture (capture after frame 1500 with
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
+  - Textures left without a slot get one once the table has room again
+    (#2822): `AURORA_DEMO_TEXTURES=6000`, `AURORA_DEMO_TEXTURES_CHURN=1`,
+    `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_POS="215,126"` and `5000`. The
+    last 1,013 textures have no slot and their cubes, in front of the
+    camera, are white (capture at frame 250). The cubes removed at frame
+    300 give their slots back: the log says `texture table: … textures in
+    use have a slot again` and, on the next line, how many objects were
+    built again (678 cubes) and how long the pass took; at frame 650
+    those cubes have their texture. Before the fix they stayed white for
+    as long as they were there.
 
 - **`AURORA_COLORED_AMBIENT=0|1|alt`**: overrides Preferences › Graphics ›
   Sky and environment › Colored sky ambient for this launch (`alt`: on
