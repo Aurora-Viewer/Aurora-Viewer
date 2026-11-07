@@ -13401,7 +13401,6 @@ ui-weather-wind-from-tip = D'où vient le vent, comme sur une boussole ; ou le v
 ui-weather-wind-region = Région
 ui-weather-wind-follow-region = Vent de la région
 ui-weather-wind-follow-region-tip = Le vent souffle dans le sens du vent de la région ; désactivé, il vient de la direction choisie dessous
-ui-options-aurora-weather-note = La part de la Météo Aurora qui est dessinée, et ce que les régions peuvent choisir. La météo elle-même (pluie ou neige, quantité, vent, orage) se règle dans la section Météo Aurora de la fenêtre Environnement ; elle n'est dessinée que pour votre vue.
 ui-weather-compass-n = N
 ui-weather-compass-ne = NE
 ui-weather-compass-e = E

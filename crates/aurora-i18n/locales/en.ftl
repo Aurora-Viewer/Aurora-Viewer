@@ -13405,7 +13405,6 @@ ui-weather-wind-from-tip = Where the wind comes from, as on a compass; or the re
 ui-weather-wind-region = Region's
 ui-weather-wind-follow-region = Region's wind
 ui-weather-wind-follow-region-tip = The wind blows the way the region's own wind does; off, it comes from the direction set below
-ui-options-aurora-weather-note = How much of Aurora Weather is drawn, and what regions may set. The weather itself (rain or snow, how much, the wind, thunder) is set in the Environment window's Aurora Weather section; it is drawn for your view only.
 ui-weather-compass-n = N
 ui-weather-compass-ne = NE
 ui-weather-compass-e = E

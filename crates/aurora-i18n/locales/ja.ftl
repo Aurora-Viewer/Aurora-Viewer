@@ -13378,7 +13378,6 @@ ui-weather-wind-from-tip = 風が吹いてくる方角（コンパスと同じ�
 ui-weather-wind-region = リージョン
 ui-weather-wind-follow-region = リージョンの風
 ui-weather-wind-follow-region-tip = リージョンの風と同じ向きに吹きます。オフにすると下で選んだ方角から吹きます
-ui-options-aurora-weather-note = Aurora の天気をどこまで描くか、リージョンに何を決めさせるかの設定です。天気そのもの（雨か雪、量、風、雷）は環境ウィンドウの「Aurora の天気」で設定し、あなたの画面だけに描かれます。
 ui-weather-compass-n = 北
 ui-weather-compass-ne = 北東
 ui-weather-compass-e = 東
