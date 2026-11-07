@@ -58,7 +58,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                                 }
                             });
                         if ch {
-                            c.apply_preset(preset);
+                            // the view as the user saved it (Controls window)
+                            s.camera.apply_view(preset, &s.camera_views);
                         }
                         ch
                     },
@@ -103,7 +104,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                             } else {
                                 c.preset
                             };
-                            c.apply_preset(preset);
+                            s.camera.apply_view(preset, &s.camera_views);
                         }
                         reset
                     },
@@ -181,6 +182,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         (VrView::FirstPerson, tr!("ui-options-camera-vr-view-first-person"), false),
                         (VrView::DesktopCamera, tr!("ui-options-camera-vr-view-desktop-camera"), false),
                     ],
+                );
+                // read by open_renderer at the next start (#2309)
+                cx.toggle(
+                    tr!("ui-options-camera-vr-at-start"),
+                    tr!("ui-options-camera-vr-at-start-help"),
+                    &field!(camera.vr_at_start),
                 );
             });
         }

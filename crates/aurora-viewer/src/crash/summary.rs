@@ -1281,6 +1281,19 @@ mod tests {
     }
 
     #[test]
+    fn the_crash_gpu_row_shows_apu_dedicated_and_shared_memory() {
+        let (dir, record) = session();
+        std::fs::write(
+            dir.join("session.log"),
+            "[t INFO  aurora_render::main_thread] GPU: AMD Radeon Graphics (Vulkan, driver AMD 1.2, memory 512 MB dedicated + 7800 MB shared)\n",
+        )
+        .unwrap();
+        let body = build(&record, &dir).body;
+        assert!(body.contains("| GPU | AMD Radeon Graphics (Vulkan, driver AMD 1.2, memory 512 MB dedicated + 7800 MB shared) |"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_crash_while_the_device_opens_names_the_card_from_the_adapters() {
         let adapter = |i: u32, what: &str| format!("[t INFO  aurora_render::main_thread] GPU adapter {i}: {what}\n");
         // only an integrated GPU, with the notice before the card is opened

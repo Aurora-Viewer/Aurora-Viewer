@@ -68,7 +68,9 @@ impl App {
     /// Each frame, after the renderer was asked for one.
     pub(super) fn gpu_stall_frame(&mut self, renderer: &aurora_render::Renderer) {
         let now = Instant::now();
-        if renderer.device_lost() && super::gpu_recovery::enabled() && !self.gpu_stall.lost {
+        // a VR session is not recovered yet (TASKS.md): it closes as before
+        let recovers = super::gpu_recovery::enabled(self.settings.gpu_recovery) && !renderer.vr_engaged();
+        if renderer.device_lost() && recovers && !self.gpu_stall.lost {
             crate::crash::gpu_loss_snapshot();
             use super::gpu_recovery::LossStep;
             match super::gpu_recovery::loss_step(&mut self.gpu_losses, now) {
@@ -156,6 +158,7 @@ impl App {
             std::thread::sleep(Duration::from_secs(10));
             log::warn!("the graphics card kept the viewer from closing: ended");
             withdraw_all(Duration::from_secs(1));
+            crate::logging::drain(crate::logging::DRAIN_WAIT);
             std::process::exit(0);
         });
         self.shutdown(event_loop);
