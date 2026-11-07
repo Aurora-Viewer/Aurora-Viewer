@@ -5267,14 +5267,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stranger's L$20 is a notification. `off`: the same with "Open a conversation for a
   friend's payment" off: no conversation opens, both are notifications. `sale` (#2675): no
   conversation; notifications for a sale ("for Steel helmet"), an object paid with its name
-  ("for Tip jar") and without, and a stranger's L$20, no card. `balance`: the toast off; 6
-  seconds after the start, three payments 0.9 s apart rise under the balance (12,480 L$), in
-  its colour, stacked downwards, and leave one at a time for the number, which
-  counts up; `AURORA_DEMO_BARS=legacy`, or Reduce motion, to see the other looks. `earning`:
-  from 12,480 L$, a sale, an object paid or a direct payment of 20 to 300 L$ at random every
-  10 seconds, for as long as the viewer runs, with the saved switches, which can be turned
-  meanwhile (by default a direct payment has its toast or its card, the others the highlight
-  alone: `sale` turns every toast on for its run, `balance` off). Capture
+  ("for Tip jar") and without, and a stranger's L$20, no card. `balance`: no toast; 6 seconds
+  after the start, three payments 0.9 s apart rise under the balance (12,480 L$), in its
+  colour, stacked downwards, then a purchase of L$300 in the danger colour: the number drops
+  at once. They leave one at a time; the number counts up for what was gained;
+  `AURORA_DEMO_BARS=legacy`, or Reduce motion, to see the other looks. `earning`:
+  from 12,480 L$, every 10 seconds for as long as the viewer runs, a sale, an object paid or a
+  direct payment of 20 to 300 L$, a purchase of as much, or ten times as much L$ bought, with
+  the saved switches and limits, which can be changed meanwhile (by default a direct payment
+  has its toast or its card, the others the highlight alone; `sale` turns every toast on for
+  its run, `balance` off). Capture
   after frame 400, with `--language fr` and `--language en`.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,

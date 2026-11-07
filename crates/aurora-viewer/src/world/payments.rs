@@ -72,10 +72,10 @@ pub struct Payments {
     pub notify_direct: bool,
     /// Other L$ received show a toast, from the preferences.
     pub notify_received: bool,
-    /// L$ received rise into the balance, from the preferences.
-    pub rise_into_balance: bool,
-    /// The amounts waiting for `ui/balance_gains.rs`, taken every frame.
-    pub gains: Vec<i32>,
+    /// Only a direct payment above this has its toast, from the preferences.
+    pub direct_above: Option<i32>,
+    /// Only other L$ above this have their toast, from the preferences.
+    pub received_above: Option<i32>,
 }
 
 impl Payments {
@@ -211,14 +211,13 @@ impl World {
         if sent {
             return;
         }
-        if self.payments.rise_into_balance {
-            self.payments.gains.push(*amount);
-        }
-        let wanted = if *kind == GIFT && !*source_group {
-            self.payments.notify_direct
+        let (wanted, above) = if *kind == GIFT && !*source_group {
+            (self.payments.notify_direct, self.payments.direct_above)
         } else {
-            self.payments.notify_received
+            (self.payments.notify_received, self.payments.received_above)
         };
+        // above, like the question of `ui::pay::needs_confirmation`
+        let wanted = wanted && above.is_none_or(|above| *amount > above);
         // process_money_balance_reply: nothing to display without a description
         if wanted && !card && !description.is_empty() {
             self.received_notice(other, *source_group, *kind, *amount, item);
@@ -553,7 +552,6 @@ mod tests {
     #[test]
     fn nothing_for_ours_a_failure_a_duplicate_or_an_empty_description() {
         let mut w = noticing();
-        w.payments.rise_into_balance = true;
         // ours
         w.payment(&received(80, trans::OBJECT_SALE, AGENT, 10, "Hat"));
         let mut ours = paid(81, trans::OBJECT_SALE, AGENT, JANE, 10, "Hat");
@@ -579,12 +577,11 @@ mod tests {
         }
         w.payment(&group);
         w.payment(&received(85, trans::OBJECT_SALE, Uuid::nil(), 10, "Hat"));
-        assert!(notices(&w).is_empty() && w.payments.gains.is_empty());
+        assert!(notices(&w).is_empty());
         // the simulator sends a reply twice
         w.payment(&received(86, trans::OBJECT_SALE, JANE, 10, "Hat"));
         w.payment(&received(86, trans::OBJECT_SALE, JANE, 10, "Hat"));
         assert_eq!(notices(&w).len(), 1);
-        assert_eq!(w.payments.gains, [10]);
         // process_money_balance_reply: no description, nothing to display
         w.payment(&paid(87, trans::OBJECT_SALE, JANE, AGENT, 10, "Hat"));
         assert_eq!(notices(&w).len(), 1);
@@ -626,14 +623,6 @@ mod tests {
     }
 
     #[test]
-    fn by_default_a_sale_is_highlighted_without_a_toast() {
-        let settings = crate::settings::Settings::default();
-        assert!(settings.notify_direct_payment);
-        assert!(!settings.notify_money_received);
-        assert!(settings.balance_gain_animation);
-    }
-
-    #[test]
     fn a_direct_payment_notifies_with_the_sales_switch_off() {
         let mut w = world();
         w.payments.notify_direct = true;
@@ -672,24 +661,35 @@ mod tests {
     }
 
     #[test]
-    fn each_switch_works_alone() {
-        for (toast, rise) in [(true, true), (true, false), (false, true), (false, false)] {
-            let mut w = world();
-            w.payments.notify_received = toast;
-            w.payments.rise_into_balance = rise;
-            w.payment(&received(110, trans::OBJECT_SALE, JANE, 100, "Hat"));
-            assert_eq!(notices(&w).len(), usize::from(toast), "{toast} {rise}");
-            assert_eq!(w.payments.gains.len(), usize::from(rise), "{toast} {rise}");
-        }
+    fn each_threshold_holds_back_its_own_kind_only() {
+        let mut w = noticing();
+        w.payments.direct_above = Some(100);
+        w.payments.received_above = Some(1000);
+        // a direct payment: only above, not at it
+        w.payment(&received(150, GIFT, JANE, 100, "Payment"));
+        assert!(notices(&w).is_empty());
+        w.payment(&received(151, GIFT, JANE, 101, "Payment"));
+        assert_eq!(notices(&w).len(), 1);
+        // a sale, between both limits, then above its own
+        w.payment(&received(152, trans::OBJECT_SALE, JANE, 500, "Hat"));
+        assert_eq!(notices(&w).len(), 1);
+        w.payment(&received(153, trans::OBJECT_SALE, JANE, 1001, "Hat"));
+        assert_eq!(notices(&w).len(), 2);
+        // the switch still decides, and a card does not depend on a limit
+        w.payments.notify_direct = false;
+        w.payment(&received(154, GIFT, JANE, 5000, "Payment"));
+        assert_eq!(notices(&w).len(), 2);
+        w.social.session_mut(JANE);
+        w.payment(&received(155, GIFT, JANE, 1, "Payment"));
+        assert_eq!(cards(&w, JANE).len(), 1);
     }
 
     #[test]
-    fn a_gift_shown_as_a_card_still_rises_into_the_balance() {
-        let mut w = noticing();
-        w.payments.rise_into_balance = true;
-        w.social.session_mut(JANE);
-        w.payment(&received(120, GIFT, JANE, 30, "Payment"));
-        assert_eq!(w.payments.gains, [30]);
-        assert!(notices(&w).is_empty());
+    fn by_default_a_sale_is_highlighted_without_a_toast() {
+        let settings = crate::settings::Settings::default();
+        assert!(settings.notify_direct_payment);
+        assert!(!settings.notify_money_received);
+        assert!(settings.balance_gain_animation);
+        assert!(!settings.notify_direct_above && !settings.notify_money_above);
     }
 }

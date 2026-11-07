@@ -627,8 +627,9 @@ pub struct App {
     /// AURORA_DEMO_LOOKAT=targets: the crosshairs shown, every avatar
     /// looking somewhere.
     demo_look_at_targets: bool,
-    /// The L$ received on their way into the balance.
+    /// The L$ gained and spent, under the balance.
     balance_gains: ui::balance_gains::BalanceGains,
+    highlight_balance: bool,
     /// `AURORA_DEMO_PAYMENT=balance`: the payments still to come.
     demo_gains: std::collections::VecDeque<(Instant, NetEvent)>,
     /// `AURORA_DEMO_PAYMENT=earning`: when the next payment comes.
@@ -1609,6 +1610,7 @@ impl App {
             demo_look_ahead: false,
             demo_look_at_targets: false,
             balance_gains: Default::default(),
+            highlight_balance: true,
             demo_gains: Default::default(),
             demo_earning: None,
             demo_money_notices: None,
@@ -8888,7 +8890,9 @@ impl App {
         ));
         self.world.payments.notify_direct = direct;
         self.world.payments.notify_received = toast;
-        self.world.payments.rise_into_balance = highlight;
+        self.highlight_balance = highlight;
+        self.world.payments.direct_above = self.settings.notify_direct_above.then_some(self.settings.notify_direct_threshold);
+        self.world.payments.received_above = self.settings.notify_money_above.then_some(self.settings.notify_money_threshold);
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700
@@ -15300,12 +15304,10 @@ impl App {
                     self.settings.show_balance
                 };
                 let now = Instant::now();
-                for amount in self.world.payments.gains.drain(..) {
-                    self.balance_gains.push(amount, now);
-                }
+                let shown = show_balance && self.highlight_balance;
                 let balance = self
                     .balance_gains
-                    .update(self.world.balance, show_balance, self.settings.reduce_motion, now);
+                    .update(self.world.balance, shown, self.settings.reduce_motion, now);
                 let status = ui::bars::StatusInfo {
                     location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
