@@ -213,10 +213,16 @@ impl WorldMapUi {
             .help(aurora_i18n::tr!(
                 "ui-worldmap-click-place-marker-double-click-teleport-wheel-zoom-drag"
             ))
+            // The side column's rows (X / Y / Z, the buttons) can measure
+            // wider than `side` with a wide font or a larger text, and the
+            // map takes all the rest: egui's frame followed the body, so the
+            // window grew by that excess at every frame up to the screen's
+            // width, and snapped back after each drag of an edge (#2669).
+            // The body is laid out in the window's rect instead.
+            .steady_size()
             .show(ctx, p, open, |ui| {
                 let avail = ui.available_size();
                 let side = 236.0;
-                // exact fit: anything wider would grow the window every frame
                 let gap = ui.spacing().item_spacing.x;
                 ui.horizontal_top(|ui| {
                     let map_size = vec2((avail.x - side - gap).max(120.0).floor(), avail.y.max(160.0).floor());
@@ -1478,5 +1484,135 @@ mod coordinate_tests {
         let t = b.world.map.track.as_ref().expect("typed destination awaiting metadata");
         assert_eq!((t.x, t.y, t.z), (256600.0, 256700.0, 30.0));
         assert!(t.pending && !t.teleport);
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use std::sync::Arc;
+
+    struct Map {
+        ui: WorldMapUi,
+        world: World,
+        tiles: MapTiles,
+        opts: MapSettings,
+    }
+
+    impl Map {
+        /// The map with a tracked place, so that the position panel shows
+        /// its every button.
+        fn new(library: &Arc<AvatarLibrary>) -> Self {
+            let mut world = World::new(library.clone());
+            world.main_region = Some(aurora_net::origin_to_handle(256000, 256000));
+            world.map.track_location(256200.0, 256150.0, 25.0, false);
+            Map {
+                ui: WorldMapUi::default(),
+                world,
+                tiles: MapTiles::new(),
+                opts: MapSettings::default(),
+            }
+        }
+
+        fn show(&mut self, ctx: &egui::Context, p: &Palette, style: WorldMapStyle) {
+            let cam = MapCamera {
+                pos: glam::Vec3::new(128.0, 128.0, 30.0),
+                dir: glam::Vec3::X,
+                hfov: 1.2,
+                far: 128.0,
+            };
+            let images = HashMap::new();
+            let pictures = MapPictures {
+                images: &images,
+                avatars: &images,
+            };
+            let mut open = true;
+            self.ui.show(
+                ctx,
+                p,
+                &mut self.world,
+                &mut self.tiles,
+                &cam,
+                &mut self.opts,
+                style,
+                &pictures,
+                &mut open,
+            );
+        }
+    }
+
+    /// Both layouts at the default size, at the full-frame layout's (the
+    /// size the side panel inherits when the setting changes with the map
+    /// open, #2669) and at a small one: the window never grows by itself,
+    /// whatever the interface scale and text size.
+    fn assert_steady(style: WorldMapStyle, bottom: &str) {
+        let library = Arc::new(AvatarLibrary::load());
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            "worldmap",
+            &[vec2(700.0, 600.0), vec2(1040.0, 640.0), vec2(420.0, 420.0)],
+            bottom,
+            || Map::new(&library),
+            |m, ctx, p| m.show(ctx, p, style),
+        );
+    }
+
+    #[test]
+    fn the_side_panel_layout_keeps_its_size() {
+        assert_steady(WorldMapStyle::Legacy, aurora_i18n::tr!("ui-waypoint-remove"));
+    }
+
+    #[test]
+    fn the_full_frame_layout_keeps_its_size() {
+        assert_steady(WorldMapStyle::Aurora, aurora_i18n::tr!("common-copy-slurl"));
+    }
+
+    /// #2669: with a side column wider than its room (the text twice as
+    /// large), the right edge dragged in stays where it was let go.
+    #[test]
+    fn the_side_panel_layout_narrows_by_its_edge() {
+        let library = Arc::new(AvatarLibrary::load());
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        crate::theme::Theme::default().apply(&frames.ctx, 2.0);
+        crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::DEFAULT);
+        crate::ui::widgets::place_floater(&frames.ctx, "worldmap", pos2(40.0, 40.0), vec2(1040.0, 640.0));
+        let mut map = Map::new(&library);
+        let mut step = |frames: &mut crate::ui::widgets::elide_tests::Frames, events: Vec<egui::Event>| {
+            frames.run(events, |ui| map.show(ui.ctx(), &p, WorldMapStyle::Legacy));
+            frames
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::unique("worldmap")))
+                .expect("the window is shown")
+        };
+        let mut rect = Rect::NOTHING;
+        for _ in 0..10 {
+            rect = step(&mut frames, vec![]);
+        }
+        let grip = pos2(rect.right() - 1.0, rect.center().y);
+        let target = grip - vec2(400.0, 0.0);
+        step(&mut frames, vec![egui::Event::PointerMoved(grip)]);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        step(&mut frames, vec![button(grip, true)]);
+        for i in 1..=10 {
+            step(&mut frames, vec![egui::Event::PointerMoved(grip.lerp(target, i as f32 / 10.0))]);
+        }
+        step(&mut frames, vec![button(target, false)]);
+        let rects: Vec<Rect> = (0..30).map(|_| step(&mut frames, vec![])).collect();
+        let last = rects[rects.len() - 1];
+        assert!(
+            rects.iter().all(|r| *r == last),
+            "the window moved or grew after the drag: {rects:?}"
+        );
+        assert!(
+            (last.width() - (rect.width() - 400.0)).abs() <= 2.0,
+            "narrowed by the drag: {rect:?} then {last:?}"
+        );
+        assert_eq!(last.left(), rect.left(), "the left edge stays");
     }
 }
