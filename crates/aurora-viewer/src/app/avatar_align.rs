@@ -7,6 +7,36 @@
 use super::*;
 use crate::avatar_align as align;
 
+/// snapAvatarBody for an avatar sitting on an object: it is drawn facing
+/// `yaw` (upright) now, through its seat, until the simulator reports its
+/// own rotation. Returns whether `id` sits on a seat that is known.
+fn snap_seated(world: &mut World, id: uuid::Uuid, yaw: f32) -> bool {
+    let now = Instant::now();
+    let Some(idx) = world.objects.index_of_uuid(&id) else {
+        return false;
+    };
+    let Some((parent_id, reported, seat)) = world
+        .objects
+        .get(idx)
+        .filter(|o| o.parent_id != 0)
+        .and_then(|o| Some((o.parent_id, o.rotation, world.objects.parent_of(o)?)))
+    else {
+        return false;
+    };
+    let Some((_, seat_rotation, _)) = crate::scene::Scene::object_transform_unshifted(world, seat, now) else {
+        return false;
+    };
+    world.seat_snaps.insert(
+        id,
+        crate::world::body::SeatSnap {
+            parent_id,
+            reported,
+            local: align::seat_local_rotation(seat_rotation, yaw),
+        },
+    );
+    true
+}
+
 impl App {
     /// Each frame: the Compass, while open.
     pub(super) fn avatar_align_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
@@ -49,7 +79,9 @@ impl App {
             .objects
             .avatars()
             .filter(|(_, o)| !o.full_id.is_nil() && o.full_id != world.agent_id)
-            .filter_map(|(_, o)| crate::world::radar::native_position(world, o).map(|at| (o.full_id, at)));
+            // where each is drawn now, seat chain included: the stored
+            // position of a seated avatar is relative to its seat
+            .filter_map(|(_, o)| crate::autopilot::avatar_position(world, o.full_id).map(|at| (o.full_id, at)));
         let me = world.agent.position;
         let Some((id, at)) = align::nearest(me, avatars) else {
             log::warn!("avatar align: no nearby avatar found to face");
@@ -71,6 +103,10 @@ impl App {
         let forward = self.world.agent.forward();
         if let Some(body) = self.world.bodies.get_mut(&agent) {
             body.snap(forward);
+        } else {
+            // seated: parented avatars have no standing body, the drawn
+            // rotation is the seat's through the avatar's own
+            snap_seated(&mut self.world, agent, yaw);
         }
         if let Some(id) = facing {
             let now = Instant::now();
@@ -129,5 +165,53 @@ impl App {
                 crate::demo::avatar_align::Step::Yaw(yaw) => self.world.agent.yaw = yaw,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{demo, scene::Scene, scene::avatar::AvatarLibrary};
+    use aurora_net::NetEvent;
+    use glam::{Quat, Vec3};
+    use std::sync::Arc;
+
+    /// Our avatar seated on a seat turned 90° and tilted: after a turn it is
+    /// drawn upright, facing the asked heading, and a new report from the
+    /// simulator takes over.
+    #[test]
+    fn a_turn_on_a_rotated_seat_shows_on_the_drawn_body() {
+        let main = aurora_net::origin_to_handle(256000, 256000);
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = demo::DEMO_AGENT;
+        world.main_region = Some(main);
+        let mut seat = demo::action_avatar(false);
+        seat.local_id = 970;
+        seat.full_id = uuid::Uuid::from_u128(970);
+        seat.pcode = 9;
+        seat.position = Vec3::new(10.0, 20.0, 30.0);
+        seat.rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(0.2);
+        let me = demo::action_avatar(true);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: main,
+            objects: vec![seat, me],
+        });
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("avatar");
+        let drawn_forward = |world: &World| {
+            let (_, r, _) = Scene::object_transform_unshifted(world, idx, Instant::now()).expect("transform");
+            r * Vec3::X
+        };
+        let yaw = 2.2_f32;
+        assert!(snap_seated(&mut world, demo::DEMO_AGENT, yaw));
+        let forward = drawn_forward(&world);
+        let wanted = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+        assert!(forward.abs_diff_eq(wanted, 1e-4), "{forward:?} vs {wanted:?}");
+        // a standing avatar has no seat to turn on
+        let mut standing = World::new(Arc::new(AvatarLibrary::load()));
+        standing.agent_id = demo::DEMO_AGENT;
+        assert!(!snap_seated(&mut standing, demo::DEMO_AGENT, yaw));
+        // the simulator reports a new rotation: its word wins
+        world.objects.get_mut(idx).expect("avatar").rotation = Quat::from_rotation_z(1.0);
+        assert!(!drawn_forward(&world).abs_diff_eq(wanted, 1e-3));
     }
 }

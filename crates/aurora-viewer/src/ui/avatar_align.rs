@@ -90,51 +90,54 @@ fn swap_layout(ctx: &egui::Context, mini: bool) {
 }
 
 fn full_body(ui: &mut egui::Ui, p: &Palette, yaw: f32) -> Option<Action> {
-    let gap = ui.spacing().item_spacing.y;
     let row = 26.0;
-    // floater_avatar_align.xml: two rows of four steps, then two wide buttons
-    let buttons = 4.0 * row + 4.0 * gap;
-    // the window's body is measured from its content: the compass takes
-    // the room its width allows (both of buildCompassLayout's limits met)
-    let width = ui.available_width();
-    let area = vec2(width, (ui.available_height() - buttons).max(width + 24.0));
-    let mut action = compass(ui, p, area, yaw, false);
-    let step = (width - 3.0 * ui.spacing().item_spacing.x) / 4.0;
-    for steps in [[-10.0, -1.0, 1.0, 10.0], [-90.0, -45.0, 45.0, 90.0]] {
-        ui.horizontal(|ui| {
-            for delta in steps {
-                let label = if delta < 0.0 { format!("{delta}°") } else { format!("+{delta}°") };
-                if ui
-                    .add_sized(vec2(step, row), egui::Button::new(label))
-                    .on_hover_text(rotate_tip(delta))
-                    .clicked()
-                {
-                    action = Some(Action::Rotate(delta));
+    // floater_avatar_align.xml: the compass, then two rows of four steps and
+    // two wide buttons. The buttons are the footer, measured from their
+    // content (large text or a taller font cannot grow the window); the
+    // compass takes the room that is left, both of buildCompassLayout's
+    // limits met.
+    let (mut above, footer) = widgets::above_footer(ui);
+    let width = above.available_width();
+    let area = vec2(width, above.available_height().max(width + 24.0));
+    let mut action = compass(&mut above, p, area, yaw, false);
+    footer.show(ui, |ui| {
+        let step = (width - 3.0 * ui.spacing().item_spacing.x) / 4.0;
+        for steps in [[-10.0, -1.0, 1.0, 10.0], [-90.0, -45.0, 45.0, 90.0]] {
+            ui.horizontal(|ui| {
+                for delta in steps {
+                    let label = if delta < 0.0 { format!("{delta}°") } else { format!("+{delta}°") };
+                    if ui
+                        .add_sized(vec2(step, row), egui::Button::new(label))
+                        .on_hover_text(rotate_tip(delta))
+                        .clicked()
+                    {
+                        action = Some(Action::Rotate(delta));
+                    }
                 }
-            }
-        });
-    }
-    let nearest = ui
-        .add_sized(
+            });
+        }
+        let nearest = ui
+            .add_sized(
+                vec2(width, row),
+                egui::Button::new(aurora_i18n::tr!("avatar-align-nearest-cardinal")),
+            )
+            .on_hover_text(aurora_i18n::tr!("avatar-align-nearest-cardinal-tip"));
+        if nearest.clicked() {
+            action = Some(Action::NearestCardinal);
+        }
+        let face = widgets::action_button(
+            ui,
+            p,
+            "user-search",
+            aurora_i18n::tr!("toolbar-command-face-nearest"),
+            widgets::ActionKind::Flat,
             vec2(width, row),
-            egui::Button::new(aurora_i18n::tr!("avatar-align-nearest-cardinal")),
         )
-        .on_hover_text(aurora_i18n::tr!("avatar-align-nearest-cardinal-tip"));
-    if nearest.clicked() {
-        action = Some(Action::NearestCardinal);
-    }
-    let face = widgets::action_button(
-        ui,
-        p,
-        "user-search",
-        aurora_i18n::tr!("toolbar-command-face-nearest"),
-        widgets::ActionKind::Flat,
-        vec2(width, row),
-    )
-    .on_hover_text(aurora_i18n::tr!("avatar-align-face-nearest-tip"));
-    if face.clicked() {
-        action = Some(Action::FaceNearest);
-    }
+        .on_hover_text(aurora_i18n::tr!("avatar-align-face-nearest-tip"));
+        if face.clicked() {
+            action = Some(Action::FaceNearest);
+        }
+    });
     action
 }
 

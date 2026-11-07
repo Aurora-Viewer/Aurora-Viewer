@@ -52,6 +52,13 @@ pub fn yaw_towards(from: Vec3, to: Vec3) -> Option<f32> {
     (d.length_squared() > 1e-8).then(|| d.y.atan2(d.x))
 }
 
+/// The rotation, relative to its seat, that makes a seated avatar face `yaw`
+/// in the world and stay upright (snapAvatarBody keeps the world's Z as up,
+/// whatever the seat's tilt). `seat` is the seat's world rotation.
+pub fn seat_local_rotation(seat: glam::Quat, yaw: f32) -> glam::Quat {
+    (seat.inverse() * glam::Quat::from_rotation_z(yaw)).normalize()
+}
+
 /// onClickFaceNearestAvatar: the nearest of `avatars` (id, position) within
 /// MAX_FACE_DISTANCE of `me`, in 3D; the first one found wins a tie. The
 /// caller leaves out ourselves and the animesh (isSelf, isControlAvatar).

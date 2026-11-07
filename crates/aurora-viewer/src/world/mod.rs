@@ -447,6 +447,9 @@ pub struct World {
     pub water_float: crate::movement::water_float::Follower,
     /// Drawn body orientation per standing avatar (LLVOAvatar::updateOrientation).
     pub bodies: HashMap<Uuid, body::Body>,
+    /// The seated avatars turned on purpose, drawn so until the simulator
+    /// reports their rotation (Compass, Face nearest avatar).
+    pub seat_snaps: HashMap<Uuid, body::SeatSnap>,
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub point_at: pointat::PointAts,
@@ -792,6 +795,7 @@ impl World {
             avatar_shape_dz: HashMap::new(),
             water_float: Default::default(),
             bodies: HashMap::new(),
+            seat_snaps: HashMap::new(),
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
             object_im_filter: object_im_filter::Settings::default(),
