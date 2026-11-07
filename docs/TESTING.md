@@ -6419,7 +6419,7 @@ failure. Grid validation and any paid upload are performed by the human.
   background and text come back. `AURORA_DEMO_COLORS` wins over it,
   `AURORA_DEMO_CONTRAST=1` ignores it. Combine with
   `AURORA_DEMO_OPTIONS=appearance/2` (the swatches show the colours in
-  use).
+  use; a look with no accent shows the note that the desktop gives none).
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Appearance ›

@@ -68,6 +68,13 @@ fn interface_colors(cx: &mut Cx) {
             tr!("ui-options-follow-system-theme-help"),
             &field!(follow_system_theme),
         );
+        if !high_contrast && crate::system_theme::following(cx.s) {
+            match crate::system_theme::given() {
+                crate::system_theme::Given::Everything => {}
+                crate::system_theme::Given::ModeOnly => cx.note(tr!("ui-options-follow-system-no-accent")),
+                crate::system_theme::Given::Nothing => cx.note(tr!("ui-options-follow-system-nothing")),
+            }
+        }
         base_color(
             cx,
             tr!("ui-options-accent-color"),

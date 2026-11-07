@@ -78,6 +78,40 @@ pub fn take_changed() -> bool {
     CHANGED.swap(false, Ordering::Relaxed)
 }
 
+/// What the system gives, for Preferences to say so: a desktop may publish
+/// the mode alone, or nothing (Hyprland has no accent of its own, and its
+/// portal no settings, xdg-desktop-portal-gtk gives the mode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Given {
+    Everything,
+    ModeOnly,
+    Nothing,
+}
+
+/// Before the first read nothing is known, so nothing is reported missing;
+/// Windows and macOS always give their mode.
+fn given_by(read: bool, mode: bool, accent: bool) -> Given {
+    match (read, mode, accent) {
+        (false, ..) | (true, true, true) | (true, false, true) => Given::Everything,
+        (true, true, false) => Given::ModeOnly,
+        (true, false, false) => Given::Nothing,
+    }
+}
+
+pub fn given() -> Given {
+    given_by(
+        READ.load(Ordering::Relaxed),
+        MODE.load(Ordering::Relaxed),
+        current().accent.is_some(),
+    )
+}
+
+/// The first read is done, or a late portal brought the mode.
+fn reported(mode: bool) {
+    MODE.store(mode, Ordering::Relaxed);
+    READ.store(true, Ordering::Relaxed);
+}
+
 fn update(change: impl FnOnce(&mut Look)) {
     let mut look = LOOK.lock().unwrap_or_else(PoisonError::into_inner);
     let before = *look;
@@ -168,6 +202,8 @@ fn demo_active() -> bool {
 }
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+static READ: AtomicBool = AtomicBool::new(false);
+static MODE: AtomicBool = AtomicBool::new(false);
 
 /// Whether the interface follows the system: the option, or a demo run's
 /// scenario, whatever the settings say.
@@ -242,6 +278,7 @@ fn run_demo(demo: DemoLooks, ready: std::sync::mpsc::Sender<()>) {
     if let Some(look) = turn.next() {
         update(|l| *l = look);
     }
+    reported(true);
     let _ = ready.send(());
     if single {
         return;
@@ -256,7 +293,7 @@ fn run_demo(demo: DemoLooks, ready: std::sync::mpsc::Sender<()>) {
 
 #[cfg(target_os = "linux")]
 mod backend {
-    use super::{accent_from_unit, scheme_from_portal, update};
+    use super::{accent_from_unit, reported, scheme_from_portal, update};
     use std::sync::mpsc::Sender;
     use zbus::blocking::{Connection, Proxy};
     use zbus::zvariant::{OwnedValue, Value};
@@ -271,6 +308,7 @@ mod backend {
             Ok(p) => p,
             Err(e) => {
                 log::warn!("system theme: no session bus ({e})");
+                reported(false);
                 return;
             }
         };
@@ -280,15 +318,21 @@ mod backend {
             Ok(s) => s,
             Err(e) => {
                 log::warn!("system theme: changes not followed ({e})");
+                reported(false);
                 return;
             }
         };
+        let mut mode = false;
         for key in ["color-scheme", "accent-color"] {
             match read(&proxy, key) {
-                Some(value) => apply(key, &value),
+                Some(value) => {
+                    mode |= key == "color-scheme";
+                    apply(key, &value);
+                }
                 None => log::info!("system theme: the portal has no {key}"),
             }
         }
+        reported(mode);
         let _ = ready.send(());
         for msg in signals {
             match msg.body().deserialize::<(String, String, OwnedValue)>() {
@@ -318,6 +362,7 @@ mod backend {
             "color-scheme" => {
                 if let Ok(n) = u32::try_from(value) {
                     update(|look| look.scheme = scheme_from_portal(n));
+                    reported(true);
                 }
             }
             "accent-color" => {
