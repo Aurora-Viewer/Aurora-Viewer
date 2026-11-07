@@ -96,10 +96,10 @@ pub fn page(cx: &mut Cx, tab: usize) {
 /// by name; the renderer opens it at startup, so the choice applies at the
 /// next start. `AURORA_GPU` overrides it.
 /// The real sky's rows (world/night_sky.rs): where it is seen from, its
-/// latitude (set by a preset, typed for Custom; moving it makes the place
-/// Custom) and the stars' brightness.
+/// latitude and longitude (set by a preset, typed for Custom; moving one
+/// makes the place Custom), what sets its hour and the stars' brightness.
 fn night_sky_rows(cx: &mut Cx) {
-    use crate::world::night_sky::{GAIN_RANGE, SkyPlace};
+    use crate::world::night_sky::{GAIN_RANGE, SkyPlace, StarHour};
     let places: Vec<(SkyPlace, &str)> = SkyPlace::ALL.iter().map(|p| (*p, p.label())).collect();
     if cx.combo(
         aurora_i18n::tr!("ui-options-night-sky-place"),
@@ -120,7 +120,26 @@ fn night_sky_rows(cx: &mut Cx) {
         cx.s.night_sky_place = SkyPlace::Custom;
         cx.s.sync_night_sky();
     }
+    // the longitude counts with the real time only
+    cx.greyed(cx.s.night_sky_place != SkyPlace::Custom || cx.s.night_sky_hour != StarHour::RealTime);
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-longitude"),
+        aurora_i18n::tr!("ui-options-night-sky-longitude-help"),
+        &field!(night_sky_longitude),
+        -180.0..=180.0,
+        "°",
+    ) {
+        cx.s.night_sky_place = SkyPlace::Custom;
+        cx.s.sync_night_sky();
+    }
     cx.greyed(false);
+    let hours: Vec<(StarHour, &str)> = StarHour::ALL.iter().map(|h| (*h, h.label())).collect();
+    cx.combo(
+        aurora_i18n::tr!("ui-options-night-sky-hour"),
+        aurora_i18n::tr!("ui-options-night-sky-hour-help"),
+        &field!(night_sky_hour),
+        &hours,
+    );
     if cx.slider(
         aurora_i18n::tr!("ui-options-night-sky-brightness"),
         aurora_i18n::tr!("ui-options-night-sky-brightness-help"),

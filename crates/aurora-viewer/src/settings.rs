@@ -548,6 +548,12 @@ pub struct Settings {
     /// Its latitude (degrees north): the preset's, or the one typed for
     /// Custom.
     pub night_sky_latitude: f32,
+    /// Its longitude (degrees east), the same way; it counts with the real
+    /// time only.
+    pub night_sky_longitude: f32,
+    /// What sets the real sky's hour: the region's sun (default) or the
+    /// clock.
+    pub night_sky_hour: crate::world::night_sky::StarHour,
     /// Brightness of the real stars, 0.5 to 4 times the catalogue's.
     pub night_sky_gain: f32,
     pub exposure: f32,
@@ -1815,6 +1821,8 @@ impl Default for Settings {
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
+            night_sky_longitude: crate::world::night_sky::LONGITUDE as f32,
+            night_sky_hour: Default::default(),
             night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
             exposure: 1.0,
             sharpen: 0.4,
@@ -2414,15 +2422,20 @@ impl Settings {
         s
     }
 
-    /// The night sky's place and latitude agree (a preset gives its own
-    /// latitude, Custom keeps the one typed), within range; the stars'
+    /// The night sky's place, latitude and longitude agree (a preset gives
+    /// its own, Custom keeps the ones typed), within range; the stars'
     /// brightness within 0.5 to 4.
     pub(crate) fn sync_night_sky(&mut self) {
-        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE};
+        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE, LONGITUDE};
         self.night_sky_latitude = match self.night_sky_place.latitude() {
             Some(latitude) => latitude,
             None if self.night_sky_latitude.is_finite() => self.night_sky_latitude.clamp(-90.0, 90.0),
             None => LATITUDE as f32,
+        };
+        self.night_sky_longitude = match self.night_sky_place.longitude() {
+            Some(longitude) => longitude,
+            None if self.night_sky_longitude.is_finite() => self.night_sky_longitude.clamp(-180.0, 180.0),
+            None => LONGITUDE as f32,
         };
         self.night_sky_gain = if self.night_sky_gain.is_finite() {
             self.night_sky_gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
