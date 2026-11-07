@@ -1279,7 +1279,9 @@ non-strict behaviours keep permissive exceptions. Channel exclusions reuse
 that checker and require the native general restriction. Its `policy.rs` checks
 the common action boundary; `inventory.rs` resolves #RLV paths and validates
 COF deltas, attachment/layer locks and scripted nostrip. `camera.rs` supplies
-temporary camera settings and exclusive ownership. `events.rs` handles
+temporary camera settings and exclusive ownership. `modifiers.rs` builds what
+the RLVa tools list: behaviours, exceptions and the global modifiers (`ui/rlva.rs`
+draws them). `events.rs` handles
 permission/teleport consent, command notifications and stand returns.
 Script attachment permission requires an actual addable point. Auto-accept
 uses simulator ownership flags and distinguishes worn objects without relying

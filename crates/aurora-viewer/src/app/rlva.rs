@@ -290,9 +290,25 @@ impl App {
                 self.panels.chat = false;
                 self.panels.inventory = false;
                 self.options_ui.rlva_tools.open = true;
-                self.options_ui.rlva_tools.tab = 3;
+                self.options_ui.rlva_tools.tab = ui::rlva::Tab::Console;
                 self.settings.rlva.debug_commands = true;
                 "@jump=n,detach=n,fly=n,fly=n,fly=y".to_owned()
+            } else if let Some(tab) = match scenario {
+                "tools-restrictions" => Some(ui::rlva::Tab::Restrictions),
+                "tools-exceptions" => Some(ui::rlva::Tab::Exceptions),
+                "tools-modifiers" => Some(ui::rlva::Tab::Modifiers),
+                _ => None,
+            } {
+                self.panels.settings = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                self.options_ui.rlva_tools.open = true;
+                self.options_ui.rlva_tools.tab = tab;
+                let (tess, loup) = (crate::demo::DEMO_TESS, crate::demo::DEMO_LOUP);
+                format!(
+                    "@jump=n,detach=n,recvim=n,recvim:{tess}=add,sendim:{loup}=add,tplure:{tess}=add,shownametags:{loup}=add,\
+                     recvim:20;50=n,fartouch:2.5=n,sittp=n,setcam_avdistmax:10=n,setcam_textures=n"
+                )
             } else if scenario == "named-blocked" {
                 let request = Uuid::from_u128(0x726c76616e616d65);
                 self.request_user_teleport(

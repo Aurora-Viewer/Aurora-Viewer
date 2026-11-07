@@ -5188,6 +5188,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   issuer's jump lock. At frame 810 its log reports two local replies and no
   channel-zero network reply. `tools-closed` closes the console at frame 810
   and reports `fly=false, other_jump=true`. Capture after that frame in EN/FR.
+  `tools-restrictions`, `tools-exceptions` and `tools-modifiers` open the RLVa
+  tools on that tab with the same rules: `jump`, `detach`, `recvim` and
+  `recvim:20;50` (greyed in Exceptions, it is a distance), exceptions for two
+  residents and modifiers from `fartouch:2.5`, `sittp`, `setcam_avdistmax:10`
+  and `setcam_textures`. Modifiers lists all 21 rows, the unset ones muted as
+  `(default)`. Capture after frame 800. Demo mode shows every asset id; the
+  `hidden-` tags of the texture rows are covered by unit tests.
   `named-blocked` starts a named lookup, adds tploc and then resolves a distant
   destination; `maturity-blocked` holds a home teleport for a maturity response
   and adds tplm before releasing it. Both exercise the real deferred application
