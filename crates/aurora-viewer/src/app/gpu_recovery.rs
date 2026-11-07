@@ -41,7 +41,7 @@ impl App {
         if !following_system(&self.settings) {
             return;
         }
-        crate::system_theme::start();
+        crate::system_theme::start(false);
         crate::system_theme::tick();
         if !crate::system_theme::take_changed() {
             return;

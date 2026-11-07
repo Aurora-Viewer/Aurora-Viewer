@@ -93,6 +93,9 @@ fn a_demo_scenario_lists_its_looks_and_pace() {
         ]
     );
     assert_eq!(parse_demo("dark").every, Duration::from_secs(4));
+    // a stray separator is no look of its own
+    assert_eq!(parse_demo("dark;").looks, parse_demo("dark").looks);
+    assert_eq!(parse_demo("dark; ;light").looks.len(), 2);
 }
 
 /// Counts, selected rows and initials are text in the lighter accents.

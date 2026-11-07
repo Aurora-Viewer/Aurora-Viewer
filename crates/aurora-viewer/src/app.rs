@@ -1424,7 +1424,7 @@ impl App {
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
         if following_system(&settings) {
-            crate::system_theme::start();
+            crate::system_theme::start(true);
         }
         crate::interface_colors::set(wanted_interface_colors(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", text_scale(&settings));
