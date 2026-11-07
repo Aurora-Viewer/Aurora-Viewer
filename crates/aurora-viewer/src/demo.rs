@@ -146,6 +146,9 @@ pub mod keywords;
 pub mod land;
 #[path = "demo_link.rs"]
 pub mod link;
+/// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
+#[path = "demo_mask_255.rs"]
+pub mod mask_255;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
@@ -7971,6 +7974,7 @@ pub fn local_texture_mips(id: &Uuid) -> bool {
         || *id == TEX_SOFT_MASK
         || *id == TEX_PROJECTED
         || *id == TEX_FOLIAGE
+        || *id == hud::TEX_MASK_PANEL
         || plants::is_texture(id)
 }
 
@@ -8473,15 +8477,16 @@ fn foliage_texture() -> (Vec<u8>, u32, u32) {
     (px, N, N)
 }
 const MAT_NONE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0001);
-const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
+pub(crate) const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
 const MAT_BUMPY: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0004);
 const MAT_BLEND: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0005);
 /// Mask with a cutoff of 0 (AURORA_DEMO_MASK_ZERO): every texel drawn.
 const MAT_MASK_ZERO: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0006);
+const MAT_MASK_255: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0007);
 /// Glossy plate of AURORA_DEMO_SHIMMER: the bumps repeated many times.
 const MAT_SHIMMER: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0020);
-const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
+pub(crate) const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
 const TEX_PICK_FAINT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0013);
 const TEX_PICK_HALF: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0014);
 
@@ -8516,8 +8521,11 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
     ]
 }
 
-/// Pixels of a procedural demo texture (RGBA8, 64×64; the hair demo's 256×256).
+/// Pixels and dimensions of a procedural demo texture (RGBA8).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if *id == hud::TEX_MASK_PANEL {
+        return Some(hud::mask_cutoff_texture());
+    }
     if let Some(texture) = alpha_mask_ab::texture(id) {
         return Some(texture);
     }
@@ -8840,6 +8848,14 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
             LegacyMaterial {
                 diffuse_alpha_mode: alpha_mode::MASK,
                 alpha_cutoff: 0,
+                ..base.clone()
+            },
+        ),
+        (
+            MAT_MASK_255,
+            LegacyMaterial {
+                diffuse_alpha_mode: alpha_mode::MASK,
+                alpha_cutoff: 255,
                 ..base.clone()
             },
         ),

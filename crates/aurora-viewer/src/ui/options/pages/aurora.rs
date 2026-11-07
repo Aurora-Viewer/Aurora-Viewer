@@ -22,13 +22,16 @@ pub enum Look {
 /// Every choice of the page set to one look (the colored sky ambient
 /// included), and Aurora's water with it;
 /// the avatar plates' own settings and the filing of received items are
-/// left as they are.
+/// left as they are, and so is a gaze on the point under the cursor: the
+/// Aurora look does not choose to show others what the cursor is over.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
     s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
-    s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
+    if !aurora {
+        s.lookat.aim = Aim::Direction;
+    }
     s.notifications_style = if aurora {
         NotificationsStyle::Aurora
     } else {
@@ -474,6 +477,18 @@ mod tests {
         assert!(s.colored_sky_ambient);
         set_all(&mut s, Look::Legacy);
         assert!(!s.colored_sky_ambient);
+    }
+
+    #[test]
+    fn the_aurora_button_keeps_the_gaze_choice() {
+        let mut s = Settings::default();
+        set_all(&mut s, Look::Aurora);
+        assert_eq!(s.lookat.aim, Aim::Direction, "never turned to the point by the button");
+        s.lookat.aim = Aim::Point;
+        set_all(&mut s, Look::Aurora);
+        assert_eq!(s.lookat.aim, Aim::Point, "a chosen point stays");
+        set_all(&mut s, Look::Legacy);
+        assert_eq!(s.lookat.aim, Aim::Direction);
     }
 
     #[test]

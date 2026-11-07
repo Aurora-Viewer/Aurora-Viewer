@@ -738,6 +738,15 @@ impl Camera {
         }
     }
 
+    /// LLPickInfo::fetchResults uses calcFocusOffset for both camera focus
+    /// and handle_object_sit's AgentRequestSit. The offset is relative to
+    /// the clicked object's origin but remains in world axes.
+    pub fn object_pick_offset(&self, object: &FocusObject, point: Vec3, ray: Option<(Vec3, Vec3)>) -> Vec3 {
+        let Some(ray) = ray else { return point - object.position };
+        let virtual_camera = self.focus_target + (self.position - self.focus_target) / (1.0 + self.fov_zoom);
+        focus::calc_focus_offset(object, point, ray, self.position, self.forward(), virtual_camera)
+    }
+
     /// Alt+click (LLToolCamera::pickCallback): lock the camera on the
     /// clicked point, inside the clicked object when there is one.
     pub fn alt_focus(
@@ -750,10 +759,7 @@ impl Camera {
     ) {
         self.set_focus_on_avatar(false, true, true, agent, s);
         let focus = match object {
-            Some((_, g)) => {
-                let virtual_camera = self.focus_target + (self.position - self.focus_target) / (1.0 + self.fov_zoom);
-                g.position + focus::calc_focus_offset(&g, point, ray, self.position, self.forward(), virtual_camera)
-            }
+            Some((_, g)) => g.position + self.object_pick_offset(&g, point, Some(ray)),
             None => point,
         };
         self.set_focus_global(Some(focus), object.map(|o| o.0), object.map(|o| o.1), s);
@@ -779,6 +785,20 @@ impl Camera {
                     .zoom_time
                     .max(orbit_angle(a.start_camera - a.start_focus, camera - focus).abs() / PI * 1.35);
             }
+        }
+    }
+
+    /// Keep the displayed framing when automatic appearance movement is
+    /// switched off mid-turn. Manual camera transitions remain independent.
+    pub fn stop_appearance_view(&mut self) {
+        if !self.focus_on_avatar && self.focus_object.is_none() && self.anim.is_none_or(|animation| animation.orbit) {
+            self.anim = None;
+            self.focus_target = self.target;
+            self.focus_object = None;
+            self.focus_geom = None;
+            self.focus_offset_target = (self.position - self.target) / (1.0 + self.fov_zoom);
+            self.focus_offset = self.focus_offset_target;
+            self.smoothing_stop = true;
         }
     }
 
@@ -2269,6 +2289,42 @@ mod tests {
     fn settle(cam: &mut Camera, w: &mut World, s: &CameraSettings) {
         for _ in 0..300 {
             cam.update(w, s, &frame(1.0 / 60.0));
+        }
+    }
+
+    #[test]
+    fn disabling_appearance_movement_stops_mid_turn_and_keeps_manual_camera_controls() {
+        for smoothing in [0.0, 1.0] {
+            let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+            let settings = CameraSettings {
+                smoothing,
+                ..Default::default()
+            };
+            let mut camera = Camera::default();
+            settle(&mut camera, &mut world, &settings);
+            let focus = world.agent.position + Vec3::Z;
+            camera.set_appearance_view(focus + Vec3::X * 3.0, focus, &mut world.agent, &settings);
+            settle(&mut camera, &mut world, &settings);
+            camera.set_appearance_view(focus - Vec3::X * 3.0, focus, &mut world.agent, &settings);
+            for _ in 0..30 {
+                camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+            }
+            let displayed = (camera.position, camera.target);
+            camera.stop_appearance_view();
+            for _ in 0..180 {
+                camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+                assert!(camera.position.abs_diff_eq(displayed.0, 1e-4), "keep the interrupted eye");
+                assert!(camera.target.abs_diff_eq(displayed.1, 1e-4), "keep the interrupted focus");
+            }
+            camera.orbit_drag(100.0, 25.0, 1.0, &mut world.agent);
+            settle(&mut camera, &mut world, &settings);
+            assert!(camera.position.distance(displayed.0) > 0.1, "manual orbit still works");
+            let target = camera.target + Vec3::Z;
+            camera.set_view(target + Vec3::X * 4.0, target, &mut world.agent, &settings);
+            camera.stop_appearance_view();
+            assert!(camera.anim.is_some(), "a manual focus transition is left running");
+            settle(&mut camera, &mut world, &settings);
+            assert!(camera.target.abs_diff_eq(target, 1e-4));
         }
     }
 
