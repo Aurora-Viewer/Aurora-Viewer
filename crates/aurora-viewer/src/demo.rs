@@ -5549,6 +5549,10 @@ pub fn events() -> Vec<NetEvent> {
                 "",
             );
             if spec == "rigid" {
+                o.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+                o.extra.flexible = None;
+            }
+            if spec == "missing-params" {
                 o.extra.flexible = None;
             }
             if k % 6 == 5 {
