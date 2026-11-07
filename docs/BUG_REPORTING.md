@@ -107,7 +107,11 @@ What each part tells the one who fixes it:
   came: `out-of-memory` or the wgpu operation that failed
   (`Queue::write_buffer`). Their messages stay in the local log.
 - **Last state**: screen, frame rate, frame time, window size, graphics
-  preset, memory, video memory used / budget, texture memory pressure,
+  preset, memory, video memory used / budget, the tightest video memory
+  headroom of the last 60 seconds (the driver's budget less what it
+  counted for the viewer, in MB, negative while the viewer was past its
+  budget: a card shared with another program, where the driver moves
+  memory out and the frames slow down together), texture memory pressure,
   objects, avatars, regions, as noted every 2 seconds, and the swapchain
   recreations of the last 10 seconds (window resizes among them), frozen
   when the graphics card is lost. It also tells the cause of a GPU loss
