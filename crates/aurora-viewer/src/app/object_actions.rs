@@ -28,7 +28,8 @@ impl App {
         let now = Instant::now();
         // LLToolPie::handleLeftClickPick: "blanket block all left-click
         // special actions" on what RlvActions::canInteract refuses
-        if !matches!(target.action, Action::Touch | Action::Grab) && !self.world.rlva_can_interact(idx, Some(point)) {
+        // (a menu's entry was judged when the menu opened, and has no point)
+        if !target.menu && !matches!(target.action, Action::Touch | Action::Grab) && !self.world.rlva_can_interact(idx, Some(point)) {
             return;
         }
         // FSBlockClickSit (LLToolPie::handleLeftClickPick): a sit click goes
