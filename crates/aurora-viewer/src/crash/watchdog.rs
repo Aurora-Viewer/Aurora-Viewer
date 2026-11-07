@@ -71,11 +71,16 @@ pub struct State {
     pub window_state: &'static str,
     /// The latest GPU frame time measured, the longest one of the last
     /// 10 s (up to a GPU loss), and the pass that took most of each
-    /// (`GpuElement::key`). A driver reset follows a GPU task of more than
-    /// about 2 s: frames getting longer before the loss show it.
+    /// (`GpuElement::key`). A driver reset follows a GPU task of about 1.1 s
+    /// on NVIDIA (measured, `HANG_AFTER` in aurora-render) and of Windows'
+    /// 2 s setting otherwise: frames getting longer before the loss show it.
+    /// The frame that hung is never measured.
     pub gpu_ms: Option<f32>,
     pub gpu_peak_ms: Option<f32>,
     pub gpu_peak_pass: Option<&'static str>,
+    /// The ambient occlusion and contact shadows of that longest frame (ms),
+    /// which its `effects` pass gathers with others.
+    pub gpu_peak_ao_contact: Option<(f32, f32)>,
     pub gpu_last_pass: Option<&'static str>,
     /// Texture uploads since the previous note: how many and how many MB,
     /// and the most MB one frame uploaded in that time.
@@ -90,14 +95,11 @@ pub struct State {
     /// Still loading: textures being fetched or decoded, textures waiting
     /// for their upload, geometry pending.
     pub loading: (usize, usize, usize),
-    /// The Vulkan layers on offer to the viewer, comma separated
-    /// (`VK_LAYER_*` names only).
-    pub layers: String,
     /// What is known of a GPU loss, as fixed words: the reason wgpu gave,
     /// what its message is about, and how the loss was first seen.
     pub loss: Option<(&'static str, &'static str, &'static str)>,
-    /// The longest time the render thread was held by the GPU before the
-    /// loss (ms, 0 when the GPU never stalled for 2 s).
+    /// The longest time the render thread was held by the GPU past 2 s
+    /// (ms); 0 when it never was, and then no row.
     pub stall_ms: u64,
     /// The other Aurora viewers on this card and how many of them are in
     /// front (instances.rs); None when the registry does not run (demo).
@@ -167,6 +169,9 @@ impl State {
         if let Some(pass) = self.gpu_peak_pass {
             let _ = writeln!(out, "gpu_peak_pass={pass}");
         }
+        if let Some((ao, contact)) = self.gpu_peak_ao_contact {
+            let _ = writeln!(out, "gpu_peak_ao_contact={ao:.1}/{contact:.1}");
+        }
         if let Some(pass) = self.gpu_last_pass {
             let _ = writeln!(out, "gpu_last_pass={pass}");
         }
@@ -182,15 +187,14 @@ impl State {
             let _ = writeln!(out, "region_s={s}");
         }
         let _ = writeln!(out, "loading={}/{}/{}", self.loading.0, self.loading.1, self.loading.2);
-        if !self.layers.is_empty() {
-            let _ = writeln!(out, "layers={}", self.layers);
-        }
         if let Some((reason, cause, seen)) = self.loss {
             let _ = writeln!(out, "loss_reason={reason}");
             let _ = writeln!(out, "loss_cause={cause}");
             let _ = writeln!(out, "loss_seen_by={seen}");
         }
-        let _ = writeln!(out, "stall_ms={}", self.stall_ms);
+        if self.stall_ms > 0 {
+            let _ = writeln!(out, "stall_ms={}", self.stall_ms);
+        }
         if let Some((n, front)) = self.viewers_on_card {
             let _ = writeln!(out, "other_viewers={n}/{front}");
         }

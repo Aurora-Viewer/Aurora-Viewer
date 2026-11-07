@@ -5,6 +5,7 @@
 
 mod abuse_reports;
 mod account;
+mod appearance_queue;
 mod asset_imports;
 mod attach_queue;
 mod build_cmds;
@@ -77,6 +78,11 @@ use crate::build::BUILD_PARCEL_SEQ;
 /// (llstartup.cpp, circuit_timeout = 100 s, LLCircuitData::checkPeriodTime).
 /// 60 s cut sessions a laggy region or a short network outage would survive.
 const SIM_TIMEOUT: Duration = Duration::from_secs(100);
+/// How long a login waits for AgentMovementComplete before logging out
+/// (STATE_AGENT_WAIT_TIMEOUT, llstartup.cpp). Only the login ends this way: a
+/// teleport or crossing the region does not confirm keeps its session, and the
+/// viewer stops waiting on its own (`NetCommand::ArrivalGivenUp`).
+const LOGIN_ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
@@ -230,6 +236,52 @@ pub(crate) struct Shared {
     pub viewer_stats_posts: Arc<crate::viewer_stats::PostsInFlight>,
 }
 
+/// How long one appearance request may hold the queue.
+const APPEARANCE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// One POST of the COF version to UpdateAvatarAppearance: whether it
+/// succeeded, and the version the server expects when it says.
+async fn post_appearance_request(http: &reqwest::Client, request: appearance_queue::Request) -> (bool, Option<i32>) {
+    let appearance_queue::Request { cof_version, url } = request;
+    let body = aurora_llsd::to_xml(&aurora_llsd::llsd_map! { "cof_version" => cof_version });
+    let exchange = async {
+        let resp = http
+            .post(&url)
+            .header("Content-Type", "application/llsd+xml")
+            .header("Accept", "application/llsd+xml")
+            .body(body)
+            .send()
+            .await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.ok();
+        Ok::<_, reqwest::Error>((status, bytes.and_then(|b| aurora_llsd::from_xml(&b).ok())))
+    };
+    match tokio::time::timeout(APPEARANCE_REQUEST_TIMEOUT, exchange).await {
+        Ok(Ok((status, Some(d)))) => {
+            let ok = status.is_success() && d["success"].as_bool();
+            if !ok {
+                log::warn!(
+                    "appearance request for COF {cof_version} failed: HTTP {status} {}",
+                    d["error"].to_string_value()
+                );
+            }
+            (ok, d.has("expected").then(|| d["expected"].as_i32()))
+        }
+        Ok(Ok((status, None))) => {
+            log::warn!("appearance request for COF {cof_version}: HTTP {status}");
+            (false, None)
+        }
+        Ok(Err(e)) => {
+            log::warn!("appearance request failed: {}", e.without_url());
+            (false, None)
+        }
+        Err(_) => {
+            log::warn!("appearance request for COF {cof_version}: no answer");
+            (false, None)
+        }
+    }
+}
+
 struct Session<'a> {
     sh: &'a Shared,
     sock: Arc<UdpSocket>,
@@ -243,6 +295,8 @@ struct Session<'a> {
     inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
     /// AgentSetAppearance messages sent this session (their SerialNum).
     appearance_serial: u32,
+    /// UpdateAvatarAppearance requests: one at a time, the newest version.
+    appearance_queue: Arc<Mutex<appearance_queue::AppearanceQueue>>,
     /// Our profile as last received (AvatarPropertiesReply), which a grid
     /// without `AgentProfile` needs whole to save a change.
     own_profile: Option<crate::profile::OwnProfile>,
@@ -268,6 +322,8 @@ struct Session<'a> {
     viewer_stats: crate::viewer_stats::Schedule,
     regions_visited: std::collections::HashSet<u64>,
     cam_requested_at: Option<Instant>,
+    /// The first arrival of this session is still awaited (STATE_AGENT_WAIT).
+    login_arrival: bool,
     /// Last confirmed agent parcel in the main region, including its geometry.
     agent_parcel: Option<Arc<ParcelInfo>>,
     /// Teleport by region name waiting for its MapBlockReply (lowercase name, position).
@@ -374,12 +430,17 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         Ok(l) => Arc::new(l),
         Err(e) => {
             let (mfa, tos) = (matches!(e, LoginError::MfaRequired(_)), matches!(e, LoginError::TosRequired(_)));
+            let critical = matches!(e, LoginError::CriticalMessage(_));
             let bad_credentials = matches!(&e, LoginError::Refused { reason, .. } if reason == "key");
             let previous_session = e.previous_session();
             // The grid's own words (LLLoginInstance shows the message as it
             // comes), without the "login refused (presence)" prefix.
             let error = match &e {
                 LoginError::Refused { message, .. } if previous_session && !message.trim().is_empty() => message.trim().to_owned(),
+                // the text to read or accept, as LLFloaterTOS shows it
+                LoginError::TosRequired(message) | LoginError::CriticalMessage(message) if !message.trim().is_empty() => {
+                    message.trim().to_owned()
+                }
                 _ => e.to_string(),
             };
             emit(
@@ -388,6 +449,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     error,
                     mfa_required: mfa,
                     tos_required: tos,
+                    critical_required: critical,
                     bad_credentials,
                     previous_session,
                 },
@@ -416,6 +478,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     error: aurora_i18n::tr!("session-udp-bind-failed", e = format!("{}", e)),
                     mfa_required: false,
                     tos_required: false,
+                    critical_required: false,
                     bad_credentials: false,
                     previous_session: false,
                 },
@@ -454,6 +517,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         viewer_stats: Default::default(),
         regions_visited: Default::default(),
         cam_requested_at: None,
+        login_arrival: true,
         agent_parcel: None,
         pending_named_tp: None,
         object_cache,
@@ -475,6 +539,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_move_tx,
         inventory_udp_tx,
         appearance_serial: 0,
+        appearance_queue: Default::default(),
         own_profile: None,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
@@ -966,6 +1031,7 @@ impl Session<'_> {
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
+                        animated_object_max_tris: v["AnimatedObjects"]["AnimatedObjectMaxTris"].as_i32().max(0) as u32,
                         voice_server_type,
                         avatar_hover_height,
                         materials_rate,
@@ -1386,7 +1452,7 @@ impl Session<'_> {
                 self.cam_warned = true;
                 log::warn!("no AgentMovementComplete 5 s after CompleteAgentMovement: agent updates (movement) paused");
             }
-            if !self.agent_moved && t.elapsed() > Duration::from_secs(90) {
+            if self.login_arrival && !self.agent_moved && t.elapsed() > LOGIN_ARRIVAL_TIMEOUT {
                 // STATE_AGENT_WAIT's timeout (llstartup.cpp): "Session was
                 // created, don't just hang up on server, send a logout
                 // request", or the grid keeps this session and the next
@@ -1565,6 +1631,11 @@ impl Session<'_> {
                     self.send_logout_request();
                     self.logout_started = Some(Instant::now());
                 }
+            }
+            NetCommand::ArrivalGivenUp => {
+                log::warn!("no AgentMovementComplete in time: agent updates resume, session kept");
+                self.agent_moved = true;
+                self.cam_requested_at = None;
             }
             NetCommand::Chat {
                 message,
@@ -3557,51 +3628,32 @@ impl Session<'_> {
             );
             return;
         };
+        let request = appearance_queue::Request { cof_version, url };
+        let Some(first) = self.appearance_queue.lock().request(request) else {
+            return;
+        };
+        let queue = self.appearance_queue.clone();
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let body = aurora_llsd::to_xml(&aurora_llsd::llsd_map! { "cof_version" => cof_version });
-            let result = http
-                .post(&url)
-                .header("Content-Type", "application/llsd+xml")
-                .header("Accept", "application/llsd+xml")
-                .body(body)
-                .send()
-                .await;
-            let (success, expected) = match result {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let doc = resp.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
-                    match doc {
-                        Some(d) => {
-                            let ok = status.is_success() && d["success"].as_bool();
-                            if !ok {
-                                log::warn!(
-                                    "appearance request for COF {cof_version} failed: HTTP {status} {}",
-                                    d["error"].to_string_value()
-                                );
-                            }
-                            (ok, d.has("expected").then(|| d["expected"].as_i32()))
-                        }
-                        None => {
-                            log::warn!("appearance request for COF {cof_version}: HTTP {status}");
-                            (false, None)
-                        }
+            appearance_queue::drain(&queue, first, |request| {
+                let http = http.clone();
+                let events = events.clone();
+                async move {
+                    let cof_version = request.cof_version;
+                    let (success, expected) = post_appearance_request(&http, request).await;
+                    if success {
+                        log::info!("server appearance requested for COF version {cof_version}");
                     }
+                    let _ = events.send(NetEvent::AppearanceRequestResult {
+                        cof_version,
+                        success,
+                        expected,
+                    });
+                    success
                 }
-                Err(e) => {
-                    log::warn!("appearance request failed: {}", e.without_url());
-                    (false, None)
-                }
-            };
-            if success {
-                log::info!("server appearance requested for COF version {cof_version}");
-            }
-            let _ = events.send(NetEvent::AppearanceRequestResult {
-                cof_version,
-                success,
-                expected,
-            });
+            })
+            .await;
         });
     }
 
@@ -3724,6 +3776,22 @@ impl Session<'_> {
             return;
         }
         match e.message.as_str() {
+            "OpenRegionInfo" => {
+                if let Some(sim) = self.sims.get(&e.sim) {
+                    let value = &b["MaxLinkCount"];
+                    let max_children = (!value.is_undef()).then(|| {
+                        let value = value.as_i32();
+                        if value < 0 { 10000 } else { value as u32 }
+                    });
+                    emit(
+                        self.sh,
+                        NetEvent::RegionLinkLimit {
+                            handle: sim.handle,
+                            max_children,
+                        },
+                    );
+                }
+            }
             "EnableSimulator" => {
                 for info in b["SimulatorInfo"].as_array() {
                     let handle = info["Handle"].as_u64();
@@ -4215,6 +4283,9 @@ impl Session<'_> {
                 self.main == Some(from),
             );
             let owner = format!("{} {}", field_str(&d.first_name), field_str(&d.last_name));
+            // process_script_dialog: the OwnerData block is missing from
+            // older simulators (getNumberOfBlocks("OwnerData")): nil then
+            let owner_id = m.owner_data.first().map_or(Uuid::nil(), |o| o.owner_id);
             emit(
                 self.sh,
                 NetEvent::ScriptDialog {
@@ -4222,6 +4293,7 @@ impl Session<'_> {
                     object_id: d.object_id,
                     object_name: field_str(&d.object_name),
                     owner_name: owner.trim().to_owned(),
+                    owner_id,
                     message: field_str(&d.message),
                     channel: d.chat_channel,
                     buttons: m.buttons.iter().map(|b| field_str(&b.button_label)).collect(),
@@ -4545,6 +4617,7 @@ impl Session<'_> {
             self.agent_moved = true;
             self.regions_visited.insert(m.data.region_handle);
             self.cam_requested_at = None;
+            self.login_arrival = false;
             // gLastVersionChannel: the server version the Region / Estate
             // window shows
             emit(
@@ -5281,6 +5354,7 @@ impl Session<'_> {
             // the agent is in this region: keep (or start) sending its updates
             self.agent_moved = true;
             self.cam_requested_at = None;
+            self.login_arrival = false;
             self.agent_update.force();
             emit(
                 self.sh,
@@ -6219,6 +6293,7 @@ mod event_queue_tests {
             inventory_move_tx,
             inventory_udp_tx,
             appearance_serial: 0,
+            appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
@@ -6234,6 +6309,7 @@ mod event_queue_tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: object_cache::ObjectCaches::new(None).0,
@@ -6560,6 +6636,7 @@ mod script_dialog_tests {
             inventory_move_tx,
             inventory_udp_tx,
             appearance_serial: 0,
+            appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
@@ -6575,6 +6652,7 @@ mod script_dialog_tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: super::object_cache::ObjectCaches::new(None).0,
@@ -6705,14 +6783,27 @@ mod script_dialog_tests {
         // account still there, #956): STATE_AGENT_WAIT's time-out logs the
         // new session out before going back to the login screen.
         let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
-        session.cam_requested_at = Some(ago(89));
+        session.login_arrival = true;
+        session.cam_requested_at = Some(ago(239));
         session.tick();
         assert!(!session.finished);
-        session.cam_requested_at = Some(ago(91));
+        session.cam_requested_at = Some(ago(241));
         session.tick();
         logout_request_from(&main).await;
         assert!(session.finished);
         assert!(matches!(ended(&received), Some(NetEvent::Disconnected { lost: true, .. })));
+
+        // A teleport or crossing the region does not confirm keeps the session
+        // however long it takes, and giving up on it resumes the agent updates
+        // (send_agent_update only checks the teleport state).
+        let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
+        session.cam_requested_at = Some(ago(241));
+        session.tick();
+        assert!(!session.finished);
+        assert!(ended(&received).is_none());
+        session.on_command(NetCommand::ArrivalGivenUp);
+        assert!(session.agent_moved);
+        assert!(session.cam_requested_at.is_none());
     }
 
     /// A `ViewerStats` capability: the body of every POST it receives.
@@ -6846,6 +6937,12 @@ mod script_dialog_tests {
                         button_label: str_field(label),
                     })
                     .collect();
+                // the owner's block on new simulators only: nil without it
+                let owner = (channel > 0).then(|| Uuid::from_u128(0x0E));
+                menu.owner_data = owner
+                    .map(|owner_id| msgs::script_dialog::OwnerData { owner_id })
+                    .into_iter()
+                    .collect();
                 let mut bytes = Vec::new();
                 aurora_msg::build_packet(&menu, 1, true, false, &[], &mut bytes);
                 session
@@ -6854,6 +6951,7 @@ mod script_dialog_tests {
                 let NetEvent::ScriptDialog {
                     sender,
                     object_id,
+                    owner_id,
                     channel: received_channel,
                     buttons,
                     ..
@@ -6863,6 +6961,7 @@ mod script_dialog_tests {
                 };
                 assert_eq!(sender, origin_addr);
                 assert_eq!((object_id, received_channel), (object, channel));
+                assert_eq!(owner_id, owner.unwrap_or_default());
                 for (index, label) in buttons.into_iter().enumerate() {
                     session.on_command(NetCommand::ScriptDialogReply {
                         sender: Some(sender),

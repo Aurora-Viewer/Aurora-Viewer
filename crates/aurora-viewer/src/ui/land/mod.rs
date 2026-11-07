@@ -627,6 +627,9 @@ impl LandUi {
         }
         self.texture_context = texture_context.filter(|_| self.texture.open);
         if let Some(asset) = self.texture.show_live(ctx, p, world, images) {
+            if let Some(slot) = self.texture.dropped_slot() {
+                self.texture_snapshot = slot == 1;
+            }
             if self.texture_snapshot {
                 world.land.update(|u| u.snapshot_id = asset);
             } else {

@@ -158,6 +158,11 @@ impl App {
             "portal-place-unavailable" => aurora_i18n::tr!("portal-place-unavailable"),
             _ => aurora_i18n::tr!("rez-no-surface"),
         };
+        self.portal_notice(message);
+    }
+
+    /// A portal placed by a drop was refused: said in the window and in chat.
+    pub(in crate::app) fn portal_notice(&mut self, message: &str) {
         self.portal_ui.notice = Some(message.into());
         self.world.system_notice(message, crate::world::notice_topics::Topic::Items);
     }

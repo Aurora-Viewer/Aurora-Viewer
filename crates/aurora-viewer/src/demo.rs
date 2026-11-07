@@ -95,6 +95,8 @@ pub mod env;
 /// (AURORA_DEMO_EXPERIENCE).
 #[path = "demo_experience.rs"]
 pub mod experience;
+#[path = "demo_floating_text.rs"]
+pub mod floating_text;
 /// A prop derezzed and particles started while the photo mode holds the
 /// world still (AURORA_DEMO_FREEZE_WORLD).
 #[path = "demo_freeze_world.rs"]
@@ -144,6 +146,9 @@ pub mod keywords;
 pub mod land;
 #[path = "demo_link.rs"]
 pub mod link;
+/// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
+#[path = "demo_mask_255.rs"]
+pub mod mask_255;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
@@ -236,6 +241,9 @@ pub mod sound_parcels;
 /// reverb of the surroundings (AURORA_DEMO_SOUND_REVERB).
 #[path = "demo_sound_reverb.rs"]
 pub mod sound_reverb;
+/// The files the scenarios take from a folder, and which ones a build reads.
+#[path = "demo_source.rs"]
+pub mod source;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
 #[path = "demo_staff.rs"]
 pub mod staff;
@@ -3708,8 +3716,8 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
     }
 }
 
-/// A non-actionable face placed before Buy. Zero-alpha texture pixels let
-/// left clicks through; every nonzero Blend texel still blocks them.
+/// A non-actionable face placed before Buy. Blend texture pixels with
+/// alpha <= 32/255 let left clicks through, following the Legacy Viewer.
 pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
     let texture = match mode.trim_end_matches("-ready") {
         "blend-faint" => TEX_PICK_FAINT,
@@ -4060,6 +4068,11 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
         size_x: 256,
         size_y: 256,
     }
+}
+
+/// AURORA_DEMO_TP_NO_ARRIVAL=1: the region never confirms a demo teleport.
+pub fn tp_no_arrival() -> bool {
+    std::env::var_os("AURORA_DEMO_TP_NO_ARRIVAL").is_some()
 }
 
 pub fn friend_join_scenario() -> bool {
@@ -4576,6 +4589,56 @@ pub fn events() -> Vec<NetEvent> {
             ExtraParams::default(),
             "",
         ));
+        // #1494 reproduction: adjacent ceiling projectors, overlapping on
+        // the same floor, each with a post that can cast a visible shadow.
+        if mode.starts_with("cluster") {
+            add(prim(
+                9720,
+                Vec3::new(135.0, 114.0, floor + 0.05),
+                Quat::IDENTITY,
+                Vec3::new(9.0, 9.0, 0.1),
+                boxp,
+                te([0.7, 0.7, 0.7, 1.0], 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            for k in 0..12u32 {
+                let x = 132.5 + (k % 3) as f32 * 2.0;
+                let y = 111.0 + (k / 3) as f32 * 2.0;
+                add(prim(
+                    9721 + k * 2,
+                    Vec3::new(x, y, floor + 4.0),
+                    Quat::IDENTITY,
+                    Vec3::new(0.3, 0.3, 0.1),
+                    boxp,
+                    te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+                    ExtraParams {
+                        light: Some(LightParams {
+                            color: [1.0, 0.9, 0.7, 1.0],
+                            radius: 10.0,
+                            cutoff: 0.0,
+                            falloff: 0.0,
+                        }),
+                        light_image: Some(aurora_prim::extra::LightImageParams {
+                            texture: BLANK_TEXTURE,
+                            params: Vec3::new(1.4, 0.0, 0.0),
+                        }),
+                        ..Default::default()
+                    },
+                    "",
+                ));
+                add(prim(
+                    9722 + k * 2,
+                    Vec3::new(x + 0.3, y, floor + 1.2),
+                    Quat::IDENTITY,
+                    Vec3::new(0.35, 0.35, 2.2),
+                    boxp,
+                    te([0.3, 0.3, 0.35, 1.0], 0, false, 0.0),
+                    ExtraParams::default(),
+                    "",
+                ));
+            }
+        }
         // an ordinary point light beside them, the same in both modes
         add(prim(
             9716,
@@ -5275,6 +5338,80 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]: a closed room with a lamp and a
+    // manual probe of that ambiance, at AURORA_DEMO_POS="100,100" (#2217): a
+    // sphere that crosses the floor, or a box that fills the room
+    if let Ok(room) = std::env::var("AURORA_DEMO_PROBE_ROOM") {
+        let mut values = room.split(',');
+        let ambiance = values.next().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0);
+        let filled = values.next().is_some_and(|v| v.trim() == "box");
+        let (x, y) = (100.0, 100.0);
+        let z = g(x, y);
+        let (half, height) = (8.0, 5.0);
+        let matte = [0.72, 0.68, 0.6, 1.0];
+        for (offset, scale) in [
+            (Vec3::new(0.0, 0.0, 0.1), Vec3::new(2.0 * half, 2.0 * half, 0.2)),
+            (Vec3::new(0.0, 0.0, height), Vec3::new(2.0 * half, 2.0 * half, 0.2)),
+            (Vec3::new(half, 0.0, height / 2.0), Vec3::new(0.2, 2.0 * half, height)),
+            (Vec3::new(-half, 0.0, height / 2.0), Vec3::new(0.2, 2.0 * half, height)),
+            (Vec3::new(0.0, half, height / 2.0), Vec3::new(2.0 * half, 0.2, height)),
+            (Vec3::new(0.0, -half, height / 2.0), Vec3::new(2.0 * half, 0.2, height)),
+        ] {
+            add(prim(
+                id,
+                Vec3::new(x, y, z) + offset,
+                Quat::IDENTITY,
+                scale,
+                boxp,
+                te(matte, 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+        add(prim(
+            id,
+            Vec3::new(x - 4.0, y + 4.0, z + 3.5),
+            Quat::IDENTITY,
+            Vec3::splat(0.3),
+            boxp,
+            te([1.0, 0.85, 0.6, 1.0], 0, true, 0.2),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [1.0, 0.8, 0.55, 1.0],
+                    radius: 10.0,
+                    cutoff: 0.0,
+                    falloff: 0.75,
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+        let (center, scale, flags) = if filled {
+            (Vec3::new(x, y, z + height / 2.0), Vec3::new(2.0 * half, 2.0 * half, height), 0x1)
+        } else {
+            (Vec3::new(x + 3.0, y + 3.0, z + 0.2), Vec3::splat(4.0), 0x0)
+        };
+        add(prim(
+            id,
+            center,
+            Quat::IDENTITY,
+            scale,
+            boxp,
+            te([1.0, 1.0, 1.0, 0.0], 0, false, 0.0),
+            ExtraParams {
+                reflection_probe: Some(aurora_prim::extra::ReflectionProbeParams {
+                    ambiance,
+                    clip_distance: 0.0,
+                    flags,
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+    }
     // glass panel (alpha blend)
     add(prim(
         id,
@@ -5850,6 +5987,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
             object_id: Uuid::from_u128(0xF1),
             object_name: aurora_i18n::tr!("demo-resident-picker").into(),
             owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
+            owner_id: Uuid::nil(),
             message,
             channel: -4243,
             buttons: ["1", "2", "3", "4"].map(str::to_owned).to_vec(),
@@ -5867,6 +6005,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
             object_id: Uuid::from_u128(0xF0),
             object_name: aurora_i18n::tr!("demo-fountain").into(),
             owner_name: owner.into(),
+            owner_id: Uuid::nil(),
             message: aurora_i18n::tr!("demo-choose-a-color-for-the-water").into(),
             channel: -4242,
             buttons: vec![
@@ -5880,6 +6019,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
             object_id: Uuid::from_u128(0xF2),
             object_name: aurora_i18n::tr!("demo-land-script-sign").into(),
             owner_name: owner.into(),
+            owner_id: Uuid::nil(),
             message: aurora_i18n::tr!("demo-scripted-textbox").into(),
             channel: -4244,
             buttons: vec!["!!llTextBox!!".into()],
@@ -5966,6 +6106,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         object_id: Uuid::from_u128(0xF0),
         object_name: object_name.into(),
         owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
+        owner_id: Uuid::nil(),
         message: message.into(),
         channel: -4242,
         buttons,
@@ -6032,14 +6173,19 @@ pub fn chime() -> (Uuid, aurora_audio::SoundClip) {
     (u(0x50_0001), aurora_audio::SoundClip::from_pcm(&pcm, 1, rate))
 }
 
-/// AURORA_DEMO_SOUND: an interface sound for the offline demo, read (never
-/// written) from the real sound cache when a grid session already loaded it,
-/// else a short tick whose pitch depends on the asset (so that different
-/// sounds can be told apart).
+/// AURORA_DEMO_SOUND: an interface sound for the offline demo. A development
+/// build reads it (never writes it) from the sound cache of grid sessions
+/// when one already loaded it (`source`); otherwise a short tick whose pitch
+/// depends on the asset (so that different sounds can be told apart).
 pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
     let demo_cache = crate::settings::cache_dir();
-    if let Some(real) = demo_cache.parent()
-        && let Ok(data) = std::fs::read(real.join("sound").join(format!("{id}.ogg")))
+    if source::reads_cache_files()
+        && let Some(real) = demo_cache.parent()
+        && let Ok(data) = crate::cache::read(
+            real.join(crate::settings::ASSET_STORE)
+                .join("sound")
+                .join(format!("{}.ogg", crate::cache::keyed_name(&id))),
+        )
         && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
     {
         return clip;
@@ -6824,7 +6970,8 @@ pub const BUSY_SPINNERS: u32 = 60;
 
 /// What a busy place has besides worn prims and meshes, for `n` crowd
 /// avatars: on each of them a flexible ribbon and a spinning ornament with
-/// two prims linked below it (none of which the GPU places from an anchor);
+/// two prims linked below it (the ribbon left to the sync, the ornament
+/// placed by the GPU from a mover, `AURORA_MOVING_ANCHORS`);
 /// on our avatar a HUD of [`BUSY_HUD_PRIMS`] prims; and
 /// [`BUSY_SPINNERS`] spinning objects on the ground.
 pub fn crowd_busy_events(n: u32) -> Vec<NetEvent> {
@@ -7783,6 +7930,40 @@ fn soft_mask_texture() -> (Vec<u8>, u32, u32) {
     (px, N, N)
 }
 
+/// Fifty-second offline performance trial, with fifteen seconds of warm-up.
+pub fn projector_bench_done() -> bool {
+    static START: std::sync::OnceLock<Option<std::time::Instant>> = std::sync::OnceLock::new();
+    START
+        .get_or_init(|| {
+            (std::env::var("AURORA_DEMO_PROJECTOR").as_deref() == Ok("cluster-bench")).then(|| {
+                log::info!("projector benchmark begin");
+                std::time::Instant::now()
+            })
+        })
+        .is_some_and(|start| start.elapsed().as_secs() >= 50)
+}
+
+/// Fixed framing of the #1494 offline fixture, or a repeatable camera sweep.
+pub fn projector_camera(frame: u64) -> Option<(Vec3, Vec3)> {
+    let mode = std::env::var("AURORA_DEMO_PROJECTOR").ok()?;
+    if !mode.starts_with("cluster") {
+        return None;
+    }
+    let floor = height(140.0, 130.0) + 0.35;
+    let t = frame.saturating_sub(700) as f32;
+    let angle = -2.35
+        + if mode == "cluster-orbit" {
+            t * 0.003
+        } else if mode == "cluster-scan" {
+            (t * 0.02).sin() * 0.7
+        } else {
+            0.0
+        };
+    let target = Vec3::new(135.0, 114.0, floor + 0.8);
+    let eye = Vec3::new(135.0 + 8.0 * angle.cos(), 114.0 + 8.0 * angle.sin(), floor + 5.0);
+    Some((eye, target))
+}
+
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
@@ -7793,6 +7974,7 @@ pub fn local_texture_mips(id: &Uuid) -> bool {
         || *id == TEX_SOFT_MASK
         || *id == TEX_PROJECTED
         || *id == TEX_FOLIAGE
+        || *id == hud::TEX_MASK_PANEL
         || plants::is_texture(id)
 }
 
@@ -8295,15 +8477,16 @@ fn foliage_texture() -> (Vec<u8>, u32, u32) {
     (px, N, N)
 }
 const MAT_NONE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0001);
-const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
+pub(crate) const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
 const MAT_BUMPY: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0004);
 const MAT_BLEND: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0005);
 /// Mask with a cutoff of 0 (AURORA_DEMO_MASK_ZERO): every texel drawn.
 const MAT_MASK_ZERO: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0006);
+const MAT_MASK_255: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0007);
 /// Glossy plate of AURORA_DEMO_SHIMMER: the bumps repeated many times.
 const MAT_SHIMMER: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0020);
-const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
+pub(crate) const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
 const TEX_PICK_FAINT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0013);
 const TEX_PICK_HALF: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0014);
 
@@ -8338,8 +8521,11 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
     ]
 }
 
-/// Pixels of a procedural demo texture (RGBA8, 64×64; the hair demo's 256×256).
+/// Pixels and dimensions of a procedural demo texture (RGBA8).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if *id == hud::TEX_MASK_PANEL {
+        return Some(hud::mask_cutoff_texture());
+    }
     if let Some(texture) = alpha_mask_ab::texture(id) {
         return Some(texture);
     }
@@ -8666,6 +8852,14 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
             },
         ),
         (
+            MAT_MASK_255,
+            LegacyMaterial {
+                diffuse_alpha_mode: alpha_mode::MASK,
+                alpha_cutoff: 255,
+                ..base.clone()
+            },
+        ),
+        (
             MAT_EMISSIVE,
             LegacyMaterial {
                 diffuse_alpha_mode: alpha_mode::EMISSIVE,
@@ -8885,13 +9079,23 @@ fn demo_day(sky: Llsd) -> Llsd {
         .unwrap_or_else(|| llsd_map! { "type" => "water" });
     frames.insert("water".into(), water);
     let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);
+    let mut day = llsd_map! {
+        "frames" => Llsd::Map(frames),
+        "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
+    };
+    // AURORA_DEMO_SKY_FLAGS: the day's settings flags (0 as a viewer saves
+    // them by default; `none` leaves the key out, which reads as 0)
+    match std::env::var("AURORA_DEMO_SKY_FLAGS").ok().as_deref().map(str::trim) {
+        Some("none") => {}
+        flags => {
+            let flags = flags.and_then(|f| f.parse::<i32>().ok()).unwrap_or(0);
+            day.insert("flags", flags);
+        }
+    }
     llsd_map! {
         "day_length" => 14400,
         "day_offset" => 0,
-        "day_cycle" => llsd_map! {
-            "frames" => Llsd::Map(frames),
-            "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
-        },
+        "day_cycle" => day,
     }
 }
 

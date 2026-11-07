@@ -25,6 +25,7 @@ pub mod demo;
 pub(crate) mod elide_tests;
 pub(crate) mod hero;
 pub(crate) mod keycap;
+pub(crate) mod local_texture;
 mod modal_keys;
 pub(crate) mod pills;
 mod resize;
@@ -3030,6 +3031,9 @@ pub fn picture(
         egui::Stroke::new(1.0, p.raised),
         egui::StrokeKind::Inside,
     );
+    if let Some(texture) = tex {
+        local_texture::image(ui, p, rect, texture.id());
+    }
     resp
 }
 
