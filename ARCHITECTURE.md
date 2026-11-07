@@ -1592,6 +1592,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ LICENSE, NOTICE.md           GPLv3, copyright notice, third-party licences
 ├─ TRADEMARKS.md                use of the name and logo by modified versions, official downloads
 ├─ aurora-tools.cmd             development tools (double-click): scripts/tools
+├─ aurora-tools.sh              the same tools on Linux, with PowerShell 7
 ├─ assets/
 │  ├─ branding/                 logos (colour, white, black, violet, teal, on navy), SVG + PNG, aurora.ico
 │  ├─ hrtf/                     head-related filters of the 3D sound for headphones (MIT KEMAR; `scripts/generate-hrtf.py`, built into the exe)
