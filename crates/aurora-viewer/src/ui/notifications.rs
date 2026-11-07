@@ -764,6 +764,17 @@ pub(super) fn card(
     out
 }
 
+/// Script prompts are windows for Close All in both notification styles.
+/// Dismissing one uses the existing ignore-without-reply response.
+pub(super) fn close_script_prompt(ctx: &egui::Context, n: &Notification) -> bool {
+    if !matches!(n.data, Data::Dialog { .. } | Data::TextBox { .. }) {
+        return false;
+    }
+    let id = egui::Id::NULL.with(("script_prompt", n.id));
+    super::close_key::shown_extra(ctx, id);
+    super::close_key::take(ctx, id)
+}
+
 fn button(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool) -> egui::Response {
     button_sized(ui, p, label, primary, None)
 }
@@ -952,6 +963,10 @@ pub fn show(
                                 ui.spacing_mut().item_spacing.y = 4.0;
                                 // newest first
                                 for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
+                                    if close_script_prompt(ctx, n) {
+                                        answers.push((n.id, Response::Dismiss));
+                                        continue;
+                                    }
                                     let r = if matches!(n.data, Data::Message { .. }) {
                                         person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, false)
                                     } else {
@@ -985,6 +1000,11 @@ pub fn show(
                 let (ids, behind) = shown_toasts(list, nui, dnd);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
+                        if close_script_prompt(ctx, n) {
+                            answers.push((id, Response::Dismiss));
+                            nui.toasts.retain(|(t, _)| *t != id);
+                            continue;
+                        }
                         let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
                             person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
                         } else {
@@ -993,7 +1013,7 @@ pub fn show(
                         match r {
                             // closing a toast only hides it: the offer waits in
                             // the list (a scripted window too, until answered)
-                            Some(Response::Dismiss) if !matches!(n.data, Data::Dialog { .. }) => {
+                            Some(Response::Dismiss) if !matches!(n.data, Data::Dialog { .. } | Data::TextBox { .. }) => {
                                 nui.toasts.retain(|(t, _)| *t != id);
                                 nui.hidden.insert(id);
                             }
