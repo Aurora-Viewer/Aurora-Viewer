@@ -2583,3 +2583,86 @@ fn empty_trash_ignores_rlva_locks_without_exempting_other_purges() {
     assert!(!world.rlva_inventory_mutation_allowed(&purge(unloaded), Uuid::nil()));
     assert!(!world.rlva_inventory_mutation_allowed(&purge(Uuid::from_u128(92)), Uuid::nil()));
 }
+
+/// #2749, #2750: what @interact and @fartouch keep from a right click, the
+/// build tools, the Create tool and a drag from the inventory.
+#[test]
+fn rlva_interact_and_fartouch_gate_what_a_click_can_designate() {
+    use glam::Vec3;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let far = world
+        .objects
+        .iter()
+        .find(|(i, o)| {
+            !o.is_avatar()
+                && o.parent_id == 0
+                && crate::scene::Scene::object_transform_unshifted(&world, *i, std::time::Instant::now())
+                    .is_some_and(|(p, _, _)| p.distance(world.agent.position) > 10.0)
+        })
+        .map(|(i, _)| i)
+        .expect("an object in the distance");
+    let me = world.objects.index_of_uuid(&world.agent_id).expect("our avatar");
+    let at = world.agent.position;
+    let beyond = at + Vec3::X * 10.0;
+    let free = |world: &crate::world::World| {
+        assert!(world.rlva_can_designate(far, Some(beyond)));
+        assert!(world.rlva_can_interact(far, Some(beyond)));
+        assert!(world.rlva_can_designate_land());
+        assert!(world.rlva_can_rez_drop(None, false));
+        assert!(world.rlva_can_place_at(beyond));
+    };
+    free(&world);
+
+    command(&mut world.rlva, A, "@fartouch=n");
+    assert!(!world.rlva_can_designate(far, Some(beyond)), "out of reach, surface included");
+    assert!(
+        world.rlva_can_designate(far, Some(at + Vec3::X)),
+        "a surface within 1.5 m stays pickable"
+    );
+    assert!(!world.rlva_can_designate(far, None));
+    assert!(world.rlva_can_designate(me, None), "our own avatar");
+    assert!(world.rlva_can_designate_land(), "@fartouch leaves the land menu");
+    assert!(!world.rlva_can_interact(far, Some(beyond)));
+    assert!(world.rlva_can_interact(far, Some(at + Vec3::X)));
+    assert!(
+        world.rlva_can_rez_drop(None, false),
+        "a drag from the inventory is not limited by @fartouch"
+    );
+    assert!(!world.rlva_can_place_at(beyond), "the Create tool is");
+    assert!(world.rlva_can_place_at(at + Vec3::X));
+    command(&mut world.rlva, A, "@fartouch=y");
+    free(&world);
+
+    command(&mut world.rlva, A, "@interact=n");
+    assert!(!world.rlva_can_designate(far, Some(at + Vec3::X)), "at any distance");
+    assert!(world.rlva_can_designate(me, None), "the avatar's own menu stays");
+    assert!(!world.rlva_can_designate_land());
+    assert!(!world.rlva_can_interact(far, Some(at + Vec3::X)));
+    assert!(!world.rlva_can_rez_drop(None, false));
+    assert!(!world.rlva_can_rez_drop(Some(far), false));
+    assert!(!world.rlva_can_rez_drop(Some(far), true), "a drop into contents only on a HUD");
+    let add = aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Duplicate {
+        handle: world.main_region.expect("demo region"),
+        local_ids: Vec::new(),
+        offset: Vec3::ZERO,
+        group_id: Uuid::nil(),
+        flags: 0,
+    });
+    assert!(!world.rlva_allows_command(&add, Uuid::nil()));
+    let sit = aurora_net::NetCommand::RequestSit {
+        target: world.objects.get(far).unwrap().full_id,
+        offset: Vec3::ZERO,
+        handle: world.main_region.expect("demo region"),
+    };
+    assert!(!world.rlva_allows_command(&sit, Uuid::nil()), "a clicked seat is an interaction");
+    command(&mut world.rlva, A, "@interact=y");
+
+    command(&mut world.rlva, A, "@rez=n");
+    assert!(!world.rlva_can_rez_drop(None, true), "@rez keeps the land");
+    assert!(world.rlva_can_rez_drop(Some(far), true), "@rez lets a drop into contents pass");
+    assert!(!world.rlva_can_rez_drop(Some(far), false));
+}

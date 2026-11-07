@@ -154,7 +154,15 @@ impl App {
             .build
             .selection
             .iter()
-            .filter(|key| self.world.objects.index_of(key).is_none_or(|i| !self.world.rlva_can_edit(i)))
+            .filter(|key| {
+                self.world.objects.index_of(key).is_none_or(|i| {
+                    // LLSelectMgr::deselectAllIfTooFar:
+                    // @interact keeps only HUDs, @fartouch applies while editing
+                    !self.world.rlva_can_edit(i)
+                        || (self.world.rlva.has("interact") && !self.world.rlva_is_hud(i))
+                        || (self.build.open && !self.world.rlva_can_designate(i, None))
+                })
+            })
             .copied()
             .collect();
         if !invalid.is_empty() {
@@ -198,7 +206,10 @@ impl App {
             if scenario == "baseline"
                 || scenario.starts_with("sphere-")
                 || scenario.starts_with("camera-")
-                || matches!(scenario, "overlay" | "textures" | "silhouette" | "self" | "head" | "resolution")
+                || matches!(
+                    scenario,
+                    "overlay" | "textures" | "silhouette" | "self" | "head" | "resolution" | "interact" | "fartouch"
+                )
             {
                 // Keep the avatar and the world visible in offline visual
                 // comparisons; a conversation otherwise covers the subject.
@@ -215,6 +226,11 @@ impl App {
             let message = if scenario == "baseline" {
                 self.panels.settings = false;
                 "@clear".to_owned()
+            } else if scenario == "interact" || scenario == "fartouch" {
+                self.panels.settings = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                format!("@{scenario}=n")
             } else if scenario == "camera-prefs" {
                 self.options_ui.page = ui::options::Page::Camera;
                 self.options_ui.tab = 0;
