@@ -63,6 +63,11 @@ fn interface_colors(cx: &mut Cx) {
             tr!("ui-options-interface-colors-help")
         });
         cx.greyed(high_contrast);
+        cx.toggle(
+            tr!("ui-options-follow-system-theme"),
+            tr!("ui-options-follow-system-theme-help"),
+            &field!(follow_system_theme),
+        );
         base_color(
             cx,
             tr!("ui-options-accent-color"),
@@ -104,7 +109,9 @@ fn interface_colors(cx: &mut Cx) {
             reset
         });
         if !high_contrast {
-            let adjusted = crate::interface_colors::adjusted(&cx.s.interface_colors);
+            // the system's colours count once they are followed
+            let colors = if cx.s.follow_system_theme { &shown } else { &cx.s.interface_colors };
+            let adjusted = crate::interface_colors::adjusted(colors);
             if adjusted.text {
                 cx.note(tr!("ui-options-interface-colors-text-adjusted"));
             }

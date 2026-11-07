@@ -21,7 +21,8 @@
 //! text and muted text read 4.5:1 against the panel (WCAG AA), the dim
 //! text and the accent 3:1 (non-text); the page says when it happened.
 //! `on_accent` is the skin's (white) while it reads at least as well on
-//! the new accent as on the skin's own, else the skin's navy.
+//! the new accent as on the skin's own, else the skin's navy. The lighter
+//! accents read 4.5:1 on a chosen background, as they colour text.
 //!
 //! The state colours (danger, success, warn, amber, rose) and the links'
 //! teal keep their hue but move in lightness, like the text, to read 4.5:1
@@ -202,6 +203,13 @@ pub fn derive(skin: Palette, colors: &InterfaceColors) -> (Palette, Adjusted) {
                 *out = Turn::of(skin.violet, of).on(p.violet);
             }
             p.on_accent = on_accent(&skin, p.violet);
+        }
+    }
+    // the lighter accents colour text and icons (a count, a selected row,
+    // initials): on another panel they read like the states above
+    if p.panel != skin.panel {
+        for c in [&mut p.violet_light, &mut p.violet_pale, &mut p.indigo_light] {
+            *c = readable(*c, p.panel, TEXT);
         }
     }
     (p, adjusted)
