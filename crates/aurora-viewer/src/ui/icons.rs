@@ -875,13 +875,17 @@ fn embedded_svg(name: &str) -> Option<&'static [u8]> {
 fn folder_badge(base: &[u8], badge: &[u8]) -> Option<egui::ColorImage> {
     let mut image = rasterize_mask(base, RASTER_PX, false)?;
     let badge = rasterize_mask(badge, 24, false)?;
+    // Both masks receive the same folder tint. Clear the corner first so
+    // the badge's holes and surrounding gap remain visible on a solid folder.
+    for y in 36..RASTER_PX as usize {
+        for x in 36..RASTER_PX as usize {
+            image.pixels[y * RASTER_PX as usize + x] = egui::Color32::TRANSPARENT;
+        }
+    }
     for y in 0..24 {
         for x in 0..24 {
-            let alpha = badge.pixels[y * 24 + x].a();
             let dst = (y + 38) * RASTER_PX as usize + x + 38;
-            if alpha > image.pixels[dst].a() {
-                image.pixels[dst] = egui::Color32::from_white_alpha(alpha);
-            }
+            image.pixels[dst] = badge.pixels[y * 24 + x];
         }
     }
     Some(image)
@@ -1079,6 +1083,11 @@ mod tests {
             .filter(|index| image.pixels[*index].a() > base.pixels[*index].a())
             .count();
         assert!(added_corner_pixels > 0, "badge adds coverage in the lower-right corner");
+        let cutout_pixels = (36..62)
+            .flat_map(|y| (36..62).map(move |x| y * RASTER_PX as usize + x))
+            .filter(|index| base.pixels[*index].a() > 200 && image.pixels[*index].a() == 0)
+            .count();
+        assert!(cutout_pixels > 0, "the solid folder must not fill the badge's holes and gap");
         assert!(icons.get("Inv_TexturesClosed").is_some());
         assert!(crate::ui::inventory::tree::is_folder_icon("Inv_TexturesClosed"));
         assert_ne!(
