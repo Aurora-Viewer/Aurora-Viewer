@@ -3426,6 +3426,23 @@ impl Scene {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
+        if lod == plants::NOT_DRAWN {
+            // a plant the trees' detail stops (tree_detail.rs): its drawing
+            // goes, as for a parcel that hides it, but it stays watched so
+            // that a higher factor brings it back
+            if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+                self.release_obj(renderer, idx, &mut g);
+            }
+            self.anchors.forget(idx);
+            self.pick.remove(idx);
+            self.list_index.remove(idx);
+            if let Some(object) = world.objects.get_mut_untracked(idx) {
+                object.render.needs_records = false;
+                object.shape_dirty = false;
+                object.material_dirty = false;
+            }
+            return;
+        }
         let wearer = Self::wearer_avatar(world, idx);
         let owner_avatar = wearer.map(|(_, i)| i);
         let first_person_hidden = Self::attachment_first_person_hidden(world, idx);

@@ -94,7 +94,12 @@ pub fn trunk_level(size: TreeSize, distance: f32, tree_factor: f32, lod_factor: 
 /// may change: the distance to the nearest of the angle and tangent changes,
 /// less a margin for the rounding.
 pub fn slack(size: TreeSize, distance: f32, tree_factor: f32, lod_factor: f32) -> f32 {
-    if !distance.is_finite() || stopped(tree_factor) {
+    // stopped, nothing changes until the factor does, which checks every
+    // object again (LodWatch::advance)
+    if stopped(tree_factor) {
+        return f32::MAX;
+    }
+    if !distance.is_finite() {
         return 0.0;
     }
     let mut changes = vec![size.radius];
