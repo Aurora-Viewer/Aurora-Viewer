@@ -393,6 +393,8 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
 // R: coverage, G: unused (the type is the sky's, a uniform), B: the detail
 // tap, which varies the cloud tops, A: unused.
 const CLOUD_WEATHER_SIZE: f32 = 512.0;
+const HEAP_KNEE: f32 = 0.4;
+const HEAP_SLOPE: f32 = 0.2;
 
 @fragment
 fn fs_cloud_weather(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
@@ -412,7 +414,11 @@ fn fs_cloud_weather(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32>
     let gc = smoothstep(0.0, 1.0, saturate((frame.sky_sunlight.w - 0.1) / 0.56));
     let wc1 = 0.55 + 0.45 * smoothstep(-0.25, 0.25, fine);
     let sheet = saturate((gc - 0.5) * 2.0);
-    return vec4<f32>(mix(wc0, wc1, sheet), 0.0, detail, 0.0);
+    // Until the sheet takes over the heaps never close up: above HEAP_KNEE
+    // their cover rises at a fifth of the pace and tops out at 0.52 (a full
+    // cover makes a slab of them), the gaps stay and fair heaps are untouched.
+    let heaps = mix(min(wc0, HEAP_KNEE) + max(wc0 - HEAP_KNEE, 0.0) * HEAP_SLOPE, wc0, sheet);
+    return vec4<f32>(mix(heaps, wc1, sheet), 0.0, detail, 0.0);
 }
 
 fn sky_pixel(in: SkyOut) -> vec4<f32> {

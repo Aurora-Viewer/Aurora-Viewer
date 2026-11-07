@@ -76,7 +76,13 @@ fn sky(cloud_shadow: f32) -> Llsd {
 /// takes the upper half of the picture.
 pub fn view_direction() -> Option<Vec3> {
     scenario()?;
-    let up = 12.0_f32.to_radians();
+    // AURORA_DEMO_CLOUDS_PITCH=<degrees>: a lower or higher view (the clouds
+    // at the horizon are seen at 1 to 3 degrees)
+    let degrees = std::env::var("AURORA_DEMO_CLOUDS_PITCH")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .map_or(12.0, |v| v.clamp(-10.0, 60.0));
+    let up = degrees.to_radians();
     Some(Vec3::new(up.cos(), 0.0, up.sin()))
 }
 

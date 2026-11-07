@@ -3892,6 +3892,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_CLOUDS=fair\|broken\|stratocumulus\|overcast` | Volumetric clouds (Preferences › Aurora › Clouds on) under a fixed sky of that cloud type |
+| `AURORA_DEMO_CLOUDS_PITCH=<degrees>` | Camera pitch of `AURORA_DEMO_CLOUDS` (default 12; 2 shows the clouds at the horizon) |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |

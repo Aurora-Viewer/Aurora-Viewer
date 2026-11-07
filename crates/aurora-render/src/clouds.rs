@@ -171,17 +171,36 @@ const HAZE_KM: f32 = 40.0;
 /// that the 3D shape, not the map, draws the cloud's edge.
 #[cfg(test)]
 fn weather_coverage(n1: f32, detail: f32, detail_weight: f32, cloud_shadow: f32) -> f32 {
+    let smooth = |lo: f32, hi: f32, x: f32| {
+        let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
     let density = 2.0 * (cloud_shadow - 0.25);
-    let x = (n1 - 0.5) + (detail - 0.5) * detail_weight * 0.35 + density;
-    let t = ((x + 0.05) / 0.5).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    let fine = (n1 - 0.5) + (detail - 0.5) * detail_weight * 0.35;
+    let wc0 = smooth(-0.05, 0.45, fine + density);
+    let gc = smooth(0.0, 1.0, ((cloud_shadow - 0.1) / 0.56).clamp(0.0, 1.0));
+    let wc1 = 0.55 + 0.45 * smooth(-0.25, 0.25, fine);
+    let sheet = ((gc - 0.5) * 2.0).clamp(0.0, 1.0);
+    let compressed = wc0.min(HEAP_KNEE) + (wc0 - HEAP_KNEE).max(0.0) * HEAP_SLOPE;
+    let heaps = compressed + (wc0 - compressed) * sheet;
+    heaps + (wc1 - heaps) * sheet
 }
 
-/// The mean cover of the weather map for a sky's `cloud_shadow` over the
-/// demo's stand-in cloud texture (tileable value noise, mean 0.46, spread
-/// 0.21; the real texture is a grid asset): [`weather_coverage`] averaged
-/// goes 0.02, 0.10, 0.22, 0.44, 0.66, 0.81, 0.95 for 0.1, 0.2, 0.27, 0.36,
-/// 0.44, 0.5, 0.6; this smoothstep follows it.
+/// Where the heaps' cover starts to rise slowly, and how slowly, before the
+/// sheet takes over (env.wgsl `HEAP_KNEE`, `HEAP_SLOPE`): broken cumulus keeps
+/// its gaps. The cover tops out at `HEAP_KNEE + (1 - HEAP_KNEE) * HEAP_SLOPE`.
+#[cfg(test)]
+const HEAP_KNEE: f32 = 0.4;
+#[cfg(test)]
+const HEAP_SLOPE: f32 = 0.2;
+
+/// The cover class of a sky's `cloud_shadow`, which gives the cloud type: the
+/// mean cover of the weather map over the demo's stand-in cloud texture
+/// (tileable value noise, mean 0.46, spread 0.21; the real texture is a grid
+/// asset) is [`weather_coverage`] averaged, 0.01, 0.06, 0.14, 0.29, 0.58,
+/// 0.72, 0.75 for 0.1, 0.2, 0.27, 0.36, 0.44, 0.5, 0.6 (the heaps' cap keeps
+/// it under this ladder until the sheet takes over); this smoothstep is the
+/// ladder.
 pub fn coverage(cloud_shadow: f32) -> f32 {
     let t = ((cloud_shadow - 0.1) / 0.56).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -785,6 +804,8 @@ mod tests {
     fn the_weather_size_matches_the_scene_shader() {
         let env = include_str!("shaders/env.wgsl");
         assert!(env.contains(&format!("const CLOUD_WEATHER_SIZE: f32 = {WEATHER_SIZE}.0;")));
+        assert!(env.contains(&format!("const HEAP_KNEE: f32 = {HEAP_KNEE};")));
+        assert!(env.contains(&format!("const HEAP_SLOPE: f32 = {HEAP_SLOPE};")));
     }
 
     #[test]
@@ -830,16 +851,26 @@ mod tests {
             }
             sum / (main.len() * detail.len()) as f32
         };
-        let mut last = -1.0;
+        // The map follows the cover class: the heaps' knee (`HEAP_KNEE`)
+        // keeps it below `coverage()` (the ladder of the cloud types) while
+        // the sky is broken, a sheet's map is a uniform 0.55 to 1.
+        let (mut last, mut last_map) = (-1.0, -1.0);
         for shadow in [0.1_f32, 0.2, 0.27, 0.36, 0.44, 0.5, 0.6] {
             let (map, fit) = (mean_cover(shadow), coverage(shadow));
-            assert!((map - fit).abs() < 0.08, "cloud_shadow {shadow}: map {map}, coverage() {fit}");
+            assert!(map >= last_map, "the map's cover grows with the shadow");
+            assert!(
+                shadow > 0.5 || (map - fit).abs() < 0.16,
+                "cloud_shadow {shadow}: map {map}, coverage() {fit}"
+            );
+            assert!(shadow < 0.5 || map > 0.7, "a closed sky: map {map}");
             assert!(fit > last, "coverage() grows with the shadow");
-            last = fit;
+            (last, last_map) = (fit, map);
         }
         // no cloud texture value gives cloud under a clear sky, all of them a closed one
         assert_eq!(weather_coverage(0.5, 0.5, 1.0, 0.0), 0.0);
-        assert_eq!(weather_coverage(0.5, 0.5, 1.0, 0.9), 1.0);
+        assert!(weather_coverage(0.5, 0.5, 1.0, 0.9) > 0.7);
+        // heaps keep their gaps: no cover above the cap before the sheet
+        assert!(weather_coverage(0.9, 0.9, 1.0, 0.37) <= HEAP_KNEE + (1.0 - HEAP_KNEE) * HEAP_SLOPE + 1e-6);
     }
 
     #[test]

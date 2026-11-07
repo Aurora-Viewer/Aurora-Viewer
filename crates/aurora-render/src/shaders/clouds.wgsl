@@ -59,6 +59,7 @@ const BASE_Y: f32 = 2.1;
 const DETAIL_KM: f32 = 0.5;
 const CURL_KM: f32 = 3.0;
 const STEP_WARP: f32 = 1.6;
+const STEP_MAX_KM: f32 = 0.3;
 const SIGMA: f32 = 110.0;    // extinction per km at density 1
 // Brightness of the lit side and of the sky light on a cloud against the
 // Legacy layer's for the same sky: the thick cloud of a demo sky stays at
@@ -204,7 +205,13 @@ fn density(p: vec3f, w: vec4f, off: vec2f, full: bool) -> f32 {
     // A sheet is thicker and thinner from place to place (slow light and
     // dark), a heap's top follows the weather map's detail tap.
     let thick = mix(mix(0.25, 1.0, saturate(n.g * 1.5)), 1.0, t);
-    base *= height_grad(hf / thick, t, w.b);
+    // The base and the top of a heap rise and sink with the cells of the
+    // noise (up to 12% of the layer, the heap is squeezed between them): a
+    // ray at a grazing angle would otherwise meet the layer's two planes as
+    // flat ledges, terraces.
+    let lift = 0.12 * t;
+    let hv = (hf - lift * saturate(n.b * 1.6 - 0.2)) / (1.0 - lift);
+    base *= height_grad(hv / thick, t, w.b);
     base *= mix(mix(0.45, 1.0, saturate(n.g * 1.8)), 1.0, t);
     // Cumulus: coverage shrinks with height, so domes rather than columns.
     let cov = w.r * 0.85 * mix(1.0, mix(1.0, 0.55, hf), t);
@@ -236,13 +243,18 @@ fn draine(c: f32, g: f32, a: f32) -> f32 {
 }
 // Approximate Mie phase of cloud droplets (Jendersie & d'Eon, "An
 // Approximate Mie Scattering Function for Fog and Cloud Rendering", SIGGRAPH
-// 2023 talk): a blend of a very narrow HG lobe, the glory round the sun that
-// silvers the thin edges, and a Draine lobe for the wide scatter. The four
-// parameters are the paper's fits for a droplet diameter of 20 micrometres.
+// 2023 talk, https://research.nvidia.com/labs/rtr/approximate-mie/): a blend
+// of a very narrow HG lobe, the glory round the sun that silvers the thin
+// edges, and a Draine lobe for the wide scatter. The parameters are the
+// paper's fog fit (equations 4 to 7) at a droplet diameter d = 20 micrometres:
+//   g_HG = exp(-0.0990567 / (d - 1.67154))                  = 0.9946
+//   g_D  = exp(-2.20679 / (d + 3.91029) - 0.428934)         = 0.5938
+//   alpha = exp(3.62489 - 8.29288 / (d + 5.52825))          = 27.11
+//   w_D  = exp(-0.599085 / (d - 0.641583) - 0.665888)       = 0.4982
 const MIE_G_HG: f32 = 0.9946;
-const MIE_G_D: f32 = 0.4829;
-const MIE_ALPHA: f32 = 27.1;
-const MIE_W: f32 = 0.498;
+const MIE_G_D: f32 = 0.5938;
+const MIE_ALPHA: f32 = 27.11;
+const MIE_W: f32 = 0.4982;
 fn mie(c: f32) -> f32 {
     return mix(hg(c, MIE_G_HG), draine(c, MIE_G_D, MIE_ALPHA), MIE_W);
 }
@@ -277,15 +289,38 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
     let sun = yup(u.sun.xyz);
     let ct = dot(dir, sun);
     var wsum = 0.0;
+    // Steps grow with the distance, but a grazing ray crosses tens of km of
+    // layer: the warp is eased so that no step is longer than STEP_MAX_KM
+    // (steps this long sampled a cloud's edge in slabs, terraces).
+    let warp = clamp(STEP_MAX_KM * f32(steps) / len, 1.0, STEP_WARP);
+    var prev_t = t0;
+    var prev_in = false;
     for (var i = 0u; i < steps; i++) {
-        // Steps grow with the distance (`STEP_WARP`): a grazing ray crosses
-        // tens of km of layer, and even steps showed as boxes and bands.
         let x = (f32(i) + max(jitter, 0.02)) / f32(steps);
-        let tt = t0 + len * pow(x, STEP_WARP);
-        let ds = len * STEP_WARP * pow(x, STEP_WARP - 1.0) / f32(steps);
-        let p = dir * tt;
-        let w = weather_at(p, off);
-        let dens = density(p, w, off, true);
+        var tt = t0 + len * pow(x, warp);
+        var ds = len * warp * pow(x, warp - 1.0) / f32(steps);
+        var p = dir * tt;
+        var w = weather_at(p, off);
+        var dens = density(p, w, off, true);
+        // The step that enters a cloud: the edge is found by bisection
+        // between the last empty sample and this one, so that it does not
+        // sit on the step grid, and the step only counts from the edge.
+        if dens > 0.002 && !prev_in && i > 0u {
+            var lo = prev_t;
+            var hi = tt;
+            for (var k = 0; k < 4; k++) {
+                let mid = 0.5 * (lo + hi);
+                let pm = dir * mid;
+                if density(pm, weather_at(pm, off), off, false) > 0.002 { hi = mid; } else { lo = mid; }
+            }
+            ds = min(ds, tt - hi + 0.5 * (hi - lo));
+            tt = 0.5 * (hi + tt);
+            p = dir * tt;
+            w = weather_at(p, off);
+            dens = density(p, w, off, true);
+        }
+        prev_t = t0 + len * pow(x, warp);
+        prev_in = dens > 0.002;
         if dens > 0.002 {
             let sigma = dens * SIGMA * u.drift.w;
             // Light march: a cone of growing taps on the cheap density, and
