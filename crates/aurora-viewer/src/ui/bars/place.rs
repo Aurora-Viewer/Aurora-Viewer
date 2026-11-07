@@ -145,6 +145,40 @@ fn one_line(name: &str) -> String {
         .join(" ")
 }
 
+/// The parcel name cut into plain text and web links, in order: the
+/// location field of the Legacy Viewer linkifies an address an owner typed
+/// in a parcel name (LLUrlRegistry, LLURLLineEditor), so a URL opens in the
+/// browser instead of the place's menu.
+pub(super) fn link_runs(parcel: &str) -> Vec<(&str, Option<&str>)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for (range, url) in crate::ui::chat::web_links(parcel) {
+        if range.start > at {
+            out.push((&parcel[at..range.start], None));
+        }
+        out.push((&parcel[range.clone()], Some(url)));
+        at = range.end;
+    }
+    if at < parcel.len() {
+        out.push((&parcel[at..], None));
+    }
+    out
+}
+
+/// One run of the parcel name, laid out on one line and cut at `room` with
+/// an ellipsis. A web link keeps the chat links' colour, underlined as the
+/// Legacy Viewer's HTMLLinkColor links.
+fn run_galley(painter: &egui::Painter, text: &str, font: FontId, color: Color32, link: bool, room: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    if link {
+        for section in &mut job.sections {
+            section.format.underline = egui::Stroke::new(1.0, color);
+        }
+    }
+    painter.layout_job(job)
+}
+
 /// The widths of the levels for this frame.
 fn measure(ui: &egui::Ui, st: &StatusInfo) -> Widths {
     let (parcel, region, position) = texts(st);
@@ -390,18 +424,52 @@ fn place(
     let room = (rights_left - LOC_GAP * 2.0 - x).max(0.0);
     let region_g = painter.layout_no_wrap(region, FontId::proportional(12.0), p.muted);
     let parcel_room = (room - region_g.size().x - LOC_GAP).max(room.min(40.0));
-    // a name longer than the room ends with "…"
-    let mut job = egui::text::LayoutJob::simple_singleline(parcel, parcel_font(ui.ctx()), p.ink);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(parcel_room);
-    let parcel_g = painter.layout_job(job);
-    let parcel_w = parcel_g.size().x;
     // both on one baseline, the parcel's capitals centred in the island
     let baseline = crate::ui::widgets::centered_baseline(&painter, parcel_font(ui.ctx()), cy);
-    crate::ui::widgets::paint_on_baseline(&painter, parcel_g, x, baseline, p.ink);
+    // a name longer than the room ends with "…"; a web address keeps the
+    // chat links' colour and underline, and its visible part (the "…"
+    // included) opens the whole address, shown whole or cut
+    let link_color = crate::ui::colors::text(crate::ui::colors::get().chat_urls);
+    let font = parcel_font(ui.ctx());
+    let mut links: Vec<(Rect, &str)> = Vec::new();
+    let mut parcel_w = 0.0;
+    let mut left = parcel_room;
+    for (text, url) in link_runs(&parcel) {
+        if left <= 0.5 {
+            break;
+        }
+        let color = if url.is_some() { link_color } else { p.ink };
+        let full = painter.layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER).size().x;
+        let fits = full <= left + 0.5;
+        let galley = run_galley(&painter, text, font.clone(), color, url.is_some(), left);
+        let w = galley.size().x;
+        crate::ui::widgets::paint_on_baseline(&painter, galley, x + parcel_w, baseline, color);
+        if let Some(url) = url {
+            let hit = Rect::from_min_size(Pos2::new(x + parcel_w, cy - SLOT / 2.0), Vec2::new(w, SLOT));
+            links.push((hit, url));
+        }
+        parcel_w += w;
+        if !fits {
+            break;
+        }
+        left -= w;
+    }
     x += parcel_w + LOC_GAP;
     let region_room = (rights_left - LOC_GAP * 2.0 - x).max(0.0);
     if region_g.size().x <= region_room + 0.5 {
         crate::ui::widgets::paint_on_baseline(&painter, region_g, x, baseline, p.muted);
+    }
+
+    // a web address in the name opens in the browser, as the Legacy
+    // Viewer's location field does (LLUrlEntryHTTP::handleClick)
+    for (i, (hit, url)) in links.iter().enumerate() {
+        let r = ui.interact(*hit, Id::unique(("bars_place_link", i)), Sense::click());
+        if r.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if r.on_hover_text(*url).clicked() {
+            crate::ui::chat::open_web_link(ui.ctx(), url);
+        }
     }
 
     // the rights: each one says what it is; a click opens About Land
@@ -700,6 +768,100 @@ mod tests {
         assert_eq!(one_line("  Moon \t\r\n  Garden"), "Moon Garden");
         assert_eq!(one_line("Lunaria Commons"), "Lunaria Commons");
         assert_eq!(one_line("\n"), "");
+    }
+
+    /// A URL an owner typed in a parcel name is a link, the rest the name.
+    #[test]
+    fn a_web_address_in_a_parcel_name_is_a_link() {
+        assert_eq!(
+            link_runs("Aurora Plaza - https://example.org"),
+            vec![("Aurora Plaza - ", None), ("https://example.org", Some("https://example.org")),]
+        );
+        assert_eq!(
+            link_runs("Shop www.example.org now"),
+            vec![("Shop ", None), ("www.example.org", Some("www.example.org")), (" now", None)]
+        );
+    }
+
+    /// The sentence's punctuation is not part of the address.
+    #[test]
+    fn trailing_punctuation_stays_out_of_the_link() {
+        assert_eq!(
+            link_runs("See https://example.org, then"),
+            vec![
+                ("See ", None),
+                ("https://example.org", Some("https://example.org")),
+                (", then", None),
+            ]
+        );
+    }
+
+    /// Place and agent links are not web addresses: they stay text in the
+    /// location field, and a web address after one is still found.
+    #[test]
+    fn only_web_addresses_are_links() {
+        assert_eq!(
+            link_runs("Land secondlife://Region/1/2/3"),
+            vec![("Land secondlife://Region/1/2/3", None)]
+        );
+        assert_eq!(
+            link_runs("Land secondlife://Region/1/2/3 https://example.org now"),
+            vec![
+                ("Land secondlife://Region/1/2/3 ", None),
+                ("https://example.org", Some("https://example.org")),
+                (" now", None),
+            ]
+        );
+    }
+
+    /// A name without an address is one plain run.
+    #[test]
+    fn a_name_without_a_link_is_one_run() {
+        assert_eq!(link_runs("Lunaria Commons"), vec![("Lunaria Commons", None)]);
+        assert!(link_runs("").is_empty());
+    }
+
+    /// The Legacy bars make a link clickable from its char rects; a link cut
+    /// by the field keeps a positive rect for the part still shown, so that
+    /// part (and the "…") still opens it. The name is the grid's longest
+    /// (63 bytes), the worst a real parcel can give.
+    #[test]
+    fn a_cut_link_keeps_a_rect_for_its_visible_part() {
+        let name = "Aurora Plaza - https://example.org/really/really/really/more";
+        assert!(name.len() <= 63, "a parcel name the grid accepts");
+        let field = 220.0;
+        let ctx = egui::Context::default();
+        let mut out = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.allocate_ui_with_layout(Vec2::new(field, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_max_width(field);
+                let mut job = egui::text::LayoutJob::default();
+                let format = egui::TextFormat {
+                    font_id: FontId::proportional(12.0),
+                    ..Default::default()
+                };
+                job.append("Aurora Plaza - ", 0.0, format.clone());
+                let start = job.text.chars().count();
+                job.append("https://example.org/really/really/really/more", 0.0, format);
+                let end = job.text.chars().count();
+                let (origin, galley, _) = egui::Label::new(job).truncate().layout_in_ui(ui);
+                let rects = crate::ui::chat::range_rects(&galley, origin, start..end);
+                out = Some((origin, galley, rects));
+            });
+        });
+        output.textures_delta.clear();
+        let (origin, galley, rects) = out.expect("a frame ran");
+        assert!(galley.elided, "the name is cut at the field's width");
+        assert!(galley.size().x <= field + 0.5, "the field keeps its width: {}", galley.size().x);
+        let rect = rects
+            .iter()
+            .find(|r| r.width() > 0.5)
+            .unwrap_or_else(|| panic!("the visible part of the link has a rect: {rects:?}"));
+        assert!(
+            (rect.right() - (origin.x + galley.size().x)).abs() < 1.0,
+            "the cut link covers the …: {rect:?} in {}",
+            galley.size().x
+        );
     }
 
     /// The parcel's name and the region beside it share one baseline,
