@@ -15,10 +15,11 @@ struct Pending {
     actor: Uuid,
     position: Vec3,
     look_at: Vec3,
+    portal: bool,
 }
 
 impl NamedTeleport {
-    pub fn observe(&mut self, command: &NetCommand, actor: Uuid) {
+    pub fn observe(&mut self, command: &NetCommand, actor: Uuid, portal: bool) {
         match command {
             NetCommand::TeleportToRegion {
                 request,
@@ -31,6 +32,7 @@ impl NamedTeleport {
                     actor,
                     position: *position,
                     look_at: *look_at,
+                    portal,
                 });
             }
             NetCommand::TeleportTo { .. } | NetCommand::TeleportHome | NetCommand::TeleportLandmark(_) | NetCommand::AcceptLure { .. } => {
@@ -46,13 +48,14 @@ impl NamedTeleport {
         }
     }
 
-    pub fn resolve(&mut self, request: Uuid, result: Result<RegionHandle, String>) -> Option<(Uuid, Result<NetCommand, String>)> {
+    pub fn resolve(&mut self, request: Uuid, result: Result<RegionHandle, String>) -> Option<(Uuid, bool, Result<NetCommand, String>)> {
         if self.pending.as_ref()?.request != request {
             return None;
         }
         let pending = self.pending.take()?;
         Some((
             pending.actor,
+            pending.portal,
             result.map(|handle| NetCommand::TeleportTo {
                 handle,
                 position: pending.position,
@@ -81,27 +84,28 @@ mod tests {
         let a = Uuid::from_u128(1);
         let b = Uuid::from_u128(2);
         let actor = Uuid::from_u128(3);
-        pending.observe(&lookup(a), actor);
-        pending.observe(&lookup(b), actor);
+        pending.observe(&lookup(a), actor, false);
+        pending.observe(&lookup(b), actor, true);
         assert!(pending.resolve(a, Err("stale".into())).is_none());
-        let (source, command) = pending.resolve(b, Ok(256)).unwrap();
+        let (source, portal, command) = pending.resolve(b, Ok(256)).unwrap();
         assert_eq!(source, actor);
+        assert!(portal);
         assert!(
             matches!(command, Ok(NetCommand::TeleportTo { handle: 256, position, look_at }) if position == Vec3::new(7.25, 3.5, 20.0) && look_at == Vec3::Y)
         );
         assert!(pending.resolve(b, Ok(256)).is_none());
-        pending.observe(&lookup(a), actor);
+        pending.observe(&lookup(a), actor, false);
         pending.cancel_scripts();
         assert!(pending.resolve(a, Ok(256)).is_none());
-        pending.observe(&lookup(a), Uuid::nil());
+        pending.observe(&lookup(a), Uuid::nil(), false);
         pending.cancel_scripts();
         assert!(
             pending
                 .resolve(a, Err("not found".into()))
-                .is_some_and(|(source, result)| source.is_nil() && result.is_err())
+                .is_some_and(|(source, portal, result)| source.is_nil() && !portal && result.is_err())
         );
-        pending.observe(&lookup(a), actor);
-        pending.observe(&NetCommand::TeleportHome, Uuid::nil());
+        pending.observe(&lookup(a), actor, true);
+        pending.observe(&NetCommand::TeleportHome, Uuid::nil(), false);
         assert!(pending.resolve(a, Ok(256)).is_none());
     }
 }

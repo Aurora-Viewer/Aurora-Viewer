@@ -151,7 +151,12 @@ enum Screen {
 /// What a held Hypergrid teleport does once accepted.
 enum SuitcaseGo {
     /// A named destination (navigation bar, links, history), resolved again.
-    Named { destination: String, pos: Vec3, look_at: Vec3 },
+    Named {
+        destination: String,
+        pos: Vec3,
+        look_at: Vec3,
+        portal: bool,
+    },
     /// The world map's teleport to its tracked spot, sent as it was.
     Map {
         command: Box<NetCommand>,
@@ -1916,7 +1921,17 @@ impl App {
         self.send_from(cmd, uuid::Uuid::nil());
     }
 
-    fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+    fn send_from(&mut self, cmd: NetCommand, actor: uuid::Uuid) {
+        self.send_from_origin(cmd, actor, false);
+    }
+
+    fn send_from_origin(&mut self, mut cmd: NetCommand, actor: uuid::Uuid, portal: bool) {
+        if portal && !self.world.rlva_allows_portal_crossing() {
+            self.world.apply(NetEvent::TeleportFailed {
+                reason: aurora_i18n::tr!("rlva-blocked").into(),
+            });
+            return;
+        }
         // a region that does not bake: our own bakes stand for the server's
         if let NetCommand::RequestServerAppearance { cof_version } = cmd
             && self.world.bakes_locally()
@@ -2011,7 +2026,7 @@ impl App {
         }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
-        self.named_teleport.observe(&cmd, actor);
+        self.named_teleport.observe(&cmd, actor, portal);
         if !self.world.maturity.synced()
             && matches!(
                 cmd,
@@ -2023,7 +2038,7 @@ impl App {
             )
         {
             log::info!("teleport: waiting for the maturity preference");
-            self.world.maturity.hold(cmd, actor);
+            self.world.maturity.hold(cmd, actor, portal);
             return;
         }
         // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
@@ -3119,9 +3134,9 @@ impl App {
             if !self.settings.rlva_enabled {
                 self.named_teleport.cancel_scripts();
             }
-            if let Some((actor, result)) = self.named_teleport.resolve(request, result) {
+            if let Some((actor, portal, result)) = self.named_teleport.resolve(request, result) {
                 match result {
-                    Ok(command) => self.send_deferred_teleport(command, actor),
+                    Ok(command) => self.send_deferred_teleport(command, actor, portal),
                     Err(reason) => {
                         self.world.apply(NetEvent::TeleportFailed { reason });
                     }
@@ -6125,7 +6140,7 @@ impl App {
     /// A Hypergrid teleport from the home grid (a `gatekeeper:region` name)
     /// while worn items are outside My Suitcase: held for the question,
     /// once per teleport.
-    fn suitcase_held(&mut self, asked: &str, resolved: &str, pos: Vec3, look_at: Vec3) -> bool {
+    fn suitcase_held(&mut self, asked: &str, resolved: &str, pos: Vec3, look_at: Vec3, portal: bool) -> bool {
         if std::mem::take(&mut self.suitcase_passed) {
             return false;
         }
@@ -6136,6 +6151,7 @@ impl App {
             destination: asked.to_owned(),
             pos,
             look_at,
+            portal,
         };
         self.suitcase_ask_for(grid, go)
     }
@@ -6228,9 +6244,20 @@ impl App {
         }
         log::info!("hypergrid: teleport accepted with worn items left behind");
         let started = match ask.go {
-            SuitcaseGo::Named { destination, pos, look_at } => {
+            SuitcaseGo::Named {
+                destination,
+                pos,
+                look_at,
+                portal,
+            } => {
+                if portal && !self.world.rlva_allows_portal_crossing() {
+                    self.world.apply(NetEvent::TeleportFailed {
+                        reason: aurora_i18n::tr!("rlva-blocked").into(),
+                    });
+                    return;
+                }
                 self.suitcase_passed = true;
-                let started = self.teleport_to_location_looking(destination, pos, look_at);
+                let started = self.teleport_to_location_looking_origin(destination, pos, look_at, portal);
                 // consumed by the question's check, unless the retry
                 // stopped before it (the destination no longer resolves)
                 self.suitcase_passed = false;
@@ -6271,6 +6298,15 @@ impl App {
     }
 
     fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) -> bool {
+        self.teleport_to_location_looking_origin(region, pos, look_at, false)
+    }
+
+    fn teleport_to_location_looking_origin(&mut self, region: String, pos: Vec3, look_at: Vec3, portal: bool) -> bool {
+        if portal && !self.world.rlva_allows_portal_crossing() {
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+            return false;
+        }
         let asked = region.clone();
         let Some(region) = self.grid_region(&region) else {
             return false;
@@ -6298,12 +6334,12 @@ impl App {
             return false;
         }
         // asked once RLVa allows it: held for its question, not started yet
-        if !local && self.suitcase_held(&asked, &region, pos, look_at) {
+        if !local && self.suitcase_held(&asked, &region, pos, look_at, portal) {
             return false;
         }
         self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z), !local);
         if local {
-            self.send(command);
+            self.send_from_origin(command, uuid::Uuid::nil(), portal);
         } else if self.demo {
             // Only inter-region demo teleports simulate a connection delay.
             aurora_net::transition::begin(
@@ -6314,7 +6350,7 @@ impl App {
             self.demo_tp_start = Some(Instant::now());
             self.demo_tp_dest = Some(pos);
         } else {
-            self.send(command);
+            self.send_from_origin(command, uuid::Uuid::nil(), portal);
         }
         true
     }
@@ -7235,13 +7271,13 @@ impl App {
     /// A named lookup or maturity response can arrive after a new lock.
     /// Finish the matching user's progress/history through the normal failure
     /// path when that delayed action is refused; scripts retain their actor.
-    fn send_deferred_teleport(&mut self, command: NetCommand, actor: uuid::Uuid) {
-        if actor.is_nil() && !self.user_teleport_allowed(&command) {
+    fn send_deferred_teleport(&mut self, command: NetCommand, actor: uuid::Uuid, portal: bool) {
+        if (portal && !self.world.rlva_allows_portal_crossing()) || (actor.is_nil() && !self.user_teleport_allowed(&command)) {
             self.world.apply(NetEvent::TeleportFailed {
                 reason: aurora_i18n::tr!("rlva-blocked").into(),
             });
         } else {
-            self.send_from(command, actor);
+            self.send_from_origin(command, actor, portal);
         }
     }
 
@@ -8537,7 +8573,7 @@ impl App {
         if !self.settings.rlva_enabled {
             self.world.maturity.cancel_script_teleports();
         }
-        for (actor, c) in self.world.maturity.take_commands() {
+        for (actor, c, portal) in self.world.maturity.take_commands() {
             if matches!(
                 c,
                 NetCommand::TeleportTo { .. }
@@ -8546,7 +8582,7 @@ impl App {
                     | NetCommand::TeleportLandmark(_)
                     | NetCommand::AcceptLure { .. }
             ) {
-                self.send_deferred_teleport(c, actor);
+                self.send_deferred_teleport(c, actor, portal);
             } else {
                 self.send_from(c, actor);
             }
@@ -16663,6 +16699,7 @@ impl App {
                             destination: "hop://hg.example-grid.org:80/Harbor%20Plaza/128/128/25".into(),
                             pos: Vec3::new(128.0, 128.0, 25.0),
                             look_at: Vec3::X,
+                            portal: false,
                         },
                         grid: "hg.example-grid.org:80".into(),
                         names: [
