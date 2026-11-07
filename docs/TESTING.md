@@ -2240,6 +2240,15 @@ No real L$ and no connection to a grid.
   After confirmation (`open-copy-yes`), the inventory footer confirms the
   three actual arrivals, then clears after five seconds (capture at frame 650
   for success, 1050 after expiry, with `--fps-limit 60`).
+- `open-selected-copy`, `open-selected-copy-yes` (#1410): at frame 420,
+  send the editor's selected-items Copy to inventory request for the notecard
+  and no-copy spare cube, leaving the script out. One new folder named after
+  the object receives both selected types. The same scripted-object move
+  warning and verified completion feedback as `open-copy` apply; `-yes`
+  confirms at 480, and the inventory opens at 540. Capture at 650 with
+  `--fps-limit 60` for the two-item result. Native pointer regressions exercise
+  the real context menu for one item and a mixed-type selection in both
+  editor layouts, while the Open window's full-copy button still takes all items.
 - `open-copy-timeout-yes` (#1410): the offline simulator withholds the spare
   cube; frame 600 advances the copy observer's deadline. The footer reports
   an unconfirmed copy with two of three items received, then clears after
@@ -4285,7 +4294,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
 | `AURORA_REZ_STYLE=1\|2\|3` | The rez effect's look: grid, scanlines, wireframe (3, the one chosen, by default) |
-| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
+| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1][,meshfail=<s>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
@@ -4295,6 +4304,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SOFT_MASK=1` | Our avatar wears a skin-tone Mask disc on the groin; soft fringe must stay visible (#1492) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
+| `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
@@ -4445,6 +4455,16 @@ both open states and the selection count. Capture at frame 620.
   pbropaqueF.glsl), so the panel is drawn whole, its holes in the teal of
   the texture: creators use it to show opaque a texture whose alpha channel
   holds something else. Before the fix the holes stayed cut out.
+- **`AURORA_DEMO_MASK_255=<alpha>`** (250 to 255, 250 otherwise): two
+  panels of colour waves ahead of the avatar wear the same texture, of that
+  alpha on every texel. The left one, with no material, is drawn whole; the
+  right one, with a Mask legacy material of cutoff 255, must be hidden, as
+  in the Legacy Viewer: nothing of it, at any distance. With 255 the texture
+  has no alpha channel and the right panel must be drawn whole instead.
+  Before #2276's fix both cases were covered with specks. The texture is a
+  `.j2c` written to the disk cache, so that it goes through the decode job
+  and its BC7 encoding, which the demo's procedural textures skip; the
+  scenario removes the `.bc7` of a previous run, so each run decodes.
 - **`AURORA_DEMO_BUMP=tall|wide`**: the "Normal + specular" panel of the
   plaza becomes 0.45 × 1.8 m (`tall`) or 1.8 × 0.45 m (`wide`): its texture
   coordinates are four times denser one way. With `AURORA_TANGENTS=alt`, the
@@ -4711,8 +4731,14 @@ both open states and the selection count. Capture at frame 620.
     spaced accordingly: their textures cover more of the screen and ask
     for finer levels, as the walls and floors of a region do. 400 objects
     of 3 m give levels close to those of a grid arrival.
-- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]`**:
+- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1][,meshfail=<s>]`**:
   an arrival in a busy region, to measure what the loading shows first.
+  With `meshfail=`, the server answers 403 to every mesh request for that
+  many seconds, then serves them: the meshes that failed four times are
+  asked again, 30 s later at most for the first time, and show. The
+  `mesh load:` lines go from `88 failed` to `88 meshes loaded, 0 failed`, and
+  `demo arrival: worn` and `all` reach the level they reach without the
+  option (with `avatars=8,worn=6`, 90 %).
   `n` objects (1,200 by default) arrive all around our avatar, the nearest
   first and 600 a second, from 3 to 120 m away and larger with the
   distance; one in three is a mesh and each has its own texture. `avatars`
@@ -12160,3 +12186,12 @@ used. The loader and headset runtime are installed separately. Runtime selection
 is still performed by OpenXR (`XR_RUNTIME_JSON` may select a development manifest).
 This is also accepted during normal viewer startup; no loader is downloaded or
 bundled. See [VR setup](VR.md) for platform requirements and validation status.
+
+
+`AURORA_DEMO_BUILD=link,0,0` selects two synthetic prims with
+different owner availability in ObjectUpdate, receives their full selection
+properties and links them with the last selected as root. `link-ready,0,0` stops
+before linking, for manual Ctrl+L and button checks. `link-denied,0,0` leaves one
+prim without Modify and attempts the same link: the refusal dialog must appear
+and both prims stay separate. Use `AURORA_DEMO_BUILD_STYLE=aurora|legacy` to
+compare the layouts and capture at frame 720 or later. These use no grid assets.

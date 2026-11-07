@@ -1496,6 +1496,9 @@ pub struct ProbeCapture {
     pub origin: Vec3,
     /// Near clip of the capture (LLReflectionMap::getNearClip).
     pub near: f32,
+    /// How far from `origin` the capture draws objects (m), its far clip
+    /// (RenderReflectionProbeDrawDistance in display_update_camera).
+    pub reach: f32,
     /// Cube face 0..5 (+X, -X, +Y, -Y, +Z, -Z).
     pub face: u32,
     /// Default probe: sky and terrain only.

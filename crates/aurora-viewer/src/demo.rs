@@ -148,6 +148,9 @@ pub mod keywords;
 pub mod land;
 #[path = "demo_link.rs"]
 pub mod link;
+/// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
+#[path = "demo_mask_255.rs"]
+pub mod mask_255;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
@@ -8485,6 +8488,7 @@ const MAT_BUMPY: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_000
 const MAT_BLEND: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0005);
 /// Mask with a cutoff of 0 (AURORA_DEMO_MASK_ZERO): every texel drawn.
 const MAT_MASK_ZERO: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0006);
+const MAT_MASK_255: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0007);
 /// Glossy plate of AURORA_DEMO_SHIMMER: the bumps repeated many times.
 const MAT_SHIMMER: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0020);
 pub(crate) const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
@@ -8849,6 +8853,14 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
             LegacyMaterial {
                 diffuse_alpha_mode: alpha_mode::MASK,
                 alpha_cutoff: 0,
+                ..base.clone()
+            },
+        ),
+        (
+            MAT_MASK_255,
+            LegacyMaterial {
+                diffuse_alpha_mode: alpha_mode::MASK,
+                alpha_cutoff: 255,
                 ..base.clone()
             },
         ),

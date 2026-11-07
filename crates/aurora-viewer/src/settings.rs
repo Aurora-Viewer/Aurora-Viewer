@@ -1287,8 +1287,12 @@ pub struct Settings {
     /// Reflection probes (RenderReflectionProbeLevel): 0 none (sky only),
     /// 1 manual, 2 manual + terrain, 3 full scene.
     pub reflection_probes: u8,
-    /// Reflection probe cube slots (RenderReflectionProbeCount; 8..=64).
+    /// Reflection probe cube slots (RenderReflectionProbeCount; 8..=256).
     pub probe_count: u32,
+    /// How far automatic reflection probes are placed around the camera
+    /// (m, 32..=512), within the draw distance. The Legacy Viewer has no
+    /// such limit (the draw distance); 512 keeps its reach.
+    pub probe_range: f32,
     /// RenderAvatarMaxComplexity: avatars above it show as grey silhouettes
     /// (0 = no limit; Firestorm's Ultra preset is 350 000).
     pub max_complexity: u32,
@@ -2091,7 +2095,8 @@ impl Default for Settings {
             screen_indirect_intensity: SCREEN_INDIRECT_INTENSITY,
             water_reflections: 1,
             reflection_probes: 3,
-            probe_count: 32,
+            probe_count: 256,
+            probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
             loading_avatars: 0,
@@ -2772,7 +2777,12 @@ impl Settings {
         self.fsr_sharpness = self.fsr_sharpness.min(100);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
-        self.probe_count = self.probe_count.clamp(8, 64);
+        self.probe_count = self.probe_count.clamp(8, 256);
+        self.probe_range = if self.probe_range.is_finite() {
+            self.probe_range.clamp(32.0, 512.0)
+        } else {
+            512.0
+        };
         self.tonemapper = self.tonemapper.min(1);
         self.tonemap_mix = if self.tonemap_mix.is_finite() {
             self.tonemap_mix.clamp(0.0, 1.0)
@@ -2988,7 +2998,7 @@ impl Settings {
             specular_aa: self.specular_aa,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
-            probe_slots: self.probe_count.clamp(8, 64),
+            probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,

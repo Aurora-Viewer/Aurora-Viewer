@@ -716,9 +716,24 @@ fn reflections_and_water(cx: &mut Cx) {
             &field!(probe_count),
             |ui, s| {
                 ui.add(
-                    egui::Slider::new(&mut s.probe_count, 8..=64)
+                    egui::Slider::new(&mut s.probe_count, 8..=256)
                         .custom_parser(aurora_i18n::parse_number)
                         .step_by(8.0)
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
+        cx.row(
+            tr!("ui-options-probe-range"),
+            tr!("ui-options-probe-range-help"),
+            &field!(probe_range),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.probe_range, 32.0..=512.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .step_by(16.0)
+                        .suffix(" m")
                         .trailing_fill(true),
                 )
                 .changed()
