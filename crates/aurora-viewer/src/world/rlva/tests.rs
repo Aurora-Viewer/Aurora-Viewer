@@ -1701,9 +1701,9 @@ fn rlva_stand_return_waits_for_a_successful_sit_and_is_cancelled_by_disabling() 
     w.rlva.stand_origin = Some(origin);
     w.rlva_update_stand();
     assert!(w.rlva.stand_return.is_none(), "an unanswered sit is not a stand");
-    w.agent.ground_sit = true;
+    w.agent.seated = true;
     w.rlva_update_stand();
-    w.agent.ground_sit = false;
+    w.agent.seated = false;
     w.rlva_update_stand();
     assert_eq!(w.rlva.stand_return, Some(origin));
     let c = NetCommand::TeleportTo {
