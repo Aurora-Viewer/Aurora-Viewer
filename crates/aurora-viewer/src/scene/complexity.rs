@@ -243,7 +243,7 @@ impl Scene {
         if weighted_mesh {
             shame *= ARC_WEIGHTED_MESH;
         }
-        if o.extra.flexible.is_some() {
+        if o.is_flexible() {
             shame *= ARC_FLEXI_MULT;
         }
         if let Some(d) = self.particles.source_data(&o.full_id) {

@@ -242,12 +242,13 @@ impl Object {
     pub fn visual_scale_at(&self, now: Instant) -> Vec3 {
         self.render.local_scale.unwrap_or_else(|| self.damped_scale_at(now))
     }
-    /// Ordinary flexible volumes use a simulated path; sculpt/mesh assets
-    /// retain their own geometry even if they carry stale flexible parameters.
+    /// A flexible path identifies a flexi prim. Some worn linksets arrive
+    /// with that path but without PARAMS_FLEXIBLE; the renderer supplies the
+    /// protocol defaults in that case. Meshes and sculpts retain their own
+    /// geometry.
     pub fn is_flexible(&self) -> bool {
         self.pcode == aurora_prim::params::LL_PCODE_VOLUME
             && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
-            && self.extra.flexible.is_some()
             && !self.volume.is_sculpt()
             && !self.visual_volume().is_mesh()
     }
@@ -1765,6 +1766,27 @@ mod tests {
             particles: Default::default(),
             sound: Default::default(),
         }
+    }
+
+    #[test]
+    fn flexible_path_simulates_without_optional_flexible_parameters() {
+        use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_VOLUME};
+
+        let mut flexible = update(1, LL_PCODE_VOLUME, "");
+        flexible.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        let flexible = Object::from_update(1, flexible);
+        assert!(flexible.is_flexible());
+
+        let mut rigid = update(2, LL_PCODE_VOLUME, "");
+        rigid.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        let rigid = Object::from_update(1, rigid);
+        assert!(!rigid.is_flexible());
+
+        let mut sculpt = update(3, LL_PCODE_VOLUME, "");
+        sculpt.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        sculpt.volume.sculpt = Some(aurora_prim::params::SculptParams::default());
+        let sculpt = Object::from_update(1, sculpt);
+        assert!(!sculpt.is_flexible());
     }
 
     #[test]

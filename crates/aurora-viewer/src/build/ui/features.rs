@@ -52,7 +52,14 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let single = tool.sel_prims(world).len() == 1;
     let editable = tool.can_modify(world, idx);
     let enabled = editable && single;
-    let (extra, volume, material, is_root, click) = (o.extra.clone(), o.volume, o.prim_material, o.parent_id == 0, o.click_action);
+    let (extra, volume, material, is_root, click, flexible) = (
+        o.extra.clone(),
+        o.volume,
+        o.prim_material,
+        o.parent_id == 0,
+        o.click_action,
+        o.is_flexible(),
+    );
     let mesh = volume.is_mesh();
     let legacy_canvas =
         super::legacy::active(ui).then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 460.0)));
@@ -81,7 +88,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             if super::common::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("build-ui-features-copy-attributes"), enabled) {
                 let (light_image, keep_light_image) = light_image_copy(world, extra.light_image);
                 tool.ui.features_clipboard = Some(FeaturesClip {
-                    flexible: extra.flexible,
+                    flexible: flexible.then_some(extra.flexible.unwrap_or(FLEX_DEFAULT)),
                     light: extra.light,
                     light_image,
                     keep_light_image,
@@ -110,7 +117,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         };
         tool.set_extra(world, idx, Extra::ExtendedMesh(Some(f)));
     }
-    let (flexibility, open) = (aurora_i18n::tr!("build-ui-features-flexibility"), extra.flexible.is_some());
+    let (flexibility, open) = (aurora_i18n::tr!("build-ui-features-flexibility"), flexible);
     feature_group(
         ui,
         p,
@@ -124,14 +131,14 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             if let Some(v) = check(
                 ui,
                 p,
-                extra.flexible.is_some(),
+                flexible,
                 false,
                 aurora_i18n::tr!("build-ui-features-flexibility"),
                 enabled && can_flex,
             ) {
                 set_flexible(tool, world, idx, v, click);
             }
-            let flex_on = extra.flexible.is_some() && enabled;
+            let flex_on = flexible && enabled;
             let mut f = extra.flexible.unwrap_or(FLEX_DEFAULT);
             let mut e = Edit::default();
             ui.add_enabled_ui(flex_on, |ui| {
