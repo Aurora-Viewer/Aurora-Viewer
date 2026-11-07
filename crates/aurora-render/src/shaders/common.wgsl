@@ -113,6 +113,7 @@ struct Frame {
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
+    tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -147,6 +148,7 @@ const FLAG_FULLBRIGHT: u32 = 1u;
 const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
 const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
+const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;
@@ -160,6 +162,11 @@ const FLAG_SKINNED: u32 = 128u;
 const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;
 const FLAG_TEX_ANIM: u32 = 1024u;
+// Added to the x of the prepass's encoded normal (in 0..1, object.wgsl
+// depth_normal) where FSR's history cannot follow the surface, a running
+// texture animation: FSR's transparency and composition mask
+// (fsr/reactivity.wgsl); GTAO's oct_decode takes it off.
+const NORMAL_COMPOSITION: f32 = 2.0;
 const FLAG_DOUBLE_SIDED: u32 = 2048u;
 // placed by the GPU: model relative to the anchor matrix palettes[flags.y]
 // (worn objects); skinned: skeleton placed by its own anchor
@@ -372,6 +379,13 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 }
 
 fn sample_tex(idx: u32, uv: vec2<f32>) -> vec4<f32> {
+    let loc = tex_loc[idx];
+    return textureSampleBias(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, frame.tex_lod.x);
+}
+
+// Without the frame's mip bias: the shadow maps have their own size, and
+// their pass binds no frame uniform
+fn sample_tex_unbiased(idx: u32, uv: vec2<f32>) -> vec4<f32> {
     let loc = tex_loc[idx];
     return textureSample(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu);
 }

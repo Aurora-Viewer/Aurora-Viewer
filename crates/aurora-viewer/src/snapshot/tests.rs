@@ -595,6 +595,20 @@ fn inventory_photos_become_power_of_two_textures_like_firestorm() {
 }
 
 #[test]
+fn reel_photos_reach_the_inventory_at_their_own_size() {
+    use inventory::{reel_side, texture_size};
+    let texture = |photo: (u32, u32)| {
+        let (w, h, _) = save::downscale(photo.0, photo.1, &vec![0; (photo.0 * photo.1 * 4) as usize], reel_side(photo));
+        texture_size((w, h))
+    };
+    assert_eq!(texture((1920, 1080)), (2048, 1024));
+    assert_eq!(texture((3840, 2160)), (2048, 1024));
+    assert_eq!(texture((1080, 1920)), (1024, 2048));
+    // a small photo is not made larger than its power of two
+    assert_eq!(texture((512, 288)), (512, 256));
+}
+
+#[test]
 fn inventory_photos_are_named_after_the_place() {
     use inventory::{item_description, item_name, location};
     let place = location("Place", "Region", glam::Vec3::new(128.4, 64.6, 25.0), "General");

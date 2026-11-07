@@ -1,7 +1,8 @@
 //! "Hide residents' names": before a copy leaves the viewer, every name and
 //! id of the residents it mentions becomes "Avatar 1", "Avatar 2"… in the
-//! order they first appear, and ours becomes "Me". Object names, texture
-//! and object ids stay: they are what the copy is for.
+//! order they first appear, and ours becomes "Me". Object names and ids
+//! stay: they are what the copy is for. Asset ids are already written by
+//! the asset id rule (`world::inventory::asset_ids`).
 
 use uuid::Uuid;
 

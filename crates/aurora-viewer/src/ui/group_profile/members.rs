@@ -165,10 +165,10 @@ pub fn rows(v: &View, names: &dyn Fn(&Uuid) -> String, filter: &str, show: Show,
         .filter(|(m, name)| filter.is_empty() || name.to_lowercase().contains(&filter) || m.title.to_lowercase().contains(&filter))
         .collect();
     rows.sort_by(|(a, an), (b, bn)| {
-        let by_name = an.to_lowercase().cmp(&bn.to_lowercase());
+        let by_name = crate::natural_order::cmp(an, bn);
         let order = match sort {
             Sort::Name => by_name,
-            Sort::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()).then(by_name),
+            Sort::Title => crate::natural_order::cmp(&a.title, &b.title).then(by_name),
             // most recent first
             Sort::Status => b.last_seen.rank().cmp(&a.last_seen.rank()).then(by_name),
             Sort::Donation => b.contribution.cmp(&a.contribution).then(by_name),
@@ -384,7 +384,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         }
         crate::ui::menu::dropdown(&by_role, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             let mut roles: Vec<_> = v.data.map(|d| d.roles.values().collect()).unwrap_or_default();
-            roles.sort_by_cached_key(|r| (!r.id.is_nil(), role_name(&r.name).to_lowercase()));
+            roles.sort_by_cached_key(|r| (!r.id.is_nil(), crate::natural_order::key(&role_name(&r.name))));
             if roles.is_empty() {
                 crate::ui::menu::info(ui, p, "loader-2", aurora_i18n::tr!("common-loading-2"));
             }

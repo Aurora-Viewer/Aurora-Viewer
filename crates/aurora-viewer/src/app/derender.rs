@@ -10,10 +10,31 @@ use crate::world::objects::ObjKey;
 use uuid::Uuid;
 
 impl App {
-    /// derenderObject on the menu's object (its linkset or the worn
-    /// object, from its root) or LLAvatarActions::derender on an avatar,
-    /// in view or only in a list.
+    /// derenderObject on the menu's object, and on every other linkset of
+    /// the selection when the object is one of them (the Legacy Viewer
+    /// takes each selected root), or LLAvatarActions::derender on an
+    /// avatar, in view or only in a list.
     pub(super) fn derender(&mut self, id: Uuid, permanent: bool) {
+        let w = &self.world;
+        let targets = match w.objects.index_of_uuid(&id) {
+            Some(idx) if w.objects.get(idx).is_some_and(|o| !o.is_avatar()) => self
+                .build
+                .menu_roots(w, idx)
+                .into_iter()
+                .filter_map(|r| w.objects.get(r))
+                .filter(|o| !o.is_avatar())
+                .map(|o| o.full_id)
+                .collect(),
+            _ => vec![id],
+        };
+        for id in targets {
+            self.derender_one(id, permanent);
+        }
+    }
+
+    /// derenderObject on one linkset or worn object (from its root), or
+    /// LLAvatarActions::derender on an avatar.
+    fn derender_one(&mut self, id: Uuid, permanent: bool) {
         let w = &self.world;
         if id == w.agent_id || id.is_nil() {
             return;
@@ -124,8 +145,12 @@ impl App {
 
     /// The Asset blacklist window, while open.
     pub(super) fn blacklist_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        let mut open = self.panels.asset_blacklist;
-        let action = self.blacklist_ui.show(ctx, p, &self.world.derender, &mut open);
+        if !self.panels.asset_blacklist {
+            return;
+        }
+        let mut open = true;
+        let ids = crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world);
+        let action = self.blacklist_ui.show(ctx, p, &self.world.derender, &ids, &mut open);
         self.panels.asset_blacklist = open;
         match action {
             Some(ui::blacklist::BlacklistAction::OpenIgnored) => self.open_ignored_list(),
