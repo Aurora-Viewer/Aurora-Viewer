@@ -753,6 +753,7 @@ impl World {
                 return;
             }
         }
+        let mut opener = None;
         if !self.mutes.text_muted(&inv.from, &inv.from_name) {
             let new = !self.groups.sessions.contains_key(&session);
             // an invitation opens the chat even when snoozed, as in the
@@ -764,15 +765,21 @@ impl World {
                 self.social.names.entry(inv.from).or_insert_with(|| inv.from_name.clone());
             }
             let text = saved_prefix(inv.offline, inv.timestamp) + &inv.message;
-            let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
+            let now = SystemTime::now();
+            let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, now);
             self.session_push(session, l, true);
+            // the time the server's history knows it by (the timestamp of
+            // the invitation, else its arrival)
+            let arrival = now.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0);
+            opener = Some(if inv.timestamp != 0 { inv.timestamp } else { arrival });
         }
         self.groups.restoring.remove(&session);
         self.groups.out.push(NetCommand::ChatSession {
             method: SessionMethod::AcceptInvitation,
             session,
         });
-        // recent messages of a session we did not have yet (FetchGroupChatHistory)
+        // recent messages of a session we did not have yet (FetchGroupChatHistory),
+        // merged up to the message that opened it
         if let Some(s) = self.groups.sessions.get_mut(&session)
             && !s.history_fetched
         {
@@ -781,6 +788,9 @@ impl World {
                 method: SessionMethod::FetchHistory,
                 session,
             });
+            if let Some(time) = opener {
+                self.session_lines(session).log.opened_by(time);
+            }
         }
     }
 
