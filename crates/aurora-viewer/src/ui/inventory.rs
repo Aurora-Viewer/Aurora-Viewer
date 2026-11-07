@@ -260,7 +260,7 @@ impl Facts {
                 (*id, ap.hud, super::appearance::items::point_name(name).to_owned())
             })
             .collect();
-        points.sort_by_cached_key(|(_, _, name)| name.to_lowercase());
+        points.sort_by_cached_key(|(_, _, name)| crate::natural_order::key(name));
         let worn_at = world
             .worn_attachment_points()
             .into_iter()

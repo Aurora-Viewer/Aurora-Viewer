@@ -402,7 +402,7 @@ impl Stack {
                             })
                             .collect();
                         self.candidates
-                            .sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()).then(a.0.cmp(&b.0)));
+                            .sort_by(|a, b| crate::natural_order::cmp(&a.1, &b.1).then(a.0.cmp(&b.0)));
                         self.cache = Some((inv.generation, self.filter.clone()));
                     }
                     let mut chosen = None;
