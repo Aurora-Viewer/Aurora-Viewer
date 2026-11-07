@@ -228,6 +228,44 @@ impl BalanceGains {
     }
 }
 
+/// The parts of a shown balance: each digit alone, what lies between them
+/// as one run.
+fn parts(text: &str) -> impl Iterator<Item = &str> {
+    text.split_inclusive(|c: char| c.is_ascii_digit()).flat_map(|part| {
+        // a run ending in its digit: the run, then the digit
+        let digit = part.len() - part.chars().last().filter(char::is_ascii_digit).map_or(0, char::len_utf8);
+        [&part[..digit], &part[digit..]].into_iter().filter(|part| !part.is_empty())
+    })
+}
+
+/// How wide `part` stands: every digit as wide as the widest, so that the
+/// number and what holds it keep their width while it ticks.
+fn part_width(painter: &egui::Painter, part: &str, font: &egui::FontId) -> f32 {
+    let width = |text: String| painter.layout_no_wrap(text, font.clone(), egui::Color32::PLACEHOLDER).size().x;
+    if part.starts_with(|c: char| c.is_ascii_digit()) {
+        ('0'..='9').map(|digit| width(digit.to_string())).fold(0.0, f32::max)
+    } else {
+        width(part.to_owned())
+    }
+}
+
+/// The width of a shown balance, for its digits' cells.
+pub fn number_width(painter: &egui::Painter, text: &str, font: &egui::FontId) -> f32 {
+    parts(text).map(|part| part_width(painter, part, font)).sum()
+}
+
+/// A shown balance from `left_center`, each digit centred in its cell.
+pub fn paint_number(painter: &egui::Painter, text: &str, font: &egui::FontId, left_center: egui::Pos2, color: egui::Color32) {
+    let mut x = left_center.x;
+    for part in parts(text) {
+        let width = part_width(painter, part, font);
+        let galley = painter.layout_no_wrap(part.to_owned(), font.clone(), color);
+        let left = x + (width - galley.size().x) / 2.0;
+        crate::ui::widgets::paint_ink_left(painter, galley, egui::pos2(left, left_center.y), color);
+        x += width;
+    }
+}
+
 /// Where the rows of a balance go: `right` the end of its text, `text_top`
 /// where the text starts and `top` where the first row stands.
 pub struct Anchor {
@@ -311,6 +349,16 @@ mod tests {
     }
 
     const ALL_OF_IT: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn a_number_splits_into_its_digits_and_what_lies_between() {
+        let parts = |text| parts(text).collect::<Vec<_>>();
+        assert_eq!(parts("12,480 L$"), ["1", "2", ",", "4", "8", "0", " L$"]);
+        assert_eq!(parts("7 L$"), ["7", " L$"]);
+        assert_eq!(parts("1 234 €"), ["1", " ", "2", "3", "4", " €"]);
+        assert_eq!(parts("L$"), ["L$"]);
+        assert_eq!(parts(""), Vec::<&str>::new());
+    }
 
     fn settled(balance: i32) -> Frame {
         Frame {

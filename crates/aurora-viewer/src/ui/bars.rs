@@ -1985,11 +1985,14 @@ pub fn top_bars(
                     }
                     if let Some(b) = st.balance.filter(|_| st.show_balance) {
                         // a click opens the L$ purchase, a right click hides it
-                        let balance = ui
-                            .add(
-                                egui::Label::new(small(format!("{b} {}", aurora_i18n::currency()), st.balance_ink))
-                                    .sense(egui::Sense::click()),
-                            )
+                        let text = format!("{b} {}", aurora_i18n::currency());
+                        let font = egui::FontId::proportional(12.0);
+                        let width = super::balance_gains::number_width(ui.painter(), &text, &font);
+                        let height = ui.fonts_mut(|f| f.row_height(&font));
+                        let (rect, balance) = ui.allocate_exact_size(Vec2::new(width.ceil(), height), egui::Sense::click());
+                        let left = egui::pos2(rect.left(), rect.center().y);
+                        super::balance_gains::paint_number(ui.painter(), &text, &font, left, st.balance_ink);
+                        let balance = balance
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l"));
                         if balance.clicked() {
@@ -2000,7 +2003,7 @@ pub fn top_bars(
                             text_top: balance.rect.top(),
                             top: balance.rect.bottom() + 4.0,
                         };
-                        super::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, egui::FontId::proportional(12.0));
+                        super::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, font);
                         menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st, &mut action));
                     }
                     // the conversations' thumbnails, left of the balance as
