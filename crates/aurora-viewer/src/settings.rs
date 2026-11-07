@@ -3198,7 +3198,7 @@ mod tests {
                 let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
                 assert_eq!((restored.appearance_camera_movement, restored.customize_animation), (camera, pose));
             }
-    }
+        }
     }
 
     #[test]
