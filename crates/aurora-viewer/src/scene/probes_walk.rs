@@ -368,3 +368,24 @@ fn walk_why() {
         );
     }
 }
+
+/// Walking must not flash, nor lose the forest's dark to the default probe:
+/// the limits are a little above what the code gives. 64 slots are the tight
+/// case (more probes than slots), 128 hold them all, and 12 fps is the case
+/// where captures fall behind.
+#[test]
+fn walking_through_a_forest_does_not_flash() {
+    let (scene, world, samples) = forest();
+    for (slots, fps, path, flashes, share) in [
+        (64, 60.0, Path::Shuttle, 0.6, 0.1),
+        (64, 60.0, Path::Straight, 0.3, 0.2),
+        (128, 60.0, Path::Shuttle, 0.1, 0.7),
+        (128, 60.0, Path::Straight, 0.1, 0.7),
+        (128, 12.0, Path::Straight, 0.4, 0.5),
+    ] {
+        let w = walk(&scene, &world, &samples, slots, fps, path);
+        let case = format!("{slots} slots, {fps} fps, {}", path.name());
+        assert!(w.flashes_per_minute <= flashes, "{case}: {} flashes a minute", w.flashes_per_minute);
+        assert!(w.share >= share, "{case}: a local share of {}", w.share);
+    }
+}
