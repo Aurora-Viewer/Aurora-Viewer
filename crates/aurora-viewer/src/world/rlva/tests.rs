@@ -2583,3 +2583,36 @@ fn empty_trash_ignores_rlva_locks_without_exempting_other_purges() {
     assert!(!world.rlva_inventory_mutation_allowed(&purge(unloaded), Uuid::nil()));
     assert!(!world.rlva_inventory_mutation_allowed(&purge(Uuid::from_u128(92)), Uuid::nil()));
 }
+
+#[test]
+fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not() {
+    use crate::world::World;
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events()
+        .into_iter()
+        .chain(crate::demo::selection_cycle_events())
+        .chain(crate::demo::sit_events(250))
+        .chain(crate::demo::sit_events(300))
+    {
+        world.apply(event);
+    }
+    world.agent.seated = true;
+    world.rlva_configure(true);
+    let index = |world: &World, id| world.objects.iter().find(|(_, o)| o.key.local_id == id).unwrap().0;
+    let seat = index(&world, 950);
+    let other = index(&world, 99610);
+    command(&mut world.rlva, A, "@sittp=n");
+    assert!(world.rlva_can_link(&[seat, other]));
+    command(&mut world.rlva, A, "@unsit=n");
+    assert!(!world.rlva_can_link(&[seat, other]));
+    assert!(world.rlva_can_link(&[other]));
+    let object = world.objects.get(seat).unwrap();
+    assert!(!world.rlva_allows_build(&aurora_net::build::BuildCmd::Link {
+        handle: object.key.region,
+        local_ids: vec![object.key.local_id]
+    }));
+    command(&mut world.rlva, A, "@unsit=y");
+    assert!(world.rlva_can_link(&[seat, other]));
+    command(&mut world.rlva, A, "@editworld=n");
+    assert!(!world.rlva_can_link(&[seat, other]));
+}

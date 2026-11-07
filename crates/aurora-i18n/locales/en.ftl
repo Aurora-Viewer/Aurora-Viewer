@@ -2302,7 +2302,7 @@ build-ui-texture-paste-limited = You applied a texture with limited permissions,
 ui-options-commands = Commands
 common-camera-and-display-commands = Camera and display commands
 common-teleport-commands = Teleport commands
-build-ui-contents-like-dragging-the-item-to-inventory = Like dragging the item to inventory
+contents-copy-selection-tip = Copy the selected items into a new folder named after the object.
 ui-context-community = Community
 common-communication = Communication
 ui-bars-communicate = Communicate
@@ -4328,6 +4328,8 @@ ui-people-exact-object-name = Exact object name
 ui-options-commands-case-insensitive-partial-name-among-nearby-avatars = Case-insensitive partial name among nearby avatars
 world-mutes-empty-name = Empty name.
 ui-options-probe-count = Probe count
+ui-options-probe-range = Probe range
+ui-options-probe-range-help = How far around you the scene gets reflection probes, within the draw distance (farther costs nothing more in video memory)
 ui-options-maximum-pages-videos-loaded-at-once-plugininstancestotal = Maximum pages / videos loaded at once (PluginInstancesTotal)
 ui-options-maximum-particles-0-disabled = Maximum particles (0 = disabled)
 ui-options-names = Names
@@ -5669,7 +5671,6 @@ ui-bars-script-library = Script library
 ui-bars-message-of-the-day = Message of the day
 ui-bars-wiki = Aurora Viewer wiki
 ui-bars-knowledge-base = Knowledge base
-ui-bars-sysinfo-button = System information button in conversations
 ui-bars-about = About Aurora Viewer
 cmdline-dice-successes = { "Successes: " }{ $successes }
 build-manip-south = South
@@ -13340,3 +13341,14 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+
+# Object linking: LLSelectMgr::linkObjects
+build-link-error-title = Unable to link objects
+build-link-downloading = Object information is still downloading. Please wait and try linking again.
+build-link-too-many = Cannot link { $count } prims. The maximum is { $max }.
+build-link-modify = You must have permission to modify every object you want to link.
+build-link-permanent = A permanent object in this selection cannot be linked from another region.
+build-link-owners = The objects must have the same owner to be linked.
+build-link-regions = The objects must be in the same region to be linked.
+build-link-animesh = The selection exceeds the animated object triangle limit.
+build-link-restricted = A restriction prevents linking this selection.
