@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.41";
+const VERSION: &str = "1.42";
 /// The controller's and query script's owner-say tags, never shown in chat.
 const PRIVATE_TAGS: [&str; 7] = [
     "<auroraBridge>",
