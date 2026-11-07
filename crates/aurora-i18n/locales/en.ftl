@@ -151,6 +151,7 @@ toolbar-command-picks = Picks
 toolbar-command-poser = Poser
 toolbar-command-flickr = Flickr
 toolbar-command-primfeed = Primfeed
+toolbar-use-name-tag-preferences = Use name tag preferences
 toolbar-command-friends-only = Show friends only
 toolbar-command-grid-status = Grid status
 toolbar-command-voice = Nearby voice
