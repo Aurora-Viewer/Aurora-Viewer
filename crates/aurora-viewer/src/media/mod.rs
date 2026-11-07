@@ -397,6 +397,12 @@ impl Default for MediaSettings {
 struct ObjMedia {
     idx: usize,
     fetched_version: Option<u32>,
+    /// The version asked for by the request in flight: a failed request
+    /// waits for a newer one (LLMediaDataClient drops it after its retries).
+    requested_version: Option<u32>,
+    /// The texture entry lost its media flags while the fetched data still
+    /// has media: ask once and retain it only while awaiting confirmation.
+    flags_lost_since: Option<Instant>,
     data: Option<ObjectMediaData>,
     hud: bool,
     on_other_avatar: bool,
@@ -431,6 +437,9 @@ pub struct MediaManager {
     pack_dir: Option<std::path::PathBuf>,
     pub impls: Vec<MediaImpl>,
     objects: HashMap<Uuid, ObjMedia>,
+    /// Objects whose media was on screen until lately (a HUD that clears then
+    /// sets its page): asked again first for `RECENTLY_SHOWN`.
+    recently_shown: HashMap<Uuid, Instant>,
     client: MediaDataClient,
     last_create: Instant,
     pub focus: Option<MediaKey>,
@@ -487,6 +496,7 @@ impl Default for MediaManager {
             pack_dir: None,
             impls: Vec::new(),
             objects: HashMap::new(),
+            recently_shown: HashMap::new(),
             client: MediaDataClient::default(),
             last_create: Instant::now() - CREATE_DELAY,
             focus: None,

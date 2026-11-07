@@ -1107,6 +1107,34 @@ fn select_only_movable_objects_follows_root_rights_and_permanent_objects() {
     assert!(!passes_select_filters(&world, &settings, root));
 }
 
+/// SelectInvisibleObjects: on by default (settings.xml), saved, on for
+/// settings and notecards written before it existed; an older saved layout
+/// gets it right above the reflection probes.
+#[test]
+fn select_invisible_is_on_by_default_and_persists() {
+    use layout::{Item, Layout, Panel};
+    let mut settings = BuildSettings::default();
+    assert!(settings.select_invisible);
+    let old: BuildSettings = serde_json::from_str("{}").unwrap();
+    assert!(old.select_invisible);
+    settings.select_invisible = false;
+    let restored: BuildSettings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+    assert!(!restored.select_invisible);
+    let mut saved = Layout::default();
+    saved.order.retain(|item| *item != Item::Invisible);
+    saved.locations.remove(&Item::Invisible);
+    saved.normalize();
+    let panel = saved.in_panel(Panel::Settings);
+    let probes = panel.iter().position(|item| *item == Item::Probes).unwrap();
+    assert_eq!(panel[probes - 1], Item::Invisible);
+    let (_, tool, _) = fixture();
+    let mut profile = serde_json::to_value(layout::Profile::capture(&tool, &settings)).unwrap();
+    let options = profile["options"].as_object_mut().unwrap();
+    assert_eq!(options["invisible"], false);
+    options.remove("invisible");
+    assert!(layout::Profile::read(&profile.to_string()).unwrap().options.invisible);
+}
+
 #[test]
 fn selection_filters_persist_and_sit_under_the_reflection_probes() {
     use layout::{Item, Layout, Panel};
@@ -1129,8 +1157,15 @@ fn selection_filters_persist_and_sit_under_the_reflection_probes() {
     let probes = panel.iter().position(|item| *item == Item::Probes).unwrap();
     assert_eq!(panel[probes + 1..probes + 3], [Item::OwnedOnly, Item::MovableOnly]);
     assert_eq!(
-        Layout::default().in_panel(Panel::Settings)[..5],
-        [Item::Snap, Item::Highlight, Item::Probes, Item::OwnedOnly, Item::MovableOnly]
+        Layout::default().in_panel(Panel::Settings)[..6],
+        [
+            Item::Snap,
+            Item::Highlight,
+            Item::Invisible,
+            Item::Probes,
+            Item::OwnedOnly,
+            Item::MovableOnly
+        ]
     );
     // notecards exported before them still load, with the filters off
     let (_, tool, _) = fixture();

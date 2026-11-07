@@ -68,8 +68,13 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
     let Some(m) = media.find_mut(&key) else {
         return;
     };
-    // LLPanelPrimMediaControls: navigation needs perms_control
+    // LLPanelPrimMediaControls::updateShape: without perms_control the
+    // controls are not shown at all (setVisible(enabled)), as a HUD that
+    // sets PRIM_MEDIA_PERMS_CONTROL to none expects
     let can_control = m.entry.as_ref().is_none_or(|e| e.perms_control != 0);
+    if !can_control {
+        return;
+    }
     let mut close = false;
     egui::Area::new(egui::Id::unique("media_controls"))
         .order(egui::Order::Foreground)
@@ -80,35 +85,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                     ui.spacing_mut().item_spacing.x = 3.0;
                     let time_media = m.is_time_media();
                     if !time_media {
-                        if button(
-                            ui,
-                            p,
-                            icons,
-                            "arrow-left",
-                            aurora_i18n::tr!("common-previous"),
-                            m.can_back && can_control,
-                        ) {
+                        if button(ui, p, icons, "arrow-left", aurora_i18n::tr!("common-previous"), m.can_back) {
                             m.back();
                         }
-                        if button(
-                            ui,
-                            p,
-                            icons,
-                            "arrow-right",
-                            aurora_i18n::tr!("common-next"),
-                            m.can_forward && can_control,
-                        ) {
+                        if button(ui, p, icons, "arrow-right", aurora_i18n::tr!("common-next"), m.can_forward) {
                             m.forward();
                         }
                         let has_home = m.entry.as_ref().is_some_and(|e| !e.home_url.trim().is_empty());
-                        if button(
-                            ui,
-                            p,
-                            icons,
-                            "home-filled",
-                            aurora_i18n::tr!("ui-media-home-page"),
-                            has_home && can_control,
-                        ) {
+                        if button(ui, p, icons, "home-filled", aurora_i18n::tr!("ui-media-home-page"), has_home) {
                             m.home();
                         }
                         if m.status == MediaStatus::Loading {
@@ -130,8 +114,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                     let mut text = st.url_edit.clone().unwrap_or(shown);
                     let edit = egui::TextEdit::singleline(&mut text)
                         .desired_width(360.0)
-                        .font(egui::FontId::proportional(12.5))
-                        .interactive(can_control);
+                        .font(egui::FontId::proportional(12.5));
                     let resp = ui.add(edit);
                     if resp.changed() {
                         st.url_edit = Some(text.clone());

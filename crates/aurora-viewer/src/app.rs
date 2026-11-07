@@ -4615,53 +4615,6 @@ impl App {
         }
     }
 
-    /// Diagnostic depth-only picking: where a ray enters and leaves our
-    /// avatar's box (the simulator's object size, widened for the arms), and
-    /// where along it the ray passes within 0.2 m of the body's vertical axis
-    /// (the click finds the avatar before its body and clothes are drawn).
-    fn own_avatar_ray(&self, origin: Vec3, dir: Vec3) -> Option<(f32, f32, Option<f32>)> {
-        let a = &self.world.agent;
-        let size = self
-            .world
-            .objects
-            .index_of_uuid(&self.world.agent_id)
-            .and_then(|i| self.world.objects.get(i))
-            .map(|o| o.scale)
-            .filter(|s| s.z > 0.5 && s.is_finite())
-            .unwrap_or(Vec3::new(0.45, 0.6, 1.9));
-        let half = Vec3::new((size.x * 0.5).max(0.3) + 0.15, (size.y * 0.5).max(0.3) + 0.15, size.z * 0.5 + 0.1);
-        // box space: centered on the agent, turned with its body
-        let inv = a.body_rotation().inverse();
-        let o = inv * (origin - a.position);
-        let d = inv * dir;
-        let (mut t0, mut t1) = (0.0f32, f32::INFINITY);
-        for k in 0..3 {
-            if d[k].abs() < 1e-8 {
-                if o[k].abs() > half[k] {
-                    return None;
-                }
-                continue;
-            }
-            let (a, b) = ((-half[k] - o[k]) / d[k], (half[k] - o[k]) / d[k]);
-            t0 = t0.max(a.min(b));
-            t1 = t1.min(a.max(b));
-        }
-        if t0 > t1 {
-            return None;
-        }
-        // closest approach to the vertical axis, inside the box
-        let dxy = d.truncate();
-        let t = if dxy.length_squared() > 1e-8 {
-            -o.truncate().dot(dxy) / dxy.length_squared()
-        } else {
-            t0
-        };
-        let t = t.clamp(t0, t1);
-        let q = o + d * t;
-        let axis = (q.truncate().length() < 0.2).then_some(t);
-        Some((t0, t1, axis))
-    }
-
     /// The avatar whose name tag is under the cursor, and the point on the
     /// cursor ray at its tag. LLPipeline::lineSegmentIntersectInWorld tests
     /// the avatar tags after the world: a tag picks its avatar unless
@@ -4712,10 +4665,16 @@ impl App {
                     command: false,
                 };
                 let distance = (point - hud_ray.0).dot(hud_ray.1);
-                if self
-                    .media
-                    .on_click(&self.world, &self.scene, hud_ray, Some(distance), &self.settings.media, mods, true)
-                {
+                if self.media.on_click(
+                    &self.world,
+                    &self.scene,
+                    hud_ray,
+                    Some(distance),
+                    &self.settings.media,
+                    mods,
+                    true,
+                    Some(idx),
+                ) {
                     return;
                 }
                 if let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props) {
@@ -4758,23 +4717,12 @@ impl App {
             .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
             .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
-        // Only our displayed body takes the press, not empty space inside
-        // its bounding box. Keep the old approximation solely for the
-        // diagnostic synchronous read, which has no drawn-face identity.
-        let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|(o, d)| {
-            if !picked.depth_only() {
-                // The depth is older than the posed surface. Only a surface
-                // actually found by the CPU can occlude that newer answer.
-                let found = hit.filter(|p| Some(*p) != picked.depth);
-                return self.scene.own_avatar_surface(&self.world, &picked.drawn, (o, d), found);
-            }
-            let (t0, t1, axis) = self.own_avatar_ray(o, d)?;
-            match hit.map(|p| (p - o).dot(d)) {
-                Some(t) if t < t0 - 0.05 => None,
-                Some(t) if t <= t1 + 0.05 => hit,
-                _ if alt => None,
-                _ => axis.map(|t| o + d * t),
-            }
+        // on our avatar: its body or what it wears under the cursor, with
+        // nothing in front (scene/self_click.rs), unless an attachment of
+        // another resident with an action is where the click landed
+        let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|ray| {
+            self.scene
+                .own_avatar_click(&self.world, ray, hit, &picked.drawn, alt, picked.depth_only(), picked.depth)
         });
         // or on our name tag
         let avatar_hit = avatar_hit.or_else(|| {
@@ -4796,7 +4744,7 @@ impl App {
                 };
                 if self
                     .media
-                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false)
+                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false, None)
                 {
                     return;
                 }
@@ -6989,7 +6937,7 @@ impl App {
         };
         // the surface under the cursor: face tool, grab surface info
         let surface = match (self.build.tool, target) {
-            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
+            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.build_touch_surface(&self.world, i, ray),
             _ => None,
         };
         let used = self.build.mouse_down(
@@ -9579,6 +9527,8 @@ impl App {
                 _ => None,
             };
             self.scene.set_debug_alpha(&mut self.world, debug_alpha);
+            self.scene
+                .set_pick_transparent(self.build.open && self.settings.build.select_invisible);
             self.scene.set_pass_view(&mut self.world, self.settings.debug.pass_view);
             // finished jobs only leave cheap work to the main thread (their
             // data is staged for the GPU by the jobs): a short budget is

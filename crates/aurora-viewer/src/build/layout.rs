@@ -22,6 +22,8 @@ pub enum Item {
     Snap,
     #[serde(rename = "highlight")]
     Highlight,
+    #[serde(rename = "invisible")]
+    Invisible,
     #[serde(rename = "probes")]
     Probes,
     #[serde(rename = "ownedOnly")]
@@ -58,7 +60,7 @@ pub enum Item {
     Land,
 }
 
-pub const ITEMS: [Item; 25] = [
+pub const ITEMS: [Item; 26] = [
     Item::Manipulators,
     Item::Face,
     Item::StretchTextures,
@@ -67,6 +69,7 @@ pub const ITEMS: [Item; 25] = [
     Item::RootAxis,
     Item::Snap,
     Item::Highlight,
+    Item::Invisible,
     Item::Probes,
     Item::OwnedOnly,
     Item::MovableOnly,
@@ -114,6 +117,7 @@ impl Item {
             self,
             Self::Snap
                 | Self::Highlight
+                | Self::Invisible
                 | Self::Probes
                 | Self::OwnedOnly
                 | Self::MovableOnly
@@ -205,6 +209,9 @@ pub struct Options {
     #[serde(default)]
     pub object_snap: bool,
     pub highlight: bool,
+    /// On when absent, its default.
+    #[serde(default = "invisible_default")]
+    pub invisible: bool,
     pub probes: bool,
     /// Absent from notecards exported before these options existed.
     #[serde(default)]
@@ -218,6 +225,9 @@ pub struct Options {
     pub follow_edit: bool,
 }
 fn surrounding_default() -> bool {
+    true
+}
+fn invisible_default() -> bool {
     true
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -258,6 +268,7 @@ impl Profile {
                 snap: s.snap,
                 object_snap: s.object_snap,
                 highlight: s.show_highlight,
+                invisible: s.select_invisible,
                 probes: s.select_probes,
                 owned_only: s.select_owned_only,
                 movable_only: s.select_movable_only,
@@ -329,6 +340,7 @@ impl Profile {
         s.snap = self.options.snap;
         s.object_snap = self.options.object_snap && !self.options.snap;
         s.show_highlight = self.options.highlight;
+        s.select_invisible = self.options.invisible;
         s.select_probes = self.options.probes;
         s.select_owned_only = self.options.owned_only;
         s.select_movable_only = self.options.movable_only;

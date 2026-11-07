@@ -298,7 +298,7 @@ impl BuildTool {
                 .filter(|i| !moving.contains(i) && world.objects.get(*i).is_some_and(|o| !o.is_avatar()))
                 .find_map(|i| {
                     let o = world.objects.get(i)?;
-                    let t = scene.left_touch_surface(world, i, ray)?;
+                    let t = scene.build_touch_surface(world, i, ray)?;
                     Some((t.position + world.region_offset(o.key.region)?, t.normal))
                 })
         });
