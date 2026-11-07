@@ -1511,13 +1511,19 @@ fn side_panel_min_size(ctx: &egui::Context) -> Vec2 {
     let style = ctx.global_style();
     let spacing = &style.spacing;
     let footer = ctx.data(|d| d.get_temp::<f32>(side_footer_id())).unwrap_or(180.0);
-    // the window's frame and title bar around the body
-    let title = ctx.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(&style))) + 24.0;
-    let margins = 2.0 * 12.0;
+    // Floater's chrome (widgets.rs): 10 points of inner margin and a 1-point
+    // stroke on each side; above the body 1 + 5, the title row (at least 28,
+    // its 14-point title), 6 + divider 6 + 6 and 5; below it 10 + 1
+    let across = 2.0 * (10.0 + 1.0);
+    let title = ctx.fonts_mut(|f| f.row_height(&egui::FontId::proportional(14.0))).max(28.0);
+    let down = 40.0 + title;
+    // a few rows of the column's scrolled list (search, landmarks, layers)
+    // stay reachable above the footer
+    let list = 3.0 * (spacing.interact_size.y + spacing.item_spacing.y);
     vec2(
-        SIDE_MAP_MIN.0 + spacing.item_spacing.x + SIDE_W + margins,
-        (title + footer + spacing.item_spacing.y + margins)
-            .max(SIDE_MAP_MIN.1 + title + margins)
+        SIDE_MAP_MIN.0 + spacing.item_spacing.x + SIDE_W + across,
+        (list + spacing.item_spacing.y + footer + down)
+            .max(SIDE_MAP_MIN.1 + down)
             .max(386.0),
     )
 }
@@ -1660,13 +1666,23 @@ mod size_tests {
             );
             let texts = std::mem::take(&mut texts);
             let case = format!("zoom {zoom}, text {text}, window {window:?}");
+            // inside the body (the frame's 10-point margin and 1-point
+            // stroke), with room for the button's own padding around its text
+            let padding = frames.ctx.global_style().spacing.button_padding;
+            let room = window.shrink(11.0).shrink2(padding).expand(0.5);
             for label in labels {
                 let found: Vec<_> = texts.iter().filter(|t| t.source == label).collect();
                 assert!(!found.is_empty(), "{case}: {label:?} is drawn");
                 for t in found {
-                    assert!(window.expand(0.5).contains_rect(t.rect), "{case}: {label:?} at {:?}", t.rect);
+                    assert!(room.contains_rect(t.rect), "{case}: {label:?} at {:?} out of {room:?}", t.rect);
                 }
             }
+            // the column's list keeps a few rows above the footer
+            let me = aurora_i18n::tr!("common-me");
+            assert!(
+                texts.iter().any(|t| t.source == me && room.contains_rect(t.rect)),
+                "{case}: the side list's first row {me:?} is shown"
+            );
         }
     }
 
