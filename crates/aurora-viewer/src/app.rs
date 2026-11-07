@@ -522,6 +522,9 @@ pub struct App {
     alt: bool,
     /// AltGr held: Ctrl + Alt for shortcuts and the mouse (app/alt_graph.rs).
     alt_graph: bool,
+    /// Shift, Ctrl and Alt key levels, one per modifier, for the gesture
+    /// mask of a modifier pressed alone (gestures/keys.rs).
+    modifier_levels: u8,
     left_down: bool,
     /// An unhandled world press may start steering when the right button joins.
     world_mouse_walk_pending: bool,
@@ -1548,6 +1551,7 @@ impl App {
             text_menu: Default::default(),
             alt: false,
             alt_graph: false,
+            modifier_levels: 0,
             left_down: false,
             world_mouse_walk_pending: false,
             clicks: Default::default(),
@@ -20304,6 +20308,18 @@ impl ApplicationHandler for App {
         {
             return;
         }
+        // Shift, Ctrl and Alt levels, one per modifier as LLKeyboard::mKeyLevel,
+        // before any return below can keep a release from the keyboard
+        // handler (a gesture key's mask needs them). The presses made up on
+        // focus gain are dropped above, as LLKeyboard counts only real
+        // key-down messages; a modifier still held then auto-repeats.
+        let modifier_levels_before = self.modifier_levels;
+        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && let PhysicalKey::Code(code) = ke.physical_key
+        {
+            self.modifier_levels =
+                crate::gestures::keys::modifier_levels_after(modifier_levels_before, code, ke.state == ElementState::Pressed);
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
@@ -20484,6 +20500,8 @@ impl ApplicationHandler for App {
                 self.alt_cursor.left_button(false);
                 self.alt = false;
                 self.alt_graph = false;
+                // LLViewerWindow::handleFocusLost -> LLKeyboard::resetKeys
+                self.modifier_levels = 0;
                 self.ctrl = false;
                 self.command = false;
                 self.shift = false;
@@ -20633,14 +20651,12 @@ impl ApplicationHandler for App {
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()
-                        && !mods.alt
                         && !self.web_has_focus()
                         && self.media.focus.is_none()
                         && let Some(key) = gesture_key
-                        && let Some(id) = self
-                            .gesture_state
-                            .manager
-                            .key_trigger(key, u32::from(mods.ctrl) | if mods.shift { 4 } else { 0 })
+                        && let Some(mask) =
+                            crate::gestures::keys::gesture_mask(key, modifier_levels_before, ke.repeat, mods.ctrl, mods.shift, mods.alt)
+                        && let Some(id) = self.gesture_state.manager.key_trigger(key, mask)
                     {
                         self.gesture_play(id, Some(key));
                         return;

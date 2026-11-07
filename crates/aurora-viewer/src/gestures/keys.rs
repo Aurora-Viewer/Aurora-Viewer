@@ -47,9 +47,9 @@ pub fn from_event(key: &Key) -> Option<u8> {
             NamedKey::Escape => 0x86,
             NamedKey::Backspace => 0x87,
             NamedKey::Delete => 0x88,
-            NamedKey::Shift => 0x89,
-            NamedKey::Control => 0x8a,
-            NamedKey::Alt => 0x8b,
+            NamedKey::Shift => KEY_SHIFT,
+            NamedKey::Control => KEY_CONTROL,
+            NamedKey::Alt => KEY_ALT,
             NamedKey::Home => 0x8c,
             NamedKey::End => 0x8d,
             NamedKey::PageUp => 0x8e,
@@ -92,9 +92,9 @@ pub fn label(key: u8) -> String {
                 0x86 => "Escape",
                 0x87 => "Backspace",
                 0x88 => "Delete",
-                0x89 => "ShiftLeft",
-                0x8a => "ControlLeft",
-                0x8b => "AltLeft",
+                KEY_SHIFT => "ShiftLeft",
+                KEY_CONTROL => "ControlLeft",
+                KEY_ALT => "AltLeft",
                 0x8c => "Home",
                 0x8d => "End",
                 0x8e => "PageUp",
@@ -131,6 +131,57 @@ pub fn shortcut(key: u8, mask: u32) -> String {
         return "---".into();
     }
     format!("{}{}", shortcut_prefix(mask), label(key))
+}
+
+pub const KEY_SHIFT: u8 = 0x89;
+pub const KEY_CONTROL: u8 = 0x8a;
+pub const KEY_ALT: u8 = 0x8b;
+
+const LEVEL_SHIFT: u8 = 1;
+const LEVEL_CONTROL: u8 = 2;
+const LEVEL_ALT: u8 = 4;
+
+/// Shift, Ctrl and Alt levels after a key event, one per modifier whatever
+/// its side, as LLKeyboard::mKeyLevel: either side raises it, either
+/// side's release lowers it. One level also comes down when Windows sends
+/// no release for the first of two held Shift keys: the last one lowers it.
+pub fn modifier_levels_after(levels: u8, physical: KeyCode, pressed: bool) -> u8 {
+    let bit = match physical {
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => LEVEL_SHIFT,
+        KeyCode::ControlLeft | KeyCode::ControlRight => LEVEL_CONTROL,
+        KeyCode::AltLeft | KeyCode::AltRight => LEVEL_ALT,
+        _ => return levels,
+    };
+    if pressed { levels | bit } else { levels & !bit }
+}
+
+/// Gesture mask of a key press, or `None` when the press plays no gesture,
+/// as the Legacy Viewer gives it on Windows: LLKeyboardWin32::handleKeyDown takes the mask from the key levels
+/// (LLKeyboardWin32::currentMask) before LLKeyboard::handleTranslatedKeyDown
+/// raises the pressed key's level, so Shift, Ctrl or Alt going down carry
+/// no bit of their own unless that level was already raised (an
+/// auto-repeat, or the other side held): a held Shift plays once. winit
+/// already counts the pressed modifier in `ctrl` / `shift` / `alt` on
+/// Windows, so its own bit is dropped from `levels_before`, the levels
+/// before this event. The Legacy Viewer's gesture editor offers no Alt mask
+/// (LLPreviewGesture: None, Shift, Ctrl) and a key pressed with Alt down
+/// carries MASK_ALT, so such a press plays nothing; Alt going down alone is
+/// a gesture key.
+pub fn gesture_mask(key: u8, levels_before: u8, repeat: bool, ctrl: bool, shift: bool, alt: bool) -> Option<u32> {
+    let own = match key {
+        KEY_SHIFT => LEVEL_SHIFT,
+        KEY_CONTROL => LEVEL_CONTROL,
+        KEY_ALT => LEVEL_ALT,
+        _ => 0,
+    };
+    let was_down = repeat || levels_before & own != 0;
+    let alt = alt && (was_down || key != KEY_ALT);
+    if alt {
+        return None;
+    }
+    let ctrl = ctrl && (was_down || key != KEY_CONTROL);
+    let shift = shift && (was_down || key != KEY_SHIFT);
+    Some(u32::from(ctrl) | if shift { 4 } else { 0 })
 }
 
 /// Modifier half of a gesture shortcut. Mask 1 is Control, which the Mac
