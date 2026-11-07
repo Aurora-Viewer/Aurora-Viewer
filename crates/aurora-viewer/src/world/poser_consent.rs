@@ -15,7 +15,18 @@ use std::{
 use uuid::Uuid;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
-const COOLDOWN: Duration = Duration::from_secs(600);
+const REFUSAL_COOLDOWN: Duration = Duration::from_secs(600);
+const NO_ANSWER_COOLDOWN: Duration = Duration::from_secs(120);
+// Reordered packets with an ended nonce stay invalid, without blocking a
+// fresh request to the same resident after a normally ended session.
+const ENDED_RETENTION: Duration = Duration::from_secs(600);
+fn cooldown(no_answer: bool) -> Duration {
+    if no_answer { NO_ANSWER_COOLDOWN } else { REFUSAL_COOLDOWN }
+}
+// The requester's timeout Cancel crosses the region relay, so it reaches
+// us a little before our own copy of the request is 60 s old, and our wait
+// must not outlast the countdown the requester shows.
+const RELAY_SLACK: Duration = Duration::from_secs(5);
 const LIMIT: usize = 64;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Policy {
@@ -54,7 +65,7 @@ pub struct State {
     pub granted_to: HashMap<Uuid, Uuid>,
     accepted: HashMap<Uuid, Uuid>,
     refused: HashMap<Uuid, (Instant, bool)>,
-    inbound_cooldown: HashMap<Uuid, Instant>,
+    inbound_cooldown: HashMap<Uuid, (Instant, bool)>,
     ended: HashMap<(Uuid, Uuid), Instant>,
     out: VecDeque<(Uuid, PoseKind, Uuid)>,
     pub notice: Option<&'static str>,
@@ -131,7 +142,7 @@ impl State {
         for r in expired {
             self.outgoing.remove(&r.peer);
             self.out.retain(|(id, kind, _)| *id != r.id || *kind != PoseKind::Request);
-            self.refused.insert(r.peer, (now, true));
+            self.refused.insert(r.peer, (now.min(r.at + TIMEOUT), true));
             self.send(r.id, PoseKind::Cancel, r.peer);
         }
         let expired: Vec<_> = self
@@ -141,11 +152,13 @@ impl State {
             .copied()
             .collect();
         for r in expired {
-            self.answer(r, false, false, now);
+            self.expire_incoming(r, now);
         }
-        self.refused.retain(|_, (at, _)| now.duration_since(*at) < COOLDOWN);
-        self.inbound_cooldown.retain(|_, at| now.duration_since(*at) < COOLDOWN);
-        self.ended.retain(|_, at| now.duration_since(*at) < COOLDOWN);
+        self.refused
+            .retain(|_, (at, no_answer)| now.duration_since(*at) < cooldown(*no_answer));
+        self.inbound_cooldown
+            .retain(|_, (at, no_answer)| now.duration_since(*at) < cooldown(*no_answer));
+        self.ended.retain(|_, at| now.duration_since(*at) < ENDED_RETENTION);
         let permitted: HashSet<_> = self.incoming.iter().filter(|r| self.allowed(world, r.peer)).map(|r| r.id).collect();
         self.incoming.retain(|r| permitted.contains(&r.id));
     }
@@ -191,6 +204,11 @@ impl State {
             Status::Ask
         }
     }
+    pub fn retry_after(&self, peer: Uuid, now: Instant) -> Duration {
+        self.refused.get(&peer).map_or(Duration::ZERO, |(at, no_answer)| {
+            cooldown(*no_answer).saturating_sub(now.duration_since(*at))
+        })
+    }
     pub fn can_pose(&self, world: &World, peer: Uuid) -> bool {
         self.accepted.contains_key(&peer) && nearby(world, peer)
     }
@@ -221,12 +239,25 @@ impl State {
             self.preferences.blocked.insert(request.peer);
             self.dirty = true;
         }
-        if accept && now.duration_since(request.at) < TIMEOUT {
+        if now.duration_since(request.at) >= TIMEOUT {
+            self.expire_incoming(request, now);
+        } else if accept {
             self.granted_to.insert(request.peer, request.id);
             self.send(request.id, PoseKind::Accept, request.peer);
         } else {
-            self.inbound_cooldown.insert(request.peer, now);
+            self.inbound_cooldown.insert(request.peer, (now, false));
             self.send(request.id, PoseKind::Refuse, request.peer);
+        }
+    }
+    fn expire_incoming(&mut self, request: Request, now: Instant) {
+        self.incoming.retain(|r| r.id != request.id || r.peer != request.peer);
+        let start = now.min(request.at + TIMEOUT);
+        self.inbound_cooldown
+            .insert(request.peer, (start.checked_sub(RELAY_SLACK).unwrap_or(start), true));
+        // Silence is not a refusal. The requester expires its own pending
+        // request, so never turn this timeout into an explicit Refuse reply.
+        if self.ended.len() < LIMIT * 2 {
+            self.ended.insert((request.peer, request.id), now);
         }
     }
     /// Called only after the worn bridge root and its owner/region were checked.
@@ -277,6 +308,13 @@ impl State {
                 }
             }
             PoseKind::Cancel => {
+                // The requester's timeout can arrive before our next sync.
+                // Preserve the same receiver cooldown whichever event wins.
+                if let Some(r) = self.incoming.iter().find(|r| r.peer == peer && r.id == id).copied()
+                    && now.duration_since(r.at) + RELAY_SLACK >= TIMEOUT
+                {
+                    self.expire_incoming(r, now);
+                }
                 if self.ended.len() < LIMIT * 2 {
                     self.ended.insert((peer, id), now);
                 }
