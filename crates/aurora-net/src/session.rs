@@ -13,6 +13,7 @@ mod currency;
 mod estate;
 mod experience_events;
 mod gestures;
+mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -2120,6 +2121,8 @@ impl Session<'_> {
             }
             NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::Estate(e) => self.on_estate_command(e),
+            NetCommand::RequestGodlikePowers { godlike } => self.request_godlike(godlike),
+            NetCommand::God(c) => self.on_god_command(c),
             NetCommand::ParcelInfoRequest(id) => {
                 let mut m = ParcelInfoRequest::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -4055,6 +4058,7 @@ impl Session<'_> {
             || self.dispatch_search(from, pkt)?
             || self.dispatch_groups(pkt)?
             || self.dispatch_build(pkt)?
+            || self.dispatch_god(pkt)?
         {
             return Ok(());
         }
@@ -7091,5 +7095,125 @@ mod script_dialog_tests {
             assert_eq!(parts.join(" "), words);
             assert!(main.try_recv_from(&mut large).is_err(), "three parts only");
         }
+    }
+
+    /// The next packets the region receives, decoded as `M`, past the
+    /// others (pings, agent updates) until `n` of them arrived.
+    async fn received<M: Msg>(sim: &UdpSocket, n: usize) -> Vec<M> {
+        let mut datagram = [0; 1500];
+        let mut out = Vec::new();
+        while out.len() < n {
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("the packet reaches the region")
+                .expect("packet");
+            let packet = parse_packet(&datagram[..size]).expect("datagram");
+            if packet.id == M::ID {
+                assert!(packet.reliable());
+                out.push(packet.decode().expect("message"));
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn admin_commands_go_to_the_region_of_the_objects_with_the_override() {
+        use crate::god::{GodCommand, PERM_ALL};
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let other = UdpSocket::bind("127.0.0.1:0").await.expect("neighbour");
+        let (main_addr, other_addr) = (main.local_addr().expect("main"), other.local_addr().expect("neighbour"));
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let sims = [(main_addr, Sim::new(main_addr, 10)), (other_addr, Sim::new(other_addr, 20))];
+        let mut session = test_session(&sh, sock.clone(), sims.into(), main_addr);
+        sock.writable().await.expect("socket ready");
+        let (me, group) = (Uuid::from_u128(1), Uuid::from_u128(7));
+
+        // 300 objects: two packets, the Legacy Viewer's 255 per packet
+        let many: Vec<u32> = (1..=300).collect();
+        session.on_command(NetCommand::God(GodCommand::ForceOwner {
+            handle: 20,
+            local_ids: many.clone(),
+            owner_id: me,
+            group_id: group,
+        }));
+        let owners: Vec<ObjectOwner> = received(&other, 2).await;
+        assert!(
+            owners
+                .iter()
+                .all(|m| m.header_data.override_ && m.header_data.owner_id == me && m.header_data.group_id == group)
+        );
+        let ids: Vec<u32> = owners
+            .iter()
+            .flat_map(|m| m.object_data.iter().map(|o| o.object_local_id))
+            .collect();
+        assert_eq!((owners[0].object_data.len(), ids), (255, many));
+
+        // base then owner, all set, with the override
+        session.on_command(NetCommand::God(GodCommand::Permissive {
+            handle: 10,
+            local_ids: vec![5],
+        }));
+        let perms: Vec<ObjectPermissions> = received(&main, 2).await;
+        let fields: Vec<(u8, u8, u32)> = perms
+            .iter()
+            .inspect(|m| assert!(m.header_data.override_))
+            .flat_map(|m| m.object_data.iter().map(|o| (o.field, o.set, o.mask)))
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                (crate::build::perm_field::BASE, 1, PERM_ALL),
+                (crate::build::perm_field::OWNER, 1, PERM_ALL)
+            ]
+        );
+
+        session.on_command(NetCommand::God(GodCommand::ForceDelete {
+            handle: 10,
+            local_ids: vec![5, 6],
+        }));
+        let delete = received::<ObjectDelete>(&main, 1).await.remove(0);
+        assert!(delete.agent_data.force);
+        assert_eq!(delete.object_data.len(), 2);
+
+        session.on_command(NetCommand::God(GodCommand::Request {
+            handle: 10,
+            method: "objectinfo".into(),
+            params: vec!["assetids".into(), "5".into()],
+        }));
+        let request = received::<GodlikeMessage>(&main, 1).await.remove(0);
+        assert_eq!(field_str(&request.method_data.method), "objectinfo");
+        let params: Vec<String> = request.param_list.iter().map(|p| field_str(&p.parameter)).collect();
+        assert_eq!(params, ["assetids", "5"]);
+
+        session.on_command(NetCommand::God(GodCommand::ParcelForceOwner {
+            handle: 10,
+            local_id: 3,
+            owner_id: me,
+        }));
+        let parcel = received::<ParcelGodForceOwner>(&main, 1).await.remove(0);
+        assert_eq!((parcel.data.local_id, parcel.data.owner_id), (3, me));
+
+        // no circuit to that region: nothing is sent
+        session.on_command(NetCommand::God(GodCommand::SaveState { handle: 99 }));
+        session.on_command(NetCommand::God(GodCommand::SaveState { handle: 10 }));
+        let save = received::<StateSave>(&main, 1).await.remove(0);
+        assert_eq!(save.agent_data.agent_id, me);
+
+        session.on_command(NetCommand::God(GodCommand::KickUser {
+            handle: 10,
+            agent_id: Uuid::from_u128(9),
+            flags: crate::god::KICK_FREEZE,
+            reason: "Frozen".into(),
+        }));
+        let kick = received::<GodKickUser>(&main, 1).await.remove(0).user_info;
+        assert_eq!(
+            (kick.god_id, kick.god_session_id, kick.agent_id, kick.kick_flags),
+            (me, Uuid::from_u128(2), Uuid::from_u128(9), 1)
+        );
+        assert_eq!(field_str(&kick.reason), "Frozen");
+        let mut rest = [0; 1500];
+        assert!(other.try_recv_from(&mut rest).is_err());
     }
 }

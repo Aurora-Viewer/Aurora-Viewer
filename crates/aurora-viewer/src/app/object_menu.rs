@@ -279,6 +279,7 @@ impl App {
                 group: self.world.groups.group(&parcel.group_id),
                 health: self.world.health,
                 frozen: self.world.frozen,
+                god_level: self.world.god_level,
             }),
             // nothing known yet: the simulator decides
             _ => true,
