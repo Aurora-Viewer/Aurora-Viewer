@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Object contents item menus share `ui/object_actions::task_copy_request` and
+`app/contents_copy.rs` with the Open window's full-copy button. The editor
+queues one `build::ui::Request::CopyContents` for its selection; both editor
+layouts and the Open item menu create one folder named after the object,
+retain the shared no-copy move warning and observe actual item arrivals.
+Only selected items are copied; drag and drop keeps its explicit destination.
+This menu command is Aurora's addition to LLFloaterOpenObject's folder copy.
+
 `ui/inventory.rs::TabFilters` keeps each window's finder state per tab, including
 advanced searches and the temporary filters of Find links / Find similar.
 Both layouts use `set_tab` to swap that state. `InventoryPreferences` retains
@@ -3623,6 +3631,13 @@ unused textures per frame, downloaded data to be written noted on arrival),
 and the memory the main thread gives back (decoded levels, J2C data, picking
 triangles) is freed by a separate thread (`Jobs::discard`): while the tasks
 allocate on all the cores, freeing it in place cost several milliseconds.
+
+Alpha coverage restoration (`aurora-render/src/textures.rs`) only increases
+the box-filtered mip alpha. A texture may be shared by faces with different
+cutoffs; reducing its alpha to match coverage at 0.5 erased HUD panels cut
+at 200/255. Fuller mips keep their plain alpha, while foliage still receives
+the coverage boost. `scene/texture_cache.rs` uses mask code 4 to regenerate
+the old adjusted chains (code 3) without invalidating opaque/blended ones.
 
 ## Threads and data ownership
 
