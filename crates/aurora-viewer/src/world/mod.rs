@@ -16,6 +16,7 @@ pub mod bridge;
 pub mod calls;
 pub mod chat_log;
 pub mod collisions;
+pub mod contact_markers;
 pub mod contact_sets;
 pub mod derender;
 pub mod dialog_names;

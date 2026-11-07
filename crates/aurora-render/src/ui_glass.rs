@@ -13,6 +13,8 @@ struct Region {
     opacity: f32,
     /// Brightness kept of the blurred scene (1: as it is).
     shade: f32,
+    /// A 45° square inside the rectangle, `radius` unused.
+    diamond: bool,
 }
 
 /// Insert below a window's contents. The viewer resolves the final rectangle
@@ -36,12 +38,23 @@ pub fn glass_panel_faded(rect: egui::Rect, radius: f32, tint: egui::Color32, opa
 /// it keeps a small surface readable over a white wall or a bright sky
 /// without making it more opaque over the rest.
 pub fn glass_region(rect: egui::Rect, radius: f32, opacity: f32, shade: f32) -> egui::Shape {
+    region(rect, radius, opacity, shade, false)
+}
+
+/// `glass_region` in the shape of a 45° square touching the middle of each
+/// side of `rect` (the contact-set markers).
+pub fn glass_diamond(rect: egui::Rect, opacity: f32, shade: f32) -> egui::Shape {
+    region(rect, 0.0, opacity, shade, true)
+}
+
+fn region(rect: egui::Rect, radius: f32, opacity: f32, shade: f32, diamond: bool) -> egui::Shape {
     egui::Shape::Callback(egui::PaintCallback {
         rect,
         callback: Arc::new(Region {
             radius,
             opacity: opacity.clamp(0.0, 1.0),
             shade: shade.clamp(0.0, 1.0),
+            diamond,
         }),
     })
 }
@@ -213,10 +226,27 @@ impl Glass {
             {
                 let level = (region.shade * 255.0).round() as u8;
                 let color = egui::Color32::from_gray(level).gamma_multiply(region.opacity);
-                primitive.primitive = egui::epaint::Primitive::Mesh(rounded_mesh(callback.rect, region.radius, texture, screen, color));
+                primitive.primitive = egui::epaint::Primitive::Mesh(if region.diamond {
+                    diamond_mesh(callback.rect, texture, screen, color)
+                } else {
+                    rounded_mesh(callback.rect, region.radius, texture, screen, color)
+                });
             }
         }
     }
+}
+
+fn diamond_mesh(rect: egui::Rect, texture: egui::TextureId, screen: egui::Vec2, color: egui::Color32) -> egui::Mesh {
+    let mut mesh = egui::Mesh::with_texture(texture);
+    for pos in [rect.center_top(), rect.right_center(), rect.center_bottom(), rect.left_center()] {
+        mesh.colored_vertex(pos, color);
+        if let Some(vertex) = mesh.vertices.last_mut() {
+            vertex.uv = egui::pos2(pos.x / screen.x, pos.y / screen.y);
+        }
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    mesh
 }
 
 fn rounded_mesh(rect: egui::Rect, radius: f32, texture: egui::TextureId, screen: egui::Vec2, color: egui::Color32) -> egui::Mesh {
@@ -263,6 +293,23 @@ mod tests {
                 assert!((vertex.uv.y * screen.y - vertex.pos.y).abs() < 0.001);
             }
             assert!(!mesh.vertices.iter().any(|v| v.pos == rect.min));
+        }
+    }
+
+    #[test]
+    fn a_glass_diamond_stands_on_the_middle_of_each_side() {
+        let screen = egui::vec2(1920.0, 1080.0);
+        let rect = egui::Rect::from_center_size(egui::pos2(500.0, 300.0), egui::Vec2::splat(28.0));
+        let mesh = diamond_mesh(rect, egui::TextureId::User(7), screen, egui::Color32::WHITE);
+        assert!(mesh.is_valid());
+        let corners: Vec<_> = mesh.vertices.iter().map(|v| v.pos).collect();
+        assert_eq!(
+            corners,
+            [rect.center_top(), rect.right_center(), rect.center_bottom(), rect.left_center()]
+        );
+        for vertex in &mesh.vertices {
+            assert!((vertex.uv.x * screen.x - vertex.pos.x).abs() < 0.001);
+            assert!((vertex.uv.y * screen.y - vertex.pos.y).abs() < 0.001);
         }
     }
 

@@ -619,6 +619,7 @@ pub struct App {
     hover_tips: hover_tips::HoverTipsState,
     /// Fade-in of the look-at targets (`ui::lookat_targets`).
     look_at_fades: ui::lookat_targets::Fades,
+    contact_markers: crate::world::contact_markers::Tracker,
     /// Offline demo: eye tracking on without touching the saved settings.
     demo_look_at: bool,
     /// AURORA_DEMO_LOOKAT=ahead: "no look-at target, even for me" turned
@@ -1595,6 +1596,7 @@ impl App {
             look_hover: None,
             hover_tips: Default::default(),
             look_at_fades: Default::default(),
+            contact_markers: Default::default(),
             demo_look_at: false,
             demo_look_ahead: false,
             demo_look_at_targets: false,
@@ -4574,6 +4576,10 @@ impl App {
             Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
             Action::Import => self.imports.toggle_import(&self.egui_ctx, &self.settings.imports),
             Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
+            Action::ContactMarkers => {
+                self.settings.contact_markers = !self.settings.contact_markers;
+                self.settings.save();
+            }
             Action::PropertyLines => {
                 self.settings.world_overlays.property_lines = !self.settings.world_overlays.property_lines;
                 self.settings.save();
@@ -6334,6 +6340,10 @@ impl App {
         if self.demo_radar_walk {
             let walk = crate::demo::radar_walk(self.world.agent.position, now);
             self.world.apply(walk);
+        }
+        if self.demo && crate::demo::contact_markers::active() {
+            let coarse = crate::demo::contact_markers::coarse(self.world.agent.position, now);
+            self.world.apply(coarse);
         }
         let mut seen = if self.world.rlva.has("shownearby") {
             Vec::new()
@@ -12137,6 +12147,7 @@ impl App {
         // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
         if self.demo && self.frame_count == 60 {
             crate::demo::people::seed(&mut self.world);
+            crate::demo::contact_markers::seed(&mut self.world);
             crate::demo::friend_location(&mut self.world);
         }
         if self.demo && matches!(self.frame_count, 700 | 720) && crate::demo::friend_join_scenario() {
@@ -15210,6 +15221,18 @@ impl App {
                         }),
                     )
                 };
+                ui::contact_markers::draw(
+                    &ctx,
+                    &p,
+                    &self.world,
+                    &self.scene,
+                    projector,
+                    self.camera.position,
+                    &self.name_tags,
+                    &mut self.contact_markers,
+                    self.settings.contact_marker_anchor,
+                    self.settings.contact_markers && !held && (!self.interface.immersive || self.settings.immersive_name_tags),
+                );
                 if !self.camera.mouselook() && !held {
                     self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 }
@@ -18239,6 +18262,7 @@ impl ApplicationHandler for App {
                     self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
             }
+            crate::demo::contact_markers::apply_preferences(&mut self.settings);
             if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
                 self.panels.ao = false;
             }
