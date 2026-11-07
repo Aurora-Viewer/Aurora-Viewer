@@ -479,8 +479,10 @@ mod tests {
     #[test]
     fn no_setting_makes_the_window_grow() {
         let p = crate::theme::Theme::default().palette();
-        let mut s = Settings::default();
-        s.debug_settings_warning_ignored = true;
+        let mut s = Settings {
+            debug_settings_warning_ignored: true,
+            ..Settings::default()
+        };
         let mut st = DebugSettingsUi::default();
         st.read_entries(&s);
         let keys: Vec<String> = st.entries.iter().map(|e| e.key.clone()).collect();
