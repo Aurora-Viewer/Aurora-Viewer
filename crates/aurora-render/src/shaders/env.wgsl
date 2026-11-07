@@ -404,8 +404,15 @@ fn fs_cloud_weather(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32>
     let density = 2.0 * (frame.sky_sunlight.w - 0.25);
     let n1 = cloud_noise(uv) - 0.5;
     let detail = cloud_noise(uv * 8.0);
-    let x = n1 + (detail - 0.5) * pd2.z * 0.6 + density;
-    return vec4<f32>(smoothstep(-0.05, 0.45, x), 0.0, detail, 0.0);
+    let fine = n1 + (detail - 0.5) * pd2.z * 0.35;
+    let wc0 = smoothstep(-0.05, 0.45, fine + density);
+    // Two coverage channels (Haggstrom 2018): separate heaps from `wc0`, and
+    // as the sky's cover passes one half a continuous sheet `wc1` whose own
+    // light and dark patches (thin and thick places) give it structure.
+    let gc = smoothstep(0.0, 1.0, saturate((frame.sky_sunlight.w - 0.1) / 0.56));
+    let wc1 = 0.55 + 0.45 * smoothstep(-0.25, 0.25, fine);
+    let sheet = saturate((gc - 0.5) * 2.0);
+    return vec4<f32>(mix(wc0, wc1, sheet), 0.0, detail, 0.0);
 }
 
 fn sky_pixel(in: SkyOut) -> vec4<f32> {

@@ -51,9 +51,12 @@ struct U {
 const PI: f32 = 3.14159265;
 const R_PLANET: f32 = 6371.0;
 const FAR_KM: f32 = 45.0;
-const BASE_KM: f32 = 5.0;
-const BASE_Y: f32 = 1.0;
-const DETAIL_KM: f32 = 0.45;
+// The base noise is stretched sideways: a heap is wider than tall (width to
+// height 1 to 2 for fair-weather cumulus), and its tile covers 10.5 km across
+// but 5 km up (one period of the pattern holds ten of them).
+const BASE_KM: f32 = 10.5;
+const BASE_Y: f32 = 2.1;
+const DETAIL_KM: f32 = 0.5;
 const CURL_KM: f32 = 3.0;
 const STEP_WARP: f32 = 1.6;
 const SIGMA: f32 = 110.0;    // extinction per km at density 1
@@ -61,7 +64,7 @@ const SIGMA: f32 = 110.0;    // extinction per km at density 1
 // Legacy layer's for the same sky: the thick cloud of a demo sky stays at
 // the Legacy layer's mean luminance, and the lit tops reach the white of a
 // real cumulus (the bench reference); fitted on the demo skies side by side.
-const SUN_GAIN: f32 = 2.5;
+const SUN_GAIN: f32 = 4.5;
 const AMB_GAIN: f32 = 0.9;
 
 fn yup(v: vec3f) -> vec3f { return vec3f(v.x, v.z, v.y); }
@@ -184,7 +187,7 @@ fn height_grad(hf: f32, t: f32, top: f32) -> f32 {
     // Rounded bottoms and tops for every type: stratus a slab, stratocumulus
     // a lumpy sheet, cumulus a dome whose top varies with `top`.
     let top_end = mix(1.0, mix(0.45, 1.0, top), t);
-    let base_ramp = smoothstep(0.0, mix(0.35, 0.18, t), hf);
+    let base_ramp = smoothstep(0.0, mix(0.35, 0.08, t), hf);
     let top_fall = 1.0 - smoothstep(mix(0.55, 0.15, t) * top_end, top_end, hf);
     return base_ramp * top_fall;
 }
@@ -200,12 +203,15 @@ fn density(p: vec3f, w: vec4f, off: vec2f, full: bool) -> f32 {
     var base = saturate(remap(n.r, low - 1.0, 1.0, 0.0, 1.0));
     // A sheet is thicker and thinner from place to place (slow light and
     // dark), a heap's top follows the weather map's detail tap.
-    let thick = mix(mix(0.4, 1.0, saturate(n.g * 1.5)), 1.0, t);
+    let thick = mix(mix(0.25, 1.0, saturate(n.g * 1.5)), 1.0, t);
     base *= height_grad(hf / thick, t, w.b);
     base *= mix(mix(0.45, 1.0, saturate(n.g * 1.8)), 1.0, t);
     // Cumulus: coverage shrinks with height, so domes rather than columns.
-    let cov = w.r * mix(1.0, mix(1.0, 0.55, hf), t);
-    base = saturate(remap(base, 1.0 - cov, 1.0, 0.0, 1.0)) * cov;
+    let cov = w.r * 0.85 * mix(1.0, mix(1.0, 0.55, hf), t);
+    base = saturate(remap(base, 1.0 - cov, 1.0, 0.0, 1.0));
+    // A shape that only just passes the cut is a speck, not a cloud: the
+    // soft edge starts a little above it.
+    base *= smoothstep(0.04, 0.24, base) * mix(0.55, 1.0, cov);
     if !full || base <= 0.0 { return base; }
     let c = textureSampleLevel(curl_t, samp, q.xz / CURL_KM, 0.0).xy * 2.0 - 1.0;
     let qd = q + vec3f(c.x, 0.0, c.y) * 0.12 * (1.0 - hf);
@@ -214,7 +220,7 @@ fn density(p: vec3f, w: vec4f, off: vec2f, full: bool) -> f32 {
     // Wispy at the base, billowy towards the top (Schneider 2015): the
     // detail eats the thin edges of the shape and leaves its core.
     let m = mix(df, 1.0 - df, saturate(hf * 4.0));
-    let er = mix(0.3, 0.7, t);
+    let er = mix(0.3, 0.45, t);
     return saturate(remap(base, m * er, 1.0, 0.0, 1.0));
 }
 
@@ -222,6 +228,23 @@ fn density(p: vec3f, w: vec4f, off: vec2f, full: bool) -> f32 {
 fn hg(c: f32, g: f32) -> f32 {
     let g2 = g * g;
     return (1.0 - g2) / (4.0 * PI * pow(1.0 + g2 - 2.0 * g * c, 1.5));
+}
+// Draine's phase function (1 + alpha c^2 over an HG lobe).
+fn draine(c: f32, g: f32, a: f32) -> f32 {
+    let g2 = g * g;
+    return (1.0 - g2) / (4.0 * PI * (1.0 + a * (1.0 + 2.0 * g2) / 3.0)) * (1.0 + a * c * c) / pow(1.0 + g2 - 2.0 * g * c, 1.5);
+}
+// Approximate Mie phase of cloud droplets (Jendersie & d'Eon, "An
+// Approximate Mie Scattering Function for Fog and Cloud Rendering", SIGGRAPH
+// 2023 talk): a blend of a very narrow HG lobe, the glory round the sun that
+// silvers the thin edges, and a Draine lobe for the wide scatter. The four
+// parameters are the paper's fits for a droplet diameter of 20 micrometres.
+const MIE_G_HG: f32 = 0.9946;
+const MIE_G_D: f32 = 0.4829;
+const MIE_ALPHA: f32 = 27.1;
+const MIE_W: f32 = 0.498;
+fn mie(c: f32) -> f32 {
+    return mix(hg(c, MIE_G_HG), draine(c, MIE_G_D, MIE_ALPHA), MIE_W);
 }
 
 // Exit distance of a ray from the camera (inside the sphere) through the
@@ -283,7 +306,8 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
             var b = 1.0;
             var cc = 1.0;
             for (var o = 0u; o < 3u; o++) {
-                s += a * exp(-od * b) * mix(hg(ct, -0.3 * cc), hg(ct, 0.8 * cc), 0.7);
+                // each octave scatters more evenly (multiple scattering)
+                s += a * exp(-od * b) * mix(0.25 / PI, min(mie(ct), 1.2), cc);
                 a *= 0.5;
                 b *= 0.5;
                 cc *= 0.5;
@@ -294,12 +318,19 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
             // tap straight up darkens the undersides and the cores.
             let up = normalize(p + vec3f(0.0, R_PLANET, 0.0));
             let ap = p + up * 0.3;
-            let sky_od = density(ap, weather_at(ap, off), off, false) * 0.3 * SIGMA * u.drift.w;
-            let sky_vis = 0.3 + 0.7 * exp(-sky_od * 0.12);
+            let bp = p + up * 0.6;
+            let cp = p + up * 1.0;
+            let sky_od = (density(ap, weather_at(ap, off), off, false) * 0.3 + density(bp, weather_at(bp, off), off, false) * 0.4
+                + density(cp, weather_at(cp, off), off, false) * 0.4) * SIGMA * u.drift.w;
+            let sky_vis = mix(0.25, 1.0, exp(-sky_od * 0.012));
             let ls_rad = u.sun_col.rgb * SUN_GAIN * s * 4.0 * PI * powder + u.amb_col.rgb * AMB_GAIN * mix(0.5, 1.0, hf) * sky_vis;
+            // A sheet is lit unevenly where it is thick or thin (the base
+            // noise's cells, as in `density`): slow light and dark patches.
+            let nb = textureSampleLevel(base_t, samp, vec3f(p.x + off.x, height_of(p) * BASE_Y, p.z + off.y) / BASE_KM, 0.0).g;
+            let sheet_shade = mix(mix(0.55, 1.0, saturate(nb * 1.8)), 1.0, u.layer.z);
             let ext = exp(-sigma * ds);
             let absorbed = r.t * (1.0 - ext);
-            r.col += ls_rad * absorbed;
+            r.col += ls_rad * sheet_shade * absorbed;
             wsum += tt * absorbed;
             r.t *= ext;
             if r.t < 0.01 { break; }
@@ -350,6 +381,26 @@ fn trace(@builtin(global_invocation_id) id: vec3u) {
     if any(hp >= u.sizes.zw) || !is_sky(vec2u(fpx)) {
         textureStore(trace_w, id.xy, vec4f(0.0, 0.0, 0.0, 1.0));
         textureStore(tdepth_w, id.xy, vec4f(FAR_KM));
+        return;
+    }
+    if u.layer.w > 1.5 {
+        // AURORA_CLOUDS_DEBUG=slice: vertical slices of the density, three
+        // bands of the picture (100 px a km, the horizontal axis too, so the
+        // aspect of a heap can be measured on the capture); red: density
+        // above 0.02, green: above 0.15.
+        let band = floor((fpx.y - 60.0) / 100.0);
+        let hh = (160.0 + 100.0 * band - fpx.y) / 100.0;
+        var o = vec3f(0.0);
+        if band >= 0.0 && band < 3.0 && hh >= 0.0 && hh < top_km() - u.layer.x {
+            let x = fpx.x / 100.0;
+            let z = 2.0 + 5.0 * band;
+            let ycorr = u.layer.x + hh - (x * x + z * z) / (2.0 * R_PLANET);
+            let p = vec3f(x, ycorr, z);
+            let d = density(p, weather_at(p, sky_off()), sky_off(), true);
+            o = vec3f(select(0.0, 1.0, d > 0.02), select(0.0, 1.0, d > 0.15), 0.0);
+        }
+        textureStore(trace_w, id.xy, vec4f(o, 0.0));
+        textureStore(tdepth_w, id.xy, vec4f(10.0));
         return;
     }
     if u.layer.w > 0.5 {

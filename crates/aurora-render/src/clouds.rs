@@ -46,7 +46,7 @@ const SLICE: u32 = 8;
 /// Frames the base noise takes (`BASE_SIZE / SLICE`).
 pub const NOISE_FRAMES: u32 = BASE_SIZE / SLICE;
 /// The pattern repeats every `PERIOD_KM` km: a multiple of the base noise
-/// (5 km), the detail noise (0.7 km), the curl noise (3 km) and of the
+/// (10.5 km across), the detail noise (0.5 km), the curl noise (3 km) and of the
 /// weather tiles ([`tile_km`]), so that wrapping the camera's position in it
 /// shows nothing.
 const PERIOD_KM: f64 = 105.0;
@@ -149,11 +149,13 @@ impl Params {
 }
 
 /// `AURORA_CLOUDS_DEBUG=weather`: the weather map's coverage instead of the
-/// clouds (0: the clouds).
+/// clouds; `slice`: vertical slices of the density, for measuring the aspect
+/// of the heaps (0: the clouds).
 fn debug_view() -> u32 {
     static VIEW: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *VIEW.get_or_init(|| match std::env::var("AURORA_CLOUDS_DEBUG").as_deref().map(str::trim) {
         Ok("weather") => 1,
+        Ok("slice") => 2,
         _ => 0,
     })
 }
@@ -170,7 +172,7 @@ const HAZE_KM: f32 = 40.0;
 #[cfg(test)]
 fn weather_coverage(n1: f32, detail: f32, detail_weight: f32, cloud_shadow: f32) -> f32 {
     let density = 2.0 * (cloud_shadow - 0.25);
-    let x = (n1 - 0.5) + (detail - 0.5) * detail_weight * 0.6 + density;
+    let x = (n1 - 0.5) + (detail - 0.5) * detail_weight * 0.35 + density;
     let t = ((x + 0.05) / 0.5).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
@@ -250,8 +252,28 @@ impl Lighting {
         let off_axis = 1.0 / (s.light_norm.z * 2.0).max(1e-6);
         let light_atten = (s.blue_density + Vec3::splat(s.haze_density * 0.25)) * s.density_multiplier * s.max_y;
         let atten = (-light_atten * off_axis).to_array().map(f32::exp);
-        let sun = (s.sunlight * Vec3::from(atten)).min(Vec3::ONE) * s.cloud_color;
-        let ambient = (s.ambient + (Vec3::ONE - s.ambient).max(Vec3::ZERO) * s.cloud_shadow * 0.5) * s.cloud_color;
+        // The haze between the camera and the layer, at a typical view of 40
+        // degrees (the Legacy layer takes its own per pixel): it dims the lit
+        // cloud (`combined_haze`) and adds the sky's colour below it
+        // (`additiveColorBelowCloud`), which is what tints a Legacy cloud
+        // blue (cloudsF.glsl).
+        let sin_view = 0.64_f32;
+        let combined = s.blue_density.abs() + Vec3::splat(s.haze_density.abs());
+        let blue_w = s.blue_density / combined.max(Vec3::splat(1e-6));
+        let haze_w = s.haze_density / combined.max(Vec3::splat(1e-6));
+        let dist = s.max_y / sin_view * s.density_multiplier;
+        let ch = Vec3::from((-combined * dist).to_array().map(f32::exp)).powf(0.5);
+        let tmp_amb = s.ambient + (Vec3::ONE - s.ambient).max(Vec3::ZERO) * s.cloud_shadow * 0.5;
+        let view_axis = 1.0 / (sin_view + s.light_norm.z).max(1e-6);
+        let sun_below = s.sunlight * Vec3::from((-light_atten * view_axis).to_array().map(f32::exp)) * (1.0 - s.cloud_shadow);
+        let glow = if s.sun_moon_glow_factor < 1.0 {
+            0.0
+        } else {
+            s.glow.x.max(0.0).powf(s.glow.z) * s.sun_moon_glow_factor + 0.25
+        };
+        let below = s.blue_horizon * blue_w * (sun_below + tmp_amb) + s.haze_horizon * haze_w * (sun_below * glow + tmp_amb);
+        let sun = (s.sunlight * Vec3::from(atten)).min(Vec3::ONE) * s.cloud_color * ch;
+        let ambient = tmp_amb * s.cloud_color * ch + below * (Vec3::ONE - ch);
         // the Legacy layer also takes the light the sky scatters below it
         // (`add_below_cloud`): the sky's own colour, the hemisphere light of
         // the frame (`zenith`, linear), takes its place, tinted by the cloud
@@ -866,7 +888,7 @@ mod tests {
 
     #[test]
     fn the_period_holds_every_noise() {
-        for km in [5.0, 0.7, 3.0] {
+        for km in [10.5, 5.0, 0.5, 3.0] {
             let n = PERIOD_KM / km;
             assert!((n - n.round()).abs() < 1e-9, "{km}");
         }
@@ -922,7 +944,13 @@ mod tests {
             Vec3::splat(0.2),
         );
         assert_eq!(black.sun, Vec3::ZERO);
-        assert_eq!(black.ambient, Vec3::ZERO);
+        // only the sky's haze below them is left (as the Legacy layer's
+        // `additiveColorBelowCloud`), blue
+        assert!(
+            black.ambient.z > black.ambient.x && black.ambient.max_element() < 0.1,
+            "{:?}",
+            black.ambient
+        );
         // the sun below the horizon (night): the sun light is gone
         let night = Lighting::new(
             &crate::types::SkyParams {
@@ -932,6 +960,19 @@ mod tests {
             Vec3::splat(0.2),
         );
         assert!(night.sun.max_element() < 1e-6);
+    }
+
+    #[test]
+    fn the_cloud_colour_tints_the_light() {
+        let red = Lighting::new(
+            &crate::types::SkyParams {
+                cloud_color: Vec3::new(0.9, 0.2, 0.2),
+                ..sky()
+            },
+            Vec3::ZERO,
+        );
+        assert!(red.sun.x > 2.0 * red.sun.z, "{:?}", red.sun);
+        assert!(red.ambient.x > red.ambient.z, "{:?}", red.ambient);
     }
 
     #[test]
