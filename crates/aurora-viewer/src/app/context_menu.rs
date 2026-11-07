@@ -71,7 +71,6 @@ impl App {
         if self.gfx.is_none() {
             return;
         }
-        let now = Instant::now();
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
@@ -114,9 +113,9 @@ impl App {
                         attachment: Some(full_id),
                     },
                     None => {
-                        let offset = Scene::object_transform(&self.world, idx, now, 0)
-                            .map(|(pos, rot, _)| rot.inverse() * (point - pos))
-                            .unwrap_or(Vec3::ZERO);
+                        let ray = self.object_menu.ray;
+                        let offset =
+                            super::object_actions::object_sit_offset(&self.world, &self.camera, idx, point, ray).unwrap_or(Vec3::ZERO);
                         // selected and outlined while the menu is open
                         // (LLToolSelect::handleObjectSelection, temp_select)
                         self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
@@ -369,7 +368,7 @@ impl App {
         let (commands, requests, properties) = self.object_profile.take_output();
         if !commands.is_empty() {
             self.interactions.on_properties(&properties);
-            self.build.on_properties(properties);
+            self.build.on_properties(&self.world, properties);
         }
         for command in commands {
             self.send(command);
