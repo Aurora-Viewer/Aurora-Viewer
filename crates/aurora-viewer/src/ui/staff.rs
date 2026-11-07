@@ -8,7 +8,7 @@
 use crate::theme::Palette;
 use crate::ui::nameplate::{aurora, mark::Look};
 use crate::world::staff::Mark;
-use egui::text::LayoutJob;
+use egui::text::{LayoutJob, LayoutSection};
 use egui::{Galley, Mesh, Pos2, Rect, Shape, Vec2};
 use std::sync::Arc;
 
@@ -45,17 +45,7 @@ impl Tag {
     pub fn new(ui: &egui::Ui, p: &Palette, mark: Mark, font: f32) -> Tag {
         let t = time(ui);
         let look = Look::new(mark);
-        let text = look.label();
-        let n = text.chars().count();
-        let semibold = crate::ui::fonts::semibold(ui.ctx());
-        let mut job = LayoutJob {
-            break_on_newline: false,
-            ..Default::default()
-        };
-        for (i, ch) in text.chars().enumerate() {
-            let format = crate::ui::fonts::semibold_format(&semibold, font, look.letter(p, i, n, t));
-            job.append(ch.encode_utf8(&mut [0; 4]), 0.0, format);
-        }
+        let job = label_job(ui.ctx(), p, &look, font, t);
         let label = ui.painter().layout_job(job);
         let size = Vec2::new(
             (2.0 * Self::pad(font) + font + Self::gap(font) + label.size().x).ceil(),
@@ -106,6 +96,31 @@ impl Tag {
     }
 }
 
+/// Keep each animated letter in its own layout section. `LayoutJob::append`
+/// merges adjacent equal formats, which changes kerning and the measured
+/// width as the Aurora staff mark animates. Keeping the sections separate
+/// preserves stable geometry for the chat row and nameplate.
+pub(crate) fn label_job(ctx: &egui::Context, p: &Palette, look: &Look, font: f32, t: f32) -> LayoutJob {
+    let label = look.label();
+    let count = label.chars().count();
+    let semibold = crate::ui::fonts::semibold(ctx);
+    let mut job = LayoutJob {
+        break_on_newline: false,
+        ..Default::default()
+    };
+    for (i, ch) in label.chars().enumerate() {
+        let start = job.text.len();
+        job.text.push(ch);
+        let format = crate::ui::fonts::semibold_format(&semibold, font, look.letter(p, i, count, t));
+        job.sections.push(LayoutSection {
+            leading_space: 0.0,
+            byte_range: start.into()..job.text.len().into(),
+            format,
+        });
+    }
+    job
+}
+
 /// Size of a tag text for a line whose text is `font` points high.
 pub fn font_for(font: f32) -> f32 {
     (font * 0.74).max(8.0)
@@ -135,4 +150,41 @@ pub fn paint_at(ui: &egui::Ui, painter: &egui::Painter, p: &Palette, mark: Optio
 /// elides the name before it.
 pub fn width(ui: &egui::Ui, p: &Palette, mark: Option<Mark>, font: f32) -> f32 {
     mark.map_or(0.0, |mark| Tag::new(ui, p, mark, font_for(font)).size().x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animated_staff_tag_width_is_constant() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        ctx.all_styles_mut(|style| style.animation_time = 0.2);
+        let p = crate::theme::Theme::default().palette();
+        for mark in [Mark::Linden, Mark::Aurora] {
+            let mut widths = Vec::new();
+            for step in 0..=2600 {
+                let t = step as f64 * 0.001;
+                let mut width = None;
+                let mut sections = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                        time: Some(t),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let tag = Tag::new(ui, &p, mark, 14.0);
+                        width = Some(tag.size().x);
+                        sections = Some(tag.label.job.sections.len());
+                    },
+                );
+                output.textures_delta.clear();
+                assert_eq!(sections, Some(Look::new(mark).label().chars().count()), "{mark:?} at {t}");
+                widths.push(width.expect("tag was laid out"));
+            }
+            assert!(widths.iter().all(|width| *width == widths[0]), "{mark:?}: {widths:?}");
+        }
+    }
 }

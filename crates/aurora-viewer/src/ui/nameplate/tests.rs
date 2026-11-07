@@ -89,6 +89,47 @@ fn contact_visuals_invalidate_surface_cache_without_a_geometry_change() {
     assert_ne!(colours(before.1), colours(after.1));
 }
 
+#[test]
+fn animated_staff_plate_lead_width_is_constant() {
+    let ctx = egui::Context::default();
+    Theme::default().apply(&ctx, 1.0);
+    let p = Theme::default().palette();
+    let icons = crate::ui::icons::Icons::default();
+    for mark in [crate::world::staff::Mark::Linden, crate::world::staff::Mark::Aurora] {
+        let mut widths = Vec::new();
+        for step in 0..=2600 {
+            let t = step as f64 * 0.001;
+            let mut width = None;
+            let mut sections = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                    time: Some(t),
+                    ..Default::default()
+                },
+                |ui| {
+                    let painter = ui.painter();
+                    let env = paint::Env::new(painter, &p, &icons, t);
+                    let mut c = content();
+                    c.mark = Some(mark);
+                    let face = paint::face(&env, Level::Compact, &c, t as f32);
+                    let (label, ..) = face.staff.expect("staff label");
+                    width = Some(aurora::tag_width(label.size().x, Metrics::of(Level::Compact, SCALE).scale));
+                    sections = Some(label.job.sections.len());
+                },
+            );
+            output.textures_delta.clear();
+            assert_eq!(
+                sections,
+                Some(crate::ui::nameplate::mark::Look::new(mark).label().chars().count()),
+                "{mark:?} at {t}"
+            );
+            widths.push(width.expect("plate was laid out"));
+        }
+        assert!(widths.iter().all(|width| *width == widths[0]), "{mark:?}: {widths:?}");
+    }
+}
+
 fn tag(n: u128, distance: f32, content: Content) -> Tag<'static> {
     Tag {
         id: Uuid::from_u128(n),
