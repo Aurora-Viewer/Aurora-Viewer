@@ -70,6 +70,9 @@ pub(super) enum FacePick {
     /// Left button: only world Blend faces test exact texels at the legacy alpha threshold.
     Left,
     LeftBlend,
+    /// Build with Select invisible objects off: texture holes remain holes,
+    /// including deliberately invisible textures retained by ordinary clicks.
+    Build,
 }
 
 impl PickFace {
@@ -386,18 +389,22 @@ impl Scene {
     /// The face rule of the build tools' left picks: every face with
     /// `pick_transparent` (Select invisible objects, Show transparency),
     /// as LLVOVolume::lineSegmentIntersect takes them all then; otherwise
-    /// the left button's (texture holes let the pick through, #1574).
+    /// test texture holes, including the library's Transparent texture.
     fn build_pick(&self) -> FacePick {
-        if self.pick_transparent { FacePick::Surface } else { FacePick::Left }
+        if self.pick_transparent {
+            FacePick::Surface
+        } else {
+            FacePick::Build
+        }
     }
 
     /// Whether a build pick in `mode` takes the faces of `o` at alpha 0:
-    /// always with `pick_transparent`; without it (Left), only when the
+    /// always with `pick_transparent`; without it (Build), only when the
     /// prim itself shows the special cursor (LLVOVolume::lineSegmentIntersect,
     /// `interaction::special_hover_cursor`). Only the build picks run in
-    /// Left mode here (`left_selection_pick`, `left_edit_ray_hits`).
+    /// Build mode here (`left_selection_pick`, `left_edit_ray_hits`).
     fn build_hidden(&self, mode: FacePick, o: &Object) -> bool {
-        mode != FacePick::Left || crate::interaction::special_hover_cursor(o)
+        mode != FacePick::Build || crate::interaction::special_hover_cursor(o)
     }
 
     pub fn left_selection_pick(
@@ -928,7 +935,7 @@ impl Scene {
                 indices: &f.indices,
             })
         });
-        if matches!(mode, FacePick::Left | FacePick::LeftBlend) && !g.hud && g.owner_avatar.is_none() {
+        if matches!(mode, FacePick::Left | FacePick::LeftBlend | FacePick::Build) && !g.hud && g.owner_avatar.is_none() {
             // LLVolume::lineSegmentIntersect rejects back faces. After a
             // texture hole, an invisible exit face must not reclaim the
             // click from the surface the GPU actually drew (#1574).
@@ -946,7 +953,7 @@ impl Scene {
                     if *actionable.get_or_init(|| self.touch_wins_alpha(world, idx)) {
                         return true;
                     }
-                    self.left_face_mask(world, o, g, hit.face)
+                    self.left_face_mask(world, o, g, hit.face, mode != FacePick::Build)
                         .is_none_or(|mask| mask.hits_exact(self.inventory_uv(world, o, hit, model, ray, now)))
                 },
             );
@@ -1018,13 +1025,23 @@ impl Scene {
     /// pick_transparent retains deliberately invisible surfaces. Their
     /// transparent texture must not erase either the click or its UVs (#2269).
     /// Ordinary Blend texture holes still use the exact alpha threshold.
-    fn left_face_mask(&self, world: &World, o: &Object, g: &ObjGpu, face: usize) -> Option<&super::textures::PickMask> {
+    /// Build without Select invisible objects does not retain invisible
+    /// textures (LLViewerWindow::pickImmediate); its search and face/UV
+    /// retrieval must both test those texels, independently of #2269.
+    fn left_face_mask(
+        &self,
+        world: &World,
+        o: &Object,
+        g: &ObjGpu,
+        face: usize,
+        retain_invisible: bool,
+    ) -> Option<&super::textures::PickMask> {
         let draw = g.faces.iter().find(|draw| usize::from(draw.te_index) == face);
         let invisible = draw.map_or_else(
             || super::te_invisible(o, face),
             |draw| draw.pass == Pass::Hidden || draw.fully_transparent(),
         );
-        if invisible || !self.blend_face_mode(world, o, g, face, true) {
+        if (retain_invisible && invisible) || !self.blend_face_mode(world, o, g, face, true) {
             return None;
         }
         let texture = draw.map_or_else(|| o.visual_texture_face(face).texture, |draw| draw.tex_id);
@@ -1219,7 +1236,7 @@ impl Scene {
                 && self.blend_face_mode(world, o, g, face, true)
                 && !*scripted.get_or_init(|| self.touch_wins_alpha(world, idx))
             {
-                self.left_face_mask(world, o, g, face)
+                self.left_face_mask(world, o, g, face, true)
             } else {
                 None
             };
@@ -4562,8 +4579,15 @@ pub(crate) mod tests {
         scene.set_debug_alpha(&mut world, Some(false));
         scene.set_pick_transparent(false);
         assert_eq!(picks(&scene, &world), (Some(front), (Some(front_point), Some(front)), Some(0)));
-        // ordinary left clicks keep their own rule
-        assert!(scene.left_touch_surface(&world, front, ray).is_none());
+        // #2721 / #2269: ordinary clicks retain deliberately invisible
+        // faces and their UVs, independently of the build option.
+        for select_invisible in [false, true] {
+            scene.set_debug_alpha(&mut world, None);
+            scene.set_pick_transparent(select_invisible);
+            let touch = scene.left_touch_surface(&world, front, ray).expect("ordinary invisible-face click");
+            assert_eq!(touch.face, 0);
+            assert!((touch.uv - Vec3::new(0.5, 0.5, 0.0)).length() < 1e-5);
+        }
 
         // 100% transparency (TE alpha 0) over the default, opaque texture:
         // without pick_transparent, LLVOVolume::lineSegmentIntersect skips
