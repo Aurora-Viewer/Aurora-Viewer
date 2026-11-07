@@ -4328,6 +4328,8 @@ ui-people-exact-object-name = Exact object name
 ui-options-commands-case-insensitive-partial-name-among-nearby-avatars = Case-insensitive partial name among nearby avatars
 world-mutes-empty-name = Empty name.
 ui-options-probe-count = Probe count
+ui-options-probe-range = Probe range
+ui-options-probe-range-help = How far around you the scene gets reflection probes, within the draw distance (farther costs nothing more in video memory)
 ui-options-maximum-pages-videos-loaded-at-once-plugininstancestotal = Maximum pages / videos loaded at once (PluginInstancesTotal)
 ui-options-maximum-particles-0-disabled = Maximum particles (0 = disabled)
 ui-options-names = Names
