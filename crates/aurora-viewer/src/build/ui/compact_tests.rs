@@ -2589,3 +2589,164 @@ fn typed_transparency_reaches_every_selected_face_even_over_a_mixed_value() {
         assert_eq!(sent(&inspector), 1);
     }
 }
+
+/// How a typed UV entry ends in `typed_uv_value_*`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Finish {
+    Enter,
+    Tab,
+    ClickAway,
+    Escape,
+    /// Enter with nothing typed: the "—" stays untouched.
+    Untouched,
+}
+
+/// #1956, UV half: every UV component (scale U / V, offset U / V, rotation)
+/// is mixed over a whole prim whose face 1 differs in all five. Typing the
+/// first face's hidden value into one of them applies that component alone
+/// to every face, as LLPanelFace sends each spinner's commit on its own
+/// (onCommitTextureScaleX… for Blinn-Phong, onCommitGLTFTextureScaleU… and
+/// updateGLTFTextureTransform for PBR); face 1 keeps its other components.
+/// Escape or an untouched "—" sends nothing. Both window styles.
+#[test]
+fn typed_uv_value_over_a_mixed_field_reaches_every_face_and_only_that_component() {
+    const ODD: [f32; 5] = [2.0, 3.0, 0.25, -0.25, 0.5];
+    const FIRST: [f32; 5] = [1.0, 1.0, 0.0, 0.0, 0.0];
+    const TYPED: [&str; 5] = ["1", "1", "0", "0", "0"];
+    let asset = uuid::Uuid::from_u128(0x1956);
+    fn values(inspector: &Inspector, pbr: bool, idx: usize, face: u8) -> [[f32; 5]; 4] {
+        if pbr {
+            let over = BuildTool::gltf_override(&inspector.world, idx, face);
+            over.transforms
+                .map(|t| [t.scale[0], t.scale[1], t.offset[0], t.offset[1], t.rotation])
+        } else {
+            let f = inspector.world.objects.get(idx).unwrap().te.as_ref().unwrap().face(face as usize);
+            [[f.scale_s, f.scale_t, f.offset_s, f.offset_t, f.rotation]; 4]
+        }
+    }
+    fn press(inspector: &mut Inspector, point: egui::Pos2) {
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            inspector.show(vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+    }
+    fn key(inspector: &mut Inspector, key: egui::Key) {
+        inspector.show(vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+    }
+    for legacy in [false, true] {
+        for pbr in [false, true] {
+            for (property, typed) in TYPED.into_iter().enumerate() {
+                for finish in [Finish::Enter, Finish::Tab, Finish::ClickAway, Finish::Escape, Finish::Untouched] {
+                    let case = format!("legacy={legacy} pbr={pbr} field={property} {finish:?}");
+                    let mut inspector = material_inspector();
+                    inspector.settings.legacy_window = legacy;
+                    inspector.tool.tab = 3;
+                    inspector.tool.ui.tex_tab = usize::from(pbr);
+                    let key_ = inspector.tool.selection[0];
+                    let idx = inspector.world.objects.index_of(&key_).unwrap();
+                    let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+                    if pbr {
+                        inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, asset)];
+                        inspector.scene.materials.insert(asset, Default::default());
+                        let odd = aurora_assets::material::TextureTransform {
+                            scale: [ODD[0], ODD[1]],
+                            offset: [ODD[2], ODD[3]],
+                            rotation: ODD[4],
+                        };
+                        let over = aurora_assets::material::PbrOverride {
+                            transforms: [odd; 4],
+                            ..Default::default()
+                        };
+                        inspector.world.gltf_overrides.insert(key_, Arc::from(vec![(1u8, over)]));
+                        inspector.list_contents(idx);
+                    } else {
+                        let object = inspector.world.objects.get_mut(idx).unwrap();
+                        let te = Arc::make_mut(object.te.as_mut().unwrap());
+                        let f = &mut te.faces[1];
+                        [f.scale_s, f.scale_t, f.offset_s, f.offset_t, f.rotation] = ODD;
+                    }
+                    inspector.show(vec![]);
+                    crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 1500.0));
+                    for _ in 0..5 {
+                        inspector.show(vec![]);
+                    }
+                    let (_, texts) = inspector.show(vec![]);
+                    let (label, width, row) = match property {
+                        0 | 1 => (aurora_i18n::tr!("common-scale"), 103.0, property),
+                        2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 75.0, property - 2),
+                        _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 71.0, 0),
+                    };
+                    let title = texts.iter().find(|(text, _)| text == label).unwrap().1;
+                    let mut fields: Vec<_> = texts
+                        .iter()
+                        .filter(|(text, rect)| {
+                            (text == "—" || aurora_i18n::parse_number(text).is_some())
+                                && rect.top() > title.bottom()
+                                && rect.top() < title.bottom() + 70.0
+                                && rect.left() >= title.left()
+                                && rect.right() < title.left() + width
+                        })
+                        .cloned()
+                        .collect();
+                    fields.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+                    let (shown, field) = fields.get(row).cloned().unwrap_or_else(|| panic!("{case}: missing UV field"));
+                    assert_eq!(shown, "—", "{case}: the field is mixed");
+                    press(&mut inspector, field.center());
+                    assert!(
+                        inspector.ctx.memory(|m| m.focused()).is_some(),
+                        "{case}: the field must take the keyboard"
+                    );
+                    inspector.tool.out.clear();
+                    if finish != Finish::Untouched {
+                        inspector.show(vec![egui::Event::Text(typed.into())]);
+                    }
+                    match finish {
+                        Finish::Enter | Finish::Untouched => key(&mut inspector, egui::Key::Enter),
+                        Finish::Tab => key(&mut inspector, egui::Key::Tab),
+                        Finish::Escape => key(&mut inspector, egui::Key::Escape),
+                        Finish::ClickAway => press(&mut inspector, title.center()),
+                    }
+                    inspector.show(vec![]);
+                    let applied = matches!(finish, Finish::Enter | Finish::Tab | Finish::ClickAway);
+                    // Escape also closes the selection (Deselect), which is no edit.
+                    let edits: Vec<_> = inspector
+                        .tool
+                        .out
+                        .iter()
+                        .filter(|command| !matches!(command, aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Deselect { .. })))
+                        .collect();
+                    assert_eq!(edits.len(), usize::from(applied), "{case}: one edit, or none: {edits:?}");
+                    for face in 0..n {
+                        let expected = if face == 1 { ODD } else { FIRST };
+                        for (channel, got) in values(&inspector, pbr, idx, face).iter().enumerate() {
+                            for component in 0..5 {
+                                // A face without an override keeps the identity
+                                // until a committed component lands on it.
+                                let want = if applied && component == property {
+                                    FIRST[component]
+                                } else {
+                                    expected[component]
+                                };
+                                assert!(
+                                    (got[component] - want).abs() < 1e-5,
+                                    "{case}: face {face} channel {channel} component {component}: {got:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

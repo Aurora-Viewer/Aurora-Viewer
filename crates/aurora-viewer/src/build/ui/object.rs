@@ -918,6 +918,7 @@ fn shape_column(
     let mut e = Edit {
         changed: chosen_type.is_some(),
         commit: chosen_type.is_some(),
+        ..Edit::default()
     };
     if let Some(ty) = chosen_type {
         u.ty = ty;
@@ -954,6 +955,7 @@ fn shape_column(
                     e = e.or(Edit {
                         changed: true,
                         commit: true,
+                        ..Edit::default()
                     });
                 }
             };

@@ -23,6 +23,9 @@ pub(super) fn typography(ui: &mut egui::Ui) {
 pub struct Edit {
     pub changed: bool,
     pub commit: bool,
+    /// A number typed over a mixed ("—") field: committed even when it
+    /// equals the first selected value the field holds underneath.
+    pub typed_over_mixed: bool,
 }
 
 impl Edit {
@@ -30,6 +33,7 @@ impl Edit {
         Edit {
             changed: self.changed || o.changed,
             commit: self.commit || o.commit,
+            typed_over_mixed: self.typed_over_mixed || o.typed_over_mixed,
         }
     }
 }
@@ -208,6 +212,7 @@ fn spinner(
     let mut e = Edit {
         changed: step != 0,
         commit: step != 0,
+        ..Edit::default()
     };
     // TextEdit also reports changed while only its uncommitted text changed.
     if r.changed() && *v != before {
@@ -228,6 +233,7 @@ fn spinner(
     if commit_typed_mixed && tentative && written.get() && r.lost_focus() {
         e.changed = true;
         e.commit = true;
+        e.typed_over_mixed = true;
     }
     e
 }
@@ -256,6 +262,7 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
     Edit {
         changed: (r.changed() && *v != before) || step != 0,
         commit: step != 0 || (r.changed() && *v != before && !r.dragged()) || r.drag_stopped(),
+        ..Edit::default()
     }
 }
 
