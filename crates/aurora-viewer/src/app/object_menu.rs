@@ -36,6 +36,8 @@ pub(super) struct ObjectMenu {
     pub particle_hits: Vec<crate::scene::particles::ParticleHit>,
     /// SurfaceInfo of send_ObjectGrab_message, using the original click ray.
     touch: Option<(ObjKey, aurora_net::TouchSurface)>,
+    /// The original cursor ray, including across asynchronous GPU readback.
+    pub ray: Option<(Vec3, Vec3)>,
 }
 
 enum Confirm {
@@ -153,6 +155,7 @@ impl App {
         m.particle_only = particle_only;
         m.particle_hits.clear();
         m.touch = None;
+        m.ray = ray;
         let Some((origin, dir)) = ray else {
             return;
         };
