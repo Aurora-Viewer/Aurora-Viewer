@@ -15,8 +15,11 @@
 //! - `store`: the folder, the thread that writes and reads;
 //! - `transcript`: a whole file for the History window, by pages;
 //! - `import`: a Legacy Viewer's transcripts brought into the account's
-//!   folder, adding only.
+//!   folder, adding only;
+//! - `conversations`: the conversation log (`conversation.log` in the same
+//!   folder), who we talked with and when.
 
+pub mod conversations;
 pub mod format;
 pub mod import;
 pub mod names;
@@ -45,6 +48,8 @@ pub struct Config {
     pub dated_names: bool,
     /// Import the Legacy Viewer's transcripts at login. On by default.
     pub import_at_login: bool,
+    /// Keep the conversation log (KeepConversationLogTranscripts > 0).
+    pub log_conversations: bool,
 }
 
 impl Default for Config {
@@ -55,6 +60,7 @@ impl Default for Config {
             show_history: true,
             dated_names: false,
             import_at_login: true,
+            log_conversations: true,
         }
     }
 }
@@ -111,6 +117,8 @@ pub struct ChatLog {
     legacy_apps: Option<Vec<PathBuf>>,
     /// An import under way.
     importing: Option<import::Running>,
+    /// The conversation log of the account logged in.
+    pub conversations: conversations::Log,
 }
 
 impl ChatLog {
@@ -134,6 +142,7 @@ impl ChatLog {
     pub fn login(&mut self, agent: Uuid) {
         self.epoch += 1;
         self.open = None;
+        self.conversations.reset();
         if agent.is_nil() || self.grid.is_empty() {
             log::info!("conversation transcripts: off for this session (no account or no grid)");
             return;
@@ -145,6 +154,70 @@ impl ChatLog {
         let accounts = self.accounts.clone().unwrap_or_else(crate::settings::accounts_dir);
         let dir = store::folder(&accounts, &identity);
         self.open = Some(Open { identity, dir });
+        // LLConversationLog::initLoggingState
+        if self.cfg.log_conversations {
+            self.start_conversations();
+        }
+    }
+
+    fn conversations_file(&self) -> Option<PathBuf> {
+        Some(self.dir()?.join(conversations::FILE))
+    }
+
+    /// enableLogging: the file read again, the session's entries after it.
+    fn start_conversations(&mut self) {
+        let reading = match self.conversations_file() {
+            Some(path) => self.worker().map(|w| w.read(path)),
+            None => None,
+        };
+        self.conversations.start(reading);
+    }
+
+    /// Write the conversation log if it changed: at most every few seconds,
+    /// at once with `now` (logout, exit, the log cleared). Not while the
+    /// transcripts move, but for the last save of a logout.
+    pub fn save_conversations(&mut self, now: bool) {
+        if self.moving.is_some() && !now {
+            return;
+        }
+        let Some(path) = self.conversations_file() else {
+            return;
+        };
+        if let Some(text) = self.conversations.take_save(now)
+            && let Some(w) = self.worker()
+        {
+            w.publish(path, text.into_bytes());
+        }
+    }
+
+    /// Every frame: the file read, the setting followed (enableLogging on a
+    /// change of KeepConversationLogTranscripts), the changes written.
+    pub fn poll_conversations(&mut self) {
+        if self.open.is_none() {
+            return;
+        }
+        self.conversations.poll_read(conversations::now());
+        match (self.cfg.log_conversations, self.conversations.logging) {
+            (true, false) => self.start_conversations(),
+            (false, true) => {
+                self.save_conversations(true);
+                self.conversations.stop();
+            }
+            _ => {}
+        }
+        self.save_conversations(false);
+    }
+
+    /// onClearLogResponse: the log emptied, its file written empty and its
+    /// backups removed.
+    pub fn clear_conversations(&mut self) {
+        self.conversations.clear();
+        self.save_conversations(true);
+        if let Some(dir) = self.dir().map(Path::to_path_buf)
+            && let Some(w) = self.worker()
+        {
+            w.remove_backups(dir);
+        }
     }
 
     /// Logged out: nothing more is written or read, and what was being read
@@ -152,6 +225,9 @@ impl ChatLog {
     /// they were queued with.
     pub fn logout(&mut self) {
         self.epoch += 1;
+        // LLConversationLog::cache at the session's end
+        self.save_conversations(true);
+        self.conversations.reset();
         self.open = None;
         if let Some(running) = self.importing.take() {
             running.cancel();
@@ -627,6 +703,150 @@ mod tests {
         assert!(!dir(bob).exists());
         assert_eq!(texts(&dir(alice).join("Jane Doe.txt")), ["hello"]);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn conversation(name: &str, session: u128, time: i64) -> conversations::Conversation {
+        conversations::Conversation {
+            time,
+            kind: conversations::Kind::Private,
+            name: name.into(),
+            history_file: name.into(),
+            session: Uuid::from_u128(session),
+            participant: Uuid::from_u128(session + 1),
+            offline: false,
+        }
+    }
+
+    /// Poll until the conversation log's file is read.
+    fn read_log(log: &mut ChatLog) {
+        assert!(log.flush(WAIT));
+        log.poll_conversations();
+    }
+
+    #[test]
+    fn the_conversation_log_is_read_at_login_and_written_after_a_change() {
+        let root = temp();
+        let agent = Uuid::from_u128(11);
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_grid("agni".into());
+        log.login(agent);
+        let file = log.dir().unwrap().join(conversations::FILE);
+        let now = conversations::now();
+        // what the Legacy Viewer left there, with a line of another kind
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let old = conversation("Jane Doe", 100, now - 3600);
+        std::fs::write(
+            &file,
+            format!(
+                "{}not an entry
+",
+                conversations::format_line(&old)
+            ),
+        )
+        .unwrap();
+        log.logout();
+        log.login(agent);
+        // a session logged while the file is read comes after it
+        log.conversations.log(conversation("John Smith", 200, now));
+        read_log(&mut log);
+        let names: Vec<_> = log.conversations.list.iter().map(|c| c.name.clone()).collect();
+        assert_eq!(names, ["Jane Doe", "John Smith"]);
+        // written at the logout, read back at the next login
+        log.logout();
+        assert!(log.flush(WAIT));
+        let (back, _) = conversations::parse_file(&std::fs::read(&file).unwrap(), now);
+        assert_eq!(back.len(), 2);
+        log.login(agent);
+        read_log(&mut log);
+        assert_eq!(log.conversations.list, back);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn turning_the_conversation_log_off_keeps_the_list_and_stops_logging() {
+        let root = temp();
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_grid("agni".into());
+        log.login(Uuid::from_u128(12));
+        read_log(&mut log);
+        let now = conversations::now();
+        log.conversations.log(conversation("Jane Doe", 100, now));
+        log.cfg.log_conversations = false;
+        log.poll_conversations();
+        assert!(!log.conversations.logging);
+        log.conversations.log(conversation("John Smith", 200, now));
+        assert_eq!(log.conversations.list.len(), 1);
+        // on again: the file is read again, with what was saved
+        log.cfg.log_conversations = true;
+        log.poll_conversations();
+        read_log(&mut log);
+        assert!(log.conversations.logging);
+        assert_eq!(log.conversations.list.len(), 1);
+        // off at login: nothing is read
+        log.logout();
+        log.cfg.log_conversations = false;
+        log.login(Uuid::from_u128(12));
+        read_log(&mut log);
+        assert!(log.conversations.list.is_empty() && !log.conversations.logging);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn clearing_the_conversation_log_empties_it_and_its_backups() {
+        let root = temp();
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_grid("agni".into());
+        log.login(Uuid::from_u128(13));
+        read_log(&mut log);
+        let dir = log.dir().unwrap().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        for backup in ["conversation.log.backup", "conversation.log.backup1"] {
+            std::fs::write(dir.join(backup), "x").unwrap();
+        }
+        log.conversations.log(conversation("Jane Doe", 100, conversations::now()));
+        log.clear_conversations();
+        assert!(log.flush(WAIT));
+        assert!(log.conversations.list.is_empty());
+        assert_eq!(std::fs::read(dir.join(conversations::FILE)).unwrap(), b"");
+        assert!(!dir.join("conversation.log.backup").exists() && !dir.join("conversation.log.backup1").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_conversation_log_moves_with_the_transcripts() {
+        let root = temp();
+        let other = temp();
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_grid("agni".into());
+        let agent = Uuid::from_u128(14);
+        log.login(agent);
+        read_log(&mut log);
+        log.append("Jane Doe", now(), "Jane Doe", "hello");
+        log.conversations.log(conversation("Jane Doe", 100, conversations::now()));
+        log.save_conversations(true);
+        // a log already in the new folder is kept as a backup
+        let to = store::folder(&other, log.identity().unwrap());
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(to.join(conversations::FILE), "older").unwrap();
+        assert!(log.relocate(Some(other.clone())));
+        assert!(log.flush(WAIT));
+        assert_eq!(log.take_relocated().unwrap().unwrap(), 1);
+        let (moved, _) = conversations::parse_file(&std::fs::read(to.join(conversations::FILE)).unwrap(), conversations::now());
+        assert_eq!(moved.len(), 1);
+        assert_eq!(std::fs::read(to.join("conversation.log.backup")).unwrap(), b"older");
+        assert!(
+            !store::folder(
+                &root,
+                &Identity {
+                    grid: "agni".into(),
+                    agent
+                }
+            )
+            .join(conversations::FILE)
+            .exists()
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&other).unwrap();
     }
 
     #[test]

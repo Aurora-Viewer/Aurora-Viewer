@@ -89,6 +89,22 @@ enum Job {
         target: PathBuf,
         done: Sender<std::io::Result<u64>>,
     },
+    /// A whole small file read (the conversation log); None when it does
+    /// not exist.
+    Read {
+        path: PathBuf,
+        done: Sender<std::io::Result<Option<Vec<u8>>>>,
+    },
+    /// A whole file replaced at once (the conversation log).
+    Publish {
+        path: PathBuf,
+        bytes: Vec<u8>,
+    },
+    /// The conversation log's backups of a folder removed
+    /// (LLConversationLog::deleteBackupLogs).
+    RemoveBackups {
+        dir: PathBuf,
+    },
     Sync(Sender<()>),
 }
 
@@ -174,6 +190,24 @@ impl Worker {
         rx
     }
 
+    /// Read a whole small file, after what is queued; the answer is None
+    /// when it does not exist.
+    pub fn read(&self, path: PathBuf) -> Receiver<std::io::Result<Option<Vec<u8>>>> {
+        let (done, rx) = crossbeam_channel::bounded(1);
+        self.send(Job::Read { path, done });
+        rx
+    }
+
+    /// Replace a whole file (written beside it, then renamed).
+    pub fn publish(&self, path: PathBuf, bytes: Vec<u8>) {
+        self.send(Job::Publish { path, bytes });
+    }
+
+    /// Remove the backups of the conversation log of a folder.
+    pub fn remove_backups(&self, dir: PathBuf) {
+        self.send(Job::RemoveBackups { dir });
+    }
+
     pub fn merge_port(&self) -> MergePort {
         MergePort(self.jobs.clone())
     }
@@ -245,6 +279,33 @@ fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
             }
             Job::Merge { source, target, done } => {
                 let _ = done.send(super::import::merge_file(&source, &target));
+            }
+            Job::Read { path, done } => {
+                let read = match std::fs::read(&path) {
+                    Ok(bytes) => {
+                        crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
+                        Ok(Some(bytes))
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                    Err(e) => Err(e),
+                };
+                let _ = done.send(read);
+            }
+            Job::Publish { path, bytes } => {
+                let written = path
+                    .parent()
+                    .map_or(Ok(()), std::fs::create_dir_all)
+                    .and_then(|()| crate::atomic_file::write(&path, &bytes));
+                if let Err(e) = written {
+                    log::warn!("conversation log: not saved ({e})");
+                }
+            }
+            Job::RemoveBackups { dir } => {
+                for backup in log_backups(&dir) {
+                    if let Err(e) = std::fs::remove_file(&backup) {
+                        log::warn!("conversation log: a backup is not removed ({e})");
+                    }
+                }
             }
             Job::Sync(done) => {
                 let _ = done.send(());
@@ -343,8 +404,45 @@ fn relocate(from: &Path, to: &Path) -> std::io::Result<usize> {
         }
         moved.push((source, target));
     }
+    // LLConversationLog::moveLog: the log follows, the one already there
+    // kept as a backup
+    if let Err(e) = move_log(&from.join(super::conversations::FILE), &to.join(super::conversations::FILE)) {
+        log::warn!("conversation log: not moved with the transcripts ({e})");
+    }
     let _ = std::fs::remove_dir(from);
     Ok(moved.len())
+}
+
+/// LLConversationLog::moveLog: `from` becomes `to`; a file already at `to`
+/// is renamed `<to>.backup`, `.backup1`, `.backup2`… first.
+fn move_log(from: &Path, to: &Path) -> std::io::Result<()> {
+    if !from.is_file() {
+        return Ok(());
+    }
+    if to.is_file() {
+        let name = to.file_name().and_then(|n| n.to_str()).unwrap_or(super::conversations::FILE);
+        let mut backup = to.with_file_name(format!("{name}.backup"));
+        let mut n = 0;
+        while backup.exists() {
+            n += 1;
+            backup = to.with_file_name(format!("{name}.backup{n}"));
+        }
+        std::fs::rename(to, &backup)?;
+    }
+    move_file(from, to)
+}
+
+/// The backups of the conversation log in a folder
+/// (LLConversationLog::getListOfBackupLogs: `conversation.log.backup*`).
+fn log_backups(dir: &Path) -> Vec<PathBuf> {
+    let prefix = format!("{}.backup", super::conversations::FILE);
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(&prefix)))
+        .map(|e| e.path())
+        .collect()
 }
 
 fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {

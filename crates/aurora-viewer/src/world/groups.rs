@@ -766,6 +766,10 @@ impl World {
             let text = saved_prefix(inv.offline, inv.timestamp) + &inv.message;
             let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
             self.session_push(session, l, true);
+            // sessionAdded with has_offline_msg
+            if inv.offline && new {
+                self.log_conversation(session, true);
+            }
         }
         self.groups.restoring.remove(&session);
         self.groups.out.push(NetCommand::ChatSession {

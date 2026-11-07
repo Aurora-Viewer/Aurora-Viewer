@@ -453,6 +453,19 @@ pub fn merge_file(source: &Path, target: &Path) -> std::io::Result<u64> {
     Err(std::io::Error::other("the transcript keeps changing"))
 }
 
+/// The entries of a folder's conversation log, without those too old to
+/// keep (the Legacy Viewer drops them at its next login).
+fn legacy_conversations(folder: &Path) -> Vec<super::conversations::Conversation> {
+    use super::conversations;
+    match std::fs::read(folder.join(conversations::FILE)) {
+        Ok(bytes) => {
+            crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
+            conversations::parse_file(&bytes, conversations::now()).0
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Where to read from.
 pub enum Sources {
     /// Folders chosen in the import window.
@@ -515,6 +528,9 @@ pub struct Report {
     pub left_out: usize,
     /// Started by the login, not by the import window.
     pub at_login: bool,
+    /// The entries of the Legacy Viewer's conversation logs
+    /// (`conversation.log` of the folders read), with the instant messages.
+    pub conversations: Vec<super::conversations::Conversation>,
 }
 
 /// An import under way.
@@ -596,6 +612,13 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
         .filter(|source| request.kinds.take(source))
         .collect();
     let left_out = folders.iter().map(|folder| left_out(folder)).sum();
+    // the conversation log goes with the instant messages; it is small and
+    // merged by session, so it is read again at each import
+    let conversations = if request.kinds.im {
+        folders.iter().flat_map(|folder| legacy_conversations(folder)).collect()
+    } else {
+        Vec::new()
+    };
     let spelled = spellings(&request.dir, &sources);
     let plan: Vec<(PathBuf, PathBuf)> = sources
         .into_iter()
@@ -608,6 +631,7 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
     let missing: HashSet<PathBuf> = plan.iter().map(|(_, target)| target).filter(|t| !t.is_file()).cloned().collect();
     let mut out = Report {
         left_out,
+        conversations,
         at_login: request.skip_unchanged,
         ..Report::default()
     };
@@ -849,6 +873,35 @@ mod tests {
         // the file deleted: the first source to create it does not end the run
         std::fs::remove_file(to.join("Bob.txt")).unwrap();
         assert_eq!(import_at_login(&from, &to, false).added, 2);
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    #[test]
+    fn the_legacy_viewers_conversation_log_comes_with_the_instant_messages() {
+        use super::super::conversations;
+        let (from, to) = (temp(), temp());
+        let now = conversations::now();
+        let entry = |name: &str, ago: i64| conversations::Conversation {
+            time: now - ago,
+            kind: conversations::Kind::Private,
+            name: name.into(),
+            history_file: name.into(),
+            session: Uuid::new_v4(),
+            participant: Uuid::new_v4(),
+            offline: true,
+        };
+        let text = conversations::format_file(&[entry("Jane Doe", 60), entry("Too Old", 200 * 86_400)]);
+        std::fs::write(from.join(conversations::FILE), text).unwrap();
+        let report = import_at_login(&from, &to, false);
+        assert_eq!(report.conversations.len(), 1);
+        assert_eq!(report.conversations[0].name, "Jane Doe");
+        // the file is only read, never counted as a transcript
+        assert_eq!((report.added, report.left_out), (0, 0));
+        assert!(!to.join(conversations::FILE).exists());
+        // left out with the instant messages
+        let kinds = Kinds { im: false, nearby: true };
+        assert!(import_kinds_at_login(&from, &to, false, kinds).conversations.is_empty());
         std::fs::remove_dir_all(from).unwrap();
         std::fs::remove_dir_all(to).unwrap();
     }
