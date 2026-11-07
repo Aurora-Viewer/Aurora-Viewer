@@ -559,8 +559,10 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
         source.push('\n');
     }
     // The one-page binding substitution leaves both production fragment
-    // entry points and their alpha/gradient/material code unchanged.
+    // entry points and their alpha/gradient/material code unchanged; the
+    // frame's mip bias (sample_tex, unused here) is 0 without its uniform.
     let source = source
+        .replace("frame.tex_lod.x", "0.0")
         .replace("tex_pages[texture_page_index(loc)]", "tex_pages")
         .replace("tex_pages[texture_page_index(ramp_loc)]", "alpha_ramp")
         .replace("let ramp_loc = tex_loc.values[6u];", "let ramp_loc = 0u;")

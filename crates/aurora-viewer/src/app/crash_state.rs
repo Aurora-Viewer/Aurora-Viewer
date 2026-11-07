@@ -281,6 +281,7 @@ pub(super) fn effects(settings: &crate::settings::Settings, vr: bool) -> String 
         4 => word(true, format_args!("aa-msaa8")),
         5 => word(true, format_args!("aa-taa")),
         6 => word(true, format_args!("aa-smaa")),
+        7 => word(true, format_args!("aa-fsr{}", settings.fsr_quality)),
         _ => {}
     }
     word(settings.bloom, format_args!("bloom"));

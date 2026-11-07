@@ -171,6 +171,8 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+    pub max_link_children: Option<u32>,
+    pub animated_object_max_tris: u32,
 }
 
 fn dirty_east_edge(region: &mut Region, y0: u32, y1: u32) {
@@ -2036,6 +2038,8 @@ impl World {
             max_tasks: 0,
             grid_status: Default::default(),
             currency_base_uri: String::new(),
+            max_link_children: None,
+            animated_object_max_tris: 0,
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
@@ -2574,8 +2578,13 @@ impl World {
                 }
                 None
             }
+            NetEvent::RegionLinkLimit { handle, max_children } => {
+                self.ensure_region(handle, (256, 256)).max_link_children = max_children;
+                None
+            }
             NetEvent::SimulatorFeatures {
                 handle,
+                animated_object_max_tris,
                 voice_server_type,
                 avatar_hover_height,
                 materials_rate,
@@ -2589,6 +2598,7 @@ impl World {
                 export_supported,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
+                r.animated_object_max_tris = animated_object_max_tris;
                 r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
@@ -5302,6 +5312,13 @@ impl World {
 
     /// The sizes a prim may take on the agent's region (its OpenSimExtras,
     /// else Second Life's limits).
+    /// LLWorld::getMaxLinkedPrims plus the root: 255 children on Second
+    /// Life, 10,000 on OpenSim until OpenRegionInfo supplies another limit.
+    pub fn link_limit(&self) -> usize {
+        let default = if self.home_grid.is_some() { 10000 } else { 255 };
+        self.main().and_then(|r| r.max_link_children).unwrap_or(default) as usize + 1
+    }
+
     pub fn prim_limits(&self) -> crate::build::PrimLimits {
         crate::build::PrimLimits::from_extras(self.opensim_extras())
     }
@@ -8312,6 +8329,7 @@ mod motion_tests {
             }
             let features = |enabled| NetEvent::SimulatorFeatures {
                 handle: here,
+                animated_object_max_tris: 0,
                 voice_server_type: String::new(),
                 avatar_hover_height: enabled,
                 materials_rate: None,

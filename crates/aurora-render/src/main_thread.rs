@@ -57,8 +57,15 @@ pub struct GpuInfo {
     /// Elements a shader can bind in the array of texture pages: the pages
     /// the texture table can hold (its textures: `TextureTable::capacity`).
     pub max_textures: u32,
-    /// Dedicated video memory (MB) when it can be detected.
+    /// Device-local heap size (MB), retained for adapter selection and the
+    /// existing viewer-statistics protocol.
     pub vram_mb: Option<u64>,
+    /// Classified dedicated heap capacity (MB); unlike `vram_mb`, this is
+    /// zero when an integrated adapter exposes one unified shared heap.
+    pub dedicated_mb: Option<u64>,
+    /// Separate host-visible system memory (MB) available to an integrated
+    /// GPU, when Vulkan exposes a distinct shared heap.
+    pub shared_mb: Option<u64>,
     /// Integrated GPU (shares the system memory).
     pub integrated: bool,
     /// The PCI vendor id and the largest 2D texture side the adapter takes
@@ -74,6 +81,13 @@ pub struct GpuInfo {
     /// The Vulkan driver's version and limits (Linden Lab's viewer
     /// statistics); None on another backend.
     pub vulkan: Option<VulkanLimits>,
+}
+
+impl GpuInfo {
+    /// Both independently reported heaps, without counting a unified heap twice.
+    pub fn memory_label(&self) -> String {
+        gpu_memory_label(self.dedicated_mb, self.shared_mb, self.integrated, self.vram_mb)
+    }
 }
 
 /// What Linden Lab's viewer statistics report of the Vulkan driver, in
@@ -299,7 +313,13 @@ impl Renderer {
     /// the old window open behind a new one. The renderer's host keeps
     /// `window` instead, dropped after the backend, or kept by a render
     /// thread left behind in the driver (`render_thread::KeepAlive`).
-    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str) -> Result<Renderer, RenderError>
+    ///
+    /// `xr`: open the GPU device through the VR runtime (OpenXR), which VR
+    /// needs from the start. Off, the runtime is never loaded: some load a
+    /// driver of their own that crashes the start on PCs that never use VR
+    /// (#2309: SteamVR's `vrclient` into AMD's `amdlvr64`). VR then asks
+    /// for a restart (`VrState::Unavailable`).
+    pub fn new<W>(window: Arc<W>, width: u32, height: u32, vsync: bool, gpu: &str, xr: bool) -> Result<Renderer, RenderError>
     where
         W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
     {
@@ -312,14 +332,22 @@ impl Renderer {
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         #[allow(unused_mut)] // reassigned only by the Windows AMD-layer fallback below
-        let mut xr_graphics = match crate::xr_device::Graphics::new(desc().flags) {
-            Ok(graphics) => Some(graphics),
-            Err(e) => {
-                log::info!("OpenXR initialization unavailable: {e}");
-                if std::env::var_os("AURORA_DEMO_XR_DEVICE").is_some() || std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
-                    return Err(RenderError::Device(e.to_string()));
-                }
+        let mut xr_graphics = {
+            let demo_xr = std::env::var_os("AURORA_DEMO_XR_DEVICE").is_some() || std::env::var_os("AURORA_DEMO_XR_WORLD").is_some();
+            if !xr && !demo_xr {
+                log::info!("OpenXR not opened at start: VR is not set up at startup");
                 None
+            } else {
+                match crate::xr_device::Graphics::new(desc().flags) {
+                    Ok(graphics) => Some(graphics),
+                    Err(e) => {
+                        log::info!("OpenXR initialization unavailable: {e}");
+                        if demo_xr {
+                            return Err(RenderError::Device(e.to_string()));
+                        }
+                        None
+                    }
+                }
             }
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -327,6 +355,8 @@ impl Renderer {
         let mut instance = xr_graphics
             .as_ref()
             .map_or_else(|| wgpu::Instance::new(desc()), |g| g.instance.clone());
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        let _ = xr; // no VR on the other systems
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         #[allow(unused_mut)] // reassigned only by the Windows enumeration retries below
         let mut instance = wgpu::Instance::new(desc());
@@ -420,6 +450,10 @@ impl Renderer {
             instance.create_surface_unsafe(target)
         }
         .map_err(|e| RenderError::Surface(e.to_string()))?;
+        let memories: Vec<(Option<u64>, Option<u64>)> = adapters
+            .iter()
+            .map(|adapter| crate::vram::heap_sizes_mb(adapter).unwrap_or((detect_vram_mb(adapter), None)))
+            .collect();
         let candidates: Vec<crate::adapter_choice::Candidate> = adapters
             .iter()
             .map(|a| {
@@ -427,6 +461,8 @@ impl Renderer {
                 crate::adapter_choice::Candidate {
                     name: info.name,
                     kind: crate::adapter_choice::Kind::from_wgpu(info.device_type),
+                    // Keep adapter selection's existing device-local size
+                    // preference unchanged; shared RAM is reported separately.
                     vram_mb: detect_vram_mb(a),
                     surface: a.is_surface_supported(&surface),
                 }
@@ -437,7 +473,12 @@ impl Renderer {
                 "GPU adapter {i}: {} ({}, {}, {})",
                 c.name,
                 c.kind.label(),
-                c.vram_mb.map(|m| format!("{m} MB")).unwrap_or_else(|| "memory unknown".into()),
+                gpu_memory_label(
+                    memories[i].0,
+                    memories[i].1,
+                    c.kind == crate::adapter_choice::Kind::Integrated,
+                    c.vram_mb,
+                ),
                 if c.surface { "can present" } else { "cannot present to the window" }
             );
         }
@@ -480,18 +521,21 @@ impl Renderer {
         }
         let (index, o) = opened.ok_or(failure)?;
         let adapter = adapters.swap_remove(index);
+        let (dedicated_mb, shared_mb) = memories[index];
         let vram_mb = candidates[index].vram_mb;
         let ainfo = adapter.get_info();
         log::info!(
-            "GPU: {} ({:?}, driver {} {})",
+            "GPU: {} ({:?}, driver {} {}, memory {})",
             ainfo.name,
             ainfo.backend,
             ainfo.driver,
-            ainfo.driver_info
-        );
-        log::info!(
-            "GPU memory: {}",
-            vram_mb.map(|m| format!("{m} MB")).unwrap_or_else(|| "unknown".into())
+            ainfo.driver_info,
+            gpu_memory_label(
+                dedicated_mb,
+                shared_mb,
+                ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
+                vram_mb,
+            )
         );
         let OpenedDevice {
             device,
@@ -546,6 +590,8 @@ impl Renderer {
             timestamps,
             max_textures,
             vram_mb,
+            dedicated_mb,
+            shared_mb,
             integrated: ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
             vendor_id: ainfo.vendor,
             max_texture_size: alim.max_texture_dimension_2d,
@@ -560,7 +606,14 @@ impl Renderer {
         // (as many textures as the table has slots; `max_textures` bounds
         // the pages they are grouped in)
         let slots = crate::textures::slot_capacity(std::env::var("AURORA_TEXTURE_SLOTS").ok().as_deref());
-        let textures = TextureTable::new(&device, &mut writes, slots, max_textures, 8);
+        let textures = TextureTable::new_with_integrated(
+            &device,
+            &mut writes,
+            slots,
+            max_textures,
+            8,
+            ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
+        );
         let geometry = GeometryArena::new(&device, alim.max_buffer_size.min(1 << 31));
         let records = RecordStore::new(&device);
         let cull = CullTables::new(&device);
@@ -939,6 +992,13 @@ impl Renderer {
     /// window's otherwise.
     pub fn frame_size(&self) -> (u32, u32) {
         self.snapshot_request.map_or(self.size, |s| (s.width, s.height))
+    }
+
+    /// The probe slots this device holds of the `slots` asked: the viewer
+    /// places probes in those only, a capture for a slot beyond them would
+    /// overwrite the last one.
+    pub fn fitted_probe_slots(&self, slots: u32) -> u32 {
+        crate::probes::Probes::fitted_slots(&self.device, slots)
     }
 
     /// The largest side a photo can be drawn at in one pass.
@@ -1907,6 +1967,16 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
         .max()
 }
 
+fn gpu_memory_label(dedicated: Option<u64>, shared: Option<u64>, integrated: bool, fallback_mb: Option<u64>) -> String {
+    match (dedicated, shared) {
+        (Some(dedicated), Some(shared)) => format!("{dedicated} MB dedicated + {shared} MB shared"),
+        (_, None) if integrated => fallback_mb.map_or_else(|| "memory unknown".into(), |mb| format!("{mb} MB video memory")),
+        (Some(dedicated), None) => format!("{dedicated} MB dedicated"),
+        (None, Some(shared)) => format!("0 MB dedicated + {shared} MB shared"),
+        (None, None) => "memory unknown".into(),
+    }
+}
+
 /// The Vulkan driver's version and limits the viewer statistics report.
 #[cfg(not(target_os = "macos"))]
 fn vulkan_limits(adapter: &wgpu::Adapter) -> Option<VulkanLimits> {
@@ -2029,6 +2099,18 @@ mod tests {
         assert!(gpu_instance_flags(false).contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL));
         assert!(gpu_instance_flags(true).contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL));
         assert!(!gpu_instance_flags(false).contains(wgpu::InstanceFlags::DEBUG));
+    }
+
+    #[test]
+    fn memory_summary_reports_distinct_heaps_without_fabricating_a_second_pool() {
+        assert_eq!(
+            gpu_memory_label(Some(512), Some(7800), true, Some(8312)),
+            "512 MB dedicated + 7800 MB shared"
+        );
+        assert_eq!(gpu_memory_label(None, Some(16_000), true, None), "0 MB dedicated + 16000 MB shared");
+        assert_eq!(gpu_memory_label(Some(8192), None, false, Some(8192)), "8192 MB dedicated");
+        assert_eq!(gpu_memory_label(Some(16_000), None, true, Some(16_000)), "16000 MB video memory");
+        assert_eq!(gpu_memory_label(None, None, false, None), "memory unknown");
     }
 
     #[test]
