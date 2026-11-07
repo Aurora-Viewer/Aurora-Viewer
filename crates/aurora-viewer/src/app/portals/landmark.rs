@@ -152,6 +152,7 @@ impl App {
 
     pub(in crate::app) fn portal_drop_notice(&mut self, key: &str) {
         let message = match key {
+            "rlva-blocked" => aurora_i18n::tr!("rlva-blocked"),
             "portal-invalid" => aurora_i18n::tr!("portal-invalid"),
             "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
             "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
