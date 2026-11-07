@@ -82,12 +82,12 @@ fn volumes(cx: &mut Cx) {
                 modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
                     s.audio.volume[i] != d.audio.volume[i]
                         || s.audio.muted[i] != d.audio.muted[i]
-                        || s.audio.enabled[i] != d.audio.enabled[i]
+                        || s.audio.channel_on(i) != d.audio.channel_on(i)
                 },
                 reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
                     s.audio.volume[i] = d.audio.volume[i];
                     s.audio.muted[i] = d.audio.muted[i];
-                    s.audio.enabled[i] = d.audio.enabled[i];
+                    *s.audio.channel_box(i) = d.audio.channel_on(i);
                 },
             };
             cx.wide().row(name, "", &t, |ui, s| {
@@ -128,9 +128,12 @@ fn volumes(cx: &mut Cx) {
                     ch = true;
                 }
                 if i > 0 {
-                    ch |= widgets::checkbox(ui, &p, &mut a.enabled[i], "")
-                        .on_hover_text(tr!("ui-options-enable-this-channel"))
-                        .changed();
+                    let tip = if i == crate::settings::VOICE_CHANNEL {
+                        tr!("ui-options-enable-voice")
+                    } else {
+                        tr!("ui-options-enable-this-channel")
+                    };
+                    ch |= widgets::checkbox(ui, &p, a.channel_box(i), "").on_hover_text(tip).changed();
                 } else {
                     // the master has no enable box: its room kept, so that
                     // its slider lines up with the channels' (the row is

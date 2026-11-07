@@ -1578,6 +1578,9 @@ impl Default for ColorSettings {
 
 /// Audio channels in Firestorm's order: Main, Interface, Ambient, Sounds,
 /// Music, Multimedia, Voice.
+/// Index of the voice channel in the audio settings (`audio_channels`).
+pub const VOICE_CHANNEL: usize = 6;
+
 pub fn audio_channels() -> [&'static str; 7] {
     [
         aurora_i18n::tr!("settings-main"),
@@ -1742,6 +1745,22 @@ pub enum VoiceEar {
 }
 
 impl AudioSettings {
+    /// What the enable box of a channel switches. The voice one is the voice
+    /// connection itself, microphone included (EnableVoiceChat of
+    /// panel_preferences_sound.xml and panel_volume_pulldown.xml).
+    pub fn channel_box(&mut self, i: usize) -> &mut bool {
+        if i == VOICE_CHANNEL {
+            &mut self.voice_enabled
+        } else {
+            &mut self.enabled[i]
+        }
+    }
+
+    /// The state of [`AudioSettings::channel_box`].
+    pub fn channel_on(&self, i: usize) -> bool {
+        if i == VOICE_CHANNEL { self.voice_enabled } else { self.enabled[i] }
+    }
+
     pub fn world_voice_visualizer(&self, own: bool, in_call: bool, mouselook: bool) -> bool {
         self.voice_visualizer && (!in_call || self.voice_visualizers_in_calls) && (!own || (self.voice_visualizer_self && !mouselook))
     }
@@ -2674,6 +2693,15 @@ impl Settings {
             self.camera_limits_restored = camera.disable_constraints || camera.ignore_sim_constraints;
             camera.disable_constraints = false;
             camera.ignore_sim_constraints = false;
+        }
+        if !self.audio.enabled[VOICE_CHANNEL] {
+            // this box used to switch a mixer channel of its own, leaving
+            // voice connected and the microphone open: whoever unticked it
+            // wanted voice off. Repaired at every load, not once by version:
+            // no control ticks this channel back on, and an earlier build
+            // sharing the file can still write it
+            self.audio.enabled[VOICE_CHANNEL] = true;
+            self.audio.voice_enabled = false;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -4299,6 +4327,38 @@ mod tests {
         let mut off = Settings::default();
         off.colors.relation_names = false;
         assert!(!off.sanitized().colors.relation_names);
+    }
+
+    #[test]
+    fn a_voice_box_unticked_before_it_meant_voice_turns_voice_off() {
+        // any version: an earlier build sharing the file can write it again
+        for version in [30, SETTINGS_VERSION] {
+            let mut old = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            old.audio.enabled[VOICE_CHANNEL] = false;
+            let audio = old.sanitized().audio;
+            assert!(!audio.voice_enabled);
+            assert!(audio.enabled[VOICE_CHANNEL], "nothing else can tick this channel back on");
+        }
+        // ticked: voice stays as it was
+        assert!(Settings::default().sanitized().audio.voice_enabled);
+        // only the voice box repairs
+        let mut music = Settings::default();
+        music.audio.enabled[4] = false;
+        let audio = music.sanitized().audio;
+        assert!(audio.voice_enabled && !audio.enabled[4]);
+    }
+
+    #[test]
+    fn the_voice_box_of_every_panel_is_the_voice_connection() {
+        let mut audio = AudioSettings::default();
+        *audio.channel_box(VOICE_CHANNEL) = false;
+        assert!(!audio.voice_enabled && !audio.channel_on(VOICE_CHANNEL));
+        assert!(audio.enabled[VOICE_CHANNEL], "the mixer channel keeps playing");
+        *audio.channel_box(1) = false;
+        assert!(!audio.enabled[1] && !audio.channel_on(1));
     }
 
     #[test]
