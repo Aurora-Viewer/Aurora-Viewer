@@ -456,12 +456,7 @@ impl Playout {
 /// Decodes the incoming Opus track into the Voice channel. Each wake takes
 /// every event already queued; how many there were is the depth of
 /// webrtc's track queue at that moment ([`LinkStats::rx_wake`]).
-async fn receive_audio(
-    track: Arc<dyn TrackRemote>,
-    sink: Arc<Mutex<VoiceSink>>,
-    stats: Arc<LinkStats>,
-    mut stop: watch::Receiver<bool>,
-) {
+async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>, stats: Arc<LinkStats>, mut stop: watch::Receiver<bool>) {
     let decoder = match rusty_opus::OpusDecoder::new(48_000, 2) {
         Ok(d) => d,
         Err(e) => {

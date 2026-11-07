@@ -292,7 +292,10 @@ mod tests {
             assert_eq!(got, Duration::from_secs(5));
         }
         // A packet earlier than all before becomes the new best.
-        assert_eq!(lag.packet(t0 + Duration::from_millis(1_990), ts0.wrapping_add(960 * 100)), Duration::ZERO);
+        assert_eq!(
+            lag.packet(t0 + Duration::from_millis(1_990), ts0.wrapping_add(960 * 100)),
+            Duration::ZERO
+        );
     }
 
     #[test]
