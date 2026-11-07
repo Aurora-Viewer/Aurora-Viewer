@@ -52,8 +52,8 @@ pub fn should_apply(code: u8, pbr: bool, explicit_normal: bool) -> bool {
 }
 
 /// Convert sampled RGB values to the pseudo-height used by the Legacy
-/// Viewer brightness/darkness normal-map shader. `rgb` is in linear 0..1,
-/// matching the values returned by texture sampling.
+/// Viewer brightness/darkness normal-map shader. `rgb` is the normalized
+/// source RGB8/RGBA8 sample, without sRGB conversion (LLImageGL::createGLTexture).
 pub fn brightness_height(rgb: [f32; 3], darkness: bool) -> f32 {
     let luminance = rgb[0] * 0.2995 + rgb[1] * 0.5875 + rgb[2] * 0.1145;
     if darkness { 1.0 - luminance } else { luminance }
@@ -71,6 +71,39 @@ pub fn normal_from_height(width: usize, height: usize, heights: &[u8], scale: f3
 /// luminance differences are multiplied by 512 rather than stored as bytes
 /// (512 / 255, rounded to the matching two-byte slope).
 pub fn normal_from_height_scaled(width: usize, height: usize, heights: &[u8], scale: f32, height_scale: f32) -> Option<Vec<[u8; 4]>> {
+    let heights: Vec<_> = heights.iter().map(|&h| h as f32).collect();
+    normal_from_values(width, height, &heights, scale, height_scale, false, 1.0)
+}
+
+/// normgenF.glsl retains float luminance until writing its normalized RGBA8
+/// target. Quantizing height first would erase relief in dark gradients.
+pub fn normal_from_brightness(width: usize, height: usize, rgba: &[u8], darkness: bool) -> Option<Vec<[u8; 4]>> {
+    if rgba.len() != width.checked_mul(height)?.checked_mul(4)? {
+        return None;
+    }
+    let heights: Vec<_> = rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|pixel| {
+            brightness_height(
+                [pixel[0] as f32 / 255.0, pixel[1] as f32 / 255.0, pixel[2] as f32 / 255.0],
+                darkness,
+            )
+        })
+        .collect();
+    normal_from_values(width, height, &heights, 64.0, 512.0, true, 255.0)
+}
+
+fn normal_from_values(
+    width: usize,
+    height: usize,
+    heights: &[f32],
+    scale: f32,
+    height_scale: f32,
+    rounded: bool,
+    alpha_scale: f32,
+) -> Option<Vec<[u8; 4]>> {
     let len = width.checked_mul(height)?;
     if width == 0
         || height == 0
@@ -90,23 +123,18 @@ pub fn normal_from_height_scaled(width: usize, height: usize, heights: &[u8], sc
             let l = (x + width - 1) % width;
             let down_y = (y + 1) % height;
             let up_y = (y + height - 1) % height;
-            let center = heights[y * width + x] as f32;
-            let right = Vec3::new(scale, 0.0, (heights[y * width + r] as f32 - center) * height_scale);
-            let left = Vec3::new(-scale, 0.0, (heights[y * width + l] as f32 - center) * height_scale);
-            let up = Vec3::new(0.0, -scale, (heights[up_y * width + x] as f32 - center) * height_scale);
-            let down = Vec3::new(0.0, scale, (heights[down_y * width + x] as f32 - center) * height_scale);
+            let center = heights[y * width + x];
+            let right = Vec3::new(scale, 0.0, (heights[y * width + r] - center) * height_scale);
+            let left = Vec3::new(-scale, 0.0, (heights[y * width + l] - center) * height_scale);
+            let up = Vec3::new(0.0, -scale, (heights[up_y * width + x] - center) * height_scale);
+            let down = Vec3::new(0.0, scale, (heights[down_y * width + x] - center) * height_scale);
             let normal = (right.cross(down) + down.cross(left) + left.cross(up) + up.cross(right)).normalize_or_zero();
+            // Top-down source rows reverse the reference raw image's Y axis.
+            // Flip before quantization: 255 - floor(x) differs by one byte.
+            let normal = Vec3::new(normal.x, -normal.y, normal.z);
             let encoded = (normal * 0.5 + Vec3::splat(0.5)) * 255.0;
-            out.push([
-                encoded.x.round() as u8,
-                // Our JPEG 2000 rows are top-down. The Legacy Viewer builds
-                // these normals from bottom-up raw rows, while both shaders
-                // use the face's +T bitangent. Reverse only the generated
-                // green channel to keep the same relief orientation.
-                255 - encoded.y.round() as u8,
-                encoded.z.round() as u8,
-                heights[y * width + x],
-            ]);
+            let byte = |value: f32| if rounded { value.round() as u8 } else { value as u8 };
+            out.push([byte(encoded.x), byte(encoded.y), byte(encoded.z), byte(center * alpha_scale)]);
         }
     }
     Some(out)
@@ -181,6 +209,28 @@ mod tests {
         assert!((bright + dark - 1.0).abs() < f32::EPSILON);
         assert!(brightness_height([1.0; 3], false) > brightness_height([0.0; 3], false));
         assert!(brightness_height([1.0; 3], true) < brightness_height([0.0; 3], true));
+    }
+
+    #[test]
+    fn brightness_uses_normalized_source_bytes_and_float_shader_heights() {
+        let gray = [128, 128, 128, 255].repeat(9);
+        let map = normal_from_brightness(3, 3, &gray, false).unwrap();
+        assert!(map.iter().all(|p| p[3] == 128), "RGB8 samples are not linearized to height 55");
+        // One red byte has sub-byte luminance: quantizing height before the
+        // shader's 512 multiplier would lose or exaggerate this shallow bump.
+        let mut red = vec![0; 3 * 3 * 4];
+        red[8] = 1;
+        let bright = normal_from_brightness(3, 3, &red, false).unwrap();
+        let dark = normal_from_brightness(3, 3, &red, true).unwrap();
+        assert_ne!(bright[1][0], 128);
+        assert!((i16::from(bright[1][0]) + i16::from(dark[1][0]) - 255).abs() <= 1);
+    }
+
+    #[test]
+    fn standard_normal_quantization_matches_the_reference_unsigned_byte_cast() {
+        let flat = normal_from_height(1, 1, &[100], 64.0).unwrap();
+        assert_eq!(flat, [[127, 127, 255, 100]]);
+        assert_eq!(normal_from_height(3, 1, &[0, 100, 200], 64.0).unwrap()[1], [20, 127, 196, 100]);
     }
 
     #[test]

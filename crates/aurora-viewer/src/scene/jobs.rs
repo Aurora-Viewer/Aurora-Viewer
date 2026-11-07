@@ -160,14 +160,16 @@ pub enum JobResult {
     TextureFailed {
         id: Uuid,
     },
-    /// A generated Legacy Viewer bump normal map. `revision` identifies the
-    /// exact source level used, so stale results can be discarded safely.
+    /// A derived normal, fully prepared and staged on the worker. Its slot
+    /// stays stable across progressive updates; epoch rejects old source jobs.
     LegacyBump {
-        source_id: Uuid,
-        mode: u8,
+        id: Uuid,
+        epoch: u32,
         revision: super::textures::PreviewRevision,
-        generated_id: Uuid,
-        image: Option<Arc<aurora_render::preview::Image>>,
+        discard: u8,
+        size: Option<(u32, u32)>,
+        staged: Option<aurora_render::StagedTexture>,
+        mips: Vec<(u32, u32, Vec<u8>)>,
     },
     /// The JPEG 2000 data of a texture read from the disk cache (none: not
     /// there).

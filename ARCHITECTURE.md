@@ -3114,17 +3114,6 @@ mouselook, teleport and photo free-camera entry. Preferences › Mouse and
 keyboard › Joystick and 3D mouse (`ui/options/pages/joystick.rs`) shares the
 normal search, modified-settings and reset paths.
 
-Legacy texture-entry bump codes are resolved in `scene/legacy_bump.rs`.
-`TextureStreamer` requests the diffuse image for brightness/darkness or the
-`std_bump.ini` source for codes 3–17, then generates wrapped heightfield
-normals on the background job pool. Generated normals are keyed by the source
-image revision and bump mode, held with the face's texture references, and
-replaced when a finer source level arrives. `Scene::rebuild_faces` binds the
-result only when the face has no explicit legacy normal; PBR normal maps keep
-their material precedence. The conversion follows
-`LLBumpImageList::generateNormalMapFromAlpha` and `normgenF.glsl` in the
-Legacy Viewer. `AURORA_DEMO_LEGACY_BUMP=1` supplies local stand-in sources and
-explicit-normal/PBR controls.
 Its four button assignments capture native press counters from the selected
 device, including taps released between frames. Capture suspends controller
 actions and cancels when its row, device or application focus goes away.
@@ -3314,6 +3303,29 @@ and counters; the status line, shared between windows, shows the activity
 and the elapsed time, then the end confirmation. Errors keep the possibility
 of reloading the folders concerned, without replaying the copies or the
 moves.
+
+Legacy texture-entry bump codes are resolved in `scene/legacy_bump.rs`.
+`TextureStreamer` requests the diffuse image for brightness/darkness or the
+`std_bump.ini` source for codes 3–17, then generates wrapped heightfield
+normals and mip chains on the background job pool. `scene/legacy_bump_stream.rs`
+is a child of `scene/textures.rs`: it reserves one ordinary streamed entry and
+stable flat-normal slot per source/mode. Source revision and refresh epochs
+reject stale work. Uploads use the existing staging, page preparation and frame
+budgets; residency, resolution reduction, unused eviction and device recovery
+share the ordinary streamer. No CPU normal-image cache or whole-scene
+invalidation is retained. At most eight conversions and pending normal uploads
+are admitted together. A chain too large for the integrated GPU staging chunk
+uses the existing bounded direct-upload fallback, with mips still built by the
+worker. `Scene::rebuild_faces` binds the
+result only when the face has no explicit legacy normal; PBR normal maps keep
+their material precedence. The conversion follows
+`LLBumpImageList::generateNormalMapFromAlpha` and `normgenF.glsl` in the
+Legacy Viewer. Brightness/darkness uses normalized source RGB bytes and float
+luminance until normal encoding. Derived normal alpha is opaque because
+`deferred/bumpF.glsl` takes Shininess from vertex data, independently of height;
+explicit material normal alpha remains unchanged.
+`AURORA_DEMO_LEGACY_BUMP=1` supplies local stand-in sources and valid competing
+explicit-normal/PBR controls; `matrix` adds all four Shininess levels.
 
 ### Window surfaces
 

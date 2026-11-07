@@ -26,7 +26,7 @@ const PANEL: f32 = 1.55;
 pub fn enabled() -> bool {
     static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
         std::env::var("AURORA_DEMO").is_ok_and(|v| v.trim() == "1")
-            && std::env::var("AURORA_DEMO_LEGACY_BUMP").is_ok_and(|v| v.trim() == "1")
+            && std::env::var("AURORA_DEMO_LEGACY_BUMP").is_ok_and(|v| matches!(v.trim(), "1" | "matrix"))
     });
     *ENABLED
 }
@@ -127,36 +127,48 @@ pub fn pbr_material() -> PbrMaterial {
     }
 }
 
-fn panel(code: u32, x: f32, y: f32, material: Option<Uuid>) -> aurora_net::objects::ObjectUpdate {
+fn panel(index: u32, code: u8, shine: u8, x: f32, y: f32, material: Option<Uuid>) -> aurora_net::objects::ObjectUpdate {
     let mut entry = (*te([1.0; 4], 0, false, 0.0)).clone();
+    let pbr = material == Some(PBR_MATERIAL);
     for face in &mut entry.faces {
         face.texture = DIFFUSE;
         face.scale_s = 2.0;
         face.scale_t = 2.0;
-        face.bump_shiny_fullbright = (code as u8 & 0x1f) | (3 << 6);
-        if let Some(material) = material {
+        face.bump_shiny_fullbright = (code & 0x1f) | ((shine & 3) << 6);
+        if let Some(material) = material.filter(|_| !pbr) {
             face.material_id = material;
         }
     }
     prim(
-        FIRST_LOCAL_ID + code,
+        FIRST_LOCAL_ID + index,
         Vec3::new(x, y, floor_at(x, y) + PANEL * 0.5 + 0.2),
         Quat::IDENTITY,
         Vec3::new(0.06, PANEL, PANEL),
         shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
         Arc::new(entry),
-        ExtraParams::default(),
+        ExtraParams {
+            render_materials: if pbr {
+                (0..6).map(|face| (face, PBR_MATERIAL)).collect()
+            } else {
+                vec![]
+            },
+            ..Default::default()
+        },
         "",
     )
 }
 
 pub struct LegacyBumpDemo {
     sent: bool,
+    matrix: bool,
 }
 
 impl LegacyBumpDemo {
     pub fn from_env() -> Option<Self> {
-        enabled().then_some(Self { sent: false })
+        enabled().then(|| Self {
+            sent: false,
+            matrix: std::env::var("AURORA_DEMO_LEGACY_BUMP").is_ok_and(|v| v.trim() == "matrix"),
+        })
     }
 
     /// Inject once after the demo's initial objects. `app.rs` owns this
@@ -166,16 +178,24 @@ impl LegacyBumpDemo {
             return;
         }
         self.sent = true;
-        let mut objects = Vec::with_capacity(20);
-        for code in 0..18 {
-            let col = code % 6;
-            let row = code / 6;
-            let x = 146.0 + row as f32 * 2.4;
-            let y = 121.0 + col as f32 * 2.1;
-            objects.push(panel(code, x, y, None));
+        let mut objects = Vec::with_capacity(if self.matrix { 74 } else { 20 });
+        for index in 0..if self.matrix { 72 } else { 18 } {
+            let code = index % 18;
+            let shine = if self.matrix { (index / 18) as u8 } else { 3 };
+            let col = if self.matrix { code } else { code % 6 };
+            let row = if self.matrix { index / 18 } else { code / 6 };
+            let x = 146.0;
+            let y = if self.matrix { 109.5 } else { 121.0 } + col as f32 * 2.1;
+            let mut object = panel(index, code as u8, shine, x, y, None);
+            object.position.z += row as f32 * 2.1;
+            objects.push(object);
         }
-        objects.push(panel(18, 153.2, 123.1, Some(LEGACY_MATERIAL)));
-        objects.push(panel(19, 153.2, 125.2, Some(PBR_MATERIAL)));
+        // Competing valid bump 9 makes a precedence regression visible.
+        for (index, y, material) in [(72, 123.1, LEGACY_MATERIAL), (73, 125.2, PBR_MATERIAL)] {
+            let mut object = panel(index, 9, 3, 146.0, y, Some(material));
+            object.position.z += if self.matrix { 8.4 } else { 6.3 };
+            objects.push(object);
+        }
         world.apply(NetEvent::ObjectUpdates { handle: HANDLE, objects });
         log::info!("demo legacy bump: codes 0–17, explicit legacy normal, and PBR normal controls");
     }
@@ -184,6 +204,47 @@ impl LegacyBumpDemo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bump_precedence_controls_use_valid_bump_and_the_correct_material_channels() {
+        let legacy = panel(72, 9, 3, 0.0, 0.0, Some(LEGACY_MATERIAL));
+        let pbr = panel(73, 9, 3, 0.0, 0.0, Some(PBR_MATERIAL));
+        assert!(legacy.extra.render_materials.is_empty());
+        assert_eq!(
+            pbr.extra.render_materials,
+            (0..6).map(|face| (face, PBR_MATERIAL)).collect::<Vec<_>>()
+        );
+        for object in [&legacy, &pbr] {
+            assert!(object.texture_entry.as_ref().unwrap().faces.iter().all(|face| face.bump() == 9));
+        }
+        assert!(
+            pbr.texture_entry
+                .as_ref()
+                .unwrap()
+                .faces
+                .iter()
+                .all(|face| face.material_id.is_nil())
+        );
+        assert!(
+            legacy
+                .texture_entry
+                .as_ref()
+                .unwrap()
+                .faces
+                .iter()
+                .all(|face| face.material_id == LEGACY_MATERIAL)
+        );
+    }
+
+    #[test]
+    fn bump_fixture_covers_all_shininess_levels_including_legacy_diffuse_only() {
+        for shine in 0..4 {
+            let object = panel(0, 9, shine, 0.0, 0.0, None);
+            for face in &object.texture_entry.as_ref().unwrap().faces {
+                assert_eq!(face.shiny(), shine);
+            }
+        }
+    }
 
     #[test]
     fn standard_preset_fixture_does_not_replace_a_grid_asset() {

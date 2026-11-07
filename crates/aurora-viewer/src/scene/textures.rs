@@ -359,6 +359,58 @@ impl Counts {
 }
 
 impl Entry {
+    fn new(slot: u32, source: TexSource, max_resolution: u32) -> Self {
+        Self {
+            slot,
+            refs: 1,
+            source,
+            data: Arc::default(),
+            complete: false,
+            info: None,
+            decoded: None,
+            // Not seen yet: the coarsest level, which `recompute_wants`
+            // gives whatever is out of view. The level of a new entry was a
+            // quarter of its size, read again from the disk and decoded once
+            // the coarsest was shown, or downloaded further, for every
+            // texture of an arrival out of view: at a login on Agni, 2,208
+            // of the 3,590 decodes of the first 10 s. What is in view has
+            // its size noted before its first read
+            // (`want_before_the_first_pass`).
+            want: aurora_assets::j2k::MAX_DISCARD_LEVEL,
+            need_px: 0.0,
+            away_px: 0.0,
+            fixed_px: 0.0,
+            seen_px: 0.0,
+            max_px: cap_px(max_resolution),
+            boosted: false,
+            asked_at: None,
+            gpu_size: (0, 0),
+            fetching: false,
+            decoding: false,
+            cache_state: 0,
+            transcoded: None,
+            keep_rgba: false,
+            failures: 0,
+            retry_at: None,
+            keep_pixels: false,
+            sculpt: None,
+            alpha: AlphaKind::Opaque,
+            unused_since: None,
+            fetch_key: 0,
+            sent: 0.0,
+            cancelled: false,
+            urgent: false,
+            dirty_cache: false,
+            last_error: None,
+            error_logged: false,
+            gone: false,
+            queued: false,
+            counted: 0,
+            refresh: false,
+            epoch: 0,
+        }
+    }
+
     /// A size on screen under the maximum resolution:
     /// LLViewerFetchedTexture::processTextureStats and
     /// LLViewerLODTexture::processTextureStats (indra/newview/llviewertexture.cpp)
@@ -552,6 +604,8 @@ struct PendingUpload {
     /// `Entry::epoch` when it was decoded: one decoded before a refresh is
     /// dropped.
     epoch: u32,
+    /// Counts derived results even after their entry is evicted.
+    derived: bool,
     /// Tests: as if staged in a chunk a job still writes in.
     #[cfg(test)]
     held: bool,
@@ -689,7 +743,8 @@ struct PendingUploads {
     unready: Vec<PendingUpload>,
     /// Finest discard level waiting, per texture: a coarser one still in
     /// the queue is dropped when its turn comes (the finer one replaces it).
-    finest: HashMap<Uuid, u8>,
+    finest: HashMap<Uuid, (u32, u8)>,
+    derived: usize,
     /// Uploads waiting, per chain size: tells the renderer when to prepare
     /// the next texture page of a size (`TextureTable::prepare_page`).
     chains: HashMap<ChainSize, u32>,
@@ -702,8 +757,8 @@ impl PendingUploads {
     }
 
     /// An upload of `id` at `discard` or finer is waiting.
-    fn covers(&self, id: &Uuid, discard: u8) -> bool {
-        self.finest.get(id).is_some_and(|&f| f <= discard)
+    fn covers(&self, id: &Uuid, epoch: u32, discard: u8) -> bool {
+        self.finest.get(id).is_some_and(|&(at, f)| at == epoch && f <= discard)
     }
 
     /// Queue an upload; `first`: the texture still shows its placeholder,
@@ -720,8 +775,13 @@ impl PendingUploads {
 
     /// Put back an upload that cannot go yet, at its place.
     fn requeue(&mut self, u: PendingUpload) {
-        let finest = self.finest.entry(u.id).or_insert(u.discard);
-        *finest = (*finest).min(u.discard);
+        self.derived += usize::from(u.derived);
+        let finest = self.finest.entry(u.id).or_insert((u.epoch, u.discard));
+        if finest.0 == u.epoch {
+            finest.1 = finest.1.min(u.discard);
+        } else if u.epoch.wrapping_sub(finest.0) < u32::MAX / 2 {
+            *finest = (u.epoch, u.discard);
+        }
         if let Some(chain) = u.chain() {
             *self.chains.entry(chain).or_default() += 1;
         }
@@ -755,6 +815,7 @@ impl PendingUploads {
     /// texture; the coarser ones met on the way are retired.
     fn pop(&mut self, trash: &mut Trash<Vec<u8>>) -> Option<PendingUpload> {
         while let Some(u) = self.heap.pop() {
+            self.derived -= usize::from(u.derived);
             if let Some(chain) = u.chain()
                 && let std::collections::hash_map::Entry::Occupied(mut n) = self.chains.entry(chain)
             {
@@ -764,7 +825,7 @@ impl PendingUploads {
                 }
             }
             match self.finest.get(&u.id) {
-                Some(&f) if f < u.discard => {
+                Some(&(epoch, f)) if epoch != u.epoch || f < u.discard => {
                     u.retire(trash);
                     continue;
                 }
@@ -887,12 +948,19 @@ type Evicted = (Arc<Vec<u8>>, Option<Arc<SculptMap>>, Option<String>);
 trait SlotTable {
     /// A slot showing the grey placeholder, None when the table is full.
     fn placeholder(&mut self) -> Option<u32>;
+    fn normal_placeholder(&mut self) -> Option<u32> {
+        self.placeholder()
+    }
     fn free(&mut self, slot: u32);
     /// The slot, while it shows the placeholder, shows the missing grey.
     fn show_missing(&mut self, slot: u32) -> bool;
 }
 
 impl SlotTable for Renderer {
+    fn normal_placeholder(&mut self) -> Option<u32> {
+        self.textures.create_normal_placeholder()
+    }
+
     fn placeholder(&mut self) -> Option<u32> {
         self.textures.create_placeholder()
     }
@@ -964,15 +1032,10 @@ pub struct TextureStreamer {
     local_slots: HashMap<Uuid, u32>,
     /// Worker-prepared local pixels, shared with avatar baking and UI previews.
     local_images: HashMap<Uuid, Arc<aurora_render::preview::Image>>,
-    /// Generated Legacy Viewer bump maps keyed by source image revision.
-    legacy_bumps: HashMap<LegacyBumpKey, Uuid>,
-    legacy_bump_slots: HashMap<Uuid, GeneratedBump>,
-    legacy_bump_pending: std::collections::HashSet<LegacyBumpKey>,
-    legacy_bump_failed: std::collections::HashSet<LegacyBumpKey>,
-    legacy_bump_wanted: std::collections::HashSet<(Uuid, u8)>,
-    legacy_bump_latest: HashMap<(Uuid, u8), PreviewRevision>,
-    legacy_bump_retired: Vec<Uuid>,
-    legacy_bump_source_refs: HashMap<Uuid, u32>,
+    /// Derived maps use ordinary streamed entries, slots and memory accounting.
+    legacy_bumps: HashMap<(Uuid, u8), Uuid>,
+    legacy_bump_entries: HashMap<Uuid, legacy_bump_stream::LegacyBumpState>,
+    legacy_bump_jobs: usize,
     /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
     /// map, changes.
     pub generation: u64,
@@ -1108,18 +1171,9 @@ fn legacy_bump_diagnostics() -> bool {
     *ENABLED
 }
 
-/// Worker result payload, separated from `JobResult` for main-thread upload.
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct LegacyBumpKey {
-    source_id: Uuid,
-    mode: u8,
-    revision: PreviewRevision,
-}
+#[path = "legacy_bump_stream.rs"]
+mod legacy_bump_stream;
 
-struct GeneratedBump {
-    key: LegacyBumpKey,
-    refs: u32,
-}
 impl PreviewSource {
     /// Appearance editing can use resident pixels immediately and improve
     /// them as finer levels arrive; export still requires the original data.
@@ -1187,7 +1241,11 @@ impl PreviewSource {
         }
         let discard = self.decoded?;
         let bytes = if self.bytes.is_empty() {
-            Arc::new(crate::cache::read(&self.jpeg).ok()?)
+            Arc::new(
+                crate::cache::read(&self.jpeg)
+                    .or_else(|_| crate::cache::read(self.jpeg.with_extension("part")))
+                    .ok()?,
+            )
         } else {
             self.bytes
         };
@@ -1361,161 +1419,6 @@ impl PreviewSource {
 }
 
 impl TextureStreamer {
-    /// Return a ready generated normal-map ID, or enqueue one worker job for
-    /// this source revision. At most eight bump conversions are queued at once.
-    pub fn request_legacy_bump(&mut self, source_id: Uuid, mode: u8, source: PreviewSource, jobs: &Jobs) -> Option<Uuid> {
-        if !(1..=17).contains(&mode) {
-            return None;
-        }
-        if self.legacy_bump_wanted.insert((source_id, mode)) && mode >= 3 && legacy_bump_diagnostics() {
-            log::info!(
-                "legacy bump requested: mode={mode} decoded={:?} size={:?} bytes={}",
-                source.decoded,
-                source.size,
-                source.bytes.len()
-            );
-        }
-        self.schedule_legacy_bump(source_id, mode, source, jobs)
-    }
-
-    fn schedule_legacy_bump(&mut self, source_id: Uuid, mode: u8, source: PreviewSource, jobs: &Jobs) -> Option<Uuid> {
-        // The worker decodes the exact resident level, including levels finer
-        // than the small inspector preview. Refresh when that level changes.
-        let revision = source.bake_revision();
-        self.legacy_bump_latest.insert((source_id, mode), revision);
-        let key = LegacyBumpKey { source_id, mode, revision };
-        if let Some(id) = self.legacy_bumps.get(&key).copied() {
-            return Some(id);
-        }
-        if self.legacy_bump_failed.contains(&key) {
-            return None;
-        }
-        if self.legacy_bump_pending.contains(&key) || self.legacy_bump_pending.len() >= 8 {
-            return None;
-        }
-        if source.local.is_none() && source.decoded.is_none() && !source.procedural {
-            return None;
-        }
-        let generated_id = legacy_bump_id(key);
-        self.legacy_bump_pending.insert(key);
-        log::debug!("legacy bump normal queued: mode={mode} source={source_id} revision={revision:?} generated={generated_id}");
-        jobs.spawn(move || {
-            let image = (if mode >= 3 {
-                source.standard_bump_image(source_id, mode)
-            } else {
-                source.inspector_image(source_id)
-            })
-            .and_then(|src| legacy_bump_image(src, mode));
-            JobResult::LegacyBump {
-                source_id,
-                mode,
-                revision,
-                generated_id,
-                image,
-            }
-        });
-        None
-    }
-
-    /// Accept a completed worker result and upload its local image. The
-    /// result is ignored if a newer request already replaced its revision.
-    pub fn on_legacy_bump_job(&mut self, renderer: &mut Renderer, result: JobResult) -> Option<Uuid> {
-        let JobResult::LegacyBump {
-            source_id,
-            mode,
-            revision,
-            generated_id,
-            image,
-        } = result
-        else {
-            return None;
-        };
-        let key = LegacyBumpKey { source_id, mode, revision };
-        self.legacy_bump_pending.remove(&key);
-        if !self.legacy_bump_wanted.contains(&(source_id, mode)) || self.legacy_bump_latest.get(&(source_id, mode)) != Some(&revision) {
-            return None;
-        }
-        let Some(image) = image else {
-            self.legacy_bump_failed.insert(key);
-            if mode >= 3 && legacy_bump_diagnostics() {
-                log::info!("legacy bump generation failed: mode={mode} revision={revision:?}");
-            }
-            log::debug!("legacy bump normal failed: mode={mode} source={source_id} revision={revision:?} generated={generated_id}");
-            return None;
-        };
-        let (width, height) = (image.size[0], image.size[1]);
-        let rgba = image.rgba.to_vec();
-        // The normal texture's alpha carries the source height for legacy
-        // gloss modulation. It does not make the face transparent.
-        let alpha = AlphaKind::Opaque;
-        let has_alpha = false;
-        let levels = build_mips(width, height, rgba, 16);
-        let mips: Vec<MipLevel> = levels
-            .iter()
-            .map(|(width, height, data)| MipLevel {
-                width: *width,
-                height: *height,
-                data,
-            })
-            .collect();
-        let slot = renderer.create_texture(&mips)?;
-        if mode >= 3 && legacy_bump_diagnostics() {
-            log::info!("legacy bump generated: mode={mode} size={width}x{height} slot={slot}");
-        }
-        self.register_local_image(generated_id, slot, alpha, has_alpha);
-        // A generated image replaces the face's prior normal source, so the
-        // scene must rebuild its material lists even when alpha stayed opaque.
-        self.generation = self.generation.wrapping_add(1);
-        self.alpha_changes.push(slot);
-        self.local_images.insert(generated_id, image);
-        self.legacy_bumps.insert(key, generated_id);
-        self.legacy_bump_slots.insert(generated_id, GeneratedBump { key, refs: 0 });
-        log::debug!(
-            "legacy bump normal ready: mode={mode} source={source_id} revision={revision:?} generated={generated_id} size={}x{}",
-            width,
-            height
-        );
-        self.legacy_bump_failed.remove(&key);
-        // Retire superseded revisions once their last face releases them.
-        let stale: Vec<_> = self
-            .legacy_bump_slots
-            .iter()
-            .filter_map(|(id, generated)| {
-                (generated.key.source_id == source_id && generated.key.mode == mode && *id != generated_id && generated.refs == 0)
-                    .then_some(*id)
-            })
-            .collect();
-        for id in stale {
-            self.evict_legacy_bump(renderer, id);
-        }
-        // Keep the local derived-image cache bounded.
-        while self.legacy_bump_slots.len() > 128 {
-            let Some(id) = self
-                .legacy_bump_slots
-                .iter()
-                .find_map(|(id, generated)| (generated.refs == 0).then_some(*id))
-            else {
-                break;
-            };
-            if id == generated_id {
-                break;
-            }
-            self.evict_legacy_bump(renderer, id);
-        }
-        Some(generated_id)
-    }
-
-    fn evict_legacy_bump(&mut self, renderer: &mut Renderer, id: Uuid) {
-        let Some(generated) = self.legacy_bump_slots.remove(&id) else {
-            return;
-        };
-        self.legacy_bumps.remove(&generated.key);
-        if let Some(slot) = self.local_slots.remove(&id) {
-            renderer.free_texture(slot);
-        }
-        self.local_images.remove(&id);
-    }
-
     pub fn new(cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(cache_dir.join("tex"));
         TextureStreamer {
@@ -1561,13 +1464,8 @@ impl TextureStreamer {
             local_slots: HashMap::new(),
             local_images: HashMap::new(),
             legacy_bumps: HashMap::new(),
-            legacy_bump_slots: HashMap::new(),
-            legacy_bump_pending: std::collections::HashSet::new(),
-            legacy_bump_failed: std::collections::HashSet::new(),
-            legacy_bump_wanted: std::collections::HashSet::new(),
-            legacy_bump_latest: HashMap::new(),
-            legacy_bump_retired: Vec::new(),
-            legacy_bump_source_refs: HashMap::new(),
+            legacy_bump_entries: HashMap::new(),
+            legacy_bump_jobs: 0,
             generation: 0,
             max_decodes: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2),
             decodes: 0,
@@ -1797,9 +1695,6 @@ impl TextureStreamer {
         if id == aurora_prim::te::BLANK_TEXTURE {
             return aurora_render::textures::WHITE;
         }
-        if self.legacy_bump_wanted.iter().any(|(source_id, _)| *source_id == id) {
-            *self.legacy_bump_source_refs.entry(id).or_default() += 1;
-        }
         if let Some(e) = self.entries.get_mut(&id) {
             e.refs += 1;
             e.unused_since = None;
@@ -1809,69 +1704,11 @@ impl TextureStreamer {
             Self::settle(&mut self.todo, &mut self.counts, id, e);
             return e.slot;
         }
-        // Generated normal maps are viewer-local and must survive a device reset.
-        if self.legacy_bump_slots.contains_key(&id)
-            && let Some(slot) = self.local_slots.get(&id).copied()
-        {
-            if let Some(generated) = self.legacy_bump_slots.get_mut(&id) {
-                if generated.refs == 0 && generated.key.mode >= 3 && legacy_bump_diagnostics() {
-                    log::info!("legacy bump bound: mode={} slot={slot}", generated.key.mode);
-                }
-                generated.refs = generated.refs.saturating_add(1);
-            }
-            return slot;
-        }
-        if self.legacy_bump_slots.contains_key(&id)
-            && let Some(image) = self.local_images.get(&id).cloned()
-        {
-            let rgba = image.rgba.to_vec();
-            let alpha = AlphaKind::Opaque;
-            let levels = build_mips(image.size[0], image.size[1], rgba, 16);
-            let mips: Vec<MipLevel> = levels
-                .iter()
-                .map(|(width, height, data)| MipLevel {
-                    width: *width,
-                    height: *height,
-                    data,
-                })
-                .collect();
-            if let Some(slot) = renderer.create_texture(&mips) {
-                set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
-                self.alpha_channel_by_slot.resize(self.alpha_by_slot.len(), false);
-                self.alpha_channel_by_slot[slot as usize] = false;
-                self.local_slots.insert(id, slot);
-                if let Some(generated) = self.legacy_bump_slots.get_mut(&id) {
-                    generated.refs = generated.refs.saturating_add(1);
-                }
-                return slot;
-            }
-        }
-        // procedural textures of the offline demo (never streamed)
+        // Procedural textures belong only to the offline demo.
         if let Some(slot) = self.local_slots.get(&id).copied() {
-            if self.legacy_bump_wanted.iter().any(|(source_id, _)| *source_id == id)
-                && !self.local_images.contains_key(&id)
-                && let Some((pixels, width, height)) = crate::demo::local_texture(&id)
-            {
-                self.local_images.insert(
-                    id,
-                    Arc::new(aurora_render::preview::Image {
-                        size: [width, height],
-                        rgba: pixels.into(),
-                    }),
-                );
-            }
             return slot;
         }
         if let Some((px, w, h)) = crate::demo::local_texture(&id) {
-            if self.legacy_bump_wanted.iter().any(|(source_id, _)| *source_id == id) {
-                self.local_images.insert(
-                    id,
-                    Arc::new(aurora_render::preview::Image {
-                        size: [w, h],
-                        rgba: px.clone().into(),
-                    }),
-                );
-            }
             let alpha = super::jobs::classify_alpha(&px);
             let pick_mask = (alpha != AlphaKind::Opaque).then(|| PickMask::from_rgba(w, h, &px)).flatten();
             let levels = mips_for(w, h, px, if crate::demo::local_texture_mips(&id) { 16 } else { 1 }, alpha);
@@ -1902,55 +1739,10 @@ impl TextureStreamer {
             slot,
             AlphaKind::Opaque,
         );
-        let e = self.entries.entry(id).or_insert(Entry {
-            slot,
-            refs: 1,
-            source,
-            data: Arc::default(),
-            complete: false,
-            info: None,
-            decoded: None,
-            // Not seen yet: the coarsest level, which `recompute_wants`
-            // gives whatever is out of view. The level of a new entry was a
-            // quarter of its size, read again from the disk and decoded once
-            // the coarsest was shown, or downloaded further, for every
-            // texture of an arrival out of view: at a login on Agni, 2,208
-            // of the 3,590 decodes of the first 10 s. What is in view has
-            // its size noted before its first read
-            // (`want_before_the_first_pass`).
-            want: aurora_assets::j2k::MAX_DISCARD_LEVEL,
-            need_px: 0.0,
-            away_px: 0.0,
-            fixed_px: 0.0,
-            seen_px: 0.0,
-            max_px: cap_px(self.max_resolution),
-            boosted: false,
-            asked_at: None,
-            gpu_size: (0, 0),
-            fetching: false,
-            decoding: false,
-            cache_state: 0,
-            transcoded: None,
-            keep_rgba: false,
-            failures: 0,
-            retry_at: None,
-            keep_pixels: false,
-            sculpt: None,
-            alpha: AlphaKind::Opaque,
-            unused_since: None,
-            fetch_key: 0,
-            sent: 0.0,
-            cancelled: false,
-            urgent: false,
-            dirty_cache: false,
-            last_error: None,
-            error_logged: false,
-            gone: false,
-            queued: false,
-            counted: 0,
-            refresh: false,
-            epoch: 0,
-        });
+        let e = self
+            .entries
+            .entry(id)
+            .or_insert_with(|| Entry::new(slot, source, self.max_resolution));
         e.urgent = own_bake(&self.own_bakes, &e.source);
         Self::settle(&mut self.todo, &mut self.counts, id, e);
         if slot == NO_SLOT {
@@ -1989,6 +1781,9 @@ impl TextureStreamer {
     /// transparent, those of the demo) are left alone, as Firestorm leaves
     /// IMG_DEFAULT and its default textures. Returns whether it was asked.
     pub fn refresh(&mut self, id: &Uuid) -> bool {
+        if self.legacy_bump_entries.contains_key(id) {
+            return false; // The face also refreshes its real height source.
+        }
         if id.is_nil() || is_builtin_transparent(id) || *id == aurora_prim::te::BLANK_TEXTURE || self.local_slots.contains_key(id) {
             return false;
         }
@@ -2022,6 +1817,7 @@ impl TextureStreamer {
         self.first_texels.clear();
         self.reductions.clear();
         self.local_slots.clear();
+        self.reset_legacy_bumps();
         self.slotless = 0;
         self.slotless_unreported = 0;
         self.slotless_ids.clear();
@@ -2035,7 +1831,11 @@ impl TextureStreamer {
             if !self.entries.contains_key(&id) {
                 continue;
             }
-            let slot = self.new_slot(new);
+            let slot = if self.legacy_bump_entries.contains_key(&id) {
+                new.normal_placeholder().unwrap_or(NO_SLOT)
+            } else {
+                self.new_slot(new)
+            };
             let Some(e) = self.entries.get_mut(&id) else {
                 if slot != NO_SLOT {
                     new.free(slot);
@@ -2056,7 +1856,9 @@ impl TextureStreamer {
             e.decoded = None;
             e.gpu_size = (0, 0);
             e.alpha = AlphaKind::Opaque;
-            if !e.busy() {
+            if self.legacy_bump_entries.contains_key(&id) {
+                e.cache_state = 2;
+            } else if !e.busy() {
                 // 3: shown from the transcoded cache, read it again; 2 with
                 // the data in memory: decoded again from it
                 e.cache_state = if e.cache_state == 3 || e.data.is_empty() { 0 } else { 2 };
@@ -2187,6 +1989,7 @@ impl TextureStreamer {
             let Some(e) = self.entries.remove(&id) else {
                 continue;
             };
+            self.forget_legacy_bump(id);
             self.counts.change(e.counted, 0);
             if let Some(mask) = self.pick_masks.remove(&id) {
                 self.trash.push(mask.bits);
@@ -2215,6 +2018,9 @@ impl TextureStreamer {
     /// have loaded since), in its own slot (an evicted one gave it back).
     fn show_unavailable(&mut self, table: &mut impl SlotTable) {
         for id in std::mem::take(&mut self.unavailable) {
+            if self.legacy_bump_entries.contains_key(&id) {
+                continue; // An unavailable normal stays flat, never missing-grey.
+            }
             if let Some(e) = self.entries.get(&id).filter(|e| e.unavailable() && e.slot != NO_SLOT) {
                 table.show_missing(e.slot);
             }
@@ -2273,25 +2079,6 @@ impl TextureStreamer {
     }
 
     pub fn release(&mut self, id: &Uuid) {
-        if let Some(generated) = self.legacy_bump_slots.get_mut(id) {
-            generated.refs = generated.refs.saturating_sub(1);
-            if generated.refs == 0
-                && self.legacy_bump_latest.get(&(generated.key.source_id, generated.key.mode)) != Some(&generated.key.revision)
-                && !self.legacy_bump_retired.contains(id)
-            {
-                self.legacy_bump_retired.push(*id);
-            }
-            return;
-        }
-        if let Some(refs) = self.legacy_bump_source_refs.get_mut(id) {
-            *refs = refs.saturating_sub(1);
-            if *refs == 0 {
-                self.legacy_bump_source_refs.remove(id);
-                self.legacy_bump_wanted.retain(|(source_id, _)| source_id != id);
-                self.legacy_bump_latest.retain(|(source_id, _), _| source_id != id);
-                self.legacy_bump_failed.retain(|key| key.source_id != *id);
-            }
-        }
         if let Some(e) = self.entries.get_mut(id) {
             let held = e.refs > 0;
             e.refs = e.refs.saturating_sub(1);
@@ -2565,6 +2352,7 @@ impl TextureStreamer {
             counts,
             moved,
             dropped: dropped_fetches,
+            legacy_bump_entries,
             ..
         } = self;
         reductions.clear();
@@ -2584,7 +2372,8 @@ impl TextureStreamer {
             e.want = if full && in_view && e.source == TexSource::Asset { 0 } else { want };
             // (still on its way: there is somewhere to download it from, or
             // what is held of it has more to give)
-            let reachable = can_fetch || e.fetching || e.decoding || !e.data.is_empty() || e.cache_state < 2;
+            let reachable =
+                can_fetch || e.fetching || e.decoding || !e.data.is_empty() || e.cache_state < 2 || legacy_bump_entries.contains_key(id);
             if in_view
                 && e.refs > 0
                 && e.source == TexSource::Asset
@@ -2735,6 +2524,7 @@ impl TextureStreamer {
     /// lookup each. A texture is visited at each frame while it waits for a
     /// retry delay, a decode slot or its upload, as it was before the list.
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>) {
+        self.update_legacy_bumps(jobs);
         self.can_fetch = viewer_asset.is_some();
         for key in self.dropped.drain(..) {
             fetcher.cancel(key);
@@ -2771,6 +2561,7 @@ impl TextureStreamer {
             counts,
             forgotten,
             trash,
+            legacy_bump_entries,
             ..
         } = self;
         if *bc7_cache && cache_writer.is_none() {
@@ -2784,6 +2575,10 @@ impl TextureStreamer {
         let mut to_decode: Vec<(UploadPriority, Uuid, u8)> = Vec::new();
         {
             let mut visit = |id: Uuid, e: &mut Entry| {
+                // Derived normals have no network or disk-cache identity.
+                if legacy_bump_entries.contains_key(&id) {
+                    return;
+                }
                 if e.refresh {
                     // (listed only once nothing of it is under way)
                     if e.busy() {
@@ -2835,7 +2630,7 @@ impl TextureStreamer {
                     // wanted: from that file again if it holds it, else the
                     // JPEG 2000 data is read at last, for a decode
                     let from_file = blocks_do && e.transcoded.is_some_and(|finest| e.want >= finest);
-                    if from_file && uploads.covers(&id, e.want) {
+                    if from_file && uploads.covers(&id, e.epoch, e.want) {
                         return;
                     }
                     e.cache_state = 1;
@@ -2884,7 +2679,7 @@ impl TextureStreamer {
                         // sent): decoding it again each time a decode slot frees up
                         // was half of the decodes of an arrival (AURORA_DEMO_STREAM
                         // with j2k=, 9000 textures: 9126 of 18129).
-                        if !e.needs_sculpt_pixels() && uploads.covers(&id, discard) {
+                        if !e.needs_sculpt_pixels() && uploads.covers(&id, e.epoch, discard) {
                             break 'decode;
                         }
                         // (given a slot below, once every texture was seen)
@@ -3241,6 +3036,7 @@ impl TextureStreamer {
                         pick_mask,
                         priority: UploadPriority::default(),
                         epoch: e.epoch,
+                        derived: self.legacy_bump_entries.contains_key(&id),
                         #[cfg(test)]
                         held: false,
                     },
@@ -3395,7 +3191,7 @@ impl TextureStreamer {
                 u.retire(&mut self.trash);
                 continue;
             };
-            if e.decoded.is_some_and(|d| d <= u.discard) {
+            if e.decoded.is_some_and(|d| d <= u.discard) && !self.legacy_bump_entries.contains_key(&u.id) {
                 u.retire(&mut self.trash);
                 continue;
             }
@@ -3539,18 +3335,6 @@ impl TextureStreamer {
         self.trash.empty(jobs);
         self.stats.uploaded_bytes_frame = spent;
         self.stats.uploads_frame = done;
-        for id in std::mem::take(&mut self.legacy_bump_retired) {
-            if self.legacy_bump_slots.get(&id).is_some_and(|generated| generated.refs == 0) {
-                self.evict_legacy_bump(renderer, id);
-            }
-        }
-        // Keep requests made before the asset decoded and refresh them as
-        // finer resident image revisions become available.
-        let wanted: Vec<_> = self.legacy_bump_wanted.iter().copied().collect();
-        for (source_id, mode) in wanted {
-            let source = self.preview_source(&source_id);
-            self.schedule_legacy_bump(source_id, mode, source, jobs);
-        }
     }
 
     /// Keep the memory budget, evict unused textures and persist downloaded
@@ -3928,30 +3712,6 @@ fn mips_for(width: u32, height: u32, rgba: Vec<u8>, levels: u32, alpha: AlphaKin
     mips
 }
 
-fn legacy_bump_id(key: LegacyBumpKey) -> Uuid {
-    // Two independently seeded FNV-1a streams make a stable local UUID from
-    // the full key without enabling a UUID generation feature in the crate.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(key.source_id.as_bytes());
-    bytes.push(key.mode);
-    bytes.extend_from_slice(&(key.revision.0 as u64).to_le_bytes());
-    bytes.push(key.revision.1.unwrap_or(u8::MAX));
-    bytes.extend_from_slice(&key.revision.2.unwrap_or_default().0.to_le_bytes());
-    bytes.extend_from_slice(&key.revision.2.unwrap_or_default().1.to_le_bytes());
-    bytes.push(u8::from(key.revision.3));
-    let hash = |seed: u64| {
-        bytes
-            .iter()
-            .fold(seed, |h, byte| (h ^ u64::from(*byte)).wrapping_mul(0x100000001b3))
-    };
-    let mut uuid = [0; 16];
-    uuid[..8].copy_from_slice(&hash(0xcbf29ce484222325).to_be_bytes());
-    uuid[8..].copy_from_slice(&hash(0x84222325cbf29ce4).to_be_bytes());
-    uuid[6] = (uuid[6] & 0x0f) | 0x50;
-    uuid[8] = (uuid[8] & 0x3f) | 0x80;
-    Uuid::from_bytes(uuid)
-}
-
 fn standard_bump_rgba(components: u8, data: &[u8], pixels: usize) -> Option<Vec<u8>> {
     let channels = usize::from(components);
     if !(1..=4).contains(&channels) || data.len() != pixels.checked_mul(channels)? {
@@ -3967,45 +3727,24 @@ fn standard_bump_rgba(components: u8, data: &[u8], pixels: usize) -> Option<Vec<
 fn legacy_bump_image(source: Arc<aurora_render::preview::Image>, mode: u8) -> Option<Arc<aurora_render::preview::Image>> {
     let [width, height] = source.size;
     let pixels = width.checked_mul(height)? as usize;
-    if width == 0 || height == 0 || source.rgba.len() != pixels.checked_mul(4)? {
+    if !(1..=17).contains(&mode) || width == 0 || height == 0 || source.rgba.len() != pixels.checked_mul(4)? {
         return None;
     }
-    let heights: Vec<u8> = source
-        .rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|pixel| match mode {
-            1 => {
-                let rgb = [srgb_to_linear(pixel[0]), srgb_to_linear(pixel[1]), srgb_to_linear(pixel[2])];
-                (super::legacy_bump::brightness_height(rgb, false) * 255.0).round() as u8
-            }
-            2 => {
-                let rgb = [srgb_to_linear(pixel[0]), srgb_to_linear(pixel[1]), srgb_to_linear(pixel[2])];
-                (super::legacy_bump::brightness_height(rgb, true) * 255.0).round() as u8
-            }
-            3..=17 => pixel[3],
-            _ => 0,
-        })
-        .collect();
-    // normgenF.glsl multiplies luminance deltas by 512; standard alpha
-    // heights use byte deltas directly. Keep its default horizontal scale 64.
-    let height_scale = if mode <= 2 { 512.0 / 255.0 } else { 1.0 };
-    let normals = super::legacy_bump::normal_from_height_scaled(width as usize, height as usize, &heights, 64.0, height_scale)?;
-    let rgba = normals.into_iter().flatten().collect::<Vec<_>>();
+    let normals = if mode <= 2 {
+        super::legacy_bump::normal_from_brightness(width as usize, height as usize, &source.rgba, mode == 2)?
+    } else {
+        let heights: Vec<_> = source.rgba.as_chunks::<4>().0.iter().map(|pixel| pixel[3]).collect();
+        super::legacy_bump::normal_from_height(width as usize, height as usize, &heights, 64.0)?
+    };
+    // PASS_BUMP (deferred/bumpF.glsl) uses vertex Shininess, ignoring bump
+    // alpha. Our shared material shader multiplies gloss by normal alpha;
+    // opaque derived alpha preserves that reference behavior without changing
+    // the alpha of explicit normal maps or the face's transparency.
+    let rgba = normals.into_iter().flat_map(|[r, g, b, _]| [r, g, b, 255]).collect::<Vec<_>>();
     Some(Arc::new(aurora_render::preview::Image {
         size: [width, height],
         rgba: rgba.into(),
     }))
-}
-
-fn srgb_to_linear(value: u8) -> f32 {
-    let value = value as f32 / 255.0;
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 /// Where a decode job leaves its result in the transcoded cache.
@@ -4265,8 +4004,8 @@ mod tests {
         assert!(normal.rgba.as_chunks::<4>().0.iter().any(|p| p[0] != 128 || p[1] != 128));
         assert_eq!(
             normal.rgba.as_chunks::<4>().0.iter().map(|p| p[3]).collect::<Vec<_>>(),
-            mono,
-            "the generated normal retains height in alpha for gloss modulation"
+            vec![255; mono.len()],
+            "texture-entry bump does not modulate Shininess"
         );
     }
 
@@ -4288,30 +4027,6 @@ mod tests {
         for (source, pixel) in source_pixels.as_chunks::<3>().0.iter().zip(image.rgba.as_chunks::<4>().0) {
             assert_eq!(pixel[3], source[2]);
         }
-    }
-
-    #[test]
-    fn legacy_bump_cache_keys_separate_modes_and_source_revisions() {
-        let source = Uuid::from_u128(17);
-        let revision = (0, Some(3), Some((64, 32)), false);
-        let first = LegacyBumpKey {
-            source_id: source,
-            mode: 9,
-            revision,
-        };
-        let finer = LegacyBumpKey {
-            source_id: source,
-            mode: 9,
-            revision: (0, Some(2), Some((64, 32)), false),
-        };
-        let other_mode = LegacyBumpKey {
-            source_id: source,
-            mode: 10,
-            revision,
-        };
-        assert_eq!(legacy_bump_id(first), legacy_bump_id(first));
-        assert_ne!(legacy_bump_id(first), legacy_bump_id(finer));
-        assert_ne!(legacy_bump_id(first), legacy_bump_id(other_mode));
     }
 
     #[test]
@@ -4353,8 +4068,8 @@ mod tests {
             .zip(brightness.rgba.as_chunks::<4>().0)
             .zip(darkness.rgba.as_chunks::<4>().0)
         {
-            assert_eq!(standard[3], src[3]);
-            assert!((i16::from(brightness[3]) + i16::from(darkness[3]) - 255).abs() <= 1);
+            let _ = src;
+            assert_eq!([standard[3], brightness[3], darkness[3]], [255; 3]);
         }
     }
 
@@ -5319,6 +5034,7 @@ mod tests {
             pick_mask: None,
             priority: UploadPriority::default(),
             epoch: 0,
+            derived: false,
             held: false,
         }
     }
@@ -5741,14 +5457,34 @@ mod tests {
     fn waiting_upload_covers_its_level_and_the_coarser_ones() {
         let mut q = PendingUploads::default();
         let mut trash = Trash::default();
-        assert!(!q.covers(&id(1), 5));
+        assert!(!q.covers(&id(1), 0, 5));
         q.push(pending(1, 2), true, 100.0);
         // no decode again at 2 or coarser while it waits; a finer one may go
-        assert!(q.covers(&id(1), 2) && q.covers(&id(1), 5));
-        assert!(!q.covers(&id(1), 1) && !q.covers(&id(2), 5));
+        assert!(q.covers(&id(1), 0, 2) && q.covers(&id(1), 0, 5));
+        assert!(!q.covers(&id(1), 0, 1) && !q.covers(&id(2), 0, 5));
         // once it left for the GPU, the texture's `decoded` level takes over
         assert!(q.pop(&mut trash).is_some());
-        assert!(!q.covers(&id(1), 5));
+        assert!(!q.covers(&id(1), 0, 5));
+    }
+
+    #[test]
+    fn bump_new_source_epoch_replaces_a_finer_pending_old_upload() {
+        let mut q = PendingUploads::default();
+        let mut trash = Trash::default();
+        let mut old = pending(1, 0);
+        old.derived = true;
+        q.push(old, true, 100.0);
+        let mut current = pending(1, 3);
+        current.epoch = 1;
+        current.derived = true;
+        q.push(current, true, 100.0);
+        assert_eq!(q.derived, 2);
+        assert!(!q.covers(&id(1), 0, 0));
+        assert!(q.covers(&id(1), 1, 3));
+        let upload = q.pop(&mut trash).unwrap();
+        assert_eq!((upload.epoch, upload.discard), (1, 3));
+        assert_eq!(q.derived, 0);
+        assert!(q.pop(&mut trash).is_none());
     }
 
     #[test]
@@ -6030,5 +5766,46 @@ mod tests {
         let e = &b.s.entries[&id];
         assert!(e.data.is_empty() && !e.fetching);
         assert!(!e.has_work());
+    }
+}
+#[cfg(test)]
+mod legacy_bump_cache_tests {
+    use super::*;
+
+    #[test]
+    fn brightness_and_darkness_can_use_bc7_only_sources() {
+        let id = Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("aurora-review-bump-{id}.bc7"));
+        let mips = build_mips(16, 16, [25, 100, 200, 255].repeat(16 * 16), 16);
+        let blocks = aurora_render::bc7::encode_chain(&mips, false).expect("fixture blocks");
+        let meta = texture_cache::Meta {
+            info: aurora_assets::J2kInfo {
+                width: 16,
+                height: 16,
+                components: 3,
+                levels: 5,
+            },
+            discard: 0,
+            alpha: AlphaKind::Opaque,
+            alpha_channel: false,
+        };
+        std::fs::write(&path, texture_cache::encode(&meta, None, &blocks).unwrap()).unwrap();
+        let source = PreviewSource {
+            local: None,
+            bytes: Arc::new(Vec::new()),
+            jpeg: path.with_extension("missing-j2c"),
+            blocks: path.clone(),
+            decoded: Some(0),
+            size: Some((16, 16)),
+            procedural: false,
+        };
+        assert!(source.clone().bake_image(id).is_some(), "existing resident source works");
+        assert!(source.clone().standard_bump_image(id, 9).is_some(), "standard source works");
+        let result = source.clone().bake_image(id).and_then(|pixels| legacy_bump_image(pixels, 1));
+        let dark = source.bake_image(id).and_then(|pixels| legacy_bump_image(pixels, 2));
+        std::fs::remove_file(path).unwrap();
+        assert!(result.is_some(), "brightness/darkness worker must also read resident BC7");
+        assert!(dark.is_some());
+        assert!(result.unwrap().rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
     }
 }
