@@ -2626,6 +2626,8 @@ mod tests {
                         );
                     },
                 );
+                // Headless tests do not submit texture uploads to a renderer.
+                output.textures_delta.clear();
             }
             let mut positions = Vec::new();
             for shape in &output.shapes {
