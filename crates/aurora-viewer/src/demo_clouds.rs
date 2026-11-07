@@ -36,7 +36,7 @@ pub fn scenario() -> Option<&'static str> {
 }
 
 /// Name, `cloud_shadow` (the cover).
-const PRESETS: [(&str, f32); 4] = [("fair", 0.27), ("broken", 0.38), ("stratocumulus", 0.45), ("overcast", 0.62)];
+const PRESETS: [(&str, f32); 4] = [("fair", 0.27), ("broken", 0.37), ("stratocumulus", 0.42), ("overcast", 0.62)];
 
 fn arr(v: &[f32]) -> Llsd {
     Llsd::Array(v.iter().map(|x| Llsd::Real(*x as f64)).collect())

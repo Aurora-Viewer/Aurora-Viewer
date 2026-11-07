@@ -4174,13 +4174,13 @@ both open states and the selection count. Capture at frame 620.
   same sky, for the before / after) and the region answers with a fixed
   afternoon (`demo_clouds.rs`): the sun about 50° up in the south-east, the
   Legacy Viewer's default haze and cloud colours, the cover of the preset
-  through `cloud_shadow` (0.27 `fair`, 0.38 `broken`, 0.45 `stratocumulus`,
+  through `cloud_shadow` (0.27 `fair`, 0.37 `broken`, 0.42 `stratocumulus`,
   0.62 `overcast`), which gives the cloud type and so the layer: cumulus
   1.2 to 3 km above the camera, a lumpy sheet at 0.6 to 1.5 km, a stratus
   slab at 0.4 to 0.9 km. The camera looks east, 12° up, from behind the
   avatar. The volumetric layer takes about 16 frames after the switch to
   make its noise (the Legacy layer shows meanwhile), so capture from
-  `AURORA_CAPTURE_FRAMES=620`. What to look at: separate heaps with flat
+  `AURORA_CAPTURE_FRAMES=2500` (the loading fade of the interface ends first). What to look at: separate heaps with flat
   bases and bright rims for `fair`, rows that merge towards the horizon, a
   grey uniform sheet for `overcast`, no hard edge at the horizon (the far
   clouds melt into the haze), the sun's disc and the stars behind the

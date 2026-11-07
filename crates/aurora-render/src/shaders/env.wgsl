@@ -405,7 +405,7 @@ fn fs_cloud_weather(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32>
     let n1 = cloud_noise(uv) - 0.5;
     let detail = cloud_noise(uv * 8.0);
     let x = n1 + (detail - 0.5) * pd2.z * 0.6 + density;
-    return vec4<f32>(smoothstep(0.0, 0.3, x), 0.0, detail, 0.0);
+    return vec4<f32>(smoothstep(-0.05, 0.45, x), 0.0, detail, 0.0);
 }
 
 fn sky_pixel(in: SkyOut) -> vec4<f32> {

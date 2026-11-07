@@ -51,15 +51,17 @@ struct U {
 const PI: f32 = 3.14159265;
 const R_PLANET: f32 = 6371.0;
 const FAR_KM: f32 = 45.0;
-const BASE_KM: f32 = 10.0;
-const BASE_Y: f32 = 2.0;     // the base noise is stretched vertically: heaps wider than tall
+const BASE_KM: f32 = 5.0;
+const BASE_Y: f32 = 1.0;
 const DETAIL_KM: f32 = 0.45;
 const CURL_KM: f32 = 3.0;
+const STEP_WARP: f32 = 1.6;
 const SIGMA: f32 = 110.0;    // extinction per km at density 1
 // Brightness of the lit side and of the sky light on a cloud against the
-// Legacy layer's for the same sky, found by eye on the demo skies side by
-// side.
-const SUN_GAIN: f32 = 2.2;
+// Legacy layer's for the same sky: the thick cloud of a demo sky stays at
+// the Legacy layer's mean luminance, and the lit tops reach the white of a
+// real cumulus (the bench reference); fitted on the demo skies side by side.
+const SUN_GAIN: f32 = 2.5;
 const AMB_GAIN: f32 = 0.9;
 
 fn yup(v: vec3f) -> vec3f { return vec3f(v.x, v.z, v.y); }
@@ -179,11 +181,11 @@ fn weather_at(p: vec3f, off: vec2f) -> vec4f {
 }
 
 fn height_grad(hf: f32, t: f32, top: f32) -> f32 {
-    // Flat bases for every type; stratus a slab, stratocumulus a lumpy
-    // sheet, cumulus a rounded dome whose top varies (B).
-    let top_end = mix(1.0, mix(0.35, 1.0, top), t);
-    let base_ramp = smoothstep(0.0, mix(0.2, 0.07, t), hf);
-    let top_fall = 1.0 - smoothstep(mix(0.7, 0.25, t) * top_end, top_end, hf);
+    // Rounded bottoms and tops for every type: stratus a slab, stratocumulus
+    // a lumpy sheet, cumulus a dome whose top varies with `top`.
+    let top_end = mix(1.0, mix(0.45, 1.0, top), t);
+    let base_ramp = smoothstep(0.0, mix(0.35, 0.18, t), hf);
+    let top_fall = 1.0 - smoothstep(mix(0.55, 0.15, t) * top_end, top_end, hf);
     return base_ramp * top_fall;
 }
 
@@ -196,7 +198,11 @@ fn density(p: vec3f, w: vec4f, off: vec2f, full: bool) -> f32 {
     let n = textureSampleLevel(base_t, samp, vec3f(q.x, q.y * BASE_Y, q.z) / BASE_KM, 0.0);
     let low = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
     var base = saturate(remap(n.r, low - 1.0, 1.0, 0.0, 1.0));
-    base *= height_grad(hf, t, w.b);
+    // A sheet is thicker and thinner from place to place (slow light and
+    // dark), a heap's top follows the weather map's detail tap.
+    let thick = mix(mix(0.4, 1.0, saturate(n.g * 1.5)), 1.0, t);
+    base *= height_grad(hf / thick, t, w.b);
+    base *= mix(mix(0.45, 1.0, saturate(n.g * 1.8)), 1.0, t);
     // Cumulus: coverage shrinks with height, so domes rather than columns.
     let cov = w.r * mix(1.0, mix(1.0, 0.55, hf), t);
     base = saturate(remap(base, 1.0 - cov, 1.0, 0.0, 1.0)) * cov;
@@ -205,9 +211,10 @@ fn density(p: vec3f, w: vec4f, off: vec2f, full: bool) -> f32 {
     let qd = q + vec3f(c.x, 0.0, c.y) * 0.12 * (1.0 - hf);
     let d = textureSampleLevel(detail_t, samp, qd / DETAIL_KM, 0.0);
     let df = d.r * 0.625 + d.g * 0.25 + d.b * 0.125;
-    // Wispy at the base, billowy towards the top (Schneider 2015).
+    // Wispy at the base, billowy towards the top (Schneider 2015): the
+    // detail eats the thin edges of the shape and leaves its core.
     let m = mix(df, 1.0 - df, saturate(hf * 4.0));
-    let er = mix(0.35, 0.85, t);
+    let er = mix(0.3, 0.7, t);
     return saturate(remap(base, m * er, 1.0, 0.0, 1.0));
 }
 
@@ -243,12 +250,16 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
     let t0 = sphere_far(dir, R_PLANET + u.layer.x);
     let t1 = min(sphere_far(dir, R_PLANET + top_km()), FAR_KM);
     if t0 >= t1 { return r; }
-    let ds = (t1 - t0) / f32(steps);
+    let len = t1 - t0;
     let sun = yup(u.sun.xyz);
     let ct = dot(dir, sun);
     var wsum = 0.0;
     for (var i = 0u; i < steps; i++) {
-        let tt = t0 + (f32(i) + jitter) * ds;
+        // Steps grow with the distance (`STEP_WARP`): a grazing ray crosses
+        // tens of km of layer, and even steps showed as boxes and bands.
+        let x = (f32(i) + max(jitter, 0.02)) / f32(steps);
+        let tt = t0 + len * pow(x, STEP_WARP);
+        let ds = len * STEP_WARP * pow(x, STEP_WARP - 1.0) / f32(steps);
         let p = dir * tt;
         let w = weather_at(p, off);
         let dens = density(p, w, off, true);
@@ -279,7 +290,13 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
             }
             let powder = 1.0 - 0.6 * exp(-sigma * 0.15);
             let hf = saturate((height_of(p) - u.layer.x) / (top_km() - u.layer.x));
-            let ls_rad = u.sun_col.rgb * SUN_GAIN * s * 4.0 * PI * powder + u.amb_col.rgb * AMB_GAIN * mix(0.45, 1.0, hf);
+            // The sky light reaches a point through the cloud above it: one
+            // tap straight up darkens the undersides and the cores.
+            let up = normalize(p + vec3f(0.0, R_PLANET, 0.0));
+            let ap = p + up * 0.3;
+            let sky_od = density(ap, weather_at(ap, off), off, false) * 0.3 * SIGMA * u.drift.w;
+            let sky_vis = 0.3 + 0.7 * exp(-sky_od * 0.12);
+            let ls_rad = u.sun_col.rgb * SUN_GAIN * s * 4.0 * PI * powder + u.amb_col.rgb * AMB_GAIN * mix(0.5, 1.0, hf) * sky_vis;
             let ext = exp(-sigma * ds);
             let absorbed = r.t * (1.0 - ext);
             r.col += ls_rad * absorbed;

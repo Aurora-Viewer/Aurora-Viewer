@@ -161,14 +161,28 @@ fn debug_view() -> u32 {
 /// Distance at which a cloud melts into the haze (km).
 const HAZE_KM: f32 = 40.0;
 
-/// The mean cover of the weather map for a sky's `cloud_shadow`
-/// (`density = 2 (cloud_shadow - 0.25)` in cloudsF.glsl, which shifts the
-/// noise the cover is cut from, and `fs_cloud_weather` cuts it the same
-/// way): the mean coverage over a stand-in cloud texture (tileable value
-/// noise, mean 0.46, spread 0.21) goes 0.02, 0.26, 0.51, 0.74, 0.87, 0.98 for
-/// 0.1, 0.27, 0.36, 0.44, 0.5, 0.6; this line follows it.
+/// The weather map's coverage at a point (`fs_cloud_weather`, env.wgsl): the
+/// cloud texture's value `n1` and its detail tap `detail`, the sky's
+/// `cloud_pos_density2.z` (`detail_weight`) and `cloud_shadow`. Legacy
+/// Viewer terms (`alpha1` of cloudsF.glsl: `density = 2 (cloud_shadow -
+/// 0.25)` shifts the noise the cover is cut from), cut with a soft ramp so
+/// that the 3D shape, not the map, draws the cloud's edge.
+#[cfg(test)]
+fn weather_coverage(n1: f32, detail: f32, detail_weight: f32, cloud_shadow: f32) -> f32 {
+    let density = 2.0 * (cloud_shadow - 0.25);
+    let x = (n1 - 0.5) + (detail - 0.5) * detail_weight * 0.6 + density;
+    let t = ((x + 0.05) / 0.5).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The mean cover of the weather map for a sky's `cloud_shadow` over the
+/// demo's stand-in cloud texture (tileable value noise, mean 0.46, spread
+/// 0.21; the real texture is a grid asset): [`weather_coverage`] averaged
+/// goes 0.02, 0.10, 0.22, 0.44, 0.66, 0.81, 0.95 for 0.1, 0.2, 0.27, 0.36,
+/// 0.44, 0.5, 0.6; this smoothstep follows it.
 pub fn coverage(cloud_shadow: f32) -> f32 {
-    ((cloud_shadow - 0.12) / 0.45).clamp(0.0, 1.0)
+    let t = ((cloud_shadow - 0.1) / 0.56).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// The type of the clouds of a sky with this `cloud_shadow`.
@@ -179,7 +193,7 @@ pub fn type_of_shadow(cloud_shadow: f32) -> f32 {
 /// The type of the clouds from the cover: 0 stratus (a grey sheet), 0.5
 /// stratocumulus, 1 cumulus, with no step in between.
 pub fn cloud_type(coverage: f32) -> f32 {
-    let t = ((0.88 - coverage) / (0.88 - 0.5)).clamp(0.0, 1.0);
+    let t = ((0.86 - coverage) / (0.86 - 0.38)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
@@ -765,6 +779,47 @@ mod tests {
         assert!(steps[NOISE_FRAMES as usize].base_z.is_none() && !steps[NOISE_FRAMES as usize].small);
     }
 
+    /// Quantiles of a normal law (mean, deviation), clipped to [0, 1]: a
+    /// deterministic stand-in for the cloud texture's values.
+    fn normal_grid(mean: f32, sd: f32, n: usize) -> Vec<f32> {
+        // Abramowitz-Stegun 26.2.23 inverse of the normal CDF
+        let z = |p: f32| {
+            let q = if p < 0.5 { p } else { 1.0 - p };
+            let t = (-2.0 * q.ln()).sqrt();
+            let v = t - (2.515517 + 0.802853 * t + 0.010328 * t * t) / (1.0 + 1.432788 * t + 0.189269 * t * t + 0.001308 * t * t * t);
+            if p < 0.5 { -v } else { v }
+        };
+        (0..n)
+            .map(|i| (mean + sd * z((i as f32 + 0.5) / n as f32)).clamp(0.0, 1.0))
+            .collect()
+    }
+
+    #[test]
+    fn the_cover_follows_the_weather_map() {
+        // the texture's statistics (mean 0.46, spread 0.21), its detail tap alike
+        let main = normal_grid(0.46, 0.21, 48);
+        let detail = normal_grid(0.46, 0.21, 48);
+        let mean_cover = |shadow: f32| {
+            let mut sum = 0.0;
+            for n in &main {
+                for d in &detail {
+                    sum += weather_coverage(*n, *d, 1.0, shadow);
+                }
+            }
+            sum / (main.len() * detail.len()) as f32
+        };
+        let mut last = -1.0;
+        for shadow in [0.1_f32, 0.2, 0.27, 0.36, 0.44, 0.5, 0.6] {
+            let (map, fit) = (mean_cover(shadow), coverage(shadow));
+            assert!((map - fit).abs() < 0.08, "cloud_shadow {shadow}: map {map}, coverage() {fit}");
+            assert!(fit > last, "coverage() grows with the shadow");
+            last = fit;
+        }
+        // no cloud texture value gives cloud under a clear sky, all of them a closed one
+        assert_eq!(weather_coverage(0.5, 0.5, 1.0, 0.0), 0.0);
+        assert_eq!(weather_coverage(0.5, 0.5, 1.0, 0.9), 1.0);
+    }
+
     #[test]
     fn the_cover_gives_the_type() {
         // a fair sky is cumulus, a broken one stratocumulus-ish, a closed one stratus
@@ -780,7 +835,7 @@ mod tests {
             last = t;
         }
         // the Legacy default sky (cloud_shadow 0.27) is a fair sky
-        assert!(coverage(0.27) < 0.4 && cloud_type(coverage(0.27)) > 0.9);
+        assert!(coverage(0.27) < 0.3 && cloud_type(coverage(0.27)) > 0.9);
         assert_eq!(coverage(-1.0), 0.0);
         assert_eq!(coverage(5.0), 1.0);
     }
