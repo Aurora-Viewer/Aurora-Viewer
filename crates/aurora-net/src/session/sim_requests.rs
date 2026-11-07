@@ -72,20 +72,41 @@ impl Session<'_> {
         });
     }
 
-    /// LLSyntaxIdLSL::initialize: the cached keywords of `id`, else the
-    /// region's; read and turned into keywords off the frame.
+    /// LLSyntaxDefCache::fetchKeywords: the cached keywords of `id`, else the
+    /// region's, through ScriptDefinitions (LSL and SLua) or else the older
+    /// LSLSyntax (LSL only); read and turned into keywords off the frame.
     pub(super) fn fetch_lsl_syntax(&mut self, id: uuid::Uuid, cache_dir: std::path::PathBuf) {
+        let defs_url = self.main_cap("ScriptDefinitions");
         let url = self.main_cap("LSLSyntax");
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let doc = crate::lsl_syntax::load(&http, url.as_deref(), &cache_dir, id).await;
-            let keywords = doc.and_then(|d| crate::lsl_syntax::keywords(&d).ok_or_else(|| "no keyword".to_owned()));
+            use crate::lsl_syntax::{self, Definitions};
+            let defs = match defs_url {
+                Some(defs_url) => lsl_syntax::load_definitions(&http, &defs_url, &cache_dir, id).await,
+                None => lsl_syntax::load(&http, url.as_deref(), &cache_dir, id)
+                    .await
+                    .map(|lsl| Definitions { lsl: Some(lsl), lua: None }),
+            };
+            let (keywords, lua) = match defs {
+                Ok(defs) => (
+                    defs.lsl
+                        .as_ref()
+                        .and_then(lsl_syntax::keywords)
+                        .ok_or_else(|| "no LSL keyword".to_owned()),
+                    defs.lua.as_ref().and_then(lsl_syntax::keywords),
+                ),
+                Err(e) => (Err(e), None),
+            };
             match &keywords {
-                Ok(k) => log::info!("lsl syntax: {id} has {} keywords", k.len()),
+                Ok(k) => log::info!(
+                    "lsl syntax: {id} has {} keywords, {} SLua ones",
+                    k.len(),
+                    lua.as_ref().map_or(0, Vec::len)
+                ),
                 Err(e) => log::warn!("lsl syntax: {id} unavailable ({e})"),
             }
-            let _ = events.send(NetEvent::LslSyntax { id, keywords });
+            let _ = events.send(NetEvent::LslSyntax { id, keywords, lua });
         });
     }
 
