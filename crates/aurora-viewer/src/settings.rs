@@ -463,6 +463,7 @@ pub struct Settings {
     pub crosshair: crate::ui::crosshair::Settings,
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
+    pub gamepad: crate::joystick::Settings,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
@@ -1778,6 +1779,7 @@ impl Default for Settings {
             camera: Default::default(),
             crosshair: Default::default(),
             joystick: Default::default(),
+            gamepad: crate::joystick::Settings::gamepad_defaults(),
             auto_hover_height: false,
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
@@ -2432,6 +2434,9 @@ impl Settings {
     }
 
     pub(crate) fn sanitized(mut self) -> Settings {
+        if self.settings_version <= SETTINGS_VERSION {
+            self.gamepad.migrate_gamepad_layout();
+        }
         if self
             .graphics_saved_active
             .as_ref()
@@ -2953,6 +2958,9 @@ impl Settings {
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
+            vr_gamma: self.camera.vr_gamma,
+            vr_vibrancy: self.camera.vr_vibrancy,
+            vr_resolution: self.camera.vr_resolution.map(|n| n.clamp(256, 8192)),
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
             aa: match self.antialiasing {
@@ -3186,6 +3194,28 @@ mod tests {
     }
 
     #[test]
+    fn saved_gamepad_defaults_upgrade_to_pan_shoulders_and_face_button_height() {
+        use crate::joystick::{AUTO_DPAD_DOWN, AUTO_DPAD_LEFT, AUTO_DPAD_RIGHT, AUTO_DPAD_UP, AUTO_LEFT_BUMPER, AUTO_RIGHT_BUMPER};
+        let mut document = serde_json::to_value(Settings::default()).expect("settings");
+        let pad = document["gamepad"].as_object_mut().unwrap();
+        pad.remove("gamepad_layout_version");
+        pad.remove("gamepad_avatar_pan_left_button");
+        pad.remove("gamepad_avatar_pan_right_button");
+        for (name, binding) in [
+            ("gamepad_avatar_next_button", AUTO_DPAD_RIGHT),
+            ("gamepad_avatar_previous_button", AUTO_DPAD_LEFT),
+            ("rise_button", AUTO_RIGHT_BUMPER),
+            ("fall_button", AUTO_LEFT_BUMPER),
+            ("flycam_rise_button", AUTO_DPAD_UP),
+            ("flycam_fall_button", AUTO_DPAD_DOWN),
+        ] {
+            pad.insert(name.into(), serde_json::json!(binding));
+        }
+        let loaded = serde_json::from_value::<Settings>(document).expect("old settings").sanitized();
+        assert_eq!(loaded.gamepad, crate::joystick::Settings::gamepad_defaults());
+    }
+
+    #[test]
     fn projector_shadow_budget_survives_restart_and_clamps_untrusted_values() {
         use super::Settings;
         let old: Settings = serde_json::from_str("{}").expect("old preferences");
@@ -3218,6 +3248,43 @@ mod tests {
         assert!(old.log_import_at_login);
         let off: Settings = serde_json::from_str(r#"{"log_import_at_login":false}"#).expect("preferences");
         assert!(!off.log_import_at_login);
+    }
+
+    #[test]
+    fn joystick_legacy_file_preserves_custom_axes_and_buttons() {
+        let path = scratch_settings_file();
+        std::fs::write(
+            &path,
+            r#"{"settings_version":30,"joystick":{"enabled":true,"mapping":[2,1,0,3,5,4,6],"jump_button":1,"flycam_button":0}}"#,
+        )
+        .expect("write legacy settings");
+        let (loaded, newer) = super::Settings::read_document(read_back(&path), &path).expect("read legacy settings");
+        let loaded = loaded.finished(newer);
+        assert_eq!(loaded.gamepad, crate::joystick::Settings::gamepad_defaults());
+        assert!(!loaded.gamepad.enabled, "legacy joystick enablement does not enable gamepads");
+        loaded.save_to(&path);
+        let s = loaded.joystick;
+        let saved = read_back(&path);
+        assert_eq!(saved["joystick"]["mapping"], serde_json::json!([2, 1, 0, 3, 5, 4, 6]));
+        let device = crate::joystick::Device::gamepad(
+            "pad".into(),
+            "Pad".into(),
+            8,
+            [[Some(0), Some(1)], [Some(3), Some(4)]],
+            [Some(6), Some(7)],
+            crate::joystick::GamepadStyle::Generic,
+            vec![],
+        );
+        assert!(s.enabled);
+        assert_eq!((s.jump_button, s.flycam_button), (1, 0));
+        assert_eq!(s.avatar.gain, [1.0, 1.0, 1.0, 0.0, 0.1, 0.1, 0.0]);
+        assert_eq!(s.flycam.gain, [2.1, 2.0, 2.0, 0.0, 0.1, 0.15, 0.0]);
+        assert_eq!(s.first_person.move_stick, crate::joystick::GamepadStick::Custom);
+        assert_eq!(s.first_person.camera_stick, crate::joystick::GamepadStick::Custom);
+        for (channel, axis) in [2, 1, 0, 3, 5, 4, 6].into_iter().enumerate() {
+            assert_eq!(s.resolved_axis(&device, false, channel), Some(axis));
+            assert_eq!(s.resolved_axis(&device, true, channel), Some(axis));
+        }
     }
 
     #[test]

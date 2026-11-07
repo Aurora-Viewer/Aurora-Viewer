@@ -192,3 +192,128 @@ struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f3
         true
     }
 }
+
+pub(crate) const HEADSET_GRADE_SHADER: &str = r#"
+@group(0) @binding(0) var image: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> grade: vec2<f32>;
+struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }
+@vertex fn vs(@builtin(vertex_index) index: u32) -> Vertex {
+    let p = array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
+    var v: Vertex; v.position=vec4(p[index],0.,1.);
+    v.uv=vec2(p[index].x*0.5+0.5,0.5-p[index].y*0.5); return v;
+}
+@fragment fn fs(v: Vertex) -> @location(0) vec4<f32> {
+    let rgb = textureLoad(image, vec2<i32>(v.position.xy), 0).rgb;
+    let luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    let colour = clamp(mix(vec3(luma), rgb, grade.y), vec3(0.0), vec3(1.0));
+    return vec4(pow(colour, vec3(1.0 / grade.x)), 1.0);
+}
+"#;
+
+/// Final headset-only colour pass. The desktop mirror samples the ungraded eye.
+pub(crate) struct HeadsetGrade {
+    pub sources: [wgpu::Texture; 2],
+    pipeline: wgpu::RenderPipeline,
+    uniform: wgpu::Buffer,
+    bindings: [wgpu::BindGroup; 2],
+}
+
+impl HeadsetGrade {
+    pub fn new(device: &wgpu::Device, target: &wgpu::Texture) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("VR headset grade"),
+            source: wgpu::ShaderSource::Wgsl(HEADSET_GRADE_SHADER.into()),
+        });
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+            label: Some("VR headset grade"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target.format(),
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let sources = std::array::from_fn(|_| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("VR ungraded eye"),
+                size: target.size(),
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: target.format(),
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            })
+        });
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VR grade parameters"),
+            size: 8,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let layout = pipeline.get_bind_group_layout(0);
+        let bindings = std::array::from_fn(|i| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("VR grade eye"),
+                layout: &layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&sources[i].create_view(&Default::default())),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: uniform.as_entire_binding(),
+                    },
+                ],
+            })
+        });
+        Self {
+            sources,
+            pipeline,
+            uniform,
+            bindings,
+        }
+    }
+
+    pub fn encode(&self, device: &wgpu::Device, queue: &wgpu::Queue, targets: &[wgpu::Texture; 2], grade: [f32; 2]) {
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&grade));
+        let mut encoder = device.create_command_encoder(&Default::default());
+        for (target, binding) in targets.iter().zip(&self.bindings) {
+            let view = target.create_view(&Default::default());
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("VR headset grade"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, binding, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit([encoder.finish()]);
+    }
+}

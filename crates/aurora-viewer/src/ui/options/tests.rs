@@ -400,6 +400,29 @@ fn a_setting_has_one_page() {
 }
 
 #[test]
+fn camera_and_vr_page_resets_are_independent() {
+    let mut s = Settings::default();
+    s.camera.vr_mouse_look = true;
+    s.camera.vr_resolution = [2560, 2560];
+    s.camera.vr_gamma = 1.5;
+    s.camera.vr_vibrancy = 0.7;
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Camera, &mut s);
+    assert!(s.camera.vr_mouse_look);
+    assert_eq!(s.camera.vr_resolution, [2560, 2560]);
+    assert_eq!(s.camera.vr_gamma, 1.5);
+    assert_eq!(s.camera.vr_vibrancy, 0.7);
+    assert_eq!(s.camera.smoothing, Settings::default().camera.smoothing);
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Vr, &mut s);
+    assert!(!s.camera.vr_mouse_look);
+    assert_eq!(s.camera.vr_resolution, [2160, 2160]);
+    assert_eq!(s.camera.vr_gamma, 0.8);
+    assert_eq!(s.camera.vr_vibrancy, 1.1);
+    assert_eq!(s.camera.smoothing, 8.0);
+}
+
+#[test]
 fn a_page_reset_leaves_the_other_pages_alone() {
     let mut s = Settings {
         draw_distance: 300.0,
@@ -468,11 +491,30 @@ fn a_page_reset_leaves_the_other_pages_alone() {
 }
 
 #[test]
+fn gamepad_and_joystick_preferences_reset_independently() {
+    let mut settings = Settings::default();
+    settings.joystick.enabled = true;
+    settings.joystick.device = "raw-device".into();
+    settings.joystick.avatar.gain[5] = 0.35;
+    settings.gamepad.enabled = true;
+    settings.gamepad.device = "pad-device".into();
+    settings.gamepad.avatar.gain[5] = 7.0;
+    let raw = settings.joystick.clone();
+    let pad = settings.gamepad.clone();
+    reset_page_settings(Page::Controls, &mut settings);
+    assert_eq!(settings.gamepad, pad);
+    settings.joystick = raw.clone();
+    reset_page_settings(Page::Gamepad, &mut settings);
+    assert_eq!(settings.joystick, raw);
+    assert_eq!(settings.gamepad, Settings::default().gamepad);
+}
+
+#[test]
 fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     let mut s = Settings::default();
     s.joystick.enabled = true;
     s.joystick.device = "test-device".into();
-    s.joystick.gamepad();
+    s.joystick.raw_gamepad_preset();
     s.joystick.flycam.gain[3] = 0.7;
     s.joystick.avatar.dead_zone[0] = 0.4;
     s.joystick.auto_level = false;
