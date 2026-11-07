@@ -6758,7 +6758,7 @@ pub fn classic_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent
                 cof_version: 1,
                 appearance_version: 1,
                 hover_height: 0.0,
-                attachments: 0,
+                attachments: Vec::new(),
             })
         })
         .collect()
@@ -6835,7 +6835,7 @@ pub fn cloud_self_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEv
             cof_version: 1,
             appearance_version: 1,
             hover_height: 0.0,
-            attachments: 0,
+            attachments: Vec::new(),
         }),
     ]
 }

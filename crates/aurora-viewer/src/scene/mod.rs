@@ -6574,7 +6574,7 @@ mod tests {
             appearance_version: 1,
             // Our preference must survive a stale simulator appearance.
             hover_height: -0.5,
-            attachments: 0,
+            attachments: Vec::new(),
         }));
         let idx = world.objects.index_of_uuid(&owner).expect("demo avatar");
         let seat_idx = world.objects.parent_of(world.objects.get(idx).expect("avatar")).expect("seat");
