@@ -220,7 +220,7 @@ pub fn members(world: &World, session: Uuid) -> Vec<Person> {
         None if world.is_group_session(&session) => Vec::new(),
         None => person(world, session).into_iter().collect(),
     };
-    out.sort_by_cached_key(|p| p.display.to_lowercase());
+    out.sort_by_cached_key(|p| crate::natural_order::key(&p.display));
     out
 }
 

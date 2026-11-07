@@ -77,6 +77,7 @@ const BEFORE: &[&str] = &[
     "shadow_quality",
     "shadows",
     "projector_shadows",
+    "projector_shadow_limit",
     "contact_shadows",
     "ssao",
     "ao_method",
@@ -107,6 +108,8 @@ const BEFORE: &[&str] = &[
     "fps_limit",
     "background_fps_cap",
     "background_fps_limit",
+    "background_gpu_pause",
+    "gpu_recovery",
     // Interface
     "language",
     "language_is_public",
@@ -226,6 +229,7 @@ const BEFORE: &[&str] = &[
     "log_show_history",
     "reopen_ims",
     "log_dated_names",
+    "log_import_at_login",
     "autoresponse",
     "mute_all_groups",
     "mute_groups_without_notices",
@@ -418,6 +422,8 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     s.auto_accept_inventory_notify = false;
     s.inventory.received_sort.folders_by_name = true;
     s.inventory.recent_sort.by_date = false;
+    s.inventory.filter_defaults.types = 0;
+    s.inventory.tab_filter_defaults[1].hours = 72;
     reset_page_settings(Page::Graphics, &mut s);
     let d = Settings::default();
     assert_eq!(s.draw_distance, d.draw_distance);
@@ -454,6 +460,8 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     assert_eq!(s.inventory.sort, d.inventory.sort);
     assert_eq!(s.inventory.received_sort, d.inventory.received_sort);
     assert_eq!(s.inventory.recent_sort, d.inventory.recent_sort);
+    assert_eq!(s.inventory.filter_defaults, d.inventory.filter_defaults);
+    assert_eq!(s.inventory.tab_filter_defaults, d.inventory.tab_filter_defaults);
     reset_page_settings(Page::Layout, &mut s);
     assert_eq!(s.ui_scale, d.ui_scale);
 }

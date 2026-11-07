@@ -992,7 +992,7 @@ impl App {
         let ev = vf::ev_of(self.photo_exposure(), s.exposure);
         let dir = (self.camera.target - self.camera.position).normalize_or_zero();
         let pitch = dir.z.clamp(-1.0, 1.0).asin().to_degrees();
-        let review = self.photo_review();
+        let review = self.photo_reel_card();
         let (af_key, menu_key, first_key) = self.vf_keys();
         let (isolate_rows, isolate_hover) = self.photo_isolate_rows();
         // an object anchor holds the object the camera is on, until one is
@@ -1003,6 +1003,9 @@ impl App {
         }
         let preset_object = self.snapshots.vf.preset_form.object.map(|id| self.photo_isolate_name(&id).0);
         let first_allowed = self.settings.camera.enable_mouselook;
+        // (the stack only opens the quick view: no destination, no clock)
+        let no_time = |_: i64| String::new();
+        let reel = self.snapshots.reel.view(&[], &no_time);
         let frame = Frame {
             now,
             photo,
@@ -1018,7 +1021,8 @@ impl App {
             zone,
             pitch,
             histogram: renderer.histogram.as_deref(),
-            review: review.as_ref().map(|(t, l, k)| (t, l.clone(), k.clone())),
+            still: self.settings.reduce_motion,
+            review: review.as_ref(),
             first_person: self.camera.mouselook(),
             first_person_allowed: first_allowed,
             base_exposure: self.settings.exposure,
@@ -1035,6 +1039,7 @@ impl App {
             presets: &self.settings.camera_shots,
             preset_object,
             posing: self.ik_editor.open && self.ik_editor.posing(),
+            reel: &reel,
         };
         // the demo aims at the own avatar's face, then shoots
         let (aim, shoot) = self.photo_demo_viewfinder();
@@ -1096,6 +1101,7 @@ impl App {
                         crate::ui::widgets::open_floater(ctx, "poser", &mut self.ik_editor.open);
                     }
                 }
+                Out::Reel(a) => self.photo_reel_action(a, renderer),
                 Out::Exit => self.panels.snapshot = false,
             }
         }

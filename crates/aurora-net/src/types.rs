@@ -515,10 +515,14 @@ pub enum NetEvent {
     /// `bad_credentials`: refused for the user name / password (reason "key").
     /// `previous_session`: the grid is still logging out a previous session
     /// of this account (reason "presence", LoginError::previous_session).
+    /// `tos_required` / `critical_required`: the Terms of Service to accept
+    /// (reason "tos") or a message to read (reason "critical"), each with
+    /// its own flag in the next request; `error` is then the server's text.
     LoginFailed {
         error: String,
         mfa_required: bool,
         tos_required: bool,
+        critical_required: bool,
         bad_credentials: bool,
         previous_session: bool,
     },
@@ -844,6 +848,9 @@ pub enum NetEvent {
         object_id: Uuid,
         object_name: String,
         owner_name: String,
+        /// The owner's id (the OwnerData block; nil from simulators that
+        /// do not send it).
+        owner_id: Uuid,
         message: String,
         channel: i32,
         buttons: Vec<String>,
@@ -1559,6 +1566,10 @@ pub enum NetCommand {
     },
     Login(Box<LoginRequest>),
     Logout,
+    /// The viewer stopped waiting for a teleport or crossing to be confirmed:
+    /// agent updates resume, as LLAgent's teleport state back at
+    /// TELEPORT_NONE lets send_agent_update through.
+    ArrivalGivenUp,
     Chat {
         message: String,
         channel: i32,

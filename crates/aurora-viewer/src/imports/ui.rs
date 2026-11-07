@@ -139,6 +139,7 @@ pub enum Action {
     StageLocalUploads,
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
+    MapDrop(Uuid, usize, crate::ui::resource_drop::Target),
     Zoom(Uuid, Option<usize>),
     LargeMap(Uuid, usize),
     Remove(Uuid),
@@ -590,13 +591,14 @@ fn texture(
     }
     if *target != 0 {
         if let Some(model) = model {
-            aurora_render::preview::paint(
+            let response = aurora_render::preview::paint(
                 ui,
                 ui.scope_id().with(("texture_preview", id)),
                 model.clone(),
                 view,
                 Vec2::new(ui.available_width(), 260.0),
             );
+            widgets::local_texture::paint(ui, p, response.rect);
             preview_camera_controls(ui, p, view);
         } else {
             ui.spinner();
@@ -638,6 +640,7 @@ fn texture(
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             widgets::PICTURE_TINT,
         );
+        widgets::local_texture::paint(ui, p, rect);
     } else {
         ui.spinner();
     }
@@ -826,7 +829,7 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
         RichText::new(aurora_i18n::tr!(
             "import-animation-frames",
             frames = bvh.frames,
-            rate = format!("{:.2}", 1.0 / bvh.frame_time)
+            rate = format!("{:.2}", if bvh.frame_time > 0.0 { 1.0 / bvh.frame_time } else { 0.0 })
         ))
         .small()
         .color(p.muted),
@@ -906,7 +909,11 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                     {
                         *value = percent / 100.0 * animation.duration;
                     }
-                    let mut frame = (*value / bvh.frame_time).round() as usize;
+                    let mut frame = if bvh.frame_time > 0.0 {
+                        (*value / bvh.frame_time).round() as usize
+                    } else {
+                        0
+                    };
                     if ui
                         .add_sized(
                             Vec2::new(52.0, 26.0),

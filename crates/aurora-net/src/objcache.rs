@@ -1,6 +1,7 @@
 //! Per-region object cache (the viewer side of `ObjectUpdateCached`, like
 //! LLVOCache): compressed object updates keyed by local id with their CRC,
-//! persisted to `<dir>/<region id>.objc`. Assets referenced by the objects
+//! persisted to `<dir>/<name>.objc` (the region id, or the name the viewer
+//! derives from it: [`name_with`]). Assets referenced by the objects
 //! (textures, meshes...) are cached separately, once, by asset id.
 //!
 //! The GLTF material overrides of the objects are kept with them (LL's
@@ -27,6 +28,37 @@ pub static DISK_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 pub static DISK_WRITTEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 const MAGIC: &[u8; 4] = b"AOC2";
+
+/// The key the files are sealed with (`aurora_assets::sealed`), the one of
+/// the viewer's disk cache: set by the viewer before any session. Without
+/// it (this crate's tests) the files are written and read as they are; with
+/// it, a file not in the store format is a miss (`Key::open`).
+static SEAL: std::sync::OnceLock<aurora_assets::sealed::Key> = std::sync::OnceLock::new();
+
+pub fn seal_with(key: aurora_assets::sealed::Key) {
+    let _ = SEAL.set(key);
+}
+
+/// The names of the viewer's store files (`aurora_assets::sealed::Names`):
+/// set by the viewer before any session, outside its demo. Without them the
+/// file of a region is named by its id.
+static NAMES: std::sync::OnceLock<aurora_assets::sealed::Names> = std::sync::OnceLock::new();
+
+pub fn name_with(names: aurora_assets::sealed::Names) {
+    let _ = NAMES.set(names);
+}
+
+fn file_of(dir: &Path, region_id: Uuid) -> PathBuf {
+    let name = NAMES.get().map_or_else(|| region_id.to_string(), |n| n.name(&region_id));
+    dir.join(format!("{name}.objc"))
+}
+
+fn open_file(file: Vec<u8>) -> std::io::Result<Vec<u8>> {
+    match SEAL.get() {
+        Some(key) => key.open(file),
+        None => Ok(file),
+    }
+}
 /// Entries beyond this are not kept (very dense regions).
 const MAX_ENTRIES: usize = 60_000;
 
@@ -65,7 +97,7 @@ impl RegionObjectCache {
     /// region.
     pub fn empty(dir: &Path, region_id: Uuid) -> RegionObjectCache {
         RegionObjectCache {
-            path: dir.join(format!("{region_id}.objc")),
+            path: file_of(dir, region_id),
             entries: HashMap::new(),
             overrides: HashMap::new(),
             dirty: false,
@@ -75,13 +107,14 @@ impl RegionObjectCache {
 
     /// Reads the file of a region. Blocking: not for the session loop.
     pub fn load(dir: &Path, region_id: Uuid) -> RegionObjectCache {
-        let path = dir.join(format!("{region_id}.objc"));
+        let path = file_of(dir, region_id);
         let (entries, overrides) = std::fs::read(&path)
             .ok()
             .and_then(|d| {
                 DISK_READ.fetch_add(d.len() as u64, std::sync::atomic::Ordering::Relaxed);
-                Self::decode(&d)
+                open_file(d).ok()
             })
+            .and_then(|d| Self::decode(&d))
             .unwrap_or_default();
         if !entries.is_empty() {
             // used: keep it in the rolling cache
@@ -257,6 +290,14 @@ impl Snapshot {
     }
 
     fn replace_file(&self, content: &[u8]) -> std::io::Result<()> {
+        let sealed;
+        let content = match SEAL.get() {
+            Some(key) => {
+                sealed = key.seal(content)?;
+                &sealed[..]
+            }
+            None => content,
+        };
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir)?;
         }

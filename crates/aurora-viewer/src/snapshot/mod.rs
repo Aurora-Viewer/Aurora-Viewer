@@ -4,9 +4,10 @@
 //! sizes and proportions a photo can have, how it is split when the card
 //! cannot draw it in one pass, its file name, and the settings kept between
 //! sessions. Saving runs on a worker (`save`), the recent photos are listed
-//! by `gallery`, a photo for the inventory is prepared by `inventory`, one
-//! for the profile feed posted by `profile`; what the photo shows is chosen
-//! by `isolate`; the window is `ui::snapshot`, the frames `app::snapshot`.
+//! by `gallery` and the session's kept by `reel`, a photo for the inventory
+//! is prepared by `inventory`, one for the profile feed posted by
+//! `profile`; what the photo shows is chosen by `isolate`; the window is
+//! `ui::snapshot`, the frames `app::snapshot`.
 
 pub mod gallery;
 pub mod inventory;
@@ -17,6 +18,7 @@ pub mod looks;
 pub mod luts;
 pub mod profile;
 pub mod quality;
+pub mod reel;
 pub mod save;
 pub mod viewfinder;
 
@@ -251,6 +253,9 @@ pub struct Settings {
     /// The warning before the first "Photo quality" was accepted: a modest
     /// PC may freeze or crash with every graphics setting at its maximum.
     pub quality_warned: bool,
+    /// "Photo quality" turned off at the next start when the viewer crashed
+    /// or was stopped while it was on (`crash::take_photo_quality_crash`).
+    pub quality_off_after_crash: bool,
     /// The viewfinder's display, AF area, peaking and beep.
     pub viewfinder: viewfinder::Prefs,
     /// The photo's looks, the first one drawn first (`looks`); none: the
@@ -287,6 +292,7 @@ impl Default for Settings {
             dof: Default::default(),
             quality: false,
             quality_warned: false,
+            quality_off_after_crash: true,
             viewfinder: Default::default(),
             looks: Vec::new(),
             look_settings: Default::default(),

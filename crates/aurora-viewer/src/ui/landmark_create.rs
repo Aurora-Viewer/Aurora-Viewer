@@ -145,7 +145,7 @@ pub fn folders(inv: &Inventory) -> Vec<(Uuid, String)> {
             below.push((id, full_name(inv, id)));
         }
     }
-    below.sort_by(|a, b| a.1.cmp(&b.1));
+    below.sort_by(|a, b| crate::natural_order::cmp(&a.1, &b.1));
     out.extend(below);
     out
 }
