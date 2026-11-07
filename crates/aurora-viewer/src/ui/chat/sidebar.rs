@@ -545,16 +545,21 @@ const FOOT_H: f32 = super::compose::BOX_H + super::compose::UNDER_BOX;
 /// the window (`workspace::ColumnChoice`). An Aurora addition: the Legacy
 /// Viewer's window has tabs and no such list. The nearest is the unregistered
 /// LLFloaterIMContainer (indra/newview/llfloaterimcontainer.cpp):
-/// onExpandCollapseButtonClicked, ConversationsListPaneCollapsed, and
-/// assignResizeLimits for the least width of `ColumnChoice::least_width`.
+/// onExpandCollapseButtonClicked, ConversationsListPaneCollapsed.
 /// Over the rail's pictures in both layouts, it does not move from under
 /// the pointer that used it, level with a one-line conversation box and the
 /// size of its buttons. Lit while the column is what a click asked
-/// (`ColumnChoice::by_hand`), plain while it follows the window. The rail
-/// has no search field to clear a search from: collapsing ends it.
+/// (`ColumnChoice::by_hand`), plain while it follows the window, greyed out
+/// in a window too narrow for the column (`workspace::OPEN_FROM`), as a head
+/// tool without its panel's room. The rail has no search field to clear a
+/// search from: collapsing ends it.
 fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut Vec<ConvAction>, column: egui::Rect, narrow: bool) {
     let rail = st.column.rail(narrow);
-    let (icon, tip) = if rail {
+    let fits = st.layout_width.is_some_and(|w| w >= super::workspace::OPEN_FROM);
+    let off = rail && !fits;
+    let (icon, tip) = if off {
+        ("layout-sidebar-left-expand-filled", aurora_i18n::tr!("ui-chat-column-no-room"))
+    } else if rail {
         ("layout-sidebar-left-expand-filled", aurora_i18n::tr!("ui-chat-column-expand"))
     } else {
         ("layout-sidebar-left-collapse-filled", aurora_i18n::tr!("ui-chat-column-collapse"))
@@ -564,9 +569,11 @@ fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut 
         column.bottom() - super::compose::UNDER_BOX - super::compose::BOX_H / 2.0,
     );
     let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::compose::BUTTON));
-    let resp = ui.interact(rect, control_id("column-toggle"), egui::Sense::click());
-    let lit = st.column.by_hand();
-    let face = match (lit, resp.hovered()) {
+    let sense = if off { egui::Sense::hover() } else { egui::Sense::click() };
+    let resp = ui.interact(rect, control_id("column-toggle"), sense);
+    let hovered = resp.hovered() && !off;
+    let lit = st.column.by_hand() && !off;
+    let face = match (lit, hovered) {
         // the wash of the conversation shown, in the entries above
         (true, false) => Some(p.violet.gamma_multiply(0.22)),
         (true, true) => Some(p.violet.gamma_multiply(0.34)),
@@ -580,7 +587,8 @@ fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut 
         ui.painter(),
         icon,
         egui::Rect::from_center_size(center, egui::Vec2::splat(18.0)),
-        match (lit, resp.hovered()) {
+        match (lit, hovered) {
+            _ if off => p.muted_dim.gamma_multiply(0.6),
             (true, _) => p.violet_pale,
             (false, true) => p.ink,
             (false, false) => p.muted,

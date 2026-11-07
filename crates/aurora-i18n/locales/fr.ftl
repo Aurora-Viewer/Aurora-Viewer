@@ -4572,6 +4572,7 @@ ui-chat-section-start-with = Démarrer une conversation
 ui-chat-new-conversation = Nouvelle conversation
 ui-chat-column-collapse = Réduire la liste des conversations
 ui-chat-column-expand = Développer la liste des conversations
+ui-chat-column-no-room = La fenêtre est trop étroite pour ouvrir la liste des conversations
 ui-chat-start-private = Message privé
 ui-chat-start-group = Chat de groupe
 ui-chat-start-conference = Conférence

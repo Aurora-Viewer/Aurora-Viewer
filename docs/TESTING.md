@@ -7269,8 +7269,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   px: the column becomes a rail of pictures) or a width in points;
   `collapsed` (the column kept as a rail by its button at any width, from
   the scenario only: the settings keep nothing until the button is used),
-  `opened` (with `narrow`: the column opened by its button in a narrow
-  window);
+  `opened` (with a width of 560 to 599 points, such as `580`: the column
+  opened by its button in a narrow window; narrower, the button is greyed
+  out);
   `call-incoming` (Tess calls: the banner and the pulsing entry),
   `call` (the group's call: the stage, speaking ring, Tess muted by a
   moderator, the speaker in the column), `call-mini` (the stage reduced to

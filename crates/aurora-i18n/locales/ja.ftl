@@ -4566,6 +4566,7 @@ ui-chat-section-start-with = 会話を開始
 ui-chat-new-conversation = 新しい会話
 ui-chat-column-collapse = 会話リストを折りたたむ
 ui-chat-column-expand = 会話リストを展開
+ui-chat-column-no-room = ウィンドウの幅が狭いため、会話リストを開けません
 ui-chat-start-private = プライベートメッセージ
 ui-chat-start-group = グループチャット
 ui-chat-start-conference = 会話

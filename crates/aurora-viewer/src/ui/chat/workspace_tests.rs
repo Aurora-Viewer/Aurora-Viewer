@@ -1232,10 +1232,6 @@ fn the_column_choice_comes_back_to_automatic() {
 
     assert!(!auto.by_hand(), "the button is plain while automatic");
     assert!(collapsed.by_hand() && opened.by_hand(), "and lit by hand, in both directions");
-
-    assert_eq!(auto.least_width(), super::LEAST);
-    assert_eq!(collapsed.least_width(), super::LEAST);
-    assert!(opened.least_width() >= super::super::sidebar::WIDTH + super::LEAST - super::super::sidebar::RAIL);
 }
 
 /// In a wide window the button collapses the column for good: the window
@@ -1274,7 +1270,7 @@ fn the_button_collapses_the_column_at_any_width() {
 #[test]
 fn the_button_opens_the_column_in_a_narrow_window() {
     let mut h = Harness::new(ChatStyle::Aurora);
-    resize(&mut h, 520.0);
+    resize(&mut h, 580.0);
     assert!(shows_rail(&h));
     toggle_column(&mut h);
     assert!(!shows_rail(&h), "opened");
@@ -1286,23 +1282,40 @@ fn the_button_opens_the_column_in_a_narrow_window() {
 
     resize(&mut h, 700.0);
     assert!(!h.st.column.opened, "automatic once wide");
-    resize(&mut h, 520.0);
+    resize(&mut h, 580.0);
     assert!(shows_rail(&h), "narrow again: the rail by itself");
     assert_eq!(collapsed_asked(&h), [] as [bool; 0]);
 }
 
-/// Opened in a window too small for it, the column makes the window grow:
-/// the conversation keeps the room the rail left it.
+/// Below `OPEN_FROM` the column does not fit: the button is greyed out, a
+/// click does nothing, and the column opened closes by itself, for good.
 #[test]
-fn the_column_opened_makes_a_small_window_grow() {
+fn the_button_is_greyed_out_when_the_column_does_not_fit() {
     let mut h = Harness::new(ChatStyle::Aurora);
-    resize(&mut h, 320.0);
-    assert!(shows_rail(&h));
+    let button = super::super::sidebar::control_id("column-toggle");
+    resize(&mut h, 460.0);
+    assert!(!h.frames.ctx.read_response(button).expect("drawn").sense.senses_click());
     toggle_column(&mut h);
-    assert!(!shows_rail(&h), "opened");
-    let window = egui::AreaState::load(&h.frames.ctx, egui::Id::unique("conversations")).and_then(|s| s.size);
-    let least = h.st.column.least_width();
-    assert!(window.is_some_and(|size| size.x >= least), "{window:?} for {least}");
+    assert!(shows_rail(&h) && !h.st.column.opened, "a click on it does nothing");
+
+    resize(&mut h, super::OPEN_FROM + 4.0);
+    assert!(h.frames.ctx.read_response(button).expect("drawn").sense.senses_click());
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened from the threshold");
+
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h) && !h.st.column.opened, "no room left: closed");
+    resize(&mut h, super::OPEN_FROM + 4.0);
+    assert!(shows_rail(&h), "room again: still automatic");
+
+    // collapsed by hand it stays so, greyed out until the room is back
+    h.st.column.collapsed = true;
+    resize(&mut h, 460.0);
+    toggle_column(&mut h);
+    assert!(h.st.column.collapsed);
+    resize(&mut h, 700.0);
+    toggle_column(&mut h);
+    assert!(!h.st.column.collapsed && !shows_rail(&h));
 }
 
 /// The column's button stands level with the conversation's box, at the

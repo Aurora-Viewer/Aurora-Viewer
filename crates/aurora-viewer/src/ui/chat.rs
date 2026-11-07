@@ -2910,7 +2910,7 @@ pub fn show(
     // style's tabs and field): smaller, it grew back to its content during
     // a resize and the messages, laid out for the smaller size first,
     // hopped for a frame
-    let least = egui::vec2(if style.workspace() { st.column.least_width() } else { 0.0 }, 240.0);
+    let least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
     floater.min_size = floater.min_size.max(least);
     let image_bounds = floater.show(ctx, p, open, |ui| {
         let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
