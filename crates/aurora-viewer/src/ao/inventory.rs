@@ -295,7 +295,8 @@ impl Catalog {
                 }
             }
         }
-        self.sets.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        self.sets
+            .sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then_with(|| a.id.cmp(&b.id)));
         self.missing.sort();
         self.missing.dedup();
     }

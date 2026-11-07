@@ -94,7 +94,7 @@ What each part tells the one who fixes it:
   0.1 s of the submission, or after the frame ended), or undecided between
   the two. Frame numbers and ages only.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
-  during the session (`AURORA_GPU_RECOVERY=1`), how many, and for the first
+  during the session (Preferences › Graphics, on by default), how many, and for the first
   five when in the session, how long the recovery took and whether it came
   back with the safe graphics. Only shown when the session ended badly later.
 - **Overlay hooks**: the overlay or capture programs that injected their
