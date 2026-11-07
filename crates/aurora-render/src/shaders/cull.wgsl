@@ -153,6 +153,8 @@ struct CullFrame {
     water_air: array<vec4<f32>, 6>,
     mirror: array<vec4<f32>, 6>,
     probe: array<vec4<f32>, 6>,
+    // xyz the probe capture's origin, w how far it draws objects
+    probe_eye: vec4<f32>,
     // frustums of the projector shadow maps
     spots: array<vec4<f32>, 96>,
     cascades: array<mat4x4<f32>, 3>,
@@ -363,17 +365,23 @@ fn face_mask(i: u32) -> u32 {
     }
     let fl = frame.sizes.w;
     // LLAgent::needsRenderHead / LLVOAvatarSelf::updateAttachmentVisibility.
-    let in_view = sphere_in(frame.planes, c, r) && !(own_first_person && ((o.flags & OBJ_FIRST_PERSON_HIDDEN) != 0u || (f.bits & FACE_FIRST_PERSON_HIDDEN) != 0u));
-    let casts = (fl & F_SHADOWS) != 0u && d - r < frame.dist.x;
-    let reflects = (fl & F_REFLECTIONS) != 0u && d - r < frame.dist.y;
-    if (!in_view && !casts && !reflects) {
+    let viewed = sphere_in(frame.planes, c, r) && !(own_first_person && ((o.flags & OBJ_FIRST_PERSON_HIDDEN) != 0u || (f.bits & FACE_FIRST_PERSON_HIDDEN) != 0u));
+    let shadow_reach = (fl & F_SHADOWS) != 0u && d - r < frame.dist.x;
+    let reflect_reach = (fl & F_REFLECTIONS) != 0u && d - r < frame.dist.y;
+    // a capture measures from its probe, not from the camera
+    let captured = (fl & F_REFLECTIONS) != 0u && (fl & F_PROBE) != 0u && (o.flags & OBJ_NO_PROBE) == 0u
+        && length(c - frame.probe_eye.xyz) - r < frame.probe_eye.w && sphere_in(frame.probe, c, r);
+    if (!viewed && !shadow_reach && !reflect_reach && !captured) {
         return 0u;
     }
     // tiny objects far away (small object culling)
-    let px = r * frame.dist.z / max(d, 0.1);
-    if (px < 1.5 && !is_avatar) {
+    let large = r * frame.dist.z / max(d, 0.1) >= 1.5 || is_avatar;
+    if (!large && !captured) {
         return 0u;
     }
+    let in_view = viewed && large;
+    let casts = shadow_reach && large;
+    let reflects = reflect_reach && large;
     if (in_view && (f.bits & FACE_FIRST) != 0u) {
         atomicAdd(&wg_stats[0], 1u);
     }
@@ -425,9 +433,9 @@ fn face_mask(i: u32) -> u32 {
         if ((fl & F_MIRROR) != 0u && sphere_in(frame.mirror, c, r)) {
             m |= 1u << BIN_REFL_MIRROR;
         }
-        if ((fl & F_PROBE) != 0u && (o.flags & OBJ_NO_PROBE) == 0u && sphere_in(frame.probe, c, r)) {
-            m |= 1u << BIN_PROBE;
-        }
+    }
+    if (captured && solid) {
+        m |= 1u << BIN_PROBE;
     }
     if (in_view && solid) {
         m |= 1u << (fp - PASS_OPAQUE);

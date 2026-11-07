@@ -152,14 +152,13 @@ impl Session<'_> {
             }
             BuildCmd::Link { handle, local_ids } => {
                 let Some(addr) = self.sim_for_handle(handle) else { return };
-                let mut m = ObjectLink::default();
-                m.agent_data.agent_id = agent_id;
-                m.agent_data.session_id = session_id;
-                m.object_data = local_ids
-                    .iter()
-                    .map(|&id| object_link::ObjectData { object_local_id: id })
-                    .collect();
-                self.send(addr, &m, true);
+                for ids in crate::build::link_batches(&local_ids) {
+                    let mut m = ObjectLink::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = ids.iter().map(|&id| object_link::ObjectData { object_local_id: id }).collect();
+                    self.send(addr, &m, true);
+                }
             }
             BuildCmd::Delink { handle, local_ids } => {
                 let Some(addr) = self.sim_for_handle(handle) else { return };
