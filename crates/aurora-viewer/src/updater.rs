@@ -452,7 +452,8 @@ impl Updater {
                         Failure::Filesystem
                     })?;
                     let parent = path.parent().ok_or(Failure::Filesystem)?;
-                    if !Workspace::supported_install(parent) {
+                    if let Err(e) = Workspace::check_install(parent) {
+                        log::warn!("update: this folder cannot be updated in place: {e:#}");
                         return Err(Failure::Unsupported);
                     }
                     Workspace::new(parent).map_err(|e| {

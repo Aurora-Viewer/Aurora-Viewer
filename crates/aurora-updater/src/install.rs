@@ -59,11 +59,17 @@ pub(crate) fn plain_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// An installation can be swapped when it has a parent to hold the update
+/// folder, the backup and the lock: any folder but a drive root, so
+/// `E:\Aurora Viewer` too. When that parent cannot be written (`C:\`
+/// without administrator rights), the workspace fails with a filesystem
+/// error, which says to check the folder's permissions.
+fn safe_install_root(install: &Path) -> bool {
+    install.is_absolute() && install.parent().is_some()
+}
+
 fn validate_install(install: &Path) -> Result<()> {
-    ensure!(
-        install.is_absolute() && install.parent().is_some_and(|p| p.parent().is_some()),
-        "unsafe installation root"
-    );
+    ensure!(safe_install_root(install), "the installation is a drive root");
     plain_dir(install)?;
     // Never rename a repository, build tree, or a directory with user files.
     for entry in fs::read_dir(install)? {
@@ -102,8 +108,9 @@ pub(crate) fn validate_tree(path: &Path) -> Result<()> {
 }
 
 impl Workspace {
-    pub fn supported_install(install: &Path) -> bool {
-        validate_install(install).is_ok()
+    /// Whether the viewer may update itself in place, and why not.
+    pub fn check_install(install: &Path) -> Result<()> {
+        validate_install(install)
     }
     pub fn new(install: &Path) -> Result<Self> {
         validate_install(install)?;
@@ -204,7 +211,7 @@ fn validate_work(work: &Path, plan: &Plan) -> Result<()> {
     );
     plain_dir(work)?;
     ensure!(
-        plan.install.parent().is_some_and(|p| p.parent().is_some()) && plan.install != work,
+        safe_install_root(&plan.install) && plan.install != work,
         "unsafe installation directory"
     );
     Ok(())
@@ -437,5 +444,24 @@ impl Parent {
     }
     fn wait(&self) -> Result<()> {
         anyhow::bail!("automatic installation is Windows-only")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_at_a_drive_root_can_be_updated_not_the_root_itself() {
+        assert!(!safe_install_root(Path::new("aurora")), "relative");
+        assert!(!safe_install_root(Path::new("/")));
+        assert!(safe_install_root(Path::new("/Aurora Viewer")));
+        assert!(safe_install_root(Path::new("/games/Aurora Viewer")));
+        #[cfg(windows)]
+        {
+            assert!(!safe_install_root(Path::new(r"E:\")));
+            assert!(safe_install_root(Path::new(r"E:\Aurora Viewer")));
+            assert!(safe_install_root(Path::new(r"C:\Users\someone\Aurora Viewer")));
+        }
     }
 }
