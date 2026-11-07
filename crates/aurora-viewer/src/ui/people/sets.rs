@@ -82,9 +82,9 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     members.retain(|id| super::matches_name(world, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&set) {
-        members.sort_by_cached_key(|id| (!online(id), name_of(id).to_lowercase()));
+        members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));
     } else {
-        members.sort_by_cached_key(|id| name_of(id).to_lowercase());
+        members.sort_by_cached_key(|id| crate::natural_order::key(&name_of(id)));
     }
     st.sel.retain(|id| members.contains(id));
     let area = egui::ScrollArea::vertical()
