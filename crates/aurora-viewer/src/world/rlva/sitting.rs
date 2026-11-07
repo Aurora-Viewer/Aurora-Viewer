@@ -42,6 +42,17 @@ impl Rlva {
 }
 
 impl World {
+    /// Capture the Legacy Viewer standtp origin after the common command
+    /// guard has accepted a native or forced sit (llviewermenu.cpp,
+    /// handle_object_sit; rlvhandler.cpp, RlvForceHandler<SIT>).
+    pub fn rlva_note_sit_command(&mut self, command: &NetCommand, actor: Uuid) {
+        self.rlva.note_sit_command(command, actor);
+        if matches!(command, NetCommand::RequestSit { .. }) && self.rlva.has("standtp") && !self.agent.is_sitting() {
+            self.rlva.stand_origin = self.main_region.map(|handle| (handle, self.agent.position));
+            self.rlva.stand_seated = false;
+        }
+    }
+
     fn rlva_seat(&self) -> Option<Seat> {
         if self.agent.ground_sit {
             return Some(Seat::Ground);
@@ -296,5 +307,45 @@ mod tests {
         assert!(w.rlva_pending().is_empty(), "standing already is a no-op");
         restrict(&mut w, A, "sitground=n");
         assert!(!w.rlva.has("sitground"), "sitground is force-only in the reference dictionary");
+    }
+
+    #[test]
+    fn accepted_native_sit_captures_standtp_origin_and_returns_after_unparenting() {
+        let mut w = world();
+        restrict(&mut w, A, "standtp=n");
+        let origin = (w.main_region.unwrap(), w.agent.position);
+        let command = NetCommand::RequestSit {
+            handle: origin.0,
+            target: CHILD,
+            offset: glam::Vec3::ZERO,
+        };
+        assert!(w.rlva_allows_command(&command, Uuid::nil()));
+        w.rlva_note_sit_command(&command, Uuid::nil());
+        assert_eq!(w.rlva.stand_origin, Some(origin));
+
+        seated(&mut w, true);
+        w.rlva_update_stand();
+        assert!(w.rlva.stand_return.is_none(), "sitting must not return yet");
+        seated(&mut w, false);
+        w.agent.position = glam::Vec3::new(20.0, 30.0, 40.0);
+        w.rlva_update_stand();
+        assert_eq!(w.rlva.stand_return, Some(origin));
+        w.rlva_update_stand();
+        assert!(
+            w.rlva.stand_return.is_some(),
+            "the origin is consumed once by stand-return dispatch"
+        );
+    }
+
+    #[test]
+    fn standtp_added_after_sitting_does_not_invent_an_origin() {
+        let mut w = world();
+        seated(&mut w, true);
+        restrict(&mut w, A, "standtp=n");
+        w.rlva_update_stand();
+        assert!(w.rlva.stand_origin.is_none());
+        seated(&mut w, false);
+        w.rlva_update_stand();
+        assert!(w.rlva.stand_return.is_none());
     }
 }
