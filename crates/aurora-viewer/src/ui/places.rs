@@ -173,7 +173,7 @@ fn add_rows(
         return;
     }
     let mut kids: Vec<_> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
-    kids.sort_by_key(|k| k.info.name.to_lowercase());
+    kids.sort_by_key(|k| crate::natural_order::key(&k.info.name));
     for k in kids {
         let keep = if filter.is_empty() {
             all || has_match(inv, k.info.id, "", 0)
@@ -204,10 +204,10 @@ fn add_rows(
         items.sort_by(|a, b| {
             b.created_at
                 .cmp(&a.created_at)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                .then_with(|| crate::natural_order::cmp(&a.name, &b.name))
         });
     } else {
-        items.sort_by_key(|i| i.name.to_lowercase());
+        items.sort_by_key(|i| crate::natural_order::key(&i.name));
     }
     rows.extend(items.into_iter().map(|i| Row {
         depth,

@@ -548,7 +548,7 @@ pub(super) fn group_picker(ctx: &egui::Context, p: &Palette, tool: &mut BuildToo
                 chosen = Some(uuid::Uuid::nil());
             }
             let mut groups: Vec<(uuid::Uuid, String)> = world.groups.groups.iter().map(|g| (g.id, g.name.clone())).collect();
-            groups.sort_by_key(|g| g.1.to_lowercase());
+            groups.sort_by_key(|g| crate::natural_order::key(&g.1));
             for (id, name) in groups {
                 if ui.selectable_label(false, RichText::new(name).size(12.0)).double_clicked() {
                     chosen = Some(id);

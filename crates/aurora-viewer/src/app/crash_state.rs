@@ -51,14 +51,14 @@ impl SwapchainRecent {
 /// frame is kept for [`PEAK_SPAN`] before the loss.
 #[derive(Debug, Default)]
 pub(super) struct Recent {
-    /// The GPU frames that may yet be the longest of the last [`PEAK_SPAN`]:
-    /// (when, GPU ms, its heaviest pass), oldest first and strictly
+    /// The GPU frames that may yet be the longest of the last [`PEAK_SPAN`],
+    /// oldest first and strictly
     /// decreasing in time, so the front is the window's peak. A frame drops
     /// every older frame no longer than itself (those could never be the
     /// peak again) and the front leaves once older than the span: amortised
     /// one push and one pop a frame, nothing scanned, at most [`PEAK_CAP`]
     /// kept.
-    peaks: VecDeque<(Instant, f32, Option<&'static str>)>,
+    peaks: VecDeque<Peak>,
     last_ms: Option<f32>,
     last_pass: Option<&'static str>,
     uploads: u32,
@@ -66,9 +66,22 @@ pub(super) struct Recent {
     upload_peak_bytes: u64,
     /// The longest the GPU kept the render thread (`stalled_for`).
     stall_ms: u64,
+    /// The last frame a photo was being drawn.
+    photo_at: Option<Instant>,
     frozen: bool,
     /// What the note at the loss gave, which stays.
     at_loss: Option<Sample>,
+}
+
+/// A GPU frame that may yet be the longest of the span.
+#[derive(Debug, Clone, Copy)]
+struct Peak {
+    at: Instant,
+    ms: f32,
+    pass: Option<&'static str>,
+    /// Its ambient occlusion and contact shadows (ms), both inside the
+    /// `effects` pass: what the pass's name alone cannot tell apart (#2238).
+    ao_contact: Option<(f32, f32)>,
 }
 
 /// What [`Recent`] gives a note.
@@ -76,6 +89,9 @@ pub(super) struct Recent {
 pub(super) struct Sample {
     gpu_ms: Option<f32>,
     peak: Option<(f32, Option<&'static str>)>,
+    peak_ao_contact: Option<(f32, f32)>,
+    /// A photo was being drawn in the last [`PEAK_SPAN`].
+    photo: bool,
     last_pass: Option<&'static str>,
     uploads: (u32, f32),
     upload_peak_mb: f32,
@@ -115,13 +131,18 @@ impl Recent {
             self.last_pass = pass;
             // an older frame no longer than this one is never the peak again:
             // of two equal ones the later stays, it outlives the other
-            while self.peaks.back().is_some_and(|p| p.1 <= ms) {
+            while self.peaks.back().is_some_and(|p| p.ms <= ms) {
                 self.peaks.pop_back();
             }
             if self.peaks.len() >= PEAK_CAP {
                 self.peaks.pop_back();
             }
-            self.peaks.push_back((now, ms, pass));
+            self.peaks.push_back(Peak {
+                at: now,
+                ms,
+                pass,
+                ao_contact: stats.gpu_ssao.zip(stats.gpu_contact),
+            });
             self.expire(now);
         }
         self.uploads = self.uploads.saturating_add(uploads.min(u32::MAX as usize) as u32);
@@ -129,8 +150,19 @@ impl Recent {
         self.upload_peak_bytes = self.upload_peak_bytes.max(upload_bytes);
     }
 
-    /// The render thread's stall, asked every frame: a hang (a driver reset
-    /// follows a GPU task of about 2 s) from a loss with no stall before.
+    /// Every frame: whether a photo is being drawn. The main thread waits for
+    /// the render thread through a hang, so no note comes between the frame
+    /// that hung and the loss: only this tells that a photo was under way.
+    pub(super) fn photo(&mut self, now: Instant, drawing: bool) {
+        if drawing && !self.frozen {
+            self.photo_at = Some(now);
+        }
+    }
+
+    /// The render thread's stall, asked every frame: past
+    /// `aurora_render::STALL_AFTER` only, so a reset that comes sooner (about
+    /// 1.1 s on NVIDIA, `HANG_AFTER` in aurora-render) leaves none: the
+    /// report's `GPU work at the loss` tells that hang.
     pub(super) fn stall(&mut self, held: Option<Duration>) {
         if !self.frozen
             && let Some(held) = held
@@ -146,10 +178,12 @@ impl Recent {
             return kept;
         }
         self.expire(now);
-        let peak = self.peaks.front().map(|p| (p.1, p.2));
+        let peak = self.peaks.front();
         let sample = Sample {
             gpu_ms: self.last_ms,
-            peak,
+            peak: peak.map(|p| (p.ms, p.pass)),
+            peak_ao_contact: peak.and_then(|p| p.ao_contact),
+            photo: self.photo_at.is_some_and(|at| now.saturating_duration_since(at) <= PEAK_SPAN),
             last_pass: self.last_pass,
             uploads: (self.uploads, self.upload_bytes as f32 / MB),
             upload_peak_mb: self.upload_peak_bytes as f32 / MB,
@@ -169,7 +203,7 @@ impl Recent {
     /// Drops the peaks older than the span; a frame exactly as old still
     /// counts.
     fn expire(&mut self, now: Instant) {
-        while self.peaks.front().is_some_and(|p| now.saturating_duration_since(p.0) > PEAK_SPAN) {
+        while self.peaks.front().is_some_and(|p| now.saturating_duration_since(p.at) > PEAK_SPAN) {
             self.peaks.pop_front();
         }
     }
@@ -221,7 +255,7 @@ impl Timeline {
 /// (`EFFECT_WORDS` in crash/watchdog.rs): what tells a hang caused by an effect
 /// from one that is not. Conditions follow the renderer: the contact shadows
 /// need the shadows, the indirect light needs the GTAO.
-pub(super) fn effects(settings: &crate::settings::Settings, photo: bool, vr: bool) -> String {
+pub(super) fn effects(settings: &crate::settings::Settings, vr: bool) -> String {
     use std::fmt::Write;
     let mut out = String::new();
     let mut word = |on: bool, text: std::fmt::Arguments| {
@@ -247,6 +281,7 @@ pub(super) fn effects(settings: &crate::settings::Settings, photo: bool, vr: boo
         4 => word(true, format_args!("aa-msaa8")),
         5 => word(true, format_args!("aa-taa")),
         6 => word(true, format_args!("aa-smaa")),
+        7 => word(true, format_args!("aa-fsr{}", settings.fsr_quality)),
         _ => {}
     }
     word(settings.bloom, format_args!("bloom"));
@@ -264,29 +299,19 @@ pub(super) fn effects(settings: &crate::settings::Settings, photo: bool, vr: boo
     word(true, format_args!("scale{}", settings.render_scale_percent));
     word(true, format_args!("draw{}", settings.draw_distance.round() as u32));
     word(settings.hdr_emissive, format_args!("hdr"));
-    word(photo, format_args!("photo"));
     word(vr, format_args!("vr"));
     out
 }
 
-/// What does not change in a session: the Vulkan layers on offer. Looked up
-/// once, on a thread of its own; empty until it is done.
-fn session_layers() -> &'static str {
-    use std::sync::OnceLock;
-    use std::sync::atomic::Ordering;
-    static LAYERS: OnceLock<String> = OnceLock::new();
-    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !STARTED.swap(true, Ordering::Relaxed)
-        && std::thread::Builder::new()
-            .name("aurora-crash-facts".into())
-            .spawn(|| {
-                let _ = LAYERS.set(aurora_render::vulkan_layers::loaded_names().join(","));
-            })
-            .is_err()
-    {
-        let _ = LAYERS.set(String::new());
+/// Adds the `photo` word of [`Sample::photo`] to a list of [`effects`], once:
+/// it reaches the state kept from before a loss as well as a fresh one.
+fn add_photo(effects: &mut String) {
+    if !effects.split(',').any(|word| word == "photo") {
+        if !effects.is_empty() {
+            effects.push(',');
+        }
+        effects.push_str("photo");
     }
-    LAYERS.get().map_or("", String::as_str)
 }
 
 /// The other viewers on this card and how many of them are in front, as
@@ -333,6 +358,8 @@ impl Live {
         let Sample {
             gpu_ms,
             peak,
+            peak_ao_contact,
+            photo,
             last_pass,
             uploads,
             upload_peak_mb,
@@ -344,6 +371,10 @@ impl Live {
         state.gpu_ms = gpu_ms;
         state.gpu_peak_ms = peak.map(|p| p.0);
         state.gpu_peak_pass = peak.and_then(|p| p.1);
+        state.gpu_peak_ao_contact = peak_ao_contact;
+        if photo {
+            add_photo(&mut state.effects);
+        }
         state.gpu_last_pass = last_pass;
         state.uploads = uploads;
         state.upload_peak_mb = upload_peak_mb;
@@ -439,8 +470,8 @@ impl App {
             regions: self.world.regions.len(),
             ..Default::default()
         };
+        state.effects = effects(&self.settings, renderer.vr_engaged());
         live.apply(&mut state);
-        state.effects = effects(&self.settings, self.snapshots.drawing(), renderer.vr_engaged());
         state.window_state = if window.is_minimized().unwrap_or(false) {
             "minimized"
         } else if self.occluded {
@@ -454,7 +485,6 @@ impl App {
         state.world_s = Timeline::seconds(self.crash_timeline.world, now);
         state.region_s = Timeline::seconds(self.crash_timeline.region, now);
         let tex = &self.scene.textures.stats;
-        state.layers = session_layers().to_owned();
         let running = !self.demo && self.capture.is_none() && !self.frame_profile.enabled();
         state.viewers_on_card = viewers_on_card(running, &self.instances.peers());
         (state.card_used_mb, state.card_others_mb) = card_memory_mb(self.scene.textures.card_used(), self.scene.textures.video_usage());
@@ -464,11 +494,13 @@ impl App {
 
     /// Every frame, after the render: what the report counts over time.
     pub(super) fn crash_frame(&mut self) {
+        let now = Instant::now();
         let tex = &self.scene.textures.stats;
         self.crash_recent
-            .frame(Instant::now(), &self.last_render, tex.uploads_frame, tex.uploaded_bytes_frame);
+            .frame(now, &self.last_render, tex.uploads_frame, tex.uploaded_bytes_frame);
+        self.crash_recent.photo(now, self.snapshots.drawing());
         self.crash_timeline
-            .frame(Instant::now(), &self.screen, self.login_form.busy, self.world.main_region);
+            .frame(now, &self.screen, self.login_form.busy, self.world.main_region);
     }
 }
 
@@ -557,7 +589,7 @@ mod tests {
             screen_indirect_light: true,
             ..Default::default()
         };
-        let list = effects(&settings, true, true);
+        let list = effects(&settings, true);
         for word in [
             "shadows3",
             "contact-shadows",
@@ -565,7 +597,6 @@ mod tests {
             "aa-smaa",
             "bloom",
             "indirect-light",
-            "photo",
             "vr",
             "scale",
             "draw",
@@ -575,12 +606,12 @@ mod tests {
         // the contact shadows and the indirect light need what they ride on
         settings.shadow_quality = 0;
         settings.ssao = 0;
-        let list = effects(&settings, false, false);
+        let list = effects(&settings, false);
         assert!(
             !list.contains("contact-shadows") && !list.contains("indirect-light") && !list.contains("shadows"),
             "{list}"
         );
-        assert!(!list.contains("photo") && !list.contains("vr"), "{list}");
+        assert!(!list.contains("vr"), "{list}");
     }
 
     #[test]
@@ -600,7 +631,8 @@ mod tests {
             antialiasing: 3,
             ..Default::default()
         };
-        let list = effects(&settings, true, true);
+        let mut list = effects(&settings, true);
+        add_photo(&mut list);
         assert!(crate::crash::summary_state_value(&list).is_some(), "{list}");
         for element in aurora_render::GpuElement::ALL {
             assert!(crate::crash::summary_state_value(element.key()).is_some(), "{}", element.key());
@@ -700,7 +732,7 @@ mod tests {
         assert_eq!(recent.peaks.len(), PEAK_CAP);
         // the longest frame is still the front, the newest is still the back
         assert_eq!(recent.note(t + s(6), false).peak, Some((n as f32, None)));
-        assert_eq!(recent.peaks.back().map(|p| p.1), Some(1.0));
+        assert_eq!(recent.peaks.back().map(|p| p.ms), Some(1.0));
         // the candidates leave in order as they age out
         let after_first = recent.note(t + ms(5) + PEAK_SPAN, false);
         assert_eq!(after_first.peak, Some(((n - 1) as f32, None)));
@@ -745,6 +777,71 @@ mod tests {
         assert_eq!(recent.note(t + s(41), false), Sample::default());
         recent.frame(t + s(42), &stats(12.0, [0.0; 7]), 0, 0);
         assert_eq!(recent.note(t + s(43), false).peak, Some((12.0, None)));
+    }
+
+    #[test]
+    fn the_longest_frame_keeps_its_ao_and_contact_shadows_apart_from_its_pass() {
+        let mut recent = Recent::default();
+        let t = Instant::now();
+        let frame = |ms: f32, ao: f32, contact: f32| aurora_render::RenderStats {
+            gpu_ssao: Some(ao),
+            gpu_contact: Some(contact),
+            ..stats(ms, [0.0, ms, 0.0, 0.0, 0.0, 0.0, 0.0])
+        };
+        recent.frame(t, &frame(900.0, 20.0, 850.0), 0, 0);
+        recent.frame(t + s(1), &frame(10.0, 2.0, 1.0), 0, 0);
+        let sample = recent.note(t + s(2), false);
+        assert_eq!(sample.peak, Some((900.0, Some("effects"))));
+        assert_eq!(sample.peak_ao_contact, Some((20.0, 850.0)));
+        // the renderer without these marks: no figures, the pass stays
+        let mut recent = Recent::default();
+        recent.frame(t, &stats(900.0, [0.0, 900.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 0, 0);
+        assert_eq!(recent.note(t, false).peak_ao_contact, None);
+    }
+
+    #[test]
+    fn a_photo_begun_after_the_last_note_is_in_the_state_kept_at_the_loss() {
+        let mut recent = Recent::default();
+        let mut kept = KeptState::default();
+        let t = Instant::now();
+        let before = crate::crash::State {
+            effects: "shadows3,scale100".to_owned(),
+            ..Default::default()
+        };
+        let live_of = |sample: Sample| Live {
+            sample,
+            ..Default::default()
+        };
+        let note = live_of(recent.note(t, false));
+        assert_eq!(kept.next(false, note, || before.clone()), Some(before.clone()));
+        // the photo's frame hangs: the main thread waits, no note until the loss
+        recent.photo(t + ms(500), true);
+        let at_loss = recent.note(t + ms(1600), true);
+        let state = kept
+            .next(true, live_of(at_loss), || panic!("no fresh state once lost"))
+            .expect("the state kept");
+        assert_eq!(state.effects, "shadows3,scale100,photo");
+        // what comes after the loss changes nothing, and the word stays single
+        recent.photo(t + s(40), false);
+        assert_eq!(recent.note(t + s(40), true), at_loss);
+        let mut twice = state.effects.clone();
+        add_photo(&mut twice);
+        assert_eq!(twice, state.effects);
+    }
+
+    #[test]
+    fn a_photo_counts_for_ten_seconds_and_not_when_none_was_drawn() {
+        let mut recent = Recent::default();
+        let t = Instant::now();
+        recent.photo(t, false);
+        assert!(!recent.note(t, false).photo);
+        recent.photo(t + s(1), true);
+        recent.photo(t + s(2), false);
+        assert!(recent.note(t + s(11), false).photo);
+        assert!(!recent.note(t + s(11) + ms(1), false).photo);
+        let mut empty = String::new();
+        add_photo(&mut empty);
+        assert_eq!(empty, "photo");
     }
 
     #[test]

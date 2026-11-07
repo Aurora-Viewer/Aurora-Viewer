@@ -93,6 +93,13 @@ impl World {
         self.mutes.is_muted(object, name, 0) || (!owner.is_nil() && self.mutes.is_muted_id(&owner))
     }
 
+    /// A script menu (process_script_dialog): also dropped when the owner
+    /// the simulator names (OwnerData) is blocked, the object out of view
+    /// or not cached yet. A nil owner (older simulators) leaves the scene's.
+    pub(super) fn script_dialog_blocked(&self, object: &Uuid, name: &str, owner: &Uuid) -> bool {
+        self.object_blocked(object, name) || (!owner.is_nil() && self.mutes.is_muted_id(owner))
+    }
+
     /// An IM from someone (or an object) we blocked: dropped; inventory
     /// offers are declined like closing the offer (LLOfferInfo IOR_DECLINE).
     pub(super) fn im_blocked(&mut self, im: &InstantMessage) -> bool {
@@ -101,7 +108,12 @@ impl World {
         }
         // object IMs carry the object id in the session id (STORM-1209)
         let muted = self.mutes.text_muted(&im.from_agent_id, &im.from_name) || (im.dialog == 19 && self.mutes.is_muted_id(&im.session_id));
-        if !muted {
+        // inventory_offer_handler: an offer is declined on any entry, one
+        // that blocks only sounds, particles or voice too (isMuted with no
+        // flags); chat and IMs keep the text chat flag
+        let offer = im.dialog == d::INVENTORY_OFFERED || im.dialog == d::TASK_INVENTORY_OFFERED;
+        let offer_muted = offer && self.mutes.is_muted(&im.from_agent_id, &im.from_name, 0);
+        if !muted && !offer_muted {
             return false;
         }
         // FSSendMutedAvatarResponse; friendship offers are declined

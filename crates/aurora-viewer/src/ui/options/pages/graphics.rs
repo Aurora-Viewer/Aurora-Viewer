@@ -164,7 +164,7 @@ fn graphics_card(cx: &mut Cx) {
     });
 }
 
-/// Other programs' overlays (Steam, RivaTuner, Epic…): their Vulkan layers
+/// Other programs' overlays (OBS's game capture, Steam, RivaTuner, Epic…): their Vulkan layers
 /// are kept out at startup unless allowed (`aurora_render::vulkan_layers`),
 /// so the choice applies at the next start. `AURORA_VULKAN_LAYERS=keep`
 /// loads them all.
@@ -182,6 +182,8 @@ fn overlays(cx: &mut Cx) {
 fn frames_per_second(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-frames-per-second"), |cx| {
+        // FSR's mode sets the world's size in its place
+        cx.greyed(cx.s.antialiasing == 7);
         cx.slider(
             tr!("ui-options-render-scale"),
             tr!("ui-options-render-scale-help"),
@@ -189,11 +191,17 @@ fn frames_per_second(cx: &mut Cx) {
             50..=100,
             "%",
         );
+        cx.greyed(false);
         // across, its switch in line with those of the limits below
         cx.wide().toggle(
             tr!("ui-options-vertical-synchronization"),
             tr!("ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing"),
             &field!(vsync),
+        );
+        cx.wide().toggle(
+            tr!("ui-options-borderless-fullscreen"),
+            tr!("ui-options-borderless-fullscreen-help"),
+            &field!(window_fullscreen),
         );
         // the limits show under their switches: the value is what the
         // switch is turned on for
@@ -221,6 +229,16 @@ fn frames_per_second(cx: &mut Cx) {
                 tr!("status-fps"),
             );
         });
+        cx.unfolded().toggle(
+            tr!("ui-options-pause-when-card-busy"),
+            tr!("ui-options-pause-when-card-busy-tip"),
+            &field!(background_gpu_pause),
+        );
+        cx.unfolded().toggle(
+            tr!("ui-options-gpu-recovery"),
+            tr!("ui-options-gpu-recovery-tip"),
+            &field!(gpu_recovery),
+        );
     });
 }
 
@@ -333,8 +351,8 @@ fn quality(cx: &mut Cx) {
         );
         cx.subs(false, |cx| {
             if cx.s.texture_budget_auto {
-                let (vram, integrated) = cx.st.vram;
-                let budget = crate::settings::auto_texture_budget(vram, integrated);
+                let (vram, shared, integrated) = cx.st.vram;
+                let budget = crate::settings::auto_texture_budget(vram, shared, integrated);
                 let gpu = match vram {
                     Some(v) if !integrated => tr!("ui-options-mb-of-video-memory-detected", value0 = format!("{}", v)),
                     _ if integrated => tr!("ui-options-integrated-graphics").to_owned(),
@@ -489,6 +507,16 @@ fn quality(cx: &mut Cx) {
             );
         });
     });
+    // the photo window's own switch, also here: a PC that crashes as soon
+    // as the window opens with it on can still turn it off
+    cx.group(tr!("photo-title"), |cx| {
+        cx.toggle(tr!("photo-quality"), tr!("photo-quality-hint"), &field!(snapshot.quality));
+        cx.toggle(
+            tr!("photo-quality-off-after-crash"),
+            tr!("photo-quality-off-after-crash-help"),
+            &field!(snapshot.quality_off_after_crash),
+        );
+    });
 }
 
 fn light(cx: &mut Cx) {
@@ -520,6 +548,23 @@ fn light(cx: &mut Cx) {
                 tr!("ui-options-projector-shadows"),
                 tr!("ui-options-projector-shadows-help"),
                 &field!(projector_shadows),
+            );
+            let enabled = cx.s.projector_shadows;
+            cx.row(
+                tr!("ui-options-projector-shadow-limit"),
+                tr!("ui-options-projector-shadow-limit-help"),
+                &field!(projector_shadow_limit),
+                |ui, s| {
+                    ui.add_enabled(
+                        enabled,
+                        egui::Slider::new(
+                            &mut s.projector_shadow_limit,
+                            1..=aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8,
+                        )
+                        .trailing_fill(true),
+                    )
+                    .changed()
+                },
             );
             cx.toggle(
                 tr!("ui-options-contact-shadows"),
@@ -730,12 +775,38 @@ fn image(cx: &mut Cx) {
                 (4, "MSAA 8×"),
                 (5, "TAA"),
                 (6, "SMAA"),
+                (7, "FSR 3.1"),
             ],
         );
         cx.toggle(
             tr!("ui-options-specular-aa"),
             tr!("ui-options-specular-aa-help"),
             &field!(specular_aa),
+        );
+    });
+    // FSR's own settings (aurora_render fsr.rs), greyed under another
+    // anti-aliasing
+    cx.group(tr!("ui-options-fsr"), |cx| {
+        cx.note(tr!("ui-options-fsr-note"));
+        cx.greyed(cx.s.antialiasing != 7);
+        cx.combo(
+            tr!("ui-options-fsr-quality"),
+            tr!("ui-options-fsr-quality-help"),
+            &field!(fsr_quality),
+            &[
+                (0, tr!("ui-options-fsr-native-aa")),
+                (1, tr!("ui-options-fsr-quality-mode")),
+                (2, tr!("ui-options-fsr-balanced")),
+                (3, tr!("ui-options-fsr-performance")),
+                (4, tr!("ui-options-fsr-ultra-performance")),
+            ],
+        );
+        cx.slider(
+            tr!("ui-options-fsr-sharpness"),
+            tr!("ui-options-fsr-sharpness-help"),
+            &field!(fsr_sharpness),
+            0..=100,
+            "%",
         );
     });
     cx.group(tr!("ui-options-color-and-sharpness"), |cx| {
@@ -794,7 +865,10 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-enhances-fine-details-amd-cas-0-4-as-in"),
             &field!(sharpen),
             |ui, s| {
-                let r = ui.add_enabled_ui(hdr, |ui| {
+                // FSR's RCAS takes its place: both on top of each other
+                // turn FSR's faint sub-pixel pattern into a visible one
+                let fsr = s.antialiasing == 7;
+                let r = ui.add_enabled_ui(hdr && !fsr, |ui| {
                     ui.add(
                         egui::Slider::new(&mut s.sharpen, 0.0..=1.0)
                             .custom_parser(aurora_i18n::parse_number)
@@ -803,7 +877,11 @@ fn image(cx: &mut Cx) {
                     )
                     .changed()
                 });
-                r.response.on_disabled_hover_text(tr!("ui-options-needs-hdr-emissive"));
+                r.response.on_disabled_hover_text(if fsr {
+                    tr!("ui-options-sharpness-off-with-fsr")
+                } else {
+                    tr!("ui-options-needs-hdr-emissive")
+                });
                 r.inner
             },
         );

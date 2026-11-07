@@ -11,6 +11,8 @@
 //!   three prims of two objects (ready stops before the face clicks).
 //!   faces-picker | faces-picker-material: select one face and keep its picker open.
 //!   faces-picker-local | faces-picker-material-local: the same, on its Local tab.
+//!   faces-picker-normal-local | faces-picker-specular-local: local legacy maps.
+//!   faces-picker-badges-local | faces-picker-material-badges-local: applied local previews.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
 //!   create-delete | create-ready: create and select a basic prim, then
@@ -60,8 +62,8 @@ pub enum Step {
     Select(usize),
     SharedRights(usize, bool),
     Face(usize, u8, bool),
-    /// Materials, Local tab.
-    TexturePicker(bool, bool),
+    /// Target channel, Local tab.
+    TexturePicker(super::ui::PickTarget, bool),
     BomPicker(Option<usize>),
     CloseView,
     CloseEditor,
@@ -524,7 +526,15 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
             240 => pick(99620, u8::MAX, false),
             250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
-                parts[0].starts_with("faces-picker-material"),
+                if parts[0].starts_with("faces-picker-material") {
+                    super::ui::PickTarget::PbrMaterial
+                } else if parts[0].starts_with("faces-picker-normal") {
+                    super::ui::PickTarget::Normal
+                } else if parts[0].starts_with("faces-picker-specular") {
+                    super::ui::PickTarget::Specular
+                } else {
+                    super::ui::PickTarget::Diffuse
+                },
                 parts[0].ends_with("-local"),
             )],
             _ if parts[0] == "faces-close" => Vec::new(),
