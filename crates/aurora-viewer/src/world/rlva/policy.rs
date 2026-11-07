@@ -21,7 +21,7 @@ impl World {
         )
     }
     /// The root of `index` and, for an attachment, who wears it.
-    fn rlva_root_and_wearer(&self, index: usize) -> Option<(usize, Option<Uuid>)> {
+    pub(crate) fn rlva_root_and_wearer(&self, index: usize) -> Option<(usize, Option<Uuid>)> {
         let mut root = index;
         for _ in 0..64 {
             let object = self.objects.get(root)?;
@@ -56,15 +56,18 @@ impl World {
     /// RlvActions::canInteract: `point` is the clicked surface, as the
     /// object's centre plus the pick offset. A left click's special action
     /// (sit, pay, buy, open, play, zoom) needs it; so does a touch, through
-    /// `rlva_can_touch_at`.
+    /// `rlva_can_touch_at`. canInteract itself exempts a HUD from @interact,
+    /// but LLViewerWindow::cursorIntersect has dropped the pick by then, so
+    /// only @fartouch spares one here.
     pub fn rlva_can_interact(&self, index: usize, point: Option<Vec3>) -> bool {
         let r = &self.rlva;
-        if !r.enabled() || self.rlva_is_hud(index) {
+        if !r.enabled() {
             return true;
         }
         let max = r.distance_limit("fartouch", 1.5, Uuid::nil());
         !r.has("interact")
-            && (!max.is_finite()
+            && (self.rlva_is_hud(index)
+                || !max.is_finite()
                 || match point.filter(|p| p.is_finite()) {
                     Some(p) => p.distance(self.agent.position) <= max,
                     None => self.rlva_object_within(index, max),
@@ -72,14 +75,14 @@ impl World {
     }
 
     /// What a right click or a click of the build tools may designate:
-    /// LLViewerWindow::cursorIntersect keeps our own avatar and HUDs under
-    /// @interact, LLToolSelect::handleObjectSelection takes an object past
-    /// @fartouch only when the clicked `surface` is within 1.5 m, and never
-    /// applies it to what we wear. The Legacy Viewer's constant stays 1.5 m
-    /// whatever the @fartouch distance is.
+    /// LLViewerWindow::cursorIntersect keeps only our own avatar under
+    /// @interact, not even a HUD; LLToolSelect::handleObjectSelection takes
+    /// an object past @fartouch only when the clicked `surface` is within
+    /// 1.5 m, and never applies it to what we wear. The Legacy Viewer's
+    /// constant stays 1.5 m whatever the @fartouch distance is.
     pub fn rlva_can_designate(&self, index: usize, surface: Option<Vec3>) -> bool {
         let r = &self.rlva;
-        if !r.enabled() || self.rlva_is_hud(index) || self.objects.get(index).is_some_and(|o| o.full_id == self.agent_id) {
+        if !r.enabled() || self.objects.get(index).is_some_and(|o| o.full_id == self.agent_id) {
             return true;
         }
         if r.has("interact") {
@@ -92,6 +95,19 @@ impl World {
                 .is_some_and(|(_, wearer)| wearer == Some(self.agent_id))
             || self.rlva_object_within(index, max)
             || surface.is_some_and(|p| p.distance(self.agent.position) <= 1.5)
+    }
+
+    /// LLSelectMgr::deselectAllIfTooFar under @fartouch: `center` is the
+    /// selection's, `primary` one of its objects. An attachment stays,
+    /// whoever wears it.
+    pub fn rlva_selection_too_far(&self, primary: usize, center: Vec3) -> bool {
+        let max = self.rlva.distance_limit("fartouch", 1.5, Uuid::nil());
+        self.rlva.enabled()
+            && max.is_finite()
+            && center != Vec3::ZERO
+            && self.objects.get(primary).is_some_and(|o| !o.is_avatar())
+            && self.rlva_root_and_wearer(primary).is_some_and(|(_, wearer)| wearer.is_none())
+            && center.distance(self.agent.position) > max
     }
 
     /// The land under a right click: only @interact takes it

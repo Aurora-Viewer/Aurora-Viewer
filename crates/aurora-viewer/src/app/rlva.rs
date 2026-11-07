@@ -156,17 +156,28 @@ impl App {
             .iter()
             .filter(|key| {
                 self.world.objects.index_of(key).is_none_or(|i| {
-                    // LLSelectMgr::deselectAllIfTooFar:
-                    // @interact keeps only HUDs, @fartouch applies while editing
-                    !self.world.rlva_can_edit(i)
-                        || (self.world.rlva.has("interact") && !self.world.rlva_is_hud(i))
-                        || (self.build.open && !self.world.rlva_can_designate(i, None))
+                    // LLSelectMgr::deselectAllIfTooFar: @interact keeps only HUDs
+                    !self.world.rlva_can_edit(i) || (self.world.rlva.has("interact") && !self.world.rlva_is_hud(i))
                 })
             })
             .copied()
             .collect();
         if !invalid.is_empty() {
-            self.build.deselect(&self.world, &invalid);
+            self.build.drop_selected(&self.world, &invalid);
+        }
+        // @fartouch applies while editing, on the whole selection, and waits
+        // for an object menu ("navigating to rate an object's owner")
+        if self.world.rlva.has("fartouch")
+            && self.build.open
+            && !matches!(
+                self.context_menu.as_ref().map(|m| &m.target),
+                Some(ui::context::Target::Object { .. })
+            )
+            && let Some(primary) = self.build.selection.first().and_then(|key| self.world.objects.index_of(key))
+            && let Some(bounds) = self.build.bounds(&self.world, std::time::Instant::now())
+            && self.world.rlva_selection_too_far(primary, bounds.center)
+        {
+            self.build.deselect_all(&self.world);
         }
         let locked_hud = self.world.rlva_has_locked_hud();
         if locked_hud {

@@ -2584,17 +2584,21 @@ fn empty_trash_ignores_rlva_locks_without_exempting_other_purges() {
     assert!(!world.rlva_inventory_mutation_allowed(&purge(Uuid::from_u128(92)), Uuid::nil()));
 }
 
-<<<<<<< ours
 /// #2749, #2750: what @interact and @fartouch keep from a right click, the
 /// build tools, the Create tool and a drag from the inventory.
 #[test]
 fn rlva_interact_and_fartouch_gate_what_a_click_can_designate() {
     use glam::Vec3;
     let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    for event in crate::demo::events() {
+    for event in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
         world.apply(event);
     }
     world.rlva.configure(true);
+    let hud = world
+        .objects
+        .index_of_uuid(&crate::demo::hud::object(31, false).full_id)
+        .expect("a HUD");
+    assert!(world.rlva_is_hud(hud));
     let far = world
         .objects
         .iter()
@@ -2626,6 +2630,8 @@ fn rlva_interact_and_fartouch_gate_what_a_click_can_designate() {
     );
     assert!(!world.rlva_can_designate(far, None));
     assert!(world.rlva_can_designate(me, None), "our own avatar");
+    assert!(world.rlva_can_designate(hud, None), "what we wear");
+    assert!(world.rlva_can_interact(hud, None));
     assert!(world.rlva_can_designate_land(), "@fartouch leaves the land menu");
     assert!(!world.rlva_can_interact(far, Some(beyond)));
     assert!(world.rlva_can_interact(far, Some(at + Vec3::X)));
@@ -2641,6 +2647,8 @@ fn rlva_interact_and_fartouch_gate_what_a_click_can_designate() {
     command(&mut world.rlva, A, "@interact=n");
     assert!(!world.rlva_can_designate(far, Some(at + Vec3::X)), "at any distance");
     assert!(world.rlva_can_designate(me, None), "the avatar's own menu stays");
+    assert!(!world.rlva_can_designate(hud, None), "cursorIntersect drops a HUD too");
+    assert!(!world.rlva_can_interact(hud, None));
     assert!(!world.rlva_can_designate_land());
     assert!(!world.rlva_can_interact(far, Some(at + Vec3::X)));
     assert!(!world.rlva_can_rez_drop(None, false));
@@ -2666,6 +2674,44 @@ fn rlva_interact_and_fartouch_gate_what_a_click_can_designate() {
     assert!(!world.rlva_can_rez_drop(None, true), "@rez keeps the land");
     assert!(world.rlva_can_rez_drop(Some(far), true), "@rez lets a drop into contents pass");
     assert!(!world.rlva_can_rez_drop(Some(far), false));
+}
+
+/// LLSelectMgr::deselectAllIfTooFar measures the selection's centre, and
+/// leaves attachments alone, ours or someone else's.
+#[test]
+fn rlva_fartouch_lets_go_of_a_selection_by_its_centre_and_never_of_an_attachment() {
+    use glam::Vec3;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let find = |wanted: fn(Option<Uuid>, Uuid) -> bool| {
+        world
+            .objects
+            .iter()
+            .find(|(i, o)| {
+                !o.is_avatar()
+                    && world
+                        .rlva_root_and_wearer(*i)
+                        .is_some_and(|(_, wearer)| wanted(wearer, world.agent_id))
+            })
+            .map(|(i, _)| i)
+    };
+    let prim = find(|wearer, _| wearer.is_none()).expect("a world object");
+    let mine = find(|wearer, me| wearer == Some(me)).expect("something we wear");
+    let theirs = find(|wearer, me| wearer.is_some_and(|w| w != me)).expect("something another avatar wears");
+    let at = world.agent.position;
+    let beyond = at + Vec3::X * 10.0;
+    assert!(!world.rlva_selection_too_far(prim, beyond), "no restriction");
+    command(&mut world.rlva, A, "@fartouch=n");
+    assert!(world.rlva_selection_too_far(prim, beyond));
+    assert!(
+        !world.rlva_selection_too_far(prim, at + Vec3::X),
+        "only the centre counts, wherever the object itself is"
+    );
+    assert!(!world.rlva_selection_too_far(mine, beyond));
+    assert!(!world.rlva_selection_too_far(theirs, beyond));
 }
 
 #[test]
@@ -2699,5 +2745,4 @@ fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not(
     assert!(world.rlva_can_link(&[seat, other]));
     command(&mut world.rlva, A, "@editworld=n");
     assert!(!world.rlva_can_link(&[seat, other]));
->>>>>>> theirs
 }
