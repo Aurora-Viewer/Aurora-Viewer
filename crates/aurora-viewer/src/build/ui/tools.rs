@@ -487,6 +487,9 @@ impl BuildTool {
     pub fn set_tool(&mut self, t: Tool) {
         self.manip.cancel();
         self.land.cancel();
+        // the gesture belongs to the tool it started under
+        self.press = None;
+        self.rect = None;
         self.tool = t;
         // LLToolGrab::handleSelect resets the radio
         if t == Tool::Grab {

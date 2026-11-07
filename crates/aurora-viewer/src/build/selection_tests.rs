@@ -1295,6 +1295,72 @@ fn a_rectangle_from_a_hud_stays_in_hud_space_after_clearing_the_selection() {
 }
 
 #[test]
+fn a_rectangle_keeps_to_the_space_of_its_press_and_never_mixes_two() {
+    let shift = Mods {
+        shift: true,
+        ..Mods::default()
+    };
+    let (mut world, mut tool, mut settings) = seated_fixture(false);
+    let hud = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+    let floor = world
+        .objects
+        .iter()
+        .find(|(idx, _)| selectable(&world, *idx) && select_type(&world, *idx) == SelectType::World)
+        .unwrap()
+        .0;
+
+    // from the world, or from nothing, a selected HUD does not keep it in HUD space
+    for target in [Some(floor), None] {
+        tool.click_select(&mut world, &settings, Some(hud), false);
+        tool.mouse_down(&mut world, &mut settings, None, target, None, (10.0, 10.0), Mods::default());
+        tool.update(&mut world, &settings, None, (40.0, 40.0), false, Mods::default());
+        assert!(tool.selection.is_empty());
+        assert!(!tool.hud_selected(&world), "the rectangle is drawn in the world");
+        tool.mouse_up(&mut world, &settings, None);
+    }
+
+    // Shift from the HUD drops a world selection instead of adding to it
+    tool.click_select(&mut world, &settings, Some(floor), false);
+    tool.mouse_down(&mut world, &mut settings, None, Some(hud), None, (10.0, 10.0), shift);
+    tool.update(&mut world, &settings, None, (40.0, 40.0), false, shift);
+    assert!(tool.selection.is_empty());
+    assert!(tool.hud_selected(&world), "the rectangle is drawn over the HUD");
+    tool.mouse_up(&mut world, &settings, None);
+
+    // Shift from the world drops a HUD selection the same way
+    tool.click_select(&mut world, &settings, Some(hud), false);
+    tool.mouse_down(&mut world, &mut settings, None, Some(floor), None, (10.0, 10.0), shift);
+    tool.update(&mut world, &settings, None, (40.0, 40.0), false, shift);
+    assert!(tool.selection.is_empty());
+    assert!(!tool.hud_selected(&world));
+    tool.mouse_up(&mut world, &settings, None);
+
+    // Shift from nothing keeps the selection and its space
+    tool.click_select(&mut world, &settings, Some(hud), false);
+    tool.mouse_down(&mut world, &mut settings, None, None, None, (10.0, 10.0), shift);
+    tool.update(&mut world, &settings, None, (40.0, 40.0), false, shift);
+    assert!(!tool.selection.is_empty());
+    assert!(tool.hud_selected(&world));
+}
+
+#[test]
+fn a_press_ended_without_its_release_selects_nothing() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99610);
+    // the focus goes with the button down: the release that follows is the app's own
+    tool.mouse_down(&mut world, &mut settings, None, Some(idx), None, (10.0, 10.0), Mods::default());
+    tool.drop_press();
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(tool.selection.is_empty());
+    // the tool changes with the button down
+    tool.mouse_down(&mut world, &mut settings, None, Some(idx), None, (10.0, 10.0), Mods::default());
+    tool.set_tool(Tool::Grab);
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(tool.selection.is_empty());
+    assert!(tool.rect.is_none());
+}
+
+#[test]
 fn select_by_surrounding_is_saved_and_on_when_a_profile_lacks_it() {
     let settings = BuildSettings {
         select_surrounding: false,

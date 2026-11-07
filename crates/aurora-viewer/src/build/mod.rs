@@ -2032,13 +2032,29 @@ impl BuildTool {
 
     /// LLToolSelectRect::handleHover: a press that leaves the slop is a
     /// rectangle and not a click; without Shift or Ctrl it starts from an
-    /// empty selection.
+    /// empty selection. With them it keeps the selection, unless the press
+    /// is in another space: a selection never mixes them, as
+    /// LLToolSelect::handleObjectSelection's click would have decided.
     fn drag_rect(&mut self, world: &World, cursor: (f32, f32)) {
         let Some(r) = self.rect.as_mut() else { return };
         r.1 = cursor;
         let (dragged, extend) = (rect_dragged(r.0, r.1), r.2);
-        if dragged && self.press.take().is_some() && !extend {
-            self.deselect_all(world);
+        if dragged && let Some(pick) = self.press.take() {
+            let other_space = pick
+                .and_then(|key| world.objects.index_of(&key))
+                .is_some_and(|idx| select_type(world, idx) != self.select_type(world));
+            if !extend || other_space {
+                self.deselect_all(world);
+            }
+        }
+    }
+
+    /// The press is abandoned without its release, as the focus going ends
+    /// the mouse capture (LLToolSelect::onMouseCaptureLost): it selects
+    /// nothing. A rectangle already dragged is left to its release.
+    pub fn drop_press(&mut self) {
+        if self.press.take().is_some() {
+            self.rect = None;
         }
     }
 
@@ -2116,7 +2132,7 @@ impl BuildTool {
                         // (LLToolCompTranslate -> LLToolSelectRect)
                         let extend = mods.shift || mods.ctrl;
                         self.press = Some(pick.and_then(|idx| world.objects.get(idx)).map(|o| o.key));
-                        self.rect_hud = self.hud_selected(world) || pick.is_some_and(|idx| select_type(world, idx) == SelectType::Hud);
+                        self.rect_hud = pick.is_some_and(|idx| select_type(world, idx) == SelectType::Hud);
                         self.rect = Some((cursor, cursor, extend));
                         true
                     }
