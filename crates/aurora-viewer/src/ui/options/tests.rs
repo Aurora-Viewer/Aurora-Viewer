@@ -1682,6 +1682,7 @@ fn the_weather_lives_in_graphics_and_every_row_the_aurora_page_borrows_exists() 
         "weather.snow_distance",
         "weather.snow_footprints",
         "weather.snow_deep",
+        "weather.snow_on_avatars",
         "weather.region_weather",
         "weather.wind_follow_region",
         "weather.wind_from",

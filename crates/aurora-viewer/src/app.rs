@@ -10630,12 +10630,15 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         // Aurora Weather: the snow gathering on the avatars near the camera
-        {
+        // ("Snow on avatars"; off, what lay on them goes at once)
+        if self.weather_now.snow_on_avatars {
             let snow = if self.weather_now.snowing() { self.weather_now.fall() } else { 0.0 };
             let rain = self.weather_now.rain();
             let mut on_avatars = std::mem::take(&mut self.scene.avatar_snow);
             on_avatars.update(&self.scene, &self.world, Instant::now(), snow, rain, self.camera.position);
             self.scene.avatar_snow = on_avatars;
+        } else {
+            self.scene.avatar_snow = Default::default();
         }
         // Aurora Weather: the feet set down in the lying snow this frame, kept
         // with the region's other footprints

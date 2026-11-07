@@ -159,6 +159,11 @@ fn weather(cx: &mut Cx) {
             );
         });
         cx.toggle(
+            tr!("ui-weather-avatar-snow"),
+            tr!("ui-weather-avatar-snow-tip"),
+            &field!(weather.snow_on_avatars),
+        );
+        cx.toggle(
             tr!("ui-weather-region"),
             tr!("ui-weather-region-tip"),
             &field!(weather.region_weather),

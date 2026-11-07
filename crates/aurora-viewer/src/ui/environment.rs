@@ -852,6 +852,7 @@ fn weather_label_width(ui: &egui::Ui) -> f32 {
         aurora_i18n::tr!("ui-weather-snow-settles"),
         aurora_i18n::tr!("ui-weather-snow-distance"),
         aurora_i18n::tr!("ui-weather-footprints"),
+        aurora_i18n::tr!("ui-weather-avatar-snow"),
         aurora_i18n::tr!("ui-weather-ice"),
         aurora_i18n::tr!("ui-weather-puddles"),
         aurora_i18n::tr!("ui-weather-distance"),
@@ -1029,6 +1030,16 @@ fn weather_body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                             .suffix(" m"),
                     );
                 });
+            });
+            // snow gathering on avatars (whether or not it settles on the ground)
+            ui.horizontal(|ui| {
+                row_label(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-weather-avatar-snow"),
+                    aurora_i18n::tr!("ui-weather-avatar-snow-tip"),
+                );
+                widgets::checkbox(ui, p, &mut w.snow_on_avatars, "");
             });
             // the puddles left by rain, frozen
             ui.horizontal(|ui| {

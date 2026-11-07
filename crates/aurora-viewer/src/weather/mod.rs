@@ -107,6 +107,9 @@ pub struct WeatherSettings {
     /// How far around my avatar footprints are kept (m, the width of their
     /// map: 32 to 64, the wider the coarser).
     pub snow_footprints_reach: f32,
+    /// Snow gathers on avatars out in the open while it snows, and melts
+    /// away under cover, in rain or once it stops (`scene/avatar_snow.rs`).
+    pub snow_on_avatars: bool,
     /// Puddles freeze while it snows (or snow lies): ice sheets.
     pub ice: bool,
     /// Deep snow (experimental): parallax through the lying snow.
@@ -145,6 +148,7 @@ impl Default for WeatherSettings {
             snow_distance: SNOW_DISTANCE_DEFAULT,
             snow_footprints: true,
             snow_footprints_reach: 32.0,
+            snow_on_avatars: true,
             ice: true,
             snow_deep: false,
             aurora: false,
