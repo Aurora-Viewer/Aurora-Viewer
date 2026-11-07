@@ -32,6 +32,7 @@ pub mod impostors;
 pub mod inspect;
 pub mod jobs;
 pub(crate) mod joint_overrides;
+pub mod legacy_bump;
 pub mod legacy_mat;
 pub mod lights;
 mod list_index;
@@ -341,6 +342,9 @@ pub struct FaceDraw {
     /// Normal, specular / metallic-roughness and emissive maps (sized like
     /// the base texture).
     pub aux_tex: [Uuid; 3],
+    /// Height asset behind a generated texture-entry normal. Its streaming
+    /// size follows this face even though the generated normal is local.
+    pub bump_height_source: Uuid,
     pub te_alpha: f32,
     pub pbr_alpha: Option<u8>, // 0 opaque, 1 blend, 2 mask
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
@@ -656,6 +660,9 @@ fn note_face_usage(usage: &mut Vec<(Uuid, f32, bool)>, f: &FaceDraw, px: f32, in
     for t in f.aux_tex.iter().filter(|t| !t.is_nil()) {
         usage.push((*t, px, in_view));
     }
+    if !f.bump_height_source.is_nil() {
+        usage.push((f.bump_height_source, px, in_view));
+    }
 }
 
 /// GPU face table entry of a face of object `idx`.
@@ -800,6 +807,8 @@ pub struct Scene {
     pub materials: MaterialStreamer,
     /// Legacy materials (normal / specular maps, alpha mode) by material id.
     pub legacy_mats: legacy_mat::LegacyMaterials,
+    /// A generated bump map completed and face records need a one-time refresh.
+    legacy_bump_changed: bool,
     pub avatar_lib: Arc<AvatarLibrary>,
     pub gpu: Vec<ObjGpu>,
     regions: HashMap<u64, RegionGpu>,
@@ -1466,6 +1475,7 @@ impl Scene {
             meshes: MeshStreamer::new(cache_dir.clone()),
             materials: MaterialStreamer::new(cache_dir),
             legacy_mats: Default::default(),
+            legacy_bump_changed: false,
             avatar_lib,
             // (room for a busy region: the first doublings of a growing
             // `Vec` would copy megabytes in the middle of an arrival)
@@ -1982,6 +1992,9 @@ impl Scene {
                 JobResult::MeshCache { id, arrival } => self.meshes.on_cache(id, arrival.map(|a| *a)),
                 JobResult::MeshPart { id, arrival } => self.meshes.on_part(id, *arrival, &self.jobs),
                 JobResult::Material { id, material } => self.materials.on_material(id, material),
+                bump @ JobResult::LegacyBump { .. } => {
+                    self.legacy_bump_changed |= self.textures.on_legacy_bump_job(renderer, bump).is_some();
+                }
                 JobResult::Done => {}
                 other => self.textures.on_job(other),
             }
@@ -2628,6 +2641,15 @@ impl Scene {
     /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         self.finish_mesh_lod_resets(world, Instant::now());
+        if std::mem::take(&mut self.legacy_bump_changed) {
+            for (idx, object) in world.objects.slots.iter_mut().enumerate() {
+                if let Some(object) = object {
+                    object.material_dirty = true;
+                    object.render.needs_records = true;
+                    self.sets.dirty.insert(idx);
+                }
+            }
+        }
         if self.parcel_visibility_version != world.parcel_visibility.version {
             self.parcel_visibility_version = world.parcel_visibility.version;
             for (idx, object) in world.objects.slots.iter_mut().enumerate() {
@@ -3862,6 +3884,40 @@ impl Scene {
                     legacy_alpha = Some(lm.diffuse_alpha_mode);
                 }
             }
+            // Texture-entry bump presets fill the normal slot only when no
+            // explicit normal map is present. PBR faces take the earlier
+            // material branch and never reach this Legacy Viewer path.
+            let bump_mode = tf.bump();
+            let mut bump_height_source = Uuid::nil();
+            if legacy_bump::should_apply(bump_mode, mat_id.is_some(), local_normal.is_some() || !aux_tex[0].is_nil()) {
+                let bump_source = match legacy_bump::bump_source(bump_mode) {
+                    legacy_bump::BumpSource::Brightness | legacy_bump::BumpSource::Darkness => Some(tf.texture),
+                    legacy_bump::BumpSource::Standard(id) => Some(id),
+                    legacy_bump::BumpSource::None => None,
+                };
+                if let Some(source_id) = bump_source
+                    && !source_id.is_nil()
+                {
+                    bump_height_source = source_id;
+                    let generated =
+                        self.textures
+                            .request_legacy_bump(source_id, bump_mode, self.textures.preview_source(&source_id), &self.jobs);
+                    // Hold the height source while its image is decoded and
+                    // while finer resident levels improve its cached normal.
+                    let _ = self.textures.acquire(renderer, source_id, TexSource::Asset);
+                    g.tex_ids.push(source_id);
+                    if let Some(generated) = generated {
+                        g.tex_ids.push(generated);
+                        aux_tex[0] = generated;
+                        rec.tex[1] = self.textures.acquire(renderer, generated, TexSource::Asset);
+                        // A texture-entry bump follows the diffuse mapping,
+                        // even when a material with no normal map supplies a
+                        // separate normal transform.
+                        rec.mat_uv = rec.uv_st;
+                        rec.legacy[0] = rec.params[0];
+                    }
+                }
+            }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
             let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
@@ -3931,6 +3987,7 @@ impl Scene {
                 base_slot: rec.tex[0],
                 tex_id: base_tex,
                 aux_tex,
+                bump_height_source,
                 te_alpha: if invisible { 0.0 } else { rec.base_color[3] },
                 pbr_alpha,
                 legacy_alpha,
@@ -4237,6 +4294,7 @@ impl Scene {
                     base_slot: slot,
                     tex_id: tex.unwrap_or(Uuid::nil()),
                     aux_tex: [Uuid::nil(); 3],
+                    bump_height_source: Uuid::nil(),
                     te_alpha: if hidden { 0.0 } else { 1.0 },
                     pbr_alpha: None,
                     legacy_alpha: None,
@@ -6808,6 +6866,7 @@ mod tests {
             base_slot: 0,
             tex_id: Uuid::nil(),
             aux_tex: [Uuid::nil(); 3],
+            bump_height_source: Uuid::nil(),
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
@@ -6820,6 +6879,17 @@ mod tests {
             system: None,
             first_person_hidden: false,
         }
+    }
+
+    #[test]
+    fn generated_bump_height_source_receives_face_texture_usage() {
+        let source = Uuid::from_u128(42);
+        let mut face = test_face(Pass::Opaque, false);
+        face.bump_height_source = source;
+        face.repeats = 2.0;
+        let mut usage = Vec::new();
+        note_face_usage(&mut usage, &face, 256.0, true);
+        assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
     }
 
     #[test]

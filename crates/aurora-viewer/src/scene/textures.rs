@@ -957,6 +957,15 @@ pub struct TextureStreamer {
     local_slots: HashMap<Uuid, u32>,
     /// Worker-prepared local pixels, shared with avatar baking and UI previews.
     local_images: HashMap<Uuid, Arc<aurora_render::preview::Image>>,
+    /// Generated Legacy Viewer bump maps keyed by source image revision.
+    legacy_bumps: HashMap<LegacyBumpKey, Uuid>,
+    legacy_bump_slots: HashMap<Uuid, GeneratedBump>,
+    legacy_bump_pending: std::collections::HashSet<LegacyBumpKey>,
+    legacy_bump_failed: std::collections::HashSet<LegacyBumpKey>,
+    legacy_bump_wanted: std::collections::HashSet<(Uuid, u8)>,
+    legacy_bump_latest: HashMap<(Uuid, u8), PreviewRevision>,
+    legacy_bump_retired: Vec<Uuid>,
+    legacy_bump_source_refs: HashMap<Uuid, u32>,
     /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
     /// map, changes.
     pub generation: u64,
@@ -1065,6 +1074,7 @@ pub struct TextureStreamer {
 }
 
 /// Shared image sources for an isolated appearance preview, decoded on a worker.
+#[derive(Clone)]
 pub struct PreviewSource {
     pub local: Option<Arc<aurora_render::preview::Image>>,
     pub bytes: Arc<Vec<u8>>,
@@ -1075,6 +1085,25 @@ pub struct PreviewSource {
     pub procedural: bool,
 }
 pub type PreviewRevision = (usize, Option<u8>, Option<(u32, u32)>, bool);
+
+fn legacy_bump_diagnostics() -> bool {
+    static ENABLED: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("AURORA_DEBUG_LEGACY_BUMP").is_ok_and(|v| v == "1"));
+    *ENABLED
+}
+
+/// Worker result payload, separated from `JobResult` for main-thread upload.
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+struct LegacyBumpKey {
+    source_id: Uuid,
+    mode: u8,
+    revision: PreviewRevision,
+}
+
+struct GeneratedBump {
+    key: LegacyBumpKey,
+    refs: u32,
+}
 impl PreviewSource {
     /// Appearance editing can use resident pixels immediately and improve
     /// them as finer levels arrive; export still requires the original data.
@@ -1150,6 +1179,73 @@ impl PreviewSource {
         Some(Arc::new(aurora_render::preview::Image {
             size: [pixels.width, pixels.height],
             rgba: super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize).into(),
+        }))
+    }
+
+    /// Standard bump presets use the last component of the source asset as
+    /// height. The ordinary RGBA conversion fills alpha with 255 for one- and
+    /// three-component textures, so decode this worker-only source separately.
+    pub fn standard_bump_image(self, id: Uuid, mode: u8) -> Option<Arc<aurora_render::preview::Image>> {
+        if self.local.is_some() || self.procedural {
+            if legacy_bump_diagnostics() {
+                log::info!("legacy bump source: mode={mode} local image");
+            }
+            return self.inspector_image(id);
+        }
+        if let Some(discard) = self.decoded {
+            let bytes = if self.bytes.is_empty() {
+                crate::cache::read(&self.jpeg)
+                    .or_else(|_| crate::cache::read(self.jpeg.with_extension("part")))
+                    .ok()
+                    .map(Arc::new)
+            } else {
+                Some(self.bytes.clone())
+            };
+            if let Some(bytes) = bytes
+                && let Ok(pixels) = aurora_assets::decode_j2k(&bytes, discard)
+                && let Some(rgba) = standard_bump_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize)
+            {
+                if legacy_bump_diagnostics() {
+                    log::info!(
+                        "legacy bump source: mode={mode} j2k components={} size={}x{}",
+                        pixels.components,
+                        pixels.width,
+                        pixels.height
+                    );
+                }
+                return Some(Arc::new(aurora_render::preview::Image {
+                    size: [pixels.width, pixels.height],
+                    rgba: rgba.into(),
+                }));
+            }
+        }
+        // A revisited texture may have only its transcoded resident level.
+        // Its cache header still records the original component count.
+        let texture_cache::Transcoded::Bc7(cached) = texture_cache::read(&self.blocks, self.decoded.unwrap_or(0))? else {
+            return None;
+        };
+        let (width, height, blocks) = cached.levels.first()?;
+        if legacy_bump_diagnostics() {
+            log::info!(
+                "legacy bump source: mode={mode} cache components={} size={}x{}",
+                cached.info.components,
+                width,
+                height
+            );
+        }
+        let mut rgba = aurora_render::bc7::decode_level(blocks, *width, *height)?;
+        let channel = match cached.info.components {
+            1 => 0,
+            2 | 4 => 3,
+            3 => 2,
+            _ => return None,
+        };
+        for pixel in rgba.as_chunks_mut::<4>().0 {
+            pixel[3] = pixel[channel];
+        }
+        Some(Arc::new(aurora_render::preview::Image {
+            size: [*width, *height],
+            rgba: rgba.into(),
         }))
     }
     pub fn revision(&self) -> PreviewRevision {
@@ -1249,6 +1345,161 @@ impl PreviewSource {
 }
 
 impl TextureStreamer {
+    /// Return a ready generated normal-map ID, or enqueue one worker job for
+    /// this source revision. At most eight bump conversions are queued at once.
+    pub fn request_legacy_bump(&mut self, source_id: Uuid, mode: u8, source: PreviewSource, jobs: &Jobs) -> Option<Uuid> {
+        if !(1..=17).contains(&mode) {
+            return None;
+        }
+        if self.legacy_bump_wanted.insert((source_id, mode)) && mode >= 3 && legacy_bump_diagnostics() {
+            log::info!(
+                "legacy bump requested: mode={mode} decoded={:?} size={:?} bytes={}",
+                source.decoded,
+                source.size,
+                source.bytes.len()
+            );
+        }
+        self.schedule_legacy_bump(source_id, mode, source, jobs)
+    }
+
+    fn schedule_legacy_bump(&mut self, source_id: Uuid, mode: u8, source: PreviewSource, jobs: &Jobs) -> Option<Uuid> {
+        // The worker decodes the exact resident level, including levels finer
+        // than the small inspector preview. Refresh when that level changes.
+        let revision = source.bake_revision();
+        self.legacy_bump_latest.insert((source_id, mode), revision);
+        let key = LegacyBumpKey { source_id, mode, revision };
+        if let Some(id) = self.legacy_bumps.get(&key).copied() {
+            return Some(id);
+        }
+        if self.legacy_bump_failed.contains(&key) {
+            return None;
+        }
+        if self.legacy_bump_pending.contains(&key) || self.legacy_bump_pending.len() >= 8 {
+            return None;
+        }
+        if source.local.is_none() && source.decoded.is_none() && !source.procedural {
+            return None;
+        }
+        let generated_id = legacy_bump_id(key);
+        self.legacy_bump_pending.insert(key);
+        log::debug!("legacy bump normal queued: mode={mode} source={source_id} revision={revision:?} generated={generated_id}");
+        jobs.spawn(move || {
+            let image = (if mode >= 3 {
+                source.standard_bump_image(source_id, mode)
+            } else {
+                source.inspector_image(source_id)
+            })
+            .and_then(|src| legacy_bump_image(src, mode));
+            JobResult::LegacyBump {
+                source_id,
+                mode,
+                revision,
+                generated_id,
+                image,
+            }
+        });
+        None
+    }
+
+    /// Accept a completed worker result and upload its local image. The
+    /// result is ignored if a newer request already replaced its revision.
+    pub fn on_legacy_bump_job(&mut self, renderer: &mut Renderer, result: JobResult) -> Option<Uuid> {
+        let JobResult::LegacyBump {
+            source_id,
+            mode,
+            revision,
+            generated_id,
+            image,
+        } = result
+        else {
+            return None;
+        };
+        let key = LegacyBumpKey { source_id, mode, revision };
+        self.legacy_bump_pending.remove(&key);
+        if !self.legacy_bump_wanted.contains(&(source_id, mode)) || self.legacy_bump_latest.get(&(source_id, mode)) != Some(&revision) {
+            return None;
+        }
+        let Some(image) = image else {
+            self.legacy_bump_failed.insert(key);
+            if mode >= 3 && legacy_bump_diagnostics() {
+                log::info!("legacy bump generation failed: mode={mode} revision={revision:?}");
+            }
+            log::debug!("legacy bump normal failed: mode={mode} source={source_id} revision={revision:?} generated={generated_id}");
+            return None;
+        };
+        let (width, height) = (image.size[0], image.size[1]);
+        let rgba = image.rgba.to_vec();
+        // The normal texture's alpha carries the source height for legacy
+        // gloss modulation. It does not make the face transparent.
+        let alpha = AlphaKind::Opaque;
+        let has_alpha = false;
+        let levels = build_mips(width, height, rgba, 16);
+        let mips: Vec<MipLevel> = levels
+            .iter()
+            .map(|(width, height, data)| MipLevel {
+                width: *width,
+                height: *height,
+                data,
+            })
+            .collect();
+        let slot = renderer.create_texture(&mips)?;
+        if mode >= 3 && legacy_bump_diagnostics() {
+            log::info!("legacy bump generated: mode={mode} size={width}x{height} slot={slot}");
+        }
+        self.register_local_image(generated_id, slot, alpha, has_alpha);
+        // A generated image replaces the face's prior normal source, so the
+        // scene must rebuild its material lists even when alpha stayed opaque.
+        self.generation = self.generation.wrapping_add(1);
+        self.alpha_changes.push(slot);
+        self.local_images.insert(generated_id, image);
+        self.legacy_bumps.insert(key, generated_id);
+        self.legacy_bump_slots.insert(generated_id, GeneratedBump { key, refs: 0 });
+        log::debug!(
+            "legacy bump normal ready: mode={mode} source={source_id} revision={revision:?} generated={generated_id} size={}x{}",
+            width,
+            height
+        );
+        self.legacy_bump_failed.remove(&key);
+        // Retire superseded revisions once their last face releases them.
+        let stale: Vec<_> = self
+            .legacy_bump_slots
+            .iter()
+            .filter_map(|(id, generated)| {
+                (generated.key.source_id == source_id && generated.key.mode == mode && *id != generated_id && generated.refs == 0)
+                    .then_some(*id)
+            })
+            .collect();
+        for id in stale {
+            self.evict_legacy_bump(renderer, id);
+        }
+        // Keep the local derived-image cache bounded.
+        while self.legacy_bump_slots.len() > 128 {
+            let Some(id) = self
+                .legacy_bump_slots
+                .iter()
+                .find_map(|(id, generated)| (generated.refs == 0).then_some(*id))
+            else {
+                break;
+            };
+            if id == generated_id {
+                break;
+            }
+            self.evict_legacy_bump(renderer, id);
+        }
+        Some(generated_id)
+    }
+
+    fn evict_legacy_bump(&mut self, renderer: &mut Renderer, id: Uuid) {
+        let Some(generated) = self.legacy_bump_slots.remove(&id) else {
+            return;
+        };
+        self.legacy_bumps.remove(&generated.key);
+        if let Some(slot) = self.local_slots.remove(&id) {
+            renderer.free_texture(slot);
+        }
+        self.local_images.remove(&id);
+    }
+
     pub fn new(cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(cache_dir.join("tex"));
         TextureStreamer {
@@ -1293,6 +1544,14 @@ impl TextureStreamer {
             cache_dir,
             local_slots: HashMap::new(),
             local_images: HashMap::new(),
+            legacy_bumps: HashMap::new(),
+            legacy_bump_slots: HashMap::new(),
+            legacy_bump_pending: std::collections::HashSet::new(),
+            legacy_bump_failed: std::collections::HashSet::new(),
+            legacy_bump_wanted: std::collections::HashSet::new(),
+            legacy_bump_latest: HashMap::new(),
+            legacy_bump_retired: Vec::new(),
+            legacy_bump_source_refs: HashMap::new(),
             generation: 0,
             max_decodes: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2),
             decodes: 0,
@@ -1519,6 +1778,9 @@ impl TextureStreamer {
         if id == aurora_prim::te::BLANK_TEXTURE {
             return aurora_render::textures::WHITE;
         }
+        if self.legacy_bump_wanted.iter().any(|(source_id, _)| *source_id == id) {
+            *self.legacy_bump_source_refs.entry(id).or_default() += 1;
+        }
         if let Some(e) = self.entries.get_mut(&id) {
             e.refs += 1;
             e.unused_since = None;
@@ -1528,11 +1790,69 @@ impl TextureStreamer {
             Self::settle(&mut self.todo, &mut self.counts, id, e);
             return e.slot;
         }
+        // Generated normal maps are viewer-local and must survive a device reset.
+        if self.legacy_bump_slots.contains_key(&id)
+            && let Some(slot) = self.local_slots.get(&id).copied()
+        {
+            if let Some(generated) = self.legacy_bump_slots.get_mut(&id) {
+                if generated.refs == 0 && generated.key.mode >= 3 && legacy_bump_diagnostics() {
+                    log::info!("legacy bump bound: mode={} slot={slot}", generated.key.mode);
+                }
+                generated.refs = generated.refs.saturating_add(1);
+            }
+            return slot;
+        }
+        if self.legacy_bump_slots.contains_key(&id)
+            && let Some(image) = self.local_images.get(&id).cloned()
+        {
+            let rgba = image.rgba.to_vec();
+            let alpha = AlphaKind::Opaque;
+            let levels = build_mips(image.size[0], image.size[1], rgba, 16);
+            let mips: Vec<MipLevel> = levels
+                .iter()
+                .map(|(width, height, data)| MipLevel {
+                    width: *width,
+                    height: *height,
+                    data,
+                })
+                .collect();
+            if let Some(slot) = renderer.create_texture(&mips) {
+                set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
+                self.alpha_channel_by_slot.resize(self.alpha_by_slot.len(), false);
+                self.alpha_channel_by_slot[slot as usize] = false;
+                self.local_slots.insert(id, slot);
+                if let Some(generated) = self.legacy_bump_slots.get_mut(&id) {
+                    generated.refs = generated.refs.saturating_add(1);
+                }
+                return slot;
+            }
+        }
         // procedural textures of the offline demo (never streamed)
-        if let Some(slot) = self.local_slots.get(&id) {
-            return *slot;
+        if let Some(slot) = self.local_slots.get(&id).copied() {
+            if self.legacy_bump_wanted.iter().any(|(source_id, _)| *source_id == id)
+                && !self.local_images.contains_key(&id)
+                && let Some((pixels, width, height)) = crate::demo::local_texture(&id)
+            {
+                self.local_images.insert(
+                    id,
+                    Arc::new(aurora_render::preview::Image {
+                        size: [width, height],
+                        rgba: pixels.into(),
+                    }),
+                );
+            }
+            return slot;
         }
         if let Some((px, w, h)) = crate::demo::local_texture(&id) {
+            if self.legacy_bump_wanted.iter().any(|(source_id, _)| *source_id == id) {
+                self.local_images.insert(
+                    id,
+                    Arc::new(aurora_render::preview::Image {
+                        size: [w, h],
+                        rgba: px.clone().into(),
+                    }),
+                );
+            }
             let alpha = super::jobs::classify_alpha(&px);
             let pick_mask = (alpha != AlphaKind::Opaque).then(|| PickMask::from_rgba(w, h, &px)).flatten();
             let levels = mips_for(w, h, px, if crate::demo::local_texture_mips(&id) { 16 } else { 1 }, alpha);
@@ -1830,6 +2150,25 @@ impl TextureStreamer {
     }
 
     pub fn release(&mut self, id: &Uuid) {
+        if let Some(generated) = self.legacy_bump_slots.get_mut(id) {
+            generated.refs = generated.refs.saturating_sub(1);
+            if generated.refs == 0
+                && self.legacy_bump_latest.get(&(generated.key.source_id, generated.key.mode)) != Some(&generated.key.revision)
+                && !self.legacy_bump_retired.contains(id)
+            {
+                self.legacy_bump_retired.push(*id);
+            }
+            return;
+        }
+        if let Some(refs) = self.legacy_bump_source_refs.get_mut(id) {
+            *refs = refs.saturating_sub(1);
+            if *refs == 0 {
+                self.legacy_bump_source_refs.remove(id);
+                self.legacy_bump_wanted.retain(|(source_id, _)| source_id != id);
+                self.legacy_bump_latest.retain(|(source_id, _), _| source_id != id);
+                self.legacy_bump_failed.retain(|key| key.source_id != *id);
+            }
+        }
         if let Some(e) = self.entries.get_mut(id) {
             let held = e.refs > 0;
             e.refs = e.refs.saturating_sub(1);
@@ -3052,6 +3391,18 @@ impl TextureStreamer {
         self.trash.empty(jobs);
         self.stats.uploaded_bytes_frame = spent;
         self.stats.uploads_frame = done;
+        for id in std::mem::take(&mut self.legacy_bump_retired) {
+            if self.legacy_bump_slots.get(&id).is_some_and(|generated| generated.refs == 0) {
+                self.evict_legacy_bump(renderer, id);
+            }
+        }
+        // Keep requests made before the asset decoded and refresh them as
+        // finer resident image revisions become available.
+        let wanted: Vec<_> = self.legacy_bump_wanted.iter().copied().collect();
+        for (source_id, mode) in wanted {
+            let source = self.preview_source(&source_id);
+            self.schedule_legacy_bump(source_id, mode, source, jobs);
+        }
     }
 
     /// Keep the memory budget, evict unused textures and persist downloaded
@@ -3428,6 +3779,86 @@ fn mips_for(width: u32, height: u32, rgba: Vec<u8>, levels: u32, alpha: AlphaKin
     mips
 }
 
+fn legacy_bump_id(key: LegacyBumpKey) -> Uuid {
+    // Two independently seeded FNV-1a streams make a stable local UUID from
+    // the full key without enabling a UUID generation feature in the crate.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(key.source_id.as_bytes());
+    bytes.push(key.mode);
+    bytes.extend_from_slice(&(key.revision.0 as u64).to_le_bytes());
+    bytes.push(key.revision.1.unwrap_or(u8::MAX));
+    bytes.extend_from_slice(&key.revision.2.unwrap_or_default().0.to_le_bytes());
+    bytes.extend_from_slice(&key.revision.2.unwrap_or_default().1.to_le_bytes());
+    bytes.push(u8::from(key.revision.3));
+    let hash = |seed: u64| {
+        bytes
+            .iter()
+            .fold(seed, |h, byte| (h ^ u64::from(*byte)).wrapping_mul(0x100000001b3))
+    };
+    let mut uuid = [0; 16];
+    uuid[..8].copy_from_slice(&hash(0xcbf29ce484222325).to_be_bytes());
+    uuid[8..].copy_from_slice(&hash(0x84222325cbf29ce4).to_be_bytes());
+    uuid[6] = (uuid[6] & 0x0f) | 0x50;
+    uuid[8] = (uuid[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(uuid)
+}
+
+fn standard_bump_rgba(components: u8, data: &[u8], pixels: usize) -> Option<Vec<u8>> {
+    let channels = usize::from(components);
+    if !(1..=4).contains(&channels) || data.len() != pixels.checked_mul(channels)? {
+        return None;
+    }
+    let mut rgba = super::jobs::to_rgba(components, data, pixels);
+    for (pixel, source) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(data.chunks_exact(channels)) {
+        pixel[3] = source[channels - 1];
+    }
+    Some(rgba)
+}
+
+fn legacy_bump_image(source: Arc<aurora_render::preview::Image>, mode: u8) -> Option<Arc<aurora_render::preview::Image>> {
+    let [width, height] = source.size;
+    let pixels = width.checked_mul(height)? as usize;
+    if width == 0 || height == 0 || source.rgba.len() != pixels.checked_mul(4)? {
+        return None;
+    }
+    let heights: Vec<u8> = source
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|pixel| match mode {
+            1 => {
+                let rgb = [srgb_to_linear(pixel[0]), srgb_to_linear(pixel[1]), srgb_to_linear(pixel[2])];
+                (super::legacy_bump::brightness_height(rgb, false) * 255.0).round() as u8
+            }
+            2 => {
+                let rgb = [srgb_to_linear(pixel[0]), srgb_to_linear(pixel[1]), srgb_to_linear(pixel[2])];
+                (super::legacy_bump::brightness_height(rgb, true) * 255.0).round() as u8
+            }
+            3..=17 => pixel[3],
+            _ => 0,
+        })
+        .collect();
+    // normgenF.glsl multiplies luminance deltas by 512; standard alpha
+    // heights use byte deltas directly. Keep its default horizontal scale 64.
+    let height_scale = if mode <= 2 { 512.0 / 255.0 } else { 1.0 };
+    let normals = super::legacy_bump::normal_from_height_scaled(width as usize, height as usize, &heights, 64.0, height_scale)?;
+    let rgba = normals.into_iter().flatten().collect::<Vec<_>>();
+    Some(Arc::new(aurora_render::preview::Image {
+        size: [width, height],
+        rgba: rgba.into(),
+    }))
+}
+
+fn srgb_to_linear(value: u8) -> f32 {
+    let value = value as f32 / 255.0;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// Where a decode job leaves its result in the transcoded cache.
 struct CacheWrite<'a> {
     path: &'a std::path::Path,
@@ -3643,6 +4074,126 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standard_bump_height_uses_the_last_source_component() {
+        for (components, source, expected) in [
+            (1, vec![17, 203], [17, 203]),
+            (2, vec![8, 17, 9, 203], [17, 203]),
+            (3, vec![8, 9, 17, 10, 11, 203], [17, 203]),
+            (4, vec![8, 9, 10, 17, 11, 12, 13, 203], [17, 203]),
+        ] {
+            let rgba = standard_bump_rgba(components, &source, 2).expect("valid source");
+            assert_eq!([rgba[3], rgba[7]], expected, "{components} components");
+        }
+        assert!(standard_bump_rgba(3, &[1, 2], 1).is_none());
+        assert!(standard_bump_rgba(5, &[0; 5], 1).is_none());
+
+        let mono = [0, 80, 200, 20, 180, 40, 100, 255, 60];
+        let rgba = standard_bump_rgba(1, &mono, 9).expect("one-component height");
+        let normal = legacy_bump_image(
+            Arc::new(aurora_render::preview::Image {
+                size: [3, 3],
+                rgba: rgba.into(),
+            }),
+            9,
+        )
+        .expect("generated normal");
+        assert!(normal.rgba.as_chunks::<4>().0.iter().any(|p| p[0] != 128 || p[1] != 128));
+        assert_eq!(
+            normal.rgba.as_chunks::<4>().0.iter().map(|p| p[3]).collect::<Vec<_>>(),
+            mono,
+            "the generated normal retains height in alpha for gloss modulation"
+        );
+    }
+
+    #[test]
+    fn standard_bump_worker_keeps_last_component_of_real_j2k() {
+        let source_pixels: Vec<u8> = (0..64 * 64).flat_map(|i| [30, 90, ((i % 64) * 3) as u8]).collect();
+        let encoded = aurora_assets::j2k::encode_texture_j2k(64, 64, 3, &source_pixels, true).expect("lossless source");
+        let source = PreviewSource {
+            local: None,
+            bytes: Arc::new(encoded),
+            jpeg: PathBuf::new(),
+            blocks: PathBuf::new(),
+            decoded: Some(0),
+            size: Some((64, 64)),
+            procedural: false,
+        };
+        let image = source.standard_bump_image(Uuid::new_v4(), 9).expect("preset source");
+        assert_eq!(image.size, [64, 64]);
+        for (source, pixel) in source_pixels.as_chunks::<3>().0.iter().zip(image.rgba.as_chunks::<4>().0) {
+            assert_eq!(pixel[3], source[2]);
+        }
+    }
+
+    #[test]
+    fn legacy_bump_cache_keys_separate_modes_and_source_revisions() {
+        let source = Uuid::from_u128(17);
+        let revision = (0, Some(3), Some((64, 32)), false);
+        let first = LegacyBumpKey {
+            source_id: source,
+            mode: 9,
+            revision,
+        };
+        let finer = LegacyBumpKey {
+            source_id: source,
+            mode: 9,
+            revision: (0, Some(2), Some((64, 32)), false),
+        };
+        let other_mode = LegacyBumpKey {
+            source_id: source,
+            mode: 10,
+            revision,
+        };
+        assert_eq!(legacy_bump_id(first), legacy_bump_id(first));
+        assert_ne!(legacy_bump_id(first), legacy_bump_id(finer));
+        assert_ne!(legacy_bump_id(first), legacy_bump_id(other_mode));
+    }
+
+    #[test]
+    fn legacy_bump_revision_tracks_levels_finer_than_the_preview() {
+        let source = |decoded| PreviewSource {
+            local: None,
+            bytes: Arc::new(Vec::new()),
+            jpeg: PathBuf::new(),
+            blocks: PathBuf::new(),
+            decoded: Some(decoded),
+            size: Some((1024, 1024)),
+            procedural: false,
+        };
+        assert_eq!(source(0).image_revision(), source(1).image_revision());
+        assert_ne!(source(0).bake_revision(), source(1).bake_revision());
+    }
+
+    #[test]
+    fn generated_legacy_bumps_use_diffuse_luminance_or_standard_alpha() {
+        let pixels: Arc<[u8]> = (0u8..9)
+            .flat_map(|i| [i.wrapping_mul(27), i.wrapping_mul(13), i.wrapping_mul(41), i.wrapping_mul(17)])
+            .collect::<Vec<_>>()
+            .into();
+        let source = Arc::new(aurora_render::preview::Image {
+            size: [3, 3],
+            rgba: pixels,
+        });
+        let brightness = legacy_bump_image(source.clone(), 1).expect("brightness map");
+        let darkness = legacy_bump_image(source.clone(), 2).expect("darkness map");
+        let standard = legacy_bump_image(source.clone(), 9).expect("standard map");
+        assert_ne!(&*brightness.rgba, &*darkness.rgba);
+        assert_ne!(&*brightness.rgba, &*standard.rgba);
+        for (((src, standard), brightness), darkness) in source
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(standard.rgba.as_chunks::<4>().0)
+            .zip(brightness.rgba.as_chunks::<4>().0)
+            .zip(darkness.rgba.as_chunks::<4>().0)
+        {
+            assert_eq!(standard[3], src[3]);
+            assert!((i16::from(brightness[3]) + i16::from(darkness[3]) - 255).abs() <= 1);
+        }
+    }
 
     #[test]
     fn alpha_just_under_opaque_is_kept_though_classed_opaque() {
