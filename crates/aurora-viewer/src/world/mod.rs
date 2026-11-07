@@ -457,6 +457,10 @@ pub struct World {
     /// Teleports completed this session (their AgentMovementComplete): the
     /// AO ends a sit the teleport ended (`ao::runtime::Frame::teleports`).
     pub teleport_arrivals: u64,
+    /// Since when a teleport to another region waits for that region's
+    /// first list of our animations: the AO does not act on the list of the
+    /// region left (`awaiting_own_animations`).
+    own_animations_awaited: Option<Instant>,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
     pub tp_show_progress: bool,
@@ -698,6 +702,9 @@ const MAX_CHAT: usize = 2000;
 /// An arrival without teleport this far from where the agent is was not a
 /// walk into a neighbour: the agent is placed as for a teleport.
 const CROSSING_MAX_GAP: f32 = 64.0;
+/// The longest the AO waits, after a teleport to another region, for that
+/// region's first list of our animations (`World::awaiting_own_animations`).
+const OWN_ANIMATIONS_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 /// The typing notices of a conversation with one resident (llinstantmessage.h).
 pub const IM_TYPING_START: u8 = 41;
 pub const IM_TYPING_STOP: u8 = 42;
@@ -816,6 +823,7 @@ impl World {
             tp_status: String::new(),
             tp_failed: false,
             teleport_arrivals: 0,
+            own_animations_awaited: None,
             outfit: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
@@ -1187,6 +1195,17 @@ impl World {
         self.get_off_for_teleport();
         // teleportCore: gObjectList.resetDerenderList()
         self.clear_temporary_derenders();
+    }
+
+    /// After a teleport to another region, until that region's first list of
+    /// our animations (at most `OWN_ANIMATIONS_WAIT`): the list still held
+    /// is the region left's. The Legacy AO reacts to the arrival's list
+    /// (AOEngine::override from LLVOAvatar::processAnimationStateChanges), so
+    /// ours waits for it too: its stops then reach a region that has the
+    /// animations, and a stale stock sit cannot select the sit again.
+    pub fn awaiting_own_animations(&self, now: Instant) -> bool {
+        self.own_animations_awaited
+            .is_some_and(|since| now.saturating_duration_since(since) < OWN_ANIMATIONS_WAIT)
     }
 
     /// Offset of a region's origin relative to the render origin (main region).
@@ -2545,6 +2564,9 @@ impl World {
                 if self.set_main_region(handle) {
                     // no agent update before the new region completes the move
                     self.movement_complete = false;
+                    if self.teleporting {
+                        self.own_animations_awaited = Some(Instant::now());
+                    }
                     // LLViewerParcelMgr::onTeleportFinished: the new region's
                     // parcel is awaited; the one left must not lend its rules
                     // (flight, build, the bar's icons) in the meantime. The
@@ -3462,7 +3484,12 @@ impl World {
                 let now = Instant::now();
                 self.drop_blacklisted_animations(avatar, &mut anims, &mut sources);
                 if avatar == self.agent_id {
-                    log::info!("own animations: {} playing", anims.len());
+                    // which of ours start and stop, for teleport reports (#2700)
+                    let before = self.animations.get(&avatar).map(Vec::as_slice).unwrap_or_default();
+                    let started: Vec<_> = anims.iter().map(|a| a.0).filter(|id| !before.iter().any(|p| p.id == *id)).collect();
+                    let stopped: Vec<_> = before.iter().map(|p| p.id).filter(|id| !anims.iter().any(|a| a.0 == *id)).collect();
+                    log::info!("own animations: {} playing, started {started:?}, stopped {stopped:?}", anims.len());
+                    self.own_animations_awaited = None;
                     self.agent.ground_sit = anims.iter().any(|(id, _)| *id == body::ANIM_SIT_GROUND_CONSTRAINED);
                     // Firestorm process_avatar_animation / processAnimationStateChanges:
                     // source blocks correspond by index, and previous source entries
@@ -6668,6 +6695,49 @@ mod motion_tests {
                 .all(|&c| world.objects.get(c).is_some_and(|o| !o.is_avatar()))
         );
         assert!(!world.agent.is_sitting());
+    }
+
+    /// #2700: after a teleport to another region the AO waits for that
+    /// region's first list of our animations, never for good.
+    #[test]
+    fn a_teleport_to_another_region_waits_for_its_animations() {
+        let (mut world, _) = teleport_from_seat(true);
+        let start = Instant::now();
+        assert!(!world.awaiting_own_animations(start), "nothing awaited before the region changes");
+        let destination = aurora_net::origin_to_handle(512 * 256, 512 * 256);
+        world.apply(NetEvent::MainRegionChanged { handle: destination });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: destination,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        let now = Instant::now();
+        assert!(world.awaiting_own_animations(now), "the list held is the region left's");
+        assert!(!world.awaiting_own_animations(now + OWN_ANIMATIONS_WAIT), "never waits for good");
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(Uuid::from_u128(74), 1)],
+            sources: Vec::new(),
+        });
+        assert!(!world.awaiting_own_animations(Instant::now()));
+    }
+
+    /// Neither a teleport within the region nor a walk into the next one
+    /// waits for a new list of our animations.
+    #[test]
+    fn only_a_teleport_to_another_region_waits_for_our_animations() {
+        let (mut world, _) = teleport_fixture();
+        let next = aurora_net::origin_to_handle(512 * 256, 512 * 256);
+        world.apply(NetEvent::MainRegionChanged { handle: next });
+        assert!(!world.awaiting_own_animations(Instant::now()), "a crossing");
+        world.begin_teleport(false);
+        world.apply(NetEvent::TeleportLocal { flying: false });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: next,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(!world.awaiting_own_animations(Instant::now()), "a teleport in the region");
     }
 
     #[test]
