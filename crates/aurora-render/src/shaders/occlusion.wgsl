@@ -31,6 +31,13 @@ fn cs_hiz_first(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(hiz_dst, vec2<i32>(id.xy), vec4<f32>(min(min(a, b), min(c, d)), 0.0, 0.0, 1.0));
 }
 
+// Next levels: the farthest of 2x2 texels of the level before. The levels'
+// sizes are halved down (texture mips), so the last texel of a row or column
+// also takes the third texel of an odd source: the pyramid then covers the
+// whole depth, and the test (hiz_test.wgsl), which clamps a pixel past the
+// level to its last texel, reads the right and bottom edges of the screen
+// (#2459: at 1920 x 1080 the top levels held only the left 1024 pixels, and
+// an object seen only to their right was hidden by what was on their left).
 @compute @workgroup_size(8, 8)
 fn cs_hiz_down(@builtin(global_invocation_id) id: vec3<u32>) {
     let dst = textureDimensions(hiz_dst);
@@ -39,11 +46,15 @@ fn cs_hiz_down(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let lim = vec2<i32>(textureDimensions(hiz_src)) - vec2<i32>(1);
     let p = vec2<i32>(id.xy) * 2;
-    let a = textureLoad(hiz_src, min(p, lim), 0).r;
-    let b = textureLoad(hiz_src, min(p + vec2<i32>(1, 0), lim), 0).r;
-    let c = textureLoad(hiz_src, min(p + vec2<i32>(0, 1), lim), 0).r;
-    let d = textureLoad(hiz_src, min(p + vec2<i32>(1, 1), lim), 0).r;
-    textureStore(hiz_dst, vec2<i32>(id.xy), vec4<f32>(min(min(a, b), min(c, d)), 0.0, 0.0, 1.0));
+    let last = id.xy == dst - vec2<u32>(1u);
+    let end = select(p + vec2<i32>(1), max(lim, p), last);
+    var far = 1.0;
+    for (var y = p.y; y <= end.y; y++) {
+        for (var x = p.x; x <= end.x; x++) {
+            far = min(far, textureLoad(hiz_src, min(vec2<i32>(x, y), lim), 0).r);
+        }
+    }
+    textureStore(hiz_dst, vec2<i32>(id.xy), vec4<f32>(far, 0.0, 0.0, 1.0));
 }
 
 // ---- culling
