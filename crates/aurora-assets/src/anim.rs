@@ -92,7 +92,7 @@ fn cstring(r: &mut ByteReader) -> Result<String, AssetError> {
 }
 
 pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
-    parse(data, false).map(|(animation, _)| animation)
+    parse(data, false).map(|(animation, _, _)| animation)
 }
 
 /// One joint constraint of a keyframe animation
@@ -117,7 +117,7 @@ pub struct Constraint {
 /// The animation with its constraints. A file that ends before them or holds
 /// a malformed one still plays its keyframes, without constraints.
 pub fn parse_animation_with_constraints(data: &[u8]) -> Result<(Animation, Vec<Constraint>), AssetError> {
-    let (animation, length) = parse(data, false)?;
+    let (animation, length, _) = parse(data, false)?;
     let constraints = data
         .get(length..)
         .and_then(|tail| read_constraints(tail, animation.joints.len()))
@@ -170,20 +170,65 @@ fn read_constraints(tail: &[u8], num_joints: usize) -> Option<Vec<Constraint>> {
 /// Validate the entire native file before paying for its upload. Playback
 /// tolerates old files without constraints; imports retain and validate them.
 pub fn parse_animation_upload(data: &[u8]) -> Result<Animation, AssetError> {
-    parse_upload(data).map(|(animation, _)| animation)
+    parse_upload(data).map(|(animation, _, _)| animation)
 }
 
 /// The animation of a native file and the bytes to upload. The upload path
 /// sends what LLKeyframeMotion::deserialize read back through dumpToFile, so
 /// it never holds a priority above 6 nor anything past the last constraint.
 pub fn prepare_animation_upload(data: &[u8]) -> Result<(Animation, Vec<u8>), AssetError> {
-    let (animation, length) = parse_upload(data)?;
+    let (animation, length, _) = parse_upload(data)?;
     let mut bytes = data[..length].to_vec();
     bytes[4..8].copy_from_slice(&animation.base_priority.to_le_bytes());
     Ok((animation, bytes))
 }
 
-fn parse_upload(data: &[u8]) -> Result<(Animation, usize), AssetError> {
+/// Encode edited import metadata while preserving the validated native motion
+/// payload (including joint keys and constraints) byte-for-byte.
+pub fn rewrite_animation_upload(data: &[u8], edited: &Animation) -> Result<Vec<u8>, AssetError> {
+    let (original, length, body_offset) = parse_upload(data)?;
+    if !(-1..=6).contains(&edited.base_priority)
+        || !edited.duration.is_finite()
+        || edited.duration != original.duration
+        || edited.emote_name.len() > 512
+        || edited.emote_name.as_bytes().contains(&0)
+        || ![edited.loop_in, edited.loop_out]
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0 && *value <= edited.duration)
+        || ![edited.ease_in, edited.ease_out]
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0)
+        || edited.hand_pose > 14
+    {
+        return Err(AssetError::invalid("animation upload metadata"));
+    }
+
+    let mut bytes = Vec::with_capacity(length + edited.emote_name.len().saturating_sub(original.emote_name.len()));
+    bytes.extend_from_slice(&data[..4]);
+    bytes.extend_from_slice(&edited.base_priority.to_le_bytes());
+    bytes.extend_from_slice(&edited.duration.to_le_bytes());
+    if edited.emote_name == original.emote_name {
+        let emote = &data[12..body_offset];
+        let end = emote
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or_else(|| AssetError::invalid("animation emote name"))?;
+        bytes.extend_from_slice(&emote[..end]);
+    } else {
+        bytes.extend_from_slice(edited.emote_name.as_bytes());
+    }
+    bytes.push(0);
+    bytes.extend_from_slice(&edited.loop_in.to_le_bytes());
+    bytes.extend_from_slice(&edited.loop_out.to_le_bytes());
+    bytes.extend_from_slice(&(i32::from(edited.looping)).to_le_bytes());
+    bytes.extend_from_slice(&edited.ease_in.to_le_bytes());
+    bytes.extend_from_slice(&edited.ease_out.to_le_bytes());
+    bytes.extend_from_slice(&edited.hand_pose.to_le_bytes());
+    bytes.extend_from_slice(&data[body_offset..length]);
+    Ok(bytes)
+}
+
+fn parse_upload(data: &[u8]) -> Result<(Animation, usize, usize), AssetError> {
     if data.len() > 64 * 1024 * 1024 {
         return Err(AssetError::TooLarge("animation file"));
     }
@@ -191,7 +236,7 @@ fn parse_upload(data: &[u8]) -> Result<(Animation, usize), AssetError> {
 }
 
 /// The animation and the number of bytes it was read from.
-fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
+fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize, usize), AssetError> {
     let mut r = ByteReader::new(data);
     let version = r.u16("version")?;
     let sub_version = r.u16("sub_version")?;
@@ -227,6 +272,7 @@ fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
     if upload && hand_pose > 14 {
         return Err(AssetError::invalid("animation hand pose"));
     }
+    let body_offset = r.pos();
     let num_joints = r.u32("num_joints")? as usize;
     if num_joints > MAX_JOINTS || (upload && num_joints > 216) {
         return Err(AssetError::invalid("too many joints"));
@@ -347,7 +393,7 @@ fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
         hand_pose,
         joints,
     };
-    Ok((animation, data.len() - r.remaining()))
+    Ok((animation, data.len() - r.remaining(), body_offset))
 }
 
 impl Animation {
@@ -557,6 +603,40 @@ mod tests {
         assert_eq!(prepare_animation_upload(&low).expect("motion priority").1, low);
         low[4..8].copy_from_slice(&(-2i32).to_le_bytes());
         assert!(prepare_animation_upload(&low).is_err());
+    }
+
+    #[test]
+    fn native_upload_metadata_changes_preserve_keys_and_constraints() {
+        let mut bytes = build();
+        let constraint_tail = bytes.len() - 4;
+        bytes.truncate(constraint_tail);
+        bytes.extend(1i32.to_le_bytes());
+        bytes.extend([1, 0]);
+        bytes.extend(b"HEAD\0\0\0\0\0\0\0\0\0\0\0\0");
+        bytes.extend([0u8; 12]);
+        bytes.extend(b"GROUND\0\0\0\0\0\0\0\0\0\0");
+        bytes.extend([0u8; 40]);
+
+        let original = parse_animation_upload(&bytes).expect("valid source animation");
+        let mut edited = original.clone();
+        edited.base_priority = 5;
+        edited.emote_name = "Imported motion".into();
+        edited.looping = false;
+        edited.loop_in = 0.25;
+        edited.loop_out = 1.75;
+        edited.ease_in = 0.1;
+        edited.ease_out = 0.2;
+        edited.hand_pose = 4;
+
+        let rewritten = rewrite_animation_upload(&bytes, &edited).expect("metadata is valid");
+        let parsed = parse_animation_upload(&rewritten).expect("rewritten animation remains valid");
+        assert_eq!(parsed, edited);
+        assert_eq!(parsed.joints, original.joints, "joint tracks are unchanged");
+        assert_eq!(
+            parse_animation_with_constraints(&rewritten).expect("constraints remain valid").1,
+            parse_animation_with_constraints(&bytes).expect("source constraints").1,
+        );
+        assert_eq!(rewrite_animation_upload(&rewritten, &parsed).expect("stable metadata"), rewritten);
     }
 
     #[test]
