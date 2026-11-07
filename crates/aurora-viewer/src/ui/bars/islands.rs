@@ -1855,6 +1855,7 @@ mod tests {
             max_texture_size: 0,
             adapters: Vec::new(),
             notice: None,
+            oit: true,
             vulkan: None,
         };
         let input = egui::RawInput {

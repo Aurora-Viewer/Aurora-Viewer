@@ -386,9 +386,10 @@ fn a_setting_has_one_page() {
     let paths = collected();
     for (page, path) in &paths {
         // the push-to-talk keys: Sound and voice and Shortcuts, as before;
-        // the colored sky ambient: Graphics, and Aurora with the other
-        // differences from the Legacy Viewer
-        if path == "keybinds" || path == "colored_sky_ambient" {
+        // the colored sky ambient and order-independent transparency:
+        // Graphics, and Aurora with the other differences from the Legacy
+        // Viewer
+        if path == "keybinds" || path == "colored_sky_ambient" || path == "oit" {
             continue;
         }
         let elsewhere: Vec<_> = paths

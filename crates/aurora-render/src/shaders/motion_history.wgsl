@@ -1,10 +1,10 @@
 // The records' model matrices as this frame drew them, kept for the next
 // frame's motion vectors (motion_history.rs). Only the matrix of a record is
-// read: the rest of `DrawRecord` (common.wgsl, 288 bytes) is skipped.
+// read: the rest of `DrawRecord` (common.wgsl, 304 bytes) is skipped.
 
 struct Record {
     model: mat4x4<f32>,
-    rest: array<vec4<f32>, 14>,
+    rest: array<vec4<f32>, 15>,
 };
 
 @group(0) @binding(0) var<storage, read> records: array<Record>;

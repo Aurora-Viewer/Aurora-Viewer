@@ -1334,6 +1334,11 @@ pub struct Settings {
     pub display_name_notices: bool,
     /// Screen-space reflections.
     pub ssr: bool,
+    /// Order-independent transparency (aurora-render oit_stochastic.rs):
+    /// the blended faces drawn with depth-based stochastic transparency
+    /// rather than in the per-object order. An Aurora addition, off by
+    /// default (an opt-in); in every anti-aliasing mode.
+    pub oit: bool,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2112,6 +2117,9 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
+            // off until tried on modest GPUs (integrated graphics, 4 GB
+            // cards): its node pool takes video memory on every frame
+            oit: false,
             anisotropy: 8,
             cache_size_mb: 20480,
             cache_location: String::new(),
@@ -2998,6 +3006,7 @@ impl Settings {
             ssr: self.ssr,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
+            oit: self.oit,
         }
     }
 
