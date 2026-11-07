@@ -50,6 +50,13 @@ pub struct EnvironmentUi {
     /// Who sets the weather now (kept by the app): the Weather window
     /// says so when it is not its own settings.
     pub weather_source: crate::weather::WeatherSource,
+    /// The Weather window's clean-up button was pressed (taken by the app:
+    /// the snow lying, the wet ground and puddles, the footprints and the
+    /// snow on avatars go at once).
+    pub weather_clean: bool,
+    /// Its snow-fill button was pressed (taken by the app: the snow lies
+    /// everywhere as deep as a long snowfall leaves it).
+    pub weather_fill: bool,
     catalog: SettingsCatalog,
     /// Inventory generation the lists were built from, and when.
     built: Option<(u64, super::inventory::view::Sort)>,
@@ -158,15 +165,25 @@ impl EnvironmentUi {
             // first: whether regions may set it, then who does now; the
             // settings below are greyed out while something else does
             let before = weather.clone();
-            widgets::checkbox(ui, p, &mut weather.region_weather, aurora_i18n::tr!("ui-weather-region"))
-                .on_hover_text(aurora_i18n::tr!("ui-weather-region-tip"));
+            ui.horizontal(|ui| {
+                widgets::checkbox(ui, p, &mut weather.region_weather, aurora_i18n::tr!("ui-weather-region"))
+                    .on_hover_text(aurora_i18n::tr!("ui-weather-region-tip"));
+                // on the right: clean up what the weather left (whoever
+                // sets it: the region's or a sky's snow is cleared too)
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::icon_button(ui, p, "eraser", aurora_i18n::tr!("ui-weather-clean-up-tip"), true) {
+                        self.weather_clean = true;
+                    }
+                });
+            });
             if weather.region_weather != before.region_weather {
                 weather.touched = true;
             }
             ui.add_space(4.0);
             weather_source_note(ui, p, self.weather_source, weather);
             let mine = self.weather_source == crate::weather::WeatherSource::Mine;
-            ui.add_enabled_ui(mine, |ui| weather_body(ui, p, weather));
+            let fill = &mut self.weather_fill;
+            ui.add_enabled_ui(mine, |ui| weather_body(ui, p, weather, fill));
         });
     }
 
@@ -891,7 +908,8 @@ pub(crate) fn compass_point(degrees: f32) -> String {
 /// "Weather": the rain (and later snow, wind, thunder) of this viewer only,
 /// folded away until opened. The controls not working yet are greyed out.
 /// The Aurora Weather window's rows.
-fn weather_body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+/// `fill`: set when the snow is to lie everywhere at once (its button).
+fn weather_body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, fill: &mut bool) {
     let before = w.clone();
     {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
@@ -991,6 +1009,19 @@ fn weather_body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                     aurora_i18n::tr!("ui-weather-snow-settles-tip"),
                 );
                 widgets::checkbox(ui, p, &mut w.snow_settles, "");
+                // across from it: the snow lying everywhere at once, as deep
+                // as a long snowfall leaves it (a test, a snowy scene now)
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::icon_button(
+                        ui,
+                        p,
+                        "mountain-filled",
+                        aurora_i18n::tr!("ui-weather-snow-fill-tip"),
+                        w.snow_settles,
+                    ) {
+                        *fill = true;
+                    }
+                });
             });
             ui.horizontal(|ui| {
                 row_label(

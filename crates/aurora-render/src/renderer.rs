@@ -2325,7 +2325,10 @@ impl SnowTrail {
 
 impl RainWet {
     fn active(&self) -> bool {
-        (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY) && self.last.is_some()
+        // a fresh start (`step.z` -1: every cell new) is drawn even while
+        // all is still dry: skipped, the next frame was no longer fresh and
+        // read the old memory back (cleaned up in rain, the snow returned)
+        (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY || self.step[2] < 0.0) && self.last.is_some()
     }
 
     /// One frame of a rain of `rain` and a snow of `snow` with the camera at
@@ -6725,6 +6728,18 @@ impl Backend {
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
+        // cleaned up (the Weather window): the memory starts again, every
+        // cell new, as dry and bare as the open is now (a region's snow so
+        // far, given below, is still the region's)
+        if f.rain_look.clean {
+            self.rain_wet = RainWet::default();
+        }
+        // filled with snow: started again with the open's snow whole, which
+        // every cell takes as new (its share of it in the lee)
+        if f.rain_look.fill {
+            self.rain_wet = RainWet::default();
+            self.rain_wet.snow = 1.0;
+        }
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
         self.rain_wet
             .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow);

@@ -1351,6 +1351,12 @@ pub struct RainLook {
     /// The soles' heights (m), the stamps' order: a foot presses only
     /// where it stands on the snow (a flying avatar's feet press nothing).
     pub snow_stamp_z: [f32; SNOW_STAMPS],
+    /// This frame starts the weather's memory again: no snow lying, the
+    /// ground dry, no puddles (the Weather window's clean-up button).
+    pub clean: bool,
+    /// This frame starts it again full of snow: lying everywhere as deep as
+    /// a long snowfall leaves it (the snow-fill button).
+    pub fill: bool,
 }
 
 /// The most feet set down in the snow in one frame.
@@ -1377,6 +1383,8 @@ impl Default for RainLook {
             snow_stamps: [[0.0; 4]; SNOW_STAMPS],
             snow_stamp_count: 0,
             snow_stamp_z: [0.0; SNOW_STAMPS],
+            clean: false,
+            fill: false,
         }
     }
 }

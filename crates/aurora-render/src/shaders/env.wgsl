@@ -2640,43 +2640,76 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     // above it nor below it: what stands there and is not in the map
     // (avatars, what moves) stays clear, what is under cover too; and the
     // wind turning does not move it (the height the rain reaches does).
-    // Beyond the map's reach, the height the memory keeps there
-    //
-    // The shelter map's texels are tested around the point (3 x 3, each by
-    // its distance): a point whose own texel is a wall's or a ledge's top
-    // but a neighbour is at its height still takes the snow, so that it
-    // lies up to walls with a smooth edge, not in the map's squares (it
-    // reaches at most about a texel and a half under a roof's edge). A
-    // texel counts fully over all of its square, corners too (out to 0.75
-    // of a texel from its centre), and fades out by 1.5: were it full only
-    // near its centre, open ground would dip at every corner where four
-    // meet (a grid of discs with stars between them)
+    // Beyond the map's reach, the height the memory keeps there. Within
+    // it, the texels around the point are weighed smoothly (below), so that
+    // the snow lies up to walls, plants and the edges of cover with a soft
+    // edge, never in the map's squares
     let st = rain_shelter_texel(world.xy, world.z);
     if (st.z < 0.5) {
         let surface = textureLoad(rain_wetness, i, 0).x;
         if (surface < -1e8) { return depth; }
         return depth * snow_gate(world.z - surface);
     }
-    let si = vec2<i32>(floor(st.xy));
-    // its own texel first: where it takes the snow whole (open ground, most
-    // of the screen), its neighbours cannot add to it
-    let own = rain_shelter_height_at(si);
-    if (own > -1e8 && snow_gate(world.z - own) >= 0.999) { return depth; }
-    var gate = 0.0;
-    for (var y = -1; y <= 1; y++) {
-        for (var x = -1; x <= 1; x++) {
-            let at = si + vec2<i32>(x, y);
-            let reach = clamp((1.5 - length(vec2<f32>(at) + vec2<f32>(0.5) - st.xy)) / 0.75, 0.0, 1.0);
-            if (reach <= gate) { continue; }
-            var surface = rain_shelter_height_at(at);
-            if (surface < -1e8) {
-                surface = textureLoad(rain_wetness, i, 0).x;
-                if (surface < -1e8) { return depth; }
-            }
-            gate = max(gate, reach * snow_gate(world.z - surface));
+    // The 4 x 4 texels around the point, by a tent two texels wide (31 cm):
+    // smooth as the point moves, a texel leaving the window at a weight of
+    // nothing
+    let sp = st.xy - vec2<f32>(0.5);
+    let s0 = vec2<i32>(floor(sp));
+    let sf = fract(sp);
+    var hs: array<f32, 16>;
+    for (var k = 0; k < 16; k++) {
+        var h = rain_shelter_height_at(s0 + vec2<i32>(k % 4 - 1, k / 4 - 1));
+        if (h < -1e8) {
+            // beyond the map's reach: the height the memory keeps there
+            h = textureLoad(rain_wetness, i, 0).x;
+            if (h < -1e8) { return depth; }
         }
+        hs[k] = h;
     }
-    return depth * gate;
+    // Cover well above the point (a roof, a tree's leaves) takes its share
+    // of the sky over the window: under a solid roof none comes through,
+    // under leaves the snow is thinner where they are thicker, and a roof's
+    // edge fades over the window. Judged texel by texel, each leaf in the
+    // map left a bare square of 15.6 cm under a tree (a grid of them)
+    var total = 0.0;
+    var covered = 0.0;
+    var taken = 0.0;
+    var counted = 0.0;
+    for (var k = 0; k < 16; k++) {
+        let d = vec2<f32>(f32(k % 4 - 1), f32(k / 4 - 1)) - sf;
+        let w = max(2.0 - abs(d.x), 0.0) * max(2.0 - abs(d.y), 0.0);
+        let above = hs[k] - world.z;
+        total += w;
+        covered += w * smoothstep(0.3, 0.6, above);
+        // the surface it lies on, at this point's height: grass and leaves
+        // a little above it are left out exactly as the gate fades on that
+        // side (as much counted as taken, no hole); one below this point (it
+        // stands on a ledge, a plant's top) counts whole against it
+        taken += w * snow_gate(-above);
+        counted += w * smoothstep(-0.3, -0.05, -above);
+    }
+    let open = 1.0 - covered / max(total, 1e-6);
+    // on smooth ground (level, a slope, a hump), the surface between the
+    // four nearest texels' centres, blended: a slope is followed exactly
+    // (each texel's own height is flat over its square, a stair on a slope:
+    // scales in rows across every slope). The window's weighing is for the
+    // jumps (a wall, a ledge, a plant, cover overhead)
+    let h00 = hs[5];
+    let h10 = hs[6];
+    let h01 = hs[9];
+    let h11 = hs[10];
+    let lo = min(min(h00, h10), min(h01, h11));
+    let hi = max(max(h00, h10), max(h01, h11));
+    // (20 cm across a texel of 15.6 cm: about 52°, past which the snow
+    // slides off anyway)
+    // (and the point on it: under a canopy of leaves as level as that, the
+    // ground below is found in the window)
+    let surface = mix(mix(h00, h10, sf.x), mix(h01, h11, sf.x), sf.y);
+    if (hi - lo < 0.2 && surface - world.z < 0.3) {
+        return depth * snow_gate(world.z - surface) * open;
+    }
+    if (counted < 1e-3) { return 0.0; }
+    return depth * clamp(taken / counted, 0.0, 1.0) * open;
 }
 
 // How much snow a point `at` metres above the topmost surface the snow
@@ -2807,11 +2840,20 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     // the sun as it lights objects (its colour, at most 1), for the glints
     // and the sheen: the sky's own sun colour is far brighter
     let sunlit = frame.sky_obj_light.rgb * frame.sun_dir.w;
-    // glints: a few tiny facets of ice turned toward the sun
-    let cell = floor(xy * 60.0);
-    let g = rain_rand(rain_hash(bitcast<u32>(i32(cell.x)) * 2654435761u ^ bitcast<u32>(i32(cell.y))));
+    // glints: a few tiny facets of ice turned toward the sun, each a point
+    // somewhere in its cell of 1.7 cm (the whole cell lit drew bright
+    // squares up close), no smaller than a pixel and as much light whatever
+    // its size (far off: a faint shimmer, not a flicker)
+    let cells = xy * 60.0;
+    let cell = floor(cells);
+    let hash = rain_hash(bitcast<u32>(i32(cell.x)) * 2654435761u ^ bitcast<u32>(i32(cell.y)));
+    let g = rain_rand(hash);
+    let spot = vec2<f32>(rain_rand(rain_hash(hash ^ 0x9e3779b9u)), rain_rand(rain_hash(hash ^ 0x7f4a7c15u))) * 0.6 + 0.2;
+    let pixel = footprint * 60.0;
+    let radius = max(0.12, pixel * 0.7);
+    let point = (1.0 - smoothstep(radius * 0.5, radius, length(fract(cells) - spot))) * min(0.0144 / (radius * radius), 1.0);
     let half = normalize(frame.sun_dir.xyz + view);
-    let glint = step(0.985, g) * pow(max(dot(sn, half), 0.0), 40.0) * sunlit * shade * 1.5;
+    let glint = step(0.985, g) * point * pow(max(dot(sn, half), 0.0), 40.0) * sunlit * shade * 1.5;
     // the hollows a little shaded, the packed snow of a print greyer
     // (deep snow: the lower the view meets it, the more its walls shade it)
     let cavity = (0.86 + 0.14 * height) * (1.0 - 0.4 * pressed) * mix(0.62, 1.0, risen);

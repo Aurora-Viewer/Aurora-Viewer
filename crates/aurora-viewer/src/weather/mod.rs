@@ -321,6 +321,10 @@ impl WeatherSettings {
             snow_stamps: [[0.0; 4]; aurora_render::SNOW_STAMPS],
             snow_stamp_count: 0,
             snow_stamp_z: [0.0; aurora_render::SNOW_STAMPS],
+            // the app sets them the frame the clean-up or the snow-fill
+            // button is pressed
+            clean: false,
+            fill: false,
             quality: match env_quality().filter(|_| !self.touched).unwrap_or(self.quality) {
                 WeatherQuality::Low => 0,
                 WeatherQuality::Medium => 1,

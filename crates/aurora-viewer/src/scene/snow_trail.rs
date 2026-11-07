@@ -61,6 +61,8 @@ struct Foot {
     time: f32,
     /// The lowest the foot has been lately (its sole on the ground).
     low: f32,
+    /// Where it was last frame.
+    at: Vec3,
     /// Where it pressed its last print.
     last_print: Option<glam::Vec2>,
 }
@@ -85,6 +87,8 @@ pub(super) enum Step {
 
 /// A foot is down within this of the lowest it has been lately (m).
 const DOWN: f32 = 0.04;
+/// A foot that moved more than this in a frame was carried there (m).
+const JUMP: f32 = 4.0;
 
 impl Foot {
     /// The foot at `at` at `time` (s): down while its sole is near the
@@ -96,7 +100,11 @@ impl Foot {
     fn advance(&mut self, at: Vec3, time: f32) -> Step {
         let dt = time - self.time;
         self.time = time;
-        if !(0.0..0.5).contains(&dt) {
+        // a jump of more than a few metres since the last frame (a teleport
+        // within the region, a sit far away): the ground is found again
+        let moved = self.at.distance(at);
+        self.at = at;
+        if !(0.0..0.5).contains(&dt) || moved > JUMP {
             self.low = at.z;
             return Step::None;
         }
@@ -126,6 +134,16 @@ pub struct SnowTrails {
 }
 
 impl SnowTrails {
+    /// Every footprint gone at once (the Weather window's clean-up button);
+    /// the next ones are pressed as before.
+    pub fn clear(&mut self) {
+        self.prints = Default::default();
+        self.generation += 1;
+        self.feet.clear();
+        self.parts.clear();
+        self.objects.clear();
+    }
+
     /// The feet set down this frame within `reach` m of `centre` (the
     /// footprints' map), as the renderer's stamps.
     /// One frame: the snow falling (`snowing`, 0..1), the prints pressed
@@ -137,9 +155,11 @@ impl SnowTrails {
         trails.fallen += dt * snowing.clamp(0.0, 1.0);
         let region = world.main_region;
         if trails.region != region {
+            // the feet too: the ground they found was the last region's (a
+            // foot kept its low there, and a higher ground here took over a
+            // minute to rise to: my feet pressed nothing after a teleport)
             trails.region = region;
-            trails.prints = Default::default();
-            trails.generation += 1;
+            trails.clear();
         }
         // the buried ones go (checked now and then: they go slowly)
         let fallen = trails.fallen;
@@ -184,6 +204,7 @@ impl SnowTrails {
                 let foot = scene.snow_trails.feet.entry(key).or_insert(Foot {
                     time,
                     low: at.z,
+                    at,
                     last_print: None,
                 });
                 if foot.advance(at, time) == Step::Down && foot.last_print.is_none_or(|l| l.distance(at.truncate()) > PRINT_EVERY) {
@@ -373,6 +394,7 @@ mod tests {
         let mut foot = Foot {
             time: 0.0,
             low: 0.0,
+            at: Vec3::ZERO,
             last_print: None,
         };
         let mut t = 0.0;
@@ -397,5 +419,19 @@ mod tests {
         // a long pause (a frame skipped by a hidden window): no print then
         t += 2.0;
         assert_eq!(foot.advance(Vec3::new(5.0, 0.0, 3.0), t), Step::None);
+    }
+
+    #[test]
+    fn a_foot_carried_far_finds_the_ground_again_at_once() {
+        let mut foot = Foot {
+            time: 0.0,
+            low: 0.0,
+            at: Vec3::ZERO,
+            last_print: None,
+        };
+        // teleported 50 m away onto ground 20 m higher, without a pause:
+        // down from the next frame (not after a minute of the low rising)
+        assert_eq!(foot.advance(Vec3::new(50.0, 0.0, 20.0), 0.016), Step::None);
+        assert_eq!(foot.advance(Vec3::new(50.0, 0.0, 20.0), 0.032), Step::Down);
     }
 }

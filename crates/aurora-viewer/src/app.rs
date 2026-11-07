@@ -10629,6 +10629,16 @@ impl App {
         } else {
             aurora_render::ProbeFrame::default()
         };
+        // Aurora Weather: the Weather window's clean-up button: the
+        // footprints and the snow on avatars go now, the renderer's memory
+        // (snow lying, wet ground, puddles) with this frame
+        let weather_clean = std::mem::take(&mut self.env_ui.weather_clean);
+        // and its snow-fill button: the renderer's memory full of snow
+        let weather_fill = std::mem::take(&mut self.env_ui.weather_fill);
+        if weather_clean {
+            self.scene.snow_trails.clear();
+            self.scene.avatar_snow = Default::default();
+        }
         // Aurora Weather: the snow gathering on the avatars near the camera
         // ("Snow on avatars"; off, what lay on them goes at once)
         if self.weather_now.snow_on_avatars {
@@ -10779,6 +10789,8 @@ impl App {
                         .unwrap_or(self.snow_lying.0)
                 },
                 trail_centre: self.trail_centre().truncate().to_array(),
+                clean: weather_clean,
+                fill: weather_fill,
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
             look: None,
