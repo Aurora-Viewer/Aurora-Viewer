@@ -229,3 +229,33 @@ fn japanese_falls_back_to_english_only_for_unknown_keys() {
     );
     assert_eq!(aurora_i18n::text_in("ja", "unknown-key"), "unknown-key");
 }
+
+#[test]
+fn brazilian_portuguese_selection_dates_numbers_and_plurals() {
+    use aurora_i18n::{text_in, tr_in};
+    let languages: Vec<_> = SOURCES.iter().map(|&(code, _)| code).collect();
+    for locale in ["pt-BR", "pt_BR", "PT-br"] {
+        assert_eq!(resolve_language("default", locale, &languages), "pt-BR");
+        assert_eq!(text_in(locale, "language-system"), "Idioma do sistema");
+    }
+    assert!(aurora_i18n::available_languages().any(|language| language == ("pt-BR", "Português (Brasil)")));
+    assert_eq!(text_in("pt-BR", "number-decimal-separator"), ",");
+    assert_eq!(text_in("pt-BR", "number-thousands-separator"), ".");
+    assert_eq!(
+        tr_in!("pt-BR", "profile-date", month = "10", day = "30", year = "2026"),
+        "30/10/2026"
+    );
+    for (count, expected) in [(0, "0 item"), (1, "1 item"), (2, "2 itens"), (25, "25 itens")] {
+        assert_eq!(tr_in!("pt-BR", "language-item-count", count = count), expected);
+    }
+    assert_eq!(text_in("pt-BR", "unknown-key"), "unknown-key");
+    // These values are serialized identities or executable commands, not labels.
+    for (key, expected) in [
+        ("keybinds-middle", "Middle"),
+        ("keybinds-back", "Back"),
+        ("keybinds-forward", "Forward"),
+        ("rlva-tools-input-hint", "@version=0"),
+    ] {
+        assert_eq!(text_in("pt-BR", key), expected);
+    }
+}
