@@ -364,113 +364,6 @@ fn live_kernel_code(text: &str) -> Option<&'static str> {
     }
 }
 
-#[cfg(test)]
-mod windows_parser_tests {
-    #[test]
-    fn windows_event_fixtures_keep_only_gpu_event_names_and_times_in_range() {
-        let xml = r#"<Events xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
-          <Event><System><Provider Name="Display"/><EventID>4101</EventID><TimeCreated SystemTime="2026-11-04T10:00:00.000Z"/></System><EventData><Data>private event contents</Data></EventData></Event>
-          <Event><System><Provider Name="Windows Error Reporting"/><EventID>1001</EventID><TimeCreated SystemTime="2026-11-04T10:00:01.000Z"/></System><EventData><Data>LiveKernelEvent</Data><Data>141</Data></EventData></Event>
-          <Event><System><Provider Name="Display"/><EventID>4101</EventID><TimeCreated SystemTime="2026-11-04T12:00:00.000Z"/></System></Event>
-        </Events>"#;
-        let start = chrono::DateTime::parse_from_rfc3339("2026-11-04T09:59:00Z").unwrap().timestamp() as u64;
-        let end = chrono::DateTime::parse_from_rfc3339("2026-11-04T10:05:00Z").unwrap().timestamp() as u64;
-        let (events, capped) = super::parse_windows_events(xml, start, end);
-        assert!(!capped);
-        assert_eq!(events.len(), 2);
-        assert!(events[0].starts_with("Display 4101 at 2026-11-04T10:00:00"));
-        assert!(events[1].starts_with("LiveKernelEvent 141 at 2026-11-04T10:00:01"));
-        assert!(events.iter().all(|event| !event.contains("private event contents")));
-    }
-
-    #[test]
-    fn the_event_query_asks_for_the_window_only() {
-        let since = chrono::DateTime::parse_from_rfc3339("2026-11-04T09:58:00Z").unwrap().timestamp() as u64;
-        assert_eq!(
-            super::event_query(since, since + 420),
-            "/q:*[System[(EventID=4101 or EventID=1001) and TimeCreated[@SystemTime>='2026-11-04T09:58:00.000Z' and @SystemTime<='2026-11-04T10:05:00.000Z']]]"
-        );
-    }
-
-    #[test]
-    fn a_live_kernel_event_code_is_read_after_the_event_name() {
-        // a bucket that happens to read 141 is not the code
-        let xml = r#"<Events><Event><System><Provider Name="Windows Error Reporting"/><EventID>1001</EventID><TimeCreated SystemTime="2026-11-04T10:00:01.000Z"/></System><EventData><Data>141</Data><Data>0</Data><Data>LiveKernelEvent</Data><Data>Not available</Data><Data>0</Data><Data>117</Data></EventData></Event></Events>"#;
-        let (events, _) = super::parse_windows_events(xml, 0, i64::MAX as u64);
-        assert_eq!(events.len(), 1);
-        assert!(events[0].starts_with("LiveKernelEvent 117 at "), "{events:?}");
-    }
-
-    #[test]
-    fn malformed_windows_event_xml_is_not_collected_as_a_record() {
-        assert!(super::parse_windows_events("<Event><System>", 0, u64::MAX).0.is_empty());
-    }
-
-    #[test]
-    fn windows_event_status_does_not_claim_unverified_registry_or_dump_samples() {
-        let status = super::windows_status(2, 0, false);
-        assert!(!status.contains("registry"));
-        assert!(!status.contains("dump"));
-    }
-
-    #[test]
-    fn matching_windows_records_disclose_truncation_below_the_query_cap() {
-        let event = r#"<Event><System><Provider Name="Display"/><EventID>4101</EventID><TimeCreated SystemTime="2026-11-04T10:00:00Z"/></System></Event>"#;
-        for count in [60, 61] {
-            let xml = format!("<Events>{}</Events>", event.repeat(count));
-            let (records, capped) = super::parse_windows_events(&xml, 0, i64::MAX as u64);
-            assert_eq!(records.len(), 60);
-            assert_eq!(capped, count > 60);
-            assert_eq!(
-                super::windows_status(2, records.len(), capped).starts_with("collected (incomplete):"),
-                count > 60
-            );
-        }
-        let (combined, capped) = super::bounded_records((0..80).map(|n| n.to_string()));
-        assert_eq!(combined.len(), 60);
-        assert!(capped, "the combined channels have the same report limit");
-    }
-
-    #[test]
-    fn capped_windows_query_is_inconclusive() {
-        let events = (0..1000).map(|_| "<Event/>").collect::<String>();
-        let xml = format!("<Events>{events}</Events>");
-        assert_eq!(super::windows_event_count(&xml), 1000);
-        assert!(super::windows_event_count("<Events><Event/></Events>") < 1000);
-        assert!(super::windows_status(2, 0, true).starts_with("collected (incomplete):"));
-        assert!(super::windows_status(1, 2, false).starts_with("collected (partial):"));
-    }
-}
-
-#[cfg(all(test, unix))]
-mod timeout_tests {
-    use super::*;
-
-    #[test]
-    fn inherited_stdout_cannot_extend_the_collection_deadline() {
-        for script in ["sleep 2 & exit 0", "sleep 2 & wait"] {
-            let started = Instant::now();
-            let result = output_before(
-                std::process::Command::new("sh").args(["-c", script]),
-                started + Duration::from_millis(50),
-            );
-            assert!(started.elapsed() < Duration::from_secs(1), "{script}");
-            assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
-        }
-    }
-
-    #[test]
-    fn os_command_is_killed_at_its_deadline() {
-        let started = Instant::now();
-        let result = output_before(
-            std::process::Command::new("sh").args(["-c", "exec sleep 5"]),
-            started + Duration::from_millis(50),
-        );
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
-        assert!(started.elapsed() < Duration::from_secs(1));
-    }
-}
-
 #[cfg(windows)]
 fn windows_graphics_settings(deadline: Instant) -> Vec<String> {
     let mut values = Vec::new();
@@ -595,5 +488,112 @@ mod tests {
     fn dmesg_fallback_uses_the_boot_time_and_requested_window() {
         let text = "[ 100.0] amdgpu: ring timeout\n[ 200.0] drm: reset\n[ 100.0] unrelated\n";
         assert_eq!(parse_dmesg(text, 1_000, 1_090, 1_150).0, ["[ 100.0] amdgpu: ring timeout"]);
+    }
+}
+
+#[cfg(test)]
+mod windows_parser_tests {
+    #[test]
+    fn windows_event_fixtures_keep_only_gpu_event_names_and_times_in_range() {
+        let xml = r#"<Events xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+          <Event><System><Provider Name="Display"/><EventID>4101</EventID><TimeCreated SystemTime="2026-11-04T10:00:00.000Z"/></System><EventData><Data>private event contents</Data></EventData></Event>
+          <Event><System><Provider Name="Windows Error Reporting"/><EventID>1001</EventID><TimeCreated SystemTime="2026-11-04T10:00:01.000Z"/></System><EventData><Data>LiveKernelEvent</Data><Data>141</Data></EventData></Event>
+          <Event><System><Provider Name="Display"/><EventID>4101</EventID><TimeCreated SystemTime="2026-11-04T12:00:00.000Z"/></System></Event>
+        </Events>"#;
+        let start = chrono::DateTime::parse_from_rfc3339("2026-11-04T09:59:00Z").unwrap().timestamp() as u64;
+        let end = chrono::DateTime::parse_from_rfc3339("2026-11-04T10:05:00Z").unwrap().timestamp() as u64;
+        let (events, capped) = super::parse_windows_events(xml, start, end);
+        assert!(!capped);
+        assert_eq!(events.len(), 2);
+        assert!(events[0].starts_with("Display 4101 at 2026-11-04T10:00:00"));
+        assert!(events[1].starts_with("LiveKernelEvent 141 at 2026-11-04T10:00:01"));
+        assert!(events.iter().all(|event| !event.contains("private event contents")));
+    }
+
+    #[test]
+    fn the_event_query_asks_for_the_window_only() {
+        let since = chrono::DateTime::parse_from_rfc3339("2026-11-04T09:58:00Z").unwrap().timestamp() as u64;
+        assert_eq!(
+            super::event_query(since, since + 420),
+            "/q:*[System[(EventID=4101 or EventID=1001) and TimeCreated[@SystemTime>='2026-11-04T09:58:00.000Z' and @SystemTime<='2026-11-04T10:05:00.000Z']]]"
+        );
+    }
+
+    #[test]
+    fn a_live_kernel_event_code_is_read_after_the_event_name() {
+        // a bucket that happens to read 141 is not the code
+        let xml = r#"<Events><Event><System><Provider Name="Windows Error Reporting"/><EventID>1001</EventID><TimeCreated SystemTime="2026-11-04T10:00:01.000Z"/></System><EventData><Data>141</Data><Data>0</Data><Data>LiveKernelEvent</Data><Data>Not available</Data><Data>0</Data><Data>117</Data></EventData></Event></Events>"#;
+        let (events, _) = super::parse_windows_events(xml, 0, i64::MAX as u64);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].starts_with("LiveKernelEvent 117 at "), "{events:?}");
+    }
+
+    #[test]
+    fn malformed_windows_event_xml_is_not_collected_as_a_record() {
+        assert!(super::parse_windows_events("<Event><System>", 0, u64::MAX).0.is_empty());
+    }
+
+    #[test]
+    fn windows_event_status_does_not_claim_unverified_registry_or_dump_samples() {
+        let status = super::windows_status(2, 0, false);
+        assert!(!status.contains("registry"));
+        assert!(!status.contains("dump"));
+    }
+
+    #[test]
+    fn matching_windows_records_disclose_truncation_below_the_query_cap() {
+        let event = r#"<Event><System><Provider Name="Display"/><EventID>4101</EventID><TimeCreated SystemTime="2026-11-04T10:00:00Z"/></System></Event>"#;
+        for count in [60, 61] {
+            let xml = format!("<Events>{}</Events>", event.repeat(count));
+            let (records, capped) = super::parse_windows_events(&xml, 0, i64::MAX as u64);
+            assert_eq!(records.len(), 60);
+            assert_eq!(capped, count > 60);
+            assert_eq!(
+                super::windows_status(2, records.len(), capped).starts_with("collected (incomplete):"),
+                count > 60
+            );
+        }
+        let (combined, capped) = super::bounded_records((0..80).map(|n| n.to_string()));
+        assert_eq!(combined.len(), 60);
+        assert!(capped, "the combined channels have the same report limit");
+    }
+
+    #[test]
+    fn capped_windows_query_is_inconclusive() {
+        let events = (0..1000).map(|_| "<Event/>").collect::<String>();
+        let xml = format!("<Events>{events}</Events>");
+        assert_eq!(super::windows_event_count(&xml), 1000);
+        assert!(super::windows_event_count("<Events><Event/></Events>") < 1000);
+        assert!(super::windows_status(2, 0, true).starts_with("collected (incomplete):"));
+        assert!(super::windows_status(1, 2, false).starts_with("collected (partial):"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod timeout_tests {
+    use super::*;
+
+    #[test]
+    fn inherited_stdout_cannot_extend_the_collection_deadline() {
+        for script in ["sleep 2 & exit 0", "sleep 2 & wait"] {
+            let started = Instant::now();
+            let result = output_before(
+                std::process::Command::new("sh").args(["-c", script]),
+                started + Duration::from_millis(50),
+            );
+            assert!(started.elapsed() < Duration::from_secs(1), "{script}");
+            assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        }
+    }
+
+    #[test]
+    fn os_command_is_killed_at_its_deadline() {
+        let started = Instant::now();
+        let result = output_before(
+            std::process::Command::new("sh").args(["-c", "exec sleep 5"]),
+            started + Duration::from_millis(50),
+        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }
