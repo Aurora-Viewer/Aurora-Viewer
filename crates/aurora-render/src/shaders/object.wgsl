@@ -553,12 +553,14 @@ fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = frame.eye_view_proj * ep;
     out.world_pos = wp.xyz;
+    out.normal = cofactor(model) * vertex_normal(rec, in);
+    // snow on avatars, judged by the facing just found (before it, the
+    // normal was zero: its up a NaN, and no snow ever showed)
     out.snow = avatar_snow(rec);
     out.snow_up = 0.0;
     if (out.snow > 0.0) {
         out.snow_up = avatar_rest_up(rec, in, out.normal);
     }
-    out.normal = cofactor(model) * vertex_normal(rec, in);
     var st = face_st(in, rec);
     let animated = has_tex_anim(rec);
     if (animated) {
